@@ -559,6 +559,29 @@ public class FuzzRunner {
         Assert.assertFalse("Table is suspended", engine.getTableSequencerAPI().isSuspended(tableToken));
     }
 
+    /**
+     * Holds the index of every indexed SYMBOL column of the table against scans that read no index: for each distinct
+     * key, up to {@link #MAX_COVERED_KEYS_CHECKED} of them, {@code WHERE sym = key} must return through the index the
+     * rows a full scan returns. Unlike {@link #assertRandomIndexes}, it needs no second table, so it can check a table
+     * that no other table mirrors, such as one a checkpoint restore just left.
+     */
+    public void assertIndexesMatchScans(String tableName) throws SqlException {
+        final ObjList<String> indexedColumnNames = new ObjList<>();
+        try (TableReader reader = getReader(tableName)) {
+            final TableReaderMetadata metadata = reader.getMetadata();
+            for (int columnIndex = 0, n = metadata.getColumnCount(); columnIndex < n; columnIndex++) {
+                if (ColumnType.isSymbol(metadata.getColumnType(columnIndex)) && metadata.isColumnIndexed(columnIndex)) {
+                    indexedColumnNames.add(metadata.getColumnName(columnIndex));
+                }
+            }
+        }
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            for (int i = 0, n = indexedColumnNames.size(); i < n; i++) {
+                checkIndexAgainstScan(compiler, tableName, indexedColumnNames.getQuick(i));
+            }
+        }
+    }
+
     public void assertRandomIndexes(String tableNameNoWal, String tableNameWal, Rnd rnd) throws SqlException {
         try (TableReader reader = getReader(tableNameNoWal)) {
             if (reader.size() > 0) {
@@ -1432,6 +1455,38 @@ public class FuzzRunner {
         if (checked == MAX_COVERED_KEYS_CHECKED) {
             LOG.info().$("covered value check capped at ").$(MAX_COVERED_KEYS_CHECKED)
                     .$(" keys [table=").$safe(tableName).$(", column=").$safe(symbolColumnName).I$();
+        }
+    }
+
+    // Compares, key by key, the rows an equality filter on the indexed column reads through the index with those it
+    // reads from a scan that uses no index. Each comparison is a single-key equality, which both plans emit in the
+    // same order.
+    private void checkIndexAgainstScan(SqlCompiler compiler, String tableName, String symbolColumnName) throws SqlException {
+        sink.clear();
+        TestUtils.printSql(compiler, sqlExecutionContext, "select distinct \"" + symbolColumnName + "\" a from " + tableName + " order by 1", sink);
+        final String keys = sink.toString();
+        final StringSink plan = new StringSink();
+        int checked = 0;
+        for (int lo = keys.indexOf('\n') + 1, hi; lo > 0 && lo < keys.length() && checked < MAX_COVERED_KEYS_CHECKED; lo = hi + 1) {
+            hi = keys.indexOf('\n', lo);
+            if (hi < 0) {
+                hi = keys.length();
+            }
+            final String key = keys.substring(lo, hi);
+            if (key.indexOf('\'') >= 0) {
+                continue; // a quote would need escaping; skip this key
+            }
+            checked++;
+            final String whereClause = " where \"" + symbolColumnName + "\" = " + (key.isEmpty() ? "null" : "'" + key + "'");
+            final String indexed = "select * from " + tableName + whereClause;
+            plan.clear();
+            TestUtils.printSql(compiler, sqlExecutionContext, "explain " + indexed, plan);
+            Assert.assertTrue(
+                    "index not chosen for " + indexed + ", plan was:\n" + plan,
+                    Chars.contains(plan, "on: " + symbolColumnName)
+            );
+            LOG.info().$("checking index against scan: ").$safe(indexed).I$();
+            TestUtils.assertSqlCursors(compiler, sqlExecutionContext, "select /*+ no_index */ * from " + tableName + whereClause, indexed, LOG);
         }
     }
 

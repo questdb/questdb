@@ -26,10 +26,14 @@ package io.questdb.test.cairo.fuzz;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.idx.PostingIndexChainHeader;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.vm.Vm;
@@ -47,6 +51,7 @@ import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -60,6 +65,7 @@ import org.junit.Test;
 
 import java.io.File;
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -92,6 +98,26 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
     @Test
     public void testCheckpointCopyKeepsCommittedPostingIndexOfWalTable() throws Exception {
         assertCheckpointCopyKeepsCommittedPostingIndex("WAL");
+    }
+
+    @Test
+    public void testCheckpointCopyKeepsPostingIndexOfColumnVersionOfNonWalTable() throws Exception {
+        assertCheckpointCopyKeepsPostingIndexOfColumnVersion("BYPASS WAL", true);
+    }
+
+    @Test
+    public void testCheckpointCopyKeepsPostingIndexOfColumnVersionOfWalTable() throws Exception {
+        assertCheckpointCopyKeepsPostingIndexOfColumnVersion("WAL", true);
+    }
+
+    @Test
+    public void testCheckpointCopyKeepsRebuiltPostingIndexOfColumnVersionOfNonWalTable() throws Exception {
+        assertCheckpointCopyKeepsPostingIndexOfColumnVersion("BYPASS WAL", false);
+    }
+
+    @Test
+    public void testCheckpointCopyKeepsRebuiltPostingIndexOfColumnVersionOfWalTable() throws Exception {
+        assertCheckpointCopyKeepsPostingIndexOfColumnVersion("WAL", false);
     }
 
     @Test
@@ -320,7 +346,7 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testCheckpointCopyRebuildsPostingIndexAfterDivergentCommit() throws Exception {
-        assertCheckpointCopyRebuildsPostingIndexAfterDivergentCommit("BYPASS WAL");
+        assertCheckpointCopyRebuildsPostingIndexAfterDivergentCommit("BYPASS WAL", false);
     }
 
     @Test
@@ -344,8 +370,18 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
+    public void testCheckpointCopyRebuildsPostingIndexOfVersionedPartitionAfterDivergentCommit() throws Exception {
+        assertCheckpointCopyRebuildsPostingIndexAfterDivergentCommit("BYPASS WAL", true);
+    }
+
+    @Test
+    public void testCheckpointCopyRebuildsPostingIndexOfVersionedPartitionOfWalTableAfterDivergentCommit() throws Exception {
+        assertCheckpointCopyRebuildsPostingIndexAfterDivergentCommit("WAL", true);
+    }
+
+    @Test
     public void testCheckpointCopyRebuildsPostingIndexOfWalTableAfterDivergentCommit() throws Exception {
-        assertCheckpointCopyRebuildsPostingIndexAfterDivergentCommit("WAL");
+        assertCheckpointCopyRebuildsPostingIndexAfterDivergentCommit("WAL", false);
     }
 
     @Test
@@ -517,6 +553,72 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
+    public void testCheckpointCopyRestoreFailsWhenPostingResetFails() throws Exception {
+        Assume.assumeFalse(Os.isWindows());
+        // The restore cannot remove the key file of the chain it resets in 2024-01-02. It fails rather than leave a
+        // chain that a later ADD INDEX could take for finished, and keeps the checkpoint for the next start.
+        final AtomicBoolean isFailing = new AtomicBoolean();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean removeQuiet(LPSZ name) {
+                if (isFailing.get() && Utf8s.endsWithAscii(name, "2024-01-02" + Files.SEPARATOR + "s.pk")) {
+                    return false;
+                }
+                return super.removeQuiet(name);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE x (s SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('a', 1, '2024-01-01'), ('b', 2, '2024-01-01T12:00'),
+                    ('a', 3, '2024-01-02'), ('b', 4, '2024-01-02T12:00'),
+                    ('a', 5, '2024-01-03'), ('b', 6, '2024-01-03T12:00')
+                    """);
+            final TableToken tableToken = engine.verifyTableName("x");
+            checkpointCreate(false, true);
+            // Model a copy taken after ADD INDEX built the index of this non-WAL table.
+            execute("ALTER TABLE x ALTER COLUMN s ADD INDEX TYPE POSTING INCLUDE (v)");
+            engine.releaseAllWriters();
+            for (int day = 1; day <= 3; day++) {
+                linkToCheckpointCopy(tableToken, "2024-01-0" + day, "s.p");
+            }
+            isFailing.set(true);
+            try {
+                checkpointRecover();
+                Assert.fail("the restore must fail");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not remove posting index key file");
+                TestUtils.assertContains(e.getFlyweightMessage(), "2024-01-02");
+            } finally {
+                isFailing.set(false);
+            }
+
+            // The trigger file and the checkpoint stay: the next start restores it again, and completes.
+            Assert.assertTrue(ff.exists(triggerFilePath.$()));
+            engine.checkpointRecover();
+            engine.getTableSequencerAPI().releaseAll();
+            engine.reloadTableNames();
+            for (int day = 1; day <= 3; day++) {
+                assertPartitionFiles(tableToken, "2024-01-0" + day, "s.p", "[s.pk]");
+            }
+            execute("ALTER TABLE x ALTER COLUMN s ADD INDEX TYPE POSTING INCLUDE (v)");
+            assertQuery("SELECT v, ts FROM x WHERE s = 'a'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanContaining("CoveringIndex on: s")
+                    .returns("""
+                            v\tts
+                            1\t2024-01-01T00:00:00.000000Z
+                            3\t2024-01-02T00:00:00.000000Z
+                            5\t2024-01-03T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testCheckpointEjectedWalApply() throws Exception {
         Rnd rnd = generateRandom(LOG);
         runEjectedWalApplyBody(rnd);
@@ -571,9 +673,45 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
         Assert.assertFalse("table suspended", tableToken.isWal() && engine.getTableSequencerAPI().isSuspended(tableToken));
     }
 
+    // Every partition of table x in which the column holds rows keeps a sealed chain in the key file of the column
+    // version _cv gives the partition.
+    private static void assertPostingIndexChains(String columnName) {
+        try (TableReader reader = getReader("x"); Path path = new Path()) {
+            final TableReaderMetadata metadata = reader.getMetadata();
+            final int writerIndex = metadata.getWriterIndex(metadata.getColumnIndex(columnName));
+            final ColumnVersionReader columnVersionReader = reader.getColumnVersionReader();
+            final TxReader txFile = reader.getTxFile();
+            for (int i = 0, n = txFile.getPartitionCount(); i < n; i++) {
+                final long partitionTimestamp = txFile.getPartitionTimestampByIndex(i);
+                final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, writerIndex);
+                if (columnTop < 0 || columnTop >= txFile.getPartitionSize(i)) {
+                    continue;
+                }
+                path.of(configuration.getDbRoot()).concat(reader.getTableToken());
+                TableUtils.setPathForNativePartition(path, metadata.getTimestampType(), metadata.getPartitionBy(), partitionTimestamp, txFile.getPartitionNameTxn(i));
+                PostingIndexUtils.keyFileName(path, columnName, columnVersionReader.getColumnNameTxn(partitionTimestamp, writerIndex));
+                Assert.assertTrue(path.toString(), PostingIndexUtils.readSealTxnFromKeyFile(configuration.getFilesFacade(), path.$()) > -1);
+            }
+        }
+    }
+
     private static String[] checkpointCopyFiles(TableToken tableToken, String partitionName, String fileNamePrefix) {
         final File copyRoot = new File(configuration.getDbRoot() + TableUtils.CHECKPOINT_META_FILE_NAME);
         return listFiles(new File(new File(copyRoot, tableToken.getDirName()), partitionName), fileNamePrefix);
+    }
+
+    // The column name txn _cv gives the column of table x, then each partition.
+    private static long[] columnNameTxns(String columnName) {
+        try (TableReader reader = getReader("x")) {
+            final int writerIndex = reader.getMetadata().getWriterIndex(reader.getMetadata().getColumnIndex(columnName));
+            final ColumnVersionReader columnVersionReader = reader.getColumnVersionReader();
+            final long[] columnNameTxns = new long[reader.getPartitionCount() + 1];
+            columnNameTxns[0] = columnVersionReader.getDefaultColumnNameTxn(writerIndex);
+            for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
+                columnNameTxns[i + 1] = columnVersionReader.getColumnNameTxn(reader.getPartitionTimestampByIndex(i), writerIndex);
+            }
+            return columnNameTxns;
+        }
     }
 
     private static void createTriggerFile() {
@@ -601,6 +739,21 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
         Assert.assertNotNull(files);
         Arrays.sort(files);
         return files;
+    }
+
+    // The directory name of a partition of table x, with the name txn suffix _txn gives it.
+    private static String partitionDirName(int partitionIndex) {
+        try (TableReader reader = getReader("x")) {
+            final StringSink sink = new StringSink();
+            TableUtils.setSinkForNativePartition(
+                    sink,
+                    reader.getMetadata().getTimestampType(),
+                    reader.getPartitionedBy(),
+                    reader.getPartitionTimestampByIndex(partitionIndex),
+                    reader.getTxFile().getPartitionNameTxn(partitionIndex)
+            );
+            return sink.toString();
+        }
     }
 
     // Writes a long of -1, which no posting index file starts with, to a file of the checkpoint copy.
@@ -730,16 +883,105 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
         });
     }
 
-    private void assertCheckpointCopyRebuildsPostingIndexAfterDivergentCommit(String walClause) throws Exception {
+    // The restore keeps the committed POSTING indexes of column versions that are not a column's first: a BITMAP index
+    // moved to POSTING (DROP INDEX gives the column a version of its own in every partition), a column an UPDATE
+    // rewrote in one partition, and a column added after the table had rows. A full copy rebuilds the indexes first.
+    private void assertCheckpointCopyKeepsPostingIndexOfColumnVersion(String walClause, boolean isHardLinkCopy) throws Exception {
         Assume.assumeFalse(Os.isWindows());
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (s SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY " + walClause);
+            execute("CREATE TABLE x (a SYMBOL INDEX TYPE BITMAP, b SYMBOL INDEX TYPE POSTING, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY " + walClause);
+            execute("INSERT INTO x VALUES ('p', 'q', 1, '2024-01-01T00:00'), ('r', 'u', 2, '2024-01-01T12:00')");
+            drainWalQueue();
+            execute("ALTER TABLE x ADD COLUMN c SYMBOL INDEX TYPE POSTING");
+            drainWalQueue();
             execute("""
-                    INSERT INTO x VALUES
-                    ('x', 1, '2024-01-01T00:00'), ('y', 2, '2024-01-01T01:00'),
-                    ('x', 3, '2024-01-01T02:00'), ('y', 4, '2024-01-01T03:00')
+                    INSERT INTO x (a, b, v, ts, c) VALUES
+                    ('p', 'q', 3, '2024-01-02T00:00', 'k'), ('r', 'u', 4, '2024-01-02T12:00', 'm'),
+                    ('p', 'q', 5, '2024-01-03T00:00', 'k'), ('r', 'u', 6, '2024-01-03T12:00', 'm')
                     """);
             drainWalQueue();
+            execute("ALTER TABLE x ALTER COLUMN a DROP INDEX");
+            drainWalQueue();
+            execute("ALTER TABLE x ALTER COLUMN a ADD INDEX TYPE POSTING");
+            drainWalQueue();
+            execute("UPDATE x SET b = 'u' WHERE v = 1");
+            drainWalQueue();
+            final TableToken tableToken = engine.verifyTableName("x");
+            // The column name txn _cv gives the column, then each partition.
+            final long[] a = columnNameTxns("a");
+            final long[] b = columnNameTxns("b");
+            final long[] c = columnNameTxns("c");
+            Assert.assertEquals(-1, a[0]);
+            for (int i = 1; i < a.length; i++) {
+                Assert.assertTrue(Arrays.toString(a), a[i] > -1);
+            }
+            Assert.assertTrue(Arrays.toString(b), b[0] == -1 && b[1] > -1 && b[2] == -1 && b[3] == -1);
+            Assert.assertTrue(Arrays.toString(c), c[0] > -1);
+            checkpointCreate(false, isHardLinkCopy);
+            checkpointRecover();
+            drainWalQueue();
+            assertNotSuspended(tableToken);
+
+            for (String column : new String[]{"a", "b", "c"}) {
+                assertPostingIndexChains(column);
+            }
+            assertQuery("SELECT v, ts FROM x WHERE a = 'p'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlanContaining("Index forward scan on: a")
+                    .returns("""
+                            v\tts
+                            1\t2024-01-01T00:00:00.000000Z
+                            3\t2024-01-02T00:00:00.000000Z
+                            5\t2024-01-03T00:00:00.000000Z
+                            """);
+            assertQuery("SELECT v, ts FROM x WHERE b = 'u'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlanContaining("Index forward scan on: b")
+                    .returns("""
+                            v\tts
+                            1\t2024-01-01T00:00:00.000000Z
+                            2\t2024-01-01T12:00:00.000000Z
+                            4\t2024-01-02T12:00:00.000000Z
+                            6\t2024-01-03T12:00:00.000000Z
+                            """);
+            assertQuery("SELECT v, ts FROM x WHERE c = 'k'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlanContaining("Index forward scan on: c")
+                    .returns("""
+                            v\tts
+                            3\t2024-01-02T00:00:00.000000Z
+                            5\t2024-01-03T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    // isPartitionVersioned: an out-of-order commit rewrites 2024-01-01 into a directory whose name carries a partition
+    // name txn before the checkpoint, as out-of-order data does by default. The test setup turns merge-append, which
+    // writes a composite piece instead, on, so the variant turns it off.
+    private void assertCheckpointCopyRebuildsPostingIndexAfterDivergentCommit(String walClause, boolean isPartitionVersioned) throws Exception {
+        Assume.assumeFalse(Os.isWindows());
+        if (isPartitionVersioned) {
+            setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        }
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY " + walClause);
+            if (isPartitionVersioned) {
+                execute("INSERT INTO x VALUES ('x', 1, '2024-01-01T00:00'), ('x', 3, '2024-01-01T02:00'), ('y', 4, '2024-01-01T03:00')");
+                drainWalQueue();
+                execute("INSERT INTO x VALUES ('y', 2, '2024-01-01T01:00')");
+            } else {
+                execute("""
+                        INSERT INTO x VALUES
+                        ('x', 1, '2024-01-01T00:00'), ('y', 2, '2024-01-01T01:00'),
+                        ('x', 3, '2024-01-01T02:00'), ('y', 4, '2024-01-01T03:00')
+                        """);
+            }
+            drainWalQueue();
+            final String partitionDir = partitionDirName(0);
+            Assert.assertEquals(partitionDir, isPartitionVersioned, !"2024-01-01".equals(partitionDir));
             final TableToken tableToken = engine.verifyTableName("x");
             checkpointCreate(false, true);
             // Model a copy taken after the table moved on: one commit appended to 2024-01-01 and opened 2024-01-02,
@@ -751,11 +993,14 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
                     ('x', 15, '2024-01-02')
                     """);
             drainWalQueue();
+            Assert.assertEquals(partitionDir, partitionDirName(0));
             execute("ALTER TABLE x ALTER COLUMN s ADD INDEX TYPE POSTING INCLUDE (v)");
             drainWalQueue();
             engine.releaseAllWriters();
-            linkToCheckpointCopy(tableToken, "2024-01-01", "s.p");
+            linkToCheckpointCopy(tableToken, partitionDir, "s.p");
             checkpointRecover();
+            // The restored metadata does not index s: the restore resets the chain the copy holds of it.
+            assertPartitionFiles(tableToken, partitionDir, "s.p", "[s.pk]");
             drainWalQueue();
 
             // The restore replays nothing that came after the checkpoint. The next commit writes other rows, up to
@@ -767,6 +1012,7 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
                     ('x', 25, '2024-01-02')
                     """);
             drainWalQueue();
+            Assert.assertEquals(partitionDir, partitionDirName(0));
             execute("ALTER TABLE x ALTER COLUMN s ADD INDEX TYPE POSTING INCLUDE (v)");
             drainWalQueue();
             assertNotSuspended(tableToken);
@@ -1269,10 +1515,14 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
 
                 // Restore snapshot here
                 checkpointRecover();
+                // Hold the indexes as the restore left them against scans that read no index: the WAL apply below
+                // and the transactions after the checkpoint rewrite the partitions they touch, which rebuilds their
+                // indexes, and the final comparison reads both tables through their indexes.
+                fuzzer.assertIndexesMatchScans(tableNameWal);
+                fuzzer.assertIndexesMatchScans(tableNameNonWal);
                 engine.notifyWalTxnRepublisher(engine.verifyTableName(tableNameWal));
-                // The indexes as the restore left them: the transactions after the checkpoint rewrite the partitions
-                // they touch, and would rebuild a broken index before the final comparison sees it.
                 drainWalQueue();
+                fuzzer.assertIndexesMatchScans(tableNameWal);
                 fuzzer.assertRandomIndexes(tableNameWal, tableNameWal, rnd);
                 if (afterSnapshot.size() > 0) {
                     fuzzer.applyWal(afterSnapshot, tableNameWal, rnd.nextInt(2) + 1, rnd);
