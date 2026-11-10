@@ -67,7 +67,9 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.File;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.Base64;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -180,7 +182,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             {"NULL", "'0'::DECIMAL(76, 10)", "'-" + "9".repeat(66) + "." + "9".repeat(10) + "'::DECIMAL(76, 10)", "'" + "9".repeat(66) + "." + "9".repeat(10) + "'::DECIMAL(76, 10)", "'1.0000000001'::DECIMAL(76, 10)"},
             {"NULL", "''", "'\u00e9\ud834\udd1e'", "'" + ROW_GROUP_TOP_LONG_TEXT + "'", "'vc'"},
             {"NULL", "''", "'\u042f\ud834\udd1e'", "'" + ROW_GROUP_TOP_LONG_TEXT + "'", "'st'"},
-            {"NULL", "''::BINARY", "'b'::BINARY", "'" + ROW_GROUP_TOP_LONG_TEXT + "'::BINARY", "'xyz'::BINARY"},
+            {"NULL", "from_base64('')", "from_base64('Yg==')", "from_base64('" + Base64.getEncoder().encodeToString(ROW_GROUP_TOP_LONG_TEXT.getBytes(StandardCharsets.UTF_8)) + "')", "from_base64('eHl6')"},
             {"NULL", "''", "'\u00e9'", "'k1'", "'k2'"},
             {"NULL", "''", "'x'", "'y'", "'x'"},
             {"NULL", "''", "'x'", "'y'", "'x'"},
