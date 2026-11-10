@@ -126,8 +126,11 @@ public final class IntervalUtils {
 
         intervals.setPos(index);
         if (periodType == PeriodType.NONE) {
-            intervals.extendAndSet(index + 1, hi);
-            intervals.setQuick(index, lo);
+            // an empty period, such as text finer than the column between two of its values, drops out
+            if (lo <= hi) {
+                intervals.extendAndSet(index + 1, hi);
+                intervals.setQuick(index, lo);
+            }
             return;
         }
         apply(timestampDriver, intervals, lo, hi, period, periodType, count);
@@ -4346,6 +4349,7 @@ public final class IntervalUtils {
                 // no semicolons, just date part, which can be the interval in itself
                 try {
                     timestampDriver.parseInterval(seq, lo, lim, operation, out);
+                    roundUpInexactPeriodStart(timestampDriver, seq, lo, lim, out, writeIndex);
                     break;
                 } catch (NumericException ignore) {
                     // this must be a date then?
@@ -4354,6 +4358,7 @@ public final class IntervalUtils {
                 try {
                     long timestamp = timestampDriver.parseFloor(seq, lo, lim);
                     encodeInterval(timestamp, timestamp, operation, out);
+                    roundUpInexactPeriodStart(timestampDriver, seq, lo, lim, out, writeIndex);
                     break;
                 } catch (NumericException e) {
                     try {
@@ -4445,6 +4450,15 @@ public final class IntervalUtils {
         }
         int lastDay = CommonUtils.getDaysPerMonth(month, CommonUtils.isLeapYear(year));
         return ((long) year << 16) | ((long) month << 8) | lastDay;
+    }
+
+    // The parsers drop the digits of the text finer than the column, so the period starts at the column value at or
+    // before the text. Rounded up, it starts at the first value at or after the text, as >= reads it, and the period
+    // of text finer than the column holds no value of it.
+    private static void roundUpInexactPeriodStart(TimestampDriver timestampDriver, CharSequence seq, int lo, int lim, LongList out, int index) {
+        if (!timestampDriver.isExactText(seq, lo, lim)) {
+            out.setQuick(index + LO_INDEX, out.getQuick(index + LO_INDEX) + 1);
+        }
     }
 
     private static void parseRange(

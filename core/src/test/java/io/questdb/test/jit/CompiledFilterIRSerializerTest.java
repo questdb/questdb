@@ -1241,10 +1241,11 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         assertIR("(i32 -1L)(i32 anint)(neg)(=)(ret)");
         serialize("anint NOT IN (1, 2, 3)");
         assertIR("(i32 3L)(i32 anint)(=)(i32 2L)(i32 anint)(=)(i32 1L)(i32 anint)(=)(||)(||)(!)(ret)");
+        // a one-item list names a period, here the whole day
         serialize("atimestamp IN ('2020-01-01')");
-        assertIR("(i64 1577836800000000L)(i64 atimestamp)(=)(ret)");
+        assertIR("(i64 1577836800000000L)(i64 atimestamp)(>=)(i64 1577923199999999L)(i64 atimestamp)(<=)(&&)(ret)");
         serialize("atimestampns IN ('2020-01-01')");
-        assertIR("(i64 1577836800000000000L)(i64 atimestampns)(=)(ret)");
+        assertIR("(i64 1577836800000000000L)(i64 atimestampns)(>=)(i64 1577923199999999999L)(i64 atimestampns)(<=)(&&)(ret)");
     }
 
     @Test
