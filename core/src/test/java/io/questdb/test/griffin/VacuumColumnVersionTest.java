@@ -236,6 +236,49 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testVacuumRogueSymbolFilesOfTableWithoutColumnFiles() throws Exception {
+        assertMemoryLeak(() -> {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                execute("CREATE TABLE live (ts TIMESTAMP, s SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
+                execute("INSERT INTO live VALUES (0, 'a')");
+                // emptied has no row and no SYMBOL column, so the files of a dropped column are all VACUUM finds
+                execute("CREATE TABLE emptied (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY");
+                final String[] root = {"."};
+                final String[] liveFiles = {"s.c", "s.o", "s.k", "s.v"};
+                final String[] rogueFiles = {"rog_sym.c", "rog_sym.o", "rog_sym.k", "rog_sym.v"};
+                assertFilesExist(root, "live", liveFiles, "", true);
+
+                // a compiler that vacuumed another table first, then a new one
+                try (SqlCompiler compiler = new SqlCompilerImpl(engine)) {
+                    execute(compiler, "VACUUM TABLE live");
+                    touchRootFiles("emptied", rogueFiles);
+                    engine.releaseInactive();
+                    execute(compiler, "VACUUM TABLE emptied");
+                }
+                runPurgeJob(purgeJob);
+                assertFilesExist(root, "live", liveFiles, "", true);
+                assertFilesExist(root, "emptied", rogueFiles, "", false);
+
+                touchRootFiles("emptied", rogueFiles);
+                try (SqlCompiler compiler = new SqlCompilerImpl(engine)) {
+                    execute(compiler, "VACUUM TABLE emptied");
+                }
+                runPurgeJob(purgeJob);
+                assertFilesExist(root, "emptied", rogueFiles, "", false);
+
+                assertQuery("SELECT ts, s FROM live")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\ts
+                                1970-01-01T00:00:00.000000Z\ta
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testVacuumErrorWhenCheckpointInProgress() throws Exception {
         Assume.assumeFalse(Os.isWindows());
         assertMemoryLeak(() -> {
@@ -2668,6 +2711,15 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
             engine.releaseInactive();
         }
         execute("VACUUM TABLE " + tableName);
+    }
+
+    private void touchRootFiles(String tableName, String[] files) {
+        final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        final Path path = Path.getThreadLocal(configuration.getDbRoot()).concat(engine.verifyTableName(tableName));
+        final int pathLen = path.size();
+        for (String file : files) {
+            Assert.assertTrue(ff.touch(path.trimTo(pathLen).concat(file).$()));
+        }
     }
 
     private String[] update3ColumnsWithOpenReader(ColumnPurgeJob purgeJob, String tableName) throws SqlException {

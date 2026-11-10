@@ -131,7 +131,7 @@ public class VacuumColumnVersions implements Closeable {
     }
 
     private void purgeColumnVersions(DirectLongList tableFiles, TableReader reader, CairoEngine engine) {
-        int columnIndex = -1;
+        int columnIndex = Integer.MIN_VALUE;
         int writerIndex = -1;
         boolean isPostingColumn = false;
         boolean isSymbolColumn = false;
@@ -146,7 +146,7 @@ public class VacuumColumnVersions implements Closeable {
             if (tableFiles.get(i) != columnIndex) {
                 int newReaderIndex = (int) tableFiles.get(i);
                 if (columnIndex != newReaderIndex) {
-                    if (columnIndex != -1 && purgeTask.getUpdatedColumnInfo().size() > 0) {
+                    if (purgeTask.getUpdatedColumnInfo().size() > 0) {
                         if (!purgeExecution.purge(purgeTask, tableReader)) {
                             queueColumnVersionPurge(purgeTask, engine);
                         }
