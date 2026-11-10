@@ -323,20 +323,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         failure = Misc.freeBestEffort(failure, base);
         failure = Misc.freeBestEffort(failure, rowIdOutAddress);
         failure = Misc.freeBestEffort(failure, samplePeriodAddress);
-        // The factory is the lifetime owner of the temporal parameter functions (timezone,
-        // offset, FROM, TO); the cursor only borrows them across the executions of this cached
-        // factory. The generator accepts runtime-constant expressions here, which may own child
-        // functions, so they must be closed exactly once.
-        failure = Misc.freeBestEffort(failure, timezoneNameFunc);
-        if (offsetFunc != timezoneNameFunc) {
-            failure = Misc.freeBestEffort(failure, offsetFunc);
-        }
-        if (sampleFromFunc != timezoneNameFunc && sampleFromFunc != offsetFunc) {
-            failure = Misc.freeBestEffort(failure, sampleFromFunc);
-        }
-        if (sampleToFunc != timezoneNameFunc && sampleToFunc != offsetFunc && sampleToFunc != sampleFromFunc) {
-            failure = Misc.freeBestEffort(failure, sampleToFunc);
-        }
+        failure = GroupByUtils.freeSampleByTemporalFunctionsBestEffort(failure, timezoneNameFunc, offsetFunc, sampleFromFunc, sampleToFunc);
         CairoException.rethrowCleanupFailure(failure);
     }
 

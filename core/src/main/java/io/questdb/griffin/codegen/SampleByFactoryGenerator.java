@@ -586,16 +586,7 @@ final class SampleByFactoryGenerator {
                 GroupByUtils.freeAssembledProjectionFunctions(recordFunctions, null, th);
                 Misc.freeObjList(fillConstants, th);
                 Misc.free(base, th);
-                Misc.free(timezoneNameFunc, th);
-                if (offsetFunc != timezoneNameFunc) {
-                    Misc.free(offsetFunc, th);
-                }
-                if (sampleFromFunc != timezoneNameFunc && sampleFromFunc != offsetFunc) {
-                    Misc.free(sampleFromFunc, th);
-                }
-                if (sampleToFunc != timezoneNameFunc && sampleToFunc != offsetFunc && sampleToFunc != sampleFromFunc) {
-                    Misc.free(sampleToFunc, th);
-                }
+                GroupByUtils.freeSampleByTemporalFunctionsBestEffort(th, timezoneNameFunc, offsetFunc, sampleFromFunc, sampleToFunc);
             }
             throw th;
         }

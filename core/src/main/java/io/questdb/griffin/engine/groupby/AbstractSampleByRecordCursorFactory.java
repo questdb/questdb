@@ -98,20 +98,7 @@ public abstract class AbstractSampleByRecordCursorFactory extends AbstractRecord
     ) {
         failure = Misc.freeObjListBestEffort(failure, recordFunctions);
         failure = Misc.freeBestEffort(failure, base);
-        // The factory is the lifetime owner of the temporal parameter functions (timezone,
-        // offset, FROM, TO); the cursors only borrow them across the executions of this cached
-        // factory. The generator accepts runtime-constant expressions here, which may own child
-        // functions, so they must be closed exactly once.
-        failure = Misc.freeBestEffort(failure, timezoneNameFunc);
-        if (offsetFunc != timezoneNameFunc) {
-            failure = Misc.freeBestEffort(failure, offsetFunc);
-        }
-        if (sampleFromFunc != timezoneNameFunc && sampleFromFunc != offsetFunc) {
-            failure = Misc.freeBestEffort(failure, sampleFromFunc);
-        }
-        if (sampleToFunc != timezoneNameFunc && sampleToFunc != offsetFunc && sampleToFunc != sampleFromFunc) {
-            failure = Misc.freeBestEffort(failure, sampleToFunc);
-        }
+        failure = GroupByUtils.freeSampleByTemporalFunctionsBestEffort(failure, timezoneNameFunc, offsetFunc, sampleFromFunc, sampleToFunc);
         return failure;
     }
 

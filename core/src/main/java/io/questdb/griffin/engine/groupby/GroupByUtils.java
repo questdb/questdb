@@ -315,6 +315,33 @@ public class GroupByUtils {
         }
     }
 
+    /**
+     * Frees the temporal parameter functions of a SAMPLE BY, the timezone, offset, FROM and TO, as
+     * {@link Misc#freeBestEffort} does: a close() failure folds into {@code failure},
+     * which stays the primary when not null, and the remaining functions still close. One function may serve several
+     * parameters and is closed once. The factory owns these functions for its lifetime, and its cursors borrow them
+     * across the executions of the cached factory; a runtime-constant expression among them may own child functions.
+     */
+    public static @Nullable Throwable freeSampleByTemporalFunctionsBestEffort(
+            @Nullable Throwable failure,
+            @Nullable Function timezoneNameFunc,
+            @Nullable Function offsetFunc,
+            @Nullable Function sampleFromFunc,
+            @Nullable Function sampleToFunc
+    ) {
+        failure = Misc.freeBestEffort(failure, timezoneNameFunc);
+        if (offsetFunc != timezoneNameFunc) {
+            failure = Misc.freeBestEffort(failure, offsetFunc);
+        }
+        if (sampleFromFunc != timezoneNameFunc && sampleFromFunc != offsetFunc) {
+            failure = Misc.freeBestEffort(failure, sampleFromFunc);
+        }
+        if (sampleToFunc != timezoneNameFunc && sampleToFunc != offsetFunc && sampleToFunc != sampleFromFunc) {
+            failure = Misc.freeBestEffort(failure, sampleToFunc);
+        }
+        return failure;
+    }
+
     public static CharSequence getUnsupportedSampleByFill(GroupByFunction function, CharSequence token) {
         final int flags = function.getSampleByFlags();
         assert (flags & GroupByFunction.SAMPLE_BY_FILL_NONE) != 0 :
