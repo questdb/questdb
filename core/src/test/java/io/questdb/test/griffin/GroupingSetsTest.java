@@ -5852,12 +5852,24 @@ public class GroupingSetsTest extends AbstractCairoTest {
                         );
                         context.setParallelGroupByEnabled(true);
                         final Thread testThread = Thread.currentThread();
+                        // From row 64 the test thread holds its frame until a worker cancels, so the remaining frames
+                        // reach the workers even when the pool is slow to wake up.
+                        final CountDownLatch workerCancelled = new CountDownLatch(1);
                         TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
                             @Override
                             public boolean onGet(Record record, int count) {
-                                if (count >= 64 && Thread.currentThread() != testThread) {
-                                    isCancellationInjected.set(true);
-                                    breaker.cancel();
+                                if (count >= 64) {
+                                    if (Thread.currentThread() != testThread) {
+                                        isCancellationInjected.set(true);
+                                        breaker.cancel();
+                                        workerCancelled.countDown();
+                                    } else {
+                                        try {
+                                            workerCancelled.await(10, TimeUnit.SECONDS);
+                                        } catch (InterruptedException e) {
+                                            Thread.currentThread().interrupt();
+                                        }
+                                    }
                                 }
                                 return true;
                             }
