@@ -991,6 +991,7 @@ public class PostingIndexWriter implements IndexWriter {
             valueMem.close(false, (byte) 0);
             Path p = Path.getThreadLocal(partitionPath);
             LPSZ fileName = PostingIndexUtils.valueFileName(p, indexName, postingColumnNameTxn, newSealTxn);
+            TableUtils.removeExistingOrFail(ff, fileName);
             valueMem.of(ff, fileName,
                     configuration.getDataIndexValueAppendPageSize(), 0L,
                     MemoryTag.MMAP_INDEX_WRITER, configuration.getWriterFileOpenOpts(), -1);
@@ -1405,6 +1406,8 @@ public class PostingIndexWriter implements IndexWriter {
             LPSZ keyFile = PostingIndexUtils.keyFileName(path, name, columnNameTxn);
 
             if (isInit) {
+                // A new index: never truncate a file an older partition version may share through a hard link
+                TableUtils.removeExistingOrFail(ff, keyFile);
                 keyMem.of(ff, keyFile, configuration.getDataIndexKeyAppendPageSize(), 0L, MemoryTag.MMAP_INDEX_WRITER);
                 this.blockCapacity = BLOCK_CAPACITY;
                 initKeyMemory(keyMem);
@@ -1476,9 +1479,13 @@ public class PostingIndexWriter implements IndexWriter {
                             .put(", actual=").put(pvActual).put(", path=").put(pvName).put(']');
                 }
             }
+            final LPSZ valueFile = PostingIndexUtils.valueFileName(path.trimTo(plen), name, postingColumnNameTxn, this.sealTxn);
+            if (isInit) {
+                TableUtils.removeExistingOrFail(ff, valueFile);
+            }
             valueMem.of(
                     ff,
-                    PostingIndexUtils.valueFileName(path.trimTo(plen), name, postingColumnNameTxn, this.sealTxn),
+                    valueFile,
                     configuration.getDataIndexValueAppendPageSize(),
                     isInit ? 0 : valueMemSize,
                     MemoryTag.MMAP_INDEX_WRITER
@@ -2236,6 +2243,7 @@ public class PostingIndexWriter implements IndexWriter {
             valueMem.close(false, (byte) 0);
             Path p = Path.getThreadLocal(partitionPath);
             LPSZ fileName = PostingIndexUtils.valueFileName(p, indexName, postingColumnNameTxn, newTxn);
+            TableUtils.removeExistingOrFail(ff, fileName);
             valueMem.of(ff, fileName,
                     configuration.getDataIndexValueAppendPageSize(), 0L,
                     MemoryTag.MMAP_INDEX_WRITER, configuration.getWriterFileOpenOpts(), -1);
@@ -4424,6 +4432,8 @@ public class PostingIndexWriter implements IndexWriter {
     private void openSealValueFile(long newTxn) {
         Path p = Path.getThreadLocal(partitionPath);
         LPSZ fileName = PostingIndexUtils.valueFileName(p, indexName, postingColumnNameTxn, newTxn);
+        // A new seal generation: never write into a file an older partition version may share through a hard link
+        TableUtils.removeExistingOrFail(ff, fileName);
         sealValueMem.of(ff, fileName,
                 configuration.getDataIndexValueAppendPageSize(),
                 MemoryTag.MMAP_INDEX_WRITER,
@@ -4452,10 +4462,12 @@ public class PostingIndexWriter implements IndexWriter {
                     continue;
                 }
                 long covT = getCoveredColumnNameTxn(c);
+                final LPSZ pcFile = PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, c, postingColumnNameTxn, covT, sealTxn);
+                TableUtils.removeExistingOrFail(ff, pcFile);
                 MemoryMARW mem = Vm.getCMARWInstance();
                 mem.of(
                         ff,
-                        PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, c, postingColumnNameTxn, covT, sealTxn),
+                        pcFile,
                         configuration.getDataIndexValueAppendPageSize(),
                         0L,
                         MemoryTag.MMAP_INDEX_WRITER
@@ -5118,8 +5130,9 @@ public class PostingIndexWriter implements IndexWriter {
                     // purge delete the live file. The orphan .pv.{newSealTxn} only
                     // becomes reachable later if a freed+reopened writer REUSES
                     // newSealTxn and publishes it live; PostingSealPurgeOperator
-                    // re-reads the .pk head at delete time and abandons the purge
-                    // when the file is live again, so the deferral is safe past reuse.
+                    // re-reads the .pk chain at delete time and abandons the purge
+                    // when a reader above the purge's reader window can see an entry
+                    // that names newSealTxn, so the deferral is safe past reuse.
                     // Poison FIRST, before the LOG record and scheduleOrphanPurge (both
                     // allocate and can throw under heap pressure): a secondary failure
                     // must still leave the half-switched writer poisoned.
@@ -5517,8 +5530,9 @@ public class PostingIndexWriter implements IndexWriter {
                             // the now-live .pv.{newSealTxn}. The remaining route --
                             // a freed+reopened writer REUSING newSealTxn and
                             // publishing it live -- is closed at delete time:
-                            // PostingSealPurgeOperator re-reads the .pk head and
-                            // abandons the purge when the file is live again.
+                            // PostingSealPurgeOperator re-reads the .pk chain and
+                            // abandons the purge when a reader above the purge's reader
+                            // window can see an entry that names newSealTxn.
                             // Poison FIRST, before the LOG record and scheduleOrphanPurge
                             // (both allocate and can throw under heap pressure): a secondary
                             // failure must still leave the half-switched writer poisoned.
@@ -7043,22 +7057,21 @@ public class PostingIndexWriter implements IndexWriter {
                 sealTxns.setQuick(i, -1L);
             }
         }
-        PostingIndexUtils.scanSealedFiles(ff, path, plen, indexName, new PostingIndexUtils.SealedFileVisitor() {
+        PostingIndexUtils.scanSealedFiles(ff, path, plen, indexName, postingColumnNameTxn, new PostingIndexUtils.SealedFileVisitor() {
             @Override
-            public void onCoverDataFile(int includeIdx, long filePostingColumnNameTxn, long coveredColumnNameTxn, long sealTxn) {
-                final int i;
-                if (filePostingColumnNameTxn != PostingIndexUtils.coverFilePostingColumnNameTxn(postingColumnNameTxn)
-                        || (i = sealTxns.indexOf(sealTxn)) < 0) {
+            public void onCoverDataFile(int includeIdx, long coveredColumnNameTxn, long sealTxn) {
+                final int i = sealTxns.indexOf(sealTxn);
+                if (i < 0) {
                     return;
                 }
-                if (!ff.removeQuiet(PostingIndexUtils.coverDataFileName(path.trimTo(plen), indexName, includeIdx, filePostingColumnNameTxn, coveredColumnNameTxn, sealTxn))) {
+                if (!ff.removeQuiet(PostingIndexUtils.coverDataFileName(path.trimTo(plen), indexName, includeIdx, postingColumnNameTxn, coveredColumnNameTxn, sealTxn))) {
                     scheduleOrphanPurge(sealTxn);
                     sealTxns.setQuick(i, -1L);
                 }
             }
 
             @Override
-            public void onValueFile(long filePostingColumnNameTxn, long sealTxn) {
+            public void onValueFile(long sealTxn) {
             }
         });
         path.trimTo(plen);

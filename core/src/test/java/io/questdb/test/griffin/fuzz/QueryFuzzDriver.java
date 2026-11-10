@@ -473,7 +473,7 @@ public final class QueryFuzzDriver {
         return binomialLowerTail(selected, completed, FUSED_SHARE_BASELINE) < FUSED_SHARE_FALSE_ALARM;
     }
 
-    private static AssertionError buildFailure(ObjList<QueryRunner.Result> failures) {
+    static AssertionError buildFailure(ObjList<QueryRunner.Result> failures) {
         StringBuilder sb = new StringBuilder("query fuzz found ").append(failures.size())
                 .append(" unexpected failure(s):\n");
         for (int i = 0, n = failures.size(); i < n; i++) {
@@ -595,7 +595,7 @@ public final class QueryFuzzDriver {
         }
     }
 
-    private static void logSchema(FuzzTable t) {
+    static void logSchema(FuzzTable t) {
         StringBuilder sb = new StringBuilder("fuzz schema ").append(t.getName())
                 .append(" (parquet=").append(t.getParquetMode());
         if (t.getParquetPartitions() != null) {

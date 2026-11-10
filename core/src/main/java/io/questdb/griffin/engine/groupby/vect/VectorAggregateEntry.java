@@ -168,11 +168,6 @@ public class VectorAggregateEntry implements Mutable {
             failure = th;
         }
         try {
-            dispatcher.signalQueueProgress();
-        } catch (Throwable th) {
-            failure = Misc.foldCleanupFailure(failure, th);
-        }
-        try {
             runDetached(workerId);
         } catch (Throwable th) {
             failure = Misc.foldCleanupFailure(failure, th);

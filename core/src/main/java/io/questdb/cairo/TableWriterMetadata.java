@@ -36,6 +36,7 @@ import org.jetbrains.annotations.NotNull;
 import static io.questdb.cairo.TableUtils.META_OFFSET_PARTITION_BY;
 
 public class TableWriterMetadata extends AbstractRecordMetadata implements TableMetadata {
+    private int dedupMode;
     private long dedupVersion;
     private long expiryCleanupIntervalMicros;
     private String expiryPredicate;
@@ -64,6 +65,11 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     @Override
     public IntList getCoveringColumnIndices(int columnIndex) {
         return getColumnMetadata(columnIndex).getCoveringColumnIndices();
+    }
+
+    @Override
+    public int getDedupMode() {
+        return dedupMode;
     }
 
     public long getDedupVersion() {
@@ -121,7 +127,8 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
 
     /**
      * The storage version stamped into {@code _meta} at {@link TableUtils#META_OFFSET_VERSION}.
-     * {@link ColumnType#VERSION} for an ordinary table, {@link ColumnType#MAX_STORAGE_VERSION}
+     * {@link ColumnType#VERSION} for an ordinary table, {@link ColumnType#DELTA_STORAGE_VERSION} for a table
+     * holding Delta partitions, {@link ColumnType#MAX_STORAGE_VERSION}
      * while the table holds composite partitions.
      */
     public int getStorageVersion() {
@@ -195,6 +202,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         this.expiryPredicate = null;
         this.expiryCleanupIntervalMicros = 0;
         this.tableFormat = TableUtils.getTableFormat(metaMem);
+        this.dedupMode = TableUtils.getDedupMode(metaMem);
 
         long offset = TableUtils.getColumnNameOffset(columnCount);
         this.symbolMapCount = 0;
@@ -274,6 +282,10 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                 }
             }
         }
+    }
+
+    public void setDedupMode(int dedupMode) {
+        this.dedupMode = dedupMode;
     }
 
     public void setDedupVersion(long value) {
