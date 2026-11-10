@@ -321,7 +321,6 @@ public class EncodedTopKBuffer implements QuietCloseable, Reopenable {
 
         if (limit > 0 && limit < maxEntries) {
             if (hasRowCopies) {
-                // The entries grow with the input, like the row copies they index.
                 compactionTrigger = Math.min(Math.max(limit << 2, MIN_COMPACTION_TRIGGER), maxEntries);
             } else {
                 compactionTrigger = Math.min(Math.max(limit << 1, MIN_COMPACTION_TRIGGER), maxEntries);

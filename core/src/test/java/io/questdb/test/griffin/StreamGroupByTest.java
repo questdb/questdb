@@ -1383,7 +1383,6 @@ public class StreamGroupByTest extends AbstractCairoTest {
                     k\tsi\tsl\tsh\tsw\tai\tal\tah
                     null\t6\t6\t6\t0x06\t2.0\t2.0\t2.0
                     """);
-            // SHORT holds no NULL, so a column top of zeros sums to zero.
             assertRows(compiler, context, "SELECT k, sum(h) sh FROM s WHERE ts IN '2024-01-02' ORDER BY k", """
                     k\tsh
                     null\t0
@@ -1478,7 +1477,6 @@ public class StreamGroupByTest extends AbstractCairoTest {
                         1\t1
                         """);
                 context.getBindVariableService().clear();
-                // The hash join keeps its slave across a rewind, so only a recomputing master needs a copy.
                 for (String join : new String[]{"JOIN " + counts + " b ON a.x = b.x", "LEFT JOIN " + counts + " b ON a.x = b.x", "LEFT JOIN " + counts + " b ON a.x = b.x AND a.x + b.c > 1"}) {
                     final String sql = "SELECT a.x, b.c FROM long_sequence(2) a " + join + " LIMIT -1";
                     assertRows(compiler, context, sql, """

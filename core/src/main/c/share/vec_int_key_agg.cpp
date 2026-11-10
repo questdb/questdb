@@ -935,7 +935,7 @@ static jboolean kIntAvgLongWrapUp(jlong pRosti, jint valueOffset, jdouble valueA
     const auto value_offset = map->value_offsets_[valueOffset];
     const auto count_offset = map->value_offsets_[valueOffset + count_idx];
 
-    // populate null value; the slot holds a sum of type T, so the double joins it in the division
+    // populate null value
     unsigned char *nullSlot = nullptr;
     if (valueAtNullCount > 0) {
         auto nullKey = reinterpret_cast<int32_t *>(map->slot_initial_values_)[0];

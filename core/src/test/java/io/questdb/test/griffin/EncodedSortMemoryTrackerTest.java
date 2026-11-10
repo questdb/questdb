@@ -194,8 +194,6 @@ public class EncodedSortMemoryTrackerTest extends AbstractCairoTest {
 
     @Test
     public void testEncodedSortLimitedCopyMemoryFollowsInputNotLimit() throws Exception {
-        // A LIMIT far above the input must not reserve entries for the LIMIT: eight known
-        // rows and an empty input of unknown size both fit the 256 KiB limit.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t1 (v VARCHAR)");
             execute("CREATE TABLE t2 (v VARCHAR)");
