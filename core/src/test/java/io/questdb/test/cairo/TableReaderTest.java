@@ -2309,6 +2309,30 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNoDeltaReaderHoldsNoFrameStates() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t VALUES (1, '2024-01-01'), (2, '2024-01-02')");
+            try (TableReader reader = engine.getReader("t")) {
+                Assert.assertFalse(reader.hasPartitionFrameStates());
+                Assert.assertEquals(1, reader.getLogicalPartitionRowCount(0, 1));
+
+                // Partition inserts and removals on reload walk the list.
+                execute("INSERT INTO t VALUES (3, '2024-01-03')");
+                Assert.assertTrue(reader.reload());
+                Assert.assertEquals(3, reader.getPartitionCount());
+                execute("ALTER TABLE t DROP PARTITION LIST '2024-01-01'");
+                Assert.assertTrue(reader.reload());
+                Assert.assertEquals(2, reader.getPartitionCount());
+                Assert.assertEquals(1, reader.getLogicalPartitionRowCount(1, 1));
+                Assert.assertEquals(2, reader.getLogicalRowCount());
+                Assert.assertFalse(reader.hasPartitionFrameStates());
+            }
+            assertQuery("SELECT x FROM t").noLeakCheck().expectSize().returns("x\n2\n3\n");
+        });
+    }
+
+    @Test
     public void testNullValueRecovery() throws Exception {
         final String expected = replaceTimestampSuffix1(
                 """

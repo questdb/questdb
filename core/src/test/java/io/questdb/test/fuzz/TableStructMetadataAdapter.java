@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 
 public class TableStructMetadataAdapter implements TableStructure {
     private final CairoConfiguration configuration;
+    private final int dedupMode;
     private final boolean isWalEnabled;
     private final RecordMetadata metadata;
     private final int partitionBy;
@@ -43,7 +44,8 @@ public class TableStructMetadataAdapter implements TableStructure {
             RecordMetadata metadata,
             CairoConfiguration configuration,
             int partitionBy,
-            int timestampIndex
+            int timestampIndex,
+            int dedupMode
     ) {
         this.tableName = tableName;
         this.isWalEnabled = isWalEnabled;
@@ -51,6 +53,7 @@ public class TableStructMetadataAdapter implements TableStructure {
         this.configuration = configuration;
         this.partitionBy = partitionBy;
         this.timestampIndex = timestampIndex;
+        this.dedupMode = dedupMode;
     }
 
     @Override
@@ -68,6 +71,11 @@ public class TableStructMetadataAdapter implements TableStructure {
         int columnType = metadata.getColumnType(columnIndex);
         assert columnType > 0;
         return columnType;
+    }
+
+    @Override
+    public int getDedupMode() {
+        return dedupMode;
     }
 
     @Override

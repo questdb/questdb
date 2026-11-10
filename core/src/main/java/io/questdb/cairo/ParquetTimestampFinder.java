@@ -39,9 +39,15 @@ import org.jetbrains.annotations.Nullable;
 import static io.questdb.std.Vect.BIN_SEARCH_SCAN_DOWN;
 
 public class ParquetTimestampFinder implements TimestampFinder, Mutable, QuietCloseable {
+    // Power of two. Sized so a sparse key's block decode stays close to a single-row decode.
+    private static final int TIMESTAMP_BLOCK_ROWS = 4096;
     private final ParquetPartitionDecoder partitionDecoder; // the decoder is managed externally
     private final RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER, true);
     private final DirectIntList timestampIdAndType = new DirectIntList(2, MemoryTag.NATIVE_DEFAULT);
+    // Partition rows [lo, hi) of the timestamps held in rowGroupBuffers. Valid across prepare()
+    // while the partition's file is unchanged, so repeated searches reuse one decode.
+    private long blockRowHi;
+    private long blockRowLo;
     private long maxTimestampUpperBound;
     private long minTimestampLowerBound;
     private int partitionIndex = -1;
@@ -147,26 +153,35 @@ public class ParquetTimestampFinder implements TimestampFinder, Mutable, QuietCl
         final long rowGroupRowLo = Math.max(rowLo - offset, 0);
         final long rowGroupRowHi = Math.min(rowHi - offset, metadata.getRowGroupSize(rowGroupIndex) - 1);
         assert rowGroupRowLo <= rowGroupRowHi;
-        partitionDecoder.decodeRowGroup(
-                rowGroupBuffers,
-                timestampIdAndType,
-                rowGroupIndex,
-                (int) rowGroupRowLo,
-                (int) (rowGroupRowHi + 1) // exclusive
-        );
+        // A range the last decode covers needs no decode: repeated interval searches narrow
+        // within one row group, e.g. backward intervals sharing rowLo = 0 and a shrinking rowHi.
+        final long searchRowLo = offset + rowGroupRowLo;
+        final long searchRowHi = offset + rowGroupRowHi;
+        if (searchRowLo < blockRowLo || searchRowHi >= blockRowHi) {
+            blockRowHi = 0;
+            partitionDecoder.decodeRowGroup(
+                    rowGroupBuffers,
+                    timestampIdAndType,
+                    rowGroupIndex,
+                    (int) rowGroupRowLo,
+                    (int) (rowGroupRowHi + 1) // exclusive
+            );
+            blockRowLo = searchRowLo;
+            blockRowHi = searchRowHi + 1;
+        }
 
         // At last, we can do binary search.
         long idx = Vect.binarySearch64Bit(
                 rowGroupBuffers.getChunkDataPtr(0),
                 value,
-                0,
-                rowGroupRowHi - rowGroupRowLo,
+                searchRowLo - blockRowLo,
+                searchRowHi - blockRowLo,
                 BIN_SEARCH_SCAN_DOWN
         );
         if (idx < 0) {
             idx = -idx - 2;
         }
-        return idx + rowGroupRowLo + offset;
+        return idx + blockRowLo;
     }
 
     @Override
@@ -190,6 +205,10 @@ public class ParquetTimestampFinder implements TimestampFinder, Mutable, QuietCl
     }
 
     public ParquetTimestampFinder of(TableReader reader, int partitionIndex, int timestampIndex, long rowCount) {
+        // A freed _pm address can come back for another partition, so prepare()'s address check can't tell them apart.
+        if (partitionIndex != this.partitionIndex || reader != this.reader) {
+            blockRowHi = 0;
+        }
         this.partitionIndex = partitionIndex;
         this.reader = reader;
         this.rowCount = rowCount;
@@ -207,6 +226,7 @@ public class ParquetTimestampFinder implements TimestampFinder, Mutable, QuietCl
     public void setMemoryTracker(@Nullable MemoryTracker memoryTracker) {
         // The native allocator is captured when RowGroupBuffers opens. Release any
         // allocation charged to the previous query before binding a reused finder.
+        blockRowHi = 0;
         rowGroupBuffers.close();
         rowGroupBuffers.setMemoryTracker(memoryTracker);
     }
@@ -217,6 +237,10 @@ public class ParquetTimestampFinder implements TimestampFinder, Mutable, QuietCl
             return;
         }
         ParquetPartitionDecoder decoder = reader.getAndInitParquetPartitionDecoder(partitionIndex);
+        if (partitionDecoder.getParquetMetaAddr() != decoder.getParquetMetaAddr()
+                || partitionDecoder.getParquetMetaSize() != decoder.getParquetMetaSize()) {
+            blockRowHi = 0;
+        }
         partitionDecoder.of(decoder);
         rowGroupBuffers.reopen();
 
@@ -235,15 +259,22 @@ public class ParquetTimestampFinder implements TimestampFinder, Mutable, QuietCl
     }
 
     public long timestampAt(long rowIndex) {
-        // Here we find the row group to which the given row belongs and decode a single row into a buffer.
+        if (rowIndex >= blockRowLo && rowIndex < blockRowHi) {
+            return Unsafe.getLong(rowGroupBuffers.getChunkDataPtr(0) + (rowIndex - blockRowLo) * Long.BYTES);
+        }
+        // Here we find the row group to which the given row belongs and decode its aligned block into a buffer.
         final ParquetMetaFileReader metadata = partitionDecoder.metadata();
         long rowCount = 0;
         for (int rowGroupIndex = 0, n = metadata.getRowGroupCount(); rowGroupIndex < n; rowGroupIndex++) {
             long size = metadata.getRowGroupSize(rowGroupIndex);
             if (rowIndex >= rowCount && rowIndex < rowCount + size) {
-                int rowLo = (int) (rowIndex - rowCount);
-                partitionDecoder.decodeRowGroup(rowGroupBuffers, timestampIdAndType, rowGroupIndex, rowLo, rowLo + 1);
-                return Unsafe.getLong(rowGroupBuffers.getChunkDataPtr(0));
+                final int rowLo = (int) (rowIndex - rowCount) & -TIMESTAMP_BLOCK_ROWS;
+                final int rowHi = (int) Math.min(rowLo + TIMESTAMP_BLOCK_ROWS, size);
+                blockRowHi = 0;
+                partitionDecoder.decodeRowGroup(rowGroupBuffers, timestampIdAndType, rowGroupIndex, rowLo, rowHi);
+                blockRowLo = rowCount + rowLo;
+                blockRowHi = rowCount + rowHi;
+                return Unsafe.getLong(rowGroupBuffers.getChunkDataPtr(0) + (rowIndex - blockRowLo) * Long.BYTES);
             }
             rowCount += size;
         }

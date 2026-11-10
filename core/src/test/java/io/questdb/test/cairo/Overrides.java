@@ -43,6 +43,7 @@ import io.questdb.std.Rnd;
 import io.questdb.std.RostiAllocFacade;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.tasks.ColumnPurgeTask;
 import io.questdb.test.AbstractCairoTest;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assume;
@@ -50,6 +51,7 @@ import org.junit.Assume;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
+import java.util.function.ObjIntConsumer;
 
 import static io.questdb.cairo.DebugUtils.LOG;
 
@@ -188,6 +190,7 @@ public class Overrides {
     private final Properties properties = new Properties();
     private boolean adaptiveRecoveryRollForwardEnabled = true;
     private boolean changed = true;
+    private ObjIntConsumer<ColumnPurgeTask> columnPurgeTruncateRefusalListener = null;
     private long currentMicros = -1;
     private final MicrosecondClock defaultMicrosecondClock = () -> currentMicros >= 0 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
     private MicrosecondClock testMicrosClock = defaultMicrosecondClock;
@@ -225,6 +228,10 @@ public class Overrides {
         } else {
             return getDefaultConfiguration(root);
         }
+    }
+
+    public ObjIntConsumer<ColumnPurgeTask> getColumnPurgeTruncateRefusalListener() {
+        return columnPurgeTruncateRefusalListener;
     }
 
     public Map<String, String> getEnv() {
@@ -287,6 +294,7 @@ public class Overrides {
         currentMicros = -1;
         testMicrosClock = defaultMicrosecondClock;
         rostiAllocFacade = null;
+        columnPurgeTruncateRefusalListener = null;
         ff = null;
         mangleTableDirNames = true;
         factoryProvider = null;
@@ -306,6 +314,10 @@ public class Overrides {
      */
     public void setAdaptiveRecoveryRollForwardEnabled(boolean enabled) {
         this.adaptiveRecoveryRollForwardEnabled = enabled;
+    }
+
+    public void setColumnPurgeTruncateRefusalListener(ObjIntConsumer<ColumnPurgeTask> listener) {
+        this.columnPurgeTruncateRefusalListener = listener;
     }
 
     public void setCurrentMicros(long currentMicros) {
