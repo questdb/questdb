@@ -24,9 +24,12 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Files;
 import io.questdb.std.str.LPSZ;
@@ -42,6 +45,7 @@ import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class AddIndexTest extends AbstractCairoTest {
+    private static final String ADD_COVERING_POSTING_INDEX = "ALTER TABLE x ALTER COLUMN s ADD INDEX TYPE POSTING INCLUDE (v)";
 
     @Test
     public void testAddBitmapIndexOverParquetPartition() throws Exception {
@@ -394,6 +398,101 @@ public class AddIndexTest extends AbstractCairoTest {
         );
     }
 
+    @Test
+    public void testPostingAddIndexFailsWhileLeftoverKeyFileStays() throws Exception {
+        assertPostingAddIndexFailsWhileLeftoverStays(
+                "2024-01-03",
+                "s.pk",
+                "could not remove posting index key file [path=",
+                "2024-01-03" + Files.SEPARATOR + "s.pk]"
+        );
+    }
+
+    @Test
+    public void testPostingAddIndexFailsWhileLeftoverValueFileStays() throws Exception {
+        assertPostingAddIndexFailsWhileLeftoverStays(
+                "2024-01-01",
+                "s.pv.",
+                "could not remove posting index files [path=",
+                Files.SEPARATOR + "2024-01-01, column=s]"
+        );
+    }
+
+    @Test
+    public void testPostingAddIndexSuspendsWalTableWhileLeftoverStays() throws Exception {
+        setProperty(PropertyKey.CAIRO_MAX_SWAP_FILE_COUNT, 1);
+        final LeftoverFacade ff = new LeftoverFacade();
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE x (s SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('a', 1, '2024-01-01'), ('b', 2, '2024-01-01T12:00'),
+                    ('a', 3, '2024-01-02'), ('b', 4, '2024-01-02T12:00'),
+                    ('a', 5, '2024-01-03'), ('b', 6, '2024-01-03T12:00')
+                    """);
+            drainWalQueue();
+            final TableToken tableToken = engine.verifyTableName("x");
+
+            // The apply builds every partition, then cannot publish the index: the table suspends, the files stay.
+            ff.isMetaSwapFailing = true;
+            execute(ADD_COVERING_POSTING_INDEX);
+            drainWalQueue();
+            ff.isMetaSwapFailing = false;
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+            TestUtils.assertContains(engine.getTableSequencerAPI().getTxnTracker(tableToken).getErrorMessage(), "Max number of attempts reached");
+            engine.releaseAllWriters();
+
+            // The replay reuses the builds of the older partitions, and must reset the active partition's leftover.
+            ff.arm("2024-01-03", "s.pv.");
+            execute("ALTER TABLE x RESUME WAL");
+            drainWalQueue();
+            ff.disarm();
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+            final String error = engine.getTableSequencerAPI().getTxnTracker(tableToken).getErrorMessage();
+            TestUtils.assertContains(error, "could not remove posting index files [path=");
+            TestUtils.assertContains(error, Files.SEPARATOR + "2024-01-03");
+            TestUtils.assertContains(error, ", column=s]");
+            assertColumnNotIndexed();
+            assertQuery("SELECT v, ts FROM x WHERE s = 'a'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            v\tts
+                            1\t2024-01-01T00:00:00.000000Z
+                            3\t2024-01-02T00:00:00.000000Z
+                            5\t2024-01-03T00:00:00.000000Z
+                            """);
+
+            execute("ALTER TABLE x RESUME WAL");
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+            assertQuery("SELECT v, ts FROM x WHERE s = 'a'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanContaining("CoveringIndex on: s")
+                    .returns("""
+                            v\tts
+                            1\t2024-01-01T00:00:00.000000Z
+                            3\t2024-01-02T00:00:00.000000Z
+                            5\t2024-01-03T00:00:00.000000Z
+                            """);
+            assertQuery("SELECT v, ts FROM x WHERE s = 'b'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanContaining("CoveringIndex on: s")
+                    .returns("""
+                            v\tts
+                            2\t2024-01-01T12:00:00.000000Z
+                            4\t2024-01-02T12:00:00.000000Z
+                            6\t2024-01-03T12:00:00.000000Z
+                            """);
+        });
+    }
+
     private static CairoException assertAddIndexFails(SymbolReadFailingFacade ff, String indexClause) throws Exception {
         ff.isFailing = true;
         try {
@@ -415,6 +514,30 @@ public class AddIndexTest extends AbstractCairoTest {
         Assert.assertNotNull(files);
         Arrays.sort(files);
         Assert.assertEquals(partitionName, expected, Arrays.toString(files));
+    }
+
+    private static void assertColumnNotIndexed() {
+        try (TableReader reader = getReader("x")) {
+            Assert.assertFalse(reader.getMetadata().isColumnIndexed(reader.getMetadata().getColumnIndex("s")));
+        }
+    }
+
+    // Runs an ADD INDEX that builds every partition of the non-WAL table x, then cannot publish the index: the files
+    // of its build stay in every partition.
+    private static void leaveBuildBehind(LeftoverFacade ff, String... partitions) throws Exception {
+        ff.isMetaSwapFailing = true;
+        try {
+            execute(ADD_COVERING_POSTING_INDEX);
+            Assert.fail("ADD INDEX must fail to publish the index");
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "Max number of attempts reached");
+        } finally {
+            ff.isMetaSwapFailing = false;
+        }
+        engine.releaseAllWriters();
+        for (String partition : partitions) {
+            Assert.assertTrue(partition, new File(partitionDir(partition), "s.pk").exists());
+        }
     }
 
     // A partition directory of table x, or its table directory for an empty name.
@@ -521,6 +644,117 @@ public class AddIndexTest extends AbstractCairoTest {
                             3
                             """);
         });
+    }
+
+    // An ADD INDEX that could not publish its index leaves its build in every partition, and a commit moves the table
+    // past the txn that build was made for, so the next ADD INDEX resets the leftovers rather than reuse them. While
+    // one of the files cannot be removed, ADD INDEX fails with that error and leaves s unindexed; once the file can
+    // go, it builds a correct index.
+    private void assertPostingAddIndexFailsWhileLeftoverStays(
+            String partitionName,
+            String fileNamePrefix,
+            String expectedErrorStart,
+            String expectedErrorEnd
+    ) throws Exception {
+        setProperty(PropertyKey.CAIRO_MAX_SWAP_FILE_COUNT, 1);
+        final LeftoverFacade ff = new LeftoverFacade();
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE x (s SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('a', 1, '2024-01-01'), ('b', 2, '2024-01-01T12:00'),
+                    ('a', 3, '2024-01-02'), ('b', 4, '2024-01-02T12:00'),
+                    ('a', 5, '2024-01-03'), ('b', 6, '2024-01-03T12:00')
+                    """);
+            leaveBuildBehind(ff, "2024-01-01", "2024-01-02", "2024-01-03");
+            execute("INSERT INTO x VALUES ('a', 7, '2024-01-03T18:00')");
+
+            ff.arm(partitionName, fileNamePrefix);
+            try {
+                execute(ADD_COVERING_POSTING_INDEX);
+                Assert.fail("ADD INDEX must fail while a leftover file stays");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), expectedErrorStart);
+                TestUtils.assertContains(e.getFlyweightMessage(), expectedErrorEnd);
+            } finally {
+                ff.disarm();
+            }
+            assertColumnNotIndexed();
+            assertQuery("SELECT v, ts FROM x WHERE s = 'a'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            v\tts
+                            1\t2024-01-01T00:00:00.000000Z
+                            3\t2024-01-02T00:00:00.000000Z
+                            5\t2024-01-03T00:00:00.000000Z
+                            7\t2024-01-03T18:00:00.000000Z
+                            """);
+
+            execute(ADD_COVERING_POSTING_INDEX);
+            assertQuery("SELECT v, ts FROM x WHERE s = 'a'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanContaining("CoveringIndex on: s")
+                    .returns("""
+                            v\tts
+                            1\t2024-01-01T00:00:00.000000Z
+                            3\t2024-01-02T00:00:00.000000Z
+                            5\t2024-01-03T00:00:00.000000Z
+                            7\t2024-01-03T18:00:00.000000Z
+                            """);
+            assertQuery("SELECT v, ts FROM x WHERE s = 'b'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanContaining("CoveringIndex on: s")
+                    .returns("""
+                            v\tts
+                            2\t2024-01-01T12:00:00.000000Z
+                            4\t2024-01-02T12:00:00.000000Z
+                            6\t2024-01-03T12:00:00.000000Z
+                            """);
+        });
+    }
+
+    // Fails the open of _meta.swp while isMetaSwapFailing, so an ADD INDEX builds every partition and then cannot
+    // publish the index. While armed, also fails the removal of one partition's files whose names start with a given
+    // prefix, as a file that another process holds open or that lost its permissions would.
+    private static class LeftoverFacade extends TestFilesFacadeImpl {
+        private volatile String fileNamePrefix;
+        private volatile boolean isMetaSwapFailing;
+        private volatile String partitionName;
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            if (isMetaSwapFailing && Utf8s.endsWithAscii(name, TableUtils.META_SWAP_FILE_NAME)) {
+                return -1;
+            }
+            return super.openRW(name, opts);
+        }
+
+        @Override
+        public boolean removeQuiet(LPSZ name) {
+            final String partition = partitionName;
+            if (partition != null
+                    && Utf8s.containsAscii(name, Files.SEPARATOR + partition)
+                    && Utf8s.containsAscii(name, Files.SEPARATOR + fileNamePrefix)) {
+                return false;
+            }
+            return super.removeQuiet(name);
+        }
+
+        private void arm(String partitionName, String fileNamePrefix) {
+            this.fileNamePrefix = fileNamePrefix;
+            this.partitionName = partitionName;
+        }
+
+        private void disarm() {
+            partitionName = null;
+        }
     }
 
     // Fails every read of one partition's symbol column file while armed: an I/O error in the middle of an index
