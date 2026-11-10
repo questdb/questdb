@@ -49,7 +49,6 @@ import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Sequence;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
-import io.questdb.std.Os;
 import io.questdb.std.Rows;
 import io.questdb.std.Transient;
 import io.questdb.std.Vect;
@@ -344,7 +343,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                         if (seq > -1) {
                             runStolenTask(queue, subSeq, seq, dispatcher);
                         } else {
-                            Os.pause();
+                            ownerLoop.pause();
                         }
                     }
                 }
@@ -498,11 +497,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                 // done(seq) releases the slot
                 subSeq.done(seq);
                 if (dispatcher != null) {
-                    try {
-                        dispatcher.signalQueueProgress();
-                    } finally {
-                        dispatcher.signalOwnerProgress(stolenProgress);
-                    }
+                    dispatcher.signalOwnerProgress(stolenProgress);
                 }
             }
         }
@@ -526,7 +521,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                 if (seq > -1) {
                     runStolenTask(queue, subSeq, seq, dispatcher);
                 } else {
-                    Os.pause();
+                    ownerLoop.pause();
                 }
             }
         }

@@ -50,12 +50,14 @@ impl ColumnChunkBuffers {
             data_vec: AcVec::new_in(allocator.clone()),
             data_ptr: ptr::null_mut(),
             data_size: 0,
-            aux_vec: AcVec::new_in(allocator),
+            aux_vec: AcVec::new_in(allocator.clone()),
             aux_ptr: ptr::null_mut(),
             aux_size: 0,
             page_buffers_size: 0,
             page_buffers: Vec::new(),
-            column_top: 0,
+            top_rows_ptr: ptr::null(),
+            top_rows_count: 0,
+            top_rows: AcVec::new_in(allocator),
             page_buffers_capacity: 0,
             page_buffers_charged: 0,
             page_buffers_counted: 0,
@@ -89,6 +91,7 @@ impl ColumnChunkBuffers {
         self.data_ptr = self.data_vec.as_mut_ptr();
         self.aux_size = self.aux_vec.len();
         self.aux_ptr = self.aux_vec.as_mut_ptr();
+        self.refresh_top_rows_ptr();
 
         // Sum of decompressed page/dict buffer bytes referenced by VarcharSlice aux entries.
         // Appends only grow page_buffers (a multi-row-group decode concatenates into the same
@@ -225,8 +228,61 @@ impl ColumnChunkBuffers {
         self.page_buffers_capacity = 0;
         self.page_buffers.clear();
         self.page_buffers_counted = 0;
-        self.column_top = 0;
+        self.top_rows.clear();
+        self.refresh_top_rows_ptr();
     }
+
+    /// The column-top rows of the decoded chunk, see the `top_rows` field.
+    pub fn top_rows(&self) -> &[[u64; 2]] {
+        &self.top_rows
+    }
+
+    /// Appends the column-top rows `[lo, hi)` of the buffer, joining them to the last run when
+    /// it ends at `lo`. Callers append in ascending row order.
+    pub(crate) fn add_top_rows(&mut self, lo: usize, hi: usize) -> ParquetResult<()> {
+        push_top_rows(&mut self.top_rows, lo, hi)?;
+        self.refresh_top_rows_ptr();
+        Ok(())
+    }
+
+    /// Moves the column-top rows out for a page decode to append to while the page decoder
+    /// holds the buffers; [`Self::restore_top_rows`] puts them back. Takes no allocation.
+    pub(crate) fn take_top_rows(&mut self) -> AcVec<[u64; 2]> {
+        let empty = AcVec::new_in(self.top_rows.allocator().clone());
+        std::mem::replace(&mut self.top_rows, empty)
+    }
+
+    pub(crate) fn restore_top_rows(&mut self, top_rows: AcVec<[u64; 2]>) {
+        self.top_rows = top_rows;
+        self.refresh_top_rows_ptr();
+    }
+
+    fn refresh_top_rows_ptr(&mut self) {
+        self.top_rows_ptr = self.top_rows.as_ptr();
+        self.top_rows_count = self.top_rows.len();
+    }
+}
+
+/// Appends the rows `[lo, hi)` to ascending, disjoint runs, joining them to the last run when
+/// it ends at `lo`.
+fn push_top_rows(top_rows: &mut AcVec<[u64; 2]>, lo: usize, hi: usize) -> ParquetResult<()> {
+    debug_assert!(lo <= hi);
+    if lo == hi {
+        return Ok(());
+    }
+    let (lo, hi) = (lo as u64, hi as u64);
+    if let Some(last) = top_rows.last_mut() {
+        debug_assert!(
+            last[1] <= lo,
+            "top rows must be appended in ascending order"
+        );
+        if last[1] == lo {
+            last[1] = hi;
+            return Ok(());
+        }
+    }
+    top_rows.push([lo, hi])?;
+    Ok(())
 }
 
 impl Drop for ColumnChunkBuffers {
@@ -322,6 +378,87 @@ fn decode_page0_mode<T: Pushable, const FILTERED: bool, const FILL_NULLS: bool>(
     }
 }
 
+/// The column-top rows a page decode appends to, see `ColumnChunkBuffers::top_rows`. `None`
+/// when the decode records none.
+pub(super) type TopRowsSink<'a> = Option<&'a mut AcVec<[u64; 2]>>;
+
+/// Decodes a page of a type without a NULL sentinel (BOOLEAN, BYTE, SHORT, CHAR) at its own
+/// width, appending the rows it decodes from definition level 0 to `top_rows`. `first_row`
+/// is the buffer row the page decodes to first.
+#[inline(always)]
+fn decode_page0_top_rows<T: Pushable, const FILTERED: bool, const FILL_NULLS: bool>(
+    page: &DataPage,
+    mode: DecodeModeContext<'_>,
+    sink: &mut T,
+    top_rows: TopRowsSink<'_>,
+    first_row: usize,
+) -> ParquetResult<()> {
+    match top_rows {
+        Some(top_rows) => decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            page,
+            mode,
+            &mut TopRowRecorder::<_, FILL_NULLS> { sink, top_rows, row: first_row },
+        ),
+        None => decode_page0_mode::<_, FILTERED, FILL_NULLS>(page, mode, sink),
+    }
+}
+
+/// Forwards to a page decoder of a type without a NULL sentinel and appends the buffer rows
+/// it writes for definition level 0 - which it writes as 0 or false - to `top_rows`. `row` is
+/// the buffer row of the next push.
+///
+/// A filling filtered decode (FILL_NULLS) pushes a NULL one at a time for each definition
+/// level 0 row of the filter, and NULLs in bulk for the rows between filter rows, which no
+/// reader reads. A bulk run extends the last run when it starts where that run ends, so the
+/// column top under a sparse filter stays one run, and starts none on its own, so the rows
+/// between the filter rows of stored values add none.
+struct TopRowRecorder<'a, 'b, T: Pushable, const FILL_NULLS: bool> {
+    sink: &'a mut T,
+    top_rows: &'b mut AcVec<[u64; 2]>,
+    row: usize,
+}
+
+impl<T: Pushable, const FILL_NULLS: bool> Pushable for TopRowRecorder<'_, '_, T, FILL_NULLS> {
+    #[inline]
+    fn reserve(&mut self, count: usize) -> ParquetResult<()> {
+        self.sink.reserve(count)
+    }
+
+    #[inline]
+    fn push(&mut self) -> ParquetResult<()> {
+        self.row += 1;
+        self.sink.push()
+    }
+
+    #[inline]
+    fn push_slice(&mut self, count: usize) -> ParquetResult<()> {
+        self.row += count;
+        self.sink.push_slice(count)
+    }
+
+    #[inline]
+    fn push_null(&mut self) -> ParquetResult<()> {
+        push_top_rows(self.top_rows, self.row, self.row + 1)?;
+        self.row += 1;
+        self.sink.push_null()
+    }
+
+    #[inline]
+    fn push_nulls(&mut self, count: usize) -> ParquetResult<()> {
+        let lo = self.row;
+        self.row += count;
+        if !FILL_NULLS || self.top_rows.last().is_some_and(|run| run[1] == lo as u64) {
+            push_top_rows(self.top_rows, lo, self.row)?;
+        }
+        self.sink.push_nulls(count)
+    }
+
+    #[inline]
+    fn skip(&mut self, count: usize) -> ParquetResult<()> {
+        self.sink.skip(count)
+    }
+}
+
 #[inline(always)]
 fn decode_array_page_mode<T: DataPageSlicer, const FILTERED: bool, const FILL_NULLS: bool>(
     page: &DataPage,
@@ -362,6 +499,7 @@ pub(super) fn decode_page_filtered<const FILL_NULLS: bool>(
     row_lo: usize,
     row_hi: usize,
     rows_filter: &[i64],
+    top_rows: TopRowsSink<'_>,
 ) -> ParquetResult<()> {
     if !FILL_NULLS && rows_filter.is_empty() {
         return Ok(());
@@ -377,9 +515,12 @@ pub(super) fn decode_page_filtered<const FILL_NULLS: bool>(
             rows_filter,
         },
     );
-    decode_page_dispatch::<true, FILL_NULLS>(page, dict, bufs, col_info, mode)
+    decode_page_dispatch::<true, FILL_NULLS>(page, dict, bufs, col_info, mode, top_rows)
 }
 
+/// Decodes rows `[row_lo, row_hi)` of a data page. `top_rows`, when set, takes the column-top
+/// rows of a page of a type without a NULL sentinel decoded at its own width, see
+/// `ColumnChunkBuffers::top_rows`; every other decode ignores it.
 pub fn decode_page(
     page: &DataPage,
     dict: Option<&DictPage>,
@@ -387,9 +528,10 @@ pub fn decode_page(
     col_info: QdbMetaCol,
     row_lo: usize,
     row_hi: usize,
+    top_rows: TopRowsSink<'_>,
 ) -> ParquetResult<()> {
     let mode = DecodeModeContext::unfiltered(row_lo, row_hi);
-    decode_page_dispatch::<false, false>(page, dict, bufs, col_info, mode)
+    decode_page_dispatch::<false, false>(page, dict, bufs, col_info, mode, top_rows)
 }
 
 fn decode_page_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
@@ -398,6 +540,7 @@ fn decode_page_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
     bufs: &mut ColumnChunkBuffers,
     col_info: QdbMetaCol,
     mode: DecodeModeContext<'_>,
+    top_rows: TopRowsSink<'_>,
 ) -> ParquetResult<()> {
     let (_rep_levels, _, values_buffer) = split_buffer(page)?;
     let column_type = col_info.column_type;
@@ -411,6 +554,7 @@ fn decode_page_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             bufs,
             column_type,
             mode,
+            top_rows,
         ),
         PhysicalType::Int64 => decode_int64_dispatch::<FILTERED, FILL_NULLS>(
             page,
@@ -462,6 +606,7 @@ fn decode_page_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             column_type,
             typ,
             mode,
+            top_rows,
         ),
     }?;
 
@@ -498,6 +643,7 @@ fn decode_page_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
     page: &DataPage,
     dict: Option<&DictPage>,
@@ -505,16 +651,20 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
     bufs: &mut ColumnChunkBuffers,
     column_type: ColumnType,
     mode: DecodeModeContext<'_>,
+    top_rows: TopRowsSink<'_>,
 ) -> ParquetResult<bool> {
     let row_hi = mode.source_row_count();
     let logical_type = page.descriptor.primitive_type.logical_type;
     let converted_type = page.descriptor.primitive_type.converted_type;
     match (page.encoding(), dict, column_type.tag()) {
         (Encoding::Plain, _, ColumnTypeTag::Byte) => {
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            let first_row = bufs.data_vec.len();
+            decode_page0_top_rows::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
                 &mut PlainPrimitiveDecoder::<i32, i8>::new(values_buffer, bufs, nulls::BYTE),
+                top_rows,
+                first_row,
             )?;
             Ok(true)
         }
@@ -539,7 +689,8 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             Ok(true)
         }
         (Encoding::DeltaBinaryPacked, _, ColumnTypeTag::Byte) => {
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            let first_row = bufs.data_vec.len();
+            decode_page0_top_rows::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
                 &mut DeltaBinaryPackedDecoder::<i8, i32>::try_new(
@@ -547,6 +698,8 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                     bufs,
                     nulls::BYTE,
                 )?,
+                top_rows,
+                first_row,
             )?;
             Ok(true)
         }
@@ -568,7 +721,8 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             ColumnTypeTag::Byte,
         ) => {
             let dict_decoder = BasePrimitiveDictDecoder::<i32, i8>::try_new(dict_page)?;
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            let first_row = bufs.data_vec.len();
+            decode_page0_top_rows::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
                 &mut RleDictionaryDecoder::try_new(
@@ -578,6 +732,8 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                     nulls::BYTE,
                     bufs,
                 )?,
+                top_rows,
+                first_row,
             )?;
             Ok(true)
         }
@@ -620,10 +776,13 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             Ok(true)
         }
         (Encoding::Plain, _, ColumnTypeTag::Short | ColumnTypeTag::Char) => {
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            let first_row = bufs.data_vec.len() / size_of::<i16>();
+            decode_page0_top_rows::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
                 &mut PlainPrimitiveDecoder::<i32, i16>::new(values_buffer, bufs, nulls::SHORT),
+                top_rows,
+                first_row,
             )?;
             Ok(true)
         }
@@ -648,7 +807,8 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             Ok(true)
         }
         (Encoding::DeltaBinaryPacked, _, ColumnTypeTag::Short | ColumnTypeTag::Char) => {
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            let first_row = bufs.data_vec.len() / size_of::<i16>();
+            decode_page0_top_rows::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
                 &mut DeltaBinaryPackedDecoder::<i16, i32>::try_new(
@@ -656,6 +816,8 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                     bufs,
                     nulls::SHORT,
                 )?,
+                top_rows,
+                first_row,
             )?;
             Ok(true)
         }
@@ -677,7 +839,8 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             ColumnTypeTag::Short | ColumnTypeTag::Char,
         ) => {
             let dict_decoder = BasePrimitiveDictDecoder::<i32, i16>::try_new(dict_page)?;
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            let first_row = bufs.data_vec.len() / size_of::<i16>();
+            decode_page0_top_rows::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
                 &mut RleDictionaryDecoder::try_new(
@@ -687,6 +850,8 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                     nulls::SHORT,
                     bufs,
                 )?,
+                top_rows,
+                first_row,
             )?;
             Ok(true)
         }
@@ -2206,6 +2371,7 @@ fn decode_double_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn decode_other_fixed_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
     page: &DataPage,
     dict: Option<&DictPage>,
@@ -2214,6 +2380,7 @@ fn decode_other_fixed_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
     column_type: ColumnType,
     typ: PhysicalType,
     mode: DecodeModeContext<'_>,
+    top_rows: TopRowsSink<'_>,
 ) -> ParquetResult<bool> {
     let row_hi = mode.source_row_count();
     clear_aux_buffers(bufs);
@@ -2247,18 +2414,24 @@ fn decode_other_fixed_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             Ok(true)
         }
         (Encoding::Plain, _, PhysicalType::Boolean, ColumnTypeTag::Boolean) => {
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            let first_row = bufs.data_vec.len();
+            decode_page0_top_rows::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
                 &mut PlainBooleanDecoder::new(values_buffer, bufs, 0),
+                top_rows,
+                first_row,
             )?;
             Ok(true)
         }
         (Encoding::Rle, _, PhysicalType::Boolean, ColumnTypeTag::Boolean) => {
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            let first_row = bufs.data_vec.len();
+            decode_page0_top_rows::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
                 &mut RleBooleanDecoder::try_new(values_buffer, row_hi, bufs, 0)?,
+                top_rows,
+                first_row,
             )?;
             Ok(true)
         }
@@ -5240,7 +5413,7 @@ mod tests {
             id: None,
         };
 
-        decode_page(&page, None, &mut bufs, col_info, 0, values.len()).unwrap();
+        decode_page(&page, None, &mut bufs, col_info, 0, values.len(), None).unwrap();
 
         let mut expected = Vec::new();
         expected.extend_from_slice(&be_to_le_truncate(&values[0], 8));
@@ -5306,7 +5479,7 @@ mod tests {
             id: None,
         };
 
-        decode_page(&page, None, &mut bufs, col_info, 0, n).unwrap();
+        decode_page(&page, None, &mut bufs, col_info, 0, n, None).unwrap();
 
         assert_eq!(bufs.data_vec.len(), n * size_of::<i64>());
         let out: &[i64] = unsafe { std::slice::from_raw_parts(bufs.data_vec.as_ptr().cast(), n) };
@@ -5387,7 +5560,7 @@ mod tests {
             id: None,
         };
 
-        decode_page(&page, None, &mut bufs, col_info, 0, n).unwrap();
+        decode_page(&page, None, &mut bufs, col_info, 0, n, None).unwrap();
         (
             bufs.data_vec.as_slice().to_vec(),
             bufs.aux_vec.as_slice().to_vec(),
@@ -5561,7 +5734,7 @@ mod tests {
             id: None,
         };
 
-        let err = decode_page(&page, None, &mut bufs, col_info, 0, n)
+        let err = decode_page(&page, None, &mut bufs, col_info, 0, n, None)
             .expect_err("a non-null claim over an empty values buffer must be a decode error");
         assert!(
             err.to_string().contains("not enough length values"),
@@ -5644,7 +5817,7 @@ mod tests {
             id: None,
         };
 
-        decode_page(&page, None, &mut bufs, col_info, 0, row_hi).unwrap();
+        decode_page(&page, None, &mut bufs, col_info, 0, row_hi, None).unwrap();
         (
             bufs.data_vec.as_slice().to_vec(),
             bufs.aux_vec.as_slice().to_vec(),
@@ -5775,7 +5948,7 @@ mod tests {
             id: None,
         };
 
-        decode_page(&page, None, &mut bufs, col_info, 0, row_hi).unwrap();
+        decode_page(&page, None, &mut bufs, col_info, 0, row_hi, None).unwrap();
         (
             bufs.data_vec.as_slice().to_vec(),
             bufs.aux_vec.as_slice().to_vec(),
@@ -5865,6 +6038,7 @@ mod tests {
             col_info,
             0,
             indices.len(),
+            None,
         )
         .expect_err("an oversized dictionary num_values must error, not abort");
         assert!(
@@ -5908,7 +6082,7 @@ mod tests {
             id: None,
         };
 
-        let err = decode_page(&page, Some(&dict_page), &mut bufs, col_info, 0, 8)
+        let err = decode_page(&page, Some(&dict_page), &mut bufs, col_info, 0, 8, None)
             .expect_err("an index bit width over 32 must error, not abort");
         assert!(
             err.to_string().contains("exceeds"),
@@ -6517,6 +6691,7 @@ mod tests {
             0,
             values.len(),
             &rows_filter,
+            None,
         )
         .unwrap();
 
@@ -6556,7 +6731,7 @@ mod tests {
             id: None,
         };
 
-        decode_page(&page, None, &mut bufs, col_info, 0, 1).unwrap();
+        decode_page(&page, None, &mut bufs, col_info, 0, 1, None).unwrap();
 
         let expected = be_to_le_truncate(&bad_value, 8);
         assert_eq!(bufs.data_vec.as_slice(), expected.as_slice());
@@ -6607,6 +6782,7 @@ mod tests {
                 col_info,
                 0,
                 indices.len(),
+                None,
             )
             .unwrap();
             assert_eq!(bufs.data_vec.as_slice(), expected.as_slice());
@@ -6668,6 +6844,7 @@ mod tests {
                 0,
                 indices.len(),
                 &rows_filter,
+                None,
             )
             .unwrap();
             assert_eq!(bufs.data_vec.as_slice(), expected.as_slice());
@@ -6705,7 +6882,7 @@ mod tests {
             id: None,
         };
 
-        decode_page(&page, None, &mut bufs, col_info, 0, values.len()).unwrap();
+        decode_page(&page, None, &mut bufs, col_info, 0, values.len(), None).unwrap();
 
         let mut expected = Vec::new();
         for value in &values {
@@ -6763,6 +6940,7 @@ mod tests {
                 0,
                 indices.len(),
                 &rows_filter,
+                None,
             )
             .unwrap();
             assert_eq!(bufs.data_vec.as_slice(), expected.as_slice());
@@ -6792,7 +6970,7 @@ mod tests {
             id: None,
         };
 
-        decode_page(&page, None, &mut bufs, col_info, 0, values.len()).unwrap();
+        decode_page(&page, None, &mut bufs, col_info, 0, values.len(), None).unwrap();
 
         let mut expected = Vec::new();
         for value in &values {
@@ -6832,7 +7010,7 @@ mod tests {
                 id: None,
             };
 
-            decode_page(&page, None, &mut bufs, col_info, 0, values.len()).unwrap();
+            decode_page(&page, None, &mut bufs, col_info, 0, values.len(), None).unwrap();
 
             let mut expected = Vec::new();
             for value in &values {
@@ -6894,6 +7072,7 @@ mod tests {
                     0,
                     indices.len(),
                     &rows_filter,
+                    None,
                 )
                 .unwrap();
 
@@ -6948,6 +7127,7 @@ mod tests {
                     col_info,
                     0,
                     indices.len(),
+                    None,
                 )
                 .unwrap();
                 assert_eq!(bufs.data_vec.as_slice(), expected.as_slice());
@@ -7007,6 +7187,7 @@ mod tests {
                     0,
                     indices.len(),
                     &rows_filter,
+                    None,
                 )
                 .unwrap();
                 assert_eq!(bufs.data_vec.as_slice(), expected.as_slice());
@@ -7069,6 +7250,7 @@ mod tests {
                 col_info,
                 0,
                 indices.len(),
+                None,
             )
             .unwrap();
 
@@ -7125,6 +7307,7 @@ mod tests {
                 0,
                 indices.len(),
                 &rows_filter,
+                None,
             )
             .unwrap();
 
@@ -7184,6 +7367,7 @@ mod tests {
                 0,
                 indices.len(),
                 &rows_filter,
+                None,
             )
             .unwrap();
 

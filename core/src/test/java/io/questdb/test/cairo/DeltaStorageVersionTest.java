@@ -35,6 +35,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -43,6 +44,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -56,6 +58,7 @@ public class DeltaStorageVersionTest extends AbstractCairoTest {
 
     @Test
     public void testCheckpointImageCarriesDeltaStamp() throws Exception {
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
         assertMemoryLeak(() -> {
             createTable();
             final TableToken token = engine.verifyTableName("t");
