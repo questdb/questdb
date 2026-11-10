@@ -29,7 +29,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
 import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -73,10 +72,7 @@ public class KSumDoubleVectorAggregateFunction extends DoubleFunction implements
     public void aggregate(long address, long frameRowCount, int workerId) {
         if (address != 0) {
             // Kahan compensated summation
-            double x = Vect.sumDoubleKahan(address, frameRowCount);
-            if (!Numbers.isFinite(x)) {
-                x = sumFinite(address, frameRowCount);
-            }
+            final double x = Vect.sumDoubleKahan(address, frameRowCount);
             if (x == x) {
                 final int sumOffset = workerId * SUM_PADDING;
                 final double sum = this.sum[sumOffset];
@@ -167,22 +163,5 @@ public class KSumDoubleVectorAggregateFunction extends DoubleFunction implements
             count += this.count[i * COUNT_PADDING];
         }
         return Rosti.keyedIntKSumDoubleWrapUp(pRosti, valueOffset, sum, count);
-    }
-
-    private static double sumFinite(long address, long count) {
-        double sum = 0;
-        double c = 0;
-        boolean hasFinite = false;
-        for (long i = 0; i < count; i++) {
-            final double v = Unsafe.getDouble(address + (i << 3));
-            if (Numbers.isFinite(v)) {
-                final double y = v - c;
-                final double t = sum + y;
-                c = (t - sum) - y;
-                sum = t;
-                hasFinite = true;
-            }
-        }
-        return hasFinite ? sum : Double.NaN;
     }
 }

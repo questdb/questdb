@@ -1534,6 +1534,28 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testArraySumSkipsInfinity() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE src (p DOUBLE, n DOUBLE)");
+            execute("INSERT INTO src VALUES ('Infinity', '-Infinity')");
+            execute("CREATE TABLE tango (arr DOUBLE[][])");
+            execute("""
+                    INSERT INTO tango
+                    SELECT ARRAY[[p, n, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, n, 15]] FROM src
+                    UNION ALL
+                    SELECT ARRAY[[p, n, null, p, n, null, p, n, null]] FROM src""");
+            assertQuery("SELECT array_sum(arr), array_sum(transpose(arr)) FROM tango")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            array_sum\tarray_sum1
+                            120.0\t120.0
+                            null\tnull
+                            """);
+        });
+    }
+
+    @Test
     public void testAutoCastToDouble() throws Exception {
         assertMemoryLeak(() -> {
             assertQuery("SELECT ARRAY[1, 2] arr FROM long_sequence(1)")

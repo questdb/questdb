@@ -187,6 +187,36 @@ public class VectFuzzTest {
     }
 
     @Test
+    public void testCompensatedSumsSkipInfinity() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final int maxCount = 40;
+            final long size = maxCount * (long) Double.BYTES;
+            final long ptr = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+            final long cPtr = Unsafe.malloc(Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+            final double[] notFinite = {Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY, Double.NaN};
+            try {
+                for (int count = 1; count <= maxCount; count++) {
+                    double sum = Double.NaN;
+                    for (int i = 0; i < count; i++) {
+                        final boolean isFinite = i % 4 == 3;
+                        final double value = isFinite ? i : notFinite[i % 4];
+                        Unsafe.putDouble(ptr + i * (long) Double.BYTES, value);
+                        if (isFinite) {
+                            sum = Double.isNaN(sum) ? value : sum + value;
+                        }
+                    }
+                    Assert.assertEquals("Kahan, count: " + count, sum, Vect.sumDoubleKahan(ptr, count), 0);
+                    final double neumaier = Vect.sumDoubleNeumaier(ptr, count, cPtr);
+                    Assert.assertEquals("Neumaier, count: " + count, sum, neumaier + Unsafe.getDouble(cPtr), 0);
+                }
+            } finally {
+                Unsafe.free(ptr, size, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(cPtr, Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
     public void testMinMaxDoubleSkipInfinity() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final int maxCount = 40;

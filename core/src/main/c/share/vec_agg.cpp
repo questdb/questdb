@@ -762,7 +762,7 @@ double SUM_DOUBLE_KAHAN(double *d, int64_t count) {
     for (; d < lim_vec; d += step) {
         _mm_prefetch(d + 63 * step, _MM_HINT_T1);
         inputVec.load(d);
-        bVec = is_nan(inputVec);
+        bVec = !is_finite(inputVec);
         nancount = if_add(bVec, nancount, 1);
         yVec = select(bVec, 0, inputVec - cVec);
         tVec = sumVec + yVec;
