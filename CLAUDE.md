@@ -250,28 +250,21 @@ qdbr toolchain; the script prints the command when it is missing.
   `.mutateWith(...)`, `.withEngine(...)`, `.withContext(...)`. For execution
   plans use `.assertsPlan(...)` / `.assertsPlanContaining(...)` or fold the plan
   into a data assertion with `.withPlan(...)` / `.withPlanContaining(...)`.
-- the old `assertSql(...)` / `TestUtils.assertSql(...)` query-result helpers have
-  been REMOVED — `.returns(...)` runs a strictly stronger battery (a second
-  cursor pass, a `calculateSize()` cross-check, a variable-column check, and the
-  factory-property assertions) that catches bugs the old single-pass print/compare
-  silently missed. (`TestServerMain.assertSql(sql, expected)` is a separate
-  live-`ServerMain` convenience wrapper and is unrelated.)
 - **never use `.returnsOnce(...)` unless the query's projection is genuinely
   non-deterministic across a re-read** — an unseeded `rnd_*` function, or
   time-varying output such as `now()`/`sysdate()`/`systimestamp()`. `returnsOnce`
-  deliberately skips the second cursor pass and every check listed above, so for
-  any deterministic query it leaves real bugs untested. Default to `.returns(...)`;
-  reach for `.returnsOnce(...)` only with a stated reason that the output cannot be
-  stable across two reads.
+  skips the second cursor pass and the consistency checks `.returns(...)` adds,
+  so for any deterministic query it leaves real bugs untested. Default to
+  `.returns(...)`; reach for `.returnsOnce(...)` only with a stated reason that
+  the output cannot be stable across two reads.
 - **Never assert peer behaviour with a hand-built frame or a fake socket.** Server
   tests must drive the real `java-questdb-client` for anything that asserts how a
   client reacts to server output — close codes, NACK classification, ack watermark
-  advance, reconnect eligibility. The client is already on the test classpath and
-  most QWP tests import it. A hand-forged frame encodes the contract you *assume* the
-  client implements, so it passes even when the pinned client disagrees; that is how
-  the ROLE_CHANGE (4001) close shipped against a client that classified it as a
-  poison strike. If a test names a client class in a comment to justify an assertion,
-  it must import that class instead.
+  advance, reconnect eligibility. The client is already on the test classpath
+  and most QWP tests import it. A hand-forged frame encodes the contract you
+  *assume* the client implements, so it passes even when the pinned client
+  disagrees. If a test names a client class in a comment to justify an
+  assertion, it must import that class instead.
 - Fake sockets (`MockRawSocket`, `TestableContext`) remain valid for *transport fault
   injection only* — partial sends, `PeerIsSlowToWriteException` resume paths, and
   malformed frames a correct client would never emit. They must never encode what a
@@ -295,18 +288,18 @@ qdbr toolchain; the script prints the command when it is missing.
   once", no rewording prior commits, no force pushes to clean up. Adding a
   fix-up commit on top is always fine. The squash flow folds the lot at merge
   time anyway.
-- **Bundle related fixes into one PR; do NOT propose splitting by logic.** This
-  is a high-throughput shop (~20 PRs/day) and CI is the bottleneck, not review:
-  a full run takes ~40 min and can go red on an unrelated flake. Splitting one
-  branch into N "logically clean" PRs multiplies that cost — N× CI time, N×
-  flake exposure, PRs failing on each other's flakes, and N× the babysitting to
-  shepherd them all to merge. The squash-merge collapses everything into one
-  tidy `master` commit anyway, so multiple fixes on a branch cost nothing at
-  merge time. Default to adding the change to the PR/branch already in flight,
-  especially when the fixes share a CI lineage (one change is what makes the
-  other's CI go green). When a branch carries more than one fix, give each its
-  own bullet in the PR body instead of opening another PR. Only split if the
-  user explicitly asks, or if the changes must merge/revert independently.
+- **Bundle related fixes into one PR; do NOT propose splitting by logic.** With
+  many PRs a day, CI is the bottleneck, not review: a full run is long and can
+  go red on an unrelated flake. Splitting one branch into N "logically clean"
+  PRs multiplies that cost — N× CI time, N× flake exposure, PRs failing on each
+  other's flakes, and N× the babysitting to shepherd them all to merge. The
+  squash-merge collapses everything into one tidy `master` commit anyway, so
+  multiple fixes on a branch cost nothing at merge time. Default to adding the
+  change to the PR/branch already in flight, especially when the fixes share a
+  CI lineage (one change is what makes the other's CI go green). When a branch
+  carries more than one fix, give each its own bullet in the PR body instead of
+  opening another PR. Only split if the user explicitly asks, or if the changes
+  must merge/revert independently.
 - **When asked to "send a change to PR #N" / update PR metadata:** push the
   commit(s) to that PR's branch (rebase onto the remote head first if it moved),
   then bring the PR title and body up to date with the branch's net effects.
@@ -473,16 +466,14 @@ For repeated runs of core tests, compile through `ci/incremental_compile.py`:
 python3 ci/incremental_compile.py -- test -Dtest=ClassNameTest
 ```
 
-Maven's compiler plugin recompiles all of core's sources (about 40
-seconds) whenever any one of them changed. The script compiles the changed
-sources, then reads the class files to see whether anything other classes
-compile against changed: signatures, supertypes, non-private members, constant
-values. If not, it is done: an edit to a method body or a private member
-compiles in about two seconds. If so, it recompiles only the sources that use
-what changed, found in the class files and, for constants and imports, in the
-sources: a new public method on a leaf class compiles in about six seconds, on
-a widely used class such as `TableUtils` in about 25. When the dependents
-exceed about half of the code, it falls back to Maven's full rebuild. Add
+Maven's compiler plugin recompiles all of core's sources whenever any one of
+them changed. The script compiles the changed sources, then reads the class
+files to see whether anything other classes compile against changed:
+signatures, supertypes, non-private members, constant values. If not, it is
+done, so an edit to a method body or a private member compiles in seconds. If
+so, it recompiles only the sources that use what changed, found in the class
+files and, for constants and imports, in the sources. When the dependents are
+a large share of the code, it falls back to Maven's full rebuild. Add
 `--verbose` to see what compiles and why.
 
 Every source file must compile to a class of its own name; `SourceFileNameTest`

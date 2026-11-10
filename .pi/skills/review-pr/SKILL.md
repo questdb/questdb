@@ -103,11 +103,11 @@ fresh-context `risk-assessor` agents (`.pi/agents/risk-assessor.md`), one per fi
 it rates. Launch all of them as foreground calls (`async: false`; a parallel fanout
 still runs them at once). Each task is self-contained and read-only.
 Discovery tasks receive the diff, Step 2.4 provenance verdicts, the Step 2.5 surface
-map, the Step 2.6 coverage map, role instructions, and the candidate contract. Agents
-10 and 11 are deliberate reduced-context exceptions. Step 3b falsifiers receive only
-the neutral proposition, revision identities, relevant files, and raw artifact paths,
-and Step 3c risk assessors the same, plus the observed results at head and base and
-the PR body.
+map, the Step 2.6 coverage map, role instructions with every checklist the role names,
+and the candidate contract. Agents 10 and 11 are deliberate reduced-context
+exceptions. Step 3b falsifiers receive only the neutral proposition, revision
+identities, relevant files, and raw artifact paths, and Step 3c risk assessors the
+same, plus the observed results at head and base and the PR body.
 The parent owns role selection, the private ledger, admission, severity, risk, and
 output.
 
@@ -358,7 +358,7 @@ Then apply the result to the map:
   - **Blast radius:** one query, the table on disk, replicas and backups, or the whole process (a Rust panic aborts the JVM).
   - **Containment:** an assertion, validation or checksum downstream that would catch the mistake.
 
-  Silent wrong or lost data, corruption, a security failure, or a crash or hang on a reachable path makes a Critical gap when it meets the bar below; a loud, bounded failure makes a Moderate gap. A failure the hostile-input rule (Step 4) covers makes no gap in this PR. Its lines stay off the public list of never-run lines, because they show where hostile input can take the server down: when a probe shows the failure, the adjacent issue draft names them; otherwise they stay in the private map. Error and cleanup paths are the code most often never run, and a mistake there tends to hide the failure or leave state half-written, so rarity alone never makes them low exposure: disks fill and connections drop in production. One hunk can hold both grades: in a guard that rejects an oversized `RANGE`, a wrong count in the error message is cosmetic, but a guard that lets the range through can let `(int) steps + 1` wrap, so the join silently uses too few offsets.
+  Silent wrong or lost data, corruption, a security failure, or a crash or hang on a reachable path makes a Critical gap when it meets the bar below; a loud, bounded failure makes a Moderate gap. A failure the hostile-input rule (Step 4) covers makes no gap in this PR. Its lines stay off the public list of never-run lines, because they show where hostile input can take the server down: when a probe shows the failure, the adjacent issue draft names them; otherwise they stay in the private map. Error and cleanup paths are the code most often never run, and a mistake there tends to hide the failure or leave state half-written, so rarity alone never makes them low exposure: disks fill and connections drop in production. One hunk can hold both grades: in a guard that rejects an oversized value, a wrong number in the error message is cosmetic, but a guard that lets the value through can overflow a later calculation and silently return wrong rows.
 - When the exposure is Critical, reach the code with a probe test in the scratch worktree before you classify it, with the expected result worked out independently. If the code already does the wrong thing, that is a functional defect, admitted on the probe's evidence, not a coverage gap. Either way, the finding carries the probe as the test to add, except on an exotic path, where a passing probe makes no finding (below).
 - Never-run lines are never private, except the lines of a failure the hostile-input rule covers (above). The Coverage map section lists the others that become no finding, each with its reason: low exposure, or an exotic path (below). Only a line proven unreachable and guarded by an assertion is exempt.
 
@@ -403,7 +403,7 @@ The diff plus surface map can be large — write them to a shared file (e.g., un
 
 Use the following as a role catalog. Select only the roles allowed by the chosen level and change surface; do not launch the whole catalog.
 
-**Agent 1 — Correctness & bugs:** NULL handling, edge cases, logic errors, off-by-one, operator precedence, error paths. Cross-reference every changed symbol against its callsite inventory and verify the new behavior is correct at each callsite. When the diff touches the QWP ingress / role-gating path, an in-place switch or failover, a `java-questdb-client` pointer move that carries client changes, or tests that drive a producer through a failover or switch, also verify the "Store-and-forward & pool startup invariants" checklist — a change that lets a running SF drainer surface transport errors to the producer, imposes a reconnect time budget on it, or hard-fails it on a transient outage is a Critical (data-loss) finding.
+**Agent 1 — Correctness & bugs:** NULL handling, edge cases, logic errors, off-by-one, operator precedence, error paths. Cross-reference every changed symbol against its callsite inventory and verify the new behavior is correct at each callsite. When the diff touches what the "Store-and-forward & pool startup invariants" checklist covers, also verify that checklist.
 
 **Agent 2 — Concurrency:** Race conditions, shared mutable state, missing volatile, lock ordering, thread-safety of data structures. Use the implicit contract list (lock order, thread-affinity) and check every callsite from 2.5b for violations of the new contract.
 
@@ -424,7 +424,7 @@ For every new or changed loop, traversal, data structure, or computation:
    search through a list where a hash set gives O(1) membership test. Sorted array where a heap gives better
    insert/extract-min. ArrayList where a direct-indexed array suffices.
 5. **Unnecessary copies and conversions:** Copying data that could be referenced in place. Converting between
-   representations (String ↔ CharSequence, byte[] ↔ DirectByteCharSequence) when the original form would work.
+   representations (`String`, `CharSequence`, UTF-8 and native-memory sequences) when the original form would work.
 6. **Zero-GC violations:** `java.util.*` collections vs `io.questdb.std`, string creation/concatenation on hot paths,
    capturing lambdas, autoboxing. Even a single GC allocation on a per-row data path is a finding.
 7. **SIMD and vectorization:** Where the code processes arrays or columns element-by-element, check whether a
@@ -450,7 +450,7 @@ that amplifies an otherwise-acceptable cost.
 
 **Agent 5 — Test review & coverage:** Coverage gaps, error path tests, NULL tests, boundary conditions, regression tests, test quality, `assertMemoryLeak()` usage, and the "Crash fuzz coverage" checklist for the changes it names. Cross-reference 2.5d: every cross-context exposure on the change's main path should have a test that exercises the changed symbol from that context. For each missing one, add an `UNTESTED` Step 2.6 row; do not predetermine its severity or publication. Probe an exotic context (Step 2.6) where the change may misbehave, and return it as a candidate only when the probe fails. Consume the Step 2.6 coverage map: re-verify every claimed test and failure link (read the assertion, don't trust the map), and hunt for behavioral changes the map missed. Then run a **mutation spot-check**: pick the 3-5 most dangerous changed lines on the main path that ran (boundary comparisons, error handling, null checks, off-by-one candidates; lines that never ran are gaps already) and ask, per line, "which test fails if this line is wrong — inverted condition, off-by-one, dropped null check?" When no assertion would catch a mutation, add an `UNTESTED` map row even if a test nominally executes the line; classify it under Step 2.6 and publish it only after Step 3b admission. **Enforce the "SQL test assertions (builder API — strict)" checklist on every added/modified test line: any new `.returnsOnce(...)` on a deterministic (non-RNG, non-time-varying) query is Critical; a lone `assertQuery(...)` wrapped in `assertMemoryLeak(...)` is a finding.** Test *efficacy* (whether tests actually exercise the change and could fail) and test-*code* quality are handled by Agents 12-14 — here, focus only on whether coverage exists for each new or changed behavior on the main path.
 
-**Agent 6 — Code quality & standards:** Code smell, member ordering, naming conventions, modern Java features, dead code, third-party dependencies. **Also check for unclosed LOG statements**: QuestDB logging uses a builder pattern (`LOG.info().$("msg").$()`) and every chain MUST end with `.$()` or `.I$()`. A missing close holds a ring buffer slot forever, causing other log producer threads to busy-wait in `nextBully()`, and the log consumer `logging_0` thread cannot progress either. Also watch for `.put()` instead of `.$()` in LOG chains — `.put()` returns `Utf8Sink`, not `LogRecord`, breaking the chain. Also flag throw-capable expressions inside LOG chains (`LOG.info().$(func()).$()`): arguments are evaluated after the ring slot is acquired, so a throwing `func()` unwinds past the terminator and leaks the slot; the call must be hoisted into a local before the chain starts.
+**Agent 6 — Code quality & standards:** Code smell, member ordering, naming conventions, modern Java features, dead code, third-party dependencies. **Also apply the "Logging" checklist below.**
 
 **Agent 7 — Conventions:** Commit messages and SQL style in tests. The parent checks the title, body and labels in Step 2.
 
@@ -570,7 +570,7 @@ If required execution is impossible, record the validation limitation in the pri
 After a candidate satisfies this admission schema, apply the domain-specific checks below:
 
 1. **Read the actual source code** at the exact lines cited. Do not rely on the agent's description alone.
-2. **Trace the full code path**: follow callers, inheritance hierarchies, and runtime types. A method called on a base-class reference may dispatch to a subclass override (e.g., `PartitionDescriptor.clear()` vs `OwnedMemoryPartitionDescriptor.clear()`).
+2. **Trace the full code path**: follow callers, inheritance hierarchies, and runtime types. A method called on a base-class reference may dispatch to a subclass override.
 3. **Check both sides of JNI/FFI boundaries**: if a finding involves Java↔Rust interaction, read both the Java caller and the Rust JNI function. Verify ownership transfer, error propagation, and cleanup on both sides.
 4. **For resource leak claims**: trace every allocation to its corresponding free/close on ALL code paths (happy path,
    error path, finally blocks). Check for polymorphic `close()`/`clear()` overrides. Before claiming a leak between
@@ -694,8 +694,8 @@ of the two categories it lands in, per the magnitude rule in Step 4.
 - Data structure fitness: is the chosen data structure optimal for the access pattern? Linear search in a list where a
   hash set gives O(1). Sorted array where a heap gives better insert/extract-min. Linked traversal where an indexed
   array gives O(1) random access. ArrayList where a pre-sized array suffices.
-- Unnecessary copies and conversions: copying data that could be referenced in place. String ↔ CharSequence, byte[] ↔
-  DirectByteCharSequence conversions when the original form works.
+- Unnecessary copies and conversions: copying data that could be referenced in place, or converting between string
+  representations (`String`, `CharSequence`, UTF-8 and native-memory sequences) when the original form works.
 
 #### Zero-GC and allocation discipline
 
@@ -730,9 +730,9 @@ of the two categories it lands in, per the magnitude rule in Step 4.
 - Modern Java features: enhanced switch, multiline strings, pattern variables in instanceof
 
 ### Logging
-- Every LOG chain MUST end with `.$()` or `.I$()` — a missing close holds a ring buffer slot forever and stalls the `logging_0` consumer
-- Watch for `.put()` instead of `.$()` in LOG chains — `.put()` returns `Utf8Sink`, not `LogRecord`, breaking the chain
-- No throw-capable expressions inside LOG chains: arguments are evaluated after the slot is acquired, so `LOG.info().$(func()).$()` leaks the slot if `func()` throws — hoist into a local first (`var a = func(); LOG.info().$(a).$();`)
+- Every LOG chain (`LOG.info().$("msg").$()`) MUST end with `.$()` or `.I$()`: an unterminated chain never releases its slot in the log queue, so the queue fills and every thread that logs then spins forever. `python3 find_unterminated_logs.py` at the repository root finds them, chains that end in `.put()` included.
+- `.put()` in a LOG chain returns a plain sink, not the log record, so nothing after it can terminate the chain
+- No call that can throw inside a LOG chain: a throw skips the terminator with the same effect. Hoist the call into a local first (`var a = func(); LOG.info().$(a).$();`)
 
 ### Resource management
 - Resources properly closed in all code paths (especially error paths)
@@ -741,109 +741,81 @@ of the two categories it lands in, per the magnitude rule in Step 4.
 
 ### Per-query memory tracker integration (if PR adds or changes native-memory allocation sites)
 
-QuestDB caps how much native memory a single bounded workload (user SQL query, materialized view refresh, WAL apply batch) may allocate through a per-query `MemoryTracker`. The tracker is bound on `SqlExecutionContext` (`getMemoryTracker()` / `setMemoryTracker(...)`) and threaded into the tracker-aware `Unsafe.malloc` / `realloc` / `free` / `getNativeAllocator(tag, tracker)` overloads (and the Rust `QdbAllocator`). A `null` tracker degrades to global-RSS-only accounting. Apply this checklist whenever the diff adds or changes a native allocation site, a factory/cursor that owns growing native buffers, or a pooled memory class (`Map`, `RecordChain`, `RecordArray`, sort/tree chains, `GroupByAllocator`, join-key maps, etc.).
+QuestDB caps how much native memory a single bounded workload (a SQL query, a materialized view refresh, a WAL apply batch) may allocate through a per-query `MemoryTracker`. The tracker lives on `SqlExecutionContext` and goes to the tracker-aware allocation overloads in `Unsafe` and the Rust allocator; a `null` tracker counts only toward the global limit. Apply this checklist whenever the diff adds or changes a native allocation site, a factory or cursor that owns growing native buffers, or a pooled memory class such as a `Map` or a record chain.
 
 **The tracker is for large, potentially unbounded allocations only — that is the whole decision rule.** Do not treat "wire everything" as the safe default; over-wiring is itself a finding.
 
-- **Wire it** when the allocation grows with the data or query cardinality and has no structural cap: map / hash-table backing, sort / tree / record chains, hash-join key (and match-id) maps, the group-by allocator and aggregate function state, `LATEST BY` rowid lists and maps, set-operation maps, encoded and top-K `ORDER BY ... LIMIT N` sort buffers (parallel and single-threaded), secondary / markout-horizon cross-join buffers, window-join and horizon-join aggregation maps, window partition maps and RANGE-frame ring buffers, SAMPLE BY fill, parquet decode buffers. These are the runaway vectors the limit exists to catch. An unbounded site that passes `null` (or omits the tracker overload entirely) is a coverage-gap candidate: record the runaway query path and classify it through Step 2.6. It is Critical only when that path independently proves the required material reachable impact.
-- **Leave it on the global counter only** when the allocation is structurally bounded, self-capped, or process / session-lived: page-frame buffers, JIT buffers, `string_agg`, fixed-size heaps (e.g. the single-column long top-K heap), ROWS-frame window buffers, table reader / writer columns, symbol tables, connection buffers, memory-mapped pages. Wiring one of these is a finding in its own right: it adds two atomic counter updates per malloc/free on both the Java and Rust paths for no protective benefit, and tracker-aware pooled classes give up cross-query backing retention (they free native backing on cursor close and re-allocate on next use), so charging a bounded or retained allocator to the tracker trades away a pool optimization for nothing.
+- **Wire it** when the allocation grows with the data or query cardinality and has no structural cap, such as hash-table backing for GROUP BY, joins and set operations, sort buffers (encoded and top-K `ORDER BY ... LIMIT N` buffers included), and window-function partition maps. These are the runaway allocations the limit exists to catch. An unbounded site that passes `null` (or omits the tracker overload entirely) is a coverage-gap candidate: record the runaway query path and classify it through Step 2.6. It is Critical only when that path independently proves the required material reachable impact.
+- **Leave it on the global counter only** when the allocation is structurally bounded, self-capped, or lives as long as the process or session, such as page-frame buffers, fixed-size heaps (the single-column long top-K heap included), table reader and writer columns, and connection buffers. Wiring one of these is a finding in its own right: it adds accounting cost to every allocation and free for no protection, and a pooled class that charges the tracker frees its memory when the cursor closes instead of reusing it for the next query.
 
 For each new or changed allocation site, verify:
 
 - **Same tracker for malloc and its matching free.** A site that allocates with a tracker but frees with `null` (or vice versa) desyncs the counter: freeing memory through a tracker that never charged it trips the tracker's underflow assert, and freeing a charged allocation without the tracker leaves the query's usage inflated. Trace every free / close path — error paths and `toTop()` / `clear()` / cursor-close reuse included — and confirm the identical tracker is used on both ends.
 - **Nested SQL inherits the outer tracker.** Subqueries, the mat-view refresh inner SELECT, and WAL apply inner SQL must inherit the tracker already bound on the context, not acquire their own. A new acquisition site that acquires unconditionally (instead of only when no outer tracker is present) double-counts — flag it.
-- **Coverage has a test.** A newly wired allocator needs a `*MemoryTrackerTest` proving (a) a breach throws the per-query out-of-memory message, (b) an under-limit run succeeds, and (c) a `getCursor()`-to-close leak loop stays balanced. Record a missing tracker test or an unpinned factory-class routing guard as an `UNTESTED` Step 2.6 row; classify and publish it only through the normal proportionality and admission gates.
+- **Coverage has a test.** A newly wired allocator needs a `*MemoryTrackerTest` proving (a) a breach throws the per-query out-of-memory message, (b) an under-limit run succeeds, and (c) repeatedly opening and closing the cursor leaves the tracker balanced. The test also checks that its query reaches the factory it means to test, so a later plan change cannot make it test something else. Record a missing tracker test or a missing factory check as an `UNTESTED` Step 2.6 row; classify and publish it only through the normal proportionality and admission gates.
 
 ### Store-and-forward & pool startup invariants (QWP client contract)
-Apply this whenever the diff touches the QWP ingress path (upgrade/role
-gating, in-place demote / lifecycle switch, connection handling on role
-change), replication failover, a `java-questdb-client` pointer move that
-carries client changes, or tests that drive a producer through a
-failover/switch window. These are the CLIENT's store-and-forward
-guarantees (the client code lives in the `java-questdb-client`
-submodule); server-side changes and tests in this repo must be reviewed
-against them. A violation here is a **Critical** finding: the whole point of
-store-and-forward is that a running producer never loses data and never
-hard-fails on a transient outage.
 
-**Drainer (steady state — once the pool is running).**
-- Once the pool is running, an async drainer thread ships buffered SF data to
-  the server. It MUST NOT propagate server / transport errors back to the
-  client (`Sender` producer calls, `flush()`, the pooled handle). The ONLY
-  error a running drainer may surface to the caller is **SF out of space** (the
-  on-disk / backing buffer is full and can accept no more rows). Flag any other
-  failure class (connect-refused, DNS, unreachable/black-hole, TLS/cert, auth,
-  role-reject, upgrade/protocol timeout, reset) that can escape the drainer
-  onto a producer or borrow call.
-- Primary reconnect MUST be fully contained inside the drainer thread and MUST
-  have **no time limit** — no `reconnect_max_duration_millis`-style budget, no
-  deadline, no "give up and latch terminal after N ms". A budget that latches
-  the sender terminal on a long outage is a Critical violation: it drops a
-  producer that store-and-forward promised to keep alive. Flag any bounded
-  reconnect loop, `deadlineNanos` / `while (now < deadline)`, or terminal
-  `SenderError` reachable from the running drainer's reconnect path.
-- The drainer must retry with **exponential backoff** and handle every connect
-  failure class gracefully, without a hard fail — it keeps buffering and keeps
-  retrying until the wire is back. The per-attempt backoff may be capped (a max
-  delay between attempts), but the RETRY LOOP ITSELF must be unbounded. Flag a
-  capped total retry duration or an attempt-count cap on the steady-state
-  drainer.
-- **Sanctioned terminals (orphan-slot drainer only).** The orphan drainer
-  (`BackgroundDrainer`) MAY quarantine its slot (`.failed` sentinel,
-  human-in-the-loop) on conditions that are terminal by design: auth failure,
-  a non-421 upgrade reject, and a genuine cluster-wide durable-ack capability
-  gap that exhausted its documented settle budget (16 consecutive
-  capability-gap sweeps, or a wall-clock budget anchored at the FIRST
-  capability-gap error of the episode — whichever is hit first). These are
-  NOT violations of the no-budget rule above. The settle budget applies ONLY
-  to consecutive capability-gap attempts: transient classes (role reject,
-  transport error) must never increment it or burn its wall clock — a
-  transient state consuming the terminal budget (shared attempt counter,
-  entry-anchored deadline) IS a Critical violation of this checklist.
-- **Mid-stream server NACKs (no drop policy).** The NACK policy must mirror
-  the connect-time tiering. A rejection category that a transient cluster
-  state can produce (`WRITE_ERROR`, `INTERNAL_ERROR`, `UNKNOWN` — and any
-  future status byte) is RETRIABLE: recycle the wire and replay from
-  `ackedFsn+1`. It must NEVER drop the batch and NEVER latch a terminal /
-  quarantine a slot on first sight. Only rejections deterministic under
-  byte-identical replay (`SCHEMA_MISMATCH`, `PARSE_ERROR`, `SECURITY_ERROR`
-  on a writable node) may go TERMINAL. A client that advances the ack
-  watermark past a NACKed frame is silently losing data — Critical. A frame
-  repeatedly rejected with no ack progress must escalate through the
-  poison-frame detector (bounded consecutive strikes at the same head FSN),
-  not through a WS close-code list — close codes carry no policy semantics.
-  `UNKNOWN` must fail OPEN (retry), never closed (terminal): a status byte
-  from a newer server must degrade to retry, not to a dead sender.
+Apply this whenever the diff touches the QWP ingress path (upgrade, role
+checks, a node changing role in place, connections on a role change),
+replication failover, a `java-questdb-client` pointer move that carries
+client changes, or tests that drive a sender through a failover or role
+change. These are the client's store-and-forward guarantees; server changes
+and tests in this repo must not break them. A violation is a **Critical**
+finding: store-and-forward promises that a running sender never loses data
+and never fails hard on a transient outage.
 
-**Pool startup — two modes; the mode decides who sees connectivity errors.**
-- `lazy_connect=true`: `build()` MUST succeed with **no server present**. The
-  producing `Sender` must work immediately (writes buffer via SF), and once the
-  server comes up the read side must also connect and read (reads are deferred,
-  not disabled).
-- `lazy_connect=false` (default): `build()` / the initial connect MUST expose
-  connectivity problems to the caller — DNS errors, connect-refused /
-  unreachable, TLS/cert, authentication/authorization, and connect/upgrade
-  timeouts must all surface as a thrown exception at startup, not be swallowed.
-- **In BOTH modes the boundary is the same:** connectivity errors are only
-  ever the caller's problem DURING initialization. Once the client has
-  connected and is past initialization, the running drainer reverts to the
-  steady-state contract above — it must NEVER expose transport problems, NEVER
-  impose a reconnect time budget, and NEVER hard-fail on a transient outage.
+**Once the sender is running**, a background thread ships its buffered data.
+- That thread surfaces no server or transport error to the caller: not to a
+  write, a `flush()` or a pooled handle. The one exception is running out of
+  store-and-forward space. Flag any other failure that reaches the caller,
+  such as a refused connection, DNS, TLS, authentication, a role rejection,
+  a timeout or a reset.
+- It reconnects with exponential backoff and never gives up: no time budget,
+  no deadline, no attempt limit, and no terminal error after a long outage.
+  The delay between attempts may have a cap; the retry loop may not.
+- The thread that drains data a previous sender left on disk may give up on
+  that data, and set it aside for an operator, only for failures that retry
+  cannot fix: an authentication failure, an upgrade rejection other than the
+  role reject (HTTP 421), or a cluster-wide lack of support for the durable
+  acknowledgements the sender asked for that persists past a bounded number
+  of consecutive attempts or a time limit that starts at the first such
+  failure. Transient failures, such as a role rejection or a transport
+  error, must never count toward that bound or its time limit.
+- When the server rejects a batch mid-stream, the sender decides by whether
+  replaying the same bytes could succeed. A rejection that a transient
+  cluster state can cause, and any rejection code the sender does not know,
+  is retried: the sender reconnects and replays from the first
+  unacknowledged batch. It never drops the batch and never gives up on first
+  sight. Only a rejection that replay cannot change, such as a schema
+  mismatch, a parse error or a security error from a writable node, may be
+  terminal. A sender that acknowledges past a rejected batch silently loses
+  data. A batch rejected again and again with no acknowledgement progress
+  may become terminal only after a bounded number of consecutive rejections
+  of that same batch, never because of a WebSocket close code.
 
-**Server-side & test application (this repo).**
-- The server MUST NOT rely on producer-visible role errors: an in-place
-  demote CLOSES QWP ingress connections (no per-write SECURITY_ERROR to an SF
-  sender). A server change that reintroduces per-write role errors on the QWP
-  ingress path breaks the containment contract above.
-- Flag any test (unit, integration, or e2e) that uses QWP producer-visible
-  role errors as evidence of the REPLICA write gate — under the containment
-  contract the producer is silent by design. Write-gate evidence belongs on
-  pg-wire probes, frozen commit counts on the settled replica, and
-  post-promotion SF drain (durable-ack await barriers + dense oracles).
-- Dense/count oracles over rows produced through an SF sender must account
-  for at-least-once replay: durably ack (await) seed rows before the
-  disturbance, or use a DEDUP table — otherwise the oracle reports replay
-  duplicates as data corruption.
+**Startup.**
+- With `lazy_connect` on, building the client succeeds with no server
+  present: its sender buffers writes at once, and reads connect once the
+  server is up.
+- With `lazy_connect` off (the default), building the client throws on any
+  connection problem: DNS, a refused or unreachable host, TLS,
+  authentication or authorization, and connect or upgrade timeouts.
+- In both modes, connection errors reach the caller only during startup.
+  After that, the running-sender rules above apply.
+
+**Server and tests in this repo.**
+- When a node stops accepting writes because it changes role in place, the
+  server closes its QWP ingress connections. It never answers individual
+  writes with role errors; a change that does breaks the guarantees above.
+- A test that proves a replica refuses writes must not rely on errors from
+  a store-and-forward sender, which stays silent by design. Use PG Wire
+  writes, unchanged commit counts on the replica, and, after promotion, the
+  drain of the buffered data: wait for durable acknowledgement, then check
+  that every expected row arrived.
+- A row-count check over data sent through store-and-forward must allow for
+  duplicate rows from replay: await durable acknowledgement of the seed rows
+  before the disruption, or use a DEDUP table.
 
 ### SQL conventions (if tests or SQL involved)
 - Keywords in UPPERCASE
@@ -863,7 +835,7 @@ QuestDB has migrated SQL test assertions to the fluent `AbstractCairoTest.assert
     - plans: `assertQuery(sql).assertsPlan(plan)` / `.assertsPlanContaining(...)` / `.assertsPlanNotContaining(...)`, or fold the plan into a data assertion via `.withPlan(...)` / `.withPlanContaining(...)` / `.withPlanNotContaining(...)`.
   The test base classes have no `assertSql(...)`, `TestUtils.assertSql(...)`, `assertPlanNoLeakCheck(...)` or `getPlan(...)`, so a new call to one fails to compile and blocks as a compile error (Step 3c). `TestServerMain.assertSql(sql, expected)` is a live-server wrapper around the builder; do not flag it.
 
-- **`.returnsOnce(...)` is a correctness smell — flag every newly added use.** `returnsOnce` runs the query through a SINGLE cursor pass and deliberately SKIPS the second read, the `calculateSize()` pass, the variable-column check, and the factory-property assertions (`supportsRandomAccess`, `expectSize`) that `.returns(...)` performs. Those skipped checks catch real bugs: cursors that don't reset correctly on `toTop()`, `size()` that disagrees between passes, random-access records that return wrong values via `recordAt()`. `returnsOnce` is **only** justified when the query's output is genuinely unstable across two reads with no underlying data change — e.g. an unseeded `rnd_*` in the projection, `now()`/`sysdate()`/`systimestamp()`-style time-varying output, or inherently non-deterministic row order. For a `.returnsOnce(...)` on a deterministic query this is a Critical finding: demand `.returns(...)`. Require the author to state *why* the query is unstable; "it was simpler" is not a reason — the shortcut leaves real bugs untested.
+- **`.returnsOnce(...)` is a correctness smell — flag every newly added use.** `returnsOnce` reads the cursor once and skips the checks `.returns(...)` makes on a second read and on the factory's properties. Those checks catch real bugs: cursors that don't reset correctly, sizes that disagree between passes, random-access records that return wrong values. `returnsOnce` is **only** justified when the query's output is genuinely unstable across two reads with no underlying data change — e.g. an unseeded `rnd_*` in the projection, `now()`/`sysdate()`/`systimestamp()`-style time-varying output, or inherently non-deterministic row order. For a `.returnsOnce(...)` on a deterministic query this is a Critical finding: demand `.returns(...)`. Require the author to state *why* the query is unstable; "it was simpler" is not a reason — the shortcut leaves real bugs untested.
 
 - **Anti-pattern: a lone `assertQuery(...)` wrapped in `assertMemoryLeak(() -> { ... })`.** The builder runs its OWN memory-leak check by default (it wraps internally unless `.noLeakCheck()` is set). When an `assertMemoryLeak(...)` lambda's only meaningful statement is a single `assertQuery(...)` chain, the outer wrapper is redundant and almost always forces a `.noLeakCheck()` on the builder — which disables the builder's leak check and replaces it with a hand-rolled one, defeating the point. Flag it: drop the `assertMemoryLeak` wrapper and the `.noLeakCheck()`, letting the builder leak-check itself. The wrapper is only legitimate when the lambda genuinely holds multiple statements (DDL + inserts + several assertions) that must share one leak-check scope; a single builder call does not.
 
@@ -873,7 +845,7 @@ This check decides on two `rg` searches in this repo — run them instead of rea
 
 - **A new ALTER TABLE operation, or any new statement that mutates table state, needs a `SecurityContext.authorize*()` call on its execution path.** Cite the callsite — the `AlterOperation.apply()` dispatch for ALTER, the op or compiler class for everything else. Absence is a proven finding, not a speculative one: the evidence is the search that finds the new operation and the search that finds no `authorize*` call covering it. Classify it with the standard rubric — a state-mutating operation no security context can refuse is a privilege bypass, which the severity table already lists as Critical.
 - **A new `authorize*()` method must be implemented wherever it is abstract:** `AllowAllSecurityContext` and `ReadOnlySecurityContext` (`DenyAllSecurityContext` extends the latter), plus any test `SecurityContext` implementations the compiler does not already catch. If the PR instead adds the method with a permissive `default` body, every implementation that does not override it — including enterprise ones this checkout cannot see — silently grants the permission. The interface does use `default` deliberately in places, so ask for the rationale; treat a missing one as the finding, not the `default` itself.
-- **Enterprise wiring is out of scope for a review run in this repo.** `Permission.java` registration, `PermissionParser` GRANT/REVOKE parsing, `EntSecurityContextBase` / `AdminSecurityContext` implementations, and replica `deniedOnReplica()` gating all live in a separate repository and cannot be verified from this checkout. Note them once as an enterprise follow-up when the PR adds an `authorize*()` method; do not raise them as findings and do not let them affect the verdict.
+- **Enterprise wiring is out of scope for a review run in this repo.** Registering the permission, parsing it in GRANT and REVOKE, implementing it in the enterprise security contexts and denying it on replicas all happen in the enterprise repository, which this checkout cannot see. When the PR adds an `authorize*()` method, note that follow-up once; do not raise it as a finding or let it affect the verdict.
 
 ### Crash fuzz coverage (if PR adds a write operation, a background job or an on-disk format change)
 
@@ -887,9 +859,9 @@ Apply this when the diff adds any of:
 Check that the PR also adds the new operation or setting to the crash fuzz tests. Decide it with `rg` over the test tree, not from memory, and cite the test it finds. Either counts:
 
 - **The fuzz library:** a `Fuzz*Operation` in `io.questdb.test.fuzz` that `FuzzTransactionGenerator` draws, with a nonzero probability in `RandomizedAdaptiveCrashFuzzTest.configureFuzz()`. This suits what a fuzz transaction can express: DDL, a WAL event, a partition operation, a table setting. `configureFuzz()` sets every probability itself, so an operation the ordinary fuzz tests draw can still sit at 0 there.
-- **A crash test:** a test in `io.questdb.test.cairo.crash` that runs the new code on `CrashFaultFilesFacade`, crashes it at its durability operations and checks what recovery leaves, as `RebaseWalPublishDurabilityCrashTest` does for REBASE WAL; `AbstractAdaptiveCrashSweepTest.forEachAdaptiveCrashPoint` sweeps every crash point of a workload. This suits a background job, an ingestion path or a format change. A setting counts when such a test runs with it enabled.
+- **A crash test:** a test in `io.questdb.test.cairo.crash` that runs the new code on `CrashFaultFilesFacade`, crashes it at each of its durability operations and checks what recovery leaves; the package has helpers that sweep every crash point of a workload. This suits a background job, an ingestion path or a format change. A setting counts when such a test runs with it enabled.
 
-When the PR adds neither, add an `UNTESTED` Step 2.6 row. It is a coverage question, not a durability gap, so grade it a Moderate gap at most. On Linux every adaptive save point flushes the whole filesystem with `syncfs`, so the new code has no flush of its own to forget; what goes unexercised is recovery from a crash partway through it. A probe that shows such a crash recovering to a wrong state is a functional defect, graded as usual. The reasoning holds for adaptive mode only: in SYNC mode each write path flushes its own files, so a SYNC path that skips a flush it needs is a durability defect, a candidate like any other. Even in adaptive mode the WAL commit path flushes its own files: `WalWriter.syncIfRequired0` makes every writer-private WAL file durable before sequencing, so a new WAL-side file it does not flush can lose acknowledged data on a power loss before the next save point, a durability defect as well.
+When the PR adds neither, add an `UNTESTED` Step 2.6 row and grade it a Moderate gap at most. On Linux, adaptive commit mode periodically makes the whole filesystem durable, so the new code has no flush of its own to forget; what goes unexercised is recovery from a crash partway through it. A probe that shows such a crash recovering to a wrong state is a functional defect, graded as usual. A path that makes its own files durable is held to more: any write path in SYNC commit mode, and in adaptive mode the WAL commit path, which makes each file its writer owns durable before the transaction is sequenced. A new file such a path does not flush can lose acknowledged data on a power loss: a durability defect, and a candidate like any other.
 
 ### Test review
 - **Coverage gaps are impact- and proportionality-assessed:** consume the Step 2.6 map. Missing tests alone are not blocking. For every uncovered path, establish user/operator impact, change risk, existing safeguards, and the least fragile meaningful test before choosing Critical, Moderate, accepted, exotic, or exempt. Do not accept unsupported "simple" or "hard to test" claims, and do not demand a brittle/invasive test whose demonstrated cost and fragility outweigh a small residual user risk. Add every discovered path to the private map; publish only admitted gaps.
