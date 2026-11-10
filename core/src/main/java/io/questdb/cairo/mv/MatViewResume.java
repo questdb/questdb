@@ -39,15 +39,22 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.LongList;
 import io.questdb.std.Os;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 /**
- * {@code REFRESH MATERIALIZED VIEW v RESUME}: makes an invalid view valid again and keeps its rows. This version
- * jumps: it sets the view's refresh position to the base table's latest applied transaction, clears the view's cached
- * refresh intervals and recomputes nothing for the gap between the old position and the new one, which the user
- * backfills with {@code REFRESH ... RANGE}. A view that never completed a refresh keeps its "never refreshed" position,
- * so its next refresh does the initial build.
+ * {@code REFRESH MATERIALIZED VIEW v RESUME [SKIP BACKLOG]}: makes an invalid view valid again and keeps its rows.
+ * <p>
+ * By default it catches up: it keeps the view's refresh position and its backlog, the base table changes the view
+ * recorded in its refresh-interval cache while it was invalid (see {@link MatViewBacklog}), and the view's next
+ * incremental refresh recomputes them. When the backlog is lost, it refuses and names the cause, so a gap in the view
+ * is always one the user accepted. With {@code SKIP BACKLOG} it jumps: it sets the view's refresh position to the base
+ * table's latest applied transaction, clears the view's cached refresh intervals and recomputes nothing for the gap
+ * between the old position and the new one, which the user backfills with {@code REFRESH ... RANGE}. A view that never
+ * completed a refresh has no backlog and keeps its "never refreshed" position either way, so its next refresh does the
+ * initial build.
  * <p>
  * The statement is synchronous:
  * <ol>
@@ -62,6 +69,8 @@ import org.jetbrains.annotations.NotNull;
  *     checks the column mapping and casts;</li>
  *     <li>it resolves the base table by name, which must be a WAL table or a materialized view with the view's
  *     designated timestamp type, and reads its latest applied transaction from a reader;</li>
+ *     <li>without SKIP BACKLOG, it brings the view's backlog up to that transaction, which checks every condition
+ *     that loses the backlog, and refuses a lost backlog with its cause;</li>
  *     <li>it persists the new state, which carries the base table id, through the view's WAL under the role-switch
  *     commit fence, and updates the view's in-memory state;</li>
  *     <li>it releases the latch through {@link MatViewRefreshJob#finalizeAndUnlock}, which re-drives an invalidation
@@ -73,6 +82,7 @@ import org.jetbrains.annotations.NotNull;
  * drops those invalidations, since the view stays invalid.
  */
 public final class MatViewResume {
+    public static final String MODE_CATCH_UP = "catch-up";
     public static final String MODE_SKIP_BACKLOG = "skip backlog";
     private static final Log LOG = LogFactory.getLog(MatViewResume.class);
 
@@ -83,6 +93,7 @@ public final class MatViewResume {
      * Resumes the view; see the class description.
      *
      * @param viewNamePosition the position of the view name in the statement, where refusals point
+     * @param isSkipBacklog    true for RESUME SKIP BACKLOG, which jumps over the view's backlog
      * @throws SqlException   a refusal
      * @throws CairoException an authorization error, a read-only refusal, a cancellation or a timeout of the wait
      *                        for the view's WAL
@@ -92,7 +103,8 @@ public final class MatViewResume {
             @NotNull SqlExecutionContext executionContext,
             @NotNull TableToken viewToken,
             int viewNamePosition,
-            @NotNull MatViewSqlValidator validator
+            @NotNull MatViewSqlValidator validator,
+            boolean isSkipBacklog
     ) throws SqlException {
         final MatViewStateStore stateStore = engine.getMatViewStateStore();
         final MatViewState viewState = stateStore.getViewState(viewToken);
@@ -114,7 +126,7 @@ public final class MatViewResume {
                 throw fullRefreshPending(viewToken, viewNamePosition);
             }
             lockView(viewState, circuitBreaker, viewToken, viewNamePosition);
-            if (resumeLocked(engine, executionContext, viewToken, viewState, viewSeqTracker, viewNamePosition, validator)) {
+            if (resumeLocked(engine, executionContext, viewToken, viewState, viewSeqTracker, viewNamePosition, validator, isSkipBacklog)) {
                 return;
             }
             // a view WAL transaction arrived after the wait, which the latch was released for
@@ -144,6 +156,20 @@ public final class MatViewResume {
             circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
             Os.sleep(1);
         }
+    }
+
+    private static SqlException backlogLost(TableToken viewToken, int viewNamePosition, CharSequence cause) {
+        return SqlException.$(viewNamePosition, "materialized view backlog is lost [reason=").put(cause)
+                .put("]; RESUME cannot catch up on base changes made while the view was invalid. Run REFRESH MATERIALIZED VIEW ")
+                .put(viewToken.getTableName())
+                .put(" RESUME SKIP BACKLOG, then REFRESH ... RANGE over the gap");
+    }
+
+    // The cause of a lost backlog that RESUME SKIP BACKLOG reports in its telemetry event without a WAL scan: the
+    // marker, or a condition that the view's state and the base table give away.
+    private static @Nullable String findKnownLostCause(MatViewState viewState, TableToken baseTableToken, long baseTableTxn) {
+        final String cause = viewState.getBacklogLostReason();
+        return cause != null ? cause : MatViewBacklog.findLostCause(viewState, baseTableToken, baseTableTxn);
     }
 
     private static SqlException fullRefreshPending(TableToken viewToken, int viewNamePosition) {
@@ -204,7 +230,8 @@ public final class MatViewResume {
             MatViewState viewState,
             SeqTxnTracker viewSeqTracker,
             int viewNamePosition,
-            MatViewSqlValidator validator
+            MatViewSqlValidator validator,
+            boolean isSkipBacklog
     ) throws SqlException {
         final MatViewStateStore stateStore = engine.getMatViewStateStore();
         boolean isResumed = false;
@@ -258,12 +285,34 @@ public final class MatViewResume {
                     baseTableTxn = baseTableReader.getSeqTxn();
                 }
 
-                // Jump. A view that never completed a refresh keeps its position, so its next refresh does the
-                // initial build. A period view's last refreshed period moves to the current period boundary.
+                // A view that never completed a refresh has no backlog: it keeps its position, so its next refresh
+                // does the initial build, and RESUME neither refuses it nor needs SKIP BACKLOG for it.
                 final boolean isNeverRefreshed = viewState.getLastRefreshBaseTxn() == -1;
-                final long refreshBaseTxn = isNeverRefreshed ? -1 : baseTableTxn;
+                final boolean isCatchUp = !isSkipBacklog;
+                final CharSequence mode;
+                if (isSkipBacklog) {
+                    final String lostCause = isNeverRefreshed ? null : findKnownLostCause(viewState, baseTableToken, baseTableTxn);
+                    mode = lostCause == null ? MODE_SKIP_BACKLOG : MODE_SKIP_BACKLOG + " (lost: " + lostCause + ')';
+                } else {
+                    if (!isNeverRefreshed) {
+                        // Bring the backlog up to the applied transaction. The update checks every condition that
+                        // loses the backlog, so a backlog whose base WAL was purged is found lost here, not at the
+                        // next refresh, which would recompute the base table's whole min..max range instead.
+                        updateBacklog(engine, viewState, walWriter, baseTableToken, baseTableTxn);
+                        final String lostCause = viewState.getBacklogLostReason();
+                        if (lostCause != null) {
+                            throw backlogLost(viewToken, viewNamePosition, lostCause);
+                        }
+                    }
+                    mode = MODE_CATCH_UP;
+                }
+
+                // Catching up keeps the refresh position, a period view's last refreshed period and the cached
+                // refresh intervals. Jumping moves the refresh position to the applied transaction and a period
+                // view's last refreshed period to the current period boundary, and clears the cache.
+                final long refreshBaseTxn = isNeverRefreshed || isCatchUp ? viewState.getLastRefreshBaseTxn() : baseTableTxn;
                 long periodHi = viewState.getLastPeriodHi();
-                if (!isNeverRefreshed && viewDefinition.getPeriodLength() > 0) {
+                if (!isNeverRefreshed && !isCatchUp && viewDefinition.getPeriodLength() > 0) {
                     final long now = viewDefinition.getBaseTableTimestampDriver().getTicks();
                     // lastPeriodHi is exclusive, the complete period hi inclusive
                     periodHi = MatViewRefreshJob.getCompletePeriodHi(viewDefinition, now) + 1;
@@ -276,17 +325,18 @@ public final class MatViewResume {
                         false,
                         null,
                         periodHi,
-                        null,
-                        -1,
-                        baseTableToken.getTableId()
+                        isCatchUp ? viewState.getRefreshIntervals() : null,
+                        isCatchUp ? viewState.getRefreshIntervalsBaseTxn() : -1,
+                        baseTableToken.getTableId(),
+                        null
                 );
-                viewState.resumeSuccess(refreshBaseTxn, periodHi, baseTableToken.getTableId(), MODE_SKIP_BACKLOG);
+                viewState.resumeSuccess(refreshBaseTxn, periodHi, baseTableToken.getTableId(), isCatchUp, mode);
                 isResumed = true;
                 LOG.info().$("resumed materialized view [view=").$(viewToken)
                         .$(", baseTable=").$(baseTableToken)
                         .$(", refreshBaseTxn=").$(refreshBaseTxn)
                         .$(", periodHi=").$ts(viewDefinition.getBaseTableTimestampDriver(), periodHi)
-                        .$(", mode=").$(MODE_SKIP_BACKLOG)
+                        .$(", mode=").$(mode)
                         .I$();
             }
         } finally {
@@ -309,6 +359,42 @@ public final class MatViewResume {
             }
         }
         return true;
+    }
+
+    // Brings the view's backlog up to the base table's applied transaction under the latch, see MatViewBacklog. A
+    // failure loses the backlog, as for the refresh job's cache update, except for a read-only refusal, which fails the
+    // statement. A refusal writes no view state, so a lost backlog keeps its marker in memory: the view's next view
+    // state event persists it, and after a restart the next cache update finds the backlog lost again.
+    private static void updateBacklog(
+            CairoEngine engine,
+            MatViewState viewState,
+            WalWriter walWriter,
+            TableToken baseTableToken,
+            long baseTableTxn
+    ) {
+        try (WalTxnRangeLoader txnRangeLoader = new WalTxnRangeLoader(engine.getConfiguration())) {
+            try {
+                MatViewBacklog.update(
+                        engine,
+                        txnRangeLoader,
+                        new LongList(),
+                        viewState,
+                        walWriter,
+                        baseTableToken,
+                        baseTableTxn,
+                        baseTableTxn,
+                        false
+                );
+            } catch (CairoException e) {
+                if (e.isAuthorizationError()) {
+                    throw e;
+                }
+                LOG.error().$("could not update materialized view backlog for resume [view=").$(viewState.getViewDefinition().getMatViewToken())
+                        .$(", ex=").$((Throwable) e)
+                        .I$();
+                MatViewBacklog.markLost(engine, null, viewState, MatViewBacklog.LOST_UPDATE_FAILED);
+            }
+        }
     }
 
     // Compiles the view's SQL under the caller's security context, reading every bare name as a column, and checks

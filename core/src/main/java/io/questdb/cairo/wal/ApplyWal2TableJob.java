@@ -1015,7 +1015,10 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                         backfillFrontier,
                                         matViewFrozenBoundaryFloor(token),
                                         matViewFrozenBoundaryLimitHoursOrMonths(token),
-                                        baseTableId
+                                        baseTableId,
+                                        // A data commit makes the view valid, which drops the backlog-lost marker
+                                        // along with the cached intervals.
+                                        null
                                 );
                                 final MatViewState state = engine.getMatViewStateStore().getViewState(token);
                                 if (state != null) {
@@ -1127,7 +1130,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             matViewBackfillFrontier(token),
                             matViewFrozenBoundaryFloor(token),
                             matViewFrozenBoundaryLimitHoursOrMonths(token),
-                            info.getBaseTableId()
+                            info.getBaseTableId(),
+                            info.getBacklogLostReason()
                     );
                 } catch (CairoException e) {
                     engine.handleDataSyncFailure(e);
@@ -1390,7 +1394,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             long backfillFrontier,
             long frozenBoundaryFloor,
             int frozenBoundaryLimitHoursOrMonths,
-            int baseTableId
+            int baseTableId,
+            @Nullable CharSequence backlogLostReason
     ) {
         try (BlockFileWriter stateWriter = blockFileWriter) {
             stateWriter.of(tablePath.concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
@@ -1407,6 +1412,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     frozenBoundaryFloor,
                     frozenBoundaryLimitHoursOrMonths,
                     baseTableId,
+                    backlogLostReason,
                     stateWriter
             );
         }
@@ -1607,6 +1613,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         floor,
                         floorLimit,
                         matViewStateReader.getBaseTableId(),
+                        matViewStateReader.getBacklogLostReason(),
                         stateWriter
                 );
             } else {

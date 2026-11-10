@@ -105,7 +105,7 @@ public class MatViewBaseIdentityTest extends AbstractCairoTest {
             final int newBaseTableId = baseTableId();
             Assert.assertNotEquals(oldBaseTableId, newBaseTableId);
 
-            execute("REFRESH MATERIALIZED VIEW price_1h RESUME");
+            execute("REFRESH MATERIALIZED VIEW price_1h RESUME SKIP BACKLOG");
             Assert.assertEquals(newBaseTableId, viewState().getBaseTableId());
             isStateWriteFailArmed.set(true);
             drainWalQueue();
@@ -396,7 +396,7 @@ public class MatViewBaseIdentityTest extends AbstractCairoTest {
             createView("IMMEDIATE");
             drainWalAndMatViewQueues();
 
-            for (String recovery : new String[]{"FULL", "RESUME"}) {
+            for (String recovery : new String[]{"FULL", "RESUME SKIP BACKLOG"}) {
                 execute("DROP TABLE base");
                 createBase();
                 insertBaseRow("b", 2.0, "2024-01-01T01:10:00.000000Z");
@@ -909,7 +909,7 @@ public class MatViewBaseIdentityTest extends AbstractCairoTest {
             drainWalAndMatViewQueues();
             assertViewStatus("invalid", "base table is dropped or renamed");
 
-            execute("REFRESH MATERIALIZED VIEW price_1h RESUME");
+            execute("REFRESH MATERIALIZED VIEW price_1h RESUME SKIP BACKLOG");
             Assert.assertTrue(viewTxnTypes().endsWith(",INVALIDATE,INVALIDATE"));
             assertPersistedBaseTableId(oldBaseTableId);
             restart();

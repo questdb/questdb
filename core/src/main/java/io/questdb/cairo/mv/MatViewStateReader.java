@@ -42,12 +42,14 @@ import org.jetbrains.annotations.Nullable;
  * invalidation reason string.
  */
 public class MatViewStateReader implements Mutable {
+    private final StringSink backlogLostReason = new StringSink();
     private final StringSink invalidationReason = new StringSink();
     private final LongList refreshIntervals = new LongList();
     private long backfillFrontier = Long.MIN_VALUE;
     private int baseTableId = MatViewState.BASE_TABLE_ID_UNKNOWN;
     private long frozenBoundaryFloor = Numbers.LONG_NULL;
     private int frozenBoundaryLimitHoursOrMonths;
+    private boolean hasBacklogLostReason;
     private boolean invalid;
     private long lastPeriodHi = Numbers.LONG_NULL;
     private long lastRefreshBaseTxn = -1;
@@ -67,10 +69,19 @@ public class MatViewStateReader implements Mutable {
         frozenBoundaryFloor = Numbers.LONG_NULL;
         frozenBoundaryLimitHoursOrMonths = 0;
         baseTableId = MatViewState.BASE_TABLE_ID_UNKNOWN;
+        setBacklogLostReason(null);
     }
 
     public long getBackfillFrontier() {
         return backfillFrontier;
+    }
+
+    /**
+     * Returns the cause of a lost backlog that the state carries, or null when the view's backlog is tracked, the
+     * view is valid, or the state predates the marker.
+     */
+    public @Nullable CharSequence getBacklogLostReason() {
+        return hasBacklogLostReason ? backlogLostReason : null;
     }
 
     /**
@@ -151,6 +162,8 @@ public class MatViewStateReader implements Mutable {
         // A data commit carries no base table id: its fixed part is followed by the symbol map diffs. The caller
         // takes the id from a newer view state event or the _mv.s state file.
         baseTableId = MatViewState.BASE_TABLE_ID_UNKNOWN;
+        // A data commit makes the view valid, and a valid view has no backlog.
+        setBacklogLostReason(null);
         return this;
     }
 
@@ -170,6 +183,7 @@ public class MatViewStateReader implements Mutable {
         frozenBoundaryFloor = Numbers.LONG_NULL;
         frozenBoundaryLimitHoursOrMonths = 0;
         baseTableId = info.getBaseTableId();
+        setBacklogLostReason(info.getBacklogLostReason());
         return this;
     }
 
@@ -236,6 +250,7 @@ public class MatViewStateReader implements Mutable {
             }
             if (block.type() == MatViewState.MAT_VIEW_STATE_FORMAT_EXTRA_BASE_TABLE_MSG_TYPE) {
                 baseTableId = readBaseTableId(block);
+                setBacklogLostReason(readBacklogLostReason(block));
             }
         }
         if (!matViewStateBlockFound) {
@@ -281,6 +296,26 @@ public class MatViewStateReader implements Mutable {
      */
     public void setBaseTableId(int baseTableId) {
         this.baseTableId = baseTableId;
+    }
+
+    /**
+     * Sets the cause of a lost backlog, or clears it with null, for the checkpoint that marks the backlog of a view it
+     * copies lost when it cannot load the base table changes the backlog misses.
+     */
+    public void setBacklogLostReason(@Nullable CharSequence backlogLostReason) {
+        this.backlogLostReason.clear();
+        if (backlogLostReason != null) {
+            this.backlogLostReason.put(backlogLostReason);
+            hasBacklogLostReason = true;
+        } else {
+            hasBacklogLostReason = false;
+        }
+    }
+
+    // The marker follows the id in the block, and a block written before the marker existed ends at the id: such a
+    // block, like one that cannot hold the marker's length, carries none. A block's length counts its header.
+    private static @Nullable CharSequence readBacklogLostReason(ReadableBlock block) {
+        return block.length() >= BlockFileUtils.BLOCK_HEADER_SIZE + 2L * Integer.BYTES ? block.getStr(Integer.BYTES) : null;
     }
 
     // A block shorter than the id, which no version writes, counts as carrying none: a failure to read the new

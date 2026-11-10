@@ -440,7 +440,9 @@ public class MatViewTimerJobTest extends AbstractCairoTest {
                     }
                     drainWalAndMatViewQueues(testEngine);
                     timer.run();
-                    Assert.assertEquals(0, timer.getTimerCount());
+                    // An IMMEDIATE view owns the refresh intervals update timer from CREATE on; the held ADD of the
+                    // timer view registers nothing yet.
+                    Assert.assertEquals(isUpdate ? 1 : 0, timer.getTimerCount());
                     final Gates gates = new Gates(false);
                     queue.gates = gates;
                     final AtomicReference<Throwable> error = new AtomicReference<>();

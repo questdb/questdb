@@ -75,9 +75,10 @@ public class MatViewState implements QuietCloseable {
     // EMA-derived threshold takes over.
     public static final long COLD_START_GAP_THRESHOLD_MICROS = 2_000_000L;
     public static final String MAT_VIEW_STATE_FILE_NAME = "_mv.s";
-    // Base table identity: the id of the base table that the refresh position and the cached refresh intervals
-    // belong to. Written after the frozen-zone block; absent in state files that a previous version wrote, so
-    // readers must default it to BASE_TABLE_ID_UNKNOWN.
+    // Base table identity and backlog: the id of the base table that the refresh position and the cached refresh
+    // intervals belong to, followed by the backlog-lost marker, the cause of a lost backlog or null. Written after the
+    // frozen-zone block; absent in state files that a previous version wrote, so readers must default the id to
+    // BASE_TABLE_ID_UNKNOWN and the marker to null.
     public static final int MAT_VIEW_STATE_FORMAT_EXTRA_BASE_TABLE_MSG_TYPE = 5;
     // Frozen-zone runtime state: backfill frontier high-water mark + last published
     // boundary floor. Written after the intervals block; absent in state files
@@ -168,6 +169,10 @@ public class MatViewState implements QuietCloseable {
     // refresh iteration's base-table scan, in nanoseconds. See
     // avgScanRangeTsUnits.
     private volatile long avgScanSampleNanos;
+    // The cause of a lost backlog, or null while the view's backlog is tracked, see MatViewBacklog. An invalid view
+    // keeps recording its base table's changes in its refresh-interval cache until the backlog is lost. Written under
+    // this.latch and by the load, cleared when the view becomes valid; persisted with every view state event.
+    private volatile String backlogLostReason;
     // The id of the base table that the refresh position and the cached refresh intervals belong to, or
     // BASE_TABLE_ID_UNKNOWN. Written under this.latch by incremental refresh (when unknown), FULL and RESUME, and
     // by the load; read under the latch by the base identity check of every refresh except FULL.
@@ -329,6 +334,7 @@ public class MatViewState implements QuietCloseable {
                 frozenBoundaryFloor,
                 frozenBoundaryLimitHoursOrMonths,
                 BASE_TABLE_ID_UNKNOWN,
+                null,
                 writer
         );
     }
@@ -345,6 +351,7 @@ public class MatViewState implements QuietCloseable {
             long frozenBoundaryFloor,
             int frozenBoundaryLimitHoursOrMonths,
             int baseTableId,
+            @Nullable CharSequence backlogLostReason,
             @NotNull BlockFileWriter writer
     ) {
         AppendableBlock block = writer.append();
@@ -363,7 +370,7 @@ public class MatViewState implements QuietCloseable {
         appendFrozenZoneState(backfillFrontier, frozenBoundaryFloor, frozenBoundaryLimitHoursOrMonths, block);
         block.commit(MAT_VIEW_STATE_FORMAT_EXTRA_FROZEN_MSG_TYPE);
         block = writer.append();
-        appendBaseTable(baseTableId, block);
+        appendBaseTable(baseTableId, backlogLostReason, block);
         block.commit(MAT_VIEW_STATE_FORMAT_EXTRA_BASE_TABLE_MSG_TYPE);
         writer.commit();
     }
@@ -383,6 +390,7 @@ public class MatViewState implements QuietCloseable {
                     refreshState.getFrozenBoundaryFloor(),
                     refreshState.getFrozenBoundaryLimitHoursOrMonths(),
                     refreshState.getBaseTableId(),
+                    refreshState.getBacklogLostReason(),
                     writer
             );
         } else {
@@ -403,8 +411,9 @@ public class MatViewState implements QuietCloseable {
     }
 
     // kept public for tests
-    public static void appendBaseTable(int baseTableId, @NotNull AppendableBlock block) {
+    public static void appendBaseTable(int baseTableId, @Nullable CharSequence backlogLostReason, @NotNull AppendableBlock block) {
         block.putInt(baseTableId);
+        block.putStr(backlogLostReason);
     }
 
     // kept public for tests
@@ -807,6 +816,14 @@ public class MatViewState implements QuietCloseable {
     }
 
     /**
+     * Returns the cause of a lost backlog, see {@link MatViewBacklog}, or null while the view's backlog is tracked or
+     * the view is valid.
+     */
+    public @Nullable String getBacklogLostReason() {
+        return backlogLostReason;
+    }
+
+    /**
      * Returns the id of the base table that the refresh position and the cached refresh intervals belong to, or
      * {@link #BASE_TABLE_ID_UNKNOWN} when the view's state carries none.
      */
@@ -950,6 +967,16 @@ public class MatViewState implements QuietCloseable {
         return pendingInvalidationMarker instanceof PendingInvalidation pending && pending.reason != null;
     }
 
+    /**
+     * Returns true when the view keeps a backlog that is not known to be lost: it has completed a refresh, its state
+     * knows the id of its base table, and no lost cause is set. While such a view is invalid, it keeps recording its
+     * base table's changes in its refresh-interval cache, and holds back base WAL purging at its cache position, see
+     * {@link MatViewBacklog}.
+     */
+    public boolean hasTrackedBacklog() {
+        return lastRefreshBaseTxn != -1 && baseTableId != BASE_TABLE_ID_UNKNOWN && backlogLostReason == null;
+    }
+
     public void incrementRefreshIntervalsSeq() {
         refreshIntervalsSeq.incrementAndGet();
     }
@@ -979,6 +1006,7 @@ public class MatViewState implements QuietCloseable {
         this.lastRefreshFrozenBoundaryFloor = reader.getFrozenBoundaryFloor();
         this.lastRefreshFrozenBoundaryLimitHoursOrMonths = reader.getFrozenBoundaryLimitHoursOrMonths();
         this.baseTableId = reader.getBaseTableId();
+        this.backlogLostReason = Chars.toString(reader.getBacklogLostReason());
     }
 
     public boolean isClosed() {
@@ -1058,17 +1086,26 @@ public class MatViewState implements QuietCloseable {
 
     /**
      * Makes the view valid again after REFRESH MATERIALIZED VIEW ... RESUME persisted its new state: the refresh
-     * position, the last refreshed period and the base table id that the state event carried, with the cached
-     * refresh intervals cleared. The caller holds the latch.
+     * position, the last refreshed period and the base table id that the state event carried. Catching up keeps the
+     * cached refresh intervals, the view's backlog, for its next incremental refresh; a jump clears them. Either way
+     * the backlog-lost marker goes. The caller holds the latch.
      */
-    void resumeSuccess(long lastRefreshBaseTxn, long lastPeriodHi, int baseTableId, @NotNull CharSequence mode) {
+    void resumeSuccess(
+            long lastRefreshBaseTxn,
+            long lastPeriodHi,
+            int baseTableId,
+            boolean isCatchUp,
+            @NotNull CharSequence mode
+    ) {
         assert latch.get();
         markAsValid();
         this.lastRefreshBaseTxn = lastRefreshBaseTxn;
         this.lastPeriodHi = lastPeriodHi;
         this.baseTableId = baseTableId;
-        this.refreshIntervalsBaseTxn = -1;
-        refreshIntervals.clear();
+        if (!isCatchUp) {
+            this.refreshIntervalsBaseTxn = -1;
+            refreshIntervals.clear();
+        }
         telemetryFacade.store(MAT_VIEW_RESUME, viewDefinition.getMatViewToken(), lastRefreshBaseTxn, mode, 0);
     }
 
@@ -1189,9 +1226,30 @@ public class MatViewState implements QuietCloseable {
         );
     }
 
+    /**
+     * Records that the view's backlog is lost, with its cause, see {@link MatViewBacklog}. The view stops tracking its
+     * base table's changes, and REFRESH MATERIALIZED VIEW ... RESUME refuses it until SKIP BACKLOG is given. The
+     * caller holds the latch and persists the marker with the next view state event.
+     */
+    void markBacklogLost(@NotNull String cause) {
+        assert latch.get();
+        this.backlogLostReason = cause;
+    }
+
+    /**
+     * Clears the backlog-lost marker, for REFRESH ... FULL, which rebuilds the view from its base table and so has no
+     * backlog to keep. The caller holds the latch.
+     */
+    void clearBacklogLost() {
+        assert latch.get();
+        this.backlogLostReason = null;
+    }
+
     public void markAsValid() {
         this.invalid = false;
         this.invalidationReason = null;
+        // A valid view has no backlog; it starts a tracked one when it goes invalid.
+        this.backlogLostReason = null;
         this.refreshRetryAfterMicros = Numbers.LONG_NULL;
         this.refreshRetryCount = 0;
     }

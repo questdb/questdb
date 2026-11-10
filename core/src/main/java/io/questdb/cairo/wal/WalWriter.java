@@ -177,6 +177,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private long lastReplaceRangeLowTs = 0;
     private long lastTxnMaxTimestamp = -1;
     private byte lastTxnType = WalTxnType.DATA;
+    // The backlog-lost marker that the next view state event carries, see resetMatViewState().
+    private CharSequence matViewBacklogLostReason;
     // The base table id that the next view state event carries, see resetMatViewState().
     private int matViewBaseTableId = MatViewState.BASE_TABLE_ID_UNKNOWN;
     private @Nullable WalPreCommitValidator preCommitValidator;
@@ -648,8 +650,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     // Marks the materialized view as invalid or resets its invalidation status,
     // depending on the input values. baseTableId is the id of the base table that the refresh position
     // and the cached intervals belong to, MatViewState.BASE_TABLE_ID_UNKNOWN when unknown. The event
-    // goes through the overridable form below, which a subclass that intercepts view state events
-    // overrides, so that both forms reach it.
+    // carries no backlog-lost marker.
     public void resetMatViewState(
             long lastRefreshBaseTxn,
             long lastRefreshTimestamp,
@@ -660,7 +661,38 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             long refreshIntervalsBaseTxn,
             int baseTableId
     ) {
+        resetMatViewState(
+                lastRefreshBaseTxn,
+                lastRefreshTimestamp,
+                invalid,
+                invalidationReason,
+                lastPeriodHi,
+                refreshIntervals,
+                refreshIntervalsBaseTxn,
+                baseTableId,
+                null
+        );
+    }
+
+    // Marks the materialized view as invalid or resets its invalidation status,
+    // depending on the input values. baseTableId is the id of the base table that the refresh position
+    // and the cached intervals belong to, MatViewState.BASE_TABLE_ID_UNKNOWN when unknown, and
+    // backlogLostReason the cause of a lost backlog of an invalid view, null while its backlog is
+    // tracked. The event goes through the overridable form below, which a subclass that intercepts
+    // view state events overrides, so that every form reaches it.
+    public void resetMatViewState(
+            long lastRefreshBaseTxn,
+            long lastRefreshTimestamp,
+            boolean invalid,
+            @Nullable CharSequence invalidationReason,
+            long lastPeriodHi,
+            @Nullable LongList refreshIntervals,
+            long refreshIntervalsBaseTxn,
+            int baseTableId,
+            @Nullable CharSequence backlogLostReason
+    ) {
         matViewBaseTableId = baseTableId;
+        matViewBacklogLostReason = backlogLostReason;
         try {
             resetMatViewState(
                     lastRefreshBaseTxn,
@@ -673,11 +705,13 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             );
         } finally {
             matViewBaseTableId = MatViewState.BASE_TABLE_ID_UNKNOWN;
+            matViewBacklogLostReason = null;
         }
     }
 
     // Marks the materialized view as invalid or resets its invalidation status,
-    // depending on the input values. Called directly, the event carries no base table id.
+    // depending on the input values. Called directly, the event carries no base table id and no
+    // backlog-lost marker.
     public void resetMatViewState(
             long lastRefreshBaseTxn,
             long lastRefreshTimestamp,
@@ -696,7 +730,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     lastPeriodHi,
                     refreshIntervals,
                     refreshIntervalsBaseTxn,
-                    matViewBaseTableId
+                    matViewBaseTableId,
+                    matViewBacklogLostReason
             );
             final int syncedMode = syncAdaptiveEventsBeforeSequencing();
             final long seqTxn = getSequencerTxn();

@@ -31,6 +31,7 @@ import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.cairo.mv.DependentViewGraph;
+import io.questdb.cairo.mv.MatViewBacklog;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateReader;
@@ -846,6 +847,23 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
         }
     }
 
+    // Rewrites the checkpointed state of an invalid view with its backlog marked lost, keeping the rest of the state.
+    private void markCheckpointedBacklogLost(
+            CharSequence checkpointRoot,
+            TableToken matViewToken,
+            MatViewStateReader matViewStateReader,
+            BlockFileWriter matViewFileWriter,
+            String cause
+    ) {
+        matViewStateReader.setBacklogLostReason(cause);
+        path.of(checkpointRoot).concat(configuration.getDbDirectory()).concat(matViewToken).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$();
+        matViewFileWriter.of(path.$());
+        MatViewState.append(matViewStateReader, matViewFileWriter);
+        LOG.info().$("marked materialized view backlog lost in the checkpoint [view=").$(matViewToken)
+                .$(", reason=").$(cause)
+                .I$();
+    }
+
     private void releaseScoreboardTxns(boolean schedulePartitionPurge) {
         for (int i = 0, n = scoreboards.size(); i < n; i++) {
             long txn = scoreboardTxns.get(2 * i);
@@ -907,8 +925,11 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             }
             matViewStateReader.of(matViewFileReader, matViewToken);
 
-            // Skip invalid mat views - they will do a full refresh on restore anyway
-            if (matViewStateReader.isInvalid()) {
+            // An invalid view keeps a backlog while it is tracked, see MatViewBacklog: the gap's intervals join it as
+            // they join a valid view's cache. A lost backlog, or a state without a base table id, tracks nothing.
+            final boolean isBacklog = matViewStateReader.isInvalid();
+            if (isBacklog && (matViewStateReader.getBacklogLostReason() != null
+                    || matViewStateReader.getBaseTableId() == MatViewState.BASE_TABLE_ID_UNKNOWN)) {
                 continue;
             }
 
@@ -918,8 +939,25 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                     matViewStateReader.getRefreshIntervalsBaseTxn()
             );
 
-            if (mvLastRefreshTxn >= checkpointBaseSeqTxn || mvLastRefreshTxn < 0) {
-                // Mat view is up to date with checkpoint base table txn, or never refreshed
+            if (mvLastRefreshTxn < 0) {
+                // Mat view never refreshed: it tracks no backlog, and its first refresh after the restore builds it
+                continue;
+            }
+
+            if (isBacklog && !MatViewBacklog.isSameBaseTable(matViewStateReader.getBaseTableId(), engine.getTableTokenIfExists(baseTableName))) {
+                // The backlog belongs to one base table. A table under the base's name with another id replaced it, and
+                // the backlog's transaction numbers are not that table's: the backlog is lost, also when the view's
+                // position is not behind the replacing table's last transaction.
+                LOG.info().$("base table was replaced, materialized view backlog is lost in the checkpoint [view=").$(matViewToken)
+                        .$(", baseTable=").$safe(baseTableName)
+                        .$(", stateBaseTableId=").$(matViewStateReader.getBaseTableId())
+                        .I$();
+                markCheckpointedBacklogLost(checkpointRoot, matViewToken, matViewStateReader, matViewFileWriter, MatViewBacklog.LOST_BASE_TABLE_REPLACED);
+                continue;
+            }
+
+            if (mvLastRefreshTxn >= checkpointBaseSeqTxn) {
+                // Mat view is up to date with checkpoint base table txn
                 continue;
             }
             // Load missing intervals from WAL transactions
@@ -937,7 +975,20 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                     continue;
                 }
                 intervals.clear();
-                walTxnRangeLoader.load(engine, Path.PATH.get(), baseTableToken, intervals, mvLastRefreshTxn, checkpointBaseSeqTxn);
+                try {
+                    walTxnRangeLoader.load(engine, Path.PATH.get(), baseTableToken, intervals, mvLastRefreshTxn, checkpointBaseSeqTxn);
+                } catch (CairoException e) {
+                    if (!isBacklog) {
+                        throw e;
+                    }
+                    // The restored view could not catch up on the gap, so its backlog is lost in the checkpoint.
+                    LOG.error().$("could not load missing refresh intervals for materialized view backlog [view=").$(matViewToken)
+                            .$(", baseTable=").$(baseTableName)
+                            .$(", error=").$safe(e.getFlyweightMessage())
+                            .I$();
+                    markCheckpointedBacklogLost(checkpointRoot, matViewToken, matViewStateReader, matViewFileWriter, MatViewBacklog.LOST_BASE_TABLE_WAL_MISSING);
+                    continue;
+                }
                 // The TRUNCATE cut, as in the refresh: when the gap holds a base TRUNCATE, the loader keeps only
                 // the intervals after it, and the view's cached intervals, which all predate it, go too. Otherwise
                 // the restored view would recompute pre-truncate intervals against a base that no longer holds
@@ -975,6 +1026,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                         matViewStateReader.getFrozenBoundaryFloor(),
                         matViewStateReader.getFrozenBoundaryLimitHoursOrMonths(),
                         baseTableId,
+                        matViewStateReader.getBacklogLostReason(),
                         matViewFileWriter
                 );
 

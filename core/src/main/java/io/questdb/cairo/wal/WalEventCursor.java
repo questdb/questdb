@@ -45,6 +45,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.wal.WalTxnType.*;
 import static io.questdb.cairo.wal.WalUtils.*;
@@ -602,9 +603,11 @@ public class WalEventCursor {
     }
 
     public class MatViewInvalidationInfo {
+        private final StringSink backlogLostReason = new StringSink();
         private final StringSink error = new StringSink();
         private final LongList refreshIntervals = new LongList();
         private int baseTableId;
+        private boolean hasBacklogLostReason;
         private boolean invalid;
         private long lastPeriodHi;
         private long lastRefreshBaseTableTxn;
@@ -618,6 +621,14 @@ public class WalEventCursor {
          */
         public int getBaseTableId() {
             return baseTableId;
+        }
+
+        /**
+         * Returns the cause of a lost backlog that the event carries, or null when the view's backlog is tracked, the
+         * view is valid, or the event predates the marker.
+         */
+        public @Nullable CharSequence getBacklogLostReason() {
+            return hasBacklogLostReason ? backlogLostReason : null;
         }
 
         public CharSequence getInvalidationReason() {
@@ -676,6 +687,17 @@ public class WalEventCursor {
                 baseTableId = readInt();
             } else {
                 baseTableId = MatViewState.BASE_TABLE_ID_UNKNOWN;
+            }
+
+            // The backlog-lost marker follows the id; an event written before the marker existed ends at the id.
+            backlogLostReason.clear();
+            hasBacklogLostReason = false;
+            if (nextOffset - offset >= Integer.BYTES) {
+                final CharSequence reason = readStr();
+                if (reason != null) {
+                    backlogLostReason.put(reason);
+                    hasBacklogLostReason = true;
+                }
             }
         }
     }

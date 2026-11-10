@@ -5009,6 +5009,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final boolean isStatsReset = SqlKeywords.isStatsKeyword(tok);
         // RESUME makes an invalid view valid again, synchronously, see MatViewResume.
         final boolean isResume = isResumeKeyword(tok);
+        boolean isSkipBacklog = false;
         long from = Numbers.LONG_NULL;
         long to = Numbers.LONG_NULL;
         if (isRangeKeyword(tok)) {
@@ -5029,7 +5030,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             if (from > to) {
                 throw SqlException.$(lexer.lastTokenPosition(), "TO timestamp must not be earlier than FROM timestamp");
             }
-        } else if (!fullRefresh && !isStatsReset && !isResume && !isIncrementalKeyword(tok)) {
+        } else if (isResume) {
+            // RESUME [SKIP BACKLOG]: SKIP BACKLOG jumps over the view's backlog instead of catching up on it.
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok != null && isSkipKeyword(tok)) {
+                expectKeyword(lexer, "backlog");
+                isSkipBacklog = true;
+            } else if (tok != null) {
+                lexer.unparseLast();
+            }
+        } else if (!fullRefresh && !isStatsReset && !isIncrementalKeyword(tok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "'full', 'incremental', 'range', 'resume' or 'stats' expected");
         }
 
@@ -5050,7 +5060,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
             final MatViewStateStore matViewStateStore = engine.getMatViewStateStore();
             if (isResume) {
-                MatViewResume.resume(engine, executionContext, matViewToken, matViewNamePosition, matViewSqlValidator);
+                MatViewResume.resume(engine, executionContext, matViewToken, matViewNamePosition, matViewSqlValidator, isSkipBacklog);
                 compiledQuery.ofRefreshMatView();
                 return;
             }

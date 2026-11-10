@@ -34,6 +34,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRegistry;
+import io.questdb.cairo.mv.MatViewBacklog;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -577,7 +578,14 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                     return 0;
                 }
 
-                if (!invalid) {
+                // A valid view holds the floor at its cache position, and so does an invalid view while its backlog
+                // is tracked: the base's WAL from there on holds the base changes the view has not cached yet, which
+                // RESUME catches up on (see MatViewBacklog). A view about to go invalid holds it too, since the
+                // backlog it starts with begins at that position. The next backlog update moves the floor, so the base
+                // keeps its WAL for at most one refresh intervals update period. A lost backlog releases the floor, and
+                // so does a suspended view WAL, which cannot persist the backlog: after RESUME WAL the next backlog
+                // update finds the WAL from the cache position still in place, or purged, which loses the backlog.
+                if (!invalid || (state.hasTrackedBacklog() && !MatViewBacklog.isViewWalSuspended(engine, viewToken))) {
                     final long appliedToViewTxn = Math.max(state.getLastRefreshBaseTxn(), state.getRefreshIntervalsBaseTxn());
                     if (appliedToViewTxn > -1) {
                         // The incremental refresh have run many times for the view.

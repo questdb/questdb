@@ -387,7 +387,8 @@ class WalEventWriter implements Closeable {
             long lastPeriodHi,
             @Nullable LongList refreshIntervals,
             long refreshIntervalsBaseTxn,
-            int baseTableId
+            int baseTableId,
+            @Nullable CharSequence backlogLostReason
     ) {
         startOffset = eventMem.getAppendOffset() - Integer.BYTES;
         eventMem.putLong(txn);
@@ -407,8 +408,9 @@ class WalEventWriter implements Closeable {
             } else {
                 eventMem.putInt(-1);
             }
-            // A trailing field: older readers stop at the record's length, which the size prefix gives.
+            // Trailing fields: older readers stop at the record's length, which the size prefix gives.
             eventMem.putInt(baseTableId);
+            eventMem.putStr(backlogLostReason);
         }
         eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
         eventMem.putInt(-1);

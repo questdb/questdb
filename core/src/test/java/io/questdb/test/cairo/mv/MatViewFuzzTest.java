@@ -644,7 +644,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         if (state.isInvalid()) {
             if (rnd.nextBoolean()) {
                 LOG.info().$("fuzz: resuming view").$();
-                execute("REFRESH MATERIALIZED VIEW mv RESUME");
+                execute("REFRESH MATERIALIZED VIEW mv RESUME SKIP BACKLOG");
                 isGapAccepted = true;
             } else {
                 LOG.info().$("fuzz: rebuilding view with FULL").$();

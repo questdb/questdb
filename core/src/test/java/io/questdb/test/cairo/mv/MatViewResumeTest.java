@@ -65,7 +65,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * symbol's base rows within the hour.
  */
 public class MatViewResumeTest extends AbstractCairoTest {
-    private static final String RESUME_SQL = "REFRESH MATERIALIZED VIEW price_1h RESUME";
+    private static final String RESUME_SQL = "REFRESH MATERIALIZED VIEW price_1h RESUME SKIP BACKLOG";
     private static final int VIEW_NAME_POSITION = "REFRESH MATERIALIZED VIEW ".length();
     private static final String VIEW_ROWS = """
             ts\tsym\tprice
@@ -1258,7 +1258,7 @@ public class MatViewResumeTest extends AbstractCairoTest {
             final TableToken copyToken = engine.verifyTableName("base_copy");
             engine.getMatViewStateStore().enqueueInvalidate(copyToken, "test invalidation");
             drainWalAndMatViewQueues();
-            execute("REFRESH MATERIALIZED VIEW base_copy RESUME");
+            execute("REFRESH MATERIALIZED VIEW base_copy RESUME SKIP BACKLOG");
             Assert.assertFalse(engine.getMatViewStateStore().getViewState(copyToken).isInvalid());
             execute("INSERT INTO base VALUES ('c', 3.0, 3.0, '2024-01-01T02:10:00.000000Z')");
             drainWalAndMatViewQueues();

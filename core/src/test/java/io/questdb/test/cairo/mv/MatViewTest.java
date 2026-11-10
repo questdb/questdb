@@ -13385,10 +13385,11 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testTimersRegistered() throws Exception {
         // Timers live only in MatViewTimerJob's in-memory heap, so timers_registered is the only
-        // surface that shows whether anything schedules a view at all. Zero is expected for an
-        // immediate, non-period view, which base table commits drive on their own; zero for any
-        // other refresh type means nothing schedules the view, while view_status keeps reporting
-        // 'valid' and every other column keeps describing the timer settings the view is not using.
+        // surface that shows whether anything schedules a view at all. An immediate, non-period view,
+        // which base table commits drive on their own, owns only the refresh intervals update timer,
+        // which keeps its backlog while it is invalid; zero for any view means nothing schedules it,
+        // while view_status keeps reporting 'valid' and every other column keeps describing the timer
+        // settings the view is not using.
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "create table base_price (" +
@@ -13424,15 +13425,15 @@ public class MatViewTest extends AbstractCairoTest {
             drainMatViewTimerQueue(timerJob);
             drainQueues();
 
-            // One refresh intervals update timer per non-immediate view, one period timer per
-            // non-manual period view, and one incremental refresh timer per timer view.
+            // One refresh intervals update timer per view, one period timer per non-manual period
+            // view, and one incremental refresh timer per timer view.
             assertQuery(timersSql)
                     .noLeakCheck()
                     .returns("""
                             view_name\trefresh_type\tview_status\ttimers_registered
-                            price_immediate\timmediate\tvalid\t0
+                            price_immediate\timmediate\tvalid\t1
                             price_manual\tmanual\tvalid\t1
-                            price_period\timmediate\tvalid\t1
+                            price_period\timmediate\tvalid\t2
                             price_timer\ttimer\tvalid\t2
                             price_timer_period\ttimer\tvalid\t3
                             """);
@@ -13446,9 +13447,9 @@ public class MatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             view_name\trefresh_type\tview_status\ttimers_registered
-                            price_immediate\timmediate\tvalid\t0
+                            price_immediate\timmediate\tvalid\t1
                             price_manual\tmanual\tvalid\t1
-                            price_period\timmediate\tvalid\t1
+                            price_period\timmediate\tvalid\t2
                             price_timer\ttimer\tvalid\t2
                             """);
         });
@@ -13484,7 +13485,7 @@ public class MatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             view_name\trefresh_type\tview_status\ttimers_registered
-                            price_1h\timmediate\tvalid\t0
+                            price_1h\timmediate\tvalid\t1
                             """);
 
             execute("alter materialized view price_1h set refresh every 1h;");
@@ -13506,13 +13507,14 @@ public class MatViewTest extends AbstractCairoTest {
             drainMatViewTimerQueue(timerJob);
             drainQueues();
 
-            // Back to base table commits driving the view, so the job holds nothing for it again.
+            // Back to base table commits driving the view, so the job holds only the refresh intervals
+            // update timer for it again.
             assertQuery(timersSql)
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             view_name\trefresh_type\tview_status\ttimers_registered
-                            price_1h\timmediate\tvalid\t0
+                            price_1h\timmediate\tvalid\t1
                             """);
         });
     }
@@ -13584,13 +13586,14 @@ public class MatViewTest extends AbstractCairoTest {
                         dequeued.get() < refillBudget
                 );
 
-                // One refresh intervals update timer plus one incremental refresh timer.
+                // One refresh intervals update timer per view, plus one incremental refresh timer for the
+                // timer view.
                 assertQuery("select view_name, refresh_type, view_status, timers_registered " +
                         "from materialized_views() order by view_name")
                         .noLeakCheck()
                         .returns("""
                                 view_name	refresh_type	view_status	timers_registered
-                                price_immediate	immediate	valid	0
+                                price_immediate	immediate	valid	1
                                 price_timer	timer	valid	2
                                 """);
             }

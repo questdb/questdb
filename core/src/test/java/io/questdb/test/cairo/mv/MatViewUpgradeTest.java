@@ -26,6 +26,7 @@ package io.questdb.test.cairo.mv;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.mv.MatViewState;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
@@ -228,6 +229,28 @@ public class MatViewUpgradeTest extends AbstractCairoTest {
                 }
                 drainWalAndMatViewQueues(restarted);
                 assertStatus(restarted, STATUS_LOADED);
+                assertViews(restarted, VALID_MV_AFTER_INSERTS, COUNT_MV_AFTER_INSERTS, GEN_MV_AFTER_INSERTS, NEVER_MV_AFTER_INSERTS);
+
+                // The previous release invalidated the view without persisting a base table id, so its backlog counts
+                // as lost: plain RESUME refuses with the cause, and RESUME SKIP BACKLOG jumps to the base table's
+                // latest applied transaction, keeping the view's rows.
+                try {
+                    restarted.execute("REFRESH MATERIALIZED VIEW invalid_mv RESUME");
+                    Assert.fail("RESUME of a view invalidated by the previous release must refuse");
+                } catch (SqlException e) {
+                    Assert.assertEquals("REFRESH MATERIALIZED VIEW ".length(), e.getPosition());
+                    TestUtils.assertEquals(
+                            "materialized view backlog is lost [reason=no base table id]; RESUME cannot catch up on base changes"
+                                    + " made while the view was invalid. Run REFRESH MATERIALIZED VIEW invalid_mv RESUME SKIP BACKLOG,"
+                                    + " then REFRESH ... RANGE over the gap",
+                            e.getFlyweightMessage()
+                    );
+                }
+                assertStatus(restarted, STATUS_LOADED);
+                restarted.execute("REFRESH MATERIALIZED VIEW invalid_mv RESUME SKIP BACKLOG");
+                drainWalAndMatViewQueues(restarted);
+                assertStatus(restarted, STATUS_LOADED.replace("invalid_mv\tinvalid\tdrop column operation", "invalid_mv\tvalid\t"));
+                assertBaseTableId(restarted, "invalid_mv", restarted.verifyTableName("trades2").getTableId());
                 assertViews(restarted, VALID_MV_AFTER_INSERTS, COUNT_MV_AFTER_INSERTS, GEN_MV_AFTER_INSERTS, NEVER_MV_AFTER_INSERTS);
             }
         });

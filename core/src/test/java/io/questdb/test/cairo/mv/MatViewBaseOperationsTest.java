@@ -43,6 +43,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.Files;
+import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
@@ -486,9 +487,10 @@ public class MatViewBaseOperationsTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAttachRangeSkipsInvalidAndNeverRefreshedViews() throws Exception {
-        // An invalid view takes no range, and a view that never completed a refresh takes none either, since its
-        // first build recomputes the whole base. FULL and the first build then bring the attached rows.
+    public void testAttachRangeJoinsInvalidBacklogAndSkipsNeverRefreshedView() throws Exception {
+        // An invalid view takes the range into its backlog, see MatViewBacklog, but recomputes nothing while it stays
+        // invalid; a view that never completed a refresh takes no range, since its first build recomputes the whole
+        // base. FULL and the first build then bring the attached rows.
         assertMemoryLeak(() -> {
             createBaseWithAttachableDay();
             createView("price_1h", "IMMEDIATE");
@@ -500,7 +502,11 @@ public class MatViewBaseOperationsTest extends AbstractCairoTest {
 
             execute("ALTER TABLE base ATTACH PARTITION LIST '2024-01-01'");
             drainWalAndMatViewQueues();
-            Assert.assertEquals(0, getViewState("price_1h").getRefreshIntervals().size());
+            assertViewStatus("price_1h", "invalid", "test invalidation");
+            final LongList attachedDay = new LongList();
+            attachedDay.add(parseFloorPartialTimestamp("2024-01-01T00:00:00.000000Z"));
+            attachedDay.add(parseFloorPartialTimestamp("2024-01-01T23:59:59.999999Z"));
+            TestUtils.assertEquals(attachedDay, getViewState("price_1h").getRefreshIntervals());
             Assert.assertEquals(0, getViewState("price_deferred").getRefreshIntervals().size());
             Assert.assertEquals(-1, getViewState("price_deferred").getLastRefreshBaseTxn());
             assertViewRows("""

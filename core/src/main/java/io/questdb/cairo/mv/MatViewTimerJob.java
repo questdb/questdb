@@ -52,7 +52,8 @@ import java.util.function.Predicate;
 
 /**
  * A scheduler for mat views with timer refresh.
- * Also, runs special timers for period views and for updating refresh intervals for manual/timer views.
+ * Also, runs special timers for period views and for updating refresh intervals: for valid manual/timer views, and for
+ * invalid views of every refresh type, whose refresh intervals hold their backlog (see {@link MatViewBacklog}).
  */
 public class MatViewTimerJob extends SynchronizedJob {
     private static final int INITIAL_QUEUE_CAPACITY = 16;
@@ -157,16 +158,16 @@ public class MatViewTimerJob extends SynchronizedJob {
         int created = 0;
         try {
             final int refreshType = viewDefinition.getRefreshType();
-            if (refreshType != MatViewDefinition.REFRESH_TYPE_IMMEDIATE) {
-                // The refresh is not immediate, i.e. it's either manual or timer.
-                // Create a special timer that will enqueue refresh intervals update tasks.
-                // We could cache the intervals right in the refresh job when there is a new base table commit,
-                // but that might create many redundant WAL MAT_VIEW_INVALIDATE transactions with mat view state
-                // values. To throttle refresh intervals caching, we have this special timer.
-                // The end goal of this caching is unblocking WalPurgeJob to delete old WAL segments.
-                createUpdateRefreshIntervalsTimer(viewDefinition, nowUs);
-                created++;
-            }
+            // Create a special timer that will enqueue refresh intervals update tasks, for every refresh type.
+            // We could cache the intervals right in the refresh job when there is a new base table commit,
+            // but that might create many redundant WAL MAT_VIEW_INVALIDATE transactions with mat view state
+            // values. To throttle refresh intervals caching, we have this special timer.
+            // The end goal of this caching is unblocking WalPurgeJob to delete old WAL segments: a valid manual or
+            // timer view caches the base table changes it has not refreshed yet, and an invalid view of any refresh
+            // type its backlog. Refreshes keep a valid immediate view's cache current, so its timer fires only while
+            // the view is invalid.
+            createUpdateRefreshIntervalsTimer(viewDefinition, nowUs);
+            created++;
 
             long timerStartUs = viewDefinition.getTimerStartUs();
             TimeZoneRules timerTzRules = viewDefinition.getTimerTzRulesUs();
@@ -184,13 +185,6 @@ public class MatViewTimerJob extends SynchronizedJob {
                 // The view has timer refresh, so add a "normal" timer for it.
                 createTimer(viewDefinition, timerStartUs, timerTzRules, nowUs);
                 created++;
-            }
-
-            if (created == 0) {
-                // An immediate, non-period view refreshes off base table commits alone, so it owns no
-                // timers. Say so: zero timers is the expected reading here, and the same reading on
-                // any other refresh type means the view is scheduled by nothing.
-                LOG.info().$("materialized view requires no timers [view=").$(viewToken).I$();
             }
         } catch (Throwable th) {
             LOG.error()
@@ -316,6 +310,21 @@ public class MatViewTimerJob extends SynchronizedJob {
                         LOG.info().$("unregistered timer for dropped materialized view [view=").$(viewToken)
                                 .$(", type=").$(timer.getType())
                                 .I$();
+                    } else if (timer.getType() == Timer.UPDATE_REFRESH_INTERVALS_TYPE) {
+                        // An invalid view of every refresh type keeps its backlog, and a valid manual or timer view
+                        // caches the base table changes it has not refreshed yet. Refreshes keep a valid immediate
+                        // view's cache current, so its timer fires only while the view is invalid.
+                        if (state.isInvalid()
+                                || (!state.hasPendingInvalidationReason()
+                                && state.getViewDefinition().getRefreshType() != MatViewDefinition.REFRESH_TYPE_IMMEDIATE)) {
+                            // Enqueue refresh intervals update only if the base table had new transactions
+                            // since the last caching.
+                            final long refreshIntervalsSeq = state.getRefreshIntervalsSeq();
+                            if (timer.getKnownSeq() != refreshIntervalsSeq) {
+                                matViewStateStore.enqueueUpdateRefreshIntervals(viewToken);
+                                timer.setKnownSeq(refreshIntervalsSeq);
+                            }
+                        }
                     } else if (!state.hasPendingInvalidationReason() && !state.isInvalid()) {
                         switch (timer.getType()) {
                             case Timer.INCREMENTAL_REFRESH_TYPE:
@@ -340,15 +349,6 @@ public class MatViewTimerJob extends SynchronizedJob {
                                 final long periodHi = viewDefinition.getBaseTableTimestampDriver().fromMicros(timer.getPeriodHiUs()) - 1;
                                 matViewStateStore.enqueueRangeRefresh(viewToken, Numbers.LONG_NULL, periodHi);
                                 reportFiring(timer, viewToken);
-                                break;
-                            case Timer.UPDATE_REFRESH_INTERVALS_TYPE:
-                                // Enqueue refresh intervals update only if the base table had new transactions
-                                // since the last caching.
-                                final long refreshIntervalsSeq = state.getRefreshIntervalsSeq();
-                                if (timer.getKnownSeq() != refreshIntervalsSeq) {
-                                    matViewStateStore.enqueueUpdateRefreshIntervals(viewToken);
-                                    timer.setKnownSeq(refreshIntervalsSeq);
-                                }
                                 break;
                             default:
                                 LOG.error().$("unexpected timer type [view=").$(viewToken)
@@ -472,12 +472,9 @@ public class MatViewTimerJob extends SynchronizedJob {
      * until {@link #reportFiring} resets it.
      */
     private void reportMissedFiring(Timer timer, TableToken viewToken, String reason) {
-        if (timer.getType() == Timer.UPDATE_REFRESH_INTERVALS_TYPE) {
-            // This timer only caches WAL txn intervals, and skipping it costs base table WAL
-            // retention rather than freshness. Its skip is also the common case: no new base table
-            // transactions since the last caching.
-            return;
-        }
+        // The refresh intervals update timer never gets here: it only caches WAL txn intervals, and skipping it
+        // costs base table WAL retention rather than freshness.
+        assert timer.getType() != Timer.UPDATE_REFRESH_INTERVALS_TYPE;
         if (timer.incrementMissedFirings() == MISSED_FIRINGS_REPORT_THRESHOLD) {
             LOG.info().$("materialized view has not refreshed across ").$(MISSED_FIRINGS_REPORT_THRESHOLD)
                     .$(" timer firings [view=").$(viewToken)

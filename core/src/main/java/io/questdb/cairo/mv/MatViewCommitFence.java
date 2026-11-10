@@ -75,7 +75,8 @@ public final class MatViewCommitFence {
     }
 
     /**
-     * Writes a view state event through {@link WalWriter#resetMatViewState} under the fence.
+     * Writes a view state event through {@link WalWriter#resetMatViewState} under the fence. Every view state event
+     * carries the base table id and the backlog-lost marker, see {@link MatViewBacklog}.
      */
     public static void resetMatViewState(
             @NotNull CairoEngine engine,
@@ -87,7 +88,8 @@ public final class MatViewCommitFence {
             long lastPeriodHi,
             @Nullable LongList refreshIntervals,
             long refreshIntervalsBaseTxn,
-            int baseTableId
+            int baseTableId,
+            @Nullable CharSequence backlogLostReason
     ) {
         final Lock lock = acquire(engine);
         try {
@@ -99,7 +101,8 @@ public final class MatViewCommitFence {
                     lastPeriodHi,
                     refreshIntervals,
                     refreshIntervalsBaseTxn,
-                    baseTableId
+                    baseTableId,
+                    backlogLostReason
             );
         } finally {
             lock.unlock();
