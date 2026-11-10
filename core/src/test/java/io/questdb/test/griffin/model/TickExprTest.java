@@ -968,6 +968,35 @@ public class TickExprTest {
     }
 
     @Test
+    public void testCompiledListStaticIntervalsCoveredElementOverMaxIntervals() throws SqlException {
+        // Days 1-28 of a month hold exactly 4 Mondays, so 2003-2024 hold 22 x 12 x 4 = 1,056 Monday
+        // intervals, above the cap (1,024) on their own, as
+        // testCompiledDayFilterBracketExpansionOverMaxIntervals expects. The date-precise filter stays
+        // pending while the element expands, and the expansion counts its intervals only once per 256
+        // leaves, the last time at 1,024 Mondays, so the element ends above the cap, and the checks of
+        // the list count it together with the earlier element. The 22 years from the Monday
+        // 2003-01-06, which the filter keeps, hold every one of the Mondays and $today, the Monday
+        // 2024-01-08, so the final union of the list leaves one interval. parseTickExpr unions the
+        // element with the earlier elements of the list, so it accepts the static equivalent too.
+        final LongList listIntervals = new LongList();
+        for (LocalDate day = LocalDate.of(2003, 1, 1); day.getYear() <= 2024; day = day.plusDays(1)) {
+            if (day.getDayOfMonth() <= 28 && day.getDayOfWeek() == DayOfWeek.MONDAY) {
+                addLocalDays(listIntervals, day, day.plusDays(1), ZoneOffset.UTC);
+            }
+        }
+        Assert.assertEquals(2 * 1_056, listIntervals.size());
+        final LocalDate coverStart = LocalDate.of(2003, 1, 6);
+        addLocalDays(listIntervals, coverStart, coverStart.plusYears(22), ZoneOffset.UTC);
+        addLocalDays(listIntervals, LocalDate.of(2024, 1, 8), LocalDate.of(2024, 1, 9), ZoneOffset.UTC);
+        final LongList twentyTwoYears = unionOf(listIntervals);
+        Assert.assertEquals(2, twentyTwoYears.size());
+        final String list = "[$today,2003-01-06;22y,20[03..24]-[01..12]-[01..28]]#mon";
+        assertCompiledTickExprIntervals(list, 2, 2, twentyTwoYears);
+        assertTickExprIntervals(configuration, twentyTwoYears, list.replace("$today", "2024-01-08"));
+        assertCompiledTickExpr(list);
+    }
+
+    @Test
     public void testCompiledListStaticIntervalsOverMaxIntervals() throws SqlException {
         // The IR of a compiled list keeps its static intervals, and every evaluate() emits them all,
         // so the list keeps at most the cap (1,024) of them, as parseTickExpr keeps a list within the
