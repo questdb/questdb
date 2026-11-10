@@ -384,10 +384,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     .put("unsupported int-width expression vs float operand: ").put(declined.token);
         }
 
-        // A SYMBOL predicate compares the column with the text of a constant, so a constant
-        // arithmetic subtree is folded into one symbol constant rather than run over symbol keys.
+        // A SYMBOL predicate compares symbol keys, so no arithmetic may run on them: a subtree of
+        // literals folds into one symbol constant, and any other subtree declines the JIT.
         if (predicateContext.isActive() && predicateContext.hasSymbolColumn && node.type == ExpressionNode.OPERATION
-                && isLiteralArithmetic(node)) {
+                && (isArithmeticOperation(node) || isUnaryMinus(node))) {
+            if (!isLiteralArithmetic(node)) {
+                throw SqlException.position(node.position)
+                        .put("operator: ").put(node.token).put(" is not supported for SYMBOL type");
+            }
             serializeConstantStub(node);
             return false;
         }
@@ -2397,8 +2401,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     /**
-     * Width-correct long fold, used ONLY to compute the immediate a LONG-width (I8) fold root
-     * emits. It mirrors the Java filter's {@code getLong()} recursion: a narrow (INT-width)
+     * Width-correct long fold. It computes the immediate a LONG-width (I8) fold root emits, and
+     * the value of a literal subtree a SYMBOL predicate compares with. It mirrors the Java filter's {@code getLong()} recursion: a narrow (INT-width)
      * node computes with per-op int wrapping and sign-extends, exactly as
      * {@code AddInt}/{@code MulInt}#getLong() do ({@code Numbers.intToLong(getInt())}); only a
      * genuine LONG-width node folds at 64-bit width.
@@ -2432,9 +2436,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             return operand == Numbers.LONG_NULL ? Numbers.LONG_NULL : -operand;
         }
         // Reject a non-arithmetic token BEFORE folding either child. See tryFoldConstantArith0.
-        // Unreachable while descend() is the only caller - tryFoldConstantArith has already
-        // accepted the subtree by then - but the sentinel propagation below must never be the
-        // first thing a new caller reaches.
+        // Unreachable for both callers - descend() reaches it after tryFoldConstantArith, and
+        // backfillSymbolArithmetic() after isLiteralArithmetic, accepted the subtree - but the
+        // sentinel propagation below must never be the first thing a new caller reaches.
         if (!isArithmeticOperation(node)) {
             throw NumericException.INSTANCE;
         }

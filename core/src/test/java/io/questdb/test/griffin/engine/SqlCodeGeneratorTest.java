@@ -623,12 +623,21 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 }
             }
 
-            bindVariableService.clear();
-            bindVariableService.setStr(0, "1");
-            assertQuery("SELECT s, v FROM ti WHERE s = $1").noLeakCheck().assertsPlanContaining("Index forward scan on: s");
-            bindVariableService.clear();
-            bindVariableService.setInt(0, 1);
-            assertQuery("SELECT s, v FROM ti WHERE s = $1").noLeakCheck().assertsPlanNotContaining("Index forward scan on: s");
+            // a bind without a type, as pgwire sends it, or a text bind keeps the index; other types filter
+            final ObjList<String> keyPredicates = new ObjList<>("s = $1", "s IN ($1, $2)", "s != $1");
+            for (int i = 0, n = keyPredicates.size(); i < n; i++) {
+                final String sql = "SELECT s, v FROM ti WHERE " + keyPredicates.getQuick(i);
+                bindVariableService.clear();
+                assertQuery(sql).noLeakCheck().assertsPlanContaining("Index forward scan on: s");
+                bindVariableService.setStr(0, "1");
+                bindVariableService.setStr(1, "2");
+                assertQuery(sql).noLeakCheck().assertsPlanContaining("Index forward scan on: s");
+            }
+            for (String predicate : new String[]{"s = $1", "s != $1"}) {
+                bindVariableService.clear();
+                bindVariableService.setInt(0, 1);
+                assertQuery("SELECT s, v FROM ti WHERE " + predicate).noLeakCheck().assertsPlanNotContaining("Index forward scan on: s");
+            }
             for (String table : new String[]{"tn", "ti"}) {
                 assertExceptionNoLeakCheck("SELECT s, v FROM " + table + " WHERE s = $0", 30, "invalid bind variable index [value=0]");
                 assertExceptionNoLeakCheck("SELECT s, v FROM " + table + " WHERE s = $99999999999", 30, "invalid bind variable index [value=$99999999999]");

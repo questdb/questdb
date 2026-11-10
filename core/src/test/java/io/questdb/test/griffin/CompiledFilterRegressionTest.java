@@ -7186,15 +7186,36 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                     1
                     7
                     """;
+            final String rowsOf2 = """
+                    id
+                    2
+                    """;
+            final String rowsOf3 = """
+                    id
+                    3
+                    """;
+            final String rowsOfNull = """
+                    id
+                    6
+                    """;
+            final String noRows = """
+                    id
+                    """;
             assertJitScalarAndVectorMatchJava("select id from x where sy = 0 + 1", rowsOf1);
             assertJitScalarAndVectorMatchJava("select id from x where 0 + 1 = sy", rowsOf1);
-            assertJitScalarAndVectorMatchJava("select id from x where sy = 2 * 1", "id\n2\n");
-            assertJitScalarAndVectorMatchJava("select id from x where sy = (1 + 2) * 3 - 6", "id\n3\n");
-            assertJitScalarAndVectorMatchJava("select id from x where sy = 7 / 2", "id\n3\n");
-            assertJitScalarAndVectorMatchJava("select id from x where sy = -(2 - 1)", "id\n4\n");
-            assertJitScalarAndVectorMatchJava("select id from x where sy = 5_000_000_000 + 1", "id\n5\n");
+            assertJitScalarAndVectorMatchJava("select id from x where sy = 2 * 1", rowsOf2);
+            assertJitScalarAndVectorMatchJava("select id from x where sy = (1 + 2) * 3 - 6", rowsOf3);
+            assertJitScalarAndVectorMatchJava("select id from x where sy = 7 / 2", rowsOf3);
+            assertJitScalarAndVectorMatchJava("select id from x where sy = -(2 - 1)", """
+                    id
+                    4
+                    """);
+            assertJitScalarAndVectorMatchJava("select id from x where sy = 5_000_000_000 + 1", """
+                    id
+                    5
+                    """);
             // the INT sum wraps onto the NULL sentinel
-            assertJitScalarAndVectorMatchJava("select id from x where sy = 2_147_483_647 + 1", "id\n6\n");
+            assertJitScalarAndVectorMatchJava("select id from x where sy = 2_147_483_647 + 1", rowsOfNull);
             assertJitScalarAndVectorMatchJava("select id from x where sy != 0 + 1", """
                     id
                     2
@@ -7209,8 +7230,8 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                     3
                     7
                     """);
-            assertJitScalarAndVectorMatchJavaOnEmptyResult("select id from x where sy = 4 * 10", "id\n");
-            assertJitMatchesJava("select id from x where sy = 1 / 0", false, "id\n6\n");
+            assertJitScalarAndVectorMatchJavaOnEmptyResult("select id from x where sy = 4 * 10", noRows);
+            assertJitMatchesJava("select id from x where sy = 1 / 0", false, rowsOfNull);
             // sy inside a function leaves the predicate numeric, and the JIT declines the function
             assertJitMatchesJava("select id from x where 1.5 < length(sy) * id::FLOAT", false, """
                     id
@@ -7227,6 +7248,13 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                     5
                     7
                     """);
+            // arithmetic on a STRING bind or on the column itself would run on symbol keys
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "2");
+            assertJitMatchesJava("select id from x where sy = $1 + 0", false, rowsOf2);
+            assertJitMatchesJava("select id from x where sy = 1 + $1", false, rowsOf3);
+            assertJitMatchesJavaOnEmptyResult("select id from x where sy = (1 + 1) * $1", false);
+            assertJitMatchesJava("select id from x where 1 + 1 = sy + 0", false);
         });
     }
 
