@@ -979,15 +979,15 @@ public class AsyncAsOfJoinAtom implements StatefulAtom, PerWorkerLockOwner, Reop
         masterSlotCount = masterCount + 1;
         slaveSlotCount = slaveCount + 1;
         // master slots, slave slots, then the slave key -> master key map of the prevailing scans
-        // ... and the slot -> slave index key map of the index mode, at most one slot per master key
-        final long slotBytes = 4L * (masterSlotCount + 2L * slaveSlotCount + masterSlotCount);
+        // ... and, in the index mode, the slot -> slave index key map, at most one slot per master key
+        final long slotBytes = 4L * (masterSlotCount + 2L * slaveSlotCount + (indexMode ? masterSlotCount : 0));
         slotArrays.close();
         slotArrays.setMemoryTracker(memoryTracker);
         slotArrays.setCapacity((slotBytes + 7) >>> 3);
         masterSlotsAddress = slotArrays.getAddress();
         slaveSlotsAddress = masterSlotsAddress + 4L * masterSlotCount;
         slaveToMasterAddress = slaveSlotsAddress + 4L * slaveSlotCount;
-        slotIndexKeysAddress = slaveToMasterAddress + 4L * slaveSlotCount;
+        slotIndexKeysAddress = indexMode ? slaveToMasterAddress + 4L * slaveSlotCount : 0;
         Vect.memset(masterSlotsAddress, 4L * (masterSlotCount + slaveSlotCount), -1);
         for (long i = 0; i < slaveSlotCount; i++) {
             Unsafe.putInt(slaveToMasterAddress + 4 * i, StaticSymbolTable.VALUE_NOT_FOUND);
@@ -1007,8 +1007,10 @@ public class AsyncAsOfJoinAtom implements StatefulAtom, PerWorkerLockOwner, Reop
                 Unsafe.putInt(masterSlotsAddress + 4L * (masterKey + 1), slot);
                 Unsafe.putInt(slaveSlotsAddress + 4L * (slaveKey + 1), slot);
                 Unsafe.putInt(slaveToMasterAddress + 4L * (slaveKey + 1), masterKey);
-                // a key's index key is its symbol key + 1, NULL's 0, see TableUtils.toIndexKey()
-                Unsafe.putInt(slotIndexKeysAddress + 4L * slot, slaveKey + 1);
+                if (indexMode) {
+                    // a key's index key is its symbol key + 1, NULL's 0, see TableUtils.toIndexKey()
+                    Unsafe.putInt(slotIndexKeysAddress + 4L * slot, slaveKey + 1);
+                }
                 slot++;
             }
         }
@@ -1019,7 +1021,9 @@ public class AsyncAsOfJoinAtom implements StatefulAtom, PerWorkerLockOwner, Reop
             Unsafe.putInt(masterSlotsAddress, slot);
             Unsafe.putInt(slaveSlotsAddress, slot);
             Unsafe.putInt(slaveToMasterAddress, StaticSymbolTable.VALUE_IS_NULL);
-            Unsafe.putInt(slotIndexKeysAddress + 4L * slot, 0);
+            if (indexMode) {
+                Unsafe.putInt(slotIndexKeysAddress + 4L * slot, 0);
+            }
             slot++;
         }
         joinableCount = slot;
