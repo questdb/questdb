@@ -975,8 +975,16 @@ public class TableReader implements Closeable, SymbolTableSource {
                 }
                 if (staleColumnIndex > -1) {
                     if (i == columnIndex) {
-                        final CairoException e = CairoException.critical(0)
-                                .put("index does not cover parquet partition data, partition compaction rebuilds it [table=")
+                        final CairoException e = CairoException.critical(0).put("index does not cover parquet partition data");
+                        // A cold partition has no local data to rebuild the index from
+                        if (!txFile.isPartitionRemotelyServed(partitionIndex)) {
+                            e.put(", rebuild it with ALTER TABLE ")
+                                    .put(tableToken.getTableName())
+                                    .put(" FORCE REINDEX PARQUET PARTITION LIST '");
+                            formatErrorPartitionDirName(partitionIndex, e.message);
+                            e.put('\'');
+                        }
+                        e.put(" [table=")
                                 .put(tableToken.getTableName())
                                 .put(", partition=");
                         formatErrorPartitionDirName(partitionIndex, e.message);
