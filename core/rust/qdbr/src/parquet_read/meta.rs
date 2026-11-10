@@ -1,6 +1,8 @@
 use crate::allocator::{AcVec, QdbAllocator};
 use crate::parquet::error::{ParquetError, ParquetErrorReason, ParquetResult};
-use crate::parquet::qdb_metadata::{extract_qdb_meta, QdbMeta};
+use crate::parquet::qdb_metadata::{
+    column_top_evidence, extract_qdb_meta, ColumnTopEvidence, QdbMeta,
+};
 use crate::parquet_read::{ColumnMeta, ParquetDecoder};
 use nonmax::NonMaxU32;
 use parquet2::metadata::ColumnDescriptor;
@@ -31,7 +33,22 @@ impl ParquetDecoder {
         // schema_descr.columns(). For all column types QuestDB currently writes
         // (including arrays encoded as LIST groups), each top-level field
         // produces exactly one leaf column, so this matches qdb_meta.schema.len().
-        let qdb_meta = qdb_meta.filter(|m| m.schema.len() == col_len);
+        let mut qdb_meta = qdb_meta.filter(|m| m.schema.len() == col_len);
+        // An O3 merge of QuestDB 9.3.3 or older kept the footer metadata of the file it updated
+        // in place, so a top there can cover rows the merge gave values. A top that the chunk
+        // null counts contradict ends; one they cannot verify holds only over rows that decode
+        // to 0, see verified_leading_nulls().
+        let mut unverified_column_tops = AcVec::with_capacity_in(col_len, allocator.clone())?;
+        if let Some(meta) = qdb_meta.as_mut() {
+            for (index, column) in meta.schema.iter_mut().enumerate() {
+                let evidence =
+                    column_top_evidence(&metadata, index, column.column_type, column.column_top);
+                if evidence == ColumnTopEvidence::Contradicted {
+                    column.column_top = 0;
+                }
+                unverified_column_tops.push(evidence == ColumnTopEvidence::Unverifiable)?;
+            }
+        }
         let mut row_group_sizes: AcVec<u32> =
             AcVec::with_capacity_in(metadata.row_groups.len(), allocator.clone())?;
         let mut row_group_sizes_acc: AcVec<usize> =
@@ -156,6 +173,7 @@ impl ParquetDecoder {
             columns,
             row_group_sizes_acc,
             unused_bytes,
+            unverified_column_tops,
         })
     }
 
