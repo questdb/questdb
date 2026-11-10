@@ -735,7 +735,7 @@ public class TableSnapshotRestore implements QuietCloseable {
             );
         } catch (CairoException e) {
             LOG.error().$("could not rebuild covering index for parquet partition [path=").$(path.trimTo(partitionPathLen))
-                    .$(", column=").$(columnName)
+                    .$(", column=").$safe(columnName)
                     .$(", errno=").$(e.getErrno())
                     .$(", msg=").$safe(e.getFlyweightMessage())
                     .I$();
@@ -1203,7 +1203,7 @@ public class TableSnapshotRestore implements QuietCloseable {
             return;
         }
 
-        LOG.info().$("rebuilding bitmap index [path=").$(path).$(", column=").$(columnName).I$();
+        LOG.info().$("rebuilding bitmap index [path=").$(path).$(", column=").$safe(columnName).I$();
 
         // Fresh per-column indexer: index type is fixed at construction.
         try (SymbolColumnIndexer indexer = new SymbolColumnIndexer(configuration, indexType)) {
@@ -1237,7 +1237,7 @@ public class TableSnapshotRestore implements QuietCloseable {
                 }
             } catch (CairoException e) {
                 LOG.error().$("could not rebuild bitmap index [path=").$(path.trimTo(partitionPathLen))
-                        .$(", column=").$(columnName)
+                        .$(", column=").$safe(columnName)
                         .$(", errno=").$(e.getErrno())
                         .$(", msg=").$safe(e.getFlyweightMessage())
                         .I$();
@@ -1247,7 +1247,7 @@ public class TableSnapshotRestore implements QuietCloseable {
             }
 
             LOG.info().$("rebuilt bitmap index [path=").$(path.trimTo(partitionPathLen))
-                    .$(", column=").$(columnName)
+                    .$(", column=").$safe(columnName)
                     .$(", rowCount=").$(partitionRowCount - columnTop)
                     .I$();
         }
@@ -1538,7 +1538,7 @@ public class TableSnapshotRestore implements QuietCloseable {
                 final int indexKeyBlockCapacity = tableMetadata.getIndexBlockCapacity(i);
                 final long columnNameTxn = columnVersionReader.getSymbolTableNameTxn(writerIndex);
 
-                LOG.info().$("rebuilding symbol files [table=").$(tablePathStr)
+                LOG.info().$("rebuilding symbol files [table=").$safe(tablePathStr)
                         .$(", column=").$safe(columnName)
                         .$(", count=").$(cleanSymbolCount)
                         .I$();
@@ -1835,7 +1835,7 @@ public class TableSnapshotRestore implements QuietCloseable {
             mem.smallFile(ff, keyFileName, MemoryTag.MMAP_INDEX_WRITER);
             IndexFactory.initKeyMemory(indexType, mem, indexBlockCapacity);
         } catch (CairoException e) {
-            LOG.error().$("could not create index key file [path=").$(path).$(", column=").$(columnName).$(", errno=").$(e.getErrno()).I$();
+            LOG.error().$("could not create index key file [path=").$(path).$(", column=").$safe(columnName).$(", errno=").$(e.getErrno()).I$();
             throw e;
         }
 
@@ -1844,7 +1844,7 @@ public class TableSnapshotRestore implements QuietCloseable {
         LPSZ valueFileName = IndexFactory.valueFileName(indexType, path.trimTo(partitionPathLen), columnName, columnNameTxn, 0L);
         if (!ff.touch(valueFileName)) {
             int errno = ff.errno();
-            LOG.error().$("could not create index value file [path=").$(path).$(", column=").$(columnName).$(", errno=").$(errno).I$();
+            LOG.error().$("could not create index value file [path=").$(path).$(", column=").$safe(columnName).$(", errno=").$(errno).I$();
             throw CairoException.critical(errno).put("could not create index value file [path=").put(path).put(']');
         }
     }
@@ -1899,7 +1899,7 @@ public class TableSnapshotRestore implements QuietCloseable {
         }
 
         LOG.info().$("rebuilding bitmap indexes for parquet partition [path=").$(path.trimTo(partitionPathLen))
-                .$(", columns=").$(columnNamesSink)
+                .$(", columns=").$safe(columnNamesSink)
                 .I$();
 
         // Second pass: create index files, open writers, build parquetColumns list.
@@ -1933,7 +1933,7 @@ public class TableSnapshotRestore implements QuietCloseable {
                     indexWriter.of(path.trimTo(partitionPathLen), columnName, columnNameTxn, partitionTimestamp, partitionNameTxn);
                 } catch (CairoException e) {
                     LOG.error().$("could not open index writer [path=").$(path.trimTo(partitionPathLen))
-                            .$(", column=").$(columnName)
+                            .$(", column=").$safe(columnName)
                             .$(", errno=").$(e.getErrno())
                             .I$();
                     Misc.free(indexWriter);

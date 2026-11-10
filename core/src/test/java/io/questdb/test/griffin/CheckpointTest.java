@@ -108,6 +108,7 @@ import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestServerMain;
@@ -2734,6 +2735,70 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckpointRestoreRebuildsIndexesOfMultiByteNames() throws Exception {
+        // The restore logs the table whose symbol maps it rebuilds and each column whose index it rebuilds, from native
+        // and parquet partitions alike. Names with 2-, 3- and 4-byte UTF-8 characters must reach the log as valid UTF-8:
+        // test log paranoia fails the restore on any other record.
+        final String snapshotId = "00000000-0000-0000-0000-000000000000";
+        final String restartedId = "123e4567-e89b-12d3-a456-426614174004";
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
+            setProperty(PropertyKey.CAIRO_CHECKPOINT_RECOVERY_REBUILD_COLUMN_INDEXES, "true");
+            execute("""
+                    CREATE TABLE "cotações_日本" (
+                        "prix_unité" SYMBOL INDEX,
+                        "код" SYMBOL INDEX TYPE POSTING,
+                        "符号😀" SYMBOL INDEX TYPE POSTING INCLUDE (v),
+                        v LONG,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO "cotações_日本" VALUES
+                    ('a', 'x', 'p', 1, '2024-01-01T00:00'),
+                    ('b', 'y', 'q', 2, '2024-01-01T12:00'),
+                    ('a', 'x', 'q', 3, '2024-01-02T00:00'),
+                    ('b', 'y', 'p', 4, '2024-01-02T12:00')
+                    """);
+            // The restore rebuilds the indexes of 2024-01-01 from parquet, and those of 2024-01-02 from native files.
+            execute("ALTER TABLE \"cotações_日本\" CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+
+            execute("CHECKPOINT CREATE");
+            engine.clear();
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, restartedId);
+            engine.checkpointRecover();
+
+            assertQuery("SELECT v FROM \"cotações_日本\" WHERE \"prix_unité\" = 'a'")
+                    .noLeakCheck()
+                    .withPlanContaining("on: prix_unité")
+                    .returns("""
+                            v
+                            1
+                            3
+                            """);
+            assertQuery("SELECT v FROM \"cotações_日本\" WHERE \"код\" = 'y'")
+                    .noLeakCheck()
+                    .withPlanContaining("on: код")
+                    .returns("""
+                            v
+                            2
+                            4
+                            """);
+            assertQuery("SELECT v FROM \"cotações_日本\" WHERE \"符号😀\" = 'p'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("CoveringIndex on: 符号😀")
+                    .returns("""
+                            v
+                            1
+                            4
+                            """);
+            engine.checkpointRelease();
+        });
+    }
+
+    @Test
     public void testCheckpointRestoreRebuildsIndexesOfParquetPartitionWithIndexRowMap() throws Exception {
         // An in-place O3 update moves the row groups it rewrites to fresh index rows, so the footer carries an
         // index row map. The restore must build the indexes in index rows, not in partition rows.
@@ -3665,6 +3730,94 @@ public class CheckpointTest extends AbstractCairoTest {
                     // The diagnostic must name the failing partition, not just the table root.
                     TestUtils.assertContains(e.getFlyweightMessage(), partDir.getName());
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreReportsIndexRebuildFailureOfMultiByteColumn() throws Exception {
+        // The restore logs the column of an index it cannot rebuild, then fails with the rebuild's error. A column name
+        // with multi-byte characters must leave that log record valid UTF-8, or test log paranoia raises an error of
+        // its own in place of the rebuild's.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE x (
+                        "prix_unité" SYMBOL INDEX,
+                        "符号😀" SYMBOL INDEX TYPE POSTING INCLUDE (v),
+                        v LONG,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO x VALUES
+                    ('a', 'p', 1, '2024-01-01T00:00'),
+                    ('b', 'q', 2, '2024-01-01T12:00'),
+                    ('a', 'q', 3, '2024-01-02T00:00'),
+                    ('b', 'p', 4, '2024-01-02T12:00')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            final TableToken tableToken = engine.verifyTableName("x");
+            final File tableDir = new File(configuration.getDbRoot(), tableToken.getDirName());
+            final String parquetDir = findParquetPartitionDir(tableDir, "2024-01-01").getName();
+            final String nativeDir = findNativePartitionDir(tableDir, "2024-01-02", "prix_unité.d").getName();
+            final IndexFileFailingFacade failingFf = new IndexFileFailingFacade();
+            final CairoConfiguration failingConfiguration = new CairoConfigurationWrapper(configuration) {
+                @Override
+                public @NotNull FilesFacade getFilesFacade() {
+                    return failingFf;
+                }
+            };
+            // The partition directory and the file that cannot be created or opened, whether its creation (touch) fails
+            // rather than its open, and the error the restore reports.
+            final Object[][] failures = {
+                    // the key file of a native partition's index
+                    {nativeDir, "prix_unité.k", false, "could not open read-write [file="},
+                    // the value file of a native partition's index
+                    {nativeDir, "prix_unité.v", true, "could not create index value file [path="},
+                    // the writer of a native partition's index
+                    {nativeDir, "prix_unité.v", false, "could not open read-write [file="},
+                    // the writer of a parquet partition's index
+                    {parquetDir, "prix_unité.v", false, "could not open read-write [file="},
+                    // the writer of a parquet partition's covering index
+                    {parquetDir, "符号😀.pv.0", false, "could not open read-write [file="}
+            };
+            for (Object[] failure : failures) {
+                final String file = Files.SEPARATOR + (String) failure[0] + Files.SEPARATOR + failure[1];
+                engine.clear();
+                failingFf.arm(file, (Boolean) failure[2]);
+                try {
+                    rebuildIndexesOnRestore(failingConfiguration, tableToken);
+                    Assert.fail("the restore must fail on " + file);
+                } catch (CairoException e) {
+                    // The rebuild's own error, not one that a log record raised.
+                    TestUtils.assertContains(e.getFlyweightMessage(), "error in parallel task: [");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "] " + failure[3]);
+                    TestUtils.assertContains(e.getFlyweightMessage(), file + ']');
+                } finally {
+                    failingFf.disarm();
+                }
+
+                // Once the file can be created and opened again, the restore rebuilds every index.
+                engine.clear();
+                rebuildIndexesOnRestore(configuration, tableToken);
+                assertQuery("SELECT v FROM x WHERE \"prix_unité\" = 'a'")
+                        .noLeakCheck()
+                        .withPlanContaining("on: prix_unité")
+                        .returns("""
+                                v
+                                1
+                                3
+                                """);
+                assertQuery("SELECT v FROM x WHERE \"符号😀\" = 'p'")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .withPlanContaining("CoveringIndex on: 符号😀")
+                        .returns("""
+                                v
+                                1
+                                4
+                                """);
             }
         });
     }
@@ -5679,6 +5832,16 @@ public class CheckpointTest extends AbstractCairoTest {
         }
     }
 
+    // Runs the restore's rebuild of the table's files, the indexes of every partition included.
+    private static void rebuildIndexesOnRestore(CairoConfiguration restoreConfiguration, TableToken tableToken) {
+        try (
+                Path tablePath = new Path().of(restoreConfiguration.getDbRoot()).concat(tableToken).slash();
+                TableSnapshotRestore restoreAgent = new TableSnapshotRestore(restoreConfiguration)
+        ) {
+            restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), true);
+        }
+    }
+
     private void assertSequencerReadColumnOrder(TableToken tableToken, int... expected) {
         try (Path path = new Path(); SequencerMetadata metadata = new SequencerMetadata(configuration, true)) {
             path.of(configuration.getDbRoot()).concat(tableToken.getDirName()).concat(WalUtils.SEQ_DIR);
@@ -6549,6 +6712,39 @@ public class CheckpointTest extends AbstractCairoTest {
             compiler.compile(sql, ctx);
         } finally {
             ctx.setValidationOnly(false);
+        }
+    }
+
+    // While armed, fails the open of one file, or its creation with touch().
+    private static class IndexFileFailingFacade extends TestFilesFacadeImpl {
+        private volatile Utf8String failingFile;
+        private volatile boolean isTouchFailing;
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            final Utf8String file = failingFile;
+            if (file != null && !isTouchFailing && Utf8s.endsWith(name, file)) {
+                return -1;
+            }
+            return super.openRW(name, opts);
+        }
+
+        @Override
+        public boolean touch(LPSZ path) {
+            final Utf8String file = failingFile;
+            if (file != null && isTouchFailing && Utf8s.endsWith(path, file)) {
+                return false;
+            }
+            return super.touch(path);
+        }
+
+        private void arm(String file, boolean isTouchFailing) {
+            this.isTouchFailing = isTouchFailing;
+            failingFile = new Utf8String(file);
+        }
+
+        private void disarm() {
+            failingFile = null;
         }
     }
 
