@@ -65,6 +65,11 @@ public class HorizonJoinIndexedLookupTest extends AbstractCairoTest {
                     "HORIZON JOIN quotes q ON (sym) LIST (-10s, 0s, 1m) AS h GROUP BY t.sym, offset ORDER BY t.sym, offset",
             // not keyed
             "SELECT count() c, count(bid) n, sum(bid) s FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 5m) AS h",
+            // more lookups than right-hand rows: the walk scans, caching the rows of its own keys alone
+            "SELECT t.sym, count() c, count(bid) n, sum(bid) s FROM (SELECT * FROM trades WHERE sym IN ('R1', 'D1', NULL)) t " +
+                    "HORIZON JOIN quotes q ON (sym) RANGE FROM 0s TO 10m STEP 1s AS h GROUP BY t.sym ORDER BY t.sym",
+            "SELECT t.sym, offset, count() c, count(bid) n, sum(bid) s FROM trades t " +
+                    "HORIZON JOIN quotes q ON (sym) RANGE FROM -5m TO 5m STEP 1s AS h GROUP BY t.sym, offset ORDER BY t.sym, offset",
             // the right-hand side bounded by an interval: its first frame starts above row 0
             "SELECT t.sym, count() c, count(bid) n, sum(bid) s FROM trades t " +
                     "HORIZON JOIN (SELECT * FROM quotes WHERE ts >= '2024-01-02T07:00:00') q ON (sym) LIST (0s, 1h) AS h " +

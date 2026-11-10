@@ -513,6 +513,27 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                 slaveTimeFrameHelper.trackKeyOf(symbolTranslatingRecord);
             }
             symbolTranslatingRecord.resetNonExistentKeyFlag();
+            if (masterRowCount > 0) {
+                // The slave rows the walk spans: from the ASOF position of its first horizon timestamp
+                // to that of its last, as the master rows are in timestamp order.
+                final int tsIndex = atom.getMasterTimestampColumnIndex();
+                long minOffset = Long.MAX_VALUE;
+                long maxOffset = Long.MIN_VALUE;
+                for (int i = 0, n = (int) atom.getOffsetCount(); i < n; i++) {
+                    minOffset = Math.min(minOffset, atom.getOffset(i));
+                    maxOffset = Math.max(maxOffset, atom.getOffset(i));
+                }
+                final long scale = atom.getMasterTimestampScale();
+                masterRecord.setFilteredRowIndex(masterRows != null ? masterRows.get(0) : 0, 0);
+                final long tsLo = masterRecord.getTimestamp(tsIndex);
+                masterRecord.setFilteredRowIndex(masterRows != null ? masterRows.get(masterRowCount - 1) : masterRowCount - 1, masterRowCount - 1);
+                final long tsHi = masterRecord.getTimestamp(tsIndex);
+                final long rowIdLo = slaveTimeFrameHelper.findAsOfRow(scaleTimestamp(HorizonTimestampIterator.addTimestampAndOffset(tsLo, minOffset), scale), circuitBreaker);
+                final long rowIdHi = slaveTimeFrameHelper.findAsOfRow(scaleTimestamp(HorizonTimestampIterator.addTimestampAndOffset(tsHi, maxOffset), scale), circuitBreaker);
+                slaveTimeFrameHelper.decideIndexOnlyWalk(masterRowCount * atom.getOffsetCount(), slaveTimeFrameHelper.countSlaveRows(rowIdLo, rowIdHi));
+                // the estimate moved the helper's bookmarks
+                slaveTimeFrameHelper.toTop();
+            }
         }
 
         final long masterTsScale = atom.getMasterTimestampScale();

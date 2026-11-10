@@ -608,12 +608,15 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
                 slaveTimeFrameHelper.beginKeyTracking();
                 final Record masterRecord = masterCursor.getRecord();
                 masterCursor.toTop();
+                long masterRowCount = 0;
                 while (masterCursor.hasNext()) {
                     circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
                     symbolTranslatingRecord.of(masterRecord);
                     slaveTimeFrameHelper.trackKeyOf(symbolTranslatingRecord);
+                    masterRowCount++;
                 }
                 symbolTranslatingRecord.resetNonExistentKeyFlag();
+                slaveTimeFrameHelper.decideIndexOnlyWalk(masterRowCount * offsets.length, slaveTimeFrameHelper.countSlaveRows());
                 // the iterator discovered a master row already: start it over
                 masterCursor.toTop();
                 horizonIterator.of(masterCursor, recordBMaster, masterTimestampColumnIndex);
