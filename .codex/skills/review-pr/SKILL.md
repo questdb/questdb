@@ -71,9 +71,9 @@ The level controls how much of the review below actually runs. Lower levels keep
 | Level | What runs |
 |-------|-----------|
 | **0 (default)** | Steps 1, 2, 2.4, 2.5f, 2.6, 3c, 4. Skip the rest of Step 2.5 and the discovery and falsification agents; re-test the earlier findings of 2.5f inline. Review the diff inline against the Review checklists, **algorithmic optimality** included. Build the Step 2.6 coverage map inline. Every candidate still passes the Step 3b admission gate inline from a blank evidence form; do not draft severity, a fix, or report prose first. Step 3c still launches its risk assessors. |
-| **1** | Adds Step 2.5a and Step 2.5e when test code is present. Run Agent 1 plus at most **two** applicable roles chosen from Agents 3, 5, 6, 12, and 13. Run an independent falsification task for each surviving atomic candidate. |
-| **2** | Full Step 2.5, with 2.5b restricted to `public`/`protected` symbols. Run Agent 1 plus at most **four** change-relevant roles from Agents 2-6, 8 and 11-13. Run an independent falsification task for each surviving atomic candidate. |
-| **3** | Full Step 2.5 and the complete admission protocol. Select at most **six** applicable discovery roles: Agent 1 always; Agents 2-6 and 8 only when their domain is touched; the others by the selection rule in their entries. Depth comes from producer/reachability evidence and independent falsification, not agent count. |
+| **1** | Adds Step 2.5a and Step 2.5e when test code is present. Run Agent 1 plus at most **two** applicable roles chosen from Agents 3, 5, 6, 11, and 12. Run an independent falsification task for each surviving atomic candidate. |
+| **2** | Full Step 2.5, with 2.5b restricted to `public`/`protected` symbols. Run Agent 1 plus at most **four** change-relevant roles from Agents 2-7 and 10-12. Run an independent falsification task for each surviving atomic candidate. |
+| **3** | Full Step 2.5 and the complete admission protocol. Select at most **six** applicable discovery roles: Agent 1 always; Agents 2-7 only when their domain is touched; the others by the selection rule in their entries. Depth comes from producer/reachability evidence and independent falsification, not agent count. |
 
 State the reviewed revision, the chosen level, the model running the review and the version of this skill, given under its title, in one line at the start of the review so the user knows what they're getting (e.g., "Reviewing PR #1234 at 1a2b3c4d5e6f, level 2, with <model>, effort <effort>, review-pr <version>"). Name the revision by the first 12 characters of its commit hash: the PR's `headRefOid` from Step 1, or the range head; for a range that ends at the working tree, the hash of `HEAD` followed by `+ uncommitted changes`. `approve-pr` approves only the revision this line names. Take the model from this session's rollout file, never from memory: models misstate their own name and version.
 
@@ -280,11 +280,11 @@ The list groups the callsites from 2.5b by execution context: hot data paths, SQ
 
 ### 2.5e Test surface & helper inventory
 
-Run this only when the PR adds or changes test code. It is the test-code counterpart to 2.5b and feeds Agents 12-14. Use real `rg` / `rg --files` searches — do not reason about helpers from memory.
+Run this only when the PR adds or changes test code. It is the test-code counterpart to 2.5b and feeds Agents 11-13. Use real `rg` / `rg --files` searches — do not reason about helpers from memory.
 
-- **Existing-infrastructure inventory:** search the changed test files' package and module for base test classes, shared `@Before`/`@After`, helper methods, fixtures, and assertion utilities the new tests could reuse (`rg` for `extends Abstract.*Test`, `class .*TestUtils`, `assertMemoryLeak`, `assertQuery`, shared `protected` helpers in the base class). This list is the baseline Agent 13 uses to flag reinvented boilerplate — a "you stamped boilerplate instead of reusing helper X" finding requires X to appear in this inventory.
+- **Existing-infrastructure inventory:** search the changed test files' package and module for base test classes, shared `@Before`/`@After`, helper methods, fixtures, and assertion utilities the new tests could reuse (`rg` for `extends Abstract.*Test`, `class .*TestUtils`, `assertMemoryLeak`, `assertQuery`, shared `protected` helpers in the base class). This list is the baseline Agent 12 uses to flag reinvented boilerplate — a "you stamped boilerplate instead of reusing helper X" finding requires X to appear in this inventory.
 - **Changed shared helpers as symbols:** if the PR changes a shared test base class, helper, or fixture, run the 2.5b callsite inventory for it too — a changed test base class can silently break every subclassing test.
-- **Exercised-symbol map:** for each new or changed test, list which production symbols from 2.5a it actually exercises, so Agents 12 and 14 can check efficacy and regression value.
+- **Exercised-symbol map:** for each new or changed test, list which production symbols from 2.5a it actually exercises, so Agents 11 and 13 can check efficacy and regression value.
 
 ### 2.5f Earlier findings
 
@@ -357,13 +357,13 @@ Rows with no effective test are marked **UNTESTED**, then classified by evidence
 - **Exotic:** an exotic path (above) with no failing probe. Not a gap.
 - **Exempt:** verified no-behavioral-change rows (pure rename, dead-code removal, comment/doc/CI-only).
 
-A bug-fix label or zero test changes triggers this analysis; neither predetermines severity or verdict. Urgency cannot waive an actual defect or an admitted Critical gap. The coverage map is required internal evidence for Agent 5, Agents 12-14, and the Step 4 test gate. Grade here every `UNTESTED` row, whichever step or agent adds it, and publish only admitted gaps; keep COVERED, ACCEPTED, EXOTIC, EXEMPT, and omitted rows private unless the user asks. At level 0, rows may be per-symbol to bound cost, but new error/exception and NULL/boundary paths still get separate rows.
+A bug-fix label or zero test changes triggers this analysis; neither predetermines severity or verdict. Urgency cannot waive an actual defect or an admitted Critical gap. The coverage map is required internal evidence for Agent 5, Agents 11-13, and the Step 4 test gate. Grade here every `UNTESTED` row, whichever step or agent adds it, and publish only admitted gaps; keep COVERED, ACCEPTED, EXOTIC, EXEMPT, and omitted rows private unless the user asks. At level 0, rows may be per-symbol to bound cost, but new error/exception and NULL/boundary paths still get separate rows.
 
 ## Step 3: Change-specific candidate discovery
 
 Run this step with fresh-context Codex subagents in the `reviewer` role. Select only roles whose domain is materially touched, obey the level's discovery cap, and launch those roles as fresh-context, read-only `reviewer` tasks. Agent count is never evidence and unused roles are skipped.
 
-Every selected agent receives the candidate-discovery directive below and its role entry. All except Agents 10 and 11, which get only what their entries list, also receive:
+Every selected agent receives the candidate-discovery directive below and its role entry. All except Agents 9 and 10, which get only what their entries list, also receive:
 1. The PR or local-range diff
 2. The Step 2.4 provenance verdicts
 3. The full change surface map from Step 2.5 (semantic deltas, callsite inventory, implicit contracts, cross-context exposure list, earlier findings, settled items, and the 2.5e test surface inventory when there is one)
@@ -409,17 +409,17 @@ candidate also states:
 
 **Agent 4 — Resource management:** Apply the "Resource management" checklist, and the "Per-query memory tracker integration" checklist when the diff adds or changes a native allocation site. Walk every callsite from 2.5b that constructs, owns, or transfers ownership of changed types and verify cleanup on all paths.
 
-**Agent 5 — Test review & coverage:** Apply the "Test review", "SQL test assertions" and "Crash fuzz coverage" checklists to the added and changed tests and to the change's main path. Consume the Step 2.6 coverage map: re-verify every claimed test and failure link (read the assertion, don't trust the map), and hunt for behavioral changes the map missed. Then run a **mutation spot-check**: pick the 3-5 most dangerous changed lines on the main path that ran (boundary comparisons, error handling, null checks, off-by-one candidates; lines that never ran are gaps already) and ask, per line, "which test fails if this line is wrong — inverted condition, off-by-one, dropped null check?" When no assertion would catch a mutation, add an `UNTESTED` map row even if a test nominally executes the line. Agents 12-14 handle test *efficacy* and test-*code* quality; here, focus only on whether coverage exists for each new or changed behavior on the main path.
+**Agent 5 — Test review & coverage:** Apply the "Test review", "SQL test assertions" and "Crash fuzz coverage" checklists to the added and changed tests and to the change's main path. Consume the Step 2.6 coverage map: re-verify every claimed test and failure link (read the assertion, don't trust the map), and hunt for behavioral changes the map missed. Then run a **mutation spot-check**: pick the 3-5 most dangerous changed lines on the main path that ran (boundary comparisons, error handling, null checks, off-by-one candidates; lines that never ran are gaps already) and ask, per line, "which test fails if this line is wrong — inverted condition, off-by-one, dropped null check?" When no assertion would catch a mutation, add an `UNTESTED` map row even if a test nominally executes the line. Agents 11-13 handle test *efficacy* and test-*code* quality; here, focus only on whether coverage exists for each new or changed behavior on the main path.
 
 **Agent 6 — Code quality & standards:** Apply the "Code quality", "QuestDB coding standards", "Logging" and "Unresolved TODOs and FIXMEs" checklists.
 
-**Agent 8 — Rust safety (only if PR contains .rs files):** Check for any code that can panic at runtime — `unwrap()`,
+**Agent 7 — Rust safety (only if PR contains .rs files):** Check for any code that can panic at runtime — `unwrap()`,
 `expect()`, array indexing without bounds checks, `panic!()`, `unreachable!()`, `todo!()`, integer overflow in release
 mode, `slice::from_raw_parts` with invalid inputs. In mission-critical software a panic in Rust code called via JNI/FFI
 will abort the entire JVM process with no recovery. Every fallible operation must use `Result`/`Option` with proper
 error propagation. Flag every potential panic site.
 
-**Agent 9 — Cross-context caller impact:** Walk the callsite inventory from 2.5b. For every callsite, fetch the surrounding code (the calling function plus its callers up two levels) and answer:
+**Agent 8 — Cross-context caller impact:** Walk the callsite inventory from 2.5b. For every callsite, fetch the surrounding code (the calling function plus its callers up two levels) and answer:
 
 - Does this caller pass inputs the new behavior handles incorrectly?
 - Does this caller depend on a contract from the implicit contract list (2.5c) that the change broke?
@@ -433,7 +433,7 @@ This agent's output is structured per callsite, not per failure mode. Each calls
 
 Select this role whenever changed symbols have meaningful out-of-diff callers; small diffs to widely used symbols usually justify it.
 
-**Agent 10 — Fresh-context adversarial:** Dispatched separately from agents 1-9 to escape checklist anchoring. This agent operates under different rules from the rest:
+**Agent 9 — Fresh-context adversarial:** Dispatched separately from agents 1-8 to escape checklist anchoring. This agent operates under different rules from the rest:
 
 - It receives ONLY the PR diff and the names of the changed files. It does NOT receive the change surface map from Step 2.5, the implicit contract list, the cross-context exposure list, or any of the review checklists below.
 - Its sole instruction: “generate a small set of falsifiable ways this code could be wrong, and try to disprove each before returning it.” No category list, failure-mode taxonomy, or QuestDB-specific style guide.
@@ -444,7 +444,7 @@ The point is to escape the structured frame, not to create privileged findings. 
 
 Select this role only when a distinct adversarial pass is warranted.
 
-**Agent 11 — Adversarial performance:** Dispatched separately from Agent 3 to escape checklist anchoring. This agent
+**Agent 10 — Adversarial performance:** Dispatched separately from Agent 3 to escape checklist anchoring. This agent
 operates under different rules:
 
 - It receives the PR diff plus the full source files that the diff touches (not just the changed lines). It does NOT
@@ -470,13 +470,13 @@ operates under different rules:
 
 Select this role only when the diff changes loops, algorithms, data structures, allocation behavior, or a plausible hot path.
 
-**Test-code agents (Agents 12-14) — eligible only when the diff adds or changes test code or claims a bug fix.** A production change with no test code is still handled by the Step 2.6 gate. Tests are not second-class code — apply the same adversarial rigor here as to production.
+**Test-code agents (Agents 11-13) — eligible only when the diff adds or changes test code or claims a bug fix.** A production change with no test code is still handled by the Step 2.6 gate. Tests are not second-class code — apply the same adversarial rigor here as to production.
 
-**Agent 12 — Test efficacy & correctness (adversarial):** Apply the "Test efficacy" checklist: prove each test actually exercises the production change and could fail if that change regressed. Each candidate states the exact assertion and why it cannot fail or what it fails to cover.
+**Agent 11 — Test efficacy & correctness (adversarial):** Apply the "Test efficacy" checklist: prove each test actually exercises the production change and could fail if that change regressed. Each candidate states the exact assertion and why it cannot fail or what it fails to cover.
 
-**Agent 13 — Test-code quality & maintainability:** Apply the "Test code quality" and "SQL conventions" checklists, reviewing the test as code, with the 2.5e inventory as the list of helpers to reuse.
+**Agent 12 — Test-code quality & maintainability:** Apply the "Test code quality" and "SQL conventions" checklists, reviewing the test as code, with the 2.5e inventory as the list of helpers to reuse.
 
-**Agent 14 — Regression-test efficacy verification:** For any PR that claims to fix a bug, verify the regression test would actually fail without the production change. Reason about reverting the production hunk and confirm the new or changed test's assertions would then fail. If the test still passes with the fix reverted, it is not a regression test — flag it. State, per test, which production line the test depends on and what its assertion would do if that line were reverted. Run only when the PR is a fix; skip for pure features or refactors.
+**Agent 13 — Regression-test efficacy verification:** For any PR that claims to fix a bug, verify the regression test would actually fail without the production change. Reason about reverting the production hunk and confirm the new or changed test's assertions would then fail. If the test still passes with the fix reverted, it is not a regression test — flag it. State, per test, which production line the test depends on and what its assertion would do if that line were reverted. Run only when the PR is a fix; skip for pure features or refactors.
 
 Combine agent outputs into a private **candidate ledger**. Split compound narratives into atomic propositions, deduplicate by proposition plus evidence, and record dependencies. Do not draft report prose, severity, or a suggested fix. A candidate is not a finding.
 
@@ -534,10 +534,10 @@ After a candidate satisfies this admission schema, apply the domain-specific che
    what the cost multiplies by, or the fixed bound that caps it (Agent 3, "Magnitude"). A performance claim with neither
    is not verified. Do not drop a technically correct finding because today's tables are small — data grows; the Step 4
    magnitude rule decides whether it blocks.
-9. **For cross-context findings (Agent 9)**: re-read the callsite in full, including its callers up two levels, and confirm the broken behavior is reachable from production code paths. Cross-context findings are high-value but also the easiest to overstate — verify carefully.
-10. **For test-efficacy candidates (Agents 12, 14)**: re-read the cited assertion in full context and confirm it can fail for the claimed regression. For “would pass without the fix” claims, use a scratch `git worktree` made as in Step 2.6 (never the primary working tree): run the new test at the reviewed revision, then revert the production hunks (`git checkout <base> -- <files>`) and run it again. Admission requires green-on-head and red-without-fix artifacts. If the environment cannot build or run the test, omit the candidate and record the validation limitation privately; do not fall back to confident reasoning. The same rule applies to every dynamic Critical candidate: execute the claimed trigger and attach the observed output, or omit it.
+9. **For cross-context findings (Agent 8)**: re-read the callsite in full, including its callers up two levels, and confirm the broken behavior is reachable from production code paths. Cross-context findings are high-value but also the easiest to overstate — verify carefully.
+10. **For test-efficacy candidates (Agents 11, 13)**: re-read the cited assertion in full context and confirm it can fail for the claimed regression. For “would pass without the fix” claims, use a scratch `git worktree` made as in Step 2.6 (never the primary working tree): run the new test at the reviewed revision, then revert the production hunks (`git checkout <base> -- <files>`) and run it again. Admission requires green-on-head and red-without-fix artifacts. If the environment cannot build or run the test, omit the candidate and record the validation limitation privately; do not fall back to confident reasoning. The same rule applies to every dynamic Critical candidate: execute the claimed trigger and attach the observed output, or omit it.
 11. **For coverage-gap candidates (UNTESTED rows from 2.6)**: omit a candidate on an exotic path (Step 2.6). For the rest, verify the recorded test search and failure-link analysis, then try to falsify the risk with existing indirect assertions, guards, type/compile guarantees, constrained inputs, downstream validation, or operational controls. Evaluate the least fragile meaningful test and concrete alternatives. Reject bare "simple", "urgent", "hard to test", or "covered indirectly" claims; test-feasibility evidence counts only when it names where the proposed test would observe the behavior, why it is invasive/unstable, and why cheaper stable alternatives do not work. A Critical gap may be counterfactual about whether the code is currently wrong, but never about reachability or impact.
-12. **For test-code-quality findings (Agent 13)**: confirm a flagged reflective access really has a non-reflective alternative (some QuestDB internals genuinely require reflection in tests) before reporting it. Confirm a "reinvented helper" finding by actually locating the helper with `rg` and checking its signature fits the test's need.
+12. **For test-code-quality findings (Agent 12)**: confirm a flagged reflective access really has a non-reflective alternative (some QuestDB internals genuinely require reflection in tests) before reporting it. Confirm a "reinvented helper" finding by actually locating the helper with `rg` and checking its signature fits the test's need.
 13. **For "swallowed exception → silent wrong results / leak / corrupt state" claims**: a `catch` block is defensive coding, not evidence that anything throws. Before reporting, name **all three** of:
     (a) the **concrete exception type** and the **exact statement** that raises it — quote the throwing line, don't infer it from the presence of a `try`;
     (b) proof that this type is actually **caught by the specific catch clause cited** — `catch (SqlException | CairoException)` does NOT catch `OutOfMemoryError`, `IllegalArgumentException`, `NullPointerException`, or any other unlisted `Error`/`RuntimeException`. An `Error` that escapes the catch means the query **fails loudly**, which inverts the finding;
