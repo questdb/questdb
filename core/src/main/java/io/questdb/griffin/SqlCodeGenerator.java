@@ -11835,50 +11835,53 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                 }
 
-                // Add the aggregate functions.
-                for (int i = 0, n = tempVecConstructors.size(); i < n; i++) {
-                    VectorAggregateFunctionConstructor constructor = tempVecConstructors.getQuick(i);
-                    int indexInBase = tempVecConstructorArgIndexes.getQuick(i);
-                    int indexInThis = tempAggIndex.getQuick(i);
-                    VectorAggregateFunction vaf = constructor.create(
-                            tempKeyKinds.size() == 0 ? 0 : tempKeyKinds.getQuick(0),
-                            indexInBase,
-                            baseMetadata.getTimestampIndex(),
-                            executionContext.getSharedQueryWorkerCount()
-                    );
-                    tempVaf.add(vaf);
-                    meta.add(
-                            indexInThis,
-                            new TableColumnMetadata(
-                                    SqlUtil.toColumnName(columns.getQuick(indexInThis).getName()),
-                                    vaf.getType(),
-                                    null
-                            )
-                    );
+                final boolean isKeyed = tempKeyIndexesInBase.size() == 1;
+                try {
+                    // Add the aggregate functions.
+                    for (int i = 0, n = tempVecConstructors.size(); i < n; i++) {
+                        VectorAggregateFunctionConstructor constructor = tempVecConstructors.getQuick(i);
+                        int indexInBase = tempVecConstructorArgIndexes.getQuick(i);
+                        int indexInThis = tempAggIndex.getQuick(i);
+                        VectorAggregateFunction vaf = constructor.create(
+                                tempKeyKinds.size() == 0 ? 0 : tempKeyKinds.getQuick(0),
+                                indexInBase,
+                                baseMetadata.getTimestampIndex(),
+                                executionContext.getSharedQueryWorkerCount()
+                        );
+                        tempVaf.add(vaf);
+                        meta.add(
+                                indexInThis,
+                                new TableColumnMetadata(
+                                        SqlUtil.toColumnName(columns.getQuick(indexInThis).getName()),
+                                        vaf.getType(),
+                                        null
+                                )
+                        );
+                    }
+
+                    if (isKeyed) {
+                        for (int i = 0, n = tempVaf.size(); i < n; i++) {
+                            tempVaf.getQuick(i).pushValueTypes(arrayColumnTypes);
+                        }
+
+                        if (tempVaf.size() == 0) { // similar to DistinctKeyRecordCursorFactory, handles e.g. select id from tab group by id
+                            int keyKind = hourIndex != -1 ? getTimestampDriver(timestampType).getGKKHourInt() : SqlCodeGenerator.GKK_VANILLA_INT;
+                            CountVectorAggregateFunction countFunction = new CountVectorAggregateFunction(keyKind);
+                            tempVaf.add(countFunction);
+                            countFunction.pushValueTypes(arrayColumnTypes);
+
+                            tempSymbolSkewIndexes.clear();
+                            tempSymbolSkewIndexes.add(0);
+                        }
+
+                        GroupByUtils.validateGroupByColumns(sqlNodeStack, model, 1);
+                    }
+                } catch (Throwable e) {
+                    Misc.freeObjList(tempVaf);
+                    throw e;
                 }
 
-                if (tempKeyIndexesInBase.size() == 1) {
-                    for (int i = 0, n = tempVaf.size(); i < n; i++) {
-                        tempVaf.getQuick(i).pushValueTypes(arrayColumnTypes);
-                    }
-
-                    if (tempVaf.size() == 0) { // similar to DistinctKeyRecordCursorFactory, handles e.g. select id from tab group by id
-                        int keyKind = hourIndex != -1 ? getTimestampDriver(timestampType).getGKKHourInt() : SqlCodeGenerator.GKK_VANILLA_INT;
-                        CountVectorAggregateFunction countFunction = new CountVectorAggregateFunction(keyKind);
-                        countFunction.pushValueTypes(arrayColumnTypes);
-                        tempVaf.add(countFunction);
-
-                        tempSymbolSkewIndexes.clear();
-                        tempSymbolSkewIndexes.add(0);
-                    }
-
-                    try {
-                        GroupByUtils.validateGroupByColumns(sqlNodeStack, model, 1);
-                    } catch (Throwable e) {
-                        Misc.freeObjList(tempVaf);
-                        throw e;
-                    }
-
+                if (isKeyed) {
                     return generateFill(
                             model,
                             new GroupByRecordCursorFactory(
