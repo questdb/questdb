@@ -188,7 +188,8 @@ public class O3MaxLagFuzzTest extends AbstractO3Test {
                     new String[]{"ABC", "CDE", "XYZ"},
                     0,
                     0.0,
-                    0.0, 0.0
+                    0.0, 0.0,
+                    0.0 // VACUUM must not run while replay holds uncommitted rows.
             );
 
             try {

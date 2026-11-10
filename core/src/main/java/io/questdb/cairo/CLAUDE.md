@@ -33,8 +33,8 @@ executes them:
 
 | Action | Meaning | Handler | Conversions? |
 |--------|---------|---------|--------------|
-| `MERGE` | O3 rows interleave with an existing row group (possibly a coalesced run of groups sharing a boundary timestamp) | `mergeRowGroup()` | yes — **dedup-aware** |
-| `COPY_ROW_GROUP_SLICE` | a row group with no O3 overlap | `ParquetRowGroupMaterializer.materialize()` if `isRewrite`, else `copyRowGroupWithNullColumns()` | yes, when rewriting |
+| `MERGE` | O3 rows interleave with an existing row group (possibly a coalesced run of groups sharing a boundary timestamp) | `mergeRowGroupPrepare()` then `mergeRowGroupWrite()` | yes — **dedup-aware** |
+| `COPY_ROW_GROUP_SLICE` | a row group with no O3 overlap | rewrite: `copyRowGroupToRewrite()` (`ParquetRowGroupMaterializer.materialize()` for type-converted columns or a legacy file, `copyRowGroupWithNullColumns()` after another schema change, a raw `copyRowGroup()` otherwise); update: nothing, the row group stays in place | yes, when rewriting with converted columns |
 | `COPY_O3` | O3 rows in a gap between/around row groups | fresh row group from O3 source buffers | no (O3 data is already target-typed) |
 
 **Rewrite vs in-place update.** A partition is rewritten to a new `txn`-named directory
@@ -62,7 +62,7 @@ is taken only when the schema is unchanged. On that path the file's column order
 from the writer's column order, and the Rust `ParquetUpdater::align_columns_to_schema()`
 matches the supplied columns to the file schema by parquet field id.
 
-Both `mergeRowGroup()` and `ParquetRowGroupMaterializer.materialize()` share the same
+Both the row group merge and `ParquetRowGroupMaterializer.materialize()` share the same
 `ParquetColumnTypeConverter` decode-selection and source-preparation methods. The materializer
 is also the parquet-to-parquet rewrite path used by cold storage.
 
@@ -87,8 +87,9 @@ symbol→fixed must decode as `VARCHAR_SLICE` (its reader expects the 16-byte sl
 
 ## Per-column source preparation (`ParquetColumnTypeConverter.prepareSourceColumn`)
 
-Runs **once per active column, unconditionally** (independent of dedup). It turns the decoded
-row group into a target-typed *source* the merge/copy can consume, writing
+Runs **once per active column** of a row group that the merge writes. In SKIP mode, a merge whose O3
+rows the dedup all drops prepares only the designated timestamp and the dedup key columns. It turns
+the decoded row group into a target-typed *source* the merge/copy can consume, writing
 `outPtrs[slot4..+3] = {dataPtr, dataSize, auxPtr, auxSize}` and recording any buffer it
 allocates in the caller's free-list `ownedBufs[slot4..+3]` (`slot4 = ai*4`).
 
@@ -112,19 +113,30 @@ the read path — see the Native/Parquet contract in `griffin/CLAUDE.md`.
 **order-agnostic stride-2 `(addr,size)` pairs**, so the slot a buffer lands in does not encode
 data-vs-aux semantics — do not rely on it.
 
-## `mergeRowGroup` pipeline
+## Row group merge pipeline
+
+A `MERGE` runs in two stages, and `processParquetPartition()` sits between them:
 
 ```
-build decode list  -> chooseDecodeType per column, track timestamp chunk index
-decode row group   -> Rust into RowGroupBuffers (worker-owned, reused)
-Phase 1a           -> prepareSourceColumn per column -> srcPtrs (+ nullBufs owns the
-                      converted/null buffers).  RUNS BEFORE the dedup compare.
-merge index        -> non-dedup: createMergeIndex
-                      dedup:     malloc index, build dedup-compare addresses, mergeDedup, realloc
-even-split sizing  -> numChunks / maxChunkSize from (post-dedup) mergeRowCount
-Phase 1b           -> grow destination buffers in mergeDstBufs (reused across MERGE actions)
-Phase 2            -> O3CopyJob.mergeCopy into mergeDstBufs (allocates nothing) -> addRowGroup
-finally            -> free nullBufs + timestampMergeIndexAddr (per row group)
+mergeRowGroupPrepare (stage 1)
+  build decode list  -> chooseDecodeType per column, track timestamp chunk index
+                        (SKIP mode: the designated timestamp and the dedup keys only)
+  decode row group   -> Rust into RowGroupBuffers (worker-owned, reused; SKIP mode:
+                        the context's separate keyRowGroupBuffers)
+  Phase 1a           -> prepareSourceColumn per decoded column -> srcPtrs (+ nullBufs owns the
+                        converted/null buffers).  RUNS BEFORE the dedup compare.
+  merge index        -> non-dedup: Vect.mergeTwoLongIndexesAsc
+                        dedup:     malloc index, build dedup-compare addresses, mergeDedup, realloc
+                     -> returns the number of O3 rows the dedup dropped
+processParquetPartition
+  SKIP mode, all O3 rows dropped -> the row groups stay as they are, no stage 2
+  otherwise                      -> opens the output if it is not open yet (see Deduplication)
+mergeRowGroupWrite (stage 2)
+  SKIP mode          -> decode and Phase 1a for the columns that stage 1 left out
+  even-split sizing  -> numChunks / maxChunkSize from (post-dedup) mergeRowCount
+  Phase 1b           -> grow destination buffers in mergeDstBufs (reused across MERGE actions)
+  Phase 2            -> O3CopyJob.mergeCopy into mergeDstBufs (allocates nothing) -> addRowGroup
+finally (caller)     -> O3ParquetMergeContext.freeRowGroupMerge(): nullBufs + merge index
 ```
 
 The critical ordering: **Phase 1a must precede the dedup compare.** The native dedup comparer
@@ -140,9 +152,51 @@ Dedup mode is gated by `tableWriter.isCommitDedupMode()`. It changes **only** th
 step; the column conversions (Phase 1a), destination sizing (Phase 1b) and copy (Phase 2) are
 byte-for-byte identical with and without dedup.
 
+The table's dedup mode (`_meta` header, `TableUtils.DEDUP_MODE_*`) decides which row of a
+duplicate group survives. UPSERT keeps the latest write, SKIP keeps the earliest one and drops
+the rest. `tableWriter.isCommitDedupSkipMode()` passes the choice to every native dedup kernel
+as `isSkipMode`: the sort-dedup of a commit or a WAL block (`Vect.dedupSortedTimestampIndex*`)
+and the merge with partition rows (`Vect.mergeDedupTimestampWithLongIndex*`), for native and
+parquet partitions alike. Both modes rely on the same invariant: equal-key rows reach the kernels
+in commit order (stable sorts, lag rows before new rows, partition rows before O3 rows).
+
+In SKIP mode the merge kernels emit every existing row once, in order, and an O3 row only when no
+existing row matches it, and the O3 rows are unique on the keys after the commit's sort-dedup. So
+a merge whose O3 rows are all duplicates reproduces the existing rows as they are:
+
+- **Native partition:** `O3PartitionJob` skips the `checkDedupCommitIdenticalToPartition` column
+  comparison and reports the partition as unchanged (`deduplication resulted in noop`).
+- **Parquet partition:** stage 1 of a `MERGE` decodes only the designated timestamp and the dedup
+  keys. When the dedup drops all O3 rows of the action, the row group stays in place in an
+  in-place update, or the rewrite copies it like a `COPY_ROW_GROUP_SLICE`, with no stage 2.
+  `processParquetPartition()` opens its output (the new `txn` directory of a rewrite, or the
+  `data.parquet` and `_pm` of an update) at the first action that writes rows: a `MERGE` that
+  keeps an O3 row, or a `COPY_O3`. On that first write a rewrite copies the row groups of the
+  actions before it, in order. When no action writes, the partition stays as it is, and the
+  partition sink reports it as unchanged as the native path does (`updatePartitionSink(...,
+  newPartitionSize = -1, partitionMutates = 0)`). Other commits open the output upfront.
+
+`TableWriter` applies nothing for a partition reported unchanged (`isO3PartitionUnchanged()`):
+`o3ConsumePartitionUpdateSink()` leaves its `_txn` entry as it is, and the posting index seal
+(`sealPostingIndexesForO3Partitions()`) does not rebuild its index, which would read and re-index
+the whole partition column on every commit that re-sends rows the table has.
+
+UPSERT takes the same shortcut on parquet partitions only for tables with a live BOOLEAN, BYTE or
+SHORT column, the types whose column tops a merge would turn into 0/false (native turns an
+identical replay into a noop or an append, which keeps every top). For those tables
+`isUpsertIdenticalUpToPartitionMax()` runs before the output opens: per `MERGE` up to the
+partition max it decodes the keys and dedups in UPSERT mode (`isKeyColumnsOnly = true`,
+`isSkipMode = false`), stops unless every O3 row at or below the max is a duplicate, then decodes
+the other columns and compares them with `FrameAlgebra.isColumnMergeIdentical()`, the native
+comparer of `checkDedupCommitIdenticalToPartition`. A `COPY_O3` at or below the max ends the
+check. When every compared row is identical, the commit runs in SKIP mode. Other tables, and
+UPSERT commits that change a value, merge and write the row group even when the O3 rows carry
+the values the partition has. The caller of `mergeRowGroupPrepare()` adds the duplicates to the
+dedup counter, so the check does not count them twice.
+
 | | Non-dedup | Dedup |
 |---|---|---|
-| call | `createMergeIndex` | `Unsafe.malloc` → build addresses → `Vect.mergeDedupTimestampWithLongIndexIntKeys` → `Unsafe.realloc` |
+| call | `Vect.mergeTwoLongIndexesAsc` | `reallocMergeIndex` (malloc) → build addresses → `Vect.mergeDedupTimestampWithLongIndexIntKeys` → `reallocMergeIndex` (realloc) |
 | index alloc | `malloc(mergeRowCount * 16)` | `malloc(mergeRowCount * 16)` then **realloc down** to `dedupRows * 16` |
 | per-column work | none | build a dedup-compare address per non-timestamp dedup key |
 
@@ -171,9 +225,10 @@ parquet, so enabling dedup or altering a dedup key never eagerly rewrites partit
 | Buffer | Holds | Lifetime | Freed |
 |---|---|---|---|
 | `RowGroupBuffers` | Rust decode output | per-worker, reused | context close |
-| `nullBufs` | **owned** conversion / null buffers (Phase 1a) | **per row group** | `mergeRowGroup` / rewrite `finally` |
+| `keyRowGroupBuffers` | SKIP stage-1 decode output (timestamp + dedup keys) | per-worker, reused | context close |
+| `nullBufs` | **owned** conversion / null buffers (Phase 1a) | **per row group** | `O3ParquetMergeContext.freeRowGroupMerge()` in the caller's `finally` |
 | `tmpBufs` | owned conversion / null buffers (rewrite path) | per row group | rewrite `finally` |
-| `timestampMergeIndexAddr` | merge index | per row group | `mergeRowGroup` `finally` (guarded `!= 0`) |
+| merge index (`O3ParquetMergeContext.reallocMergeIndex`) | merge index | per row group, owned by the context | `freeRowGroupMerge()` (guarded `!= 0`) |
 | `mergeDstBufs` | merge-copy destinations | **reused across MERGE actions** | caller, after the action loop |
 | `dedupColSinkAddr` | dedup-compare address sink | per partition | `TableWriter` (`dedupColumnCommitAddresses`) |
 | `srcPtrs`, `convertedPtrs` | **pointer copies** (not owned) | per-worker container; pointers valid per row group | nulled at `close` — never `freeNativePairs` |
@@ -191,8 +246,18 @@ with `freeNativePairs`; the pointer-copy lists (`srcPtrs`, `convertedPtrs`) are 
   of Phase 1a reintroduces the SIGSEGV / silent-corruption bug.
 - **One conversion site.** `chooseDecodeType` and `prepareSourceColumn` are
   shared by the merge and rewrite paths. Fix bugs in the helper, not in one caller.
+- **Merge state survives a materializer run.** In SKIP mode a rewrite can copy the row groups before
+  a `MERGE` through `ParquetRowGroupMaterializer` between the two stages of that merge. The
+  materializer decodes into the shared `ParquetConversionContext` scratch (`getRowGroupBuffers`,
+  the active-column lists, `convertedPtrs`, `tmpBufs`). So stage 1 keeps its state outside of it:
+  `keyRowGroupBuffers`, the merge's own active-column lists, `srcPtrs`, `nullBufs` and the merge
+  index. Stage 2 must not re-zero `nullBufs` or `srcPtrs`: it would drop the key columns' buffers.
 - **`var_data_len` is a debug-assert bound**, so a tight `getDataVectorSizeAt` extent is fine;
   do not pass a stale `getChunkDataSize` for a converted buffer.
+- **`dedup_column` is a packed struct.** Its `null_value` (read for rows in a column top) sits at
+  an unaligned offset. Read it through `get_null_value<T>()`, which copies it out: dereferencing
+  it in place as a 16-byte `T` (`__int128`, `int256`) lets the compiler emit aligned SIMD loads,
+  which fault (seen with GCC 16 at `-O3`).
 - **No conversion buffers on the native O3 path** — only parquet partitions with a lazy ALTER
   allocate them.
 
@@ -200,7 +265,7 @@ with `freeNativePairs`; the pointer-copy lists (`srcPtrs`, `convertedPtrs`) are 
 
 | File | Role |
 |------|------|
-| `O3PartitionJob.java` | `processParquetPartition` (action dispatch / rewrite decision), `mergeRowGroup` (dedup-aware merge), `createMergeIndex` |
+| `O3PartitionJob.java` | `processParquetPartition` (action dispatch / rewrite decision / output opening), `mergeRowGroupPrepare` + `mergeRowGroupWrite` (dedup-aware merge), `copyRowGroupToRewrite`, `createMergeIndex` |
 | `ParquetColumnTypeConverter.java` | shared decode-type selection, source preparation, and `convert*` / `estimate*` helpers |
 | `ParquetConversionContext.java` | reusable worker-local decode/conversion scratch and native-resource lifecycle |
 | `ParquetRowGroupMaterializer.java` | shared decode -> convert -> `PartitionUpdater.addRowGroup` pipeline for O3 and cold rewrites |
