@@ -51,8 +51,24 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.TestOnly;
 
 public class InSymbolCursorFunctionFactory implements FunctionFactory {
+
+    /**
+     * Returns how many subquery values the given function holds, or -1 when it is not a function
+     * of this factory that keeps them.
+     */
+    @TestOnly
+    public static int getValueCount(Function function) {
+        if (function instanceof StrInCursorFunc f) {
+            return f.valueSet.size();
+        }
+        if (function instanceof SymbolInCursorFunc f) {
+            return f.symbolKeys.size();
+        }
+        return -1;
+    }
 
     @Override
     public String getSignature() {

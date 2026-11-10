@@ -296,15 +296,14 @@ public class ExportQueryProcessorStateTest extends AbstractCairoTest {
                     pageFrameCursor,
                     sqlExecutionContext.getMemoryTracker()
             );
-            final HybridColumnMaterializer materializer = getPrivateField(state, "materializer");
-            final DirectLongList columnData = getPrivateField(state, "materializerColumnData");
-            final HTTPSerialParquetExporter exporter = new HTTPSerialParquetExporter(
+            final HybridColumnMaterializer materializer = state.getMaterializerForTest();
+            final DirectLongList columnData = state.getMaterializerColumnDataForTest();
+            final HTTPSerialParquetExporter exporter = state.getOrCreateSerialParquetExporterForTest(
                     engine,
                     (SqlExecutionContextImpl) sqlExecutionContext
             );
-            setPrivateField(state, "serialParquetExporter", exporter);
             if (releasePath == MaterializerReleasePath.STATE_CLEAR_STATE_OWNED) {
-                setPrivateField(state, "pageFrameCursor", probe);
+                state.setPageFrameCursorForTest(probe);
             } else {
                 exporter.setupPageFrameBackedExport(probe, materializer, columnData);
             }
@@ -342,13 +341,6 @@ public class ExportQueryProcessorStateTest extends AbstractCairoTest {
         final QueryTrace trace = new QueryTrace();
         while (queue.tryDequeue(trace)) {
         }
-    }
-
-    @SuppressWarnings("unchecked")
-    private static <T> T getPrivateField(Object target, String fieldName) throws Exception {
-        final Field field = target.getClass().getDeclaredField(fieldName);
-        field.setAccessible(true);
-        return (T) field.get(target);
     }
 
     private static void recordTrackerOwnerState(

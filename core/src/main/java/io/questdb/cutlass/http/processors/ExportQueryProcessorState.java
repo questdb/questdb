@@ -248,6 +248,24 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         return httpConnectionContext;
     }
 
+    @TestOnly
+    public DirectLongList getMaterializerColumnDataForTest() {
+        return materializerColumnData;
+    }
+
+    @TestOnly
+    public HybridColumnMaterializer getMaterializerForTest() {
+        return materializer;
+    }
+
+    @TestOnly
+    public HTTPSerialParquetExporter getOrCreateSerialParquetExporterForTest(
+            CairoEngine engine,
+            SqlExecutionContextImpl sqlExecutionContext
+    ) {
+        return getOrCreateSerialParquetExporter(engine, sqlExecutionContext);
+    }
+
     public String getParquetExportTableName() {
         return parquetExportTableName;
     }
@@ -297,6 +315,11 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
             resumeCursorTimer();
             sqlExecutionOwner.mount();
         }
+    }
+
+    @TestOnly
+    public void setPageFrameCursorForTest(PageFrameCursor pageFrameCursor) {
+        this.pageFrameCursor = pageFrameCursor;
     }
 
     public void setParquetExportTableName(String tableName) {

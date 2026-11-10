@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.functions;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.RecordCursor;
@@ -31,21 +32,22 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.cast.CastToSymbolDictionary;
-import io.questdb.std.AbstractCharSequenceHashSet;
-import io.questdb.std.AbstractIntHashSet;
+import io.questdb.griffin.engine.PerWorkerLocks;
+import io.questdb.griffin.engine.functions.bool.InSymbolCursorFunctionFactory;
+import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
+import io.questdb.mp.WorkerPool;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.sql.async.SlotGatedWorkStealingStrategy;
+import io.questdb.test.mp.TestWorkerPool;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.lang.reflect.Field;
-import java.lang.reflect.Modifier;
-import java.util.ArrayDeque;
-import java.util.IdentityHashMap;
+import java.util.concurrent.CountDownLatch;
 
 /**
  * A cached factory (SELECT) or operation (INSERT ... SELECT) outlives its cursor. A function that
@@ -54,8 +56,6 @@ import java.util.IdentityHashMap;
  * until the next execution re-initializes the function.
  */
 public class FunctionCursorClosedTest extends AbstractCairoTest {
-    private static final String CAST_TO_SYMBOL_PREFIX = "io.questdb.griffin.engine.functions.cast.Cast";
-    private static final String IN_SYMBOL_CURSOR_PREFIX = "io.questdb.griffin.engine.functions.bool.InSymbolCursorFunctionFactory$";
     private static final String ISSUE_CTES = """
             WITH ref AS (
                 SELECT cast(k AS SYMBOL) k, v1
@@ -150,13 +150,16 @@ public class FunctionCursorClosedTest extends AbstractCairoTest {
                 final CompiledQuery cq = compiler.compile(ISSUE_CTES + "INSERT INTO target " + ISSUE_PROJECTION, sqlExecutionContext);
                 Assert.assertEquals(CompiledQuery.INSERT_AS_SELECT, cq.getType());
                 try (InsertOperation op = cq.popInsertOperation()) {
-                    final ObjList<Function> casts = collectFunctions(op, CAST_TO_SYMBOL_PREFIX);
-                    Assert.assertTrue("expected cast-to-symbol functions in the operation tree", casts.size() > 0);
+                    // testCastToSymbolSelectReleasesDictionaries shows that this SELECT builds native
+                    // dictionaries while its cursor is open
                     for (int run = 0; run < 2; run++) {
                         final long nativeBaseline = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS);
                         op.execute(sqlExecutionContext).await();
-                        assertStateReleased(casts);
-                        Assert.assertEquals(nativeBaseline, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS));
+                        Assert.assertEquals(
+                                "the executed operation must free the native cast-to-symbol dictionaries",
+                                nativeBaseline,
+                                Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS)
+                        );
                     }
                 }
             }
@@ -172,7 +175,7 @@ public class FunctionCursorClosedTest extends AbstractCairoTest {
     public void testCastToSymbolSelectReleasesDictionaries() throws Exception {
         assertMemoryLeak(() -> {
             createIssueTables();
-            assertSelectReleasesState(ISSUE_CTES + ISSUE_PROJECTION, CAST_TO_SYMBOL_PREFIX);
+            assertSelectReleasesCastDictionaries(ISSUE_CTES + ISSUE_PROJECTION);
         });
     }
 
@@ -181,7 +184,7 @@ public class FunctionCursorClosedTest extends AbstractCairoTest {
         // concat() is a MultiArgFunction, so cursorClosed() only reaches the cast if it forwards
         assertMemoryLeak(() -> {
             execute("create table t as (select ('k' || x)::varchar v from long_sequence(1000))");
-            assertSelectReleasesState("select concat(cast(v as symbol), '-') c from t", CAST_TO_SYMBOL_PREFIX);
+            assertSelectReleasesCastDictionaries("select concat(cast(v as symbol), '-') c from t");
         });
     }
 
@@ -344,10 +347,34 @@ public class FunctionCursorClosedTest extends AbstractCairoTest {
             execute("create table t as (select ('s' || (x % 100))::symbol s, ('s' || x)::varchar v from long_sequence(1000))");
             execute("create table r as (select ('s' || x)::varchar s from long_sequence(50))");
             // a static symbol column takes the key-set variant, a cast to symbol the value-set one
-            assertSelectReleasesState(
-                    "select s in (select s from r) a, cast(v as symbol) in (select s from r) b from t",
-                    IN_SYMBOL_CURSOR_PREFIX
-            );
+            final String sql = "select s in (select s from r) a, cast(v as symbol) in (select s from r) b from t";
+            try (RecordCursorFactory factory = select(sql)) {
+                final ObjList<Function> functions = findVirtualFactory(factory).getFunctions();
+                Assert.assertEquals(2, functions.size());
+                String firstRun = null;
+                for (int run = 0; run < 2; run++) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        println(factory, cursor);
+                        for (int i = 0; i < 2; i++) {
+                            // every one of the subquery's 50 values is in the set
+                            Assert.assertEquals(50, InSymbolCursorFunctionFactory.getValueCount(functions.getQuick(i)));
+                        }
+                    }
+                    for (int i = 0; i < 2; i++) {
+                        Assert.assertEquals(
+                                "cursor close must drop the subquery's values",
+                                0,
+                                InSymbolCursorFunctionFactory.getValueCount(functions.getQuick(i))
+                        );
+                    }
+                    // the cached factory re-executes after the release and returns the same rows
+                    if (firstRun == null) {
+                        firstRun = sink.toString();
+                    } else {
+                        Assert.assertEquals(firstRun, sink.toString());
+                    }
+                }
+            }
         });
     }
 
@@ -408,8 +435,63 @@ public class FunctionCursorClosedTest extends AbstractCairoTest {
                     )""");
             // one cast per query, so that each cast's native dictionary is checked on its own
             for (String column : new String[]{"l", "i", "s", "b", "d", "f", "c", "dt", "ts"}) {
-                assertSelectReleasesState("select cast(" + column + " as symbol) " + column + " from t", CAST_TO_SYMBOL_PREFIX);
+                assertSelectReleasesCastDictionaries("select cast(" + column + " as symbol) " + column + " from t");
             }
+        });
+    }
+
+    @Test
+    public void testParallelWorkersReleaseCastDictionaries() throws Exception {
+        // Each worker evaluates the filter with a clone of its own, and the clone builds a dictionary
+        // of its own. The latch holds the query owner back until a worker has taken a slot, so that
+        // a worker reduces at least one frame. The frame sequence reads the factory provider when the
+        // query compiles; the overrides reset it after the test.
+        factoryProvider = SlotGatedWorkStealingStrategy.newFactoryProvider();
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 100);
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 100);
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS, 100);
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 100);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, context) -> {
+                        engine.execute("""
+                                create table t as (
+                                    select ('k' || (x % 300))::varchar v, ('s' || (x % 3))::symbol s, x l, (x * 1_000_000)::timestamp ts
+                                    from long_sequence(10_000)
+                                ) timestamp(ts) partition by hour""", context);
+                        final String[] queries = {
+                                "select v from t where cast(v as symbol) <> 'k7'",
+                                "select s, count() c from t where cast(v as symbol) <> 'k7' order by s",
+                                "select max(l) m from t where cast(v as symbol) <> 'k7'",
+                                "select l from t where cast(v as symbol) <> 'k7' order by l desc limit 5"
+                        };
+                        for (String sql : queries) {
+                            try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()) {
+                                final PerWorkerLocks workerLocks = TestUtils.findPerWorkerLocks(factory, sql);
+                                for (int run = 0; run < 2; run++) {
+                                    final long nativeBaseline = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS);
+                                    // a fresh latch per open, so that the acquisition it records belongs to this open
+                                    final CountDownLatch acquired = new CountDownLatch(1);
+                                    workerLocks.setTestAcquireLatch(acquired);
+                                    final MemoryTracker tracker;
+                                    try (RecordCursor cursor = factory.getCursor(context)) {
+                                        tracker = context.getMemoryTracker();
+                                        Assert.assertNotNull(tracker);
+                                        TestUtils.drainCursor(cursor);
+                                    } finally {
+                                        workerLocks.setTestAcquireLatch(null);
+                                    }
+                                    Assert.assertEquals("no worker reduced a frame: " + sql, 0, acquired.getCount());
+                                    assertCastDictionariesReleased(nativeBaseline, tracker);
+                                }
+                            }
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
         });
     }
 
@@ -451,7 +533,7 @@ public class FunctionCursorClosedTest extends AbstractCairoTest {
     public void testVarcharCastToSymbolReleasesDictionary() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t as (select ('k' || (x % 300))::varchar v from long_sequence(1000))");
-            assertSelectReleasesState("select cast(v as symbol) s from t", CAST_TO_SYMBOL_PREFIX);
+            assertSelectReleasesCastDictionaries("select cast(v as symbol) s from t");
         });
     }
 
@@ -503,29 +585,39 @@ public class FunctionCursorClosedTest extends AbstractCairoTest {
     }
 
     // An owner (filter, group by, join, ...) initializes the functions it evaluates, so it must also
-    // notify them when its cursor closes. Per-worker clones of a parallel owner may stay idle, so
-    // only the query's native cast memory proves that the dictionaries were built.
+    // notify them when its cursor closes.
     private void assertOwnerReleasesCastDictionaries(String sql, String expectedPlanFragment) throws Exception {
         assertQuery(sql).noLeakCheck().assertsPlanContaining(expectedPlanFragment);
+        assertSelectReleasesCastDictionaries(sql);
+    }
+
+    // A cast to symbol keeps its dictionary in native memory, charged to the query's memory tracker.
+    // The cursor close must free it before the tracker goes back to its pool.
+    private static void assertCastDictionariesReleased(long nativeBaseline, MemoryTracker tracker) {
+        Assert.assertEquals(
+                "cursor close must free the native cast-to-symbol dictionaries",
+                nativeBaseline,
+                Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS)
+        );
+        Assert.assertEquals("the query's tracker went back to its pool with memory charged to it", 0, tracker.getUsed());
+    }
+
+    private static void assertSelectReleasesCastDictionaries(String sql) throws Exception {
         try (RecordCursorFactory factory = select(sql)) {
-            final ObjList<Function> casts = collectDictionaryCasts(factory);
-            Assert.assertTrue("expected cast-to-symbol functions in the factory tree", casts.size() > 0);
             String firstRun = null;
             for (int run = 0; run < 2; run++) {
                 final long nativeBaseline = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS);
+                final MemoryTracker tracker;
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    tracker = sqlExecutionContext.getMemoryTracker();
+                    Assert.assertNotNull(tracker);
                     println(factory, cursor);
                     Assert.assertTrue(
                             "an open cursor must hold its cast-to-symbol dictionaries in native memory",
                             Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS) > nativeBaseline
                     );
                 }
-                assertStateReleased(casts);
-                Assert.assertEquals(
-                        "cursor close must free the native cast-to-symbol dictionaries",
-                        nativeBaseline,
-                        Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS)
-                );
+                assertCastDictionariesReleased(nativeBaseline, tracker);
                 // the cached factory re-executes after the release and returns the same rows
                 if (firstRun == null) {
                     firstRun = sink.toString();
@@ -534,126 +626,6 @@ public class FunctionCursorClosedTest extends AbstractCairoTest {
                 }
             }
         }
-    }
-
-    private static void assertSelectReleasesState(String sql, String functionClassPrefix) throws Exception {
-        try (RecordCursorFactory factory = select(sql)) {
-            final ObjList<Function> functions = collectFunctions(factory, functionClassPrefix);
-            Assert.assertTrue("expected " + functionClassPrefix + "* functions in the factory tree", functions.size() > 0);
-            String firstRun = null;
-            final boolean isCastToSymbol = CAST_TO_SYMBOL_PREFIX.equals(functionClassPrefix);
-            for (int run = 0; run < 2; run++) {
-                final long nativeBaseline = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS);
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    println(factory, cursor);
-                    for (int i = 0, n = functions.size(); i < n; i++) {
-                        final Function function = functions.getQuick(i);
-                        Assert.assertTrue(
-                                "an open cursor must have populated " + function.getClass().getName(),
-                                stateSize(function) > 0
-                        );
-                    }
-                    if (isCastToSymbol) {
-                        // cast-to-symbol dictionaries live in native memory, accounted to the query
-                        Assert.assertTrue(
-                                "an open cursor must hold its cast-to-symbol dictionaries in native memory",
-                                Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS) > nativeBaseline
-                        );
-                    }
-                }
-                assertStateReleased(functions);
-                if (isCastToSymbol) {
-                    Assert.assertEquals(
-                            "cursor close must free the native cast-to-symbol dictionaries",
-                            nativeBaseline,
-                            Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS)
-                    );
-                }
-                // the cached factory re-executes after the release and returns the same rows
-                if (firstRun == null) {
-                    firstRun = sink.toString();
-                } else {
-                    Assert.assertEquals(firstRun, sink.toString());
-                }
-            }
-        }
-    }
-
-    private static void assertStateReleased(ObjList<Function> functions) throws IllegalAccessException {
-        for (int i = 0, n = functions.size(); i < n; i++) {
-            final Function function = functions.getQuick(i);
-            Assert.assertEquals(
-                    "cursor close must release the state of " + function.getClass().getName(),
-                    0,
-                    stateSize(function)
-            );
-        }
-    }
-
-    // Walks the factory/operation object graph, staying within the SQL engine's own classes, and
-    // collects the functions whose class name starts with the given prefix. Factories keep their
-    // functions in private fields with no common accessor, so reflection is the only uniform way
-    // to reach them.
-    private static ObjList<Function> collectFunctions(Object root, String classNamePrefix) throws IllegalAccessException {
-        final ObjList<Function> result = new ObjList<>();
-        final IdentityHashMap<Object, Boolean> visited = new IdentityHashMap<>();
-        final ArrayDeque<Object> stack = new ArrayDeque<>();
-        stack.push(root);
-        while (!stack.isEmpty()) {
-            final Object o = stack.pop();
-            if (visited.put(o, Boolean.TRUE) != null) {
-                continue;
-            }
-            if (o instanceof Function f && o.getClass().getName().startsWith(classNamePrefix)) {
-                result.add(f);
-            }
-            if (o instanceof ObjList<?> list) {
-                for (int i = 0, n = list.size(); i < n; i++) {
-                    pushIfPresent(stack, list.getQuick(i));
-                }
-                continue;
-            }
-            final Class<?> clazz = o.getClass();
-            if (clazz.isArray()) {
-                if (!clazz.getComponentType().isPrimitive()) {
-                    for (Object e : (Object[]) o) {
-                        pushIfPresent(stack, e);
-                    }
-                }
-                continue;
-            }
-            // parallel factories keep their functions in a page frame sequence (io.questdb.cairo.sql.async)
-            final String className = clazz.getName();
-            if (!(className.startsWith("io.questdb.griffin.") || className.startsWith("io.questdb.cairo.sql."))
-                    || o instanceof SqlExecutionContext
-                    || o instanceof SqlCompiler) {
-                continue;
-            }
-            for (Class<?> c = clazz; c != null && c != Object.class; c = c.getSuperclass()) {
-                for (Field field : c.getDeclaredFields()) {
-                    if (Modifier.isStatic(field.getModifiers()) || field.getType().isPrimitive()) {
-                        continue;
-                    }
-                    field.setAccessible(true);
-                    pushIfPresent(stack, field.get(o));
-                }
-            }
-        }
-        return result;
-    }
-
-    // the casts to symbol that build a dictionary, leaving out casts from symbol and the static
-    // BOOLEAN-to-symbol cast
-    private static ObjList<Function> collectDictionaryCasts(Object root) throws IllegalAccessException {
-        final ObjList<Function> casts = collectFunctions(root, CAST_TO_SYMBOL_PREFIX);
-        final ObjList<Function> result = new ObjList<>();
-        for (int i = 0, n = casts.size(); i < n; i++) {
-            final Function cast = casts.getQuick(i);
-            if (findDictionary(cast) != null) {
-                result.add(cast);
-            }
-        }
-        return result;
     }
 
     private static void createIndexedTable() throws Exception {
@@ -690,46 +662,12 @@ public class FunctionCursorClosedTest extends AbstractCairoTest {
                 ) timestamp(ts) partition by hour""");
     }
 
-    private static CastToSymbolDictionary findDictionary(Function function) throws IllegalAccessException {
-        for (Class<?> c = function.getClass(); c != null; c = c.getSuperclass()) {
-            for (Field field : c.getDeclaredFields()) {
-                if (!Modifier.isStatic(field.getModifiers()) && field.getType() == CastToSymbolDictionary.class) {
-                    field.setAccessible(true);
-                    return (CastToSymbolDictionary) field.get(function);
-                }
+    private static VirtualRecordCursorFactory findVirtualFactory(RecordCursorFactory factory) {
+        for (RecordCursorFactory f = factory; f != null; f = f.getBaseFactory()) {
+            if (f instanceof VirtualRecordCursorFactory virtualFactory) {
+                return virtualFactory;
             }
         }
-        return null;
-    }
-
-    private static void pushIfPresent(ArrayDeque<Object> stack, Object o) {
-        if (o != null) {
-            stack.push(o);
-        }
-    }
-
-    // None of these functions exposes its per-query state, so the test reads it reflectively:
-    // a cast to symbol keeps its keys in a native CastToSymbolDictionary, and the IN (SELECT ...)
-    // functions keep the subquery's values in a hash set.
-    private static int stateSize(Function function) throws IllegalAccessException {
-        for (Class<?> c = function.getClass(); c != null; c = c.getSuperclass()) {
-            for (Field field : c.getDeclaredFields()) {
-                if (Modifier.isStatic(field.getModifiers()) || field.getType().isPrimitive()) {
-                    continue;
-                }
-                field.setAccessible(true);
-                final Object value = field.get(function);
-                if (value instanceof CastToSymbolDictionary dictionary) {
-                    return dictionary.size();
-                }
-                if (value instanceof AbstractCharSequenceHashSet set) {
-                    return set.size();
-                }
-                if (value instanceof AbstractIntHashSet set) {
-                    return set.size();
-                }
-            }
-        }
-        throw new AssertionError("no per-query state found in " + function.getClass().getName());
+        throw new AssertionError("no virtual factory in the tree, top was " + factory.getClass().getSimpleName());
     }
 }
