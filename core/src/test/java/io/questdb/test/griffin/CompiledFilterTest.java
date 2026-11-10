@@ -1809,21 +1809,22 @@ public class CompiledFilterTest extends AbstractCairoTest {
         // H lies between the values of n0 and n1, P between those of p0 and z0, for both the TIMESTAMP column m and
         // the DATE column d. Every mode, on native and on Parquet partitions, gives the rows of the exact value. The
         // JIT compiles <, <=, > and >= of a column with such a literal, and a one-item list of a day.
-        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1);
+        // n0 comes last in the Parquet partition, alone in its row group, which pruning must not skip.
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (k SYMBOL, m TIMESTAMP, d DATE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     ('p0', '1969-12-31T23:59:59.999999Z', '1969-12-31T23:59:59.999Z', '2020-01-01T00:00:00.000000Z'),
-                    ('z0', '1970-01-01T00:00:00.000000Z', '1970-01-01T00:00:00.000Z', '2020-01-01T00:00:00.000000Z'),
-                    ('n0', '2020-01-01T00:00:00.000000Z', '2020-01-01T00:00:00.000Z', '2020-01-01T00:00:00.000000Z'),
-                    ('n1', '2020-01-01T00:00:00.000001Z', '2020-01-01T00:00:00.001Z', '2020-01-01T00:00:00.000001Z'),
-                    ('noon', '2020-01-01T12:00:00.000000Z', '2020-01-01T12:00:00.000Z', '2020-01-01T12:00:00.000000Z'),
+                    ('z0', '1970-01-01T00:00:00.000000Z', '1970-01-01T00:00:00.000Z', '2020-01-01T01:00:00.000000Z'),
+                    ('n1', '2020-01-01T00:00:00.000001Z', '2020-01-01T00:00:00.001Z', '2020-01-01T02:00:00.000000Z'),
+                    ('noon', '2020-01-01T12:00:00.000000Z', '2020-01-01T12:00:00.000Z', '2020-01-01T03:00:00.000000Z'),
+                    ('n0', '2020-01-01T00:00:00.000000Z', '2020-01-01T00:00:00.000Z', '2020-01-01T04:00:00.000000Z'),
                     ('nul', NULL, NULL, '2020-01-02T00:00:00.000000Z')
                     """);
             final String h = "'2020-01-01T00:00:00.000000500Z'";
             final String p = "'1969-12-31T23:59:59.9999995Z'";
-            final String all = "p0\nz0\nn0\nn1\nnoon\nnul\n";
+            final String all = "p0\nz0\nn1\nnoon\nn0\nnul\n";
             // filter, expected keys, whether the JIT compiles it, the bind variable $1: H as text or as TIMESTAMP_NS
             final Object[][] cases = {
                     {"m < " + h, "p0\nz0\nn0\n", true, null},
@@ -1831,19 +1832,19 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     {"m > " + h, "n1\nnoon\n", true, null},
                     {"m >= " + h, "n1\nnoon\n", true, null},
                     {h + " <= m", "n1\nnoon\n", true, null},
-                    {"m >= " + p, "z0\nn0\nn1\nnoon\n", true, null},
+                    {"m >= " + p, "z0\nn1\nnoon\nn0\n", true, null},
                     {"m = " + h, "", false, null},
                     {"m != " + h, all, false, null},
                     {"d < " + h, "p0\nz0\nn0\n", true, null},
                     {"d >= " + h, "n1\nnoon\n", true, null},
-                    {"d >= " + p, "z0\nn0\nn1\nnoon\n", true, null},
+                    {"d >= " + p, "z0\nn1\nnoon\nn0\n", true, null},
                     {"d = " + h, "", false, null},
                     {"d >= $1", "n1\nnoon\n", false, "text"},
                     {"d IN (" + h + ", '2020-01-01T12:00:00.000Z')", "noon\n", false, null},
                     // a one-item list names a period; the period of H holds no value of the column
                     {"m IN (" + h + ")", "", false, null},
-                    {"m IN ('2020-01-01')", "n0\nn1\nnoon\n", true, null},
-                    {"d IN ('2020-01-01')", "n0\nn1\nnoon\n", true, null},
+                    {"m IN ('2020-01-01')", "n1\nnoon\nn0\n", true, null},
+                    {"d IN ('2020-01-01')", "n1\nnoon\nn0\n", true, null},
                     {"ts IN " + h, "", false, null},
                     {"m < " + h + "::TIMESTAMP_NS", "p0\nz0\nn0\n", false, null},
                     {"m < $1", "p0\nz0\nn0\n", false, "ns"},
