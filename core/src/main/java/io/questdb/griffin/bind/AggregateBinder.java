@@ -1159,12 +1159,8 @@ final class AggregateBinder implements Mutable {
             return false;
         }
         if (hasSelectAliases && expression.type == ExpressionNode.LITERAL
-                && getColumnIndexQuiet(aggregate.getChild().getOutput(), expression.token) < 0) {
-            for (int i = 0, n = model.getColumns().size(); i < n; i++) {
-                if (Chars.equalsIgnoreCase(model.getColumns().getQuick(i).getName(), expression.token)) {
-                    return false;
-                }
-            }
+                && getColumnIndexQuiet(aggregate.getChild().getOutput(), expression.token) < 0 && isSelectAlias(expression, model)) {
+            return false;
         }
         if (expression.type == ExpressionNode.LITERAL && ctx.scope().referenceScope.getColumnCount() > 0) {
             final OutputSchema referenceScope = ctx.scope().referenceScope;
@@ -1186,7 +1182,6 @@ final class AggregateBinder implements Mutable {
         }
         return false;
     }
-
 
     private boolean isConstantGroupingExpression(ExpressionNode expression) {
         if (expression == null) {

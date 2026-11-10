@@ -1104,6 +1104,24 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDistinctOrderByExpressionOverSelectAlias() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v LONG)");
+            execute("INSERT INTO t VALUES (-3), (2), (-1), (2)");
+            final String expected = """
+                    Total
+                    -1
+                    2
+                    -3
+                    """;
+            assertQuery("SELECT DISTINCT v AS Total FROM t ORDER BY abs(Total)").noLeakCheck().expectSize().returns(expected);
+            assertQuery("SELECT DISTINCT v AS \"Total\" FROM t ORDER BY abs(\"Total\")").noLeakCheck().expectSize().returns(expected);
+            assertQuery("SELECT DISTINCT v AS Total FROM t ORDER BY abs(\"Total\")").noLeakCheck().expectSize().returns(expected);
+            assertQuery("SELECT DISTINCT v AS \"Total\" FROM t ORDER BY abs(total)").noLeakCheck().expectSize().returns(expected);
+        });
+    }
+
+    @Test
     public void testDistinctSymbolOptimizationOnQuoteProtectedAlias() throws Exception {
         // SELECT DISTINCT over an indexed SYMBOL takes the distinct-symbol optimization in
         // AggregateFactoryGenerator, which builds the result metadata name via toColumnName. A
