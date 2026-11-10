@@ -26,9 +26,12 @@ package io.questdb.test.cairo.fuzz;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnPurgeJob;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -43,6 +46,7 @@ import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.io.File;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -59,6 +63,22 @@ public class FuzzRunnerTest extends AbstractCairoTest {
     private static final long RETRY_TIMEOUT_MILLIS = 300;
     private final FuzzRunner fuzzer = new FuzzRunner();
     private final Rnd rnd = TestUtils.generateRandom(LOG);
+
+    @Test
+    public void testApplyLeavesColumnPurgeToRunningJob() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 0);
+        assertMemoryLeak(() -> {
+            final File staleFile = createStaleColumnVersion("t", false);
+            // the job of the test holds the purge log, as the job of a server does
+            try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
+                newRunner().applyNonWal(new ObjList<>(), "t", new Rnd());
+                Assert.assertTrue(staleFile.exists());
+                purgeJob.run();
+            }
+            Assert.assertFalse(staleFile.exists());
+            assertQuery("SELECT x FROM t").noLeakCheck().expectSize().returns("x\n2\n");
+        });
+    }
 
     @Test
     public void testApplyManyWalParallelDrainsAfterWritersDoneCallback() throws Exception {
@@ -108,6 +128,67 @@ public class FuzzRunnerTest extends AbstractCairoTest {
 
             Assert.assertSame(failure, thrown.getCause());
             assertQuery("SELECT sym FROM callback_failure").expectSize().returns("sym\nfinal\n");
+        });
+    }
+
+    @Test
+    public void testApplyNonWalKeepsColumnPurgeOffWhilePlantedFailurePending() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 0);
+        final FuzzRunner runner = newRunner();
+        final FailureFileFacade ff = runner.getFileFacade();
+        assertMemoryLeak(ff, () -> {
+            final File staleFile = createStaleColumnVersion("t", false);
+            // no file operation of the run reaches the planted call, so the failure stays pending
+            ff.setToFailAfter(Integer.MAX_VALUE);
+            runner.applyNonWal(new ObjList<>(), "t", new Rnd());
+            Assert.assertTrue(staleFile.exists());
+
+            // applyNonWal clears the failure before it returns
+            runner.applyNonWal(new ObjList<>(), "t", new Rnd());
+            Assert.assertFalse(staleFile.exists());
+            assertQuery("SELECT x FROM t").noLeakCheck().expectSize().returns("x\n2\n");
+        });
+    }
+
+    @Test
+    public void testApplyNonWalPurgesColumnVersionsAfterEachCommit() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 0);
+        assertMemoryLeak(() -> {
+            final File staleFile = createStaleColumnVersion("t", false);
+            final ObjList<FuzzTransaction> transactions = new ObjList<>();
+            transactions.add(assertingTransaction(() -> Assert.assertTrue(staleFile.exists())));
+            transactions.add(assertingTransaction(() -> Assert.assertFalse(staleFile.exists())));
+            // the first draw of the reload Rnd is false, so applyNonWal purges and reloads after every commit
+            Assert.assertFalse(new Rnd().nextBoolean());
+
+            newRunner().applyNonWal(transactions, "t", new Rnd());
+
+            assertQuery("SELECT x FROM t").noLeakCheck().expectSize().returns("x\n2\n");
+        });
+    }
+
+    @Test
+    public void testApplyPurgesColumnVersionsBeforeReturning() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 0);
+        assertMemoryLeak(() -> {
+            // with no transaction to apply, each apply still purges what the queue holds before it returns
+            final File nonWalFile = createStaleColumnVersion("non_wal", false);
+            newRunner().applyNonWal(new ObjList<>(), "non_wal", new Rnd());
+            Assert.assertFalse(nonWalFile.exists());
+
+            final File walFile = createStaleColumnVersion("wal", true);
+            newRunner().applyWal(new ObjList<>(), "wal", 1, new Rnd());
+            Assert.assertFalse(walFile.exists());
+
+            final File parallelFile = createStaleColumnVersion("parallel", true);
+            final ObjList<ObjList<FuzzTransaction>> transactions = new ObjList<>();
+            transactions.add(new ObjList<>());
+            newRunner().applyManyWalParallel(transactions, new Rnd(), "parallel", false, true);
+            Assert.assertFalse(parallelFile.exists());
+
+            for (String tableName : new String[]{"non_wal", "wal", "parallel"}) {
+                assertQuery("SELECT x FROM " + tableName).noLeakCheck().expectSize().returns("x\n2\n");
+            }
         });
     }
 
@@ -475,6 +556,37 @@ public class FuzzRunnerTest extends AbstractCairoTest {
         Assert.assertEquals(expectedOpenCalls, fuzzer.openCalls.get());
         Assert.assertEquals(expectedRecreateTolerantCalls, fuzzer.recreateTolerantCalls.get());
         Assert.assertEquals(expectedCancellableCalls, fuzzer.cancellableCalls.get());
+    }
+
+    // a transaction that checks the assertion when it applies, and rolls back
+    private static FuzzTransaction assertingTransaction(Runnable assertion) {
+        final FuzzTransaction transaction = new FuzzTransaction();
+        transaction.operationList.add((rnd, cairoEngine, writer, timestampIndex, excludedIntervals) -> {
+            assertion.run();
+            return false;
+        });
+        transaction.rollback = true;
+        return transaction;
+    }
+
+    // A reader pins the first version of x while UPDATE replaces it, so the writer queues its purge instead of
+    // purging it, and no job of the test runs that purge.
+    private static File createStaleColumnVersion(String tableName, boolean isWal) throws SqlException {
+        execute("CREATE TABLE " + tableName + " (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY " + (isWal ? "WAL" : "BYPASS WAL"));
+        execute("INSERT INTO " + tableName + " VALUES (1, '2022-02-24T00:00:00Z')");
+        drainWalQueue();
+        final File[] partitions = new File(configuration.getDbRoot(), engine.verifyTableName(tableName).getDirName())
+                .listFiles((dir, name) -> name.startsWith("2022-02-24"));
+        Assert.assertNotNull(partitions);
+        Assert.assertEquals(1, partitions.length);
+        final File staleFile = new File(partitions[0], "x.d");
+        try (TableReader ignore = getReader(tableName)) {
+            execute("UPDATE " + tableName + " SET x = 2");
+            drainWalQueue();
+        }
+        engine.releaseInactive();
+        Assert.assertTrue(staleFile.exists());
+        return staleFile;
     }
 
     private void createWalTable(String tableName) throws Exception {

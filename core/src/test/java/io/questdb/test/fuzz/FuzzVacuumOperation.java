@@ -75,9 +75,10 @@ public class FuzzVacuumOperation implements FuzzTransactionOperation {
     // and asks the caller to retry. With VACUUM before every transaction from several writer threads, the
     // purge workers can fall behind on a loaded host, and a single-writer WAL run queues every operation
     // before any apply worker starts. This thread drains the discovery queue itself and retries. A full
-    // ColumnPurgeJob queue skips the VACUUM instead: a test that drives FuzzRunner itself runs no
-    // ColumnPurgeJob, so nothing would drain it. Neither loses work: the next VACUUM rescans the table
-    // directory and re-discovers every stale partition and column version.
+    // ColumnPurgeJob queue skips the VACUUM instead: FuzzRunner runs that job between transactions, on this
+    // thread when it applies them one by one, so a wait here would not see the queue drain. Neither loses
+    // work: the next VACUUM rescans the table directory and re-discovers every stale partition and column
+    // version.
     private static void vacuum(SqlCompiler compiler, SqlExecutionContext context, O3PartitionPurgeJob purgeJob, String sql) throws SqlException {
         final long deadline = System.nanoTime() + QUEUE_FULL_TIMEOUT_NANOS;
         while (true) {
