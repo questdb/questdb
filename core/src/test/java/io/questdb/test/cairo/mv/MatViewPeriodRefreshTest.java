@@ -57,8 +57,8 @@ import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
  * A period materialized view refreshes up to the end of the last complete period and records that end, and the
  * refresh that runs once a period completes starts there. These tests check that every base row reaches the view
  * around that recorded end: the rows of a bucket that crosses it, which a range replace can delete before their
- * period completes, rows that an ALTER of the period moves behind it, and rows that a refresh which cannot read
- * the WAL transactions has to pick up before it.
+ * period completes, rows that an ALTER of the period or the end of DST moves behind it, and rows that a refresh
+ * which cannot read the WAL transactions has to pick up before it.
  */
 @RunWith(Parameterized.class)
 public class MatViewPeriodRefreshTest extends AbstractCairoTest {
@@ -147,6 +147,20 @@ public class MatViewPeriodRefreshTest extends AbstractCairoTest {
         testRangeReplaceDeletesRowsOfBucketCrossingPeriodHi(
                 "create materialized view mv refresh immediate as " + viewSql("base", "4h"),
                 "alter materialized view mv set refresh immediate period (length 7h)"
+        );
+    }
+
+    @Test
+    public void testDstEndBehindUtcRefreshesLateRow() throws Exception {
+        testDstEndRefreshesLateRow("period (length 1h time zone 'America/New_York')", viewSql("base", "1h"));
+    }
+
+    @Test
+    public void testDstEndBehindUtcRefreshesLateRowWithSampleByInterval() throws Exception {
+        // PERIOD (SAMPLE BY INTERVAL) takes the time zone of the SAMPLE BY clause.
+        testDstEndRefreshesLateRow(
+                "period (sample by interval)",
+                viewSql("base", "1h align to calendar time zone 'America/New_York'")
         );
     }
 
@@ -404,6 +418,48 @@ public class MatViewPeriodRefreshTest extends AbstractCairoTest {
             assertPeriodHi("mv", rowPeriodHi);
             assertView("mv", expectedView);
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, viewSql("base", "1h"), "mv", LOG);
+        });
+    }
+
+    // DST ends in America/New_York on 2022-11-06 at 06:00Z (02:00 EDT -> 01:00 EST). For hours after that, the
+    // incremental refresh computes the end of the last complete 1h period an hour before the end that the period
+    // timer recorded. Creates the view "mv" over the table "base" with the given period and query, then checks that
+    // a row of the hour that completed at 06:00Z, written at 06:30Z, reaches the view.
+    private void testDstEndRefreshesLateRow(String period, String query) throws Exception {
+        assertMemoryLeak(() -> {
+            currentMicros = parseFloorPartialTimestamp("2022-11-06T03:30:00.000000Z");
+            createBaseTable("base");
+            execute("insert into base values (7, '2022-11-06T01:10')");
+            drainWalQueue();
+            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+            execute("create materialized view mv refresh immediate " + period + " as " + query);
+            drain(timerJob);
+            for (String hour : new String[]{"04", "05", "06"}) {
+                currentMicros = parseFloorPartialTimestamp("2022-11-06T" + hour + ":00:00.000000Z");
+                drain(timerJob);
+            }
+            assertPeriodHi("mv", "2022-11-06T06:00:00.000000Z");
+
+            // The refresh of the late row computes 05:00Z as the period end, so it trims the row and rewinds the
+            // recorded end to 05:00Z.
+            currentMicros = parseFloorPartialTimestamp("2022-11-06T06:30:00.000000Z");
+            execute("insert into base values (1, '2022-11-06T05:30')");
+            drain(timerJob);
+            assertPeriodHi("mv", "2022-11-06T05:00:00.000000Z");
+
+            // The period refresh at 07:00Z starts at the rewound end and takes the row in.
+            currentMicros = parseFloorPartialTimestamp("2022-11-06T07:00:00.000000Z");
+            drain(timerJob);
+            assertPeriodHi("mv", "2022-11-06T07:00:00.000000Z");
+            assertView(
+                    "mv",
+                    """
+                            min_v\tmax_v\tts
+                            7\t7\t2022-11-06T01:00:00.000000Z
+                            1\t1\t2022-11-06T05:00:00.000000Z
+                            """
+            );
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, query, "mv", LOG);
         });
     }
 
