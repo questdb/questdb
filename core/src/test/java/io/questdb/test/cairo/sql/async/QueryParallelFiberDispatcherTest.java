@@ -4554,6 +4554,7 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                                 compiler.compile("tab", setupContext).getRecordCursorFactory(),
                                 metadata,
                                 columnTypes,
+                                configuration.getGroupByMapCapacity(),
                                 4,
                                 functions,
                                 0,

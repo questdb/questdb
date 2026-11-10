@@ -566,7 +566,8 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
     private void awaitTasks() {
         final int queued = queuedCount;
         final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
-        final boolean canPark = dispatcher != null && isFiberSuspendable();
+        final boolean isFiberSuspendable = isFiberSuspendable();
+        final boolean canPark = dispatcher != null && isFiberSuspendable;
         // Phase 2: Wait for all queued frames to complete.
         final SqlExecutionCircuitBreaker circuitBreaker = sqlExecutionContext.getCircuitBreaker();
         while (true) {
