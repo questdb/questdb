@@ -48,7 +48,7 @@ public class LtCharFunctionFactoryTest extends AbstractFunctionFactoryTest {
                 a\tb\tc
                 false\tfalse\tfalse
                 """;
-        assertQuery("SELECT cast(0 AS CHAR) <= null a, null >= cast(0 AS CHAR) b, cast(0 AS CHAR) >= cast(0 AS CHAR) c")
+        assertQuery("SELECT 0::CHAR <= null a, null >= 0::CHAR b, 0::CHAR >= 0::CHAR c")
                 .expectSize()
                 .returns(expected);
         bindVariableService.setChar(0, (char) 0);
