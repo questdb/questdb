@@ -1294,6 +1294,53 @@ public class IntervalFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInExchangeCalendarKeepsSessionsOfNestedIntervals() throws Exception {
+        // TestTickCalendarService holds the 2025 XNYS sessions: 14:30 to 21:00 UTC in January. The
+        // minute 15:30 of the Friday 2025-01-24 lies inside the hour 15:00 and ends inside the session,
+        // and it adds no instant to the hour, so the row at 15:45 matches as well. $today is the Monday
+        // 2025-01-27, whose session holds row 3.
+        final FactoryProvider previousFactoryProvider = factoryProvider;
+        factoryProvider = new DefaultFactoryProvider() {
+            @Override
+            public @NotNull TickCalendarServiceFactory getTickCalendarServiceFactory() {
+                return () -> TestTickCalendarService.INSTANCE;
+            }
+        };
+        try {
+            assertMemoryLeak(() -> {
+                executeWithRewriteTimestamp("CREATE TABLE x (k INT, tm #TIMESTAMP, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", timestampType.getTypeName());
+                execute("""
+                        INSERT INTO x VALUES
+                        (1, '2025-01-24T15:00:00.000000Z', '2025-01-24T15:00:00.000000Z'),
+                        (2, '2025-01-24T15:45:00.000000Z', '2025-01-24T15:45:00.000000Z'),
+                        (3, '2025-01-27T15:00:00.000000Z', '2025-01-27T15:00:00.000000Z')
+                        """);
+                setCurrentMicros(Micros.toMicros(2025, 1, 27, 1, 0));
+                // the designated ts runs an interval scan, and tm the row filter
+                for (String column : new String[]{"ts", "tm"}) {
+                    assertQuery("SELECT k FROM x WHERE " + column + " IN '[2025-01-24T15,2025-01-24T15:30]#XNYS'")
+                            .noLeakCheck()
+                            .returns("""
+                                    k
+                                    1
+                                    2
+                                    """);
+                    assertQuery("SELECT k FROM x WHERE " + column + " IN '[$today,2025-01-24T15,2025-01-24T15:30]#XNYS'")
+                            .noLeakCheck()
+                            .returns("""
+                                    k
+                                    1
+                                    2
+                                    3
+                                    """);
+                }
+            });
+        } finally {
+            factoryProvider = previousFactoryProvider;
+        }
+    }
+
+    @Test
     public void testInExchangeCalendarWithRuntimeInterval() throws Exception {
         // TestTickCalendarService holds the 2025 XNYS sessions: 14:30 to 21:00 UTC in January.
         final FactoryProvider previousFactoryProvider = factoryProvider;
@@ -1673,6 +1720,131 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns("a\tts\n");
+        });
+    }
+
+    @Test
+    public void testInStaticListOverMaxIntervalsWithDateVariable() throws Exception {
+        // A date variable compiles the tick string once, and the compiled list keeps its static
+        // intervals, after its day filter and zone, so it keeps at most the cap (1,024) of them, as a
+        // static list does. One row every 6 hours from 1999-12-20 to 2000-01-20 and from 2024-01-01
+        // to 2024-01-20; now is 01:00 on the Monday 2024-01-08.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE t (tm #TIMESTAMP, d DATE, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", timestampType.getTypeName());
+            execute("""
+                    INSERT INTO t
+                    SELECT '1999-12-20'::TIMESTAMP + (x - 1) * 21_600_000_000L,
+                           ('1999-12-20'::TIMESTAMP + (x - 1) * 21_600_000_000L)::DATE,
+                           '1999-12-20'::TIMESTAMP + (x - 1) * 21_600_000_000L
+                    FROM long_sequence(128)
+                    """);
+            execute("""
+                    INSERT INTO t
+                    SELECT '2024-01-01'::TIMESTAMP + (x - 1) * 21_600_000_000L,
+                           ('2024-01-01'::TIMESTAMP + (x - 1) * 21_600_000_000L)::DATE,
+                           '2024-01-01'::TIMESTAMP + (x - 1) * 21_600_000_000L
+                    FROM long_sequence(80)
+                    """);
+            executeWithRewriteTimestamp("CREATE TABLE base (v LONG, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL", timestampType.getTypeName());
+            setCurrentMicros(Micros.toMicros(2024, 1, 8, 1, 0));
+
+            // The workdays of 1980-1999 form 1,044 runs, the 1,025 hours of the repetition never touch,
+            // nor do the 1,305 Mondays of 2000-2024 at 09:00, and the 991 Mondays of 1981-1999 and the
+            // 992 of 1961-1979 exceed the cap together.
+            final String[] overCapLists = {
+                    "'[$today,[1980..1999]]#workday'",
+                    "'[$today,2024-01-01T09:00;1h;1d;1025]'",
+                    "'[$today,20[00..24]-[01..12]]T09:00#mon'",
+                    "'[$today,[1981..1999],[1961..1979]]#mon'"
+            };
+            for (String tick : overCapLists) {
+                assertOverMaxIntervalsError("SELECT ts FROM t WHERE ts IN " + tick);
+                assertOverMaxIntervalsError("SELECT ts FROM t WHERE ts NOT IN " + tick);
+                assertOverMaxIntervalsError("SELECT ts FROM t WHERE ts IN '$today' OR ts IN " + tick);
+                assertOverMaxIntervalsError("SELECT ts FROM t WHERE ts IN " + tick + " OR ts IN '$today'");
+                assertOverMaxIntervalsError("SELECT ts FROM t WHERE ts IN " + tick + " AND ts > dateadd('y', -30, now())");
+                assertOverMaxIntervalsError("SELECT ts FROM t WHERE ts > dateadd('y', -30, now()) AND ts IN " + tick);
+                assertOverMaxIntervalsError("SELECT ts FROM t WHERE tm IN " + tick);
+                assertOverMaxIntervalsError("SELECT ts FROM t WHERE d IN " + tick);
+                assertOverMaxIntervalsError("SELECT ts IN " + tick + " FROM t");
+                assertOverMaxIntervalsError("SELECT * FROM (SELECT ts FROM t WHERE ts IN " + tick + ")");
+                assertOverMaxIntervalsError("WITH c AS (SELECT ts FROM t WHERE ts IN " + tick + ") SELECT * FROM c");
+                assertOverMaxIntervalsError("SELECT ts FROM t UNION ALL SELECT ts FROM t WHERE ts IN " + tick);
+                assertOverMaxIntervalsError("CREATE VIEW v AS (SELECT ts FROM t WHERE ts IN " + tick + ")");
+                // the EXPIRE ROWS validator reports every predicate error at the name of the view
+                assertExceptionNoLeakCheck(
+                        "CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS WHEN ts IN " + tick,
+                        25,
+                        "invalid EXPIRE ROWS predicate: Bracket expansion produces too many intervals (max 1024)"
+                );
+            }
+            Assert.assertNull(engine.getTableTokenIfExists("v"));
+            Assert.assertNull(engine.getTableTokenIfExists("mv"));
+            // A bind variable string resolves when the cursor opens, and the interval scan of the
+            // designated timestamp swallows its error: IN keeps no row, and NOT IN keeps every row.
+            bindVariableService.clear();
+            bindVariableService.setStr("p", "[$today,[1980..1999]]#workday");
+            assertQuery("SELECT ts FROM t WHERE ts IN :p").noLeakCheck().timestamp("ts").returns("ts\n");
+            assertQuery("SELECT count() FROM t WHERE ts NOT IN :p").noLeakCheck().expectSize().noRandomAccess().returns("count\n208\n");
+
+            // Lists whose static intervals exceed the cap only before their union, against plain SQL:
+            // the static intervals end before 2000, and $today adds the Monday 2024-01-08.
+            final String today = "(ts >= '2024-01-08' AND ts < '2024-01-09')";
+            final String[][] unionedLists = {
+                    {"'[$today,[1981..1999]]#workday'", "SELECT ts FROM t WHERE (ts < '2000-01-01' AND day_of_week(ts) <= 5) OR " + today},
+                    {"'[$today,[1981..1999],[1981..1999]]#mon'", "SELECT ts FROM t WHERE (ts < '2000-01-01' AND day_of_week(ts) = 1) OR " + today},
+                    {"'[$today,1980-01-07;20y,[1980..1999]]#mon'", "SELECT ts FROM t WHERE (ts >= '1980-01-07' AND ts < '2000-01-07') OR " + today},
+                    {
+                            "'[$today,[1981..1999]]@America/Santiago#workday'",
+                            "SELECT ts FROM (SELECT ts, to_timezone(ts, 'America/Santiago') l FROM t) "
+                                    + "WHERE (l < '2000-01-01' AND day_of_week(l) <= 5) OR (l >= '2024-01-08' AND l < '2024-01-09')"
+                    }
+            };
+            for (String[] c : unionedLists) {
+                final String tick = c[0];
+                final String reference = c[1];
+                assertSqlCursors(reference, "SELECT ts FROM t WHERE ts IN " + tick);
+                assertSqlCursors(reference, "WITH c AS (SELECT ts FROM t WHERE ts IN " + tick + ") SELECT ts FROM c");
+                assertSqlCursors(
+                        reference + " UNION ALL " + reference,
+                        "SELECT ts FROM t WHERE ts IN " + tick + " UNION ALL SELECT ts FROM t WHERE tm IN " + tick
+                );
+                execute("CREATE VIEW v AS (SELECT ts FROM t WHERE ts IN " + tick + ")");
+                drainWalAndViewQueues();
+                assertSqlCursors(reference, "SELECT ts FROM v");
+                execute("DROP VIEW v");
+                assertQuery("SELECT ts FROM t WHERE ts IN " + tick).noLeakCheck().assertsPlanContaining("Interval forward scan on: t");
+            }
+            // The JIT bounds the range checks of a list without reading the clock: a cover of the
+            // Mondays leaves two, with or without a zone, and the 992 runs of workdays send the list to
+            // the Java filter.
+            assertInOnEveryColumn(
+                    "[$today,1980-01-07;20y,[1980..1999]]#mon",
+                    "(ts >= '1980-01-07' AND ts < '2000-01-07') OR " + today,
+                    76,
+                    true
+            );
+            assertInOnEveryColumn(
+                    "[$today,1980-01-07;20y,[1980..1999]]@America/Santiago#mon",
+                    "(to_timezone(ts, 'America/Santiago') >= '1980-01-07' AND to_timezone(ts, 'America/Santiago') < '2000-01-07') "
+                            + "OR (to_timezone(ts, 'America/Santiago') >= '2024-01-08' AND to_timezone(ts, 'America/Santiago') < '2024-01-09')",
+                    77,
+                    true
+            );
+            assertInOnEveryColumn(
+                    "[$today,[1981..1999]]#workday",
+                    "(ts < '2000-01-01' AND day_of_week(ts) <= 5) OR " + today,
+                    44,
+                    false
+            );
+
+            // One factory, run again after the clock moves to the Tuesday 2024-01-09: the Mondays
+            // 1999-12-20 and 12-27 keep their 8 rows, and $today the 4 rows of its day only on a Monday.
+            try (RecordCursorFactory factory = select("SELECT count() FROM t WHERE ts IN '[$today,[1981..1999],[1981..1999]]#mon'")) {
+                assertFactory(factory).withContext(sqlExecutionContext).expectSize().noRandomAccess().returns("count\n12\n");
+                setCurrentMicros(Micros.toMicros(2024, 1, 9, 1, 0));
+                assertFactory(factory).withContext(sqlExecutionContext).expectSize().noRandomAccess().returns("count\n8\n");
+            }
         });
     }
 

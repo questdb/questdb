@@ -137,9 +137,11 @@ long[1]:  lo  (interval start, fully resolved at compile time)
 long[2]:  hi  (interval end, fully resolved at compile time)
 ```
 
-Static elements have all suffix processing (time override, duration, timezone,
-day filter, exchange schedule) applied at compile time. They are emitted
-directly into the output without further computation.
+The compiler applies the time override, the duration, the day filter and the
+timezone to the intervals of the static elements, so each STATIC entry holds an
+interval of a fixed date after the day filter, in UTC. The compiler writes the
+STATIC entries after the date variable elements. The exchange schedule applies
+at run time, to the whole list.
 
 ### RANGE — 2 longs
 
@@ -183,7 +185,7 @@ The `expression` string is also kept for `toPlan()` display only.
 ```
 1. Walk elements (elemOff → end of ir):
    - SINGLE_VAR: decode expr → evaluate → emit day/point interval
-   - STATIC:     emit pre-computed [lo, hi]
+   - STATIC:     skip
    - RANGE:      decode both exprs → evaluate → emit day-by-day or single interval
 
 2. Apply day filter (bitmask check on day-of-week of each lo)
@@ -192,7 +194,12 @@ The `expression` string is also kept for `toPlan()` display only.
    - Numeric: subtract fixed offset from all timestamps
    - Named:   DST-aware conversion via driver.toUTC(timestamp, tzRules)
 
+   Then append the STATIC entries as stored: the compiler applied phases 2
+   and 3 to them.
+
 4. Apply exchange schedule (if present):
+   - Union the intervals, so that an interval inside another one cannot end
+     the other one's part of a session
    - Filter intervals to exchange trading hours
    - Optionally apply duration to filtered intervals
 
@@ -215,16 +222,14 @@ an upper bound on the interval count that holds for every "now".
 | SINGLE_VAR | `max(1, T)`                                                  |
 | RANGE      | 1 if contiguous (see below), otherwise no bound              |
 
-The compiler writes one STATIC entry per bracket leaf, day or list value, and
-phase 5 merges the intervals that overlap or touch, so the 20 STATIC entries of
+The compiler writes one STATIC entry per bracket leaf, day or list value, or
+one per interval of their union once they exceed the interval cap, and phase 5
+merges the intervals that overlap or touch, so the 20 STATIC entries of
 `[$today, 2024-01-[01..20]]` yield one interval. The STATIC entries count as the
 runs of overlapping or adjacent intervals they form, plus one per empty interval
 (lo > hi, as a zero duration yields), which the merge may keep apart from a run.
-Phases 2 and 3 treat each interval on its own and do not read "now", but either
-can split a run: the day filter keeps or drops an interval by the weekday of its
-lo, and a clock change at local midnight can part two adjacent local days in
-UTC. So the method runs both phases on the STATIC entries, as `evaluate()` does,
-before it counts the runs.
+The compiler stores them after the day filter and the timezone conversion, and
+`evaluate()` emits them as stored, so the method counts their runs as they are.
 
 A range is contiguous when it has no business-day walk and the expression has
 no time override, duration, day filter or named timezone. `emitRange()` then
@@ -245,9 +250,23 @@ does not know, for any other range, and when the sum exceeds `cap`.
    placeholders at `ir[0..5)`
 2. Append duration parts at `ir[5..5+D)`
 3. Append time override triples at `ir[5+D..5+D+3T)`
-4. Append elements at `ir[5+D+3T..)`
+4. Append elements at `ir[5+D+3T..)`: the date variable elements in list
+   order, then the STATIC entries of the list
 5. Write the header at `ir[0]` and the counts at `ir[2..5)`
 
+The compiler collects the intervals of the static elements of a list in a
+scratch list before it writes them. Each static element, and each day of a
+month or year with a time, gets the day filter and the timezone conversion of
+phases 2 and 3 on its own, as `parseTickExpr()` finishes each element before
+its list union. A union of the list then joins final UTC intervals only; a
+union in local time would join two days across a fall-back into a block that
+spans the repeated hour.
+Every `evaluate()` emits all STATIC entries, so the list keeps at most the
+interval cap (`cairo.sql.interval.max.intervals.after.merge`) of them: the
+compiler unions the collected intervals whenever they exceed the cap and the
+merge threshold together, and once more at the end when they exceed the cap,
+and fails if the union still exceeds the cap.
+
 This produces exactly **one `LongList`** for the stored IR. Compile-time
-temporaries (`StringSink`s and one `LongList`) are thread-local and reused
+temporaries (`StringSink`s and two `LongList`s) are thread-local and reused
 across all parsing phases via `clear()` between uses.

@@ -69,14 +69,17 @@ public final class IntervalUtils {
     // Day filter bitmask constants (bit 0 = Monday, bit 6 = Sunday)
     private static final int DAY_FILTER_WORKDAY = (1 << (MONDAY - 1)) | (1 << (TUESDAY - 1)) | (1 << (WEDNESDAY - 1))
             | (1 << (THURSDAY - 1)) | (1 << (FRIDAY - 1)); // Mon-Fri
-    // compileTickExpr thread-locals (3 sinks + 1 LongList):
+    // compileTickExpr thread-locals (3 sinks + 2 LongLists):
     //   tlCompileSink1  — day-filter stripping (effectiveSeq)
     //   tlCompileSink2  — time override parsing (parseSink)
     //   tlCompileSink3  — bracket expansion inside static elements (expansionSink)
+    //   tlCompileStaticIntervals — the static intervals of the date list being compiled, with the
+    //                              day filter and the time zone applied
     //   tlCompileTmp    — scratch list for intermediate parsing
     private static final FiberLocal<StringSink> tlCompileSink1 = new FiberLocal<>(StringSink::new);
     private static final FiberLocal<StringSink> tlCompileSink2 = new FiberLocal<>(StringSink::new);
     private static final FiberLocal<StringSink> tlCompileSink3 = new FiberLocal<>(StringSink::new);
+    private static final FiberLocal<LongList> tlCompileStaticIntervals = new FiberLocal<>(LongList::new);
     private static final FiberLocal<LongList> tlCompileTmp = new FiberLocal<>(LongList::new);
     private static final FiberLocal<StringSink> tlDateVarSink = new FiberLocal<>(StringSink::new);
     private static final FiberLocal<FlyweightCharSequence> tlExchangeCs = new FiberLocal<>(FlyweightCharSequence::new);
@@ -300,7 +303,7 @@ public final class IntervalUtils {
                 timestampDriver, configuration, effectiveSeq,
                 elemListLo, elemListHi, isBareVar,
                 timeLo, timeHi, tzMarkerPos, durationSemicolon, durationHi, tzContentHi,
-                dayFilterMask, exchangeSchedule,
+                dayFilterMask, exchangeSchedule, numericTzOffset, tzRules,
                 position, irList, parseSink, tmp
         );
 
@@ -1759,6 +1762,20 @@ public final class IntervalUtils {
         }
     }
 
+    // The static intervals of a date list that compileTickExpr() compiles are final: in UTC, after
+    // the day filter. Once they exceed the cap by more than slack, this unions them, as evaluate()
+    // would, and fails when the union still exceeds the cap. A list within the cap keeps its
+    // intervals as its elements left them.
+    private static void checkStaticIntervalCount(LongList staticIntervals, int slack, int maxIntervalsAfterMerge, int position) throws SqlException {
+        if (staticIntervals.size() / 2 - slack > maxIntervalsAfterMerge) {
+            unionBracketExpandedIntervals(staticIntervals, 0);
+            if (staticIntervals.size() / 2 > maxIntervalsAfterMerge) {
+                throw SqlException.$(position, "Bracket expansion produces too many intervals (max ")
+                        .put(maxIntervalsAfterMerge).put(')');
+            }
+        }
+    }
+
     /**
      * Compiles a bare variable (possibly a range like "$today..$today+5bd") into irList.
      */
@@ -1795,7 +1812,9 @@ public final class IntervalUtils {
     }
 
     /**
-     * Iterates comma-separated elements within a bracket list and appends each to irList.
+     * Iterates comma-separated elements within a bracket list. Appends each date variable element to
+     * irList, collects the intervals of the static elements with the day filter and the time zone
+     * applied, and appends one STATIC entry per collected interval after the date variable elements.
      *
      * @return number of elements appended
      */
@@ -1813,11 +1832,19 @@ public final class IntervalUtils {
             int tzContentHi,
             int dayFilterMask,
             LongList exchangeSchedule,
+            long numericTzOffset,
+            @Nullable TimeZoneRules tzRules,
             int position,
             LongList irList,
             StringSink parseSink,
             LongList tmp
     ) throws SqlException {
+        // Every evaluate() emits all static intervals of the list, so the list keeps at most the cap
+        // of them, as parseTickExpr() keeps a list within the cap.
+        final LongList staticIntervals = tlCompileStaticIntervals.get();
+        staticIntervals.clear();
+        final int maxIntervalsAfterMerge = configuration.getSqlIntervalMaxIntervalsAfterMerge();
+        final int mergeThreshold = configuration.getSqlIntervalIncrementalMergeThreshold();
         int elemCount = 0;
         int depth = 0;
         int elementStart = elemListLo;
@@ -1849,18 +1876,26 @@ public final class IntervalUtils {
                     compileVarElement(effectiveSeq, es, ee, position, irList);
                     elemCount++;
                 } else {
-                    elemCount += compileStaticElement(
+                    compileStaticElement(
                             timestampDriver, configuration, effectiveSeq,
                             es, ee, timeLo, timeHi, tzMarkerPos,
                             durationSemicolon, durationHi, tzContentHi,
-                            dayFilterMask, exchangeSchedule,
-                            position, irList, parseSink, tmp
+                            dayFilterMask, exchangeSchedule, numericTzOffset, tzRules,
+                            maxIntervalsAfterMerge, mergeThreshold,
+                            position, staticIntervals, parseSink, tmp
                     );
+                    checkStaticIntervalCount(staticIntervals, mergeThreshold, maxIntervalsAfterMerge, position);
                 }
                 elementStart = elementEnd + 1;
             }
         }
-        return elemCount;
+        checkStaticIntervalCount(staticIntervals, 0, maxIntervalsAfterMerge, position);
+        for (int k = 0, n = staticIntervals.size(); k < n; k += 2) {
+            irList.add(CompiledTickExpression.TAG_STATIC);
+            irList.add(staticIntervals.getQuick(k));
+            irList.add(staticIntervals.getQuick(k + 1));
+        }
+        return elemCount + staticIntervals.size() / 2;
     }
 
     /**
@@ -1925,6 +1960,8 @@ public final class IntervalUtils {
             int tzContentHi,
             int dayFilterMask,
             LongList exchangeSchedule,
+            long numericTzOffset,
+            @Nullable TimeZoneRules tzRules,
             int position,
             LongList irList,
             StringSink parseSink,
@@ -1938,7 +1975,7 @@ public final class IntervalUtils {
                 timestampDriver, configuration, effectiveSeq,
                 elemListLo, elemListHi,
                 timeLo, timeHi, tzMarkerPos, durationSemicolon, durationHi, tzContentHi,
-                dayFilterMask, exchangeSchedule,
+                dayFilterMask, exchangeSchedule, numericTzOffset, tzRules,
                 position, irList, parseSink, tmp
         );
     }
@@ -2007,8 +2044,10 @@ public final class IntervalUtils {
      * builds a precise YYYY-MM-DD + time string for each day and parses it.
      * This allows expressions like {@code [2024-01, 2024-02]T09:30#workday;6h29m}
      * and {@code 2024-[01..02]T09:30} to work without requiring explicit day ranges.
+     * Appends the interval of each day to staticIntervals, with the day filter and the
+     * time zone applied, and checks the static intervals of the list after each day.
      */
-    private static int compileImpreciseDateWithTime(
+    private static void compileImpreciseDateWithTime(
             TimestampDriver timestampDriver,
             CairoConfiguration configuration,
             CharSequence effectiveSeq,
@@ -2022,8 +2061,12 @@ public final class IntervalUtils {
             int tzContentHi,
             int dayFilterMask,
             LongList exchangeSchedule,
+            long numericTzOffset,
+            @Nullable TimeZoneRules tzRules,
+            int maxIntervalsAfterMerge,
+            int mergeThreshold,
             int position,
-            LongList irList,
+            LongList staticIntervals,
             StringSink parseSink,
             LongList tmp
     ) throws SqlException {
@@ -2082,8 +2125,8 @@ public final class IntervalUtils {
         }
         tmp.setPos(dayCount);
 
-        // Step 3: For each day, build "YYYY-MM-DD" + time suffix + duration and parse
-        int addedElems = 0;
+        // Step 3: For each day, build "YYYY-MM-DD" + time suffix + duration and parse it to the end of
+        // the static intervals of the list
         for (int d = 0; d < dayCount; d++) {
             long dayStart = tmp.getQuick(d);
             int year = timestampDriver.getYear(dayStart);
@@ -2109,18 +2152,12 @@ public final class IntervalUtils {
                 parseSink.put(effectiveSeq, tzContentHi, durationHi);
             }
 
-            tmp.setPos(dayCount);
-            parseIntervalSuffix(timestampDriver, parseSink, 0, parseSink.length(), position, tmp, IntervalOperation.INTERSECT);
-            applyLastEncodedInterval(timestampDriver, tmp);
-
-            for (int k = dayCount; k < tmp.size(); k += 2) {
-                irList.add(CompiledTickExpression.TAG_STATIC);
-                irList.add(tmp.getQuick(k));
-                irList.add(tmp.getQuick(k + 1));
-                addedElems++;
-            }
+            final int dayLo = staticIntervals.size();
+            parseIntervalSuffix(timestampDriver, parseSink, 0, parseSink.length(), position, staticIntervals, IntervalOperation.INTERSECT);
+            applyLastEncodedInterval(timestampDriver, staticIntervals);
+            finishStaticIntervals(timestampDriver, staticIntervals, dayLo, effectiveDayMask, numericTzOffset, tzRules);
+            checkStaticIntervalCount(staticIntervals, mergeThreshold, maxIntervalsAfterMerge, position);
         }
-        return addedElems;
     }
 
     /**
@@ -2192,12 +2229,10 @@ public final class IntervalUtils {
     }
 
     /**
-     * Compiles a static (non-variable) element by pre-computing its [lo, hi] intervals
-     * and appending TAG_STATIC entries to irList.
-     *
-     * @return number of static elements appended (may be &gt;1 for bracket expansion)
+     * Compiles a static (non-variable) element by pre-computing its [lo, hi] intervals and appending
+     * them to staticIntervals, with the day filter and the time zone applied.
      */
-    private static int compileStaticElement(
+    private static void compileStaticElement(
             TimestampDriver timestampDriver,
             CairoConfiguration configuration,
             CharSequence effectiveSeq,
@@ -2211,8 +2246,12 @@ public final class IntervalUtils {
             int tzContentHi,
             int dayFilterMask,
             LongList exchangeSchedule,
+            long numericTzOffset,
+            @Nullable TimeZoneRules tzRules,
+            int maxIntervalsAfterMerge,
+            int mergeThreshold,
             int position,
-            LongList irList,
+            LongList staticIntervals,
             StringSink parseSink,
             LongList tmp
     ) throws SqlException {
@@ -2221,11 +2260,13 @@ public final class IntervalUtils {
         // Without this, "2024-01T09:30" would reach parseInterval which only
         // accepts YYYY-MM-DD'T'HH:mm format.
         if (timeLo < timeHi && !hasDatePrecision(effectiveSeq, es, ee)) {
-            return compileImpreciseDateWithTime(
+            compileImpreciseDateWithTime(
                     timestampDriver, configuration, effectiveSeq, es, ee,
                     timeLo, timeHi, tzMarkerPos, durationSemicolon, durationHi, tzContentHi,
-                    dayFilterMask, exchangeSchedule, position, irList, parseSink, tmp
+                    dayFilterMask, exchangeSchedule, numericTzOffset, tzRules,
+                    maxIntervalsAfterMerge, mergeThreshold, position, staticIntervals, parseSink, tmp
             );
+            return;
         }
 
         // Build the full element string: date + time override + duration suffix
@@ -2247,7 +2288,8 @@ public final class IntervalUtils {
             parseSink.put(effectiveSeq, durationSemicolon, durationHi);
         }
 
-        tmp.clear();
+        // the intervals of the element start after those of the earlier static elements
+        final int base = staticIntervals.size();
 
         // Check if element contains brackets (e.g. 2025-01-[13..15])
         boolean elemHasBrackets = false;
@@ -2265,50 +2307,30 @@ public final class IntervalUtils {
             pendingDayFilter = tlPendingDayFilter.get().of(
                     exchangeSchedule == null ? dayFilterMask : 0,
                     hasDatePrecision(effectiveSeq, es, ee),
-                    0
+                    base
             );
             expandBracketsRecursive(
                     timestampDriver, configuration, parseSink,
                     0, dateLimInSink, parseSink.length(),
-                    position, tmp,
+                    position, staticIntervals,
                     expansionSink, 0,
                     null, -1, -1,
                     pendingDayFilter
             );
         } else {
-            parseIntervalSuffix(timestampDriver, parseSink, 0, parseSink.length(), position, tmp, IntervalOperation.INTERSECT);
-            applyLastEncodedInterval(timestampDriver, tmp);
+            parseIntervalSuffix(timestampDriver, parseSink, 0, parseSink.length(), position, staticIntervals, IntervalOperation.INTERSECT);
+            applyLastEncodedInterval(timestampDriver, staticIntervals);
         }
 
         // Day filter in local time (before tz conversion)
-        if (dayFilterMask != 0 && exchangeSchedule == null && tmp.size() >= 2) {
+        if (dayFilterMask != 0 && exchangeSchedule == null && staticIntervals.size() - base >= 2) {
             if (pendingDayFilter != null && pendingDayFilter.isPending()) {
-                pendingDayFilter.apply(timestampDriver, tmp);
-                // While a date-precise day filter is pending, the incremental merge checks the interval
-                // count only once per threshold intervals, and this method has no final check like
-                // parseTickExpr's, so it counts the intervals added after the last merge here.
-                final int maxIntervalsAfterMerge = configuration.getSqlIntervalMaxIntervalsAfterMerge();
-                if (tmp.size() / 2 > maxIntervalsAfterMerge) {
-                    unionBracketExpandedIntervals(tmp, 0);
-                    if (tmp.size() / 2 > maxIntervalsAfterMerge) {
-                        throw SqlException.$(position, "Bracket expansion produces too many intervals (max ")
-                                .put(maxIntervalsAfterMerge).put(')');
-                    }
-                }
+                pendingDayFilter.apply(timestampDriver, staticIntervals);
             } else {
-                applyDayFilter(timestampDriver, tmp, 0, dayFilterMask, hasDatePrecision(effectiveSeq, es, ee));
+                applyDayFilter(timestampDriver, staticIntervals, base, dayFilterMask, hasDatePrecision(effectiveSeq, es, ee));
             }
         }
-
-        // Append TAG_STATIC entries to IR
-        int addedElems = 0;
-        for (int k = 0; k < tmp.size(); k += 2) {
-            irList.add(CompiledTickExpression.TAG_STATIC);
-            irList.add(tmp.getQuick(k));
-            irList.add(tmp.getQuick(k + 1));
-            addedElems++;
-        }
-        return addedElems;
+        finishStaticIntervals(timestampDriver, staticIntervals, base, exchangeSchedule == null ? dayFilterMask : 0, numericTzOffset, tzRules);
     }
 
     /**
@@ -4087,6 +4109,27 @@ public final class IntervalUtils {
         return -1;
     }
 
+    // evaluate() applies neither the day filter nor the time zone to STATIC entries, so this applies
+    // both to the intervals that a static element or day added from lo on, each on its own, as phases
+    // 2 and 3 of evaluate() apply them to the date variables. A union of the list then joins final UTC
+    // intervals only: a union of local intervals would not commute with a named zone, as a block that
+    // joins two days across a fall-back takes the standard offset at its end and so spans the repeated
+    // hour that the days leave out.
+    private static void finishStaticIntervals(
+            TimestampDriver timestampDriver,
+            LongList staticIntervals,
+            int lo,
+            int runtimeDayFilterMask,
+            long numericTzOffset,
+            @Nullable TimeZoneRules tzRules
+    ) {
+        if (runtimeDayFilterMask != 0 && staticIntervals.size() > lo) {
+            // the day filter of evaluate(): keeps an interval by the weekday of its lo
+            applyDayFilter(timestampDriver, staticIntervals, lo, runtimeDayFilterMask, true);
+        }
+        CompiledTickExpression.applyTimezone(timestampDriver, numericTzOffset, tzRules, staticIntervals, lo);
+    }
+
     /**
      * Looks up an tick calendar schedule for the token between {@code lo} (inclusive) and
      * {@code hi} (exclusive) in {@code seq}. Returns the schedule {@link LongList} if the
@@ -4650,13 +4693,16 @@ public final class IntervalUtils {
         }
         assert schedule.size() % 2 == 0 : "odd element count in schedule";
 
-        // Sort query intervals by lo value before intersection (intersectInPlace requires sorted input)
-        LongGroupSort.quickSort(2, out, startIndex / 2, startIndex / 2 + queryIntervalCount);
+        // intersectInPlace() needs ordered intervals that do not overlap: an interval that lies inside
+        // an earlier one and ends inside a session would end the earlier one's piece of that session
+        // at its own hi. The union sorts the query intervals and joins those that overlap or touch, so
+        // the result depends on the set of the intervals only.
+        if (queryIntervalCount > 1) {
+            unionBracketExpandedIntervals(out, startIndex);
+        }
 
-        // Determine the query time range to narrow the schedule scan.
-        // Query intervals are sorted by lo at this point, but they may overlap or
-        // nest (union happens later), so hi values are not monotonic: the last
-        // interval's hi is not necessarily the maximum. Scan all hi values.
+        // Determine the query time range to narrow the schedule scan. The union leaves the intervals
+        // sorted and apart, so the largest hi that the scan finds is the one of the last interval.
         long queryLo = out.getQuick(startIndex);
         long queryHi = out.getQuick(startIndex + 1);
         for (int i = startIndex + 3, n = out.size(); i < n; i += 2) {

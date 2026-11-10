@@ -34,6 +34,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.TimeZoneRules;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 /**
@@ -57,7 +58,8 @@ import org.jetbrains.annotations.TestOnly;
  * Element encodings (tag in bits 63-62, expr in bits 59-0):
  * <ul>
  *   <li>SINGLE_VAR (tag 00): 1 long — encoded DateVariableExpr</li>
- *   <li>STATIC (tag 01): 3 longs — tag, lo, hi</li>
+ *   <li>STATIC (tag 01): 3 longs — tag, lo, hi of an interval of a fixed date, after the day filter
+ *   and in UTC; the compiler writes them after the date variable elements</li>
  *   <li>RANGE (tag 10): 2 longs — tag+isBusinessDay+startExpr, endExpr</li>
  * </ul>
  */
@@ -136,6 +138,44 @@ public class CompiledTickExpression extends UntypedFunction {
         this.elemOff = toOff + timeOverrideCount * 3;
     }
 
+    // Phase 3 of evaluate(): converts each interval from startIndex on from local time to UTC on its
+    // own. IntervalUtils.compileTickExpr() converts the static intervals of a list with it.
+    static void applyTimezone(
+            TimestampDriver timestampDriver,
+            long numericTzOffset,
+            @Nullable TimeZoneRules tzRules,
+            LongList out,
+            int startIndex
+    ) {
+        int size = out.size();
+        if (numericTzOffset != Long.MIN_VALUE) {
+            for (int i = startIndex; i < size; i++) {
+                out.setQuick(i, out.getQuick(i) - numericTzOffset);
+            }
+        } else if (tzRules != null) {
+            for (int i = startIndex; i < size; i += 2) {
+                long lo = out.getQuick(i);
+                long hi = out.getQuick(i + 1);
+
+                long adjustedLo = lo;
+                long adjustedHi = hi;
+                long gapDuration = tzRules.getDstGapOffset(lo);
+                if (gapDuration != 0) {
+                    adjustedLo = lo + gapDuration;
+                    adjustedHi = hi + gapDuration;
+                } else {
+                    gapDuration = tzRules.getDstGapOffset(hi);
+                    if (gapDuration != 0) {
+                        adjustedHi = hi + gapDuration;
+                    }
+                }
+
+                out.setQuick(i, timestampDriver.toUTC(adjustedLo, tzRules));
+                out.setQuick(i + 1, timestampDriver.toUTC(adjustedHi, tzRules));
+            }
+        }
+    }
+
     static long encodeDuration(char unit, int value) {
         return ((long) (unit & 0xFFFF) << 32) | (value & 0xFFFFFFFFL);
     }
@@ -179,7 +219,7 @@ public class CompiledTickExpression extends UntypedFunction {
     public void evaluate(LongList outIntervals) {
         int outStart = outIntervals.size();
 
-        // Phase 1: Emit intervals for each element
+        // Phase 1: Emit intervals for each date variable element
         int pos = elemOff;
         for (int i = 0; i < elemCount; i++) {
             long word = ir.getQuick(pos);
@@ -188,7 +228,6 @@ public class CompiledTickExpression extends UntypedFunction {
                 emitSingleVar(word, outIntervals);
                 pos++;
             } else if (tag == TAG_STATIC) {
-                outIntervals.add(ir.getQuick(pos + 1), ir.getQuick(pos + 2));
                 pos += 3;
             } else {
                 emitRange(word, ir.getQuick(pos + 1), outIntervals);
@@ -199,6 +238,21 @@ public class CompiledTickExpression extends UntypedFunction {
         // Phase 2: Apply day filter (before timezone conversion, in local time)
         // Phase 3: Apply timezone conversion
         applyDayFilterAndTimezone(outIntervals, outStart);
+
+        // The compiler applied the day filter and the time zone to the STATIC entries, so they join
+        // the intervals of the date variables after phases 2 and 3.
+        pos = elemOff;
+        for (int i = 0; i < elemCount; i++) {
+            long tag = ir.getQuick(pos) & TAG_MASK;
+            if (tag == TAG_SINGLE_VAR) {
+                pos++;
+            } else if (tag == TAG_STATIC) {
+                outIntervals.add(ir.getQuick(pos + 1), ir.getQuick(pos + 2));
+                pos += 3;
+            } else {
+                pos += 2;
+            }
+        }
 
         // Phase 4: Apply exchange schedule filter + optional duration
         if (exchangeSchedule != null) {
@@ -237,15 +291,13 @@ public class CompiledTickExpression extends UntypedFunction {
      * merge joins the intervals that overlap or touch, so it yields no more intervals than the STATIC
      * bound below plus the intervals that the date variable elements emit.
      * <ul>
-     *     <li>STATIC: the runs of overlapping or adjacent intervals that the STATIC entries leave
-     *     after the day filter and the timezone conversion, plus one for each empty interval
-     *     (lo &gt; hi, as a zero duration yields), which the merge may keep apart from a run. The
-     *     compiler writes one STATIC entry per bracket leaf, day or list value, so
-     *     '[$today, 2024-01-[01..20]]' holds twenty in one run. The day filter and the conversion
-     *     treat each interval on its own and do not read "now", but either can split a run: the
-     *     filter keeps or drops an interval by the weekday of its lo, and a clock change at local
-     *     midnight can part two adjacent local days in UTC. So this method runs both on the STATIC
-     *     entries as {@link #evaluate} does, before it counts the runs.</li>
+     *     <li>STATIC: the runs of overlapping or adjacent intervals that the STATIC entries form,
+     *     plus one for each empty interval (lo &gt; hi, as a zero duration yields), which the merge
+     *     may keep apart from a run. The compiler stores the STATIC entries after the day filter and
+     *     the timezone conversion: one per bracket leaf, day or list value, or one per interval of
+     *     their union once they exceed the interval cap, so '[$today, 2024-01-[01..20]]' holds twenty
+     *     in one run. {@link #evaluate} emits them as stored, so this method counts their runs as
+     *     they are.</li>
      *     <li>SINGLE_VAR: the time override count, or 1 without time overrides.
      *     {@link #emitSingleVar} emits one interval per time override for a day-aligned value, and
      *     one interval otherwise. The day filter only drops intervals, and the timezone conversion
@@ -308,7 +360,6 @@ public class CompiledTickExpression extends UntypedFunction {
             }
         }
         if (staticIntervals != null) {
-            applyDayFilterAndTimezone(staticIntervals, 0);
             int emptyCount = 0;
             int writeIndex = 0;
             for (int i = 0, n = staticIntervals.size(); i < n; i += 2) {
@@ -413,8 +464,8 @@ public class CompiledTickExpression extends UntypedFunction {
         out.setPos(startIndex + totalIntervals * 2);
     }
 
-    // Phases 2 and 3 of evaluate(). getMaxIntervalCount() runs them on the STATIC entries alone and
-    // takes the result for every "now", so neither may read "now".
+    // Phases 2 and 3 of evaluate(). IntervalUtils.compileTickExpr() runs both on the static intervals
+    // once and stores the result for every "now", so neither may read "now".
     private void applyDayFilterAndTimezone(LongList out, int startIndex) {
         if (dayFilterMask != 0 && exchangeSchedule == null) {
             applyDayFilter(out, startIndex);
@@ -430,34 +481,7 @@ public class CompiledTickExpression extends UntypedFunction {
     }
 
     private void applyTimezone(LongList out, int startIndex) {
-        long numericTzOffset = ir.getQuick(IR_TZ_OFFSET_INDEX);
-        int size = out.size();
-        if (numericTzOffset != Long.MIN_VALUE) {
-            for (int i = startIndex; i < size; i++) {
-                out.setQuick(i, out.getQuick(i) - numericTzOffset);
-            }
-        } else if (tzRules != null) {
-            for (int i = startIndex; i < size; i += 2) {
-                long lo = out.getQuick(i);
-                long hi = out.getQuick(i + 1);
-
-                long adjustedLo = lo;
-                long adjustedHi = hi;
-                long gapDuration = tzRules.getDstGapOffset(lo);
-                if (gapDuration != 0) {
-                    adjustedLo = lo + gapDuration;
-                    adjustedHi = hi + gapDuration;
-                } else {
-                    gapDuration = tzRules.getDstGapOffset(hi);
-                    if (gapDuration != 0) {
-                        adjustedHi = hi + gapDuration;
-                    }
-                }
-
-                out.setQuick(i, timestampDriver.toUTC(adjustedLo, tzRules));
-                out.setQuick(i + 1, timestampDriver.toUTC(adjustedHi, tzRules));
-            }
-        }
+        applyTimezone(timestampDriver, ir.getQuick(IR_TZ_OFFSET_INDEX), tzRules, out, startIndex);
     }
 
     private void emitDayInterval(long dayStart, LongList out) {

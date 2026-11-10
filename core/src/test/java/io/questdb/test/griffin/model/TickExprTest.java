@@ -38,6 +38,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.LongList;
 import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.StringSink;
@@ -56,8 +57,13 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.EnumSet;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeMap;
 import java.util.TreeSet;
 
 import static io.questdb.test.griffin.GriffinParserTestUtils.intervalToString;
@@ -727,8 +733,8 @@ public class TickExprTest {
     @Test
     public void testCompiledDayFilterBracketExpansionOverMaxIntervals() {
         // 22 x 12 x 4 = 1,056 Monday intervals exceed the cap of 1,024. The incremental merge checks
-        // the count only once per 256 leaves, so compileStaticElement checks it again after the
-        // last leaf.
+        // the count only once per 256 leaves, so the checks of the list count them after the last
+        // leaf.
         assertCompileTickExprError(
                 "[$today,20[03..24]-[01..12]-[01..28]]#mon",
                 "Bracket expansion produces too many intervals (max 1024)"
@@ -739,10 +745,10 @@ public class TickExprTest {
     public void testCompiledDayFilterImpreciseBracketExpansion() throws SqlException {
         // A bracketed element without date precision (year, month or ISO week) leaves the day filter
         // holder of compileStaticElement unarmed, so the element takes the expanding filter, which
-        // turns each year, month or week into its matching days. CompiledTickExpression filters
-        // again at run time, but only by the first day of each interval: it would keep January 2024
-        // whole, since it starts on a Monday, and drop February and March. $today, the Monday
-        // 2024-01-08, lies in every range.
+        // turns each year, month or week into its matching days. The compiler applies the run-time
+        // filter of CompiledTickExpression too, but that one judges only the first day of each
+        // interval: alone it would keep January 2024 whole, since it starts on a Monday, and drop
+        // February and March. $today, the Monday 2024-01-08, lies in every range.
         assertCompiledFullDayMondays(configuration, "[$today,2024-[01..03]]#mon", LocalDate.of(2024, 1, 1), LocalDate.of(2024, 3, 31));
         // ISO week 1 of 2024 starts on Monday 2024-01-01, and week 13 ends on Sunday 2024-03-31
         assertCompiledFullDayMondays(configuration, "[$today,2024-W[01..13]]#mon", LocalDate.of(2024, 1, 1), LocalDate.of(2024, 3, 31));
@@ -766,20 +772,578 @@ public class TickExprTest {
     @Test
     public void testCompiledImpreciseDateWithTimeDayFilterControl() throws SqlException {
         // compileImpreciseDateWithTime expands the months with no pending day filter and then filters
-        // every day of every month: one 09:00 interval per Monday of 2000-2024, with no cap.
+        // every day of every month: one 09:00 interval per Monday. The list keeps at most the cap
+        // (1,024) of static intervals, so the 1,305 Mondays of 2000-2024 fail, as in parseTickExpr, and
+        // the 992 of 2000-2018 stay, next to $today, the Monday 2024-01-08.
+        assertCompiledAndParsedOverMaxIntervals("[$today,20[00..24]-[01..12]]T09:00#mon");
         final TimestampDriver timestampDriver = timestampType.getDriver();
-        final String interval = "[$today,20[00..24]-[01..12]]T09:00#mon";
+        final String interval = "[$today,20[00..18]-[01..12]]T09:00#mon";
         try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(timestampDriver, configuration, interval, 0, interval.length(), 0)) {
             out.clear();
             compiled.evaluate(out, mondayNow());
         }
-        Assert.assertEquals(countMondays(LocalDate.of(2000, 1, 1), LocalDate.of(2024, 12, 31)), out.size() / 2);
+        Assert.assertEquals(countMondays(LocalDate.of(2000, 1, 1), LocalDate.of(2018, 12, 31)) + 1, out.size() / 2);
         for (int i = 0, n = out.size(); i < n; i += 2) {
             final long lo = out.getQuick(i);
             Assert.assertEquals(1, timestampDriver.getDayOfWeek(lo));
             Assert.assertEquals(9, timestampDriver.getHourOfDay(lo));
             Assert.assertEquals(0, timestampDriver.getMinuteOfHour(lo));
         }
+    }
+
+    @Test
+    public void testCompiledImpreciseDateWithTimeOverMaxIntervals() throws SqlException {
+        // compileImpreciseDateWithTime turns a month or a year with a time into one interval per day,
+        // and the list keeps at most the cap (1,024) of static intervals. The 31,280 days of the odd
+        // months of 1900-2069 at 09:30 never touch.
+        Assert.assertEquals(1_024, configuration.getSqlIntervalMaxIntervalsAfterMerge());
+        assertCompiledAndParsedOverMaxIntervals("[$today,[1900..2069]-[01,03,05,07,09,11]]T09:30");
+
+        // A duration of 25 hours reaches into the next day, so the days of a month join into one
+        // interval, from 09:30 on its first day to 10:29:59.999999 on the first day of the next month.
+        // The list unions its days whenever it holds more than the cap and the merge threshold (256)
+        // together, and once more at the end, which leaves the 1,020 months. $today, the Monday
+        // 2024-01-08, lies in January 2024.
+        final LongList oddMonths = new LongList();
+        for (int year = 1900; year < 2070; year++) {
+            for (int month = 1; month < 12; month += 2) {
+                final LocalDateTime lo = LocalDate.of(year, month, 1).atTime(9, 30);
+                final LocalDateTime end = LocalDate.of(year, month + 1, 1).atTime(10, 30);
+                addLocalBlock(oddMonths, lo, ZoneOffset.UTC, (end.toEpochSecond(ZoneOffset.UTC) - lo.toEpochSecond(ZoneOffset.UTC)) * Micros.SECOND_MICROS);
+            }
+        }
+        final String oddMonthDays = "[$today,[1900..2069]-[01,03,05,07,09,11]]T09:30;25h";
+        assertCompiledTickExprIntervals(oddMonthDays, 1_021, 1_021, oddMonths);
+        // The expansion of the 1,020 month leaves reads the cap at its unions at the leaves 256, 512
+        // and 768 and after the last leaf, and the list reads it once.
+        final MaxIntervalsCountingConfiguration countingConfiguration = new MaxIntervalsCountingConfiguration();
+        IntervalUtils.compileTickExpr(timestampType.getDriver(), countingConfiguration, oddMonthDays, 0, oddMonthDays.length(), 0).close();
+        Assert.assertEquals(5, countingConfiguration.getterCallCount);
+
+        // The 1,461 days of 2000-2003, an odd count, join into one interval, also after a static
+        // element.
+        final LongList fourYears = new LongList();
+        addLocalBlock(fourYears, LocalDateTime.of(2000, 1, 1, 9, 30), ZoneOffset.UTC, (1_461 * 24 + 1) * Micros.HOUR_MICROS);
+        addLocalBlock(fourYears, LocalDateTime.of(2024, 1, 8, 9, 30), ZoneOffset.UTC, 25 * Micros.HOUR_MICROS);
+        assertCompiledTickExprIntervals("[$today,20[00..03]-[01..12]]T09:30;25h", 182, 2, fourYears);
+        assertCompiledTickExpr("[$today,20[00..03]-[01..12]]T09:30;25h");
+        addLocalBlock(fourYears, LocalDateTime.of(2024, 1, 15, 9, 30), ZoneOffset.UTC, 25 * Micros.HOUR_MICROS);
+        assertCompiledTickExprIntervals("[$today,2024-01-15,20[00..03]-[01..12]]T09:30;25h", 184, 3, fourYears);
+        assertCompiledTickExpr("[$today,2024-01-15,20[00..03]-[01..12]]T09:30;25h");
+
+        // Two copies of the 992 Mondays of 2000-2018 at 09:00 hold 1,984 intervals, whose union is the
+        // 992. parseTickExpr counts the days of a month with a time before the day filter, so it
+        // rejects the static equivalent.
+        final LongList mondayMinutes = new LongList();
+        for (LocalDate day = LocalDate.of(2000, 1, 3); day.getYear() < 2019; day = day.plusWeeks(1)) {
+            addLocalBlock(mondayMinutes, day.atTime(9, 0), ZoneOffset.UTC, Micros.MINUTE_MICROS);
+        }
+        Assert.assertEquals(2 * 992, mondayMinutes.size());
+        addLocalBlock(mondayMinutes, LocalDateTime.of(2024, 1, 8, 9, 0), ZoneOffset.UTC, Micros.MINUTE_MICROS);
+        assertCompiledTickExprIntervals("[$today,20[00..18]-[01..12],20[00..18]-[01..12]]T09:00#mon", 993, 993, mondayMinutes);
+
+        // A negative duration starts the interval of a weekend day D at D - 6d, and evaluate() keeps
+        // each interval by the weekday of its start, so only those of the Saturdays stay, and they
+        // never touch: the 783 of 2000-2014 stay within the cap, the 1,305 of 2000-2024 do not. The
+        // interval of $today starts on a Tuesday and goes. parseTickExpr judges these intervals by
+        // another day, so it gives no reference here.
+        final LongList saturdayWeeks = new LongList();
+        for (LocalDate day = LocalDate.of(2000, 1, 1); day.getYear() < 2015; day = day.plusWeeks(1)) {
+            addLocalDays(saturdayWeeks, day.minusDays(6), day, ZoneOffset.UTC);
+        }
+        Assert.assertEquals(2 * 783, saturdayWeeks.size());
+        assertCompiledTickExprIntervals("[$today,[2000..2014]]T00:00#weekend;-6d", 784, 784, saturdayWeeks);
+        assertCompiledOverMaxIntervals(configuration, "[$today,[2000..2024]]T00:00#weekend;-6d");
+    }
+
+    @Test
+    public void testCompiledListStaticIntervalsAcrossElements() throws SqlException {
+        // The cap (1,024) bounds the static intervals of the whole list, not those of each element:
+        // elements within the cap can exceed it together, and the union of repeated elements stays
+        // within it. The list unions its static intervals whenever they exceed the cap and the merge
+        // threshold (256) together, and once more at the end.
+        final LongList mondays = new LongList();
+        addDayRuns(mondays, LocalDate.of(1981, 1, 1), LocalDate.of(1999, 12, 31), EnumSet.of(DayOfWeek.MONDAY), ZoneOffset.UTC);
+        Assert.assertEquals(2 * 991, mondays.size());
+        addLocalDays(mondays, LocalDate.of(2024, 1, 8), LocalDate.of(2024, 1, 9), ZoneOffset.UTC);
+        // the 991 Mondays of 1981-1999, twice and 50 times, and $today, the Monday 2024-01-08
+        assertCompiledTickExprIntervals("[$today,[1981..1999],[1981..1999]]#mon", 992, 992, mondays);
+        assertCompiledTickExpr("[$today,[1981..1999],[1981..1999]]#mon");
+        assertCompiledTickExprIntervals("[$today," + repeatedValues("[1981..1999]", 50) + "]#mon", 992, 992, mondays);
+        // the 991 Mondays of 1981-1999 and the 992 of 1961-1979
+        assertCompiledAndParsedOverMaxIntervals("[$today,[1981..1999],[1961..1979]]#mon");
+
+        // 25 days x 8 hours x 5 minutes are 1,000 seconds that never touch, and the same seconds again
+        // stay within the cap, while those of March next to them do not.
+        final String february = "2024-02-[01..25]T[00..07]:[00..04]:00";
+        final LongList seconds = new LongList();
+        addLocalDays(seconds, LocalDate.of(2024, 1, 8), LocalDate.of(2024, 1, 9), ZoneOffset.UTC);
+        for (int day = 1; day <= 25; day++) {
+            for (int hour = 0; hour < 8; hour++) {
+                for (int minute = 0; minute < 5; minute++) {
+                    addLocalBlock(seconds, LocalDateTime.of(2024, 2, day, hour, minute), ZoneOffset.UTC, Micros.SECOND_MICROS);
+                }
+            }
+        }
+        assertCompiledTickExprIntervals("[$today," + february + ',' + february + ']', 1_001, 1_001, seconds);
+        assertCompiledTickExpr("[$today," + february + ',' + february + ']');
+        assertCompiledAndParsedOverMaxIntervals("[$today," + february + ",2024-03-[01..25]T[00..07]:[00..04]:00]");
+
+        // An element that covers the 1,043 Mondays of 1980-1999 joins them at the final union, before
+        // or after them, while they stay within the cap and the threshold. parseTickExpr unions a list
+        // whenever it grew by the threshold, so it rejects the list with the cover last.
+        final LongList twentyYears = new LongList();
+        addLocalDays(twentyYears, LocalDate.of(1980, 1, 7), LocalDate.of(2000, 1, 7), ZoneOffset.UTC);
+        addLocalDays(twentyYears, LocalDate.of(2024, 1, 8), LocalDate.of(2024, 1, 9), ZoneOffset.UTC);
+        assertCompiledTickExprIntervals("[$today,1980-01-07;20y,[1980..1999]]#mon", 2, 2, twentyYears);
+        assertCompiledTickExpr("[$today,1980-01-07;20y,[1980..1999]]#mon");
+        assertCompiledTickExprIntervals("[$today,[1980..1999],1980-01-07;20y]#mon", 2, 2, twentyYears);
+        // the 1,304 Mondays of 1975-1999 exceed the cap and the threshold before the cover
+        assertCompiledAndParsedOverMaxIntervals("[$today,[1975..1999],1975-01-06;25y]#mon");
+    }
+
+    @Test
+    public void testCompiledListStaticIntervalsAfterCapError() throws SqlException {
+        // A list that fails leaves its static intervals in the scratch list of the thread. The next
+        // list on the thread starts with an empty one, and converts its own intervals once.
+        assertCompiledOverMaxIntervals(configuration, "[$today,[1981..1999],[1961..1979]]#mon");
+        final ZoneId santiago = ZoneId.of("America/Santiago");
+        final LongList days = new LongList();
+        addZonedLocalDay(days, LocalDate.of(2024, 1, 8), santiago);
+        addZonedLocalDay(days, LocalDate.of(2024, 1, 15), santiago);
+        assertCompiledTickExprIntervals("[$today,2024-01-15]@America/Santiago", 2, 2, days);
+    }
+
+    @Test
+    public void testCompiledListStaticIntervalsAtConfiguredCap() throws SqlException {
+        // The list reads the cap and the merge threshold from the configuration. 2024 holds 53
+        // Mondays, the first on 2024-01-01, and 2023 holds 52. $today, the Monday 2024-01-08, is one of
+        // those of 2024.
+        final CairoConfiguration cap53Configuration = new DefaultCairoConfiguration(".") {
+            @Override
+            public int getSqlIntervalIncrementalMergeThreshold() {
+                return 4;
+            }
+
+            @Override
+            public int getSqlIntervalMaxIntervalsAfterMerge() {
+                return 53;
+            }
+        };
+        final LongList mondays = new LongList();
+        addDayRuns(mondays, LocalDate.of(2024, 1, 1), LocalDate.of(2024, 12, 31), EnumSet.of(DayOfWeek.MONDAY), ZoneOffset.UTC);
+        Assert.assertEquals(2 * 53, mondays.size());
+        assertCompiledTickExprIntervals(cap53Configuration, "[$today,2024]#mon", 54, 54, mondays);
+        // two copies of the Mondays exceed the cap and the threshold, and their union does not
+        assertCompiledTickExprIntervals(cap53Configuration, "[$today,2024,2024]#mon", 54, 54, mondays);
+        assertCompiledOverMaxIntervals(cap53Configuration, "[$today,2024,2023]#mon");
+        final CairoConfiguration cap52Configuration = new DefaultCairoConfiguration(".") {
+            @Override
+            public int getSqlIntervalIncrementalMergeThreshold() {
+                return 4;
+            }
+
+            @Override
+            public int getSqlIntervalMaxIntervalsAfterMerge() {
+                return 52;
+            }
+        };
+        assertCompiledOverMaxIntervals(cap52Configuration, "[$today,2024]#mon");
+
+        // At the largest merge threshold below the default cap (1,024), only the final check of the
+        // list unions the 1,305 Mondays of 2000-2024 at 09:00, and they fail.
+        final CairoConfiguration mergeThreshold1023Configuration = new DefaultCairoConfiguration(".") {
+            @Override
+            public int getSqlIntervalIncrementalMergeThreshold() {
+                return 1_023;
+            }
+        };
+        assertCompiledOverMaxIntervals(mergeThreshold1023Configuration, "[$today,20[00..24]-[01..12]]T09:00#mon");
+        final LongList mondayMinutes = new LongList();
+        for (LocalDate day = LocalDate.of(2000, 1, 3); day.getYear() < 2019; day = day.plusWeeks(1)) {
+            addLocalBlock(mondayMinutes, day.atTime(9, 0), ZoneOffset.UTC, Micros.MINUTE_MICROS);
+        }
+        addLocalBlock(mondayMinutes, LocalDateTime.of(2024, 1, 8, 9, 0), ZoneOffset.UTC, Micros.MINUTE_MICROS);
+        assertCompiledTickExprIntervals(mergeThreshold1023Configuration, "[$today,20[00..18]-[01..12]]T09:00#mon", 993, 993, mondayMinutes);
+    }
+
+    @Test
+    public void testCompiledListStaticIntervalsOverMaxIntervals() throws SqlException {
+        // The IR of a compiled list keeps its static intervals, and every evaluate() emits them all,
+        // so the list keeps at most the cap (1,024) of them, as parseTickExpr keeps a list within the
+        // cap. An expanding day filter turns each year into its matching days before the list counts
+        // them: the 1,043 Mondays of 1980-1999 never touch, and their workdays form 1,044 runs from
+        // Monday to Friday.
+        Assert.assertEquals(1_024, configuration.getSqlIntervalMaxIntervalsAfterMerge());
+        assertCompiledAndParsedOverMaxIntervals("[$today,[1980..1999]]#mon");
+        assertCompiledAndParsedOverMaxIntervals("[$today,[1980..1999]]#workday");
+        // the 991 Mondays of 1981-1999, and $today, the Monday 2024-01-08
+        final LongList mondays = new LongList();
+        addDayRuns(mondays, LocalDate.of(1981, 1, 1), LocalDate.of(1999, 12, 31), EnumSet.of(DayOfWeek.MONDAY), ZoneOffset.UTC);
+        addLocalDays(mondays, LocalDate.of(2024, 1, 8), LocalDate.of(2024, 1, 9), ZoneOffset.UTC);
+        assertCompiledTickExprIntervals("[$today,[1981..1999]]#mon", 992, 992, mondays);
+        // The 4,957 workdays of 1981-1999 exceed the cap, and their union, 992 runs, does not.
+        final LongList workdayRuns = new LongList();
+        addDayRuns(workdayRuns, LocalDate.of(1981, 1, 1), LocalDate.of(1999, 12, 31), EnumSet.range(DayOfWeek.MONDAY, DayOfWeek.FRIDAY), ZoneOffset.UTC);
+        Assert.assertEquals(2 * 992, workdayRuns.size());
+        addLocalDays(workdayRuns, LocalDate.of(2024, 1, 8), LocalDate.of(2024, 1, 9), ZoneOffset.UTC);
+        assertCompiledTickExprIntervals("[$today,[1981..1999]]#workday", 993, 993, workdayRuns);
+        assertCompiledTickExpr("[$today,[1981..1999]]#workday");
+        // the 36,524 days of 1800-1899 join into one interval
+        final LongList century = new LongList();
+        addLocalDays(century, LocalDate.of(1800, 1, 1), LocalDate.of(1900, 1, 1), ZoneOffset.UTC);
+        addLocalDays(century, LocalDate.of(2024, 1, 8), LocalDate.of(2024, 1, 9), ZoneOffset.UTC);
+        assertCompiledTickExprIntervals("[$today,[1800..1899]]#mon,tue,wed,thu,fri,sat,sun", 2, 2, century);
+        assertCompiledTickExpr("[$today,[1800..1899]]#mon,tue,wed,thu,fri,sat,sun");
+    }
+
+    @Test
+    public void testCompiledListStaticIntervalsOverMaxIntervalsOutsideNanoRange() throws SqlException {
+        // TIMESTAMP_NS covers the years 1677-2262 only
+        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
+        // The 3,287,182 days of 1000-9999 join into one interval, which holds $today, the Monday
+        // 2024-01-08, and their runs from Monday to Friday exceed the cap (1,024).
+        final LongList millennia = new LongList();
+        addLocalDays(millennia, LocalDate.of(1000, 1, 1), LocalDate.of(10_000, 1, 1), ZoneOffset.UTC);
+        assertCompiledTickExprIntervals("[$today,[1000..9999]]#mon,tue,wed,thu,fri,sat,sun", 2, 2, millennia);
+        assertCompiledAndParsedOverMaxIntervals("[$today,[1000..9999]]#workday");
+    }
+
+    @Test
+    public void testCompiledListStaticIntervalsPeriodic() throws SqlException {
+        // A periodic element expands into its repetitions before the list counts them: 1,024 hours
+        // from 09:00, one a day, stay within the cap (1,024), and 1,025 do not. $today, the Monday
+        // 2024-01-08, widens the hour of that day to the whole day.
+        final LocalDate today = LocalDate.of(2024, 1, 8);
+        final LongList hours = new LongList();
+        for (LocalDate day = LocalDate.of(2024, 1, 1); !day.isAfter(LocalDate.of(2026, 10, 20)); day = day.plusDays(1)) {
+            if (day.equals(today)) {
+                addLocalDays(hours, day, day.plusDays(1), ZoneOffset.UTC);
+            } else {
+                addLocalBlock(hours, day.atTime(9, 0), ZoneOffset.UTC, Micros.HOUR_MICROS);
+            }
+        }
+        Assert.assertEquals(2 * 1_024, hours.size());
+        assertCompiledTickExprIntervals("[$today,2024-01-01T09:00;1h;1d;1024]", 1_025, 1_025, hours);
+        assertCompiledAndParsedOverMaxIntervals("[$today,2024-01-01T09:00;1h;1d;1025]");
+        // the 1,024 Mondays among 7,168 days, the last on 2043-08-10, and the 1,025 among 7,169
+        final LongList mondayHours = new LongList();
+        for (LocalDate day = LocalDate.of(2024, 1, 1); !day.isAfter(LocalDate.of(2043, 8, 10)); day = day.plusWeeks(1)) {
+            if (day.equals(today)) {
+                addLocalDays(mondayHours, day, day.plusDays(1), ZoneOffset.UTC);
+            } else {
+                addLocalBlock(mondayHours, day.atTime(9, 0), ZoneOffset.UTC, Micros.HOUR_MICROS);
+            }
+        }
+        Assert.assertEquals(2 * 1_024, mondayHours.size());
+        assertCompiledTickExprIntervals("[$today,2024-01-01T09:00;1h;1d;7168]#mon", 1_025, 1_025, mondayHours);
+        assertCompiledAndParsedOverMaxIntervals("[$today,2024-01-01T09:00;1h;1d;7169]#mon");
+
+        // The list unions its static intervals once they exceed the cap and the merge threshold (256)
+        // together: 1,280 hours wait for the four years that cover them, while 1,281 fail before.
+        // parseTickExpr unions a list whenever it grew by the threshold, so it rejects both.
+        final LongList fourYears = new LongList();
+        addLocalDays(fourYears, LocalDate.of(2024, 1, 1), LocalDate.of(2028, 1, 1), ZoneOffset.UTC);
+        assertCompiledTickExprIntervals("[$today,2024-01-01T09:00;1h;1d;1280,2024-01-01;4y]", 2, 2, fourYears);
+        assertCompiledAndParsedOverMaxIntervals("[$today,2024-01-01T09:00;1h;1d;1281,2024-01-01;4y]");
+        // the filter drops every repetition, each on a Saturday, which leaves $today
+        final LongList todayOnly = new LongList();
+        addLocalDays(todayOnly, today, today.plusDays(1), ZoneOffset.UTC);
+        assertCompiledTickExprIntervals("[$today,2024-01-06T09:00;1h;7d;2000]#mon", 1, 1, todayOnly);
+        // and so does the filter of the 16 x 16 = 256 seconds of the Sunday 2024-01-07, which the
+        // expansion runs on its leaves at its union by the merge threshold (256), before it ends
+        assertCompiledTickExprIntervals("[$today,2024-01-07T[00..15]:[00..15]:00]#mon", 1, 1, todayOnly);
+    }
+
+    @Test
+    public void testCompiledListStaticIntervalsZoned() throws SqlException {
+        // The list converts each static interval to UTC on its own, as evaluate() converts the date
+        // variables, before it unions them. America/Santiago and Asia/Beirut go back from 00:00 to
+        // 23:00 at the end of a Saturday, so that Saturday ends an hour before the Sunday starts in
+        // UTC: in America/Santiago, [2024-04-06T03:00Z, 2024-04-07T02:59:59.999999Z] and
+        // [2024-04-07T04:00Z, 2024-04-08T03:59:59.999999Z]. A union in local time would join them
+        // across the repeated hour. The 1,774 weekend days of 2008-2024 exceed the cap (1,024), and
+        // their union does not. $today, the Monday 2024-01-08, fails the filter.
+        final ZoneId santiago = ZoneId.of("America/Santiago");
+        final LongList santiagoWeekends = unionOfZonedWeekendDays(santiago, 2008, 2024);
+        Assert.assertEquals(2 * 903, santiagoWeekends.size());
+        assertCompiledTickExprIntervals("[$today,[2008..2024]]@America/Santiago#weekend", 904, 904, santiagoWeekends);
+        assertTickExprIntervals(configuration, santiagoWeekends, "[2024-01-08,[2008..2024]]@America/Santiago#weekend");
+        assertCompiledTickExpr("[$today,[2008..2024]]@America/Santiago#weekend");
+        final LongList beirutWeekends = unionOfZonedWeekendDays(ZoneId.of("Asia/Beirut"), 2008, 2024);
+        Assert.assertEquals(2 * 904, beirutWeekends.size());
+        assertCompiledTickExprIntervals("[$today,[2008..2024]]@Asia/Beirut#weekend", 905, 905, beirutWeekends);
+        assertTickExprIntervals(configuration, beirutWeekends, "[2024-01-08,[2008..2024]]@Asia/Beirut#weekend");
+        assertCompiledTickExpr("[$today,[2008..2024]]@Asia/Beirut#weekend");
+
+        // Across elements: 12 copies of the days 1-28 of May to August 2023, which keep one offset in
+        // America/Santiago, take the list past the cap and the threshold (256), so the list unions
+        // its intervals in UTC, where the days 2024-04-01 to 04-06 and 04-07 to 04-10 stay apart.
+        final String summerDays = repeatedValues("2023-[05..08]-[01..28]", 12);
+        final LongList summerAndToday = new LongList();
+        addZonedLocalDay(summerAndToday, LocalDate.of(2024, 1, 8), santiago);
+        for (int month = 5; month <= 8; month++) {
+            for (int day = 1; day <= 28; day++) {
+                addZonedLocalDay(summerAndToday, LocalDate.of(2023, month, day), santiago);
+            }
+        }
+        final LongList aprilDays = new LongList();
+        aprilDays.add(summerAndToday);
+        for (int day = 1; day <= 10; day++) {
+            addZonedLocalDay(aprilDays, LocalDate.of(2024, 4, day), santiago);
+        }
+        final LongList april = unionOf(aprilDays);
+        Assert.assertEquals(2 * 7, april.size());
+        final String aprilList = "[$today,2024-04-[01..10]," + summerDays + "]@America/Santiago";
+        assertCompiledTickExprIntervals(aprilList, 7, 7, april);
+        assertCompiledTickExpr(aprilList);
+
+        // The minutes 00:30 to 00:59 of 2024-09-08 lie in the gap of America/Santiago, which jumps from
+        // 00:00 to 01:00. The conversion moves both ends of such a minute by its distance from the
+        // start of the gap, so the minute 00:(30 + k) becomes 01:(2k) at -03:00: 30 minutes apart,
+        // which a union in local time would join into one block before the conversion.
+        final LongList gapDays = new LongList();
+        gapDays.add(summerAndToday);
+        for (int k = 0; k < 30; k++) {
+            addLocalBlock(gapDays, LocalDateTime.of(2024, 9, 8, 1, 2 * k), ZoneOffset.ofHours(-3), Micros.MINUTE_MICROS);
+        }
+        final LongList gap = unionOf(gapDays);
+        Assert.assertEquals(2 * 35, gap.size());
+        final String gapList = "[$today,2024-09-08T00:[30..59]," + summerDays + "]@America/Santiago";
+        assertCompiledTickExprIntervals(gapList, 35, 35, gap);
+        assertCompiledTickExpr(gapList);
+
+        // America/New_York jumps from 02:00 to 03:00 on 2024-03-10, so the minute 01:59 with a duration
+        // of 2 minutes ends in the gap, which moves the end alone. The compiler converts the static
+        // interval as parseTickExpr does, on the Monday 2024-03-11.
+        assertCompiledTickExprWithNow("[$today,2024-03-10T01:59;2m]@America/New_York", "2024-03-11T12:00:00.000000Z");
+
+        // A numeric offset shifts every interval alike: the 992 runs from Monday to Friday of
+        // 1981-1999 at +05:00.
+        final LongList workdayRuns = new LongList();
+        addDayRuns(workdayRuns, LocalDate.of(1981, 1, 1), LocalDate.of(1999, 12, 31), EnumSet.range(DayOfWeek.MONDAY, DayOfWeek.FRIDAY), ZoneOffset.ofHours(5));
+        addLocalDays(workdayRuns, LocalDate.of(2024, 1, 8), LocalDate.of(2024, 1, 9), ZoneOffset.ofHours(5));
+        assertCompiledTickExprIntervals("[$today,[1981..1999]]@+05:00#workday", 993, 993, workdayRuns);
+        assertCompiledTickExpr("[$today,[1981..1999]]@Asia/Beirut#workday");
+    }
+
+    @Test
+    public void testCompiledStaticListCapFuzz() throws SqlException {
+        // Builds random date lists of year ranges, years of months, periodic hours and days around the
+        // clock changes of 2024 next to $today, under a day filter or a time, and maybe a zone. A list
+        // that compiles keeps at most the cap (1,024) of static IR entries, evaluate() stays within
+        // getMaxIntervalCount() every 6 hours through 2024, and at the Monday 2024-01-08 it returns
+        // what parseTickExpr returns for the static equivalent whenever that parses. A list that
+        // fails, fails with the cap error at position 0. Under #mon, alone or after a time, each
+        // interval lies within one Monday, and two Mondays never touch, so the union of a list only
+        // grows with its elements, and the static equivalent fails too. The lists must reach each
+        // shape that the assertions at the end name, so the test builds more lists, up to ten times
+        // as many, until they do.
+        final int listCount = Integer.getInteger("questdb.fuzz.tick.lists", 300);
+        final String[] suffixes = {"#mon", "#workday", "#weekend", "T09:30#mon", "T09:30;25h"};
+        final String[] zones = {"", "@+05:00", "@Europe/London", "@America/Santiago", "@Asia/Beirut"};
+        final String overCapError = "Bracket expansion produces too many intervals (max 1024)";
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final long start = timestampDriver.parseFloorLiteral("2024-01-01T00:00:00.000000Z");
+        final long end = timestampDriver.parseFloorLiteral("2025-01-01T00:00:00.000000Z");
+        final long step = timestampDriver.fromHours(6);
+        final ObjList<String> elements = new ObjList<>();
+        final ObjList<int[]> elementCounts = new ObjList<>();
+        final TreeSet<LocalDate> keptDays = new TreeSet<>();
+        final StringSink expression = new StringSink();
+        final LongList intervals = new LongList();
+        final LongList parsed = new LongList();
+        boolean hasUnionWithinCap = false;
+        boolean hasZonedUnionAcrossFallBack = false;
+        boolean hasElementOverCap = false;
+        boolean hasElementsWithinCapOverCap = false;
+        for (
+                int i = 0;
+                i < listCount || (i < 10 * listCount && !(hasUnionWithinCap && hasZonedUnionAcrossFallBack && hasElementOverCap && hasElementsWithinCapOverCap));
+                i++
+        ) {
+            // America/Santiago and Asia/Beirut go back at local midnight. A list in either zone keeps
+            // the days around the clock change, under #weekend or every day of T09:30;25h, half the
+            // time, and draws the days around its clock changes twice as often, mostly those of the
+            // fall-back.
+            final String zone = zones[rnd.nextInt(zones.length)];
+            final boolean isMidnightFallBackZone = zone.equals("@America/Santiago") || zone.equals("@Asia/Beirut");
+            final String suffix = isMidnightFallBackZone && rnd.nextBoolean()
+                    ? (rnd.nextBoolean() ? "#weekend" : "T09:30;25h")
+                    : suffixes[rnd.nextInt(suffixes.length)];
+            final boolean hasTime = suffix.charAt(0) == 'T';
+            final Set<DayOfWeek> keptWeekdays = switch (suffix) {
+                case "#workday" -> EnumSet.range(DayOfWeek.MONDAY, DayOfWeek.FRIDAY);
+                case "#weekend" -> EnumSet.of(DayOfWeek.SATURDAY, DayOfWeek.SUNDAY);
+                case "T09:30;25h" -> EnumSet.allOf(DayOfWeek.class);
+                default -> EnumSet.of(DayOfWeek.MONDAY);
+            };
+            elements.clear();
+            elementCounts.clear();
+            keptDays.clear();
+            int rawCount = 0;
+            int maxElementUnionCount = 0;
+            for (int e = 0, n = 2 + rnd.nextInt(5); e < n; e++) {
+                int kind = rnd.nextInt(isMidnightFallBackZone ? 6 : 5);
+                if (kind == 5) {
+                    kind = 3;
+                }
+                if (kind == 4 && e > 0) {
+                    // a copy of an earlier element
+                    final int copied = rnd.nextInt(e);
+                    elements.add(elements.getQuick(copied));
+                    elementCounts.add(elementCounts.getQuick(copied));
+                    rawCount += elementCounts.getQuick(copied)[0];
+                    continue;
+                }
+                if (hasTime && (kind == 0 || kind == 2)) {
+                    // a bracketed year or a repetition takes no time of the list
+                    kind = kind == 0 ? 1 : 3;
+                }
+                LocalDate first;
+                LocalDate last;
+                boolean isWholeDay = true;
+                switch (kind) {
+                    case 0 -> {
+                        final int firstYear = 1981 + rnd.nextInt(30);
+                        final int lastYear = firstYear + rnd.nextInt(25);
+                        elements.add("[" + firstYear + ".." + lastYear + ']');
+                        first = LocalDate.of(firstYear, 1, 1);
+                        last = LocalDate.of(lastYear, 12, 31);
+                    }
+                    case 2 -> {
+                        final int count = 900 + rnd.nextInt(401);
+                        elements.add("2024-01-01T09:00;1h;1d;" + count);
+                        first = LocalDate.of(2024, 1, 1);
+                        last = first.plusDays(count - 1);
+                        isWholeDay = false;
+                    }
+                    case 3 -> {
+                        // Days around a clock change at local midnight in America/Santiago (back in
+                        // April, forward in September) and Asia/Beirut (forward in March, back in
+                        // October), and at 01:00 UTC in Europe/London (March and October); a named zone
+                        // takes its own months.
+                        final String days = switch (zone) {
+                            case "@America/Santiago" -> rnd.nextInt(4) > 0 ? "2024-04-[01..10]" : "2024-09-[06..09]";
+                            case "@Asia/Beirut" -> rnd.nextInt(4) > 0 ? "2024-10-[25..28]" : "2024-03-[28..31]";
+                            case "@Europe/London" -> rnd.nextBoolean() ? "2024-10-[25..28]" : "2024-03-[28..31]";
+                            default -> switch (rnd.nextInt(4)) {
+                                case 0 -> "2024-04-[01..10]";
+                                case 1 -> "2024-09-[06..09]";
+                                case 2 -> "2024-03-[28..31]";
+                                default -> "2024-10-[25..28]";
+                            };
+                        };
+                        elements.add(days);
+                        final int month = Integer.parseInt(days.substring(5, 7));
+                        first = LocalDate.of(2024, month, Integer.parseInt(days.substring(9, 11)));
+                        last = LocalDate.of(2024, month, Integer.parseInt(days.substring(13, 15)));
+                    }
+                    default -> {
+                        final int year = 1981 + rnd.nextInt(44);
+                        elements.add(year + "-[01..12]");
+                        first = LocalDate.of(year, 1, 1);
+                        last = LocalDate.of(year, 12, 31);
+                    }
+                }
+                // An element yields one interval per day that the filter keeps. Whole days, and days
+                // of 25 hours, join into runs of consecutive days; hours and minutes stay apart.
+                int keptCount = 0;
+                int runCount = 0;
+                LocalDate previousKeptDay = null;
+                for (LocalDate day = first; !day.isAfter(last); day = day.plusDays(1)) {
+                    if (keptWeekdays.contains(day.getDayOfWeek())) {
+                        keptCount++;
+                        if (previousKeptDay == null || !previousKeptDay.plusDays(1).equals(day)) {
+                            runCount++;
+                        }
+                        previousKeptDay = day;
+                        if (isWholeDay) {
+                            keptDays.add(day);
+                        }
+                    }
+                }
+                final int unionCount = isWholeDay && (!hasTime || suffix.endsWith(";25h")) ? runCount : keptCount;
+                elementCounts.add(new int[]{keptCount, unionCount});
+                rawCount += keptCount;
+            }
+            for (int e = 0, n = elementCounts.size(); e < n; e++) {
+                maxElementUnionCount = Math.max(maxElementUnionCount, elementCounts.getQuick(e)[1]);
+            }
+            // the Saturday that ends at a clock change from 00:00 to 23:00 and the Sunday after it
+            final boolean hasFallBackPair = (zone.equals("@America/Santiago") && keptDays.contains(LocalDate.of(2024, 4, 6)) && keptDays.contains(LocalDate.of(2024, 4, 7)))
+                    || (zone.equals("@Asia/Beirut") && keptDays.contains(LocalDate.of(2024, 10, 26)) && keptDays.contains(LocalDate.of(2024, 10, 27)));
+
+            expression.clear();
+            expression.put('[');
+            final int todayIndex = rnd.nextInt(elements.size() + 1);
+            for (int e = 0, n = elements.size(); e <= n; e++) {
+                if (e > 0) {
+                    expression.put(',');
+                }
+                expression.put(e == todayIndex ? "$today" : elements.getQuick(e < todayIndex ? e : e - 1));
+            }
+            expression.put(']');
+            if (hasTime) {
+                expression.put("T09:30");
+            }
+            expression.put(zone);
+            final int filterIndex = suffix.indexOf('#');
+            expression.put(filterIndex >= 0 ? suffix.substring(filterIndex) : ";25h");
+            final String tick = expression.toString();
+            final String staticEquivalent = tick.replace("$today", "2024-01-08");
+
+            final CompiledTickExpression compiled;
+            try {
+                compiled = IntervalUtils.compileTickExpr(timestampDriver, configuration, tick, 0, tick.length(), 0);
+            } catch (SqlException e) {
+                Assert.assertEquals(tick, 0, e.getPosition());
+                Assert.assertEquals(tick, overCapError, e.getFlyweightMessage().toString());
+                if (suffix.endsWith("#mon")) {
+                    assertTickExprErrorAtMonday(staticEquivalent, overCapError);
+                }
+                if (maxElementUnionCount > 1_024) {
+                    hasElementOverCap = true;
+                } else {
+                    hasElementsWithinCapOverCap = true;
+                }
+                continue;
+            }
+            try (compiled) {
+                // $today is the only date variable
+                Assert.assertTrue(tick + ": " + compiled.getElementCount(), compiled.getElementCount() - 1 <= 1_024);
+                final int bound = compiled.getMaxIntervalCount(Integer.MAX_VALUE);
+                Assert.assertTrue(tick, bound > 0);
+                for (long now = start; now < end; now += step) {
+                    intervals.clear();
+                    compiled.evaluate(intervals, now);
+                    if (intervals.size() / 2 > bound) {
+                        Assert.fail(tick + " yields " + intervals.size() / 2 + " intervals, above its bound of " + bound
+                                + ", at " + timestampDriver.toMSecString(now));
+                    }
+                }
+                intervals.clear();
+                compiled.evaluate(intervals, mondayNow());
+            }
+            parsed.clear();
+            boolean isParsed = true;
+            try {
+                parseTickExprAtMonday(configuration, parsed, staticEquivalent);
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), overCapError);
+                isParsed = false;
+            }
+            if (isParsed) {
+                Assert.assertEquals(tick, intervalToString(timestampDriver, parsed).toString(), intervalToString(timestampDriver, intervals).toString());
+            }
+            hasUnionWithinCap |= rawCount > 1_024;
+            hasZonedUnionAcrossFallBack |= rawCount > 1_024 && hasFallBackPair;
+        }
+        Assert.assertTrue("a list above the cap that its union takes within", hasUnionWithinCap);
+        Assert.assertTrue("such a list whose union in a zone crosses a clock change at local midnight", hasZonedUnionAcrossFallBack);
+        Assert.assertTrue("a list that fails on an element above the cap", hasElementOverCap);
+        Assert.assertTrue("a list that fails on elements within the cap", hasElementsWithinCapOverCap);
     }
 
     @Test
@@ -1261,6 +1825,14 @@ public class TickExprTest {
         assertMaxIntervalCount("[$today, 2024-04-[01..10]]@America/Santiago", Integer.MAX_VALUE, 3);
         assertMaxIntervalCount("[$today, 2024-10-[20..31]]@Asia/Beirut", Integer.MAX_VALUE, 3);
         assertMaxIntervalCount("[$today, 2024-09-[06..09]]@America/Santiago", Integer.MAX_VALUE, 2);
+        // The 1,774 weekend days of 2008-2024 in America/Santiago form 903 runs in UTC, as each fall-back
+        // parts its Saturday and Sunday.
+        assertMaxIntervalCount("[$today,[2008..2024]]@America/Santiago#weekend", Integer.MAX_VALUE, 904);
+        // The compiler stores the static intervals filtered and in UTC, where the Mondays 2024-01-01,
+        // 01-08 and 01-15 at +12:00 start on a Sunday, so the bound counts them as stored, and a
+        // Monday away from them yields them and $today.
+        assertMaxIntervalCount("[$today, 2024-01-[01..20]]@+12:00#mon", Integer.MAX_VALUE, 4);
+        assertMaxIntervalCountReached("[$today, 2024-01-[01..20]]@+12:00#mon", 4);
         // The day filter splits a run at a weekend. 2024-01-01 is a Monday, and the compiler drops
         // the weekend 2024-01-06 and 01-07 whole.
         assertMaxIntervalCount("[$today, 2024-01-[01..20]]#workday", Integer.MAX_VALUE, 4);
@@ -1656,14 +2228,14 @@ public class TickExprTest {
         // compileStaticElement expands the static element on its own: 8 hours x 60 minutes x 10
         // seconds x 100 = 480,000 leaves of 10 ms, which form 480 ten-second blocks, more than the
         // merge threshold (256). Its unions wait until the range grew by the threshold since the
-        // last one: 1,875 of them, the last at the last leaf, each of which reads the cap once. A
-        // union after every leaf, once the range holds 256 blocks, would read the cap about 256,000
-        // times.
+        // last one: 1,875 of them, the last at the last leaf, each of which reads the cap once, and
+        // the list reads it once more for its own checks. A union after every leaf, once the range
+        // holds 256 blocks, would read the cap about 256,000 times.
         Assert.assertEquals(256, configuration.getSqlIntervalIncrementalMergeThreshold());
         final String expression = "[$today,2024-01-01T[09..16]:[00..59]:[00..09].[0..9][0..9]]@America/New_York";
         final MaxIntervalsCountingConfiguration countingConfiguration = new MaxIntervalsCountingConfiguration();
         IntervalUtils.compileTickExpr(timestampType.getDriver(), countingConfiguration, expression, 0, expression.length(), 0).close();
-        Assert.assertEquals(1_875, countingConfiguration.getterCallCount);
+        Assert.assertEquals(1_876, countingConfiguration.getterCallCount);
         // The blocks from 09:00 to 16:59 at New York, which keeps -05:00 in January, and the New York
         // day of $today, the Monday 2024-01-08. The compiled expression keeps an IR entry per block
         // and one for $today, and counts as many intervals.
@@ -5282,8 +5854,8 @@ public class TickExprTest {
         assertTickExprErrorAtMonday(mergeThreshold1023Configuration, "[2024-01-[01..25]T09:[00..40]:00,2024-01]", overCapError);
         assertTickExprIntervals(mergeThreshold1023Configuration, january, "[2024-01-[01..16]T[00..07]:[00..07]:00,2024-01]");
 
-        // compileStaticElement expands a static element on its own and checks no count after the
-        // expansion, so the union after the last leaf checks it. $today is the Monday 2024-01-08.
+        // compileStaticElement expands a static element on its own, and the union after the last
+        // leaf counts it, as the final check of the list does. $today is the Monday 2024-01-08.
         final LongList seconds = new LongList();
         addLocalDays(seconds, LocalDate.of(2024, 1, 8), LocalDate.of(2024, 1, 9), ZoneOffset.UTC);
         for (int day = 1; day <= 16; day++) {
@@ -7181,6 +7753,43 @@ public class TickExprTest {
         return LocalDate.ofEpochDay(Math.floorDiv(timestampDriver.toMicros(timestamp), Micros.DAY_MICROS));
     }
 
+    // The union of the intervals: sorted by lo, and joined where they overlap or touch
+    private static LongList unionOf(LongList intervals) {
+        final TreeMap<Long, Long> hiByLo = new TreeMap<>();
+        for (int i = 0, n = intervals.size(); i < n; i += 2) {
+            hiByLo.merge(intervals.getQuick(i), intervals.getQuick(i + 1), Math::max);
+        }
+        final LongList union = new LongList();
+        for (Map.Entry<Long, Long> interval : hiByLo.entrySet()) {
+            final int size = union.size();
+            if (size > 0 && interval.getKey() <= union.getQuick(size - 1) + 1) {
+                union.setQuick(size - 1, Math.max(union.getQuick(size - 1), interval.getValue()));
+            } else {
+                union.add(interval.getKey(), interval.getValue());
+            }
+        }
+        return union;
+    }
+
+    // Adds one whole-day interval at the offset for each run of consecutive days from first to last
+    // whose weekday is one of the days: one day each for Mondays, Monday to Friday for workdays
+    private void addDayRuns(LongList intervals, LocalDate first, LocalDate last, Set<DayOfWeek> days, ZoneOffset offset) {
+        LocalDate runStart = null;
+        for (LocalDate day = first; !day.isAfter(last); day = day.plusDays(1)) {
+            if (days.contains(day.getDayOfWeek())) {
+                if (runStart == null) {
+                    runStart = day;
+                }
+            } else if (runStart != null) {
+                addLocalDays(intervals, runStart, day, offset);
+                runStart = null;
+            }
+        }
+        if (runStart != null) {
+            addLocalDays(intervals, runStart, last.plusDays(1), offset);
+        }
+    }
+
     // Adds one interval of lengthMicros from the local time at the offset
     private void addLocalBlock(LongList intervals, LocalDateTime lo, ZoneOffset offset, long lengthMicros) {
         final TimestampDriver timestampDriver = timestampType.getDriver();
@@ -7219,6 +7828,16 @@ public class TickExprTest {
                 addLocalBlock(intervals, day.atTime(time), offset, lengthMicros);
             }
         }
+    }
+
+    // Adds the local day in the zone as one interval whose ends convert on their own, at the earlier
+    // offset where a local time occurs twice, as the time zone conversion of tick expressions takes
+    // it. Unlike addLocalDays, the day ends before the repeated hour of a clock change that follows it.
+    private void addZonedLocalDay(LongList intervals, LocalDate day, ZoneId zone) {
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        intervals.add(timestampDriver.fromMicros(ZonedDateTime.ofLocal(day.atStartOfDay(), zone, null).toEpochSecond() * Micros.SECOND_MICROS));
+        intervals.add(timestampDriver.fromMicros(ZonedDateTime.ofLocal(day.atTime(23, 59, 59), zone, null).toEpochSecond() * Micros.SECOND_MICROS)
+                + timestampDriver.fromSeconds(1) - 1);
     }
 
     private void assertBracketInterval(String expected, String interval) throws SqlException {
@@ -7276,6 +7895,13 @@ public class TickExprTest {
         }
     }
 
+    // Expects compileTickExpr() to fail with the cap error at position 0, and parseTickExpr() to fail
+    // with it on the static equivalent, in which the Monday 2024-01-08 stands for $today
+    private void assertCompiledAndParsedOverMaxIntervals(String expression) {
+        assertCompiledOverMaxIntervals(configuration, expression);
+        assertTickExprErrorAtMonday(expression.replace("$today", "2024-01-08"), "Bracket expansion produces too many intervals (max 1024)");
+    }
+
     // Compiles the expression, evaluates it at mondayNow() and expects one full-day interval for
     // every Monday from first to last, as java.time lists them.
     private void assertCompiledFullDayMondays(CairoConfiguration cfg, String expression, LocalDate first, LocalDate last) throws SqlException {
@@ -7291,6 +7917,18 @@ public class TickExprTest {
             compiled.evaluate(out, mondayNow());
         }
         TestUtils.assertEquals(intervalToString(timestampDriver, expected).toString(), intervalToString(timestampDriver, out));
+    }
+
+    // Expects compileTickExpr() to fail with the cap error of the configuration at position 0
+    private void assertCompiledOverMaxIntervals(CairoConfiguration cfg, String expression) {
+        final int maxIntervals = cfg.getSqlIntervalMaxIntervalsAfterMerge();
+        try {
+            IntervalUtils.compileTickExpr(timestampType.getDriver(), cfg, expression, 0, expression.length(), 0).close();
+            Assert.fail("Expected the cap error for " + expression);
+        } catch (SqlException e) {
+            Assert.assertEquals(expression, 0, e.getPosition());
+            TestUtils.assertEquals("Bracket expansion produces too many intervals (max " + maxIntervals + ')', e.getFlyweightMessage());
+        }
     }
 
     /**
@@ -7363,9 +8001,19 @@ public class TickExprTest {
             int expectedMaxIntervalCount,
             LongList expected
     ) throws SqlException {
+        assertCompiledTickExprIntervals(configuration, expression, expectedElementCount, expectedMaxIntervalCount, expected);
+    }
+
+    private void assertCompiledTickExprIntervals(
+            CairoConfiguration cfg,
+            String expression,
+            int expectedElementCount,
+            int expectedMaxIntervalCount,
+            LongList expected
+    ) throws SqlException {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         out.clear();
-        try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(timestampDriver, configuration, expression, 0, expression.length(), 0)) {
+        try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(timestampDriver, cfg, expression, 0, expression.length(), 0)) {
             Assert.assertEquals(expression, expectedElementCount, compiled.getElementCount());
             Assert.assertEquals(expression, expectedMaxIntervalCount, compiled.getMaxIntervalCount(Integer.MAX_VALUE));
             compiled.evaluate(out, mondayNow());
@@ -7675,6 +8323,17 @@ public class TickExprTest {
 
     private void parseTickExprAtMonday(CairoConfiguration cfg, LongList intervals, String interval) throws SqlException {
         IntervalUtils.parseTickExpr(timestampType.getDriver(), cfg, interval, 0, interval.length(), 0, intervals, new StringSink(), mondayNow());
+    }
+
+    // The union of the weekend days of the years in the zone, each day converted on its own
+    private LongList unionOfZonedWeekendDays(ZoneId zone, int firstYear, int lastYear) {
+        final LongList days = new LongList();
+        for (LocalDate day = LocalDate.of(firstYear, 1, 1); day.getYear() <= lastYear; day = day.plusDays(1)) {
+            if (day.getDayOfWeek() == DayOfWeek.SATURDAY || day.getDayOfWeek() == DayOfWeek.SUNDAY) {
+                addZonedLocalDay(days, day, zone);
+            }
+        }
+        return unionOf(days);
     }
 
     @FunctionalInterface
