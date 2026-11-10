@@ -253,17 +253,6 @@ abstract class AbstractPageFrameSequence {
         return progressWaitQueue;
     }
 
-    /**
-     * A cursor opened before its owner lost the ability to park captured the owner's context. Its
-     * reducers must not depend on a CPU grant that owner cannot give up, even if a limit on such
-     * grants only appears while they run.
-     */
-    protected final void detachContextIfOwnerCannotPark() {
-        if (dispatchContext != null && !isFiberSuspendable()) {
-            dispatchContext = null;
-        }
-    }
-
     protected final boolean isInterruptionSuperseded(CairoException exception) {
         final int interruptionReason = exception.getInterruptionReason();
         if (interruptionReason == SqlExecutionCircuitBreaker.STATE_OK) {

@@ -432,6 +432,14 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     }
 
     /**
+     * Returns whether this context serves one client session across statements, so a statement
+     * can change state that later statements of the session see.
+     */
+    default boolean isSessionScoped() {
+        return false;
+    }
+
+    /**
      * A table-name function or a SHOW statement in a view reads the object it names through that
      * view, not as the caller, when the view's definition names the object, see
      * {@link TableFunctionView#isDependency(TableToken)}. Any other object, such as one a caller
@@ -495,14 +503,6 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     }
 
     boolean isTimestampRequired();
-
-    /**
-     * Returns whether this context serves one client session across statements, so a statement
-     * can change state that later statements of the session see.
-     */
-    default boolean isSessionScoped() {
-        return false;
-    }
 
     default boolean isUninterruptible() {
         return false;
@@ -654,10 +654,6 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     void setRandom(Rnd rnd);
 
-    default void setSessionResourceGroup(@Nullable CharSequence resourceGroup) {
-        throw new UnsupportedOperationException("this execution context has no session");
-    }
-
     /**
      * Sets the reader-pool supervisor for table-reader borrows made through this context.
      * {@link io.questdb.griffin.engine.QueryProgress} installs itself here for the duration
@@ -666,6 +662,10 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
      * not track reader leaks.
      */
     default void setReaderPoolSupervisor(@Nullable ResourcePoolSupervisor<TableReader> supervisor) {
+    }
+
+    default void setSessionResourceGroup(@Nullable CharSequence resourceGroup) {
+        throw new UnsupportedOperationException("this execution context has no session");
     }
 
     /**
