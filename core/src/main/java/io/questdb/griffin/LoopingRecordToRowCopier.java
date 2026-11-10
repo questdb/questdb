@@ -217,7 +217,8 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
                     copyFromDecimal(record, row, fromColumnIndex, toColumnWriterIndex, fromColumnTypeTag, fromColumnType, toColumnType, decimal128, decimal256);
             // copy() skips NULL-typed columns, and INSERT compilation rejects every type the
             // copier does not convert
-            default -> throw new IllegalStateException("Unexpected source column type: " + ColumnType.nameOf(fromColumnType));
+            default ->
+                    throw new IllegalStateException("Unexpected source column type: " + ColumnType.nameOf(fromColumnType));
         }
     }
 
