@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.Reopenable;
@@ -204,6 +205,12 @@ public class AsyncAsOfJoinAtom implements StatefulAtom, PerWorkerLockOwner, Reop
     private long slaveSlotsAddress;
     private StaticSymbolTable slaveSymbolTable;
     private long slaveToMasterAddress;
+    // per joinable slot, the slave key's index key (NULL: 0), for the index mode
+    private long slotIndexKeysAddress;
+    // whether the parallel way looks keys up in the slave symbol index, see enableIndexMode()
+    private boolean indexMode;
+    private final ObjList<AsyncAsOfJoinIndexState> perWorkerIndexStates = new ObjList<>();
+    private final AsyncAsOfJoinIndexState ownerIndexState = new AsyncAsOfJoinIndexState();
 
     public AsyncAsOfJoinAtom(
             @NotNull CairoConfiguration configuration,
@@ -361,6 +368,9 @@ public class AsyncAsOfJoinAtom implements StatefulAtom, PerWorkerLockOwner, Reop
     @Override
     public void clear() {
         Throwable failure = null;
+        // the index mode's key cursors read the slave cursors' index readers: first
+        failure = Misc.freeBestEffort(failure, ownerIndexState);
+        failure = Misc.freeObjListAndKeepObjectsBestEffort(failure, perWorkerIndexStates);
         failure = Misc.freeBestEffort(failure, ownerSlaveTimeFrameCursor);
         failure = Misc.freeObjListAndKeepObjectsBestEffort(failure, perWorkerSlaveTimeFrameCursors);
         failure = Misc.freeBestEffort(failure, slaveSymbolLookupMap);
@@ -384,6 +394,9 @@ public class AsyncAsOfJoinAtom implements StatefulAtom, PerWorkerLockOwner, Reop
     @Override
     public void close() {
         Throwable failure = null;
+        // the index mode's key cursors read the slave cursors' index readers: first
+        failure = Misc.freeBestEffort(failure, ownerIndexState);
+        failure = Misc.freeObjListAndKeepObjectsBestEffort(failure, perWorkerIndexStates);
         failure = Misc.freeBestEffort(failure, ownerSlaveTimeFrameCursor);
         failure = Misc.freeObjListBestEffort(failure, perWorkerSlaveTimeFrameCursors);
         failure = Misc.freeBestEffort(failure, compiledMasterFilter);
@@ -752,6 +765,38 @@ public class AsyncAsOfJoinAtom implements StatefulAtom, PerWorkerLockOwner, Reop
     /**
      * The joinable slot of a master symbol key, -1 when it cannot join. The parallel way only.
      */
+    /**
+     * Lets the parallel way look the join keys up in the slave symbol index, through table readers of
+     * the slots' own, see {@code AsyncAsOfJoinRecordCursorFactory#joinIndexed}.
+     */
+    public void enableIndexMode(CairoEngine engine) {
+        indexMode = true;
+        ownerSlaveTimeFrameCursor.enableIndexReaders(engine);
+        for (int i = 0, n = perWorkerSlaveTimeFrameCursors.size(); i < n; i++) {
+            perWorkerSlaveTimeFrameCursors.getQuick(i).enableIndexReaders(engine);
+            perWorkerIndexStates.extendAndSet(i, new AsyncAsOfJoinIndexState());
+        }
+    }
+
+    public AsyncAsOfJoinIndexState getIndexState(int slotId) {
+        return slotId == -1 ? ownerIndexState : perWorkerIndexStates.getQuick(slotId);
+    }
+
+    public ConcurrentTimeFrameCursor getSlaveTimeFrameCursor(int slotId) {
+        return slotId == -1 ? ownerSlaveTimeFrameCursor : perWorkerSlaveTimeFrameCursors.getQuick(slotId);
+    }
+
+    public boolean isIndexMode() {
+        return indexMode;
+    }
+
+    /**
+     * The slave index key of a joinable slot.
+     */
+    public int slotIndexKeyOf(int slot) {
+        return Unsafe.getInt(slotIndexKeysAddress + 4L * slot);
+    }
+
     public int masterSlotOf(int masterKey) {
         // NULL (Integer.MIN_VALUE) goes to index 0, key k to k + 1
         final int index = Math.max(masterKey + 1, 0);
@@ -934,13 +979,15 @@ public class AsyncAsOfJoinAtom implements StatefulAtom, PerWorkerLockOwner, Reop
         masterSlotCount = masterCount + 1;
         slaveSlotCount = slaveCount + 1;
         // master slots, slave slots, then the slave key -> master key map of the prevailing scans
-        final long slotBytes = 4L * (masterSlotCount + 2L * slaveSlotCount);
+        // ... and the slot -> slave index key map of the index mode, at most one slot per master key
+        final long slotBytes = 4L * (masterSlotCount + 2L * slaveSlotCount + masterSlotCount);
         slotArrays.close();
         slotArrays.setMemoryTracker(memoryTracker);
         slotArrays.setCapacity((slotBytes + 7) >>> 3);
         masterSlotsAddress = slotArrays.getAddress();
         slaveSlotsAddress = masterSlotsAddress + 4L * masterSlotCount;
         slaveToMasterAddress = slaveSlotsAddress + 4L * slaveSlotCount;
+        slotIndexKeysAddress = slaveToMasterAddress + 4L * slaveSlotCount;
         Vect.memset(masterSlotsAddress, 4L * (masterSlotCount + slaveSlotCount), -1);
         for (long i = 0; i < slaveSlotCount; i++) {
             Unsafe.putInt(slaveToMasterAddress + 4 * i, StaticSymbolTable.VALUE_NOT_FOUND);
@@ -960,6 +1007,8 @@ public class AsyncAsOfJoinAtom implements StatefulAtom, PerWorkerLockOwner, Reop
                 Unsafe.putInt(masterSlotsAddress + 4L * (masterKey + 1), slot);
                 Unsafe.putInt(slaveSlotsAddress + 4L * (slaveKey + 1), slot);
                 Unsafe.putInt(slaveToMasterAddress + 4L * (slaveKey + 1), masterKey);
+                // a key's index key is its symbol key + 1, NULL's 0, see TableUtils.toIndexKey()
+                Unsafe.putInt(slotIndexKeysAddress + 4L * slot, slaveKey + 1);
                 slot++;
             }
         }
@@ -970,6 +1019,7 @@ public class AsyncAsOfJoinAtom implements StatefulAtom, PerWorkerLockOwner, Reop
             Unsafe.putInt(masterSlotsAddress, slot);
             Unsafe.putInt(slaveSlotsAddress, slot);
             Unsafe.putInt(slaveToMasterAddress, StaticSymbolTable.VALUE_IS_NULL);
+            Unsafe.putInt(slotIndexKeysAddress + 4L * slot, 0);
             slot++;
         }
         joinableCount = slot;

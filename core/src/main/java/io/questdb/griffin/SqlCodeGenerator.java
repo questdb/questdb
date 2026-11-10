@@ -7860,7 +7860,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             SqlExecutionContext executionContext
     ) throws SqlException {
         final boolean hasParallelHint = SqlHints.hasAsOfParallelHint(model, masterAlias, slaveAlias);
-        if (!hasParallelHint && (SqlHints.hasAsOfDenseHint(model, masterAlias, slaveAlias)
+        // asof_index on one symbol key: the parallel way in its index mode when the slave key is
+        // indexed, which is known once a slave filter is stolen, see below
+        final boolean isIndexHint = SqlHints.hasAsOfIndexHint(model, masterAlias, slaveAlias)
+                && isSingleSymbolJoin(symbolShortCircuit, listColumnFilterA);
+        if (!hasParallelHint && !isIndexHint && (SqlHints.hasAsOfDenseHint(model, masterAlias, slaveAlias)
                 || SqlHints.hasAsOfFastHint(model, masterAlias, slaveAlias)
                 || SqlHints.hasAsOfIndexHint(model, masterAlias, slaveAlias)
                 || SqlHints.hasAsOfMemoizedHint(model, masterAlias, slaveAlias)
@@ -7932,10 +7936,24 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
         final boolean isSlaveSteal = slaveFilterFactory != null;
+        // the key column of the rows the join reads: the stolen filter's base, else the slave's
+        final boolean isIndexMode = isIndexHint && (isSlaveSteal
+                ? slaveFilterFactory.getBaseFactory().getMetadata().isColumnIndexed(slaveFilterKeyIndex)
+                : slaveMetadata.isColumnIndexed(slaveKeyIndex));
+        if (isIndexHint && !isIndexMode) {
+            // asof_index over a key without an index: the serial plan, as before
+            return null;
+        }
 
         final String selectReason;
         if (hasParallelHint) {
             selectReason = "hint";
+        } else if (isIndexMode) {
+            if (executionContext.getSharedQueryWorkerCount() < 2) {
+                // one worker: the serial index merge reads the same rows on the query's thread
+                return null;
+            }
+            selectReason = "index hint";
         } else {
             if (executionContext.getSharedQueryWorkerCount() < 2) {
                 // one worker: the per-frame span setup and prevailing lookups are not repaid
@@ -8018,6 +8036,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     workerCount,
                     isVirtualKey ? selectReason + ", virtual key" : selectReason
             );
+            if (isIndexMode) {
+                factory.enableIndexMode(executionContext.getCairoEngine());
+            }
         } catch (Throwable th) {
             // the caller frees symbolShortCircuit, as on any other throw
             Misc.freeObjList(perWorkerMasterFilters, th);

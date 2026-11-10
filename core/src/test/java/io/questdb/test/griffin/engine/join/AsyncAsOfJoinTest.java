@@ -143,7 +143,8 @@ public class AsyncAsOfJoinTest extends AbstractCairoTest {
                         assertPlanContains(engine, ctx, "SELECT /*+ asof_dense(t q) */" + join, "AsOf Join Dense Single Symbol");
                         assertPlanContains(engine, ctx, "SELECT /*+ asof_fast(t q) */" + join, "AsOf Join Fast");
                         assertPlanContains(engine, ctx, "SELECT /*+ asof_memoized(t q) */" + join, "AsOf Join Memoized Scan");
-                        assertPlanContains(engine, ctx, "SELECT /*+ asof_index(t q) */" + join, "AsOf Join Indexed Merge");
+                        // asof_index over an indexed key: the parallel way's index mode
+                        assertPlanContains(engine, ctx, "SELECT /*+ asof_index(t q) */" + join, "lookup: index");
                         // two keys, a non-symbol key, no key: serial
                         assertPlanContains(engine, ctx, "SELECT /*+ asof_parallel(t q) */ t.ts, q.bid FROM trades t ASOF JOIN quotes q ON (sym, ex)", "AsOf Join Dense Dual Symbol");
                         assertParallel(engine, ctx, "SELECT /*+ asof_parallel(t q) */ t.ts, q.bid FROM trades t ASOF JOIN (SELECT ts, sym, bid, bid::long bl FROM quotes) q ON (sym) WHERE t.px::long = q.bl", false);

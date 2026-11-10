@@ -274,6 +274,13 @@ public class AsyncAsOfJoinRecordCursorFactory extends AbstractRecordCursorFactor
         return masterFactory.supportsUpdateRowId(tableToken);
     }
 
+    /**
+     * Lets the workers look the join keys up in the slave symbol index, see joinIndexed().
+     */
+    public void enableIndexMode(CairoEngine engine) {
+        frameSequence.getAtom().enableIndexMode(engine);
+    }
+
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Async AsOf Join");
@@ -285,6 +292,9 @@ public class AsyncAsOfJoinRecordCursorFactory extends AbstractRecordCursorFactor
                 .val(slaveFactory.getMetadata().getColumnName(atom.getSlaveSymbolIndex()));
         if (selectReason != null) {
             sink.attr("select").val(selectReason);
+        }
+        if (atom.isIndexMode()) {
+            sink.attr("lookup").val("index");
         }
         sink.val(atom);
         if (atom.getMasterFilter(0) != null) {
@@ -471,8 +481,12 @@ public class AsyncAsOfJoinRecordCursorFactory extends AbstractRecordCursorFactor
             final long outAddress = reserveOutput(atom, rows, outOffset, rowCount);
             final WindowJoinTimeFrameHelper helper = atom.getSlaveTimeFrameHelper(slotId);
             boolean done = false;
+            if (atom.isIndexMode() && joinIndexed(atom, slotId, helper, record, rows, isMasterFiltered, rowCount, outAddress, circuitBreaker)) {
+                atom.recordFrameWalk();
+                done = true;
+            }
             final int walkMode = WALK_MODE;
-            if (walkMode != WALK_NEVER && (walkMode == WALK_ALWAYS || atom.isWalkWorthTrying())) {
+            if (!done && walkMode != WALK_NEVER && (walkMode == WALK_ALWAYS || atom.isWalkWorthTrying())) {
                 final int walk = joinWalk(atom, slotId, helper, record, rows, isMasterFiltered, rowCount, outAddress, walkMode == WALK_ALWAYS, circuitBreaker);
                 if (walk == WALK_DONE) {
                     atom.recordFrameWalk();
@@ -795,6 +809,59 @@ public class AsyncAsOfJoinRecordCursorFactory extends AbstractRecordCursorFactor
         }
 
         resolvePrevailing(atom, prevailingCache, helper, record, rows, isMasterFiltered, rowCount, outAddress);
+    }
+
+    // Index mode, on the asof_index hint over an indexed slave symbol: per master row, R by a galloping
+    // search over the slave timestamps, then the key's latest row at or below R from the slave symbol
+    // index, through a forward cursor per key over its index rows that moves up with R, started by a
+    // backward lookup. A frame reads the index rows of its keys, never the rows of other keys, and
+    // needs no prevailing scan. False when a slave frame has no native column memory or no index
+    // reader: the span scan joins the frame instead, overwriting what this wrote.
+    private static boolean joinIndexed(
+            AsyncAsOfJoinAtom atom,
+            int slotId,
+            WindowJoinTimeFrameHelper helper,
+            PageFrameMemoryRecord record,
+            DirectLongList rows,
+            boolean isMasterFiltered,
+            long rowCount,
+            long outAddress,
+            SqlExecutionCircuitBreaker circuitBreaker
+    ) {
+        if (!(helper.getRecord() instanceof PageFrameMemoryRecord slaveFrameRecord)) {
+            return false;
+        }
+        final AsyncAsOfJoinIndexState state = atom.getIndexState(slotId);
+        final int masterTimestampIndex = atom.getMasterTimestampIndex();
+        final int masterSymbolIndex = atom.getMasterSymbolIndex();
+        final long masterTsScale = atom.getMasterTsScale();
+        try {
+            if (!state.of(atom.getSlaveTimeFrameCursor(slotId), slaveFrameRecord, helper.getTimestampIndex(), atom.getSlaveSymbolIndex(), atom.getSlaveTsScale(), atom.getJoinableCount())) {
+                return false;
+            }
+            for (long i = 0; i < rowCount; i++) {
+                if ((i & (CIRCUIT_BREAKER_CHECK_ROWS - 1)) == 0) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
+                }
+                record.setRowIndex(isMasterFiltered ? rows.get(i) : i);
+                final int slot = atom.masterSlotOf(record.getInt(masterSymbolIndex));
+                long rowId = NO_ROW;
+                if (slot >= 0) {
+                    final long masterTs = scaleTimestamp(record.getTimestamp(masterTimestampIndex), masterTsScale);
+                    final long match = state.match(slot, atom.slotIndexKeyOf(slot), masterTs, circuitBreaker);
+                    if (match == AsyncAsOfJoinIndexState.UNSUPPORTED) {
+                        return false;
+                    }
+                    if (match != Long.MIN_VALUE) {
+                        rowId = match;
+                    }
+                }
+                Unsafe.putLong(outAddress + (i << 3), rowId);
+            }
+            return true;
+        } finally {
+            state.closeKeyCursors();
+        }
     }
 
     // Walk mode, for a frame with few master rows against a long slave span. Per master row: R, the
