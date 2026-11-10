@@ -340,6 +340,22 @@ public class AsyncAsOfJoinAtom implements StatefulAtom, PerWorkerLockOwner, Reop
      * The bits a gathered column holds for a row: the value the record's getter returns, widened
      * to a long, in the column type's storage layout (its low bytes, little endian).
      */
+    /**
+     * {@link #readBits} of a native page frame's row, read from the column's address: the same bits
+     * {@code PageFrameMemoryRecord}'s getters return for a column with a non-zero page address.
+     */
+    public static long rawBits(long address, long row, int kind) {
+        return switch (kind) {
+            case GATHER_BOOL -> Unsafe.getByte(address + row) == 1 ? 1 : 0;
+            case GATHER_BYTE, GATHER_GEOBYTE, GATHER_DECIMAL8 -> Unsafe.getByte(address + row);
+            case GATHER_SHORT, GATHER_GEOSHORT, GATHER_DECIMAL16 -> Unsafe.getShort(address + (row << 1));
+            case GATHER_CHAR -> Unsafe.getChar(address + (row << 1));
+            case GATHER_INT, GATHER_SYMBOL, GATHER_IPV4, GATHER_FLOAT, GATHER_GEOINT, GATHER_DECIMAL32 -> Unsafe.getInt(address + (row << 2));
+            case GATHER_LONG, GATHER_DOUBLE, GATHER_DATE, GATHER_TIMESTAMP, GATHER_GEOLONG, GATHER_DECIMAL64 -> Unsafe.getLong(address + (row << 3));
+            default -> throw new UnsupportedOperationException();
+        };
+    }
+
     public static long readBits(Record record, int col, int kind) {
         return switch (kind) {
             case GATHER_BOOL -> record.getBool(col) ? 1 : 0;

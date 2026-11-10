@@ -401,35 +401,63 @@ public class AsyncAsOfJoinRecordCursorFactory extends AbstractRecordCursorFactor
         final int masterTimestampIndex = atom.getMasterTimestampIndex();
         final long masterTsScale = atom.getMasterTsScale();
         final long slaveTsScale = atom.getSlaveTsScale();
+        // A native slave frame: the columns' addresses, read once per frame, and a raw read per row
+        // and column; a column without an address (a column top, a type cast) reads through the record.
+        final PageFrameMemoryRecord slaveFrameRecord = slaveRecord instanceof PageFrameMemoryRecord pfmr ? pfmr : null;
+        // per call: the workers gather concurrently
+        final long[] columnAddresses = slaveFrameRecord != null ? new long[gatherCount] : null;
+        int addressFrame = -1;
+        long timestampAddress = 0;
+        boolean isRecordNeeded = true;
         for (long i = 0; i < rowCount; i++) {
             if ((i & (CIRCUIT_BREAKER_CHECK_ROWS - 1)) == 0) {
                 circuitBreaker.statefulThrowExceptionIfTripped();
             }
             long rowId = Unsafe.getLong(outAddress + (i << 3));
             if (rowId >= 0) {
-                helper.recordAt(rowId);
+                final long slaveRow = Rows.toLocalRowID(rowId);
+                if (slaveFrameRecord != null) {
+                    final int frame = Rows.toPartitionIndex(rowId);
+                    if (frame != addressFrame) {
+                        helper.recordAt(rowId);
+                        addressFrame = frame;
+                        isRecordNeeded = false;
+                        for (int g = 0; g < gatherCount; g++) {
+                            columnAddresses[g] = slaveFrameRecord.getPageAddress(atom.getGatherColumn(g));
+                            isRecordNeeded |= columnAddresses[g] == 0;
+                        }
+                        timestampAddress = slaveFrameRecord.getPageAddress(slaveTimestampIndex);
+                        isRecordNeeded |= hasTolerance && timestampAddress == 0;
+                    } else if (isRecordNeeded) {
+                        helper.recordAtRowIndex(slaveRow);
+                    }
+                } else {
+                    helper.recordAt(rowId);
+                }
                 if (hasTolerance) {
                     record.setRowIndex(isMasterFiltered ? rows.get(i) : i);
                     final long masterTs = scaleTimestamp(record.getTimestamp(masterTimestampIndex), masterTsScale);
-                    final long slaveTs = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTsScale);
-                    if (slaveTs < masterTs - tolerance) {
+                    final long rawSlaveTs = slaveFrameRecord != null && timestampAddress != 0
+                            ? Unsafe.getLong(timestampAddress + (slaveRow << 3))
+                            : slaveRecord.getTimestamp(slaveTimestampIndex);
+                    if (scaleTimestamp(rawSlaveTs, slaveTsScale) < masterTs - tolerance) {
                         rowId = NO_ROW;
                         Unsafe.putLong(outAddress + (i << 3), NO_ROW);
                     }
                 }
+                if (rowId >= 0) {
+                    for (int g = 0; g < gatherCount; g++) {
+                        final int col = atom.getGatherColumn(g);
+                        final long bits = slaveFrameRecord != null && columnAddresses[g] != 0
+                                ? AsyncAsOfJoinAtom.rawBits(columnAddresses[g], slaveRow, atom.getGatherKind(col))
+                                : AsyncAsOfJoinAtom.readBits(slaveRecord, col, atom.getGatherKind(col));
+                        Unsafe.putLong(gatherAddress + ((g * rowCount + i) << 3), bits);
+                    }
+                    continue;
+                }
             }
-            if (rowId >= 0) {
-                for (int g = 0; g < gatherCount; g++) {
-                    final int col = atom.getGatherColumn(g);
-                    Unsafe.putLong(
-                            gatherAddress + ((g * rowCount + i) << 3),
-                            AsyncAsOfJoinAtom.readBits(slaveRecord, col, atom.getGatherKind(col))
-                    );
-                }
-            } else {
-                for (int g = 0; g < gatherCount; g++) {
-                    Unsafe.putLong(gatherAddress + ((g * rowCount + i) << 3), atom.getGatherNullBits(g));
-                }
+            for (int g = 0; g < gatherCount; g++) {
+                Unsafe.putLong(gatherAddress + ((g * rowCount + i) << 3), atom.getGatherNullBits(g));
             }
         }
     }
