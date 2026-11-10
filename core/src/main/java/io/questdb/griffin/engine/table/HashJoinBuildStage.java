@@ -87,14 +87,17 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
  * rows on the workers, and the workers fill the hash partitions of {@link IntHashJoinBuild} or
  * {@link MapHashJoinBuild}, through rounds of tasks that the operator's dispatcher runs. Each task
  * of a round finds the stage through the {@link HashJoinBuildHost} atom of the dispatcher's
- * sequence. Then {@link #bindSymbolKeyTranslation(SqlExecutionCircuitBreaker)} binds the SYMBOL key
- * translation: one cache per SYMBOL key column, shared by every slot, plus a pair of symbol tables
- * per slot; and {@link #bindProbes()} gives every slot its probe of the frozen build. The build
- * frames stay open until {@link #clear()}, because probes read payload columns through them and the
- * translation's keyOf() lookups resolve through their symbol tables. The owner dispatches the
- * probe tasks after the build returns, and the first task that its sequence publishes is what
- * publishes the frozen build, its flags and the slots' probes to the reducers. clear() requires
- * all reducers to have finished and output consumers to be done.
+ * sequence. A parallel hash join first prepares every stage's build, see {@link #prepareBuild()},
+ * and builds its stages that are too small for rounds of their own at once, when it has more than
+ * one, in one round with one task per stage, each on the slot that its task takes; see
+ * {@link #BUILD_STAGE}. Then {@link #bindSymbolKeyTranslation(SqlExecutionCircuitBreaker)} binds the
+ * SYMBOL key translation: one cache per SYMBOL key column, shared by every slot, plus a pair of
+ * symbol tables per slot; and {@link #bindProbes()} gives every slot its probe of the frozen build.
+ * The build frames stay open until {@link #clear()}, because probes read payload columns through
+ * them and the translation's keyOf() lookups resolve through their symbol tables. The owner
+ * dispatches the probe tasks after the build returns, and the first task that its sequence publishes
+ * is what publishes the frozen build, its flags and the slots' probes to the reducers. clear()
+ * requires all reducers to have finished and output consumers to be done.
  * <p>
  * A query that only counts the joined pairs reads nothing of a pair, so a build that repeats a key
  * need not hand its rows out one by one: {@link #countKeyRows(PageFrameRoundDispatcher)} has the
@@ -123,6 +126,11 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
  * left input's in either orientation, stay as they are.
  */
 public final class HashJoinBuildStage implements Mutable, QuietCloseable {
+    /**
+     * One task per small stage of a parallel hash join's build round: builds the stage alone, on the
+     * slot the task takes; see {@link HashJoinBuildRoundAtom#buildConcurrently}.
+     */
+    static final UnorderedPageFrameReducer BUILD_STAGE = HashJoinBuildStage::buildStage;
     private static final UnorderedPageFrameReducer BUILD_PARTITION = HashJoinBuildStage::buildPartition;
     private static final UnorderedPageFrameReducer COPY_FRAME_PAYLOAD = HashJoinBuildStage::copyFramePayload;
     private static final UnorderedPageFrameReducer COUNT_PARTITIONS = HashJoinBuildStage::countPartitions;
@@ -178,11 +186,14 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
     private FrozenHashJoinBuild frozen;
     // Exactly one of the two builds exists, as isKeyStaged says.
     private IntHashJoinBuild intBuild;
-    // Read by the frame tasks of a parallel build: whether a frame's rows go through the filters.
+    // Read by the frame tasks of a parallel build, and by the task of a build alone: whether a
+    // frame's rows go through the filters.
     private boolean isBuildFiltered;
     private boolean isBuildFiltersInitialized;
     // True when the open cursor's build has more than one partition, whose probes are a class of their own.
     private boolean isBuildPartitioned;
+    // True once prepareBuild() loaded the open cursor's build frames.
+    private boolean isBuildPrepared;
     private boolean isBuildUnique;
     // True when the open cursor's build ran on the workers, which lays the heap out by partition.
     private boolean isBuiltInRounds;
@@ -194,7 +205,12 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
     // key layout the slots' swap sinks, translating records and record probes follow; see
     // setKeySourceSwapped().
     private boolean isKeySourceSwapped;
+    // True when the open cursor's build runs in rounds of its own, as prepareBuild() decided.
+    private boolean isLargeBuild;
     private boolean isPayloadCopied;
+    // The presize hints of a build alone, which prepareBuild() takes on the owner: the rows the build
+    // keeps, -1 when a filter thins them, and the keys among them, -1 when the key table grows.
+    private long keyCountHint;
     private MapHashJoinBuild mapBuild;
     // The open cursor's tracker, which init() takes for build(): the build runs after getCursor()
     // returned, when the execution context may no longer carry it.
@@ -214,6 +230,8 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
     private SymbolTableSource probeSymbols;
     // The rounds of tasks the stage dispatched, over all its executions; see getRoundCount().
     private long roundCount;
+    // See keyCountHint.
+    private long rowCountHint;
 
     /**
      * Takes every key sink and stager the stage will ever need, so construct it while the inputs,
@@ -532,6 +550,8 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
         isBuiltInRounds = false;
         isCountedInRounds = false;
         isKeyCapacityPresized = false;
+        isBuildPrepared = false;
+        isLargeBuild = false;
         isPayloadCopied = false;
         parquetBuildRows = 0;
         parquetFrameCount = 0;
@@ -824,6 +844,32 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
     }
 
     /**
+     * The one task of a small stage in a parallel hash join's round of concurrent builds: builds the
+     * stage alone, as the owner builds a small stage, but on the slot that the task takes, with the
+     * slot's own filters, memory pool and build views, so that the stages of the round build at once
+     * on as many threads. A stage takes part only when it can build on the workers, see
+     * {@link #isConcurrentBuildCapable()}, and each stage has one task, so no two tasks share a
+     * stage's slot.
+     */
+    private static void buildStage(
+            int workerId,
+            PageFrameMemoryRecord unused,
+            int task,
+            SqlExecutionCircuitBreaker breaker,
+            UnorderedPageFrameSequence<?> sequence,
+            UnorderedPageFrameSequence<?> stealingSequence
+    ) {
+        final HashJoinBuildRoundAtom host = (HashJoinBuildRoundAtom) sequence.getAtom();
+        final HashJoinBuildStage stage = host.getConcurrentStage(task);
+        final int slotId = host.maybeAcquire(workerId, stealingSequence == sequence, breaker);
+        try {
+            stage.buildOnOwner(slotId, breaker);
+        } finally {
+            host.release(slotId);
+        }
+    }
+
+    /**
      * One task of a parallel build's payload copy per build frame: copies the payload columns of
      * the rows the frame kept, partition by partition, through the slot's copy reader. The rows
      * all come from the one frame, so a Parquet frame decodes once per task.
@@ -940,12 +986,13 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
      * it, unless a staged key is too wide for that. A round returns once all its tasks have stopped,
      * also when it throws.
      */
-    private void buildInRounds(MemoryTracker memoryTracker, SqlExecutionCircuitBreaker circuitBreaker,
-                               PageFrameRoundDispatcher dispatcher, SymbolTableSource buildSymbols, boolean isFiltered) {
+    private void buildInRounds(SqlExecutionCircuitBreaker circuitBreaker, PageFrameRoundDispatcher dispatcher) {
+        assert isLargeBuild;
+        final SymbolTableSource buildSymbols = buildFrames.getSymbolTableSource();
         for (int i = 0, n = slots.size(); i < n; i++) {
             slots.getQuick(i).buildRecord.of(buildSymbols);
         }
-        isBuildFiltered = isFiltered;
+        final boolean isFiltered = isBuildFiltered;
         final int frameCount = buildFrames.getFrameCount();
         roundTaskRowCounts.clear();
         for (int frameIndex = 0; frameIndex < frameCount; frameIndex++) {
@@ -1004,14 +1051,15 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
         }
     }
 
-    // Walks the build frames on the owner, appending each frame's kept rows as it goes.
-    private void buildOnOwner(MemoryTracker memoryTracker, SqlExecutionCircuitBreaker circuitBreaker,
-                              SymbolTableSource buildSymbols, boolean isFiltered) {
-        final Slot owner = getSlot(-1);
-        final PageFrameMemoryRecord buildRecord = owner.buildRecord;
-        buildRecord.of(buildSymbols);
-        final long rowCountHint = isFiltered ? -1 : buildFrames.getRowCount();
-        final long keyCountHint = getKeyCountHint(rowCountHint);
+    // Walks the build frames alone, appending each frame's kept rows as it goes, on one slot: the
+    // owner's, -1, or the slot of a task in a round of concurrent builds, whose own breaker the build
+    // then checks. The build is small, so prepareBuild() took its presize hints on the owner.
+    private void buildOnOwner(int slotId, SqlExecutionCircuitBreaker circuitBreaker) {
+        assert !isLargeBuild;
+        final boolean isFiltered = isBuildFiltered;
+        final Slot slot = getSlot(slotId);
+        final PageFrameMemoryRecord buildRecord = slot.buildRecord;
+        buildRecord.of(buildFrames.getSymbolTableSource());
         if (isKeyStaged) {
             mapBuild.open(memoryTracker, circuitBreaker);
             mapBuild.reserve(rowCountHint, keyCountHint);
@@ -1019,8 +1067,8 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
             intBuild.open(memoryTracker, circuitBreaker);
             intBuild.reserve(rowCountHint, keyCountHint);
         }
-        final PageFrameMemoryPool pool = buildFilterContext.getMemoryPool(-1);
-        final DirectLongList rows = buildFilterContext.getFilteredRows(-1);
+        final PageFrameMemoryPool pool = buildFilterContext.getMemoryPool(slotId);
+        final DirectLongList rows = buildFilterContext.getFilteredRows(slotId);
         for (int frameIndex = 0, frameCount = buildFrames.getFrameCount(); frameIndex < frameCount; frameIndex++) {
             circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
             final PageFrameMemory frameMemory = pool.navigateTo(frameIndex);
@@ -1028,15 +1076,15 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
             final long rowCount = buildFrames.getFrameRowCount(frameIndex);
             try {
                 if (isFiltered) {
-                    filterBuildFrame(-1, frameMemory, buildRecord, rowCount, rows);
+                    filterBuildFrame(slotId, frameMemory, buildRecord, rowCount, rows);
                     // A SYMBOL key keeps the build's own symbol keys; the probe translates into them.
                     if (isKeyStaged) {
-                        mapBuild.appendFrame(buildRecord, owner.buildKeySink, rows, buildOrder);
+                        mapBuild.appendFrame(buildRecord, slot.buildKeySink, rows, buildOrder);
                     } else {
                         intBuild.appendFrame(buildRecord, buildKeyColumn, rows, buildOrder);
                     }
                 } else if (isKeyStaged) {
-                    mapBuild.appendFrame(buildRecord, owner.buildKeySink, rowCount, buildOrder);
+                    mapBuild.appendFrame(buildRecord, slot.buildKeySink, rowCount, buildOrder);
                 } else {
                     intBuild.appendFrame(buildRecord, buildKeyColumn, rowCount, buildOrder);
                 }
@@ -1377,20 +1425,16 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
      *                   {@link HashJoinBuildHost} that returns this stage as the building one
      */
     void build(SqlExecutionCircuitBreaker circuitBreaker, PageFrameRoundDispatcher dispatcher) {
-        assert frozen == null && buildFrames.getSymbolTableSource() != null && parquetBuildRows == 0 && parquetFrameCount == 0
-                && parquetFrameRows == 0;
-        buildCount++;
-        buildFrames.loadFrames();
-        final SymbolTableSource buildSymbols = buildFrames.getSymbolTableSource();
-        buildFilterContext.initMemoryPools(buildFrames.getAddressCache(), memoryTracker);
-        final boolean isFiltered = buildFilterContext.getFilter(-1) != null || buildOnFilter != null;
-        final int frameCount = buildFrames.getFrameCount();
-        if (isParallelBuildCapable && frameCount > 0 && buildFrames.getRowCount() >= parallelBuildMinRows) {
-            buildInRounds(memoryTracker, circuitBreaker, dispatcher, buildSymbols, isFiltered);
-        } else {
-            buildOnOwner(memoryTracker, circuitBreaker, buildSymbols, isFiltered);
+        // A parallel hash join prepares every stage's build before it builds any.
+        if (!isBuildPrepared) {
+            prepareBuild();
         }
-        isBuildUnique = frozen.getRowCount() == frozen.getKeyCount();
+        if (isLargeBuild) {
+            buildInRounds(circuitBreaker, dispatcher);
+        } else {
+            buildOnOwner(-1, circuitBreaker);
+        }
+        finishBuild();
     }
 
     /**
@@ -1411,6 +1455,25 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
     }
 
     /**
+     * Ends the open cursor's build, once the build ran, whichever way it ran: on the owner, in rounds
+     * of its own, or as a task of a round of concurrent builds, whose end made the build's writes
+     * visible to the owner; {@link #build} ends its own.
+     */
+    void finishBuild() {
+        assert frozen != null;
+        isBuildUnique = frozen.getRowCount() == frozen.getKeyCount();
+    }
+
+    /**
+     * The build input's rows before any filter, once {@link #prepareBuild()} loaded its frames: the
+     * rows that a task of a round of concurrent builds walks, by which the fiber dispatcher batches
+     * the round's tasks.
+     */
+    long getBuildRowCount() {
+        return buildFrames.getRowCount();
+    }
+
+    /**
      * The slot of a parallel hash join's consumer, which positions the slot's probe and payload
      * reader on the matches that the workers found; the stage's own tasks never run on it.
      */
@@ -1424,6 +1487,23 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
      */
     Slot getSlot(int slotId) {
         return slots.getQuick(slotId + 1);
+    }
+
+    /**
+     * True when the stage can build alone on a worker's slot, in a round of concurrent builds: its
+     * build scan has a memory pool for every worker, and a filter of its own for every worker, or a
+     * thread safe one, as a build in rounds of its own needs.
+     */
+    boolean isConcurrentBuildCapable() {
+        return isParallelBuildCapable;
+    }
+
+    /**
+     * True when the open cursor's build runs in rounds of its own, as {@link #prepareBuild()}
+     * decided.
+     */
+    boolean isLargeBuild() {
+        return isLargeBuild;
     }
 
     /**
@@ -1476,6 +1556,35 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
             }
             isPayloadCopied = true;
         }
+    }
+
+    /**
+     * Loads the build scan's page frames and decides how the open cursor's build runs, on the owner
+     * and before any of its rows is read: in rounds of its own, on the workers, when it can and its
+     * input holds at least the configured rows, and alone otherwise, on the owner, or, for a parallel
+     * hash join with several small stages, as a task of a round that builds them at once; see
+     * {@link #BUILD_STAGE}. A build alone takes its presize hints here, on the owner, since the key
+     * hint of a SYMBOL key reads the build scan's dictionary. The caller then builds, see
+     * {@link #build}, which also prepares a build that nothing prepared, and {@link #BUILD_STAGE},
+     * after which it runs {@link #finishBuild()}. On failure the caller runs {@link #clear()}, which
+     * closes what this opened.
+     *
+     * @return true when the build runs in rounds of its own
+     */
+    boolean prepareBuild() {
+        assert !isBuildPrepared && frozen == null && buildFrames.getSymbolTableSource() != null && parquetBuildRows == 0
+                && parquetFrameCount == 0 && parquetFrameRows == 0;
+        isBuildPrepared = true;
+        buildCount++;
+        buildFrames.loadFrames();
+        buildFilterContext.initMemoryPools(buildFrames.getAddressCache(), memoryTracker);
+        isBuildFiltered = buildFilterContext.getFilter(-1) != null || buildOnFilter != null;
+        isLargeBuild = isParallelBuildCapable && buildFrames.getFrameCount() > 0 && buildFrames.getRowCount() >= parallelBuildMinRows;
+        if (!isLargeBuild) {
+            rowCountHint = isBuildFiltered ? -1 : buildFrames.getRowCount();
+            keyCountHint = getKeyCountHint(rowCountHint);
+        }
+        return isLargeBuild;
     }
 
     /**

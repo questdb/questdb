@@ -38,6 +38,35 @@ import io.questdb.std.DirectLongList;
 final class HashJoinStageStepperTemplate extends HashJoinStageStepper {
 
     @Override
+    long countRows(AsyncHashJoinAtom.Slot slot, long rowCount, long from, boolean isDescending) {
+        final PageFrameMemoryRecord probeRecord = slot.probeRecord;
+        for (long i = from; i < rowCount; i++) {
+            final long row = isDescending ? rowCount - 1 - i : i;
+            probeRecord.setRowIndex(row);
+            slot.probeRow = row;
+            if (!step(slot, 0)) {
+                return CANCELLED;
+            }
+        }
+        return slot.pairCount;
+    }
+
+    @Override
+    long countRows(AsyncHashJoinAtom.Slot slot, DirectLongList rows, long from, boolean isDescending) {
+        final PageFrameMemoryRecord probeRecord = slot.probeRecord;
+        final long n = rows.size();
+        for (long p = from; p < n; p++) {
+            final long row = rows.get(isDescending ? n - 1 - p : p);
+            probeRecord.setRowIndex(row);
+            slot.probeRow = row;
+            if (!step(slot, 0)) {
+                return CANCELLED;
+            }
+        }
+        return slot.pairCount;
+    }
+
+    @Override
     long probeRows(AsyncHashJoinAtom.Slot slot, long rowCount, long from, boolean isDescending, long tupleCap) {
         final PageFrameMemoryRecord probeRecord = slot.probeRecord;
         final DirectLongList tuples = slot.tuples;
@@ -91,9 +120,15 @@ final class HashJoinStageStepperTemplate extends HashJoinStageStepper {
                 entry = NO_MATCH;
             } else {
                 // The first match's locator serves a key of one row; a key of several rows hands
-                // its chain to the consumer instead.
+                // its chain to the consumer instead, or, in a count, the chain's length.
                 probe.next();
-                entry = probe.hasNext() ? -head : s.reader.locator();
+                if (!probe.hasNext()) {
+                    entry = s.reader.locator();
+                } else if (slot.isCountOnly) {
+                    return emitChain(slot, stage, probe);
+                } else {
+                    entry = -head;
+                }
             }
         }
         if (entry != NO_MATCH || isOuter) {
@@ -108,10 +143,35 @@ final class HashJoinStageStepperTemplate extends HashJoinStageStepper {
     private boolean emit(AsyncHashJoinAtom.Slot slot, int stage) {
         final HashJoinStageStepper next = this.next;
         if (next == null) {
-            slot.appendTuple();
+            if (slot.isCountOnly) {
+                // The tuple stands for as many rows as the product of its deferred chains' lengths.
+                slot.pairCount += slot.pairMultiplier;
+            } else {
+                slot.appendTuple();
+            }
             return true;
         }
         return next.step(slot, stage + 1);
+    }
+
+    // In a count, hands the probe row on with the rest of the key's chain counted, after the first
+    // match that the probe already took: each tuple that comes out of the later stages stands for as
+    // many more rows. Walks the chain, which leaves its links as they are. Returns false when the
+    // execution was cancelled.
+    private boolean emitChain(AsyncHashJoinAtom.Slot slot, int stage, FrozenHashJoinBuild.Probe probe) {
+        long chainLength = 1;
+        while (probe.hasNext()) {
+            if (isInterrupted(slot)) {
+                return false;
+            }
+            probe.next();
+            chainLength++;
+        }
+        final long pairMultiplier = slot.pairMultiplier;
+        slot.pairMultiplier = pairMultiplier * chainLength;
+        final boolean isActive = emit(slot, stage);
+        slot.pairMultiplier = pairMultiplier;
+        return isActive;
     }
 
     // Walks the key's matches in chain order and hands on each pair that passes the stage's filters,

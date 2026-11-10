@@ -66,6 +66,16 @@ import io.questdb.std.Os;
  * the right input's frames and reads the left input's columns from the first stage's matches; the
  * joined row keeps its columns, and each column's symbol tables come from the open scan whose frames
  * hold it.
+ * <p>
+ * {@link #calculateSize} counts the rows still to come without reading them: it dispatches
+ * count-only tasks, which count each frame's joined rows on the workers, see
+ * {@link AsyncHashJoinAtom#probeFrame}, and walks the chains that a tuple leaves to the consumer only
+ * to count their links, which leaves the builds as they are, so that {@code toTop()} reads the rows
+ * again. A count that follows some rows first counts what the tuple-carrying tasks dispatched before
+ * it left: the current tuple's chains' combinations after the current one, the current frame's
+ * tuples not yet read, the tuples of every such task it collects, chains included, and the rows that
+ * each of those frames left to a continuation, which it counts on the owner's slot rather than
+ * joins.
  */
 class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
     // The chain heads of the current tuple's stages that left their chains to the consumer, in
@@ -85,6 +95,11 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
     // The chains the cursor walks for the current tuple; 0 when it walks none.
     private int chainStageCount;
     private SqlExecutionCircuitBreaker circuitBreaker;
+    // What the open execution's counts met: frames of count-only tasks, continuations, and frames of
+    // tuple-carrying tasks; see the factory's test accessors.
+    private int countOnlyFrameCount;
+    private int countedContinuationCount;
+    private int countedTupleFrameCount;
     // The current frame's task, -1 when the cursor holds none.
     private long cursor = -1;
     private int dispatchLimit;
@@ -108,6 +123,62 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
         // A LEFT join's miss reads the payload columns as typed NULLs, by their payload index.
         this.record = spec.newJoinedRecord();
         record.setProbeRecord(probeRecord);
+    }
+
+    /**
+     * Counts the rows that {@link #hasNext()} would still return, without reading them, and leaves
+     * the cursor at its end, so that {@code toTop()} reads every row again. The builds run first if no
+     * row was read yet, and stay as they are. The count checks the execution's breaker, as
+     * {@link #hasNext()} does, whichever breaker the caller passes.
+     */
+    @Override
+    public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
+        if (!isBuilt) {
+            build();
+        }
+        if (chainStageCount > 0) {
+            counter.add(countRemainingChainMatches());
+        }
+        if (cursor > -1) {
+            // The rest of the frame the cursor holds, which a tuple-carrying task joined.
+            countTupleFrame(counter);
+        }
+        while (frameIndex < frameLimit) {
+            cursor = frameSequence.next(Integer.MAX_VALUE, true);
+            if (cursor > -1) {
+                final PageFrameReduceTask task = frameSequence.getTask(cursor);
+                if (task.hasError()) {
+                    throw task.buildError();
+                }
+                allFramesActive &= frameSequence.isActive();
+                frameIndex = task.getFrameIndex();
+                // A cancelled or failed sequence's frames hold nothing to count.
+                if (frameSequence.isActive()) {
+                    if (task.isCountOnly()) {
+                        countOnlyFrameCount++;
+                        counter.add(task.getFilteredRowCount());
+                    } else {
+                        // A task that the cursor dispatched before the count began carries tuples.
+                        tuples = atom.getRing().getTuples(frameIndex);
+                        tupleIndex = 0;
+                        tupleCount = task.getFilteredRowCount();
+                        countTupleFrame(counter);
+                    }
+                }
+                collectCursor(false);
+                this.circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+            } else {
+                // The sequence has frames, and only close() stops the fiber dispatcher; see
+                // fetchNextFrame().
+                assert cursor == -1 : "the probe's frame sequence stopped dispatching";
+                Os.pause();
+            }
+        }
+        tupleIndex = 0;
+        tupleCount = 0;
+        if (!allFramesActive) {
+            throw frameSequence.buildInterruptionException();
+        }
     }
 
     @Override
@@ -272,6 +343,81 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
         return false;
     }
 
+    // The links of a chain that a tuple left to the consumer: the rows of its key. Walks the chain
+    // with the stage's output probe, which changes no link.
+    private long countChain(int stage, long head) {
+        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+        final FrozenHashJoinBuild.Probe probe = outputProbes.getQuick(stage);
+        probe.ofChain(head);
+        long length = 0;
+        while (probe.hasNext()) {
+            probe.next();
+            length++;
+        }
+        return length;
+    }
+
+    /**
+     * The combinations of the current tuple's chains that come after the current one,
+     * odometer-style, see {@link #nextChainMatch()}: for each chain, the matches after its current
+     * one, times the combinations of the chains after it. Walks the chains no further than to count
+     * them, and walks none of them from then on.
+     */
+    private long countRemainingChainMatches() {
+        long remaining = 0;
+        long laterCombinations = 1;
+        for (int i = chainStageCount - 1; i > -1; i--) {
+            final FrozenHashJoinBuild.Probe probe = outputProbes.getQuick(chainStages[i]);
+            long laterMatches = 0;
+            while (probe.hasNext()) {
+                probe.next();
+                laterMatches++;
+            }
+            remaining += laterMatches * laterCombinations;
+            if (i > 0) {
+                laterCombinations *= countChain(chainStages[i], chainHeads[i]);
+            }
+        }
+        chainStageCount = 0;
+        return remaining;
+    }
+
+    /**
+     * Counts the rest of a frame that a tuple-carrying task joined, which the cursor holds: the rows
+     * of its tuples not yet read, each as many as the product of its chains' lengths, and the rows
+     * that the task, or the last chunk, left to a continuation, which the owner counts rather than
+     * joins. Then collects the frame.
+     */
+    private void countTupleFrame(Counter counter) {
+        countedTupleFrameCount++;
+        long rows = 0;
+        for (; tupleIndex < tupleCount; tupleIndex++) {
+            final long base = tupleIndex * tupleStride;
+            long tupleRows = 1;
+            for (int k = 0; k < stageCount; k++) {
+                final long entry = tuples.get(base + 1 + k);
+                if (entry < HashJoinStageStepper.NO_MATCH) {
+                    tupleRows *= countChain(k, HashJoinStageStepper.toChainHead(entry));
+                }
+            }
+            rows += tupleRows;
+        }
+        counter.add(rows);
+        if (atom.getRing().getResumePosition(frameIndex) > -1) {
+            countedContinuationCount++;
+            // The breaker is checked before the rest, as before a chunk of a continuation.
+            final long restRows = AsyncHashJoinAtom.isInterrupted(circuitBreaker, frameSequence)
+                    ? HashJoinStageStepper.CANCELLED
+                    : atom.countFrameRest(frameSequence.getTask(cursor), circuitBreaker);
+            if (restRows == HashJoinStageStepper.CANCELLED) {
+                allFramesActive = false;
+            } else {
+                counter.add(restRows);
+            }
+        }
+        collectCursor(false);
+    }
+
     private void collectCursor(boolean forceCollect) {
         if (cursor > -1) {
             frameSequence.collect(cursor, forceCollect);
@@ -290,6 +436,8 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
                 if (task.hasError()) {
                     throw task.buildError();
                 }
+                // Only a count dispatches count-only tasks, and it collects every frame.
+                assert !task.isCountOnly();
                 allFramesActive &= frameSequence.isActive();
                 frameIndex = task.getFrameIndex();
                 tupleIndex = 0;
@@ -372,6 +520,21 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
         allFramesActive = true;
     }
 
+    // The frames whose count-only tasks the open execution's counts collected.
+    int getCountOnlyFrameCount() {
+        return countOnlyFrameCount;
+    }
+
+    // The continuations that the open execution's counts counted rather than joined.
+    int getCountedContinuationCount() {
+        return countedContinuationCount;
+    }
+
+    // The frames of tuple-carrying tasks whose rest the open execution's counts counted.
+    int getCountedTupleFrameCount() {
+        return countedTupleFrameCount;
+    }
+
     /**
      * Binds the cursor to an execution whose frame sequence the factory has bound; the cursor
      * builds on the first call to {@link #hasNext()}.
@@ -390,6 +553,9 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
         probeRecord.of(frameSequence.getSymbolTableSource());
         isBuilt = false;
         frameLimit = -1;
+        countOnlyFrameCount = 0;
+        countedContinuationCount = 0;
+        countedTupleFrameCount = 0;
         resetFrames();
     }
 

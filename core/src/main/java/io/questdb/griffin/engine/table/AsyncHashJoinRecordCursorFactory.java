@@ -181,6 +181,33 @@ public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursor
         return buildRounds.getAtom();
     }
 
+    /**
+     * The frames whose count-only tasks the last execution's row counts collected, since its cursor
+     * opened; see {@code RecordCursor.calculateSize()}.
+     */
+    @TestOnly
+    public int getCountOnlyFrameCount() {
+        return cursor.getCountOnlyFrameCount();
+    }
+
+    /**
+     * The continuations of frames that the last execution's row counts counted on the owner rather
+     * than joined, since its cursor opened.
+     */
+    @TestOnly
+    public int getCountedContinuationCount() {
+        return cursor.getCountedContinuationCount();
+    }
+
+    /**
+     * The frames of tuple-carrying tasks, dispatched before a row count began, whose rest the last
+     * execution's row counts counted, since its cursor opened.
+     */
+    @TestOnly
+    public int getCountedTupleFrameCount() {
+        return cursor.getCountedTupleFrameCount();
+    }
+
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         cursor.close();

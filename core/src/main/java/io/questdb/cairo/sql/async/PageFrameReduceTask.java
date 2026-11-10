@@ -69,9 +69,9 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     private PageFrameSequence<?> frameSequence;
     private long frameSequenceId = -1;
     private int interruptionReason = SqlExecutionCircuitBreaker.STATE_OK;
-    // Valid for TYPE_FILTER and TYPE_HORIZON_JOIN only. When set, the reducer sets filteredRowCount
-    // and the collecting cursor must not read filteredRows: a filtered TYPE_HORIZON_JOIN reducer
-    // still fills it with the filtered row indexes.
+    // Valid for TYPE_FILTER, TYPE_HORIZON_JOIN and TYPE_HASH_JOIN only. When set, the reducer sets
+    // filteredRowCount and the collecting cursor must not read filteredRows: a filtered
+    // TYPE_HORIZON_JOIN or TYPE_HASH_JOIN reducer still fills it with the filtered row indexes.
     private boolean isCountOnly;
     private boolean isOutOfMemory;
     private byte taskType;

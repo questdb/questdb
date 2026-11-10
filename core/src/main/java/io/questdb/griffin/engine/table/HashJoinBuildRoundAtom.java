@@ -27,8 +27,11 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StatefulAtom;
+import io.questdb.cairo.sql.async.PageFrameRoundDispatcher;
 import io.questdb.griffin.engine.PerWorkerLockOwner;
 import io.questdb.griffin.engine.PerWorkerLocks;
+import io.questdb.std.LongList;
+import io.questdb.std.ObjList;
 import org.jetbrains.annotations.TestOnly;
 
 /**
@@ -42,11 +45,23 @@ import org.jetbrains.annotations.TestOnly;
  * and the slot's index addresses the building stage's per-slot state. The atom guards those slots
  * with locks of its own, so that a round task never waits on a slot that a probe task holds, and
  * owns nothing else: the stages belong to the join's other atom.
+ * <p>
+ * The stages too small to build in rounds of their own build at once, when there are several, in
+ * one round with one task per stage; see {@link #buildConcurrently}. Each task builds its stage
+ * alone, on the slot it takes, through the stage's state of that slot, so the round's tasks share no
+ * state.
  */
 public final class HashJoinBuildRoundAtom implements StatefulAtom, HashJoinBuildHost, PerWorkerLockOwner {
+    // The stages that the round of concurrent builds in flight builds, one per task, and the build
+    // rows of each, by which the fiber dispatcher batches the tasks; empty between such rounds.
+    private final LongList concurrentStageRowCounts = new LongList();
+    private final ObjList<HashJoinBuildStage> concurrentStages = new ObjList<>();
     private final PerWorkerLocks perWorkerLocks;
     // The stage whose round is in flight; null between builds.
     private HashJoinBuildStage buildingStage;
+    // The rounds of concurrent builds dispatched, over all executions; see
+    // getConcurrentBuildRoundCount().
+    private long concurrentBuildRoundCount;
 
     public HashJoinBuildRoundAtom(CairoConfiguration configuration, int workerCount) {
         this.perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
@@ -55,11 +70,23 @@ public final class HashJoinBuildRoundAtom implements StatefulAtom, HashJoinBuild
     @Override
     public void clear() {
         buildingStage = null;
+        concurrentStages.clear();
+        concurrentStageRowCounts.clear();
     }
 
     @Override
     public HashJoinBuildStage getBuildingStage() {
         return buildingStage;
+    }
+
+    /**
+     * The rounds of concurrent builds that the atom's sequence ran since the atom was constructed,
+     * one per execution that builds more than one small stage on the workers: a test reads it before
+     * and after executions, to count the rounds of each.
+     */
+    @TestOnly
+    public long getConcurrentBuildRoundCount() {
+        return concurrentBuildRoundCount;
     }
 
     @Override
@@ -86,5 +113,44 @@ public final class HashJoinBuildRoundAtom implements StatefulAtom, HashJoinBuild
      */
     public void setBuildingStage(HashJoinBuildStage buildingStage) {
         this.buildingStage = buildingStage;
+    }
+
+    /**
+     * Adds a small stage to the next round of concurrent builds; the owner adds every stage of the
+     * round once its frames are loaded, see {@link HashJoinBuildStage#prepareBuild()}. A stage must be
+     * able to build on a worker's slot, see {@link HashJoinBuildStage#isConcurrentBuildCapable()}.
+     */
+    void addConcurrentStage(HashJoinBuildStage stage) {
+        assert stage.isConcurrentBuildCapable() && !stage.isLargeBuild();
+        concurrentStages.add(stage);
+        concurrentStageRowCounts.add(stage.getBuildRowCount());
+    }
+
+    /**
+     * Builds the stages added since the last round at once, in one round of the dispatcher's tasks,
+     * one task per stage, see {@link HashJoinBuildStage#BUILD_STAGE}, on whichever threads run them,
+     * the owner's included, and forgets the stages. Whether this returns or throws, no task of the
+     * round is still queued or running; on failure the caller clears the stages, which closes their
+     * builds, the half done ones included. The caller then ends each stage's build, see
+     * {@link HashJoinBuildStage#finishBuild()}.
+     *
+     * @param dispatcher the sequence whose atom this is
+     */
+    void buildConcurrently(PageFrameRoundDispatcher dispatcher) {
+        assert concurrentStages.size() > 1;
+        concurrentBuildRoundCount++;
+        try {
+            dispatcher.dispatchRoundAndAwait(HashJoinBuildStage.BUILD_STAGE, concurrentStageRowCounts);
+        } finally {
+            concurrentStages.clear();
+            concurrentStageRowCounts.clear();
+        }
+    }
+
+    /**
+     * The stage that the given task of the round of concurrent builds in flight builds.
+     */
+    HashJoinBuildStage getConcurrentStage(int task) {
+        return concurrentStages.getQuick(task);
     }
 }

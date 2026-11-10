@@ -65,6 +65,13 @@ import org.jetbrains.annotations.TestOnly;
  * <p>
  * The loops over a frame's rows stop at a probe row's boundary once the tuples reach their cap, so
  * that the consumer continues the frame from there; see {@link AsyncHashJoinRecordCursor}.
+ * <p>
+ * A count of the joined rows, see {@link #countRows(AsyncHashJoinAtom.Slot, long, long, boolean)},
+ * walks the stages as a frame's tuples do, but appends no tuple: each tuple that would come out of
+ * the last stage adds the rows it stands for to the slot's pair count instead, one, or, for a tuple
+ * with chains that the stages after the last enumerated one would hand to the consumer, the product
+ * of those chains' lengths. A deferred stage walks its key's chain to count it, which leaves every
+ * link of the build as it is, so that the same execution can join the frames again afterwards.
  */
 abstract class HashJoinStageStepper {
     // The key reads an INT column of the key source.
@@ -174,6 +181,27 @@ abstract class HashJoinStageStepper {
      * was, or {@link #CANCELLED} when the execution was cancelled
      */
     abstract long probeRows(AsyncHashJoinAtom.Slot slot, DirectLongList rows, long from, boolean isDescending, long tupleCap);
+
+    /**
+     * Counts the joined rows of a frame's rows, from the given position in the probe scan's order to
+     * the end of the frame, into the slot's pair count, which the slot holds for a count: see
+     * {@link AsyncHashJoinAtom.Slot#ofCount}. Writes no tuple, and has no cap.
+     *
+     * @param rowCount     the frame's rows
+     * @param from         the position, in the scan's order, of the first row to count
+     * @param isDescending true for a backward probe scan
+     * @return the slot's pair count, or {@link #CANCELLED} when the execution was cancelled
+     */
+    abstract long countRows(AsyncHashJoinAtom.Slot slot, long rowCount, long from, boolean isDescending);
+
+    /**
+     * Counts the joined rows of the frame's rows that the probe filter kept, as
+     * {@link #countRows(AsyncHashJoinAtom.Slot, long, long, boolean)} counts those of every row.
+     *
+     * @param rows the kept rows' indexes in the frame, ascending
+     * @return the slot's pair count, or {@link #CANCELLED} when the execution was cancelled
+     */
+    abstract long countRows(AsyncHashJoinAtom.Slot slot, DirectLongList rows, long from, boolean isDescending);
 
     /**
      * Probes this stage for the slot's current probe row, hands each match on to the next stage,

@@ -67,10 +67,11 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
  * the first stage adopts the build scan that the factory opened, see {@link #ofOrientation}, every
  * later stage opens its own, each stage initializes its filters, and the slots bind to the probe
  * scan. {@link #build} runs once per execution, when the cursor is first asked for a row: every
- * stage builds, in stage order, on the owner or in rounds of the join's build sequence, binds its
- * SYMBOL key translation and hands every slot its probe of the build. The owner dispatches the probe
- * tasks after the build returns, and the first task that the frame sequence publishes is what
- * publishes the builds and the slots' probes to the workers.
+ * stage builds, a large one in rounds of the join's build sequence, one at a time, and the small
+ * ones on the owner, or at once, in one round of that sequence with one task per stage; then each
+ * binds its SYMBOL key translation and hands every slot its probe of the build. The owner dispatches
+ * the probe tasks after the build returns, and the first task that the frame sequence publishes is
+ * what publishes the builds and the slots' probes to the workers.
  * <p>
  * The first join of a swap candidate, see {@link AsyncHashJoinSpec#isSwapCandidate()}, has two runtime
  * stages: the one that hashes its right input, and the one that hashes its left input, which an
@@ -101,6 +102,12 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
  * rest of the frame in chunks of the same cap on the owner's slot, see {@link #continueFrame}. One
  * probe row's pairs always finish in one chunk, so a key with more matches than the cap overruns it
  * by its own matches, in memory that the execution's tracker counts.
+ * <p>
+ * A count of the join's rows dispatches count-only tasks, which walk the stages as a probe task
+ * does, but count the frame's joined rows instead of writing tuples, and leave the ring alone; see
+ * {@link #probeFrame}. A frame whose tuples a count meets before it read them all also counts the
+ * rest of the frame, which its task left to a continuation, on the owner's slot, see
+ * {@link #countFrameRest}.
  * <p>
  * {@link #clear()} requires every task to have finished and the consumer to be done with the tuples
  * and the payload readers.
@@ -441,24 +448,70 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
     }
 
     /**
-     * Builds every stage, in stage order, and binds every slot to the builds. The cursor calls it
-     * once per execution, on first demand for a row, on the thread that then dispatches the probes
-     * and before it dispatches any; nothing here runs when the cursor merely opens. Returns false
-     * when the build of any INNER join has no row, so that the join returns no row and needs no
-     * probe task. Every stage builds even then, as every serial join of a stack builds its map before
-     * it reads its master, so that a build that fails fails in both plans. On failure the caller
-     * closes the cursor, whose clear() closes the builds.
+     * Builds every stage and binds every slot to the builds. The cursor calls it once per execution,
+     * on first demand for a row, on the thread that then dispatches the probes and before it
+     * dispatches any; nothing here runs when the cursor merely opens. Returns false when the build of
+     * any INNER join has no row, so that the join returns no row and needs no probe task. Every stage
+     * builds even then, as every serial join of a stack builds its map before it reads its master, so
+     * that a build that fails fails in both plans. On failure the caller closes the cursor, whose
+     * clear() closes the builds.
+     * <p>
+     * Every stage first loads its build's frames, which tells a large build, one that runs in rounds
+     * of its own, see {@link HashJoinBuildStage#prepareBuild()}, from a small one. The small builds
+     * run first: more than one build at once, in one round with one task per stage, see
+     * {@link HashJoinBuildRoundAtom#buildConcurrently}, and a lone one on the owner. The large builds
+     * then run one at a time, in stage order, each through rounds of its own, which already spread one
+     * build over the workers.
      *
-     * @param buildRounds the task-only sequence that runs the rounds of a stage's parallel build
+     * @param buildRounds the task-only sequence that runs the rounds of the builds
      */
     boolean build(SqlExecutionCircuitBreaker circuitBreaker, UnorderedPageFrameSequence<HashJoinBuildRoundAtom> buildRounds) {
-        boolean hasRows = true;
         final HashJoinBuildRoundAtom roundAtom = buildRounds.getAtom();
-        for (int k = 0, n = executionStages.size(); k < n; k++) {
+        final int stageCount = executionStages.size();
+        int smallCount = 0;
+        for (int k = 0; k < stageCount; k++) {
             final HashJoinBuildStage stage = executionStages.getQuick(k);
-            // The rounds of a parallel build find the stage through the sequence's atom.
-            roundAtom.setBuildingStage(stage);
-            stage.build(circuitBreaker, buildRounds);
+            // The planner gives every input a memory pool per worker and, for a filter that is not
+            // thread safe, a copy of it per worker, and a join stage has no build ON filter, so any
+            // stage can build on a worker's slot.
+            assert stage.isConcurrentBuildCapable();
+            if (!stage.prepareBuild()) {
+                smallCount++;
+            }
+        }
+        // A round of one task would only add the dispatch's cost to a build on the owner.
+        final boolean isConcurrent = smallCount > 1;
+        if (isConcurrent) {
+            for (int k = 0; k < stageCount; k++) {
+                final HashJoinBuildStage stage = executionStages.getQuick(k);
+                if (!stage.isLargeBuild()) {
+                    roundAtom.addConcurrentStage(stage);
+                }
+            }
+            roundAtom.buildConcurrently(buildRounds);
+        }
+        for (int k = 0; k < stageCount; k++) {
+            final HashJoinBuildStage stage = executionStages.getQuick(k);
+            if (!stage.isLargeBuild()) {
+                if (isConcurrent) {
+                    // The round built the stage.
+                    stage.finishBuild();
+                } else {
+                    stage.build(circuitBreaker, buildRounds);
+                }
+            }
+        }
+        for (int k = 0; k < stageCount; k++) {
+            final HashJoinBuildStage stage = executionStages.getQuick(k);
+            if (stage.isLargeBuild()) {
+                // The rounds of a parallel build find the stage through the sequence's atom.
+                roundAtom.setBuildingStage(stage);
+                stage.build(circuitBreaker, buildRounds);
+            }
+        }
+        boolean hasRows = true;
+        for (int k = 0; k < stageCount; k++) {
+            final HashJoinBuildStage stage = executionStages.getQuick(k);
             stage.bindSymbolKeyTranslation(circuitBreaker);
             stage.bindProbes();
             // Swapped, a later stage's keys read the left input's columns off the first stage's
@@ -559,11 +612,41 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
     }
 
     /**
+     * Counts, on the owner's slot, -1, the joined rows of the rest of a frame whose task, or whose
+     * last continuation chunk, stopped at the tuple cap: the frame's rows, or the rows its probe
+     * filter kept, from the ring's resume position on, as {@link #continueFrame} would join them, but
+     * into a count, with no cap and no tuple written. The consumer calls it, while it holds the
+     * frame's task, for a count that begins while the frame's tuples are still to be read, between
+     * two calls to the frame sequence's {@code next()}, as it calls {@link #continueFrame}.
+     *
+     * @return the joined rows, or {@link HashJoinStageStepper#CANCELLED} when the execution was
+     * cancelled
+     */
+    long countFrameRest(PageFrameReduceTask task, SqlExecutionCircuitBreaker circuitBreaker) {
+        final int frameIndex = task.getFrameIndex();
+        final long resumePosition = ring.getResumePosition(frameIndex);
+        assert resumePosition > 0;
+        final Slot slot = getSlot(-1);
+        slot.probeRecord.init(task.getFrameMemory());
+        // A frame without a probe filter has no kept rows: its rest is a range of its rows.
+        final DirectLongList rows = ring.getKeptRowCount(frameIndex) < 0 ? null : task.getFilteredRows();
+        return countRows(slot, task, rows, resumePosition, circuitBreaker);
+    }
+
+    /**
      * Joins one probe frame on a slot: reads the frame through the task's memory, so that the
      * consumer reads the probe rows where the task read them, keeps the rows that the probe filter
      * passes in the task's filtered rows, and writes the frame's tuples into its ring entry, in the
      * probe scan's row order, up to the task's cap. The tuples' count goes to the task, and where the
      * frame's continuation resumes to the ring.
+     * <p>
+     * A count-only task, which a count of the join's rows dispatches, counts the frame's joined rows
+     * into the task instead, see {@link HashJoinStageStepper#countRows}, with no cap. It never touches
+     * the ring, neither its tuples nor its resume positions: a count-only {@code next()} may pass a
+     * wider dispatch limit than the ring's, so that a count-only frame can run while the consumer
+     * still reads the tuples of a frame that shares its entry. Its probe filter writes its kept rows
+     * into the task's list, as any task's does, through the compiled filter's overload that takes the
+     * list and reserves a row per frame row in it.
      */
     void probeFrame(int slotId, PageFrameReduceTask task, SqlExecutionCircuitBreaker circuitBreaker) {
         final Slot slot = getSlot(slotId);
@@ -575,6 +658,12 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
             filterProbeFrame(slotId, task, frameMemory, slot.probeRecord, rows, task.getFrameRowCount());
         } else {
             rows = null;
+        }
+        if (task.isCountOnly()) {
+            // A cancelled task's count is not read: the consumer drops the frames of a cancelled
+            // execution.
+            task.setFilteredRowCount(Math.max(0, countRows(slot, task, rows, 0, circuitBreaker)));
+            return;
         }
         final long tupleCount = joinRows(slot, task, rows, 0, circuitBreaker);
         // A cancelled task's tuples are not read: the consumer drops the frames of a cancelled
@@ -682,6 +771,25 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
     }
 
     /**
+     * Counts the joined rows of a frame's rows, or of the rows its probe filter kept, from the given
+     * position in the probe scan's order to the end of the frame, on a slot; touches no ring entry.
+     *
+     * @param rows the rows the probe filter kept, null without a probe filter
+     * @return the joined rows, or {@link HashJoinStageStepper#CANCELLED} when the execution was
+     * cancelled
+     */
+    private long countRows(Slot slot, PageFrameReduceTask task, @Nullable DirectLongList rows, long from, SqlExecutionCircuitBreaker circuitBreaker) {
+        slot.ofCount(task.getFrameSequence(), circuitBreaker, pairsPerCheck);
+        try {
+            return rows != null
+                    ? stepper.countRows(slot, rows, from, isProbeDescending)
+                    : stepper.countRows(slot, task.getFrameRowCount(), from, isProbeDescending);
+        } finally {
+            slot.of(null, null, null, 0);
+        }
+    }
+
+    /**
      * Joins a frame's rows, or the rows its probe filter kept, from the given position in the probe
      * scan's order, on a slot, into the frame's ring entry, and stops at the first probe row's
      * boundary where the entry holds the task's cap of tuples: the frame's rows, or
@@ -752,6 +860,14 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
         // The joined row of the current probe row and the stages' current matches.
         final MultiHashJoinRecord record;
         private final ObjList<StageProbe> stageProbes = new ObjList<>();
+        // True while the slot counts a frame's joined rows rather than writes its tuples; see
+        // ofCount().
+        boolean isCountOnly;
+        // The joined rows a count has met so far.
+        long pairCount;
+        // The rows that each tuple that comes out of the last stage stands for in a count: the
+        // product of the chain lengths of the deferred stages that the current probe row passed.
+        long pairMultiplier;
         // The pairs left before the next check of the circuit breaker.
         long pairsUntilCheck;
         // The current probe row, by its index in the frame.
@@ -778,6 +894,7 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
             // The probe scan's symbol tables go here, before the frame sequence closes the scan.
             probeRecord.of(null);
             tuples = null;
+            isCountOnly = false;
             circuitBreaker = null;
             frameSequence = null;
         }
@@ -846,6 +963,15 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
             this.circuitBreaker = circuitBreaker;
             this.pairsPerCheck = pairsPerCheck;
             this.pairsUntilCheck = pairsPerCheck;
+            this.isCountOnly = false;
+        }
+
+        // Binds the slot to a frame whose joined rows it counts, from zero, rather than writes.
+        void ofCount(PageFrameSequence<?> frameSequence, SqlExecutionCircuitBreaker circuitBreaker, long pairsPerCheck) {
+            of(null, frameSequence, circuitBreaker, pairsPerCheck);
+            this.isCountOnly = true;
+            this.pairCount = 0;
+            this.pairMultiplier = 1;
         }
     }
 
