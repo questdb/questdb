@@ -2128,7 +2128,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 !(symbolShortCircuit instanceof ChainedSymbolShortCircuit);
     }
 
-    private static boolean isTemporalJoinCopySupported(RecordMetadata metadata) {
+    private static boolean isCopySupported(RecordMetadata metadata) {
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             final int type = metadata.getColumnType(i);
             final boolean isSupported = RecordValueSinkFactory.isSupportedColumnType(type) || switch (ColumnType.tagOf(type)) {
@@ -7519,6 +7519,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         slaveToFree = null;
                                         slaveToFree = materialize(slaveToMaterialize, false);
                                     }
+                                    // Nothing above the join can copy a slave value such as a RECORD, so the master
+                                    // gives back the random access and cheap rewind of a hash GROUP BY.
+                                    if (!isCopySupported(slaveMetadata) && isRandomAccessLostToStream(master)) {
+                                        final RecordCursorFactory masterToMaterialize = master;
+                                        master = null;
+                                        master = materialize(masterToMaterialize, true);
+                                    }
                                     master = new CrossJoinRecordCursorFactory(
                                             createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
                                             master,
@@ -7542,7 +7549,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 if (!fullFatJoins
                                         && !slaveToFree.recordCursorSupportsRandomAccess()
                                         && findUnsupportedFullFatJoinColumn(slaveMetadata, listColumnFilterA) != -1
-                                        && isTemporalJoinCopySupported(slaveMetadata)) {
+                                        && isCopySupported(slaveMetadata)) {
                                     // Light temporal joins retain row IDs. Copy only inputs that the full-fat
                                     // value sink cannot store; compatible inputs keep their per-key state.
                                     final RecordCursorFactory slaveToMaterialize = slaveToFree;

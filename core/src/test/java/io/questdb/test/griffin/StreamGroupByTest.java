@@ -1379,6 +1379,66 @@ public class StreamGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRecordValuesOverStreamGroupBy() throws Exception {
+        run((engine, compiler, context) -> {
+            engine.execute("CREATE TABLE t (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY", context);
+            engine.execute("INSERT INTO t VALUES ('2024-01-01T00:10', 1), ('2024-01-01T01:10', 2), ('2024-01-01T01:20', 3)", context);
+            // pg_database() joins its RECORD in as a field, which no copy can hold.
+            final String buckets = "(SELECT ts, c, pg_catalog.pg_database() r FROM (SELECT ts, count() c FROM t SAMPLE BY 1h))";
+            for (boolean isStream : new boolean[]{true, false}) {
+                context.setStreamGroupByEnabled(isStream);
+                assertRows(compiler, context, "SELECT ts, c, (r).oid o FROM (" + buckets + " LIMIT -1)", """
+                        ts\tc\to
+                        2024-01-01T01:00:00.000000Z\t2\t1
+                        """);
+                context.getBindVariableService().setLong(0, 1);
+                assertRows(compiler, context, "SELECT ts, c, (r).oid o FROM (" + buckets + " LIMIT $1)", """
+                        ts\tc\to
+                        2024-01-01T00:00:00.000000Z\t1\t1
+                        """);
+                context.getBindVariableService().clear();
+                assertRows(compiler, context, "SELECT a.x, b.ts, (b.r).oid o FROM long_sequence(2) a CROSS JOIN " + buckets + " b", """
+                        x\tts\to
+                        1\t2024-01-01T00:00:00.000000Z\t1
+                        1\t2024-01-01T01:00:00.000000Z\t1
+                        2\t2024-01-01T00:00:00.000000Z\t1
+                        2\t2024-01-01T01:00:00.000000Z\t1
+                        """);
+                final String matched = """
+                        x\tts\to
+                        2\t2024-01-01T00:00:00.000000Z\t1
+                        2\t2024-01-01T01:00:00.000000Z\t1
+                        3\t2024-01-01T00:00:00.000000Z\t1
+                        3\t2024-01-01T01:00:00.000000Z\t1
+                        """;
+                assertRows(compiler, context, "SELECT a.x, b.ts, (b.r).oid o FROM (SELECT x + 1 x FROM long_sequence(2)) a LEFT JOIN " + buckets + " b ON a.x >= b.c", matched);
+                assertRows(compiler, context, "SELECT a.x, b.ts, (b.r).oid o FROM " + buckets + " b RIGHT JOIN (SELECT x + 1 x FROM long_sequence(2)) a ON a.x >= b.c", matched);
+                assertRows(compiler, context, "SELECT ts, c, (r).oid o FROM (" + buckets + " LATEST ON ts PARTITION BY c)", """
+                        ts\tc\to
+                        2024-01-01T00:00:00.000000Z\t1\t1
+                        2024-01-01T01:00:00.000000Z\t2\t1
+                        """);
+                assertRows(compiler, context, "SELECT x, c, (r).oid o FROM ((SELECT x, c, pg_catalog.pg_database() r FROM (SELECT x, count() c FROM long_sequence(1) GROUP BY x)) LIMIT -1)", """
+                        x\tc\to
+                        1\t1\t1
+                        """);
+                if (isStream) {
+                    try (RecordCursorFactory factory = compiler.compile("SELECT ts, c, (r).oid o FROM (" + buckets + " LATEST ON ts PARTITION BY c)", context).getRecordCursorFactory()) {
+                        final String plan = plan(factory, context);
+                        Assert.assertTrue(plan, plan.contains("Cross Join") && plan.contains("Materialize") && plan.contains("Stream Group By"));
+                    }
+                    // A slave the copy can hold leaves the stream uncopied.
+                    try (RecordCursorFactory factory = compiler.compile("SELECT a.ts, a.c, b.x FROM (SELECT ts, count() c FROM t SAMPLE BY 1h) a CROSS JOIN long_sequence(1) b", context).getRecordCursorFactory()) {
+                        final String plan = plan(factory, context);
+                        Assert.assertTrue(plan, plan.contains("Cross Join") && plan.contains("Stream Group By") && !plan.contains("Materialize"));
+                    }
+                }
+            }
+            context.setStreamGroupByEnabled(true);
+        });
+    }
+
+    @Test
     public void testCopyingSortsFitSmallMemoryLimit() throws Exception {
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 4 * 1024 * 1024);
         run((engine, compiler, context) -> {
@@ -2847,6 +2907,13 @@ public class StreamGroupByTest extends AbstractCairoTest {
                 + "(x % 5_000)::VARCHAR s, x v, (x % 3)::SYMBOL sym FROM long_sequence(30_000)) TIMESTAMP(ts) PARTITION BY DAY", context);
         engine.execute("CREATE TABLE hash_input (ts TIMESTAMP, k LONG, s VARCHAR, v LONG, sym SYMBOL)", context);
         engine.execute("INSERT INTO hash_input SELECT * FROM trades", context);
+    }
+
+    private static void assertRows(SqlCompiler compiler, SqlExecutionContext context, String sql, String expected) throws Exception {
+        try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()) {
+            TestUtils.assertEquals(sql, expected, read(factory, context));
+            TestUtils.assertEquals(sql, expected, read(factory, context));
+        }
     }
 
     private static void assertSums(SqlCompiler compiler, SqlExecutionContext context, String sql, double[] expected) throws Exception {
