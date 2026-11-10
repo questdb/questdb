@@ -1805,6 +1805,77 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampConstantsFinerThanColumnSameRowsEverywhere() throws Exception {
+        // H lies between the values of n0 and n1, P between those of p0 and z0, for both the TIMESTAMP column m and
+        // the DATE column d. Every mode, on native and on Parquet partitions, gives the rows of the exact value. The
+        // JIT compiles <, <=, > and >= of a column with such a literal, and a one-item list of a day.
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (k SYMBOL, m TIMESTAMP, d DATE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('p0', '1969-12-31T23:59:59.999999Z', '1969-12-31T23:59:59.999Z', '2020-01-01T00:00:00.000000Z'),
+                    ('z0', '1970-01-01T00:00:00.000000Z', '1970-01-01T00:00:00.000Z', '2020-01-01T00:00:00.000000Z'),
+                    ('n0', '2020-01-01T00:00:00.000000Z', '2020-01-01T00:00:00.000Z', '2020-01-01T00:00:00.000000Z'),
+                    ('n1', '2020-01-01T00:00:00.000001Z', '2020-01-01T00:00:00.001Z', '2020-01-01T00:00:00.000001Z'),
+                    ('noon', '2020-01-01T12:00:00.000000Z', '2020-01-01T12:00:00.000Z', '2020-01-01T12:00:00.000000Z'),
+                    ('nul', NULL, NULL, '2020-01-02T00:00:00.000000Z')
+                    """);
+            final String h = "'2020-01-01T00:00:00.000000500Z'";
+            final String p = "'1969-12-31T23:59:59.9999995Z'";
+            final String all = "p0\nz0\nn0\nn1\nnoon\nnul\n";
+            // filter, expected keys, whether the JIT compiles it, the bind variable $1: H as text or as TIMESTAMP_NS
+            final Object[][] cases = {
+                    {"m < " + h, "p0\nz0\nn0\n", true, null},
+                    {"m <= " + h, "p0\nz0\nn0\n", true, null},
+                    {"m > " + h, "n1\nnoon\n", true, null},
+                    {"m >= " + h, "n1\nnoon\n", true, null},
+                    {h + " <= m", "n1\nnoon\n", true, null},
+                    {"m >= " + p, "z0\nn0\nn1\nnoon\n", true, null},
+                    {"m = " + h, "", false, null},
+                    {"m != " + h, all, false, null},
+                    {"d < " + h, "p0\nz0\nn0\n", true, null},
+                    {"d >= " + h, "n1\nnoon\n", true, null},
+                    {"d >= " + p, "z0\nn0\nn1\nnoon\n", true, null},
+                    {"d = " + h, "", false, null},
+                    {"d >= $1", "n1\nnoon\n", false, "text"},
+                    {"d IN (" + h + ", '2020-01-01T12:00:00.000Z')", "noon\n", false, null},
+                    // a one-item list names a period; the period of H holds no value of the column
+                    {"m IN (" + h + ")", "", false, null},
+                    {"m IN ('2020-01-01')", "n0\nn1\nnoon\n", true, null},
+                    {"d IN ('2020-01-01')", "n0\nn1\nnoon\n", true, null},
+                    {"ts IN " + h, "", false, null},
+                    {"m < " + h + "::TIMESTAMP_NS", "p0\nz0\nn0\n", false, null},
+                    {"m < $1", "p0\nz0\nn0\n", false, "ns"},
+            };
+            for (int run = 0; run < 2; run++) {
+                if (run == 1) {
+                    execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+                }
+                for (int mode = 0; mode < 4; mode++) {
+                    final boolean isParallel = (mode & 1) != 0;
+                    final boolean isJit = (mode & 2) != 0;
+                    sqlExecutionContext.setParallelFilterEnabled(isParallel);
+                    sqlExecutionContext.setJitMode(isJit ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+                    for (Object[] c : cases) {
+                        final String filter = (String) c[0];
+                        bindVariableService.clear();
+                        if ("text".equals(c[3])) {
+                            bindVariableService.setStr(0, "2020-01-01T00:00:00.000000500Z");
+                        } else if ("ns".equals(c[3])) {
+                            bindVariableService.setTimestampNano(0, 1_577_836_800_000_000_500L);
+                        }
+                        try (RecordCursorFactory factory = select("SELECT k FROM x WHERE " + filter)) {
+                            Assert.assertEquals(filter, isParallel && isJit && (boolean) c[2], factory.usesCompiledFilter());
+                        }
+                        assertBound(filter, (String) c[1]);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testTimestampInvalidTextBoundFails() throws Exception {
         // Text that is not a timestamp fails in every comparison, as a literal or as a bind variable, on both
         // precisions: it never counts as a bound past the range.
@@ -1878,7 +1949,7 @@ public class CompiledFilterTest extends AbstractCairoTest {
                 sqlExecutionContext.setParallelFilterEnabled(isParallel);
                 sqlExecutionContext.setJitMode(isJit ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
                 try (RecordCursorFactory factory = select("SELECT k FROM x WHERE m < " + l)) {
-                    Assert.assertFalse(factory.usesCompiledFilter());
+                    Assert.assertEquals(isParallel && isJit, factory.usesCompiledFilter());
                 }
                 try (RecordCursorFactory factory = select("SELECT k FROM x WHERE m < '2020-01-01T00:00:00.000001Z'")) {
                     Assert.assertEquals(isParallel && isJit, factory.usesCompiledFilter());
@@ -2274,10 +2345,11 @@ public class CompiledFilterTest extends AbstractCairoTest {
                         .noLeakCheck().returns("k\nmax\nmid\none\n");
                 assertQuery("SELECT k FROM x WHERE m BETWEEN '2262-01-01T00:00:00Z' AND '2262-04-11T23:47:16.854775807Z'")
                         .noLeakCheck().returns("k\nmax\nmid\n");
+                // a DATE column compares exactly too: the literal lies after the millisecond of 'max'
                 assertQuery("SELECT k FROM x WHERE d = '2262-04-11T23:47:16.854775807Z'")
-                        .noLeakCheck().returns("k\nmax\n");
+                        .noLeakCheck().returns("k\n");
                 assertQuery("SELECT k FROM x WHERE d < '2262-04-11T23:47:16.854775807Z'")
-                        .noLeakCheck().returns("k\nmid\none\n");
+                        .noLeakCheck().returns("k\nmax\nmid\none\n");
                 // a bound with nanosecond digits compares exactly: 'mid' lies 123ns before the lower bound
                 assertQuery("SELECT k FROM x WHERE d BETWEEN '2262-01-01T00:00:00.000000123Z' AND '2262-04-11T23:47:16.854775807Z'")
                         .noLeakCheck().returns("k\nmax\n");
