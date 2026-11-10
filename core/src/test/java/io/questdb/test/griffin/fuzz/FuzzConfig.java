@@ -121,7 +121,8 @@ public final class FuzzConfig {
         // type registry even when it builds a single table.
         this.minColumnsPerTable = 5;
         this.maxColumnsPerTable = 12;
-        // 30 minutes: rowsPerTable * 30min covers 30..75 hours, so 2-4 DAY partitions.
+        // 30 minutes: rowsPerTable * 30min covers 30..75 hours, so 2-4 DAY partitions. A run's
+        // later tables hold a row or two more (see getTableRows()).
         this.stepMicros = 30L * 60L * 1_000_000L;
         this.tsStart = "2024-01-01";
         this.numQueries = Integer.getInteger(QUERIES_PROP, DEFAULT_NUM_QUERIES);
@@ -169,16 +170,16 @@ public final class FuzzConfig {
         // -Dquestdb.fuzz.hashjoin=false to drop them, for example while investigating a failure,
         // and give the band back to GROUP BY.
         this.isHashJoinEnabled = Boolean.parseBoolean(System.getProperty(HASH_JOIN_PROP, "true"));
-        // Row-producing INNER and LEFT equi-joins, the ones the parallel hash join runs, carve a
-        // band out of the SIMPLE range (see QueryGenerator). On by default; pass
+        // Row-producing INNER and LEFT equi-joins, alone or in stars, the ones the parallel hash
+        // join runs, carve a band out of the SIMPLE range (see QueryGenerator). On by default; pass
         // -Dquestdb.fuzz.equijoin=false to drop them and give the band back to SIMPLE.
         this.isEquiJoinEnabled = Boolean.parseBoolean(System.getProperty(EQUI_JOIN_PROP, "true"));
         // ROLLUP, CUBE and GROUPING SETS shapes also carve a band out of the GROUP BY range (see
         // QueryGenerator), and QueryRunner checks each against its UNION ALL rewrite. On by
         // default; pass -Dquestdb.fuzz.groupingsets=false to drop them.
         this.isGroupingSetsEnabled = Boolean.parseBoolean(System.getProperty(GROUPING_SETS_PROP, "true"));
-        // The fuzz tables share one row count, so the default rule copies a build's payload unless
-        // a probe interval leaves the probe under half the build. Pass
+        // The fuzz tables hold nearly the same rows (see getTableRows()), so the default rule copies
+        // a build's payload unless a probe interval leaves the probe under half the build. Pass
         // -Dquestdb.fuzz.hashjoin.payload=row_ids or =copied to force every fused query onto one
         // layout; the fused on/off axis then checks that one.
         final String payloadLayout = System.getProperty(HASH_JOIN_PAYLOAD_PROP);
@@ -249,6 +250,19 @@ public final class FuzzConfig {
 
     public int getRowsPerTable() {
         return rowsPerTable;
+    }
+
+    /**
+     * The rows of the run's table of the given index: {@link #getRowsPerTable()} plus the index, so
+     * that no two tables of a run start out the same size. An INNER join of two unfiltered tables
+     * hashes the smaller one and streams the other, whichever of the two the query names first, so
+     * the queries over one pair of tables decide that swap both ways, and a few rows apart, the
+     * margin at which a wrong table size would swap a join that should not swap. A table can still
+     * gain up to three rows from a composite partition (see FuzzTableFactory), which may make two
+     * tables the same size, the swap's other edge.
+     */
+    public int getTableRows(int tableIndex) {
+        return rowsPerTable + tableIndex;
     }
 
     public long getStepMicros() {

@@ -66,8 +66,9 @@ import io.questdb.test.griffin.fuzz.expr.BindContext;
  * ROLLUP, CUBE and GROUPING SETS queries take the band [60, 65) of the GROUP BY
  * range in the same way. When row-producing equi-join fuzzing is enabled
  * ({@code equiJoinEnabled}, on by default), INNER and LEFT joins on the shared key
- * columns take the band [70, 75) of the SIMPLE range, the shape the parallel hash
- * join runs; disabling it gives the band back to SIMPLE without an extra rnd draw.
+ * columns, alone or as stars of several joins over the run's tables, take the band
+ * [70, 75) of the SIMPLE range, the shape the parallel hash join runs; disabling it
+ * gives the band back to SIMPLE without an extra rnd draw.
  * <p>
  * For non-join shapes the {@link FuzzSource} is usually a direct
  * reference to a real table, but occasionally wrapped in a subquery or
@@ -140,10 +141,11 @@ public final class QueryGenerator {
         // pickSource() so that, with the knob off or a single table, the query falls through to
         // the shapes below exactly as it did before the band existed. The join reads real tables,
         // which the parallel hash join takes as page frame scans, so the parallel join axis in
-        // QueryRunner has an operator to compare with the ordinary plan.
+        // QueryRunner has an operator to compare with the ordinary plan. Later joins of a star read
+        // any of the tables.
         if (equiJoinEnabled && pick >= 70 && pick < 75 && tables.size() >= 2) {
             FuzzTable other = pickOtherTable(rnd, tables, t);
-            return EquiJoinClause.generate(rnd, t, other, ctx, injectFaultFn).withShape(QueryShape.EQUI_JOIN);
+            return EquiJoinClause.generate(rnd, t, other, tables, ctx, injectFaultFn).withShape(QueryShape.EQUI_JOIN);
         }
 
         FuzzSource source = pickSource(rnd, t);

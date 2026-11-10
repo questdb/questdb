@@ -1,0 +1,462 @@
+# name: test/sql/hash_join_star.test
+# description: INNER and LEFT star joins: a fact table joined with several dimensions on its own keys
+# group: [join]
+#
+# The runner starts QuestDB with cairo.sql.parallel.hash.join.enabled=true, so these joins run
+# on the parallel hash join, which stacks the joins of a star into stages of one operator;
+# HashJoinStarSqllogicTest checks that the runner's server plans them so. The queries above the
+# "QuestDB-specific" line follow DuckDB semantics, and DuckDB returns their expected rows. Two
+# types differ, which leaves the values alone: the SYMBOL key column is a VARCHAR in DuckDB, and
+# QuestDB's window sum() of an INT column returns a DOUBLE where DuckDB's returns an integer. The
+# window functions' default frame differs as well, ROWS in QuestDB and RANGE in DuckDB, which agree
+# under the total order the windows sort by. Below that line, QuestDB deliberately differs:
+# - its hash joins match a NULL key with a NULL key; DuckDB's never match NULL keys;
+# - it returns a join's rows in a defined order without ORDER BY: the order of the input it
+#   streams, each row's matches in reverse insertion order, and the matches of a later join nested
+#   in those of an earlier one; DuckDB leaves that order undefined;
+# - an INNER first join of two plain tables hashes the smaller one and streams the larger, so when
+#   the left table is the smaller, the rows come in the right table's order, unless the query
+#   orders them by the left table's timestamp;
+# - a negative LIMIT takes the last rows; DuckDB has no negative LIMIT.
+
+statement ok
+CREATE TABLE sales (id INT, cust INT, prod INT, store INT, qty INT, channel SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+
+statement ok
+INSERT INTO sales VALUES
+(1, 1, 10, 100, 2, 'web', '2024-01-01T00:00:00.000000Z'),
+(2, 2, 11, 100, 1, 'shop', '2024-01-01T01:00:00.000000Z'),
+(3, 3, 10, 101, 5, 'web', '2024-01-01T02:00:00.000000Z'),
+(4, 9, 12, 102, 3, 'phone', '2024-01-01T03:00:00.000000Z'),
+(5, 2, 13, 100, 4, 'shop', '2024-01-02T00:00:00.000000Z'),
+(6, 1, 11, 103, 1, 'web', '2024-01-02T01:00:00.000000Z'),
+(7, 3, 12, 101, 6, 'shop', '2024-01-02T02:00:00.000000Z'),
+(8, 4, 10, 102, 2, 'web', '2024-01-02T03:00:00.000000Z')
+
+# Customer 2 has two rows and customer 9 none; customer 5 bought nothing.
+statement ok
+CREATE TABLE customers (cust INT, cname VARCHAR, region VARCHAR, ts TIMESTAMP) TIMESTAMP(ts)
+
+statement ok
+INSERT INTO customers VALUES
+(1, 'Ann', 'EU', '2024-01-01T00:00:00.000000Z'),
+(2, 'Bob', 'US', '2024-01-01T01:00:00.000000Z'),
+(2, 'Bea', 'EU', '2024-01-01T02:00:00.000000Z'),
+(3, 'Cid', 'APAC', '2024-01-01T03:00:00.000000Z'),
+(4, 'Dan', 'US', '2024-01-01T04:00:00.000000Z'),
+(5, 'Eve', 'EU', '2024-01-01T05:00:00.000000Z')
+
+# Product 12 has two rows and product 13 none.
+statement ok
+CREATE TABLE products (prod INT, pname VARCHAR, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)
+
+statement ok
+INSERT INTO products VALUES
+(10, 'apple', 1.5, '2024-01-01T00:00:00.000000Z'),
+(11, 'bread', 3.0, '2024-01-01T01:00:00.000000Z'),
+(12, 'cheese', 12.0, '2024-01-01T02:00:00.000000Z'),
+(12, 'cheddar', 15.0, '2024-01-01T03:00:00.000000Z'),
+(14, 'fig', 7.0, '2024-01-01T04:00:00.000000Z')
+
+# Store 102 has two rows and store 103 none.
+statement ok
+CREATE TABLE stores (store INT, city VARCHAR, ts TIMESTAMP) TIMESTAMP(ts)
+
+statement ok
+INSERT INTO stores VALUES
+(100, 'Paris', '2024-01-01T00:00:00.000000Z'),
+(101, 'Berlin', '2024-01-01T01:00:00.000000Z'),
+(102, 'Austin', '2024-01-01T02:00:00.000000Z'),
+(102, 'Boston', '2024-01-01T03:00:00.000000Z')
+
+# A SYMBOL key whose dictionary lists the channels in another order than the sales table's.
+statement ok
+CREATE TABLE channels (channel SYMBOL, fee INT, ts TIMESTAMP) TIMESTAMP(ts)
+
+statement ok
+INSERT INTO channels VALUES
+('shop', 0, '2024-01-01T00:00:00.000000Z'),
+('mail', 5, '2024-01-01T01:00:00.000000Z'),
+('web', 1, '2024-01-01T02:00:00.000000Z'),
+('web', 2, '2024-01-01T03:00:00.000000Z')
+
+# Store 102 has two managers and store 101 none.
+statement ok
+CREATE TABLE managers (store INT, manager VARCHAR, ts TIMESTAMP) TIMESTAMP(ts)
+
+statement ok
+INSERT INTO managers VALUES
+(100, 'Mia', '2024-01-01T00:00:00.000000Z'),
+(102, 'Noa', '2024-01-01T01:00:00.000000Z'),
+(102, 'Oli', '2024-01-01T02:00:00.000000Z')
+
+# INNER star of three dimensions
+query ITTT nosort
+SELECT s.id, c.cname, p.pname, st.city
+FROM sales s
+JOIN customers c ON s.cust = c.cust
+JOIN products p ON s.prod = p.prod
+JOIN stores st ON s.store = st.store
+ORDER BY s.id, c.cname, p.pname, st.city
+----
+1 Ann apple Paris
+2 Bea bread Paris
+2 Bob bread Paris
+3 Cid apple Berlin
+7 Cid cheddar Berlin
+7 Cid cheese Berlin
+8 Dan apple Austin
+8 Dan apple Boston
+
+# LEFT star of three dimensions
+query ITTT nosort
+SELECT s.id, c.cname, p.pname, st.city
+FROM sales s
+LEFT JOIN customers c ON s.cust = c.cust
+LEFT JOIN products p ON s.prod = p.prod
+LEFT JOIN stores st ON s.store = st.store
+ORDER BY s.id, c.cname, p.pname, st.city
+----
+1 Ann apple Paris
+2 Bea bread Paris
+2 Bob bread Paris
+3 Cid apple Berlin
+4 NULL cheddar Austin
+4 NULL cheddar Boston
+4 NULL cheese Austin
+4 NULL cheese Boston
+5 Bea NULL Paris
+5 Bob NULL Paris
+6 Ann bread NULL
+7 Cid cheddar Berlin
+7 Cid cheese Berlin
+8 Dan apple Austin
+8 Dan apple Boston
+
+# The same LEFT star, counted
+query I nosort
+SELECT count(*)
+FROM sales s
+LEFT JOIN customers c ON s.cust = c.cust
+LEFT JOIN products p ON s.prod = p.prod
+LEFT JOIN stores st ON s.store = st.store
+----
+15
+
+# INNER, then LEFT
+query ITT nosort
+SELECT s.id, c.cname, p.pname
+FROM sales s
+JOIN customers c ON s.cust = c.cust
+LEFT JOIN products p ON s.prod = p.prod
+ORDER BY s.id, c.cname, p.pname
+----
+1 Ann apple
+2 Bea bread
+2 Bob bread
+3 Cid apple
+5 Bea NULL
+5 Bob NULL
+6 Ann bread
+7 Cid cheddar
+7 Cid cheese
+8 Dan apple
+
+# LEFT, then INNER
+query ITT nosort
+SELECT s.id, c.cname, p.pname
+FROM sales s
+LEFT JOIN customers c ON s.cust = c.cust
+JOIN products p ON s.prod = p.prod
+ORDER BY s.id, c.cname, p.pname
+----
+1 Ann apple
+2 Bea bread
+2 Bob bread
+3 Cid apple
+4 NULL cheddar
+4 NULL cheese
+6 Ann bread
+7 Cid cheddar
+7 Cid cheese
+8 Dan apple
+
+# A LEFT join's ON residual that some of a row's pairs fail and that all of them fail
+query ITT nosort
+SELECT s.id, c.cname, p.pname
+FROM sales s
+JOIN customers c ON s.cust = c.cust
+LEFT JOIN products p ON s.prod = p.prod AND p.price > 10
+ORDER BY s.id, c.cname, p.pname
+----
+1 Ann NULL
+2 Bea NULL
+2 Bob NULL
+3 Cid NULL
+5 Bea NULL
+5 Bob NULL
+6 Ann NULL
+7 Cid cheddar
+7 Cid cheese
+8 Dan NULL
+
+# A LEFT join's ON residual that reads an earlier join's columns
+query ITT nosort
+SELECT s.id, c.cname, st.city
+FROM sales s
+LEFT JOIN customers c ON s.cust = c.cust
+LEFT JOIN stores st ON s.store = st.store AND (c.region = 'US' OR st.city = 'Berlin')
+ORDER BY s.id, c.cname, st.city
+----
+1 Ann NULL
+2 Bea NULL
+2 Bob Paris
+3 Cid Berlin
+4 NULL NULL
+5 Bea NULL
+5 Bob Paris
+6 Ann NULL
+7 Cid Berlin
+8 Dan Austin
+8 Dan Boston
+
+# A post-join WHERE over the fact table and two dimensions
+query ITT nosort
+SELECT s.id, c.cname, p.pname
+FROM sales s
+JOIN customers c ON s.cust = c.cust
+JOIN products p ON s.prod = p.prod
+WHERE p.price * s.qty >= 3 AND c.region <> 'EU'
+ORDER BY s.id, c.cname, p.pname
+----
+2 Bob bread
+3 Cid apple
+7 Cid cheddar
+7 Cid cheese
+8 Dan apple
+
+# A later LEFT join's misses alone
+query II nosort
+SELECT s.id, s.store
+FROM sales s
+JOIN customers c ON s.cust = c.cust
+LEFT JOIN stores st ON s.store = st.store
+WHERE st.store IS NULL
+ORDER BY s.id, c.cname
+----
+6 103
+
+# A post-join WHERE on a later LEFT join
+query IIT nosort
+SELECT s.id, ch.fee, st.city
+FROM sales s
+LEFT JOIN channels ch ON s.channel = ch.channel
+LEFT JOIN stores st ON s.store = st.store
+WHERE ch.fee IS NULL OR st.city LIKE 'B%'
+ORDER BY s.id, ch.fee, st.city
+----
+3 1 Berlin
+3 2 Berlin
+4 NULL Austin
+4 NULL Boston
+7 0 Berlin
+8 1 Boston
+8 2 Boston
+
+# A SYMBOL key (VARCHAR in DuckDB)
+query IIT nosort
+SELECT s.id, ch.fee, c.cname
+FROM sales s
+JOIN channels ch ON s.channel = ch.channel
+LEFT JOIN customers c ON s.cust = c.cust
+ORDER BY s.id, ch.fee, c.cname
+----
+1 1 Ann
+1 2 Ann
+2 0 Bea
+2 0 Bob
+3 1 Cid
+3 2 Cid
+5 0 Bea
+5 0 Bob
+6 1 Ann
+6 2 Ann
+7 0 Cid
+8 1 Dan
+8 2 Dan
+
+# GROUP BY over a star
+query TII nosort
+SELECT c.region, count(*), sum(s.qty)
+FROM sales s
+JOIN customers c ON s.cust = c.cust
+LEFT JOIN products p ON s.prod = p.prod
+GROUP BY c.region
+ORDER BY c.region
+----
+APAC 3 17
+EU 4 8
+US 3 7
+
+# Window functions over a star with a post-join WHERE
+query ITTIR nosort
+SELECT s.id, c.cname, p.pname,
+    row_number() OVER (ORDER BY s.ts, p.pname, c.cname) AS rn,
+    sum(s.qty) OVER (PARTITION BY c.region ORDER BY s.ts, p.pname, c.cname) AS running
+FROM sales s
+JOIN customers c ON s.cust = c.cust
+JOIN products p ON s.prod = p.prod
+WHERE p.price < s.qty * 5
+ORDER BY s.id, c.cname, p.pname
+----
+1 Ann apple 1 2.000000
+2 Bea bread 2 3.000000
+2 Bob bread 3 1.000000
+3 Cid apple 4 5.000000
+6 Ann bread 5 4.000000
+7 Cid cheddar 6 11.000000
+7 Cid cheese 7 17.000000
+8 Dan apple 8 3.000000
+
+# ORDER BY and LIMIT over a star
+query ITT nosort
+SELECT s.id, c.cname, st.city
+FROM sales s
+JOIN customers c ON s.cust = c.cust
+JOIN stores st ON s.store = st.store
+ORDER BY s.ts DESC, c.cname, st.city
+LIMIT 4
+----
+8 Dan Austin
+8 Dan Boston
+7 Cid Berlin
+5 Bea Paris
+
+# An INNER first join whose left table is the smaller, with a LEFT join keyed on that table
+query ITT rowsort
+SELECT s.id, st.city, m.manager
+FROM stores st
+JOIN sales s ON st.store = s.store
+LEFT JOIN managers m ON st.store = m.store
+----
+1 Paris Mia
+2 Paris Mia
+3 Berlin NULL
+4 Austin Noa
+4 Austin Oli
+4 Boston Noa
+4 Boston Oli
+5 Paris Mia
+7 Berlin NULL
+8 Austin Noa
+8 Austin Oli
+8 Boston Noa
+8 Boston Oli
+
+# ---------------------------------------------------------------------------------------------
+# QuestDB-specific
+# ---------------------------------------------------------------------------------------------
+
+# The row order without ORDER BY: the sales rows in their order, each one's customers newest
+# first (Bea before Bob), and within each customer the products newest first (cheddar before
+# cheese). DuckDB leaves the order undefined.
+query ITT nosort
+SELECT s.id, c.cname, p.pname
+FROM sales s
+JOIN customers c ON s.cust = c.cust
+JOIN products p ON s.prod = p.prod
+----
+1 Ann apple
+2 Bea bread
+2 Bob bread
+3 Cid apple
+6 Ann bread
+7 Cid cheddar
+7 Cid cheese
+8 Dan apple
+
+# The stores table has fewer rows than the sales table, so the INNER first join hashes the stores
+# and streams the sales: the rows come in the sales order, each sale's stores newest first, and
+# each store's managers newest first.
+query ITT nosort
+SELECT s.id, st.city, m.manager
+FROM stores st
+JOIN sales s ON st.store = s.store
+LEFT JOIN managers m ON st.store = m.store
+----
+1 Paris Mia
+2 Paris Mia
+3 Berlin NULL
+4 Boston Oli
+4 Boston Noa
+4 Austin Oli
+4 Austin Noa
+5 Paris Mia
+7 Berlin NULL
+8 Boston Oli
+8 Boston Noa
+8 Austin Oli
+8 Austin Noa
+
+# An ORDER BY on the left table's timestamp fixes the order to the stores', so the join keeps
+# its inputs: each store's sales newest first.
+query ITT nosort
+SELECT s.id, st.city, m.manager
+FROM stores st
+JOIN sales s ON st.store = s.store
+LEFT JOIN managers m ON st.store = m.store
+ORDER BY st.ts
+----
+5 Paris Mia
+2 Paris Mia
+1 Paris Mia
+7 Berlin NULL
+3 Berlin NULL
+8 Austin Oli
+8 Austin Noa
+4 Austin Oli
+4 Austin Noa
+8 Boston Oli
+8 Boston Noa
+4 Boston Oli
+4 Boston Noa
+
+# A negative LIMIT takes the last rows of the star, in the order above.
+query ITT nosort
+SELECT s.id, c.cname, st.city
+FROM sales s
+LEFT JOIN customers c ON s.cust = c.cust
+LEFT JOIN stores st ON s.store = st.store
+LIMIT -3
+----
+7 Cid Berlin
+8 Dan Boston
+8 Dan Austin
+
+statement ok
+CREATE TABLE nf (id INT, k INT, ts TIMESTAMP) TIMESTAMP(ts)
+
+statement ok
+INSERT INTO nf VALUES
+(1, NULL, '2024-01-01T00:00:00.000000Z'),
+(2, 1, '2024-01-01T01:00:00.000000Z'),
+(3, 2, '2024-01-01T02:00:00.000000Z')
+
+statement ok
+CREATE TABLE nd (k INT, v VARCHAR, ts TIMESTAMP) TIMESTAMP(ts)
+
+statement ok
+INSERT INTO nd VALUES
+(NULL, 'none', '2024-01-01T00:00:00.000000Z'),
+(1, 'one', '2024-01-01T01:00:00.000000Z')
+
+# NULL keys match NULL keys. DuckDB matches no NULL key, so it returns the row of id 2 alone.
+query ITT nosort
+SELECT nf.id, a.v, b.v
+FROM nf
+LEFT JOIN nd a ON nf.k = a.k
+JOIN nd b ON nf.k = b.k
+ORDER BY nf.id
+----
+1 none none
+2 one one

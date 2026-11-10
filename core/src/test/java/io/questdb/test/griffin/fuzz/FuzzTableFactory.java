@@ -107,13 +107,19 @@ public final class FuzzTableFactory {
     // now cover most of the registry instead of drawing the same handful of
     // popular types over and over.
     private final ObjList<FuzzColumnType> typeDeck = new ObjList<>();
+    private int tablesCreated;
     private int typeDeckCursor;
 
     public FuzzTableFactory(FuzzConfig config) {
         this.config = config;
     }
 
+    /**
+     * Creates the run's next table, which holds {@link FuzzConfig#getTableRows(int)} rows for its
+     * index among the tables this factory created, and its shadow.
+     */
     public FuzzTable create(Rnd rnd, String primaryName, SqlExecutor executor, Runnable drainWal) throws SqlException {
+        final int rows = config.getTableRows(tablesCreated++);
         String shadowName = primaryName + "_shadow";
         ObjList<FuzzColumn> primaryColumns = buildColumnList(rnd);
         ObjList<FuzzColumn> shadowColumns = mirrorColumns(rnd, primaryColumns);
@@ -126,12 +132,12 @@ public final class FuzzTableFactory {
         // hold byte-identical content. Doing it the other way (running the
         // rnd_* insert on each independently) would draw two different
         // random sequences and break the row-set comparison.
-        executor.execute(buildInsertDml(primaryName, primaryColumns));
+        executor.execute(buildInsertDml(primaryName, primaryColumns, rows));
         drainWal.run();
 
         // Composite-partition backdate, primary only and before the shadow copy
         // (see the class javadoc) -- both siblings still end up with identical rows.
-        String compositeDay = applyCompositePartition(rnd, primaryName, primaryColumns, executor);
+        String compositeDay = applyCompositePartition(rnd, primaryName, primaryColumns, rows, executor);
         if (compositeDay != null) {
             drainWal.run();
         }
@@ -140,8 +146,8 @@ public final class FuzzTableFactory {
 
         // Convert statements are queued behind the shadow insert in the WAL
         // queue and processed by the second drain.
-        ParquetConversion primaryParquet = applyParquetConversion(rnd, primaryName, executor);
-        ParquetConversion shadowParquet = applyParquetConversion(rnd, shadowName, executor);
+        ParquetConversion primaryParquet = applyParquetConversion(rnd, primaryName, rows, executor);
+        ParquetConversion shadowParquet = applyParquetConversion(rnd, shadowName, rows, executor);
         drainWal.run();
 
         FuzzTable shadow = new FuzzTable(shadowName, shadowColumns, TS_COLUMN,
@@ -160,11 +166,11 @@ public final class FuzzTableFactory {
      * partition. Returns the backdated day (ISO date), or {@code null} if the
      * coin missed or the table has no non-active day to target.
      */
-    private String applyCompositePartition(Rnd rnd, String tableName, ObjList<FuzzColumn> columns, SqlExecutor executor) throws SqlException {
+    private String applyCompositePartition(Rnd rnd, String tableName, ObjList<FuzzColumn> columns, int rows, SqlExecutor executor) throws SqlException {
         if (rnd.nextDouble() >= COMPOSITE_PARTITION_CHANCE) {
             return null;
         }
-        long totalMicros = config.getStepMicros() * (long) config.getRowsPerTable();
+        long totalMicros = config.getStepMicros() * (long) rows;
         int numPartitions = (int) (totalMicros / DAY_MICROS) + 1;
         if (numPartitions <= 1) {
             // Only the active day exists - nothing non-active to backdate into.
@@ -178,7 +184,7 @@ public final class FuzzTableFactory {
         return day;
     }
 
-    private ParquetConversion applyParquetConversion(Rnd rnd, String tableName, SqlExecutor executor) throws SqlException {
+    private ParquetConversion applyParquetConversion(Rnd rnd, String tableName, int rows, SqlExecutor executor) throws SqlException {
         ParquetMode mode = pickParquetMode(rnd);
         String partitions = null;
         switch (mode) {
@@ -187,7 +193,7 @@ public final class FuzzTableFactory {
             case ALL -> executor.execute("ALTER TABLE " + tableName
                     + " CONVERT PARTITION TO PARQUET WHERE " + TS_COLUMN + " >= 0");
             case PARTIAL -> {
-                partitions = pickPartialPartitionList(rnd);
+                partitions = pickPartialPartitionList(rnd, rows);
                 if (partitions != null) {
                     executor.execute("ALTER TABLE " + tableName
                             + " CONVERT PARTITION TO PARQUET LIST " + partitions);
@@ -277,7 +283,7 @@ public final class FuzzTableFactory {
         return ddl.toString();
     }
 
-    private String buildInsertDml(String tableName, ObjList<FuzzColumn> columns) {
+    private String buildInsertDml(String tableName, ObjList<FuzzColumn> columns, int rows) {
         StringSink dml = new StringSink();
         dml.put("INSERT INTO ").put(tableName).put(" SELECT ");
         for (int i = 0, n = columns.size(); i < n; i++) {
@@ -295,7 +301,7 @@ public final class FuzzTableFactory {
             }
             dml.put(' ').put(c.getName());
         }
-        dml.put(" FROM long_sequence(").put(config.getRowsPerTable()).put(')');
+        dml.put(" FROM long_sequence(").put(rows).put(')');
         return dml.toString();
     }
 
@@ -411,8 +417,8 @@ public final class FuzzTableFactory {
      * the convert path -- and is rendered as comma-separated quoted ISO dates
      * suitable for {@code CONVERT PARTITION TO PARQUET LIST ...}.
      */
-    private String pickPartialPartitionList(Rnd rnd) {
-        long totalMicros = config.getStepMicros() * (long) config.getRowsPerTable();
+    private String pickPartialPartitionList(Rnd rnd, int rows) {
+        long totalMicros = config.getStepMicros() * (long) rows;
         int numPartitions = (int) (totalMicros / DAY_MICROS) + 1;
         if (numPartitions <= 1) {
             return null;

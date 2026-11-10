@@ -153,19 +153,21 @@ import java.nio.file.Paths;
  *         stopped selecting it.</li>
  *     <li>{@code -Dquestdb.fuzz.equijoin=true|false} &mdash; generate
  *         row-producing equi-join shapes (an INNER or LEFT join on one or two of
- *         the shared key columns, with ON residuals, post-join filters, intervals,
- *         ORDER BY and LIMIT), the shape the parallel hash join runs (default
- *         true). Their band is carved from the SIMPLE range, so the other shapes'
- *         frequencies are unchanged; pass {@code false} to give the band back to
- *         SIMPLE.</li>
+ *         the shared key columns, alone or followed by up to five more joins over
+ *         the run's tables, a star the parallel hash join stacks into stages, with
+ *         ON residuals, post-join filters, intervals, window functions, ORDER BY
+ *         and LIMIT), the shape the parallel hash join runs (default true). Their
+ *         band is carved from the SIMPLE range, so the other shapes' frequencies
+ *         are unchanged; pass {@code false} to give the band back to SIMPLE.</li>
  *     <li>{@code -Dquestdb.fuzz.diff.parallel.join=true|false} &mdash; run every
  *         equi-join query a second time with the parallel hash join disabled and
  *         compare the two materializations in order (default true). The run turns
  *         the operator on for every query, and the other axes run it on both of
  *         their sides, so only this axis sees an operator that returns wrong rows
  *         or the right rows in another order. The run asserts that the operator ran
- *         on enough of the comparisons whose query compiled to rule out a planner
- *         that has stopped selecting it.</li>
+ *         on enough of the comparisons whose query compiled, and stacked two joins
+ *         or more on enough of those, to rule out a planner that has stopped
+ *         selecting it or stacking it.</li>
  *     <li>{@code -Dquestdb.fuzz.parallel.join.cap=N} &mdash; the parallel hash
  *         join's cap of tuples per probe task (default: the seed picks one tuple,
  *         which leaves the rest of a frame with fan-out to continuations, or the
@@ -238,6 +240,15 @@ public class QueryFuzzTest extends AbstractCairoTest {
     // rate, FUSED_SHARE_FALSE_ALARM, while it still fails every guarded run of a planner that stops
     // running the operator (0.5^25 = 3e-8 at the smallest guarded sample).
     private static final double PARALLEL_JOIN_SHARE_BASELINE = 0.5;
+    // Share of the comparisons that ran the parallel hash join in which the operator stacked two
+    // joins or more, as runFuzz's guard models it. About half of the equi-join queries are stars,
+    // and the operator stacks a star's later join unless the join keeps the ordinary plan: a
+    // snowflake key, an input that exposes no page frames, a residual the workers cannot run. Two
+    // 20_000-query runs measured 155 of 383 and 163 of 453, 36% to 40%. The baseline sits below
+    // that, and the guard fails a run with the fused axis's false-alarm rate, while it fails a
+    // planner that stops stacking from 33 operator runs on (0.7^33 = 7.7e-6), which a default run of
+    // 1_000 queries reaches only now and then and a large run always.
+    private static final double STACKED_SHARE_BASELINE = 0.3;
     // Lowest share, in percent, of a shape's differential queries that must actually run rather
     // than be skipped on an expected error. Skips are normal - a fuzzed expression can overflow, a
     // cast can be inconvertible - and how often they happen swings with the randomly generated
@@ -378,6 +389,22 @@ public class QueryFuzzTest extends AbstractCairoTest {
         // A soak's larger sample holds the share to more.
         Assert.assertTrue(isParallelJoinShareImplausible(200, 589));
         Assert.assertFalse(isParallelJoinShareImplausible(260, 589));
+    }
+
+    @Test
+    public void testStackedShareGuard() {
+        // A working planner stacks about 38% of the operator's runs; a share at or above the
+        // baseline passes, and so does a sample at the measured share's low end.
+        Assert.assertFalse(isStackedShareImplausible(8, 25));
+        Assert.assertFalse(isStackedShareImplausible(155, 383));
+        Assert.assertFalse(isStackedShareImplausible(2, 25));
+        // A planner that stops stacking passes a small sample and fails a larger one.
+        Assert.assertFalse(isStackedShareImplausible(0, MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR));
+        Assert.assertFalse(isStackedShareImplausible(0, 32));
+        Assert.assertTrue(isStackedShareImplausible(0, 33));
+        // A soak's larger sample holds the share to more.
+        Assert.assertTrue(isStackedShareImplausible(60, 383));
+        Assert.assertFalse(isStackedShareImplausible(90, 383));
     }
 
     @Test
@@ -825,6 +852,15 @@ public class QueryFuzzTest extends AbstractCairoTest {
         return binomialLowerTail(selected, completed, PARALLEL_JOIN_SHARE_BASELINE) < FUSED_SHARE_FALSE_ALARM;
     }
 
+    /**
+     * Says whether a working planner, one that stacks two joins or more into STACKED_SHARE_BASELINE
+     * of the parallel hash joins it runs, would stack {@code stacked} or fewer of {@code selected}
+     * with a chance below FUSED_SHARE_FALSE_ALARM.
+     */
+    private static boolean isStackedShareImplausible(int stacked, int selected) {
+        return binomialLowerTail(stacked, selected, STACKED_SHARE_BASELINE) < FUSED_SHARE_FALSE_ALARM;
+    }
+
     private static String planOf(String sql) throws SqlException {
         try (RecordCursorFactory factory = engine.select(sql, sqlExecutionContext)) {
             TextPlanSink sink = new TextPlanSink();
@@ -912,9 +948,10 @@ public class QueryFuzzTest extends AbstractCairoTest {
         return false;
     }
 
-    private static void logSchema(FuzzTable t) {
+    private static void logSchema(FuzzTable t, int rows) {
         StringBuilder sb = new StringBuilder("fuzz schema ").append(t.getName())
-                .append(" (parquet=").append(t.getParquetMode());
+                .append(" (rows=").append(rows)
+                .append(" parquet=").append(t.getParquetMode());
         if (t.getParquetPartitions() != null) {
             sb.append(" partitions=[").append(t.getParquetPartitions()).append(']');
         }
@@ -1008,9 +1045,9 @@ public class QueryFuzzTest extends AbstractCairoTest {
                     QueryFuzzTest::drainWalQueue
             );
             tables.add(t);
-            logSchema(t);
+            logSchema(t, config.getTableRows(i));
             if (t.getShadow() != null) {
-                logSchema(t.getShadow());
+                logSchema(t.getShadow(), config.getTableRows(i));
             }
         }
 
@@ -1218,7 +1255,11 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 .$(runner.getBuildChoiceRuns()).$(" runs picked the build per execution")
                 .$();
         LOG.info().$("fuzz parallel join axis: ").$(runner.getParallelJoinAxisSelected()).$(" of ")
-                .$(runner.getParallelJoinAxisCompletedRuns()).$(" completed comparisons used the parallel hash join; ")
+                .$(runner.getParallelJoinAxisCompletedRuns()).$(" completed comparisons used the parallel hash join, ")
+                .$(runner.getParallelJoinAxisStacked()).$(" of them stacking two joins or more (at most ")
+                .$(runner.getParallelJoinAxisMaxStages()).$("), ")
+                .$(runner.getParallelJoinAxisSwapCandidates()).$(" whose first join may swap its inputs, ")
+                .$(runner.getParallelJoinAxisSwapped()).$(" whose execution swapped them; ")
                 .$(runner.getParallelJoinAxisRuns()).$(" comparisons across ")
                 .$(generatedByShape[QueryShape.EQUI_JOIN.ordinal()]).$(" equi-join queries")
                 .$();
@@ -1326,6 +1367,18 @@ public class QueryFuzzTest extends AbstractCairoTest {
                                 + binomialLowerTail(parallelJoinSelected, parallelJoinCompleted, PARALLEL_JOIN_SHARE_BASELINE)
                                 + "; the parallel join axis looks vacuous",
                         isParallelJoinShareImplausible(parallelJoinSelected, parallelJoinCompleted)
+                );
+                // The same for the stacking: a planner that stops absorbing a star's later joins runs
+                // every one of them as an ordinary join over a one-stage operator, which the axis
+                // still finds equal to the ordinary plan.
+                final int parallelJoinStacked = runner.getParallelJoinAxisStacked();
+                Assert.assertFalse(
+                        "the parallel hash join stacked two joins or more in only " + parallelJoinStacked + " of its "
+                                + parallelJoinSelected + " runs, which a planner that stacks " + Math.round(100 * STACKED_SHARE_BASELINE)
+                                + "% of them does with probability "
+                                + binomialLowerTail(parallelJoinStacked, parallelJoinSelected, STACKED_SHARE_BASELINE)
+                                + "; the star joins look unstacked",
+                        isStackedShareImplausible(parallelJoinStacked, parallelJoinSelected)
                 );
             }
         }

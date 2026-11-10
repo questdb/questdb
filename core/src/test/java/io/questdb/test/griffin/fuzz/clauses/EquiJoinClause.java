@@ -35,46 +35,77 @@ import io.questdb.test.griffin.fuzz.GeneratedQuery;
 import io.questdb.test.griffin.fuzz.PredicateGenerator;
 import io.questdb.test.griffin.fuzz.expr.BindContext;
 import io.questdb.test.griffin.fuzz.types.ColumnKind;
+import org.jetbrains.annotations.Nullable;
 
 /**
- * Row-producing equi-joins across two WAL tables: the INNER and LEFT OUTER hash joins that the
+ * Row-producing equi-joins across WAL tables: the INNER and LEFT OUTER hash joins that the
  * parallel hash join ({@code Async Hash Join}) runs in place of {@code Hash Join Light} and
- * {@code Hash Left Outer Join Light}. QueryRunner runs every query of this shape with the operator
- * on and off and compares the two results in order, since the operator returns the ordinary plan's
- * rows in the ordinary plan's order, so the generator aims most of its queries at what the
- * operator accepts and sends the rest through the features that keep the ordinary plan.
+ * {@code Hash Left Outer Join Light}, alone or stacked into a star. QueryRunner runs every query of
+ * this shape with the operator on and off and compares the two results in order, since the
+ * operator returns the ordinary plan's rows in the ordinary plan's order, so the generator aims
+ * most of its queries at what the operator accepts and sends the rest through the features that
+ * keep the ordinary plan.
  * <p>
  * Shape:
  * <pre>
- * SELECT (* | side.column AS c0[, ...])
- * FROM input l (JOIN | LEFT JOIN) input r ON l.key = r.key [AND l.key2 = r.key2] [AND (residual)]
+ * SELECT (* | input.column AS cN, ... [, window AS cN, ...])
+ * FROM input l
+ *   (JOIN | LEFT JOIN) input r ON key [AND (residual)]
+ *   [(JOIN | LEFT JOIN) input r2 ON key [AND (residual)] ...]
  * [WHERE conjunct [AND ...]]
  * [ORDER BY ...]
  * [LIMIT N | LIMIT -N]
  * </pre>
- * The join key is one of the four shared key columns, two of them together, or the INT key
+ * The first join is the one {@link #generate(Rnd, FuzzTable, FuzzTable, BindContext, boolean)}
+ * draws alone. {@link #generate(Rnd, FuzzTable, FuzzTable, ObjList, BindContext, boolean)}, which
+ * QueryFuzzTest runs, follows it with up to {@link #MAX_JOINS} - 1 later joins over any of the
+ * run's tables, aliased {@code r2}, {@code r3}, ..., a star whose joins the operator stacks into
+ * stages of one operator, and adds window functions over the joined rows.
+ * <p>
+ * A join's key is one of the four shared key columns, two of them together, or the INT key
  * against the LONG one or the designated timestamps against each other: the INT column
  * {@code k} and the SYMBOL column {@code sym}, which the operator reads straight off the frames,
  * the SYMBOL key translated into the build's dictionary, and the others, which it stages into a
- * map. The key domains are small, so most keys repeat in the build, and their chains reach the
- * consumer or, under a residual or a post-join filter, the workers.
+ * map. A later join's key reads the left input, the fact table of the star, or, now and then, an
+ * earlier join's input: a snowflake key, which leaves that join to an ordinary hash join over the
+ * operator. The key domains are small, so most keys repeat in every build, and their chains reach
+ * the consumer or, under a residual or a post-join filter, the workers, each stage's matches
+ * nested in the previous stage's. The joins' duplicates multiply, so a later join that would take
+ * the estimated output past {@link #FAN_OUT_BUDGET} rows per left row takes a selective key (a
+ * composite or the timestamps) or a dimension narrowed to the first hours of its table, whose few
+ * rows still repeat keys.
  * <p>
  * An input is the table itself, a projection over it that renames some columns and may filter
  * (a probe or build filter that the operator steals), the table scanned backward under
  * {@code ORDER BY ts DESC} (a backward probe on the left, a sort that keeps the ordinary plan on
- * the right), or a {@code LIMIT} sub-query (a barrier that keeps the ordinary plan). A LEFT join's
- * ON condition may carry a residual over the left input or over both inputs, which the operator
- * runs per pair, or over the right one, which the optimiser moves into the build's filter. The
- * WHERE clause may filter either input, compare the two inputs (a post-join filter), keep the
- * LEFT join's misses alone ({@code r.k IS NULL}, an anti-join), narrow a designated timestamp to an
- * interval, or hold a constant. The inputs never pass through an operator whose row order varies
- * between executions, so the two plans' results compare row for row; a {@code LIMIT} without a
- * total order still marks the query non-deterministic for the multiset axes, whose storage
- * shadow can scan an indexed input in another order.
+ * the right), or a {@code LIMIT} sub-query (a barrier that keeps the ordinary plan). A third of a
+ * star's INNER first joins read their two tables unfiltered, which lets the join swap its inputs
+ * unless a parent of the join asks for its order, and the first join of a star joins the left table
+ * with itself now and then, so its two inputs have the same size; the fuzz tables' sizes otherwise
+ * differ by a few rows, so such a join swaps its inputs in some queries and not in others.
+ * <p>
+ * A LEFT join's ON condition may carry a residual over the left input, over its own input, over
+ * both or over its own input and an earlier join's, which the operator runs per pair; one over its
+ * own input alone filters the build instead. An INNER join moves its residual into the WHERE
+ * clause. The WHERE
+ * clause may filter any input, compare two inputs (a post-join filter on the later of their
+ * joins), keep a LEFT join's misses alone ({@code r.k IS NULL}, an anti-join), narrow a designated
+ * timestamp to an interval, or hold a constant. The inputs never pass through an operator whose
+ * row order varies between executions, so the two plans' results compare row for row.
+ * <p>
+ * A window function numbers, ranks, counts, sums or reads neighbouring values of the joined rows,
+ * partitioned or not, in the order of no column, the left input's timestamp either way, or a later
+ * input's timestamp. Asking the joined rows for their order is what decides whether the first join
+ * may still swap its inputs, and a post-join filter answers that question in its own way (see
+ * {@code AsyncHashJoinRecordCursorFactory.followedOrderByAdvice()}), so window functions and orders
+ * come over post-filtered stars as well. Rows that tie on a window's order key get their
+ * values in the order the join returns them, which the parallel join axis checks but a storage
+ * shadow that reads an index may change, so a window function marks the query non-deterministic for
+ * the multiset axes, as a {@code LIMIT} without a total order does.
  * <p>
  * A {@code LIMIT} without an {@code ORDER BY} never comes with a filter on the left input: such a
  * query orders by the left input's designated timestamp before its {@code LIMIT}. The optimiser
- * pushes a bare {@code LIMIT} into the left input's filter, below the join, so a join that drops
+ * pushes a bare {@code LIMIT} into the left input's filter, below the joins, so a join that drops
  * left rows returns fewer rows than the {@code LIMIT} asks for (questdb/questdb#7982, also on the
  * PR base). Every plan of such a query hits the bug alike, the parallel hash join's among them,
  * since the pushed limit keeps the ordinary plan, but the fuzz axes see a difference wherever one
@@ -84,17 +115,34 @@ import io.questdb.test.griffin.fuzz.types.ColumnKind;
  */
 public final class EquiJoinClause {
     public static final String LEFT_ALIAS = "l";
+    // The most joins of one query: the first join and up to five later ones.
+    public static final int MAX_JOINS = 6;
     public static final String RIGHT_ALIAS = "r";
-    // Operators that never turn a comparison of the two inputs into a join key.
+    // Operators that never turn a comparison of two inputs into a join key.
     private static final String[] CROSS_INPUT_OPS = {"<", "<=", ">", ">=", "!="};
     // The optimiser moves a constant conjunct into the join model's constant WHERE clause; only a
     // false one shows an operator that ignores it, so three in four are false.
     private static final String[] CONSTANT_PREDICATES = {"1 = 0", "false", "2 < 1", "1 = 1"};
+    // The estimated rows that the joins produce per left row, past which a later join takes a
+    // selective key or a narrowed dimension. The fuzz tables hold up to about 150 rows, so a query
+    // returns a few thousand rows at most, which every axis materializes several times.
+    private static final double FAN_OUT_BUDGET = 24;
     private static final String INT_KEY = "k";
     // Interval widths in hours. The fuzz tables start at FuzzConfig's 2024-01-01 and span 30 to
     // 75 hours, so an interval selects anything from no row to every row of a table.
     private static final int[] INTERVAL_HOURS = {1, 3, 12, 48};
+    // The key picks: 0-11 INT and 12-23 SYMBOL, which the operator reads off the frames; 24-29
+    // LONG, 30-35 VARCHAR and 36-37 SYMBOL against VARCHAR; the composite keys 38-45 INT and
+    // SYMBOL, 46-50 LONG and VARCHAR and 51-55 INT and LONG; 56-57 INT against LONG and 58-59 the
+    // designated timestamps. All but the INT and SYMBOL keys stage their key into a map.
+    private static final int KEY_PICKS = 60;
     private static final String LONG_KEY = "lk";
+    // The share of its table that a narrowed dimension keeps: the rows of its first one to six
+    // hours, twelve at most of at least sixty.
+    private static final double NARROWED_SHARE = 0.1;
+    // One later join in this many reads its key off an earlier join's input instead of the left
+    // input's: a snowflake join, which the operator leaves to an ordinary hash join over it.
+    private static final int SNOWFLAKE_ONE_IN_N = 12;
     private static final String SYMBOL_KEY = "sym";
     private static final String TS = "ts";
     private static final String VARCHAR_KEY = "vk";
@@ -102,20 +150,72 @@ public final class EquiJoinClause {
     private EquiJoinClause() {
     }
 
+    /**
+     * Draws one join of two inputs, without window functions: the shape of the first join of a
+     * star.
+     */
     public static GeneratedQuery generate(Rnd rnd, FuzzTable left, FuzzTable right, BindContext ctx, boolean injectFaultFn) {
+        return generate(rnd, left, right, null, ctx, injectFaultFn);
+    }
+
+    /**
+     * Draws a star: the join of the two tables, then, unless {@code tables} is null, up to
+     * {@link #MAX_JOINS} - 1 later joins over the given tables, and window functions over the
+     * joined rows.
+     */
+    public static GeneratedQuery generate(
+            Rnd rnd,
+            FuzzTable left,
+            FuzzTable right,
+            @Nullable ObjList<FuzzTable> tables,
+            BindContext ctx,
+            boolean injectFaultFn
+    ) {
         // The draws below depend neither on ctx nor on injectFaultFn, so the bind variant
         // regenerates the same tree.
-        final boolean isLeftJoin = rnd.nextBoolean();
-        final Input l = pickInput(rnd, left, ctx);
-        final Input r = pickInput(rnd, right, ctx);
+        final boolean isStar = tables != null;
+        final boolean isFirstLeftJoin = rnd.nextBoolean();
+        // A third of a star's INNER first joins read two unfiltered tables, which the joins' order
+        // decides whether to swap, and leave every filter of the two tables out of the query, since
+        // a filtered input never swaps. Other queries filter their inputs too often to swap much.
+        final boolean isSwapProne = isStar && !isFirstLeftJoin && rnd.nextInt(3) == 0;
+        final Input l = isSwapProne ? tableInput(rnd, left) : pickInput(rnd, left, ctx);
+        final ObjList<Join> joins = new ObjList<>();
+        // The first join's right table is the left one now and then, so that the two inputs of a
+        // join that may swap them have the same size.
+        final FuzzTable firstRight = isStar && rnd.nextInt(8) == 0 ? left : right;
+        final Input r = isSwapProne ? tableInput(rnd, firstRight) : pickInput(rnd, firstRight, ctx);
+        final int firstKeyPick = rnd.nextInt(KEY_PICKS);
+        joins.add(new Join(RIGHT_ALIAS, isFirstLeftJoin, r, firstKeyPick, -1));
+        double fanOut = Math.max(1, keyFanOut(firstKeyPick) * r.rowShare);
+        final int laterJoins = isStar ? pickLaterJoinCount(rnd) : 0;
+        for (int j = 1; j <= laterJoins; j++) {
+            final boolean isLeftJoin = rnd.nextBoolean();
+            final FuzzTable table = tables.getQuick(rnd.nextInt(tables.size()));
+            final int keySource = rnd.nextInt(SNOWFLAKE_ONE_IN_N) == 0 ? rnd.nextInt(j) : -1;
+            int keyPick = rnd.nextInt(KEY_PICKS);
+            boolean isNarrowed = false;
+            if (fanOut * keyFanOut(keyPick) > FAN_OUT_BUDGET) {
+                // Too many duplicates for the joins before it: narrow the dimension, which keeps its
+                // duplicate keys, or take a key that matches about one row.
+                isNarrowed = rnd.nextBoolean();
+                if (!isNarrowed || fanOut * keyFanOut(keyPick) * NARROWED_SHARE > FAN_OUT_BUDGET) {
+                    keyPick = pickSelectiveKey(rnd);
+                }
+            }
+            final Input input = isNarrowed ? narrowedInput(rnd, table) : pickInput(rnd, table, ctx);
+            joins.add(new Join("r" + (j + 1), isLeftJoin, input, keyPick, keySource));
+            fanOut *= Math.max(1, keyFanOut(keyPick) * input.rowShare);
+        }
         // True when the left input may run a filter, which a bare LIMIT would be pushed into.
         boolean isLeftFiltered = l.isFiltered;
 
         final StringSink sql = new StringSink();
         sql.put("SELECT ");
-        final boolean isStar = rnd.nextInt(6) == 0;
+        final boolean isSelectStar = rnd.nextInt(6) == 0;
         int projected = 0;
-        if (isStar) {
+        int windows = 0;
+        if (isSelectStar) {
             sql.put('*');
         } else {
             projected = 1 + rnd.nextInt(5);
@@ -123,88 +223,98 @@ public final class EquiJoinClause {
                 if (i > 0) {
                     sql.put(", ");
                 }
-                final boolean isLeft = rnd.nextBoolean();
-                final Input input = isLeft ? l : r;
+                final int source = rnd.nextInt(1 + joins.size());
+                final Input input = source == 0 ? l : joins.getQuick(source - 1).input;
                 final FuzzColumn column = input.columns.getQuick(rnd.nextInt(input.columns.size()));
-                sql.put(isLeft ? LEFT_ALIAS : RIGHT_ALIAS).put('.').put(column.getName()).put(" AS c").put(i);
+                sql.put(source == 0 ? LEFT_ALIAS : joins.getQuick(source - 1).alias).put('.').put(column.getName()).put(" AS c").put(i);
+            }
+            windows = isStar && rnd.nextInt(4) == 0 ? 1 + rnd.nextInt(2) : 0;
+            for (int i = 0; i < windows; i++) {
+                sql.put(", ");
+                appendWindow(sql, rnd, l, joins);
+                sql.put(" AS c").put(projected + i);
             }
         }
 
         sql.put(" FROM ").put(l.fromSql).put(' ').put(LEFT_ALIAS);
-        sql.put(isLeftJoin ? " LEFT JOIN " : " JOIN ").put(r.fromSql).put(' ').put(RIGHT_ALIAS);
-        sql.put(" ON ");
-        // 0-11: INT key and 12-23: SYMBOL key, which the operator reads off the frames.
-        // 24-29: LONG key, 30-35: VARCHAR key, 36-37: SYMBOL against VARCHAR, and the composite
-        // keys 38-45: INT and SYMBOL, 46-50: LONG and VARCHAR, 51-55: INT and LONG, which stage
-        // their key into a map, as do 56-57: INT against LONG and 58-59: the designated timestamps.
-        final int keyPick = rnd.nextInt(60);
-        if (keyPick >= 46 && keyPick < 51) {
-            appendKeyEquality(sql, rnd, l.name(LONG_KEY), r.name(LONG_KEY));
-            sql.put(" AND ");
-            appendKeyEquality(sql, rnd, l.name(VARCHAR_KEY), r.name(VARCHAR_KEY));
-        } else if (keyPick >= 51 && keyPick < 56) {
-            appendKeyEquality(sql, rnd, l.name(INT_KEY), r.name(INT_KEY));
-            sql.put(" AND ");
-            appendKeyEquality(sql, rnd, l.name(LONG_KEY), r.name(LONG_KEY));
-        } else if (keyPick >= 56 && keyPick < 58) {
-            appendKeyEquality(sql, rnd, l.name(INT_KEY), r.name(LONG_KEY));
-        } else if (keyPick >= 58) {
-            appendKeyEquality(sql, rnd, TS, TS);
-        } else if (keyPick < 12 || keyPick >= 38) {
-            appendKeyEquality(sql, rnd, l.name(INT_KEY), r.name(INT_KEY));
-        } else if (keyPick < 24) {
-            appendKeyEquality(sql, rnd, l.name(SYMBOL_KEY), r.name(SYMBOL_KEY));
-        } else if (keyPick < 30) {
-            appendKeyEquality(sql, rnd, l.name(LONG_KEY), r.name(LONG_KEY));
-        } else if (keyPick < 36) {
-            appendKeyEquality(sql, rnd, l.name(VARCHAR_KEY), r.name(VARCHAR_KEY));
-        } else {
-            // vk holds sym's texts, so the pair matches rows; both sides stage their text.
-            appendKeyEquality(sql, rnd, l.name(SYMBOL_KEY), r.name(VARCHAR_KEY));
-        }
-        if (keyPick >= 38 && keyPick < 46) {
-            sql.put(" AND ");
-            appendKeyEquality(sql, rnd, l.name(SYMBOL_KEY), r.name(SYMBOL_KEY));
-        }
-        if (rnd.nextInt(3) == 0) {
-            // A residual over the left input or over both inputs runs per pair on a LEFT join; an
-            // INNER join moves the condition into its WHERE clause. One over the right input
-            // filters the build either way.
-            sql.put(" AND (");
-            switch (rnd.nextInt(3)) {
-                case 0 -> {
-                    sql.put(predicate(rnd, l, LEFT_ALIAS, ctx));
-                    // The INNER join's WHERE clause hands the condition to the left input's filter.
-                    isLeftFiltered |= !isLeftJoin;
+        for (int j = 0, n = joins.size(); j < n; j++) {
+            final Join join = joins.getQuick(j);
+            sql.put(join.isLeftJoin ? " LEFT JOIN " : " JOIN ").put(join.input.fromSql).put(' ').put(join.alias);
+            sql.put(" ON ");
+            final boolean isSnowflake = join.keySource >= 0;
+            appendKey(
+                    sql,
+                    rnd,
+                    join.keyPick,
+                    isSnowflake ? joins.getQuick(join.keySource).alias : LEFT_ALIAS,
+                    isSnowflake ? joins.getQuick(join.keySource).input : l,
+                    join.alias,
+                    join.input
+            );
+            if (rnd.nextInt(3) == 0) {
+                // A residual over the left input, over both inputs or over the join's input and an
+                // earlier join's runs per pair on a LEFT join; an INNER join moves the condition
+                // into its WHERE clause. One over the join's input alone filters the build either
+                // way.
+                sql.put(" AND (");
+                int kind = rnd.nextInt(j == 0 ? 3 : 4);
+                if (isSwapProne && !join.isLeftJoin && (kind == 0 || (j == 0 && kind == 1))) {
+                    // The INNER join hands the condition to the left input's filter or to the first
+                    // join's build filter, either of which keeps the first join from swapping.
+                    kind = 2;
                 }
-                case 1 -> sql.put(predicate(rnd, r, RIGHT_ALIAS, ctx));
-                default -> sql.put(crossPredicate(rnd, l, r));
+                switch (kind) {
+                    case 0 -> {
+                        sql.put(predicate(rnd, l, LEFT_ALIAS, ctx));
+                        // The INNER join's WHERE clause hands the condition to the left input's filter.
+                        isLeftFiltered |= !join.isLeftJoin;
+                    }
+                    case 1 -> sql.put(predicate(rnd, join.input, join.alias, ctx));
+                    case 2 -> sql.put(crossPredicate(rnd, l, LEFT_ALIAS, join.input, join.alias));
+                    default -> {
+                        final Join earlier = joins.getQuick(rnd.nextInt(j));
+                        sql.put(crossPredicate(rnd, earlier.input, earlier.alias, join.input, join.alias));
+                    }
+                }
+                sql.put(')');
             }
-            sql.put(')');
         }
 
         final ObjList<String> conjuncts = new ObjList<>();
-        if (rnd.nextBoolean()) {
-            // The probe filter, or, on a swapped INNER execution, the build's.
+        if (rnd.nextBoolean() && !isSwapProne) {
+            // The left input's filter, which the operator steals as its probe filter.
             conjuncts.add(predicate(rnd, l, LEFT_ALIAS, ctx));
             isLeftFiltered = true;
         }
-        if (rnd.nextInt(3) == 0) {
-            // The build's filter on an INNER join; a post-join filter on a LEFT one.
-            conjuncts.add(predicate(rnd, r, RIGHT_ALIAS, ctx));
-        }
-        if (rnd.nextInt(4) == 0) {
-            conjuncts.add(crossPredicate(rnd, l, r));
-        }
-        if (isLeftJoin && rnd.nextInt(8) == 0) {
-            // The LEFT join's misses alone.
-            conjuncts.add(RIGHT_ALIAS + '.' + r.name(INT_KEY) + " IS NULL");
-        }
-        if (l.isTable && rnd.nextInt(4) == 0) {
-            conjuncts.add(interval(rnd, LEFT_ALIAS));
-        }
-        if (r.isTable && rnd.nextInt(6) == 0) {
-            conjuncts.add(interval(rnd, RIGHT_ALIAS));
+        for (int j = 0, n = joins.size(); j < n; j++) {
+            final Join join = joins.getQuick(j);
+            // A swap-prone query filters neither the left input nor the first join's.
+            final boolean isFilterable = !isSwapProne || j > 0;
+            if (rnd.nextInt(j == 0 ? 3 : 4) == 0 && isFilterable) {
+                // The build's filter on an INNER join; a post-join filter on a LEFT one.
+                conjuncts.add(predicate(rnd, join.input, join.alias, ctx));
+            }
+            if (rnd.nextInt(4) == 0) {
+                // A post-join filter on this join; on a later join, it may compare its input with an
+                // earlier join's.
+                final int other = j == 0 ? 0 : rnd.nextInt(j + 1);
+                if (other == 0) {
+                    conjuncts.add(crossPredicate(rnd, l, LEFT_ALIAS, join.input, join.alias));
+                } else {
+                    final Join earlier = joins.getQuick(other - 1);
+                    conjuncts.add(crossPredicate(rnd, earlier.input, earlier.alias, join.input, join.alias));
+                }
+            }
+            if (join.isLeftJoin && rnd.nextInt(8) == 0) {
+                // The LEFT join's misses alone.
+                conjuncts.add(join.alias + '.' + join.input.name(INT_KEY) + " IS NULL");
+            }
+            if (j == 0 && l.isTable && rnd.nextInt(4) == 0 && isFilterable) {
+                conjuncts.add(interval(rnd, LEFT_ALIAS));
+            }
+            if (join.input.isTable && rnd.nextInt(j == 0 ? 6 : 8) == 0 && isFilterable) {
+                conjuncts.add(interval(rnd, join.alias));
+            }
         }
         if (rnd.nextInt(16) == 0) {
             conjuncts.add(CONSTANT_PREDICATES[rnd.nextInt(CONSTANT_PREDICATES.length)]);
@@ -229,8 +339,8 @@ public final class EquiJoinClause {
             // Ascending, which the left input already scans in, and which fixes the join's order.
             case 1 -> sql.put(" ORDER BY ").put(LEFT_ALIAS).put('.').put(TS);
             case 2 -> {
-                if (!isStar) {
-                    sql.put(" ORDER BY c").put(rnd.nextInt(projected)).put(rnd.nextBoolean() ? " DESC" : "");
+                if (!isSelectStar) {
+                    sql.put(" ORDER BY c").put(rnd.nextInt(projected + windows)).put(rnd.nextBoolean() ? " DESC" : "");
                 } else {
                     hasOrderBy = false;
                 }
@@ -246,37 +356,122 @@ public final class EquiJoinClause {
             }
             sql.put(" LIMIT ").put(rnd.nextBoolean() ? "" : "-").put(1 + rnd.nextInt(30));
         }
-        return new GeneratedQuery(sql.toString(), !hasLimit);
+        return new GeneratedQuery(sql.toString(), !hasLimit && windows == 0);
+    }
+
+    /**
+     * The key of a join: the source input's key columns against the join's input's, as the key pick
+     * says (see {@link #KEY_PICKS}).
+     */
+    private static void appendKey(StringSink sql, Rnd rnd, int keyPick, String sourceAlias, Input source, String alias, Input input) {
+        if (keyPick >= 46 && keyPick < 51) {
+            appendKeyEquality(sql, rnd, sourceAlias, source.name(LONG_KEY), alias, input.name(LONG_KEY));
+            sql.put(" AND ");
+            appendKeyEquality(sql, rnd, sourceAlias, source.name(VARCHAR_KEY), alias, input.name(VARCHAR_KEY));
+        } else if (keyPick >= 51 && keyPick < 56) {
+            appendKeyEquality(sql, rnd, sourceAlias, source.name(INT_KEY), alias, input.name(INT_KEY));
+            sql.put(" AND ");
+            appendKeyEquality(sql, rnd, sourceAlias, source.name(LONG_KEY), alias, input.name(LONG_KEY));
+        } else if (keyPick >= 56 && keyPick < 58) {
+            appendKeyEquality(sql, rnd, sourceAlias, source.name(INT_KEY), alias, input.name(LONG_KEY));
+        } else if (keyPick >= 58) {
+            appendKeyEquality(sql, rnd, sourceAlias, TS, alias, TS);
+        } else if (keyPick < 12 || keyPick >= 38) {
+            appendKeyEquality(sql, rnd, sourceAlias, source.name(INT_KEY), alias, input.name(INT_KEY));
+        } else if (keyPick < 24) {
+            appendKeyEquality(sql, rnd, sourceAlias, source.name(SYMBOL_KEY), alias, input.name(SYMBOL_KEY));
+        } else if (keyPick < 30) {
+            appendKeyEquality(sql, rnd, sourceAlias, source.name(LONG_KEY), alias, input.name(LONG_KEY));
+        } else if (keyPick < 36) {
+            appendKeyEquality(sql, rnd, sourceAlias, source.name(VARCHAR_KEY), alias, input.name(VARCHAR_KEY));
+        } else {
+            // vk holds sym's texts, so the pair matches rows; both sides stage their text.
+            appendKeyEquality(sql, rnd, sourceAlias, source.name(SYMBOL_KEY), alias, input.name(VARCHAR_KEY));
+        }
+        if (keyPick >= 38 && keyPick < 46) {
+            sql.put(" AND ");
+            appendKeyEquality(sql, rnd, sourceAlias, source.name(SYMBOL_KEY), alias, input.name(SYMBOL_KEY));
+        }
     }
 
     // Both operand orders: the join context records the key per model either way.
-    private static void appendKeyEquality(StringSink sql, Rnd rnd, String leftColumn, String rightColumn) {
+    private static void appendKeyEquality(StringSink sql, Rnd rnd, String sourceAlias, String sourceColumn, String alias, String column) {
         if (rnd.nextBoolean()) {
-            sql.put(LEFT_ALIAS).put('.').put(leftColumn).put(" = ").put(RIGHT_ALIAS).put('.').put(rightColumn);
+            sql.put(sourceAlias).put('.').put(sourceColumn).put(" = ").put(alias).put('.').put(column);
         } else {
-            sql.put(RIGHT_ALIAS).put('.').put(rightColumn).put(" = ").put(LEFT_ALIAS).put('.').put(leftColumn);
+            sql.put(alias).put('.').put(column).put(" = ").put(sourceAlias).put('.').put(sourceColumn);
         }
     }
 
     /**
-     * A comparison of the two inputs that is never an equality, so that it stays a filter over
-     * the joined pairs: the designated timestamps, the INT key against the LONG one, or two
-     * numeric columns, one of each input.
+     * A window function over the joined rows: a ranking, a count, a sum or a neighbouring value of
+     * a key column of any input, over no partition or one key column's, in the order of no column,
+     * the left input's timestamp either way or a joined input's timestamp.
      */
-    private static String crossPredicate(Rnd rnd, Input l, Input r) {
+    private static void appendWindow(StringSink sql, Rnd rnd, Input l, ObjList<Join> joins) {
+        switch (rnd.nextInt(7)) {
+            case 0 -> sql.put("row_number()");
+            case 1 -> sql.put("rank()");
+            case 2 -> sql.put("dense_rank()");
+            case 3 -> sql.put("count(*)");
+            default -> {
+                sql.put(rnd.nextBoolean() ? "sum(" : rnd.nextBoolean() ? "lag(" : "first_value(");
+                appendInputColumn(sql, rnd, l, joins, rnd.nextBoolean() ? INT_KEY : LONG_KEY);
+                sql.put(')');
+            }
+        }
+        sql.put(" OVER (");
+        final boolean isPartitioned = rnd.nextBoolean();
+        if (isPartitioned) {
+            sql.put("PARTITION BY ");
+            appendInputColumn(sql, rnd, l, joins, rnd.nextBoolean() ? SYMBOL_KEY : INT_KEY);
+        }
+        switch (rnd.nextInt(4)) {
+            case 0 -> {
+            }
+            case 1 -> sql.put(isPartitioned ? " " : "").put("ORDER BY ").put(LEFT_ALIAS).put('.').put(TS);
+            case 2 -> sql.put(isPartitioned ? " " : "").put("ORDER BY ").put(LEFT_ALIAS).put('.').put(TS).put(" DESC");
+            default -> {
+                final Join join = joins.getQuick(rnd.nextInt(joins.size()));
+                sql.put(isPartitioned ? " " : "").put("ORDER BY ").put(join.alias).put('.').put(TS);
+                if (rnd.nextBoolean()) {
+                    sql.put(" DESC");
+                }
+            }
+        }
+        sql.put(')');
+    }
+
+    // A shared column of the left input or of a joined one, under the name the input exposes.
+    private static void appendInputColumn(StringSink sql, Rnd rnd, Input l, ObjList<Join> joins, String baseName) {
+        final int source = rnd.nextInt(1 + joins.size());
+        if (source == 0) {
+            sql.put(LEFT_ALIAS).put('.').put(l.name(baseName));
+        } else {
+            final Join join = joins.getQuick(source - 1);
+            sql.put(join.alias).put('.').put(join.input.name(baseName));
+        }
+    }
+
+    /**
+     * A comparison of two inputs that is never an equality, so that it stays a filter over the
+     * joined pairs: the designated timestamps, the INT key against the LONG one, or two numeric
+     * columns, one of each input.
+     */
+    private static String crossPredicate(Rnd rnd, Input a, String aliasA, Input b, String aliasB) {
         final String op = CROSS_INPUT_OPS[rnd.nextInt(CROSS_INPUT_OPS.length)];
         final int pick = rnd.nextInt(3);
         if (pick == 0) {
-            return LEFT_ALIAS + '.' + TS + ' ' + op + ' ' + RIGHT_ALIAS + '.' + TS;
+            return aliasA + '.' + TS + ' ' + op + ' ' + aliasB + '.' + TS;
         }
         if (pick == 1) {
-            return LEFT_ALIAS + '.' + l.name(INT_KEY) + ' ' + op + ' ' + RIGHT_ALIAS + '.' + r.name(LONG_KEY);
+            return aliasA + '.' + a.name(INT_KEY) + ' ' + op + ' ' + aliasB + '.' + b.name(LONG_KEY);
         }
-        final FuzzColumn leftColumn = pickNumeric(rnd, l.columns);
-        final FuzzColumn rightColumn = pickNumeric(rnd, r.columns);
-        final String leftName = leftColumn != null ? leftColumn.getName() : l.name(LONG_KEY);
-        final String rightName = rightColumn != null ? rightColumn.getName() : r.name(LONG_KEY);
-        return LEFT_ALIAS + '.' + leftName + ' ' + op + ' ' + RIGHT_ALIAS + '.' + rightName;
+        final FuzzColumn columnA = pickNumeric(rnd, a.columns);
+        final FuzzColumn columnB = pickNumeric(rnd, b.columns);
+        final String nameA = columnA != null ? columnA.getName() : a.name(LONG_KEY);
+        final String nameB = columnB != null ? columnB.getName() : b.name(LONG_KEY);
+        return aliasA + '.' + nameA + ' ' + op + ' ' + aliasB + '.' + nameB;
     }
 
     // The literal of the given hour after 2024-01-01T00:00, within January.
@@ -293,6 +488,39 @@ public final class EquiJoinClause {
     }
 
     /**
+     * The estimated rows of a fuzz table of 150 rows that one left row matches on the key the pick
+     * says. Every key domain holds NULL, which matches NULL: the INT and LONG keys take one of 16
+     * values or NULL (one row in eight), so a value repeats in about 10 rows; the SYMBOL and VARCHAR
+     * keys take one of 8 values or NULL, each in a ninth of the rows; a composite key matches about
+     * one row, and the designated timestamps, which the fuzz tables share, at most one.
+     */
+    private static double keyFanOut(int keyPick) {
+        if (keyPick < 12 || (keyPick >= 24 && keyPick < 30) || (keyPick >= 56 && keyPick < 58)) {
+            return 10;
+        }
+        if (keyPick < 38) {
+            return 17;
+        }
+        return 1;
+    }
+
+    /**
+     * A dimension narrowed to its table's first one to six hours by an interval, which keeps the
+     * input a page frame scan the operator takes as a build, and keeps between two and twelve of its
+     * rows, so that a later join's duplicate keys stay within the fan-out budget.
+     */
+    private static Input narrowedInput(Rnd rnd, FuzzTable table) {
+        final String fromSql = "(SELECT * FROM " + FuzzNames.table(rnd, table.getName())
+                + " WHERE " + TS + " < " + hourOf2024(1 + rnd.nextInt(6)) + ')';
+        return new Input(fromSql, table.getColumns(), false, false, NARROWED_SHARE);
+    }
+
+    // The table itself, unfiltered.
+    private static Input tableInput(Rnd rnd, FuzzTable table) {
+        return new Input(FuzzNames.table(rnd, table.getName()), table.getColumns(), true, false, 1);
+    }
+
+    /**
      * Draws one input: the table itself on 30 draws in 40, a projection over it on six, the table
      * scanned backward on two and a {@code LIMIT} sub-query on two. The projection keeps every
      * column and the designated timestamp's name, renames each other column with probability
@@ -305,13 +533,14 @@ public final class EquiJoinClause {
         final String tableName = FuzzNames.table(rnd, table.getName());
         final int pick = rnd.nextInt(40);
         if (pick < 30) {
-            return new Input(tableName, table.getColumns(), true, false);
+            return new Input(tableName, table.getColumns(), true, false, 1);
         }
         if (pick >= 38) {
-            return new Input("(SELECT * FROM " + tableName + " LIMIT " + (10 + rnd.nextInt(50)) + ')', table.getColumns(), false, false);
+            final int limit = 10 + rnd.nextInt(50);
+            return new Input("(SELECT * FROM " + tableName + " LIMIT " + limit + ')', table.getColumns(), false, false, limit / 150.0);
         }
         if (pick >= 36) {
-            return new Input("(SELECT * FROM " + tableName + " ORDER BY " + TS + " DESC)", table.getColumns(), false, false);
+            return new Input("(SELECT * FROM " + tableName + " ORDER BY " + TS + " DESC)", table.getColumns(), false, false, 1);
         }
         final ObjList<FuzzColumn> exposed = new ObjList<>();
         final StringSink sql = new StringSink();
@@ -336,7 +565,25 @@ public final class EquiJoinClause {
             sql.put(" WHERE ").put(new PredicateGenerator(rnd, 1).generate(table.getColumns(), null, ctx));
         }
         sql.put(')');
-        return new Input(sql.toString(), exposed, false, isFiltered);
+        return new Input(sql.toString(), exposed, false, isFiltered, 1);
+    }
+
+    /**
+     * How many joins follow the first one: none on half the draws, one on a quarter, two on an
+     * eighth, and three to five on the rest.
+     */
+    private static int pickLaterJoinCount(Rnd rnd) {
+        final int pick = rnd.nextInt(8);
+        if (pick < 4) {
+            return 0;
+        }
+        if (pick < 6) {
+            return 1;
+        }
+        if (pick < 7) {
+            return 2;
+        }
+        return 3 + rnd.nextInt(MAX_JOINS - 3);
     }
 
     private static FuzzColumn pickNumeric(Rnd rnd, ObjList<FuzzColumn> columns) {
@@ -350,13 +597,21 @@ public final class EquiJoinClause {
         return matching.size() > 0 ? matching.getQuick(rnd.nextInt(matching.size())) : null;
     }
 
+    // A key that matches about one row: one of the composite keys, picks 38 to 55, or the
+    // designated timestamps, picks 58 and 59.
+    private static int pickSelectiveKey(Rnd rnd) {
+        final int pick = 38 + rnd.nextInt(20);
+        return pick < 56 ? pick : pick + 2;
+    }
+
     private static String predicate(Rnd rnd, Input input, String alias, BindContext ctx) {
         return new PredicateGenerator(rnd, 1).generate(input.columns, alias, ctx);
     }
 
     /**
-     * One join input: the SQL after {@code FROM} (or after the join keyword), and the columns it
-     * exposes, under the names it exposes them by.
+     * One join input: the SQL after {@code FROM} (or after the join keyword), the columns it
+     * exposes, under the names it exposes them by, and the share of its table's rows it reads at
+     * most.
      */
     private static final class Input {
         final ObjList<FuzzColumn> columns;
@@ -364,12 +619,14 @@ public final class EquiJoinClause {
         // A projection with a WHERE clause, which the input's filter runs.
         final boolean isFiltered;
         final boolean isTable;
+        final double rowShare;
 
-        Input(String fromSql, ObjList<FuzzColumn> columns, boolean isTable, boolean isFiltered) {
+        Input(String fromSql, ObjList<FuzzColumn> columns, boolean isTable, boolean isFiltered, double rowShare) {
             this.fromSql = fromSql;
             this.columns = columns;
             this.isTable = isTable;
             this.isFiltered = isFiltered;
+            this.rowShare = rowShare;
         }
 
         // The exposed name of a base column: a projection input may have renamed it.
@@ -381,6 +638,26 @@ public final class EquiJoinClause {
                 }
             }
             throw new AssertionError("every fuzz table carries the column " + baseName);
+        }
+    }
+
+    /**
+     * One join of the query: its alias, its type, its input, its key pick and the earlier join
+     * whose input the key reads instead of the left input's, or -1.
+     */
+    private static final class Join {
+        final String alias;
+        final Input input;
+        final boolean isLeftJoin;
+        final int keyPick;
+        final int keySource;
+
+        Join(String alias, boolean isLeftJoin, Input input, int keyPick, int keySource) {
+            this.alias = alias;
+            this.isLeftJoin = isLeftJoin;
+            this.input = input;
+            this.keyPick = keyPick;
+            this.keySource = keySource;
         }
     }
 }

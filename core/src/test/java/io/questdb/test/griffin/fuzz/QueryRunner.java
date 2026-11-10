@@ -47,6 +47,7 @@ import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHashJoinGroupByRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncHashJoinRecordCursorFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
@@ -57,6 +58,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.cairo.Overrides;
 import io.questdb.test.cairo.fuzz.FailureFileFacade;
+import io.questdb.test.griffin.ParallelHashJoinTestUtils;
 import io.questdb.test.griffin.fuzz.FuzzTableFactory.ParquetMode;
 
 import java.util.Arrays;
@@ -248,6 +250,13 @@ public final class QueryRunner {
     private int parallelJoinAxisCompletedRuns;
     private int parallelJoinAxisRuns;
     private int parallelJoinAxisSelected;
+    // Of the comparisons whose pivot used the parallel hash join: those whose operator stacked two
+    // joins or more, the most joins one operator stacked, those whose first join was a swap
+    // candidate, and those whose execution swapped the first join's inputs.
+    private int parallelJoinAxisStacked;
+    private int parallelJoinAxisMaxStages;
+    private int parallelJoinAxisSwapCandidates;
+    private int parallelJoinAxisSwapped;
     private final TextPlanSink planSink = new TextPlanSink();
     private final boolean primaryHasAnyParquet;
     private final Pattern[] primaryPatterns;
@@ -407,6 +416,39 @@ public final class QueryRunner {
      */
     public int getParallelJoinAxisSelected() {
         return parallelJoinAxisSelected;
+    }
+
+    /**
+     * The most joins that one parallel hash join stacked among the comparisons of the parallel join
+     * axis.
+     */
+    public int getParallelJoinAxisMaxStages() {
+        return parallelJoinAxisMaxStages;
+    }
+
+    /**
+     * Comparisons of the parallel join axis whose pivot stacked two joins or more into one parallel
+     * hash join: the star joins that the operator runs as stages.
+     */
+    public int getParallelJoinAxisStacked() {
+        return parallelJoinAxisStacked;
+    }
+
+    /**
+     * Comparisons of the parallel join axis whose pivot's parallel hash join may swap its first
+     * join's inputs: an INNER join of two unfiltered table scans whose order no parent fixed.
+     */
+    public int getParallelJoinAxisSwapCandidates() {
+        return parallelJoinAxisSwapCandidates;
+    }
+
+    /**
+     * Comparisons of the parallel join axis whose pivot's execution swapped the first join's inputs,
+     * hashing the left input and streaming the right one. Counts only the operators that the plan's
+     * base factories reach, which leaves out an operator under an ordinary join.
+     */
+    public int getParallelJoinAxisSwapped() {
+        return parallelJoinAxisSwapped;
     }
 
     /**
@@ -1016,6 +1058,24 @@ public final class QueryRunner {
      */
     static boolean isParallelHashJoinPlan(CharSequence plan) {
         return Chars.indexOf(plan, 0, plan.length(), "Hash Join workers:") >= 0;
+    }
+
+    /**
+     * The most joins that a parallel hash join of a rendered plan stacks, from the {@code stages}
+     * attribute that only that operator prints, or 0 when the plan runs none.
+     */
+    static int parallelHashJoinStages(CharSequence plan) {
+        final String attribute = "stages: ";
+        final int n = plan.length();
+        int stages = 0;
+        for (int i = Chars.indexOf(plan, 0, n, attribute); i >= 0; i = Chars.indexOf(plan, i + 1, n, attribute)) {
+            int count = 0;
+            for (int j = i + attribute.length(); j < n && Character.isDigit(plan.charAt(j)); j++) {
+                count = count * 10 + plan.charAt(j) - '0';
+            }
+            stages = Math.max(stages, count);
+        }
+        return stages;
     }
 
     // The SplitMix64 finalizer over the SQL text's hash and the salt, so that neighbouring salts
@@ -1663,14 +1723,24 @@ public final class QueryRunner {
      */
     private Result runParallelJoinVariant(GeneratedQuery query, Outcome bJ, Outcome bP) {
         parallelJoinAxisRuns++;
-        if (bP.hasParallelHashJoin) {
+        if (bP.hasParallelHashJoin()) {
             return Result.failed(query.sql(), new AssertionError(
                     "the parallel hash join is disabled but the plan still uses it: " + query.sql()));
         }
         if (bJ.failure == null) {
             parallelJoinAxisCompletedRuns++;
-            if (bJ.hasParallelHashJoin) {
+            if (bJ.hasParallelHashJoin()) {
                 parallelJoinAxisSelected++;
+                if (bJ.parallelHashJoinStages > 1) {
+                    parallelJoinAxisStacked++;
+                }
+                parallelJoinAxisMaxStages = Math.max(parallelJoinAxisMaxStages, bJ.parallelHashJoinStages);
+                if (bJ.isParallelHashJoinSwapCandidate) {
+                    parallelJoinAxisSwapCandidates++;
+                }
+                if (bJ.isParallelHashJoinSwapped) {
+                    parallelJoinAxisSwapped++;
+                }
             }
         }
         if (bJ.failure == null && bP.failure == null) {
@@ -1855,7 +1925,19 @@ public final class QueryRunner {
             if (Chars.indexOf(plan, 0, plan.length(), "Hash Join Group By Build Choice") >= 0) {
                 buildChoiceRuns++;
             }
-            return Outcome.ok(rowsRead, planUsesIndex(plan), usesParquet, isFusedHashJoinPlan(plan), isParallelHashJoinPlan(plan), fpColumnMask);
+            final int parallelHashJoinStages = isParallelHashJoinPlan(plan) ? Math.max(1, parallelHashJoinStages(plan)) : 0;
+            // The last execution's orientation outlives its cursor, until the next one opens.
+            final AsyncHashJoinRecordCursorFactory parallelHashJoin = parallelHashJoinStages > 0 ? ParallelHashJoinTestUtils.find(factory) : null;
+            return Outcome.ok(
+                    rowsRead,
+                    planUsesIndex(plan),
+                    usesParquet,
+                    isFusedHashJoinPlan(plan),
+                    parallelHashJoinStages,
+                    Chars.indexOf(plan, 0, plan.length(), "inputSwap:") >= 0,
+                    parallelHashJoin != null && parallelHashJoin.getAtom().isSwapped(),
+                    fpColumnMask
+            );
         } catch (CursorCheckException e) {
             throw e;
         } catch (SqlException e) {
@@ -2118,7 +2200,10 @@ public final class QueryRunner {
             boolean hasBlockingAggregation,
             boolean usesParquet,
             boolean hasFusedHashJoin,
-            boolean hasParallelHashJoin,
+            // The joins that the plan's parallel hash join stacks, 0 when it runs none.
+            int parallelHashJoinStages,
+            boolean isParallelHashJoinSwapCandidate,
+            boolean isParallelHashJoinSwapped,
             boolean[] fpColumnMask,
             Throwable failure,
             String exceptionClass,
@@ -2126,15 +2211,29 @@ public final class QueryRunner {
     ) {
 
         static Outcome error(Throwable t, String message, boolean usesParquet) {
-            return new Outcome(0, false, false, false, false, usesParquet, false, false, EMPTY_FP_MASK, t, t.getClass().getSimpleName(), message);
+            return new Outcome(0, false, false, false, false, usesParquet, false, 0, false, false, EMPTY_FP_MASK, t, t.getClass().getSimpleName(), message);
         }
 
         static Outcome ok(int rowsRead, boolean hasIndex, boolean hasPushedLimit, boolean hasEarlyExitGroupBy, boolean hasBlockingAggregation, boolean usesParquet) {
-            return new Outcome(rowsRead, hasIndex, hasPushedLimit, hasEarlyExitGroupBy, hasBlockingAggregation, usesParquet, false, false, EMPTY_FP_MASK, null, null, null);
+            return new Outcome(rowsRead, hasIndex, hasPushedLimit, hasEarlyExitGroupBy, hasBlockingAggregation, usesParquet, false, 0, false, false, EMPTY_FP_MASK, null, null, null);
         }
 
-        static Outcome ok(int rowsRead, boolean hasIndex, boolean usesParquet, boolean hasFusedHashJoin, boolean hasParallelHashJoin, boolean[] fpColumnMask) {
-            return new Outcome(rowsRead, hasIndex, false, false, false, usesParquet, hasFusedHashJoin, hasParallelHashJoin, fpColumnMask, null, null, null);
+        static Outcome ok(
+                int rowsRead,
+                boolean hasIndex,
+                boolean usesParquet,
+                boolean hasFusedHashJoin,
+                int parallelHashJoinStages,
+                boolean isParallelHashJoinSwapCandidate,
+                boolean isParallelHashJoinSwapped,
+                boolean[] fpColumnMask
+        ) {
+            return new Outcome(rowsRead, hasIndex, false, false, false, usesParquet, hasFusedHashJoin, parallelHashJoinStages,
+                    isParallelHashJoinSwapCandidate, isParallelHashJoinSwapped, fpColumnMask, null, null, null);
+        }
+
+        boolean hasParallelHashJoin() {
+            return parallelHashJoinStages > 0;
         }
     }
 

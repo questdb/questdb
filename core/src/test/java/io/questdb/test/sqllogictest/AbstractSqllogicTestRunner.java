@@ -104,7 +104,10 @@ public abstract class AbstractSqllogicTestRunner extends AbstractBootstrapTest {
                             HTTP_ENABLED.getEnvVarName(), "false",
                             LINE_TCP_ENABLED.getEnvVarName(), "false",
                             TELEMETRY_DISABLE_COMPLETELY.getEnvVarName(), "true",
-                            CAIRO_SQL_PARALLEL_READ_PARQUET_ENABLED.getEnvVarName(), String.valueOf(parallelReadParquet)
+                            CAIRO_SQL_PARALLEL_READ_PARQUET_ENABLED.getEnvVarName(), String.valueOf(parallelReadParquet),
+                            // Every file's INNER and LEFT hash joins run on the parallel hash join,
+                            // which must return what the ordinary plan returns, in its order.
+                            CAIRO_SQL_PARALLEL_HASH_JOIN_ENABLED.getEnvVarName(), "true"
                     );
                     serverMain.start();
                     break;
@@ -133,6 +136,13 @@ public abstract class AbstractSqllogicTestRunner extends AbstractBootstrapTest {
             Assert.assertTrue(Misc.getThreadLocalUtf8Sink().put(path).toString(), FilesFacadeImpl.INSTANCE.exists(path.$()));
             Sqllogictest.run(pgPort, path.$().ptr());
         }
+    }
+
+    /**
+     * The port the PostgreSQL wire server of the test's QuestDB listens on.
+     */
+    protected short getPgPort() {
+        return pgPort;
     }
 
     private static String getTestResourcePath() {
