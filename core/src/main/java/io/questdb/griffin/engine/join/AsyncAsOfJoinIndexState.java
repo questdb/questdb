@@ -46,11 +46,14 @@ import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.sc
  * master row by a galloping search over the slave timestamps, and per join key a forward cursor over
  * the key's index rows that moves up to the position by row numbers, started by a backward lookup.
  * The index readers are the slot's own, see {@code ConcurrentTimeFrameCursor#enableIndexReaders}.
- * A frame's cursors are closed at its end; {@link #close()} frees what a failed frame left open.
+ * The keys' cursors carry on from one master frame of the slot to the next of the same execution,
+ * and start over when the next one's master timestamps are lower; {@link #close()} frees them.
  */
 public class AsyncAsOfJoinIndexState implements QuietCloseable {
     // a frame without native column memory, or without an index reader: the span scan joins it
-    static final long UNSUPPORTED = Long.MIN_VALUE + 1;
+    public static final long UNSUPPORTED = Long.MIN_VALUE + 1;
+    // rows updatePosition() reads one by one before it gallops
+    private static final int LINEAR_PROBE_ROWS = 8;
     private static final RowCursor NO_ROWS = new RowCursor() {
         @Override
         public boolean hasNext() {
@@ -94,7 +97,7 @@ public class AsyncAsOfJoinIndexState implements QuietCloseable {
      * The slave's latest row of the slot's key at or below the master timestamp, Long.MIN_VALUE when
      * there is none, or {@link #UNSUPPORTED}. The master timestamps of a frame ascend.
      */
-    long match(int slot, int indexKey, long masterTimestamp, SqlExecutionCircuitBreaker circuitBreaker) {
+    public long match(int slot, int indexKey, long masterTimestamp, SqlExecutionCircuitBreaker circuitBreaker) {
         if (!updatePosition(masterTimestamp)) {
             return UNSUPPORTED;
         }
@@ -152,7 +155,12 @@ public class AsyncAsOfJoinIndexState implements QuietCloseable {
      * Starts a master frame: the slot's slave cursor and record, and the slave frames' bounds.
      * False when a slave frame has no native column memory: the span scan joins the master frame.
      */
-    boolean of(TimeFrameCursor cursor, PageFrameMemoryRecord slaveRecord, int slaveTimestampIndex, int slaveSymbolIndex, long slaveTsScale, int joinableCount) {
+    public boolean of(TimeFrameCursor cursor, PageFrameMemoryRecord slaveRecord, int slaveTimestampIndex, int slaveSymbolIndex, long slaveTsScale, int joinableCount) {
+        if (this.cursor == cursor && this.slaveRecord == slaveRecord) {
+            // the slot's next frame of the same execution: the keys' cursors carry on when its
+            // master timestamps are not lower than the last position's, see updatePosition()
+            return true;
+        }
         closeKeyCursors();
         this.cursor = cursor;
         this.slaveRecord = slaveRecord;
@@ -316,6 +324,16 @@ public class AsyncAsOfJoinIndexState implements QuietCloseable {
             } else {
                 final long rowHi = frameRowHis.getQuick(frame) - 1;
                 long lo = positionRow;
+                // most gaps are short: the next rows first, one after another
+                final long linearHi = Math.min(lo + LINEAR_PROBE_ROWS, rowHi);
+                while (lo < linearHi && timestampAt(lo + 1) <= masterTimestamp) {
+                    lo++;
+                }
+                if (lo < linearHi) {
+                    positionRow = lo;
+                    positionTimestamp = masterTimestamp;
+                    return true;
+                }
                 long step = 1;
                 while (lo + step <= rowHi && timestampAt(lo + step) <= masterTimestamp) {
                     lo += step;

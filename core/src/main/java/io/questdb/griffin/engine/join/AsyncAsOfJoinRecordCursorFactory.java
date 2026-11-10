@@ -835,6 +835,7 @@ public class AsyncAsOfJoinRecordCursorFactory extends AbstractRecordCursorFactor
         final int masterTimestampIndex = atom.getMasterTimestampIndex();
         final int masterSymbolIndex = atom.getMasterSymbolIndex();
         final long masterTsScale = atom.getMasterTsScale();
+        boolean isJoined = false;
         try {
             if (!state.of(atom.getSlaveTimeFrameCursor(slotId), slaveFrameRecord, helper.getTimestampIndex(), atom.getSlaveSymbolIndex(), atom.getSlaveTsScale(), atom.getJoinableCount())) {
                 return false;
@@ -858,9 +859,13 @@ public class AsyncAsOfJoinRecordCursorFactory extends AbstractRecordCursorFactor
                 }
                 Unsafe.putLong(outAddress + (i << 3), rowId);
             }
+            isJoined = true;
             return true;
         } finally {
-            state.closeKeyCursors();
+            if (!isJoined) {
+                // a frame left half-joined, by a failure or a fallback: the keys start over
+                state.close();
+            }
         }
     }
 
