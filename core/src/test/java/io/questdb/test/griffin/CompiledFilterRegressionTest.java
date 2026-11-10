@@ -7168,6 +7168,53 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSymbolConstantArithmetic() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (sy SYMBOL, id INT, k TIMESTAMP) TIMESTAMP(k)");
+            execute("""
+                    INSERT INTO x VALUES
+                        ('1', 1, 0),
+                        ('2', 2, 1),
+                        ('3', 3, 2),
+                        ('-1', 4, 3),
+                        ('5000000001', 5, 4),
+                        (null, 6, 5),
+                        ('1', 7, 6)
+                    """);
+            final String rowsOf1 = """
+                    id
+                    1
+                    7
+                    """;
+            assertJitScalarAndVectorMatchJava("select id from x where sy = 0 + 1", rowsOf1);
+            assertJitScalarAndVectorMatchJava("select id from x where 0 + 1 = sy", rowsOf1);
+            assertJitScalarAndVectorMatchJava("select id from x where sy = 2 * 1", "id\n2\n");
+            assertJitScalarAndVectorMatchJava("select id from x where sy = (1 + 2) * 3 - 6", "id\n3\n");
+            assertJitScalarAndVectorMatchJava("select id from x where sy = 7 / 2", "id\n3\n");
+            assertJitScalarAndVectorMatchJava("select id from x where sy = -(2 - 1)", "id\n4\n");
+            assertJitScalarAndVectorMatchJava("select id from x where sy = 5_000_000_000 + 1", "id\n5\n");
+            // the INT sum wraps onto the NULL sentinel
+            assertJitScalarAndVectorMatchJava("select id from x where sy = 2_147_483_647 + 1", "id\n6\n");
+            assertJitScalarAndVectorMatchJava("select id from x where sy != 0 + 1", """
+                    id
+                    2
+                    3
+                    4
+                    5
+                    6
+                    """);
+            assertJitScalarAndVectorMatchJava("select id from x where sy = 0 + 1 or sy = 1 + 2", """
+                    id
+                    1
+                    3
+                    7
+                    """);
+            assertJitScalarAndVectorMatchJavaOnEmptyResult("select id from x where sy = 4 * 10", "id\n");
+            assertJitMatchesJava("select id from x where sy = 1 / 0", false, "id\n6\n");
+        });
+    }
+
+    @Test
     public void testSymbolKnownConstant() throws Exception {
         // The column order is important here, since we want
         // query and table column indexes to be different.
