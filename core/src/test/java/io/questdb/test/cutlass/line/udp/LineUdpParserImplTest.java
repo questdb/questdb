@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.line.udp;
 
+import com.sun.management.ThreadMXBean;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
@@ -35,8 +36,11 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cutlass.line.udp.CachedCharSequence;
+import io.questdb.cutlass.line.udp.CharSequenceCache;
 import io.questdb.cutlass.line.udp.DefaultLineUdpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.LineUdpLexer;
+import io.questdb.cutlass.line.udp.LineUdpParser;
 import io.questdb.cutlass.line.udp.LineUdpParserImpl;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.std.Chars;
@@ -1018,6 +1022,82 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRepeatedColumnInLineThatCreatesTableComparesOnlyRepeats() throws Exception {
+        // the parser reads a kept name back only when its hash matches the new name's, so a line of 1,000
+        // different names and 3 repeats reads 3 names, not every kept name for each new one, and allocates
+        // nothing once warm; the empty value of a new column drops the line, so each copy takes the same path
+        assertMemoryLeak(() -> {
+            final StringBuilder sb = new StringBuilder("nt ");
+            for (int i = 0; i < 1_000; i++) {
+                sb.append('c').append(i).append("=1.5,");
+            }
+            sb.append("C0=2.5,C500=2.5,C999=2.5,e=\n");
+            final byte[] bytes = sb.toString().getBytes(Files.UTF_8);
+            final long mem = Unsafe.malloc(bytes.length, MemoryTag.NATIVE_DEFAULT);
+            try (
+                    LineUdpParserImpl parser = new LineUdpParserImpl(engine, new DefaultLineUdpReceiverConfiguration());
+                    LineUdpLexer lexer = new LineUdpLexer(4096);
+                    TestUtils.ThreadMetricsScope<ThreadMXBean> scope = TestUtils.threadAllocationScope()
+            ) {
+                for (int i = 0; i < bytes.length; i++) {
+                    Unsafe.putByte(mem + i, bytes[i]);
+                }
+                final CacheReadCountingParser countingParser = new CacheReadCountingParser(parser);
+                lexer.withParser(countingParser);
+                lexer.parse(mem, mem + bytes.length);
+                Assert.assertEquals(3, countingParser.reads);
+
+                final ThreadMXBean threadMXBean = scope.getBean();
+                final long threadId = Thread.currentThread().threadId();
+                final long allocatedBefore = threadMXBean.getThreadAllocatedBytes(threadId);
+                for (int i = 0; i < 10_000; i++) {
+                    lexer.parse(mem, mem + bytes.length);
+                }
+                final long allocated = threadMXBean.getThreadAllocatedBytes(threadId) - allocatedBefore;
+                Assert.assertEquals(3 + 10_000 * 3, countingParser.reads);
+                // a 16-byte object per line would add up to 160 KB
+                Assert.assertTrue("10,000 lines allocated " + allocated + " bytes", allocated < 64 * 1024);
+                Assert.assertNull(engine.getTableTokenIfExists("nt"));
+            } finally {
+                Unsafe.free(mem, bytes.length, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testRepeatedColumnInLineThatCreatesTableIgnoresCaseOfAnyLetter() throws Exception {
+        // names match ignoring the case of any letter, as the table's column names do; the two Cyrillic
+        // names, a+ya and b+a, differ but have the same hash, so both are kept and each is repeated in upper
+        // case; the ten names after them make the parser's set of names grow while it holds the pair
+        assertThat(
+                """
+                        a\u044F\tb\u0430\t\u00E9\tc0\tc1\tc2\tc3\tc4\tc5\tc6\tc7\tc8\tc9\ttimestamp
+                        1.5\t2.5\t3.5\t0.5\t1.5\t2.5\t3.5\t4.5\t5.5\t6.5\t7.5\t8.5\t9.5\t1970-01-01T00:00:01.000000Z
+                        """,
+                "nt a\u044F=1.5,b\u0430=2.5,\u00E9=3.5,c0=0.5,c1=1.5,c2=2.5,c3=3.5,c4=4.5,c5=5.5,c6=6.5,c7=7.5,"
+                        + "c8=8.5,c9=9.5,B\u0410=-1.5,\u00C9=-1.5,A\u042F=-1.5 1000000000\n",
+                "nt"
+        );
+    }
+
+    @Test
+    public void testRepeatedColumnInLineThatCreatesWideTable() throws Exception {
+        // 24 names make the parser's set of names grow twice; repeats, in upper case, of the first name, of
+        // the names on both sides of each growth and of the last name keep the first value
+        final StringBuilder expected = new StringBuilder();
+        final StringBuilder values = new StringBuilder();
+        final StringBuilder line = new StringBuilder("nt ");
+        for (int i = 0; i < 24; i++) {
+            expected.append('c').append(i).append('\t');
+            values.append(i).append(".5\t");
+            line.append('c').append(i).append('=').append(i).append(".5,");
+        }
+        expected.append("timestamp\n").append(values).append("1970-01-01T00:00:01.000000Z\n");
+        line.append("C0=-1.5,C7=-1.5,C8=-1.5,C15=-1.5,C16=-1.5,C23=-1.5 1000000000\n");
+        assertThat(expected.toString(), line.toString(), "nt");
+    }
+
+    @Test
     public void testRepeatedColumnKeepsFirstValue() throws Exception {
         // a line that names a column twice keeps the first value and ignores the repeat, as ILP over TCP
         // does, for every kind of value, for a column the line adds and for a repeat of the wrong type; a
@@ -1702,6 +1782,39 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         refreshTablesInBaseEngine();
         try (TableReader reader = newOffPoolReader(configuration, "tab")) {
             Assert.assertEquals(colType, reader.getMetadata().getColumnType("f5"));
+        }
+    }
+
+    // passes the lexer's events to a parser and counts the parser's reads of earlier tokens of the line
+    private static class CacheReadCountingParser implements LineUdpParser {
+        private final CharSequenceCache countingCache;
+        private final LineUdpParser parser;
+        private CharSequenceCache cache;
+        private long reads;
+
+        private CacheReadCountingParser(LineUdpParser parser) {
+            this.parser = parser;
+            this.countingCache = address -> {
+                reads++;
+                return cache.get(address);
+            };
+        }
+
+        @Override
+        public void onError(int position, int state, int code) {
+            parser.onError(position, state, code);
+        }
+
+        @Override
+        public void onEvent(CachedCharSequence token, int type, CharSequenceCache cache) {
+            this.cache = cache;
+            parser.onEvent(token, type, countingCache);
+        }
+
+        @Override
+        public void onLineEnd(CharSequenceCache cache) {
+            this.cache = cache;
+            parser.onLineEnd(countingCache);
         }
     }
 }

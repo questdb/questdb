@@ -42,6 +42,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
+import io.questdb.std.Hash;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
@@ -83,6 +84,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     private final CairoEngine engine;
     private final IntList valueTypeByColIdx = new IntList(); // what getValueType() made of each value; putValue reads the spelling from it
     private final FieldValueParser MY_NEW_TAG_VALUE = this::parseTagValueNewTable;
+    private final ColumnNameSet newTableNames = new ColumnNameSet(); // the names the line that creates a table has kept
     private final Path path = new Path();
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
     private final byte timestampUnit;
@@ -411,18 +413,6 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         return false;
     }
 
-    private boolean isNewTableColumnName(CharSequence name, CharSequenceCache cache) {
-        if (Chars.equalsIgnoreCase(name, DESIGNATED_TIMESTAMP_NAME)) {
-            return true;
-        }
-        for (int i = 0, n = columnNameType.size(); i < n; i += 2) {
-            if (Chars.equalsIgnoreCase(name, cache.get(columnNameType.getQuick(i)))) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     private void parseFieldName(CachedCharSequence token, CharSequenceCache cache) {
         columnIndex = metadata.getColumnIndexQuiet(token);
         if (columnIndex > -1) {
@@ -440,7 +430,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
             switchModeToSkipLine();
             return;
         }
-        if (isNewTableColumnName(token, cache)) {
+        if (Chars.equalsIgnoreCase(token, DESIGNATED_TIMESTAMP_NAME) || !newTableNames.add(token, cache, currentLine)) {
             // the line names a column again, or names the designated timestamp: keep the first value, as
             // for a table that exists
             isNewTableValueSkipped = true;
@@ -710,6 +700,65 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     private static class CacheEntry {
         private int state = 0;
         private TableWriter writer;
+    }
+
+    // The names the line that creates a table has kept, to find a name the line repeats without comparing it
+    // with every kept name. The set keeps a name as its cache address, an offset into the lexer's buffer, which
+    // holds the current line only, and matches names ignoring case, as the table's column names do. A slot an
+    // earlier line filled reads as free, so each line starts with an empty set and nothing has to clear it.
+    private static class ColumnNameSet {
+        private static final int INITIAL_CAPACITY = 16;
+        private long[] addresses = new long[INITIAL_CAPACITY];
+        private int[] hashes = new int[INITIAL_CAPACITY];
+        private long line; // the line whose names the set holds
+        private long[] lines = new long[INITIAL_CAPACITY]; // the line that filled each slot
+        private int mask = INITIAL_CAPACITY - 1;
+        private int size;
+
+        // adds the name unless the line has added it already; returns whether it added the name
+        boolean add(CachedCharSequence name, CharSequenceCache cache, long currentLine) {
+            if (currentLine != line) {
+                line = currentLine;
+                size = 0;
+            }
+            final int hash = Chars.lowerCaseHashCode(name);
+            int slot = Hash.spread(hash) & mask;
+            while (lines[slot] == line) {
+                if (hashes[slot] == hash && Chars.equalsIgnoreCase(name, cache.get(addresses[slot]))) {
+                    return false;
+                }
+                slot = (slot + 1) & mask;
+            }
+            addresses[slot] = name.getCacheAddress();
+            hashes[slot] = hash;
+            lines[slot] = line;
+            if (++size >= lines.length >> 1) {
+                grow();
+            }
+            return true;
+        }
+
+        private void grow() {
+            final long[] oldAddresses = addresses;
+            final int[] oldHashes = hashes;
+            final long[] oldLines = lines;
+            final int capacity = oldLines.length << 1;
+            addresses = new long[capacity];
+            hashes = new int[capacity];
+            lines = new long[capacity];
+            mask = capacity - 1;
+            for (int i = 0, n = oldLines.length; i < n; i++) {
+                if (oldLines[i] == line) {
+                    int slot = Hash.spread(oldHashes[i]) & mask;
+                    while (lines[slot] == line) {
+                        slot = (slot + 1) & mask;
+                    }
+                    addresses[slot] = oldAddresses[i];
+                    hashes[slot] = oldHashes[i];
+                    lines[slot] = line;
+                }
+            }
+        }
     }
 
     private class TableStructureAdapter implements TableStructure {
