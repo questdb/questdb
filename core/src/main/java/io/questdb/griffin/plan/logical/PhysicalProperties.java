@@ -286,7 +286,7 @@ public final class PhysicalProperties {
                 case WINDOW, VIRTUAL -> null;
                 case WINDOW_JOIN -> windowJoinTableToken((WindowJoinPlan) project.getChild());
                 case SELECTION ->
-                        PlanToFactoryRules.isIdentityProjection(project) ? tableToken(project.getChild()) : null;
+                        PlanToFactoryRules.isPassThroughProjection(project) ? tableToken(project.getChild()) : null;
             };
             case SortPlan sort ->
                     sort.getAlgorithm() == SortPlan.Algorithm.INPUT_ORDER ? tableToken(sort.getChild()) : null;
@@ -984,7 +984,7 @@ public final class PhysicalProperties {
     private static TableToken sortedLimitTableToken(LogicalPlan plan, LimitPlan limit) {
         if (plan instanceof ProjectPlan project) {
             final TableToken input = sortedLimitTableToken(project.getChild(), limit);
-            return PlanToFactoryRules.isIdentityProjection(project) ? input : null;
+            return PlanToFactoryRules.isPassThroughProjection(project) ? input : null;
         }
         final SortPlan sort = (SortPlan) plan;
         return switch (sort.getAlgorithm()) {

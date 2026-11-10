@@ -49,6 +49,7 @@ import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.PlanTable;
 import io.questdb.griffin.plan.logical.ScanPlan;
+import io.questdb.griffin.plan.logical.UniqueColumnNames;
 import io.questdb.std.BitSet;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
@@ -83,6 +84,7 @@ final class GenerationFrame implements Closeable, Mutable {
     final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
     final ListColumnFilter listColumnFilterA = new ListColumnFilter();
     final ListColumnFilter listColumnFilterB = new ListColumnFilter();
+    final UniqueColumnNames projectionNames = new UniqueColumnNames();
     final GenericRecordMetadata projectionScopeMetadata = new GenericRecordMetadata();
     final ParquetPushdownExtractor pushdown = new ParquetPushdownExtractor(expressions, intListB);
     final OutputSchema schema = new OutputSchema();
@@ -198,6 +200,7 @@ final class GenerationFrame implements Closeable, Mutable {
         sharedConsumers.clear();
         sharedFactories.clear();
         sharedPlans.clear();
+        projectionNames.clear();
         projectionScopeMetadata.clear();
         windowGroups.clear();
         windowMetadata.clear();

@@ -172,7 +172,7 @@ public abstract sealed class GroupingPlan extends UnaryPlan permits AggregatePla
     }
 
     /**
-     * True when an otherwise identity projection above keeps a grouping key's GROUP BY spelling
+     * True when an otherwise pass-through projection above keeps a grouping key's GROUP BY spelling
      * where the SELECT list names it in a different case.
      */
     public boolean hasKeySpellingKept() {

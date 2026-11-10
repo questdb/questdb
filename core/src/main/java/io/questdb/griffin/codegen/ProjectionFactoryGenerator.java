@@ -32,6 +32,7 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.FunctionInstantiator;
 import io.questdb.griffin.FunctionResolver;
 import io.questdb.griffin.PriorityMetadata;
@@ -61,6 +62,7 @@ import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.SampleByPlan;
 import io.questdb.griffin.plan.logical.SetOperationPlan;
 import io.questdb.griffin.plan.logical.SortPlan;
+import io.questdb.griffin.plan.logical.UniqueColumnNames;
 import io.questdb.griffin.plan.logical.WindowJoinPlan;
 import io.questdb.griffin.plan.logical.WindowPlan;
 import io.questdb.griffin.plan.logical.WindowSpec;
@@ -70,10 +72,12 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 final class ProjectionFactoryGenerator {
+    private final CharacterStore characterStore;
     private final FunctionInstantiator functionInstantiator;
 
-    ProjectionFactoryGenerator(FunctionInstantiator functionInstantiator) {
+    ProjectionFactoryGenerator(FunctionInstantiator functionInstantiator, CharacterStore characterStore) {
         this.functionInstantiator = functionInstantiator;
+        this.characterStore = characterStore;
     }
 
     private static boolean hasProjectionReferences(ProjectPlan project) {
@@ -86,14 +90,14 @@ final class ProjectionFactoryGenerator {
     }
 
     /**
-     * Whether the plan's answer to the identity of the column projection must match the generator's: everywhere but
-     * over a join of several inputs, directly or through nodes that forward its columns or projections that pass them
-     * through, whose factories name its columns qualifier.name, which the plan does not model; no planner decision
-     * reads that answer differently.
+     * Whether a projection the plan passes through must be one the generator elides: everywhere but over a join of
+     * several inputs, directly or through nodes that forward its columns or projections that pass them through, whose
+     * factories name its columns qualifier.name, which the plan does not model; no planner decision reads the plan's
+     * answer differently.
      */
-    private static boolean isPlannedIdentityChecked(ProjectPlan project) {
+    private static boolean isPlannedPassThroughChecked(ProjectPlan project) {
         LogicalPlan input = project.getChild();
-        while (input instanceof ForwardingPlan || input instanceof ProjectPlan inner && PlanToFactoryRules.isIdentityProjection(inner)) {
+        while (input instanceof ForwardingPlan || input instanceof ProjectPlan inner && PlanToFactoryRules.isPassThroughProjection(inner)) {
             input = input.inputAt(0);
         }
         return !LogicalPlans.isComputedProjection(project) && !(input instanceof JoinPlan join && join.getOrderedInputs().size() > 1);
@@ -136,18 +140,6 @@ final class ProjectionFactoryGenerator {
             for (int j = 0, m = input.getColumnCount(); j < m; j++) {
                 final int columnId = input.getColumnId(j);
                 frame.setReferenceCount(columnId, isPassThrough ? Math.max(1, frame.getReferenceCount(columnId)) : 1);
-            }
-        }
-    }
-
-    private static String uniqueColumnName(RecordMetadata metadata, CharSequence name) {
-        if (metadata.getColumnIndexQuiet(name) < 0) {
-            return Chars.toString(name);
-        }
-        for (int i = 1; ; i++) {
-            final String candidate = name + Integer.toString(i);
-            if (metadata.getColumnIndexQuiet(candidate) < 0) {
-                return candidate;
             }
         }
     }
@@ -197,6 +189,8 @@ final class ProjectionFactoryGenerator {
                 scope = input;
                 scopeMetadata = null;
             }
+            final UniqueColumnNames names = frame.projectionNames;
+            names.clear();
             for (int i = 0; i < count; i++) {
                 final BoundExpression expression = project.getExpressions().getQuick(i);
                 Function function;
@@ -227,7 +221,7 @@ final class ProjectionFactoryGenerator {
                 }
                 functions.add(function);
                 final TableColumnMetadata columnMetadata = new TableColumnMetadata(
-                        uniqueColumnName(metadata, project.getOutput().getColumnName(i)), project.getOutput().getColumnType(i),
+                        Chars.toString(names.take(project.getOutput().getColumnName(i), characterStore)), project.getOutput().getColumnType(i),
                         IndexType.NONE, 0, project.hasUpdateConversions()
                         ? function instanceof SymbolFunction symbol && symbol.isSymbolTableStatic()
                         : columnIndex >= 0 && base.getMetadata().isSymbolTableStatic(columnIndex),
@@ -379,9 +373,9 @@ final class ProjectionFactoryGenerator {
         final int timestampIndex;
         try {
             timestampIndex = PlanToFactoryRules.projectedTimestampIndex(project, base.getMetadata().getTimestampIndex());
-            if (ParanoiaState.PLAN_PARANOIA_MODE && isPlannedIdentityChecked(project)
-                    && PlanToFactoryRules.isIdentityProjection(project) != PlanToFactoryRules.isIdentityProjection(project, base.getMetadata(), timestampIndex, base.getMetadata().getTimestampIndex())) {
-                throw new AssertionError("planned identity projection differs from the generator's");
+            if (ParanoiaState.PLAN_PARANOIA_MODE && isPlannedPassThroughChecked(project)
+                    && PlanToFactoryRules.isPassThroughProjection(project) != PlanToFactoryRules.isProjectionElided(project, base.getMetadata(), timestampIndex, base.getMetadata().getTimestampIndex())) {
+                throw new AssertionError("planned pass-through projection differs from the generator's elision");
             }
         } catch (Throwable th) {
             Misc.free(base, th);
@@ -407,7 +401,7 @@ final class ProjectionFactoryGenerator {
         final IntList mapping;
         final GenericRecordMetadata metadata;
         try {
-            if (PlanToFactoryRules.isIdentityProjection(project, base.getMetadata(), timestampIndex, base.getMetadata().getTimestampIndex())) {
+            if (PlanToFactoryRules.isProjectionElided(project, base.getMetadata(), timestampIndex, base.getMetadata().getTimestampIndex())) {
                 return base;
             }
             mapping = new IntList(project.getExpressions().size());

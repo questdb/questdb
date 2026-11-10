@@ -1493,11 +1493,11 @@ final class OperatorPlanning implements Mutable {
 
     /**
      * The table scan the SAMPLE BY, which nothing fills, reads the first and last values of its buckets from the index
-     * of: under a fused filter or identity projections, the scan of the index of a single SYMBOL key without a
+     * of: under a fused filter or pass-through projections, the scan of the index of a single SYMBOL key without a
      * residual, which the SAMPLE BY keys by that symbol or by none; null when the SAMPLE BY reads no such scan.
      */
     static ScanPlan firstLastIndexScan(SampleByPlan sample, LogicalPlan base) {
-        while (base instanceof ProjectPlan project && PlanToFactoryRules.isIdentityProjection(project)) {
+        while (base instanceof ProjectPlan project && PlanToFactoryRules.isPassThroughProjection(project)) {
             base = project.getChild();
         }
         if (base instanceof FilterPlan filter && PlanToFactoryRules.isFusedFilter(filter)) {

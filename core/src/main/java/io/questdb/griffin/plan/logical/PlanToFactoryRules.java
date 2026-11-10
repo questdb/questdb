@@ -120,7 +120,7 @@ public final class PlanToFactoryRules {
      */
     public static LogicalPlan generatedPlan(LogicalPlan plan) {
         while (true) {
-            if (plan instanceof ProjectPlan project && isIdentityProjection(project)) {
+            if (plan instanceof ProjectPlan project && isPassThroughProjection(project)) {
                 plan = project.getChild();
             } else if (plan instanceof FilterPlan filter && !isFusedFilter(filter)
                     && filter.getPredicate() instanceof ConstantExpression constant && constant.getLongValue() != 0) {
@@ -270,25 +270,33 @@ public final class PlanToFactoryRules {
     }
 
     /**
-     * True when the generator builds no factory for the projection over the factory of its input, see
-     * {@link #isIdentityProjection(ProjectPlan, RecordMetadata, int, int)}, whose columns operator planning takes to be
-     * the input's output schema. Over a join of several inputs, or a node that forwards its columns, such as a filter
-     * or a sort over one, the factory names its columns qualifier.name, so the generator builds a selection where this
-     * answers true; the planner reads the answer only to look through the projection for a filter, a scan or page
-     * frames, which such a join exposes no more than the selection does.
+     * True when the projection passes the planned columns of its input through: it selects every input column, in
+     * order, under the name and type the input's output schema gives it, and designates the input's timestamp. The
+     * planner looks through such a projection for a filter, a scan or page frames. It is a fact of the plan, not of the
+     * factories: the factory of a join of several inputs, directly or under nodes that forward its columns, names
+     * them qualifier.name, so the generator keeps a selection over it, see {@link #isProjectionElided}; such a join
+     * exposes a filter, a scan or page frames no more than the selection does.
      */
-    public static boolean isIdentityProjection(ProjectPlan project) {
-        return isIdentityProjection(project, null, PhysicalProperties.timestampIndex(project),
+    public static boolean isPassThroughProjection(ProjectPlan project) {
+        return isColumnPassThrough(project, null, PhysicalProperties.timestampIndex(project),
                 PhysicalProperties.timestampIndex(project.getChild()));
     }
 
     /**
-     * True when the generator builds no factory for the projection: it selects every input column, in order, under
-     * the name and type the input's factory gives it, {@code layout}, or the input's output schema when null, and
-     * designates the timestamp the input's factory designates. A SELECT list over GROUP BY keeps the key spelling when
-     * it only changes the name case.
+     * True when the generator builds no factory for the projection over the factory whose columns {@code layout}
+     * lists: it selects every column of the factory, in order, under the name and type the factory gives it, and
+     * designates the timestamp the factory designates.
      */
-    public static boolean isIdentityProjection(ProjectPlan project, @Nullable RecordMetadata layout, int timestampIndex, int inputTimestampIndex) {
+    public static boolean isProjectionElided(ProjectPlan project, RecordMetadata layout, int timestampIndex, int inputTimestampIndex) {
+        return isColumnPassThrough(project, layout, timestampIndex, inputTimestampIndex);
+    }
+
+    /**
+     * True when the projection selects every column of {@code layout}, or of the input's output schema when null, in
+     * order and under its name and type, designating the timestamp at {@code inputTimestampIndex}. A SELECT list over
+     * GROUP BY keeps the key spelling when it only changes the name case.
+     */
+    private static boolean isColumnPassThrough(ProjectPlan project, @Nullable RecordMetadata layout, int timestampIndex, int inputTimestampIndex) {
         if (projectionFactory(project) != ProjectionFactory.SELECTION) {
             return false;
         }

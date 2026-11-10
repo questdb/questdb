@@ -264,36 +264,6 @@ public class PhysicalPropertiesTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testIdentityProjectionOverJoinKeepsPlanNames() throws Exception {
-        assertMemoryLeak(() -> {
-            createTable();
-            execute("CREATE TABLE u (ts2 TIMESTAMP, y LONG) TIMESTAMP(ts2) PARTITION BY DAY");
-            execute("INSERT INTO u VALUES ('2024-01-01T00:30:00.000000Z', 10), ('2024-01-02T00:30:00.000000Z', 20)");
-            final String sql = "SELECT * FROM t a ASOF JOIN u b";
-            try (
-                    SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
-                    RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()
-            ) {
-                final ProjectPlan project = find(compiler.getPlanForTesting(), ProjectPlan.class);
-                Assert.assertTrue(project.getChild() instanceof JoinPlan);
-                Assert.assertTrue(PlanToFactoryRules.isIdentityProjection(project));
-                Assert.assertTrue(factory.getBaseFactory() instanceof SelectedRecordCursorFactory);
-            }
-            assertQuery(sql)
-                    .timestamp("ts")
-                    .noRandomAccess()
-                    .expectSize()
-                    .returns("""
-                            ts\tx\tts2\ty
-                            2024-01-01T00:00:00.000000Z\t1\t\tnull
-                            2024-01-01T01:00:00.000000Z\t2\t2024-01-01T00:30:00.000000Z\t10
-                            2024-01-01T02:00:00.000000Z\t3\t2024-01-01T00:30:00.000000Z\t10
-                            2024-01-02T00:00:00.000000Z\t4\t2024-01-01T00:30:00.000000Z\t10
-                            """);
-        });
-    }
-
-    @Test
     public void testIndexAccessPathDeliversKeyOrder() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE s (ts TIMESTAMP, sym SYMBOL INDEX, x LONG) TIMESTAMP(ts) PARTITION BY NONE");
@@ -509,6 +479,36 @@ public class PhysicalPropertiesTest extends AbstractCairoTest {
             Assert.assertTrue(padded.recordCursorSupportsLongTopK(1));
             Assert.assertFalse(padded.recordCursorSupportsLongTopK(2));
         }
+    }
+
+    @Test
+    public void testPassThroughProjectionOverJoinIsNotElided() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable();
+            execute("CREATE TABLE u (ts2 TIMESTAMP, y LONG) TIMESTAMP(ts2) PARTITION BY DAY");
+            execute("INSERT INTO u VALUES ('2024-01-01T00:30:00.000000Z', 10), ('2024-01-02T00:30:00.000000Z', 20)");
+            final String sql = "SELECT * FROM t a ASOF JOIN u b";
+            try (
+                    SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                    RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()
+            ) {
+                final ProjectPlan project = find(compiler.getPlanForTesting(), ProjectPlan.class);
+                Assert.assertTrue(project.getChild() instanceof JoinPlan);
+                Assert.assertTrue(PlanToFactoryRules.isPassThroughProjection(project));
+                Assert.assertTrue(factory.getBaseFactory() instanceof SelectedRecordCursorFactory);
+            }
+            assertQuery(sql)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            ts\tx\tts2\ty
+                            2024-01-01T00:00:00.000000Z\t1\t\tnull
+                            2024-01-01T01:00:00.000000Z\t2\t2024-01-01T00:30:00.000000Z\t10
+                            2024-01-01T02:00:00.000000Z\t3\t2024-01-01T00:30:00.000000Z\t10
+                            2024-01-02T00:00:00.000000Z\t4\t2024-01-01T00:30:00.000000Z\t10
+                            """);
+        });
     }
 
     @Test
