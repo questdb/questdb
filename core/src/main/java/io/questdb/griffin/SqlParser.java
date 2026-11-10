@@ -301,8 +301,10 @@ public class SqlParser {
     // lookupExpiryPredicate), so the keep-filter rewrite can null-safely flip only timestamp comparisons.
     private CharSequence expiryTimestampColumnName;
     private boolean isParsingExpiryPredicate;
-    // Whether viewReaderDecls set an OVERRIDABLE variable of a view the parser has expanded since it started on the
-    // outermost view it is expanding, see SqlExecutionContext.TableFunctionView.isReadOverridden().
+    // Whether a value of viewReaderDecls has reached a view the parser has expanded since it started on the outermost
+    // view of the current override scope: the declarations set an OVERRIDABLE variable of the view, or the body of
+    // the view reads a value of theirs, under such a variable or under a name the view does not declare, see
+    // RewriteDeclaredVariablesInExpressionVisitor and SqlExecutionContext.TableFunctionView.isReadOverridden().
     private boolean isViewReadOverridden;
     // For each table (by id) whose EXPIRE ROWS policy this parse read straight from the table metadata while a
     // SET/DROP EXPIRE was still in flight: the metadata version that read saw. The optimiser compares it
@@ -320,9 +322,14 @@ public class SqlParser {
     private boolean subQueryMode = false;
     // Number of view bodies compileViewQuery() is expanding at the current parse position.
     private int viewExpansionDepth;
-    // The declarations of the statement where it reads the outermost view compileViewQuery() is expanding: a value
+    // The declarations of the statement where it reads the outermost view of the current override scope: a value
     // they give a variable that view, or a view it reads, declares OVERRIDABLE replaces the value of the definition.
+    // Null while the parser expands no view of the scope.
     private LowerCaseCharSequenceObjHashMap<ExpressionNode> viewReaderDecls;
+    // The view expansion depth at which a view starts an override scope of its own, which takes the declarations
+    // where it is read as viewReaderDecls: 0, the statement, or the depth at which parseDeclaredQuery() parses a
+    // copy of a sub-query the statement declared, which reads its views as the statement does.
+    private int viewReaderScopeDepth;
     // Where the statement's text reads the outermost view compileViewQuery() is expanding.
     private int viewReferencePosition;
     // The body parseViewSql() last parsed, for a caller that inspects it before the statement runs.
@@ -1403,6 +1410,7 @@ public class SqlParser {
         isViewReadOverridden = false;
         viewExpansionDepth = 0;
         viewReaderDecls = null;
+        viewReaderScopeDepth = 0;
         viewReferencePosition = 0;
         viewTextLength = 0;
     }
@@ -1501,10 +1509,12 @@ public class SqlParser {
 
         // Track that we're compiling this view
         viewsBeingCompiled.add(viewName);
-        if (viewExpansionDepth++ == 0) {
-            viewReferencePosition = viewPosition;
+        if (viewExpansionDepth == viewReaderScopeDepth) {
             viewReaderDecls = model.getDecls();
             isViewReadOverridden = false;
+        }
+        if (viewExpansionDepth++ == 0) {
+            viewReferencePosition = viewPosition;
         }
         try {
             final IQueryModel viewModel = viewDefinition.isAudited()
@@ -1519,7 +1529,7 @@ public class SqlParser {
         } finally {
             // the body's parse moved the digit from 1 to where it is now
             digit = readDigit + digit - 1;
-            if (--viewExpansionDepth == 0) {
+            if (--viewExpansionDepth == viewReaderScopeDepth) {
                 viewReaderDecls = null;
             }
             viewsBeingCompiled.popLast();
@@ -1538,10 +1548,12 @@ public class SqlParser {
         } finally {
             idleViewLexers.add(viewLexer);
         }
-        // The views the body reads were expanded with it, so the outermost view knows whether the statement sets a
-        // variable of any of them. The scans of the body read through the outermost view, see setViewNameExpr().
-        // Every branch of a set operation takes the statement's value of a variable its own DECLARE block marks
-        // OVERRIDABLE, see parseDml(), so the variables of every branch count, not only those of the first.
+        // The views the body reads were expanded with it, and the body has read the values of the statement's
+        // declarations it reads, see RewriteDeclaredVariablesInExpressionVisitor, so the outermost view knows whether
+        // the statement sets a variable of any of them. The scans of the body read through the outermost view, see
+        // setViewNameExpr(). Every branch of a set operation takes the statement's value of a variable its own
+        // DECLARE block marks OVERRIDABLE, see parseDml(), so the variables of every branch count, not only those of
+        // the first.
         for (IQueryModel branch = viewModel; branch != null && !isViewReadOverridden; branch = branch.getUnionModel()) {
             if (isAnyDeclared(viewReaderDecls, branch.getOverridableDecls())) {
                 isViewReadOverridden = true;
@@ -5920,9 +5932,26 @@ public class SqlParser {
         // digit the read found comes back however the parse ends.
         final int readDigit = digit;
         digit = declaredQueryDigits.getQuick(index);
+        // A sub-query the statement declared reads views as the statement does, wherever a view reads
+        // the copy: a view the copy expands starts an override scope of its own, whose declarations are
+        // the copy's where it reads the view, see isViewReadOverridden. The scope of the read comes back
+        // however the parse ends. A sub-query a view declared stays in the scope of that view.
+        final boolean isStatementQuery = viewDepth == 0;
+        final int readViewReaderScopeDepth = viewReaderScopeDepth;
+        final LowerCaseCharSequenceObjHashMap<ExpressionNode> readViewReaderDecls = viewReaderDecls;
+        final boolean wasViewReadOverridden = isViewReadOverridden;
+        if (isStatementQuery) {
+            viewReaderScopeDepth = viewExpansionDepth;
+            viewReaderDecls = null;
+        }
         try {
             return parseAsSubQuery(queryLexer, declaredQueryWithClauses.getQuick(index), false, sqlParserCallback, declaredQueryModels.getQuick(index).getDecls(), false);
         } finally {
+            if (isStatementQuery) {
+                viewReaderScopeDepth = readViewReaderScopeDepth;
+                viewReaderDecls = readViewReaderDecls;
+                isViewReadOverridden = wasViewReadOverridden;
+            }
             digit = readDigit;
             idleViewLexers.add(queryLexer);
             subQueryMode = isSubQueryMode;
@@ -10552,7 +10581,14 @@ public class SqlParser {
                 // one before twice double the copies with every level, in a pool that keeps them
                 // until clear(). The parser refuses the reference whose copy would take the
                 // statement past its budget, before copying anything.
-                final ExpressionNode value = decls.get(node.token).rhs;
+                final ExpressionNode decl = decls.get(node.token);
+                if (viewReaderDecls != null && viewReaderDecls.get(node.token) == decl) {
+                    // The body of a view the parser is expanding reads a value the statement declared: under a
+                    // variable the view declares OVERRIDABLE, or under a name the view does not declare, which
+                    // the view's body takes from the statement unchecked, see QueryModel.copyDeclsFrom().
+                    isViewReadOverridden = true;
+                }
+                final ExpressionNode value = decl.rhs;
                 final int countedLo = declaredVariableNodeCount;
                 countDeclaredValueNodes(value);
                 if (declaredVariableNodeCount > MAX_DECLARED_VARIABLE_NODES) {

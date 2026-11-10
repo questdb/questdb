@@ -789,6 +789,31 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
     }
 
     @Test
+    public void testOverridableVariableSetInDeclaredSubQueryAnotherViewReads() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            execute("CREATE VIEW v_alias AS (DECLARE OVERRIDABLE @c := 0 SELECT l.k, @c AS v FROM (SELECT u.ts, u.k, u.a, u.b FROM x u) l)");
+            drainWalAndViewQueues();
+            Assert.assertEquals("{x=[?a, ?b, ?ts, k]}", dependenciesOf("v_alias"));
+            // The statement sets @c of v_alias in a sub-query it declares, and reads the sub-query before the view v
+            // does, so v reads a copy of the sub-query. The copy reads v_alias as the statement does, setting @c.
+            final String viewSql = "DECLARE OVERRIDABLE @ids := (SELECT 'none'::SYMBOL AS k) SELECT k FROM y WHERE k IN @ids";
+            assertReads(viewSql, "{y=[k]}", "DECLARE @ids := (SELECT k FROM v_alias) SELECT k FROM (SELECT (k IN @ids) AS f, k FROM v)");
+            assertOverrideDenied(
+                    viewSql,
+                    "DECLARE @ids := (SELECT k FROM (DECLARE @c := b SELECT k, v FROM v_alias) WHERE v > 3) SELECT k FROM (SELECT (k IN @ids) AS f, k FROM v)",
+                    "permission denied [table=x, columns=b]"
+            );
+            // v reads the sub-query twice, and the read of the second output takes the copy
+            assertOverrideDenied(
+                    "DECLARE OVERRIDABLE @ids := (SELECT 'none'::SYMBOL AS k) SELECT (k IN @ids) AS f1, (k IN @ids) AS f2 FROM y",
+                    "DECLARE @ids := (SELECT k FROM (DECLARE @c := ts SELECT k, v FROM v_alias) WHERE v > '1970-01-01T00:30') SELECT f2 FROM v",
+                    "permission denied [table=x, columns=ts]"
+            );
+        });
+    }
+
+    @Test
     public void testSampleBy() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
@@ -839,6 +864,20 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
             createTables();
             assertDependencies("SELECT t.a FROM x t UNION ALL SELECT u.c FROM y u", "{x=[a], y=[c]}");
             assertDependencies("SELECT t.k FROM x t EXCEPT SELECT u.k FROM y u WHERE u.d > 6", "{x=[k], y=[d, k]}");
+        });
+    }
+
+    @Test
+    public void testStatementValueReadUnderNameTheViewDoesNotDeclare() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE xc (ts TIMESTAMP, k SYMBOL, a LONG, b LONG, \"@c\" LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO xc VALUES (0, 'k1', 1, 2, 7)");
+            drainWalQueue();
+            // The view declares no variable, and selects the column @c by a name a variable can have. A value the
+            // statement gives @c replaces the column in the body of the view, as it replaces an OVERRIDABLE variable.
+            final String viewSql = "SELECT 'src' src, l.k, \"@c\" FROM (SELECT u.ts, u.k, u.a, u.b, u.\"@c\" FROM xc u) l";
+            assertReads(viewSql, "{xc=[?a, ?b, ?ts, @c, k]}", "SELECT src FROM v");
+            assertOverrideDenied(viewSql, "DECLARE @c := b SELECT * FROM v", "permission denied [table=xc, columns=b]");
         });
     }
 
@@ -1941,6 +1980,32 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
     }
 
     @Test
+    public void testViewOverViewLendsNoColumnThatViewLendsToNoRead() throws Exception {
+        assertMemoryLeak(() -> {
+            createTablesWithTwoTimestamps();
+            // v_cols lends no form of ts2, the designated timestamp of x2
+            execute("CREATE VIEW v_cols AS (SELECT k, a, ts FROM x2)");
+            drainWalAndViewQueues();
+            Assert.assertEquals("{x2=[a, k, ts]}", dependenciesOf("v_cols"));
+            // A read that counts the rows of the view drops the ORDER BY of the sub-query, so the ASOF JOIN takes ts2,
+            // which it reads through v_cols. Only such a read reads ts2, and nothing checks that the principal that
+            // records the view may read it, so the view lends it to no read, as v_cols does.
+            final String viewSql = "SELECT t.a, u.c FROM (SELECT k, a, ts FROM v_cols ORDER BY ts) t ASOF JOIN y u ON (k)";
+            assertReads(viewSql, "{v_cols=[], x2=[a, k, ts], y=[c, k, ts]}", "SELECT * FROM v");
+            forEachViewStatement(viewSql, statement -> {
+                try (SqlExecutionContext context = denyBaseTableSelectContext()) {
+                    assertQuery("SELECT count() FROM v WHERE c = 5")
+                            .withContext(context)
+                            .noLeakCheck()
+                            .failsWith("permission denied [table=x2, columns=ts2]");
+                } catch (AssertionError e) {
+                    throw new AssertionError(statement + ": " + viewSql, e);
+                }
+            });
+        });
+    }
+
+    @Test
     public void testViewReadingWholeRowsReadsColumnAddedLater() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
@@ -2585,8 +2650,8 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
     private static final class AlteringSecurityContext extends AllowAllSecurityContext {
         // the number of checks each pending alter waits for, and its statements, at the same index
         private final IntList checksToSkip = new IntList();
-        private final String tableName;
         private final ObjList<String[]> statements = new ObjList<>();
+        private final String tableName;
         private int checkCount;
 
         private AlteringSecurityContext() {
