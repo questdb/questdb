@@ -4364,12 +4364,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * The truncate moves no generation watermark:
      * {@link LiveViewCheckpointTimelineStoreWriter#publishTruncate} carries the
      * superblock's {@code normalizedBaseSeqTxn} forward untouched, and the post-replay
-     * seal is what advances it over the commit the repair rewrote. So until that seal
-     * lands the preserved prefix is a generation valid against a base snapshot that
-     * predates the correction, and a restore standing on it would re-feed that commit
-     * out of raw WAL and meet it out of order (see {@link #replayToApplied}). The marker
-     * is what holds every restore off in the meantime, which is why a caller whose seal
-     * fails must retire the prefix rather than clear the marker over it.
+     * seal is what advances it over the commit the repair rewrote - or, after a replay
+     * that emitted no row, the watermark that publishes the root left at the view's new
+     * frontier at that commit. So until that publication lands the preserved prefix is a
+     * generation valid against a base snapshot that predates the correction, and a
+     * restore standing on it would re-feed that commit out of raw WAL and meet it out of
+     * order (see {@link #replayToApplied}). The marker is what holds every restore off in
+     * the meantime, which is why a caller whose closing publication fails must retire the
+     * prefix rather than clear the marker over it.
      *
      * @param isReplacementCommitted true when the repair's replacement commit has
      *                               already landed, which makes the marker record no
@@ -8200,8 +8202,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * Without a capture, truncate immediately before commit and move the provisional
      * baseline to the truncated generation for an incremental closing seal.
      * <p>
-     * A published splice or successful closing seal resolves the marker. Otherwise retire
-     * the timeline, including an empty replay that cannot seal. A splice whose output ended
+     * A published splice or successful closing seal resolves the marker. An empty replay
+     * holding no capture leaves the view at its anchor: the root its truncate left at the
+     * view's new frontier is published at the repair commit without a new root, after a
+     * second truncate drops an anchor above that frontier, or a seal puts a root there when
+     * none is left. Otherwise retire the timeline. A splice whose output ended
      * below the newest root it kept - the view's newest rows left it - is truncated at the
      * view's new frontier before the closing seal, which then seals at that frontier even
      * after an empty replay, and resolves the marker the truncate wrote. An unreadable restore
@@ -9066,6 +9071,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             boolean headSealed = false;
             // Whether the truncate below kept a prefix whose newest root sits at the frontier.
             boolean isFrontierRootKept = false;
+            // Whether a zero-row replay with no capture published the root its truncate left at
+            // the view's new frontier as valid at this commit, without a seal.
+            boolean isZeroRowHeadPublished = false;
             if (isSpliceAboveFrontier) {
                 // A splice whose newest kept root sits above the view's frontier is truncated at
                 // that frontier, as a resume holding no capture truncates at its floor: every
@@ -9105,9 +9113,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // A zero-row replay seals nothing here unless it truncated its splice at the
                 // frontier: the truncating commit above left the LV table holding exactly
                 // the rows the anchor covered, and the restore left the window state at
-                // that same moment. Without a splice, the next in-order seal re-opens the
-                // history from there; a splice that kept its newest root at the frontier
-                // re-stamps the head on that root past this gate. There is also nothing to
+                // that same moment. Without a splice, the branches past this gate put the
+                // head on the root at the frontier; a splice that kept its newest root at the
+                // frontier re-stamps the head on that root, and a resume holding no capture
+                // publishes the root its truncate left there. There is also nothing to
                 // seal (replayMaxTs is LONG_NULL). A splice truncated at the frontier owes
                 // the frontier its root even then: the state the runtime holds is the state
                 // at the frontier, and no root of the truncated generation sits there unless
@@ -9187,13 +9196,77 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 final long headSealStart = System.nanoTime();
                 maybeWriteHeadCheckpoint(instance, windowFactory, committedSeqTxn, durableMaxTsAfterRepair, 0L, true, false);
                 openSegmentRepairPhases.headSealNanos += System.nanoTime() - headSealStart;
+            } else if (prefixMarkerLive && !isKeyed) {
+                // A zero-row replay with no capture: the truncate before the commit kept the roots
+                // below the anchor's successor, so its generation's newest root is the anchor, and
+                // the truncating commit left the table holding exactly the rows the anchor covers.
+                // The runtime holds the anchor's state with nothing fed since, which is the state
+                // after every row at or below the view's new frontier: the view holds no row
+                // between the frontier and the anchor. The truncate carried the generation's base
+                // coordinate forward, so the roots it kept are restorable only once that moves to
+                // this commit, which a watermark does without a root when the anchor sits at the
+                // frontier. An anchor above it holds no row of its own - an earlier splice
+                // re-versioned it after its row left - so the roots above the frontier go first,
+                // as a splice that kept roots above the frontier truncates them, and the frontier
+                // then takes the root the truncate left there or a seal of the runtime. A frontier
+                // this cannot read, an empty view and one above the anchor - a replacement the
+                // apply has not landed - leave the truncated timeline to the resolution below,
+                // which retires it.
+                hooks.beforeResumeHeadSeal();
+                final long headSealStart = System.nanoTime();
+                long frontierTs = Numbers.LONG_NULL;
+                try (TableReader lvReader = engine.getReader(instance.getLiveViewToken())) {
+                    if (lvReader.size() > 0) {
+                        frontierTs = lvReader.getMaxTimestamp();
+                    }
+                } catch (Throwable t) {
+                    LOG.error().$("could not read the live view frontier after an O3 resume that emitted no row [view=")
+                            .$(viewName).$(", error=").$(t).I$();
+                }
+                // The truncate kept the roots below R = A + 1 - a resume's R floors at START FROM
+                // only below the first row a root can sit on - root timestamps are unique, and
+                // only this worker publishes for the view: its head is the anchor.
+                assert truncatedHead.maxTs == anchorMaxTs && truncatedHead.checkpointId == anchorCheckpointId
+                        : "a resume's truncate leaves its anchor as the head of the generation it publishes";
+                if (frontierTs != Numbers.LONG_NULL && frontierTs <= anchorMaxTs) {
+                    if (frontierTs < anchorMaxTs) {
+                        // After the replacement commit, so the truncate's marker records no
+                        // seqTxn: see truncateOrRetireTimelineOnO3.
+                        final TimestampDriver driver = ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType());
+                        LOG.info().$("live view O3 resume emitted no row below a root above the frontier, truncating at the frontier [view=")
+                                .$(viewName)
+                                .$(", frontier=").$ts(driver, frontierTs)
+                                .$(", anchorMaxTs=").$ts(driver, anchorMaxTs).I$();
+                        prefixMarkerLive = truncateOrRetireTimelineOnO3(instance, frontierTs + 1, true, truncatedHead);
+                    }
+                    if (prefixMarkerLive && truncatedHead.maxTs == frontierTs) {
+                        isZeroRowHeadPublished = publishZeroRowResumeHead(
+                                instance,
+                                windowFactory,
+                                committedSeqTxn,
+                                frontierTs,
+                                truncatedHead.checkpointId
+                        );
+                    } else {
+                        // No root at the frontier: freeze the runtime there. The truncate moved
+                        // the generation past the one its baseline names, so the seal images
+                        // every key, and over a retired timeline it opens a fresh history.
+                        headSealed = maybeWriteHeadCheckpoint(instance, windowFactory, committedSeqTxn, frontierTs, 0L, true, true);
+                    }
+                    if (isZeroRowHeadPublished || headSealed) {
+                        stats.inc(LiveViewRefreshStats.TRUNCATE_ZERO_ROW_KEEP_COUNT);
+                    }
+                }
+                openSegmentRepairPhases.headSealNanos += System.nanoTime() - headSealStart;
             }
             if (prefixMarkerLive) {
                 // Resolve the repair's live marker. A truncate left the timeline headless, so a
-                // fresh head is what makes the preserved prefix restorable, and without one the
-                // truncated timeline has to be retired (which removes the marker) and left to a
-                // restart. A splice truncated at the frontier is a truncate, except that the
-                // prefix is restorable without a seal when its newest root already sits there.
+                // fresh head is what makes the preserved prefix restorable: the closing seal's, or,
+                // after a zero-row replay, the root at the frontier published at this commit.
+                // Without one the truncated timeline has to be retired (which removes the marker)
+                // and left to a restart. A splice truncated at the frontier is a truncate, except
+                // that the prefix is restorable without a seal when its newest root already sits
+                // there.
                 //
                 // A published splice needs a root at the frontier: the newest root it kept, or
                 // the one the seal above landed. Without one, a restore before the next seal
@@ -9212,7 +9285,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         retireCheckpointTimeline(instance);
                     }
                 } else if (timelineSplice == null) {
-                    if (headSealed) {
+                    if (headSealed || isZeroRowHeadPublished) {
                         clearCheckpointRepairMarker(instance);
                     } else {
                         retireCheckpointTimeline(instance);
@@ -12400,8 +12473,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             WindowRecordCursorFactory windowFactory,
             long consumedSeqTxn
     ) {
-        // Above the head's: the cycle consumed at least one commit past the last one.
-        final long baseSeqTxn = instance.getLastProcessedSeqTxn();
         final long nowUs = engine.getConfiguration().getMicrosecondClock().getTicks();
         if (instance.isSealOnCooldown(nowUs)) {
             return true;
@@ -12430,9 +12501,55 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (durableRows > 0 && durableMaxTs > headMaxTs) {
             return false;
         }
-        final long headRootId = instance.getHeadCheckpointRootId();
-        final RecordCursorFactory headRootWindowFactory = instance.getHeadCheckpointRootWindowFactory();
-        final long headStateBytes = instance.getHeadCheckpointStateBytes();
+        // The same root at a later base coordinate: nothing this publication does changes the
+        // root identity the head carries, so it goes back as it was.
+        publishHeadCheckpointBase(
+                instance,
+                windowFactory,
+                consumedSeqTxn,
+                headMaxTs,
+                instance.getHeadCheckpointRootId(),
+                instance.getHeadCheckpointRootWindowFactory(),
+                instance.getHeadCheckpointStateBytes(),
+                nowUs
+        );
+        return true;
+    }
+
+    /**
+     * Publishes the timeline's newest root, at {@code headMaxTs}, as valid at the base commit the
+     * view last processed, with {@link LiveViewCheckpointTimelineStoreWriter#publishWatermark},
+     * and puts the head on it there. The publication keeps every root where it is and moves the
+     * generation's base coordinate, which is where a restore starts its base WAL replay and what
+     * {@code WalPurgeJob} holds the base WAL back to; the head is set only once it is durable.
+     * <p>
+     * It shares the seal's failure accounting: a failure leaves the head where it was, counts on
+     * the seal failure streak, and pauses, then retires the timeline at the streak's budget, as a
+     * streak of failed seals does. A publication that lands clears the streak and sweeps, since
+     * it supersedes a catalogue segment.
+     *
+     * @param consumedSeqTxn        the view's seqTxn the head records
+     * @param headRootId            the {@code checkpointId} of the newest root, which the writer
+     *                              checks the generation's newest root against, or
+     *                              {@link Numbers#LONG_NULL} to name it by its timestamp alone
+     * @param headRootWindowFactory the window factory whose state the newest root was frozen from,
+     *                              which goes back on the head with {@code headRootId}; null leaves
+     *                              the head mirroring no root
+     * @param headStateBytes        the newest root's logical state bytes the head records
+     * @return true when the publication landed
+     */
+    private boolean publishHeadCheckpointBase(
+            LiveViewInstance instance,
+            WindowRecordCursorFactory windowFactory,
+            long consumedSeqTxn,
+            long headMaxTs,
+            long headRootId,
+            @Nullable RecordCursorFactory headRootWindowFactory,
+            long headStateBytes,
+            long nowUs
+    ) {
+        // Above the head's: the cycle consumed at least one commit past the last one.
+        final long baseSeqTxn = instance.getLastProcessedSeqTxn();
         try {
             if (checkpointTimelineStoreWriter == null) {
                 checkpointTimelineStoreWriter = new LiveViewCheckpointTimelineStoreWriter(
@@ -12466,10 +12583,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
             instance.recordCheckpointTimelineWalPurgeFloor(result.getWalPurgeFloor());
             instance.recordCheckpointTimelineStats(result.getStats());
-            // The same root at a later base coordinate. setHeadCheckpoint clears the root
-            // identity, and nothing this publication did changes it, so it goes back as it was.
+            // setHeadCheckpoint clears the root identity, so it goes back only when the caller
+            // names the state the root was frozen from.
             instance.setHeadCheckpoint(consumedSeqTxn, baseSeqTxn, headMaxTs, headStateBytes, nowUs);
-            if (headRootId != Numbers.LONG_NULL) {
+            if (headRootWindowFactory != null) {
                 instance.setHeadCheckpointRoot(headRootId, headRootWindowFactory);
             }
             instance.recordCheckpointWriteMicros(engine.getConfiguration().getMicrosecondClock().getTicks() - nowUs);
@@ -12484,11 +12601,57 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             if (streak >= MAX_CONSECUTIVE_SEAL_FAILURES) {
                 backOffRepeatedSealFailure(instance, nowUs, streak, t);
             }
-            return true;
+            return false;
         }
         // Each publication supersedes a catalogue segment, so it sweeps on the seal's cadence.
         maybeSweepCheckpointSegments(instance);
         return true;
+    }
+
+    /**
+     * Puts the head of a zero-row resume that held no capture on the root its truncate left at
+     * the view's new frontier, at the repair commit, without a new root: the runtime holds that
+     * root's state with nothing fed since, so the root is valid at the repair commit as it stands,
+     * and only the generation's base coordinate has to move there
+     * ({@link #publishHeadCheckpointBase}). The truncate carried the coordinate forward, so until
+     * this lands a restore would replay the corrected commits' raw WAL over the root.
+     * <p>
+     * A seal pause holds it, as it holds every checkpoint write, without counting a failure. It
+     * publishes only a root a restore can stand on: the replacement applied and the view's row
+     * count matches the lifetime counter ({@link #isSealBackedByDurableOutput}, which retires the
+     * timeline over a count that drifted), and the newest root at or below the frontier sits at
+     * the frontier, counting every row the view holds ({@link #isRestorableRootAtFrontier}). The
+     * root's identity stays off the head and its state bytes at zero, as after a re-stamp.
+     *
+     * @param frontierTs       the view's newest row, which the truncated generation's newest root
+     *                         sits at
+     * @param rootCheckpointId that root's {@code checkpointId}
+     * @return true when the publication landed; false when the pause held it, a check declined it
+     * or it failed, which leaves the truncated timeline for the caller to retire
+     */
+    private boolean publishZeroRowResumeHead(
+            LiveViewInstance instance,
+            WindowRecordCursorFactory windowFactory,
+            long committedSeqTxn,
+            long frontierTs,
+            long rootCheckpointId
+    ) {
+        final long nowUs = engine.getConfiguration().getMicrosecondClock().getTicks();
+        if (instance.isSealOnCooldown(nowUs)
+                || !isSealBackedByDurableOutput(instance, 0, frontierTs)
+                || !isRestorableRootAtFrontier(instance, frontierTs)) {
+            return false;
+        }
+        return publishHeadCheckpointBase(
+                instance,
+                windowFactory,
+                committedSeqTxn,
+                frontierTs,
+                rootCheckpointId,
+                null,
+                0L,
+                nowUs
+        );
     }
 
     /**
@@ -13039,9 +13202,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * ({@link #publishCheckpointTimelineRepair}), which puts the commit under the floor this
      * replay starts at. One that truncates instead keeps the prefix under a durable repair
      * marker that {@link #isRepairMarkerLive} refuses every restore behind, and only the
-     * post-replay seal moves the coordinate and clears the marker - so a seal that fails
-     * retires the prefix rather than leaving it addressable at the old coordinate. A repair's
-     * two exits are therefore sealing and retiring, and a failed post-O3 seal takes the second.
+     * post-replay seal - or, after a replay that emitted no row, the watermark that publishes
+     * the root at the view's new frontier - moves the coordinate and clears the marker, so a
+     * closing publication that fails retires the prefix rather than leaving it addressable at
+     * the old coordinate. A repair's two exits are therefore publishing at its commit and
+     * retiring, and a failed post-O3 publication takes the second.
      */
     private long replayToApplied(
             LiveViewInstance instance,

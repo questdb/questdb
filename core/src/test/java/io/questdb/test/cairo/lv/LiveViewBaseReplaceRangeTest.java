@@ -40,6 +40,7 @@ import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.std.Files;
 import io.questdb.std.Numbers;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -1215,6 +1216,35 @@ public class LiveViewBaseReplaceRangeTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testADeletedNewestRowWithTheChainDeclinedRestoresRetainedRowsUnderARangeFrame() throws Exception {
+        // 23:55 sits in the ten-minute frame of 00:01, and not in that of the forward row 00:06.
+        assertADeletedNewestRowWithTheChainDeclinedRestoresRetainedRows(
+                "sum(x) OVER (PARTITION BY sym ORDER BY ts RANGE BETWEEN '10' MINUTE PRECEDING AND CURRENT ROW)",
+                "6.0"
+        );
+    }
+
+    @Test
+    public void testADeletedNewestRowWithTheChainDeclinedRestoresRetainedRowsUnderARowsFrame() throws Exception {
+        assertADeletedNewestRowWithTheChainDeclinedRestoresRetainedRows(
+                "sum(x) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)",
+                "6.5"
+        );
+    }
+
+    @Test
+    public void testDeletedNewestRootsPastTheDefaultChainBudgetKeepTheTimeline() throws Exception {
+        // 257 roots above the anchor: one more than the default chain budget.
+        assertDeletedNewestRootsKeepTheTimeline(257, true);
+    }
+
+    @Test
+    public void testDeletedNewestRootsWithinTheDefaultChainBudgetKeepTheTimeline() throws Exception {
+        // 256 roots above the anchor: the default chain budget, which the splice takes.
+        assertDeletedNewestRootsKeepTheTimeline(256, false);
+    }
+
+    @Test
     public void testDepartedNewestBucketRestoresRetainedRowsUnderARangeFrame() throws Exception {
         assertDepartedNewestBucketRestoresRetainedRows(
                 "sum(x) OVER (PARTITION BY sym ORDER BY ts RANGE BETWEEN '10' MINUTE PRECEDING AND CURRENT ROW)",
@@ -2055,6 +2085,126 @@ public class LiveViewBaseReplaceRangeTest extends AbstractLiveViewTest {
      * @param window         the view's window over {@code x}
      * @param forwardS       the window's value at the forward row committed after the first restart
      */
+    /**
+     * The materialized-view shape with the chain declined: over the day the base loses, a root at
+     * 00:01 and one at 00:02, then a REPLACE_RANGE that deletes 00:02 and writes nothing. The
+     * resume truncates at its anchor 00:01 ahead of its commit and replays no row, so the anchor
+     * is the view's new frontier, and a watermark publishes it at the repair commit. Each restart
+     * restores the view from it, over the day the base lost, and the forward row 00:06 between the
+     * two folds onto the restored state.
+     */
+    private void assertADeletedNewestRowWithTheChainDeclinedRestoresRetainedRows(String window, String forwardS) throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS SELECT ts, sym, x, "
+                    + window + " s FROM base WHERE x > 0");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                commitTheDayTheBaseLoses(job);
+                commitAndRefresh(job, "('2026-01-01T00:01:00.000000Z', 'a', 1.5)");
+                commitAndRefresh(job, "('2026-01-01T00:02:00.000000Z', 'a', 2.5)");
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                assertCheckpointLadder(instance, false, """
+                        2025-12-31T23:55:00.000000Z -> 1
+                        2026-01-01T00:01:00.000000Z -> 2
+                        2026-01-01T00:02:00.000000Z -> 3
+                        """);
+                final long resetsBefore = instance.getCheckpointTimelineResets();
+                replaceBaseRange(ts("2026-01-01T00:02:00.000000Z"), ts("2026-01-01T00:03:00.000000Z"), Double.NaN);
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals("the zero-row resume keeps its timeline", resetsBefore, instance.getCheckpointTimelineResets());
+                Assert.assertEquals(1, job.getStatsForTest().get(LiveViewRefreshStats.TRUNCATE_ZERO_ROW_KEEP_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(LiveViewRefreshStats.SPLICE_FRONTIER_TRUNCATE_COUNT));
+                assertCheckpointLadder(instance, false, """
+                        2025-12-31T23:55:00.000000Z -> 1
+                        2026-01-01T00:01:00.000000Z -> 2
+                        """);
+                assertNoRepairMarker(instance);
+            }
+            final String rows = """
+                    ts\tsym\tx\ts
+                    2025-12-31T23:55:00.000000Z\ta\t0.5\t0.5
+                    2026-01-01T00:01:00.000000Z\ta\t1.5\t2.0
+                    """;
+            assertDepartedViewRows(rows);
+            assertNoRefreshFaults("lv");
+
+            restartLiveViewsAndRecover();
+            assertDepartedViewRestored(rows);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                commitAndRefresh(job, "('2026-01-01T00:06:00.000000Z', 'a', 4.5)");
+            }
+            final String grownRows = rows + "2026-01-01T00:06:00.000000Z\ta\t4.5\t" + forwardS + "\n";
+            assertDepartedViewRows(grownRows);
+            restartLiveViewsAndRecover();
+            assertDepartedViewRestored(grownRows);
+        });
+    }
+
+    /**
+     * Over the day the base loses, a root at 00:01, then {@code rootCount} one-row commits a
+     * second apart above it, each sealing a root, then one REPLACE_RANGE deleting them all. The
+     * resume anchors on the root at 00:01 and crosses a boundary per deleted root. Past the
+     * default chain budget it declines the chain and truncates at its anchor, and its zero-row
+     * replay publishes the anchor, the view's new frontier, at its commit; within the budget the
+     * splice re-versions every root, and the frontier truncate drops them. Either way the timeline
+     * keeps the anchor, which each restart restores from over the day the base lost.
+     */
+    private void assertDeletedNewestRootsKeepTheTimeline(int rootCount, boolean isChainDeclined) throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS SELECT ts, sym, x, "
+                    + "sum(x) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) s FROM base WHERE x > 0");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                commitTheDayTheBaseLoses(job);
+                commitAndRefresh(job, "('2026-01-01T00:01:00.000000Z', 'a', 1.5)");
+                final long firstDeletedTs = ts("2026-01-01T00:02:00.000000Z");
+                for (int i = 0; i < rootCount; i++) {
+                    execute("INSERT INTO base VALUES (" + (firstDeletedTs + i * Micros.SECOND_MICROS) + "::timestamp, 'a', 1.0)");
+                    drainWalQueue();
+                    driveRefreshToQuiescence(job);
+                }
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                Assert.assertEquals("a root per commit", rootCount + 2, snapshotCheckpointLadder(instance).size() / 2);
+                final long resetsBefore = instance.getCheckpointTimelineResets();
+                replaceBaseRange(firstDeletedTs, firstDeletedTs + rootCount * Micros.SECOND_MICROS, Double.NaN);
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals("the repair keeps its timeline", resetsBefore, instance.getCheckpointTimelineResets());
+                Assert.assertEquals(isChainDeclined ? 1 : 0, job.getStatsForTest().get(LiveViewRefreshStats.TRUNCATE_ZERO_ROW_KEEP_COUNT));
+                Assert.assertEquals(isChainDeclined ? 0 : 1, job.getStatsForTest().get(LiveViewRefreshStats.SPLICE_FRONTIER_TRUNCATE_COUNT));
+                assertCheckpointLadder(instance, false, """
+                        2025-12-31T23:55:00.000000Z -> 1
+                        2026-01-01T00:01:00.000000Z -> 2
+                        """);
+                assertNoRepairMarker(instance);
+            }
+            final String rows = """
+                    ts\tsym\tx\ts
+                    2025-12-31T23:55:00.000000Z\ta\t0.5\t0.5
+                    2026-01-01T00:01:00.000000Z\ta\t1.5\t2.0
+                    """;
+            assertDepartedViewRows(rows);
+            assertNoRefreshFaults("lv");
+            restartLiveViewsAndRecover();
+            assertDepartedViewRestored(rows);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                commitAndRefresh(job, "('2026-01-01T00:06:00.000000Z', 'a', 4.5)");
+            }
+            final String grownRows = rows + "2026-01-01T00:06:00.000000Z\ta\t4.5\t6.5\n";
+            assertDepartedViewRows(grownRows);
+            restartLiveViewsAndRecover();
+            assertDepartedViewRestored(grownRows);
+        });
+    }
+
     private void assertDepartedNewestBucketRestoresRetainedRows(String window, String forwardS) throws Exception {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         assertMemoryLeak(() -> {

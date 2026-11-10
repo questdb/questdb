@@ -129,7 +129,10 @@ public final class LiveViewRefreshStats {
     public static final int SYMBOL_REWIND_REFUSAL_COUNT = 45;
     // Keys keyed resumes handed back to the primary runtime.
     public static final int TRANSPLANTED_KEY_COUNT = 46;
-    private static final int STAT_COUNT = 47;
+    // Anchor resumes holding no capture that emitted no row and put the head on a root at the
+    // view's new frontier at the repair commit, instead of retiring the truncated timeline.
+    public static final int TRUNCATE_ZERO_ROW_KEEP_COUNT = 47;
+    private static final int STAT_COUNT = 48;
     // Completed repairs by route, one slot per LiveViewCheckpointRepairRoute.ROUTE_*, after the
     // counters above. A repair counts once, on the turn that publishes it.
     private final long[] values = new long[STAT_COUNT + LiveViewCheckpointRepairRoute.ROUTE_COUNT];

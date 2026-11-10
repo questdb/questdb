@@ -1396,6 +1396,71 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testTwoViewsPublishingZeroRowResumesInterleavedKeepTheirTimelines() throws Exception {
+        // As below, with the checkpoint chain declined: each view's resume of a row both filters
+        // reject truncates at its anchor, the root at the view's frontier, and publishes that root
+        // at the commit with a watermark. The first job's hook ahead of that publication drives
+        // the second job, whose turn over the other view - truncate, watermark and sweep - runs
+        // between the first view's truncate and its watermark. Each publication names its own
+        // view's newest root, so neither refuses, and neither view retires its timeline.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS, 1_000_000);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, sym)");
+            final String viewSql = "SELECT ts, sym, x, sum(x) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) s "
+                    + "FROM base WHERE x > 0";
+            execute("CREATE LIVE VIEW lv1 FLUSH EVERY 100ms START FROM BEGINNING AS " + viewSql);
+            execute("CREATE LIVE VIEW lv2 FLUSH EVERY 100ms START FROM BEGINNING AS " + viewSql);
+            try (
+                    LiveViewRefreshJob jobA = new LiveViewRefreshJob(0, engine, 1);
+                    LiveViewRefreshJob jobB = new LiveViewRefreshJob(0, engine, 1)
+            ) {
+                setCurrentMicros(1_000_000_000_000L);
+                commitAndRefresh(jobA, "('2026-01-01T00:01:00.000000Z', 'a', 1.5)");
+                commitAndRefresh(jobA, "('2026-01-01T00:02:00.000000Z', 'a', 2.5), ('2026-01-01T00:03:00.000000Z', 'a', 4.5)");
+                // The row at 00:03 leaves both filters: each view's head goes back to a root at 00:02.
+                commitAndRefresh(jobA, "('2026-01-01T00:03:00.000000Z', 'a', -4.5)");
+                final LiveViewInstance lv1 = engine.getLiveViewRegistry().getViewInstance("lv1");
+                final LiveViewInstance lv2 = engine.getLiveViewRegistry().getViewInstance("lv2");
+                Assert.assertNotNull(lv1);
+                Assert.assertNotNull(lv2);
+                final long resets1 = lv1.getCheckpointTimelineResets();
+                final long resets2 = lv2.getCheckpointTimelineResets();
+                for (int i = 0; i < 4; i++) {
+                    hooks(jobA).setSimulateResumeHeadSealStart(() -> drainJob(jobB));
+                    final long keepsA = jobA.getStatsForTest().get(LiveViewRefreshStats.TRUNCATE_ZERO_ROW_KEEP_COUNT);
+                    final long keepsB = jobB.getStatsForTest().get(LiveViewRefreshStats.TRUNCATE_ZERO_ROW_KEEP_COUNT);
+                    commitAndRefresh(jobA, "('2026-01-01T00:02:1" + i + ".000000Z', 'b', -1.0)");
+                    Assert.assertEquals("the other job took one view's turn", keepsB + 1, jobB.getStatsForTest().get(LiveViewRefreshStats.TRUNCATE_ZERO_ROW_KEEP_COUNT));
+                    Assert.assertEquals(keepsA + 1, jobA.getStatsForTest().get(LiveViewRefreshStats.TRUNCATE_ZERO_ROW_KEEP_COUNT));
+                    final long seqTxn = 4 + i;
+                    for (LiveViewInstance view : new LiveViewInstance[]{lv1, lv2}) {
+                        Assert.assertEquals(seqTxn, view.getHeadCheckpointBaseSeqTxn());
+                        Assert.assertEquals(MicrosTimestampDriver.floor("2026-01-01T00:02:00.000000Z"), view.getHeadCheckpointMaxTs());
+                        Assert.assertEquals(0, view.getCheckpointSealFailures());
+                    }
+                }
+                Assert.assertEquals(resets1, lv1.getCheckpointTimelineResets());
+                Assert.assertEquals(resets2, lv2.getCheckpointTimelineResets());
+                assertCatalogueMatchesDisk(lv1);
+                assertCatalogueMatchesDisk(lv2);
+                for (String view : new String[]{"lv1", "lv2"}) {
+                    TestUtils.assertSqlCursors(
+                            engine,
+                            sqlExecutionContext,
+                            "(" + viewSql + ") ORDER BY ts, sym",
+                            "(" + view + ") ORDER BY ts, sym",
+                            LOG,
+                            true
+                    );
+                    assertNoRefreshFaults(view);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testTwoViewsSplicingInterleavedCarryOnlyTheirOwnSweptEntries() throws Exception {
         // Two filtered views over one deduplicating base, refreshed by two jobs that share the
         // engine's purge state. Both lose their newest row, then rows both filters reject land

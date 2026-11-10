@@ -62,6 +62,8 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.MemoryCARWImpl;
+import io.questdb.cairo.wal.WalUtils;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.functions.columns.LongColumn;
@@ -125,6 +127,14 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
                     + "('2026-01-01T11:00:01.000000Z', 'acct-2', 20.0), "
                     + "('2026-01-01T11:00:02.000000Z', 'acct-3', 30.0), "
                     + "('2026-01-01T11:00:03.000000Z', 'acct-4', 40.0)";
+    // Six accounts sealed one per row: every key's state is in the first root.
+    private static final String SEED_SIX_ACCOUNTS =
+            "('2026-01-01T11:00:00.000000Z', 'acct-1', 10.0), "
+                    + "('2026-01-01T11:00:01.000000Z', 'acct-2', 20.0), "
+                    + "('2026-01-01T11:00:02.000000Z', 'acct-3', 30.0), "
+                    + "('2026-01-01T11:00:03.000000Z', 'acct-4', 40.0), "
+                    + "('2026-01-01T11:00:04.000000Z', 'acct-5', 50.0), "
+                    + "('2026-01-01T11:00:05.000000Z', 'acct-6', 60.0)";
     // Enough accounts that a sweep's evicted set dwarfs what one cadence touches, which is
     // the only shape in which the dirty sets' retained capacity is observable at all.
     private static final int SWEEP_CAPACITY_ACCOUNTS = 2_000;
@@ -1305,6 +1315,118 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
     }
 
     @Test
+    public void testAZeroRowResumeOnTheReusedRuntimeWithTheChainDeclinedKeepsTheNextSealIncremental() throws Exception {
+        // A commit wholly above the frontier, out of order within itself, whose rows the filter
+        // rejects: the drain hands it to a resume from the head's own root, which reuses the
+        // runtime standing there, declines the chain and replays no row. The root at the frontier
+        // goes back on the head at the commit with no new root, and the runtime's incremental
+        // baseline moves with it, so the next seal images only the key its row touched.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+        assertMemoryLeak(() -> {
+            execute("create table tx (created_at timestamp, account_id symbol nocache index capacity 4, "
+                    + "amount double) timestamp(created_at) partition by hour wal");
+            execute("insert into tx values " + SEED_SIX_ACCOUNTS);
+            drainWalQueue();
+            final String filteredView = "select created_at, account_id, "
+                    + "sum(amount) over w as cumulative_sum, "
+                    + "count(account_id) over w as cumulative_count "
+                    + "from tx where amount > 0 window w as (partition by account_id order by created_at anchor daily '"
+                    + NOON_ANCHOR + "')";
+            execute("create live view lv flush every 100ms start from beginning as " + filteredView);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                commit(row("acct-1", 10), job);
+                final LiveViewInstance instance = viewInstance();
+                Assert.assertEquals(instance.getHeadCheckpointMaxTs(), instance.getLatestSeenTs());
+                final long generationBefore = publishedCheckpointGeneration(instance);
+                final long headMaxTs = instance.getHeadCheckpointMaxTs();
+                commit("('2026-01-01T11:02:10.000000Z', 'acct-1', -1.0), ('2026-01-01T11:01:10.000000Z', 'acct-2', -1.0)", job);
+                Assert.assertEquals(1, job.getStatsForTest().get(LiveViewRefreshStats.RUNTIME_ANCHOR_REUSE_COUNT));
+                Assert.assertEquals(1, job.getStatsForTest().get(LiveViewRefreshStats.TRUNCATE_ZERO_ROW_KEEP_COUNT));
+                Assert.assertEquals("the truncate and the watermark", generationBefore + 2, publishedCheckpointGeneration(instance));
+                Assert.assertEquals(headMaxTs, instance.getHeadCheckpointMaxTs());
+                Assert.assertEquals(
+                        "at the repair commit",
+                        engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("tx")),
+                        instance.getHeadCheckpointBaseSeqTxn()
+                );
+                assertFilteredViewMatchesRecompute();
+
+                commit(row("acct-3", 20), job);
+                Assert.assertEquals(
+                        "the seal after the zero-row resume must image only the key its row touched",
+                        1,
+                        anchorWindow().getCheckpointLastFreezeKeyCount()
+                );
+                assertFilteredViewMatchesRecompute();
+            }
+            for (int restart = 0; restart < 2; restart++) {
+                restartCycle();
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    drainJob(job);
+                    Assert.assertTrue(viewInstance().isCheckpointRestoreSucceeded());
+                    driveRefreshToQuiescence(job);
+                    assertFilteredViewMatchesRecompute();
+                    commit(row("acct-" + (5 + restart), 30 + restart), job);
+                    assertFilteredViewMatchesRecompute();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testTheSealAfterAZeroRowResumeWithTheChainDeclinedStaysIncremental() throws Exception {
+        // A REPLACE_RANGE deletes the newest row, and the resume repairing it declines the chain,
+        // truncates at its anchor and replays no row: the anchor is the view's new frontier, and a
+        // watermark publishes it at the repair commit, carrying the runtime's incremental baseline
+        // over it. The next seal then images only the key its row touched, where a retired
+        // timeline would have left a first checkpoint imaging every key.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+        assertMemoryLeak(() -> {
+            createView(NOON_ANCHOR, SEED_SIX_ACCOUNTS);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                commit(row("acct-1", 10), job);
+                commit(row("acct-2", 11), job);
+                try (WalWriter walWriter = engine.getWalWriter(engine.verifyTableName("tx"))) {
+                    walWriter.commitWithParams(
+                            ts("2026-01-01T11:00:11.000000Z"),
+                            ts("2026-01-01T11:00:12.000000Z"),
+                            WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE
+                    );
+                }
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals(1, job.getStatsForTest().get(LiveViewRefreshStats.TRUNCATE_ZERO_ROW_KEEP_COUNT));
+                Assert.assertEquals(ts("2026-01-01T11:00:10.000000Z"), viewInstance().getHeadCheckpointMaxTs());
+                assertViewMatchesRecompute(NOON_ANCHOR);
+
+                commit(row("acct-3", 20), job);
+                Assert.assertEquals(
+                        "the seal after the zero-row resume must image only the key its row touched",
+                        1,
+                        anchorWindow().getCheckpointLastFreezeKeyCount()
+                );
+                assertHeadRootPartitionCount(6);
+                assertViewMatchesRecompute(NOON_ANCHOR);
+            }
+            for (int restart = 0; restart < 2; restart++) {
+                restartCycle();
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    drainJob(job);
+                    Assert.assertTrue(viewInstance().isCheckpointRestoreSucceeded());
+                    driveRefreshToQuiescence(job);
+                    assertViewMatchesRecompute(NOON_ANCHOR);
+                    commit(row("acct-" + (5 + restart), 30 + restart), job);
+                    assertViewMatchesRecompute(NOON_ANCHOR);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testResumeDeclinedTheChainFallsBackToTheTruncate() throws Exception {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         // Zero declines the chain for every repair, whatever its depth. It is what a
@@ -2421,6 +2543,26 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
                 engine,
                 sqlExecutionContext,
                 "(" + recompute + ") order by 2, 1",
+                "(lv) order by 2, 1",
+                LOG,
+                true
+        );
+        assertNoRefreshFaults("lv");
+    }
+
+    // The view over the rows of tx with a positive amount, recomputed as recompute(NOON_ANCHOR)
+    // recomputes the unfiltered one.
+    private void assertFilteredViewMatchesRecompute() throws Exception {
+        final String bucket = "timestamp_floor('1d', created_at, '1970-01-01T" + NOON_ANCHOR + ":00.000000Z'::timestamp)";
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                "(select created_at, account_id, "
+                        + "sum(amount) over (partition by account_id, bucket order by created_at "
+                        + "rows between unbounded preceding and current row) as cumulative_sum, "
+                        + "count(account_id) over (partition by account_id, bucket order by created_at "
+                        + "rows between unbounded preceding and current row) as cumulative_count "
+                        + "from (select created_at, account_id, amount, " + bucket + " as bucket from tx where amount > 0)) order by 2, 1",
                 "(lv) order by 2, 1",
                 LOG,
                 true

@@ -102,7 +102,9 @@ public interface LiveViewRefreshHooks {
      * Called by a predecessor resume immediately before its head seal, once its replacement
      * is applied and the consumed seqTxn advanced. When the resume's output ended below the
      * newest root its splice kept, the truncate that drops the roots above the new frontier
-     * has run by then, whether it kept a prefix or retired the timeline.
+     * has run by then, whether it kept a prefix or retired the timeline. A resume holding no
+     * capture whose replay emitted no row calls it ahead of its read of the view's new
+     * frontier, and so ahead of the truncate and the publication that put the head there.
      */
     default void beforeResumeHeadSeal() {
     }

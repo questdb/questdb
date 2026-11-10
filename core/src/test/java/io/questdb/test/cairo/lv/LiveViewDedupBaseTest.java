@@ -27,13 +27,16 @@ package io.questdb.test.cairo.lv;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
 import io.questdb.cairo.lv.LiveViewCheckpointRecoveryPhase;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairMarker;
+import io.questdb.cairo.lv.LiveViewCheckpointRepairRoute;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
 import io.questdb.cairo.lv.LiveViewInstance;
@@ -55,11 +58,14 @@ import io.questdb.test.QueryAssertion;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -82,6 +88,18 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
             2025-12-31T12:00:00.000000Z\ta\t0.5\t0.5
             2026-01-01T00:01:00.000000Z\ta\t1.5\t2.0
             2026-01-01T00:01:30.000000Z\ta\t3.0\t5.0
+            """;
+    // What departTheNewestRowWithTheChainDeclined leaves: the root at 00:01, the view's new
+    // frontier, above the day the base lost.
+    private static final String CHAIN_DECLINED_DEPARTURE_LADDER = """
+            2025-12-31T12:00:00.000000Z -> 1
+            2026-01-01T00:01:00.000000Z -> 2
+            """;
+    // The rows departTheNewestRowWithTheChainDeclined leaves the view holding.
+    private static final String CHAIN_DECLINED_DEPARTURE_ROWS = """
+            ts\tsym\tx\ts
+            2025-12-31T12:00:00.000000Z\ta\t0.5\t0.5
+            2026-01-01T00:01:00.000000Z\ta\t1.5\t2.0
             """;
     private static final String DEPARTURE_SUM = "sum(x) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)";
     // One upsert over the head-miss departure fixture: 00:57 to a new value, 00:58 and 00:59 out
@@ -1610,12 +1628,13 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testDepartedNewestRowWithTheChainDeclinedAndNoRowToReplayRetiresTheTimeline() throws Exception {
+    public void testDepartedNewestRowWithTheChainDeclinedAndNoRowToReplayKeepsItsTimeline() throws Exception {
         // With the chain declined, the resume truncates at its anchor before the commit, and its
         // replay emits no row: the newest row departed with nothing between it and the anchor.
-        // No seal closes the truncated prefix, so the timeline retires, as every such resume did
-        // before the chain, and a restart rebuilds the view from its base, which lost nothing.
-        // No splice kept a root above the frontier, so nothing is truncated after the commit.
+        // The anchor is the view's new frontier, so the truncated prefix is restorable once its
+        // base coordinate moves to the repair commit: a watermark publishes it there, and a
+        // restart restores the view from it. No splice kept a root above the frontier, so
+        // nothing is truncated after the commit.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
         assertMemoryLeak(() -> {
@@ -1630,16 +1649,16 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
                         """);
                 final LiveViewInstance instance = departureView();
                 final long resetsBefore = instance.getCheckpointTimelineResets();
+                final long generationBefore = departureGeneration();
                 commitDeparture(job, "('2026-01-01T00:02:00.000000Z', 'a', -2.5)");
+                Assert.assertEquals("the truncated prefix stays", resetsBefore, instance.getCheckpointTimelineResets());
                 Assert.assertEquals(0, job.getStatsForTest().get(LiveViewRefreshStats.SPLICE_FRONTIER_TRUNCATE_COUNT));
-                Assert.assertEquals(
-                        "the truncated prefix goes with the seal it never got",
-                        resetsBefore + 1,
-                        instance.getCheckpointTimelineResets()
-                );
+                Assert.assertEquals(1, job.getStatsForTest().get(LiveViewRefreshStats.TRUNCATE_ZERO_ROW_KEEP_COUNT));
+                assertDepartureLadder("2026-01-01T00:01:00.000000Z -> 1\n");
+                Assert.assertEquals("the truncate and the watermark", generationBefore + 2, departureGeneration());
                 try (Path dir = departureCheckpointsDir(); Path timelinePath = new Path()) {
                     LiveViewCheckpointLayout.timelinePath(timelinePath, dir);
-                    Assert.assertFalse(configuration.getFilesFacade().exists(timelinePath.$()));
+                    Assert.assertTrue(configuration.getFilesFacade().exists(timelinePath.$()));
                     Assert.assertFalse(LiveViewCheckpointRepairMarker.exists(configuration.getFilesFacade(), dir));
                 }
             }
@@ -1650,10 +1669,328 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
             assertDepartureRows(rows);
             assertNoRefreshFaults("lv");
             restartLiveViewsAndRecover();
-            assertRebuiltFromAppliedBase("lv");
+            assertRestoredFromTimeline("lv");
             Assert.assertFalse(departureView().isCheckpointRecoveryBlocked());
             assertDepartureRows(rows);
             assertDepartureMatchesRecompute();
+        });
+    }
+
+    @Test
+    public void testDepartedNewestRowAloneInItsDayWithTheChainDeclinedKeepsItsTimeline() throws Exception {
+        // The departed row was the view's only row of its day, so the replacement leaves that
+        // day's partition of the view empty, and the new frontier falls on the day below it.
+        assertDepartedNewestRootWithTheChainDeclinedKeepsItsTimeline(
+                "2025-12-31",
+                "2026-01-01T00:01:00.000000Z",
+                "2026-01-02T00:02:00.000000Z",
+                "2026-01-02T00:05:00.000000Z",
+                CHAIN_DECLINED_DEPARTURE_ROWS,
+                "6.5"
+        );
+    }
+
+    @Test
+    public void testDepartedNewestRowAtTheEpochWithTheChainDeclinedKeepsItsTimeline() throws Exception {
+        // The smallest frontier a designated timestamp can hold: the view's output ends at the
+        // epoch itself once the row one microsecond above it departs.
+        assertDepartedNewestRootWithTheChainDeclinedKeepsItsTimeline(
+                null,
+                "1970-01-01T00:00:00.000000Z",
+                "1970-01-01T00:00:00.000001Z",
+                "1970-01-01T00:00:00.000002Z",
+                """
+                        ts\tsym\tx\ts
+                        1970-01-01T00:00:00.000000Z\ta\t1.5\t1.5
+                        """,
+                "6.0"
+        );
+    }
+
+    @Test
+    public void testDepartedNewestRowWithTheChainDeclinedKeepsItsTimelineAtTheDefaultCadence() throws Exception {
+        // The duration cadence seals every in-order commit here, as one row per seal does in the
+        // other cases: the clock moves past it before each one.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+        assertMemoryLeak(() -> assertDepartedNewestRowWithTheChainDeclinedKeepsItsTimeline("", "-2.5", true));
+    }
+
+    @Test
+    public void testDepartedNewestRowWithTheChainDeclinedKeepsItsTimelineInAnInMemoryView() throws Exception {
+        assertDepartedNewestRowWithTheChainDeclinedKeepsItsTimeline("IN MEMORY 1h ", "-2.5");
+    }
+
+    @Test
+    public void testDepartedNewestRowWithTheChainDeclinedKeepsItsTimelineOverALostDay() throws Exception {
+        assertDepartedNewestRowWithTheChainDeclinedKeepsItsTimeline("", "-2.5");
+    }
+
+    @Test
+    public void testDepartedNewestRowWithTheChainDeclinedKeepsItsTimelineWhenUpsertedToNull() throws Exception {
+        assertDepartedNewestRowWithTheChainDeclinedKeepsItsTimeline("", "NULL");
+    }
+
+    @Test
+    public void testDepartedNewestRowWithTheChainDeclinedKeepsItsTimelineWhenUpsertedToZero() throws Exception {
+        assertDepartedNewestRowWithTheChainDeclinedKeepsItsTimeline("", "0.0");
+    }
+
+    @Test
+    public void testDepartedNewestRowWithTheChainDeclinedKeepsItsTimelineWithJitDisabled() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(SqlJitMode.JIT_MODE_DISABLED));
+        assertDepartedNewestRowWithTheChainDeclinedKeepsItsTimeline("", "-2.5");
+    }
+
+    @Test
+    public void testDepartedNewestRowWithTheChainDeclinedThenAForwardRowRestoresACount() throws Exception {
+        assertDepartedNewestRowWithTheChainDeclinedThenAForwardRowRestores(
+                "count(*) OVER w s FROM base WHERE x > 0 WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')",
+                "1", "1", "2", "3"
+        );
+    }
+
+    @Test
+    public void testDepartedNewestRowWithTheChainDeclinedThenAForwardRowRestoresACumulativeSum() throws Exception {
+        assertDepartedNewestRowWithTheChainDeclinedThenAForwardRowRestores(
+                "sum(x) OVER w s FROM base WHERE x > 0 WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))",
+                "0.5", "1.5", "6.0", "7.0"
+        );
+    }
+
+    @Test
+    public void testDepartedNewestRowWithTheChainDeclinedThenAForwardRowRestoresADailyAnchor() throws Exception {
+        assertDepartedNewestRowWithTheChainDeclinedThenAForwardRowRestores(
+                "sum(x) OVER w s FROM base WHERE x > 0 WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')",
+                "0.5", "1.5", "6.0", "7.0"
+        );
+    }
+
+    @Test
+    public void testDepartedNewestRowWithTheChainDeclinedThenAForwardRowRestoresAMax() throws Exception {
+        // The departed row held the key's maximum, which the root at the frontier does not carry.
+        assertDepartedNewestRowWithTheChainDeclinedThenAForwardRowRestores(
+                "max(x) OVER w s FROM base WHERE x > 0 WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')",
+                "0.5", "1.5", "4.5", "4.5"
+        );
+    }
+
+    @Test
+    public void testDepartedNewestRowWithTheChainDeclinedThenAForwardRowRestoresAProjectedWindowValue() throws Exception {
+        assertDepartedNewestRowWithTheChainDeclinedThenAForwardRowRestores(
+                DEPARTURE_SUM + " * 2 s FROM base WHERE x > 0",
+                "1.0", "4.0", "13.0", "14.0"
+        );
+    }
+
+    @Test
+    public void testDepartedNewestRowWithTheChainDeclinedThenAForwardRowRestoresARangeFrame() throws Exception {
+        assertDepartedNewestRowWithTheChainDeclinedThenAForwardRowRestores(
+                "sum(x) OVER (PARTITION BY sym ORDER BY ts RANGE BETWEEN '10' MINUTE PRECEDING AND CURRENT ROW) s FROM base WHERE x > 0",
+                "0.5", "1.5", "6.0", "7.0"
+        );
+    }
+
+    @Test
+    public void testDepartedNewestRowWithTheChainDeclinedThenAForwardRowRestoresARowNumber() throws Exception {
+        // A live view takes an unbounded window only under an anchor, which resets it per day.
+        assertDepartedNewestRowWithTheChainDeclinedThenAForwardRowRestores(
+                "row_number() OVER w s FROM base WHERE x > 0 WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')",
+                "1", "1", "2", "3"
+        );
+    }
+
+    @Test
+    public void testDepartedNewestRowWithTheChainDeclinedThenAForwardRowRestoresARowsFrame() throws Exception {
+        assertDepartedNewestRowWithTheChainDeclinedThenAForwardRowRestores(
+                DEPARTURE_SUM + " s FROM base WHERE x > 0",
+                "0.5", "2.0", "6.5", "7.0"
+        );
+    }
+
+    @Test
+    public void testDepartedNewestRowWithTheChainDeclinedThenALateRowKeepsTheLostDaysWindowValues() throws Exception {
+        // The departure leaves the root at 00:01 at the view's frontier, published at the repair
+        // commit, so the late row between the two roots resumes from it, with nothing above it.
+        // An unanchored rebuild would recompute 00:01 and the late row from a base that no
+        // longer holds the day the view keeps.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+        assertMemoryLeak(() -> {
+            createDepartureView("TIMESTAMP", DEPARTURE_SUM + " s FROM base WHERE x > 0", "");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                departTheNewestRowWithTheChainDeclined(job, "-2.5");
+                final long resumesBefore = job.getStatsForTest().getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_RESUME_FROM_ANCHOR);
+                final long headMissRepairsBefore = countHeadMissRepairs(job);
+                commitDeparture(job, "('2026-01-01T00:01:30.000000Z', 'a', 3.0)");
+                Assert.assertEquals("no rebuild repairs the late row", headMissRepairsBefore, countHeadMissRepairs(job));
+                Assert.assertEquals(
+                        "the late row resumes from the root at the frontier",
+                        resumesBefore + 1,
+                        job.getStatsForTest().getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_RESUME_FROM_ANCHOR)
+                );
+                assertDepartureLadder("""
+                        2025-12-31T12:00:00.000000Z -> 1
+                        2026-01-01T00:01:00.000000Z -> 2
+                        2026-01-01T00:01:30.000000Z -> 3
+                        """);
+            }
+            assertDepartureRows(DEPARTED_ROW_THEN_LATE_ROW);
+            assertNoRefreshFaults("lv");
+            assertDepartureRestoresTwice(DEPARTED_ROW_THEN_LATE_ROW, "('2026-01-01T00:03:00.000000Z', 'a', 4.0)", """
+                    2026-01-01T00:03:00.000000Z\ta\t4.0\t8.5
+                    """);
+        });
+    }
+
+    @Test
+    public void testDepartedNewestRowWithTheChainDeclinedThenABaseColumnAddedRestoresTheRuntimeInPlace() throws Exception {
+        // An unreferenced ADD COLUMN between the departure and the next late row drifts the
+        // compiled plan, and the drift recovery restores the runtime from the timeline the
+        // zero-row resume kept, over a base that lost a day of the view's rows.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+        final LogCapture capture = new LogCapture();
+        capture.start();
+        try {
+            assertMemoryLeak(() -> {
+                createDepartureView("TIMESTAMP", DEPARTURE_SUM + " s FROM base WHERE x > 0", "");
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    driveSeedToCompletion(job, "lv");
+                    departTheNewestRowWithTheChainDeclined(job, "-2.5");
+                    execute("ALTER TABLE base ADD COLUMN extra INT");
+                    drainWalQueue();
+                    commitDeparture(job, "('2026-01-01T00:01:30.000000Z', 'a', 3.0, NULL)");
+                    assertDepartureLadder("""
+                            2025-12-31T12:00:00.000000Z -> 1
+                            2026-01-01T00:01:00.000000Z -> 2
+                            2026-01-01T00:01:30.000000Z -> 3
+                            """);
+                }
+                final LiveViewInstance instance = departureView();
+                capture.drain();
+                capture.assertLogged("live view restored its runtime from the checkpoint timeline [view=lv, cause=base table metadata change");
+                Assert.assertEquals(1, instance.getCheckpointRuntimeRestores());
+                Assert.assertEquals("the restore must not fall back to a rebuild", 0, instance.getCheckpointRebuildAttempts());
+                Assert.assertEquals("the drift is the one fault", 1, instance.getRefreshFaultCount());
+                Assert.assertFalse(instance.isCheckpointRecoveryBlocked());
+                assertDepartureRows(DEPARTED_ROW_THEN_LATE_ROW);
+                assertDepartureRestoresTwice(DEPARTED_ROW_THEN_LATE_ROW, "('2026-01-01T00:05:00.000000Z', 'a', 4.5, NULL)", """
+                        2026-01-01T00:05:00.000000Z\ta\t4.5\t9.0
+                        """);
+            });
+        } finally {
+            capture.stop();
+        }
+    }
+
+    @Test
+    public void testDepartedNewestRowWithTheChainDeclinedThenABaseTruncateRestores() throws Exception {
+        // TRUNCATE is base data removal, which the view walks past keeping its rows: a restart
+        // after it must restore them from the timeline the zero-row resume kept.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+        assertMemoryLeak(() -> {
+            createDepartureView("TIMESTAMP", DEPARTURE_SUM + " s FROM base WHERE x > 0", "");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                departTheNewestRowWithTheChainDeclined(job, "-2.5");
+                execute("TRUNCATE TABLE base");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+            }
+            assertDepartureRows(CHAIN_DECLINED_DEPARTURE_ROWS);
+            assertNoRefreshFaults("lv");
+            assertDepartureRestoresTwice(CHAIN_DECLINED_DEPARTURE_ROWS, SINGLE_DEPARTURE_FORWARD_ROW, """
+                    2026-01-01T00:05:00.000000Z\ta\t4.5\t6.5
+                    """);
+        });
+    }
+
+    @Test
+    public void testDepartedNewestRowWithTheChainDeclinedThenAMidDrainFaultRestoresTheRuntimeInPlace() throws Exception {
+        // The forward drain after the departure takes two commits in one pass and fails on the
+        // second, with the first one's row already in the accumulators, and the recovery restores
+        // the runtime in place from the timeline the zero-row resume kept.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault("ts", "x", "sym");
+        assertMemoryLeak(fault.facade(), () -> {
+            createDepartureView("TIMESTAMP", DEPARTURE_SUM + " s FROM base WHERE x > 0", "");
+            fault.of(engine.verifyTableName("base").getDirName());
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                departTheNewestRowWithTheChainDeclined(job, "-2.5");
+                // A row the filter rejects above the departed row, then two provably clean commits.
+                // The first goes in on its own turn, with no row to seal; the next two coalesce
+                // behind it and drain through the raw WAL in one pass, which puts the failure after
+                // a row that pass has already fed, above the root at the frontier.
+                execute("INSERT INTO base VALUES ('2026-01-01T00:03:30.000000Z', 'a', -1.0)");
+                drainWalQueue();
+                execute("INSERT INTO base VALUES ('2026-01-01T00:04:00.000000Z', 'a', 8.0)");
+                execute("INSERT INTO base VALUES ('2026-01-01T00:05:00.000000Z', 'a', 4.5)");
+                drainWalQueue();
+                runOneDeparturePass(job);
+                assertDepartureRows(CHAIN_DECLINED_DEPARTURE_ROWS);
+                assertDepartureLadder(CHAIN_DECLINED_DEPARTURE_LADDER);
+                fault.arm(1);
+                runOneDeparturePass(job);
+                Assert.assertTrue("the drain must have met the fault", fault.hasFired());
+                driveRefreshToQuiescence(job);
+            }
+            final LiveViewInstance instance = departureView();
+            Assert.assertEquals(1, instance.getCheckpointRuntimeRestores());
+            Assert.assertEquals("the restore must not fall back to a rebuild", 0, instance.getCheckpointRebuildAttempts());
+            Assert.assertEquals("the fault is the one fault", 1, instance.getRefreshFaultCount());
+            Assert.assertFalse(instance.isCheckpointRecoveryBlocked());
+            final String rows = CHAIN_DECLINED_DEPARTURE_ROWS + """
+                    2026-01-01T00:04:00.000000Z\ta\t8.0\t10.0
+                    2026-01-01T00:05:00.000000Z\ta\t4.5\t14.0
+                    """;
+            assertDepartureRows(rows);
+            assertDepartureRestoresTwice(rows, "('2026-01-01T00:06:00.000000Z', 'a', 1.0)", """
+                    2026-01-01T00:06:00.000000Z\ta\t1.0\t13.5
+                    """);
+        });
+    }
+
+    @Test
+    public void testDepartedNewestRowsWithTheChainDeclinedTwiceInARowKeepTheTimeline() throws Exception {
+        // Two departures in a row, each one's resume declining the chain and replaying nothing:
+        // the first leaves the root at 00:02 at the frontier, the second the one at 00:01.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+        assertMemoryLeak(() -> {
+            createDepartureView("TIMESTAMP", DEPARTURE_SUM + " s FROM base WHERE x > 0", "");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                commitTheDayTheBaseLoses(job);
+                commitDeparture(job, "('2026-01-01T00:01:00.000000Z', 'a', 1.5)");
+                commitDeparture(job, "('2026-01-01T00:02:00.000000Z', 'a', 2.5)");
+                commitDeparture(job, "('2026-01-01T00:03:00.000000Z', 'a', 3.5)");
+                final LiveViewInstance instance = departureView();
+                final long resetsBefore = instance.getCheckpointTimelineResets();
+                commitDeparture(job, "('2026-01-01T00:03:00.000000Z', 'a', -3.5)");
+                assertDepartureLadder("""
+                        2025-12-31T12:00:00.000000Z -> 1
+                        2026-01-01T00:01:00.000000Z -> 2
+                        2026-01-01T00:02:00.000000Z -> 3
+                        """);
+                Assert.assertEquals(ts("2026-01-01T00:02:00.000000Z"), instance.getHeadCheckpointMaxTs());
+                Assert.assertEquals(lastBaseSeqTxn(), instance.getHeadCheckpointBaseSeqTxn());
+                commitDeparture(job, "('2026-01-01T00:02:00.000000Z', 'a', -2.5)");
+                assertDepartureLadder(CHAIN_DECLINED_DEPARTURE_LADDER);
+                Assert.assertEquals(ts("2026-01-01T00:01:00.000000Z"), instance.getHeadCheckpointMaxTs());
+                Assert.assertEquals(lastBaseSeqTxn(), instance.getHeadCheckpointBaseSeqTxn());
+                Assert.assertEquals(2, job.getStatsForTest().get(LiveViewRefreshStats.TRUNCATE_ZERO_ROW_KEEP_COUNT));
+                Assert.assertEquals(resetsBefore, instance.getCheckpointTimelineResets());
+                assertNoDepartureRepairMarker();
+            }
+            assertDepartureRows(CHAIN_DECLINED_DEPARTURE_ROWS);
+            assertNoRefreshFaults("lv");
+            assertDepartureRestoresTwice(CHAIN_DECLINED_DEPARTURE_ROWS, SINGLE_DEPARTURE_FORWARD_ROW, """
+                    2026-01-01T00:05:00.000000Z\ta\t4.5\t6.5
+                    """);
         });
     }
 
@@ -1677,6 +2014,470 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
                     2026-01-01T00:05:00.000000Z\ta\t4.5\t8.5
                     """);
         });
+    }
+
+    @Test
+    public void testDepartedRootsPastAChainBudgetOfOneKeepTheTimeline() throws Exception {
+        // One upsert moves the two newest roots' rows out of the filter, and the chain budget of
+        // one boundary declines the resume's chain: it truncates at its anchor 00:01, replays no
+        // row, and publishes the root at 00:01, the view's new frontier, at its commit.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 1);
+        assertMemoryLeak(() -> {
+            createDepartureView("TIMESTAMP", DEPARTURE_SUM + " s FROM base WHERE x > 0", "");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                commitTheDayTheBaseLoses(job);
+                commitDeparture(job, "('2026-01-01T00:01:00.000000Z', 'a', 1.5)");
+                commitDeparture(job, "('2026-01-01T00:02:00.000000Z', 'a', 2.5)");
+                commitDeparture(job, "('2026-01-01T00:03:00.000000Z', 'a', 3.5)");
+                final LiveViewInstance instance = departureView();
+                final long resetsBefore = instance.getCheckpointTimelineResets();
+                final long generationBefore = departureGeneration();
+                commitDeparture(job, "('2026-01-01T00:02:00.000000Z', 'a', -2.5), ('2026-01-01T00:03:00.000000Z', 'a', -3.5)");
+                Assert.assertEquals("the zero-row resume keeps its timeline", resetsBefore, instance.getCheckpointTimelineResets());
+                Assert.assertEquals(1, job.getStatsForTest().get(LiveViewRefreshStats.TRUNCATE_ZERO_ROW_KEEP_COUNT));
+                assertDepartureLadder(CHAIN_DECLINED_DEPARTURE_LADDER);
+                Assert.assertEquals("the truncate and the watermark", generationBefore + 2, departureGeneration());
+                Assert.assertEquals(lastBaseSeqTxn(), instance.getHeadCheckpointBaseSeqTxn());
+                assertNoDepartureRepairMarker();
+            }
+            assertDepartureRows(CHAIN_DECLINED_DEPARTURE_ROWS);
+            assertNoRefreshFaults("lv");
+            assertDepartureRestoresTwice(CHAIN_DECLINED_DEPARTURE_ROWS, SINGLE_DEPARTURE_FORWARD_ROW, """
+                    2026-01-01T00:05:00.000000Z\ta\t4.5\t6.5
+                    """);
+        });
+    }
+
+    @Test
+    public void testDepartureAboveARowlessAnchorWithTheChainDeclinedPublishesTheRootAtTheFrontier() throws Exception {
+        assertDepartureAboveARowlessAnchorWithTheChainDeclinedPublishesTheRootAtTheFrontier(false);
+    }
+
+    @Test
+    public void testDepartureAboveARowlessAnchorWithTheChainDeclinedPublishesTheRootAtTheFrontierInNanoseconds() throws Exception {
+        // The rowless anchor sits one nanosecond above the row that becomes the frontier, so the
+        // frontier truncate must floor one nanosecond above it: a floor a microsecond up would
+        // keep the anchor.
+        assertDepartureAboveARowlessAnchorWithTheChainDeclinedPublishesTheRootAtTheFrontier(true);
+    }
+
+    @Test
+    public void testDepartureAboveARowlessAnchorWithTheChainDeclinedSealsTheFrontier() throws Exception {
+        assertDepartureAboveARowlessAnchorWithTheChainDeclinedSealsTheFrontier(DEPARTURE_SUM + " s FROM base WHERE x > 0", "0.5", "2.0", "4.5", "8.5");
+    }
+
+    @Test
+    public void testDepartureAboveARowlessAnchorWithTheChainDeclinedSealsTheFrontierOfACount() throws Exception {
+        assertDepartureAboveARowlessAnchorWithTheChainDeclinedSealsTheFrontier(
+                "count(*) OVER w s FROM base WHERE x > 0 WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')",
+                "1", "1", "2", "3"
+        );
+    }
+
+    @Test
+    public void testDepartureAboveARowlessAnchorWithTheChainDeclinedSealsTheFrontierOfACumulativeSum() throws Exception {
+        assertDepartureAboveARowlessAnchorWithTheChainDeclinedSealsTheFrontier(
+                "sum(x) OVER w s FROM base WHERE x > 0 WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))",
+                "0.5", "1.5", "4.0", "8.5"
+        );
+    }
+
+    @Test
+    public void testDepartureAboveARowlessAnchorWithTheChainDeclinedSealsTheFrontierOfADailyAnchor() throws Exception {
+        assertDepartureAboveARowlessAnchorWithTheChainDeclinedSealsTheFrontier(
+                "sum(x) OVER w s FROM base WHERE x > 0 WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')",
+                "0.5", "1.5", "4.0", "8.5"
+        );
+    }
+
+    @Test
+    public void testDepartureAboveARowlessAnchorWithTheChainDeclinedSealsTheFrontierOfAMax() throws Exception {
+        // The departed rows held the key's maximum, which the root at the new frontier does not
+        // carry: the forward row after the restart is below them.
+        assertDepartureAboveARowlessAnchorWithTheChainDeclinedSealsTheFrontier(
+                "max(x) OVER w s FROM base WHERE x > 0 WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')",
+                "0.5", "1.5", "2.5", "4.5"
+        );
+    }
+
+    @Test
+    public void testDepartureAboveARowlessAnchorWithTheChainDeclinedSealsTheFrontierOfAProjectedWindowValue() throws Exception {
+        assertDepartureAboveARowlessAnchorWithTheChainDeclinedSealsTheFrontier(DEPARTURE_SUM + " * 2 s FROM base WHERE x > 0", "1.0", "4.0", "9.0", "17.0");
+    }
+
+    @Test
+    public void testDepartureAboveARowlessAnchorWithTheChainDeclinedSealsTheFrontierOfARangeFrame() throws Exception {
+        assertDepartureAboveARowlessAnchorWithTheChainDeclinedSealsTheFrontier(
+                "sum(x) OVER (PARTITION BY sym ORDER BY ts RANGE BETWEEN '10' MINUTE PRECEDING AND CURRENT ROW) s FROM base WHERE x > 0",
+                "0.5", "1.5", "4.0", "8.5"
+        );
+    }
+
+    @Test
+    public void testDepartureAboveARowlessAnchorWithTheChainDeclinedSealsTheFrontierOfARowNumber() throws Exception {
+        assertDepartureAboveARowlessAnchorWithTheChainDeclinedSealsTheFrontier(
+                "row_number() OVER w s FROM base WHERE x > 0 WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')",
+                "1", "1", "2", "3"
+        );
+    }
+
+    @Test
+    public void testCrashAfterAZeroRowResumeCommitsRebuildsUnderItsMarker() throws Exception {
+        // A crash after the replacement commit and ahead of the watermark leaves the truncated
+        // generation under the truncate's marker, which reads as live: the restart rebuilds from
+        // the applied base, which lost nothing here.
+        assertCrashAfterAZeroRowResumeCommits(false);
+    }
+
+    @Test
+    public void testCrashAfterAZeroRowResumeCommitsOverALostDayBlocksTheRestart() throws Exception {
+        // As above, over a base that lost a day the view keeps: the restatement guard refuses the
+        // rebuild, and the view stops with every row it holds.
+        assertCrashAfterAZeroRowResumeCommits(true);
+    }
+
+    @Test
+    public void testZeroRowResumeInsideASealPauseRetiresItsTruncatedTimeline() throws Exception {
+        // A seal pause holds the watermark that would publish the root at the frontier, as it
+        // holds every checkpoint write, and a truncated timeline whose closing write is held
+        // retires: the cooldown declines the publication without counting a failure. Past the
+        // pause, the next row opens a fresh history.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+        assertMemoryLeak(() -> {
+            createDepartureView("TIMESTAMP", DEPARTURE_SUM + " s FROM base WHERE x > 0", "");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                final LiveViewInstance instance = commitTwoRootsAboveTheLostDay(job, false);
+                final long resetsBefore = instance.getCheckpointTimelineResets();
+                // The pause a third seal failure in a row arms, set just ahead of the publication.
+                hooks(job).setSimulateResumeHeadSealStart(() -> instance.setSealCooldownUntilUs(currentMicros + Micros.MINUTE_MICROS));
+                commitDeparture(job, "('2026-01-01T00:02:00.000000Z', 'a', -2.5)");
+                hooks(job).setSimulateResumeHeadSealStart(null);
+                Assert.assertTrue(instance.isSealOnCooldown(currentMicros));
+                assertZeroRowResumeRetired(job, instance, resetsBefore, 0);
+                assertDepartureRows(CHAIN_DECLINED_DEPARTURE_ROWS);
+                setCurrentMicros(currentMicros + Micros.MINUTE_MICROS + Micros.SECOND_MICROS);
+                commitDeparture(job, SINGLE_DEPARTURE_FORWARD_ROW);
+                Assert.assertEquals("the next row opens a fresh history", 1, departureGeneration());
+                assertDepartureLadder("2026-01-01T00:05:00.000000Z -> 3\n");
+                Assert.assertEquals(0, instance.getCheckpointSealFailures());
+            }
+            assertNoRefreshFaults("lv");
+            assertDepartureRestoresTwiceAfterARetiredZeroRowResume();
+        });
+    }
+
+    @Test
+    public void testZeroRowResumeWhoseMarkerClearFailsRestoresAfterARestart() throws Exception {
+        // The clear of the truncate's marker fails once the watermark has published, so the
+        // marker stays behind: the generation stands two past the one it names, so a restart reads
+        // it as stale, clears it and restores the view from the root at its frontier.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+        final AtomicBoolean isMarkerRemovalFailing = new AtomicBoolean();
+        final TestFilesFacadeImpl ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean removeQuiet(LPSZ name) {
+                if (isMarkerRemovalFailing.get() && Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.REPAIRING_MARKER_FILE_NAME)) {
+                    return false;
+                }
+                return super.removeQuiet(name);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            createDepartureView("TIMESTAMP", DEPARTURE_SUM + " s FROM base WHERE x > 0", "");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                commitTwoRootsAboveTheLostDay(job, false);
+                final long generationBefore = departureGeneration();
+                hooks(job).setSimulateResumeHeadSealStart(() -> isMarkerRemovalFailing.set(true));
+                commitDeparture(job, "('2026-01-01T00:02:00.000000Z', 'a', -2.5)");
+                isMarkerRemovalFailing.set(false);
+                Assert.assertEquals(1, job.getStatsForTest().get(LiveViewRefreshStats.TRUNCATE_ZERO_ROW_KEEP_COUNT));
+                Assert.assertEquals("the truncate and the watermark", generationBefore + 2, departureGeneration());
+                try (Path dir = departureCheckpointsDir()) {
+                    Assert.assertTrue("the marker the clear failed on stays", LiveViewCheckpointRepairMarker.exists(configuration.getFilesFacade(), dir));
+                    Assert.assertEquals(
+                            "it names the generation the truncate replaced",
+                            generationBefore,
+                            LiveViewCheckpointRepairMarker.readBaseGeneration(configuration, dir)
+                    );
+                }
+            }
+            assertDepartureRows(CHAIN_DECLINED_DEPARTURE_ROWS);
+            assertNoRefreshFaults("lv");
+            restartLiveViewsAndRecover();
+            assertDepartureRestored(CHAIN_DECLINED_DEPARTURE_ROWS);
+            assertNoDepartureRepairMarker();
+            assertDepartureRestoresTwice(CHAIN_DECLINED_DEPARTURE_ROWS, SINGLE_DEPARTURE_FORWARD_ROW, """
+                    2026-01-01T00:05:00.000000Z\ta\t4.5\t6.5
+                    """);
+        });
+    }
+
+    @Test
+    public void testZeroRowResumeAtAFrontierTheApplyHasNotReachedRetiresItsTruncatedTimeline() throws Exception {
+        // A late row the filter rejects below the departed row, resumed from the root at the
+        // view's frontier with the view's writer busy: the replacement commit removes nothing, so
+        // the table's frontier is the anchor either way, but the row count the publication is
+        // held to cannot be taken while the commit waits for its apply. The publication declines
+        // without counting a failure, and the truncated timeline retires; the next row opens a
+        // fresh history.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+        assertMemoryLeak(() -> {
+            createDepartureView("TIMESTAMP", DEPARTURE_SUM + " s FROM base WHERE x > 0", "");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                departTheNewestRowWithTheChainDeclined(job, "-2.5");
+                final LiveViewInstance instance = departureView();
+                final long resetsBefore = instance.getCheckpointTimelineResets();
+                final AtomicLong frontierAtThePublication = new AtomicLong(Numbers.LONG_NULL);
+                execute("INSERT INTO base VALUES ('2026-01-01T00:01:30.000000Z', 'b', -1.0)");
+                drainWalQueue();
+                try (TableWriter ignore = engine.getWriter(instance.getLiveViewToken(), "test holds the view's writer")) {
+                    hooks(job).setSimulateResumeHeadSealStart(() -> {
+                        try (TableReader reader = engine.getReader(instance.getLiveViewToken())) {
+                            frontierAtThePublication.set(reader.getMaxTimestamp());
+                        }
+                    });
+                    runOneDeparturePass(job);
+                    hooks(job).setSimulateResumeHeadSealStart(null);
+                }
+                Assert.assertEquals("the frontier is the anchor", ts("2026-01-01T00:01:00.000000Z"), frontierAtThePublication.get());
+                Assert.assertEquals("the truncated timeline retires", resetsBefore + 1, instance.getCheckpointTimelineResets());
+                Assert.assertEquals("a declined publication is no failed one", 0, instance.getCheckpointSealFailures());
+                Assert.assertEquals("the departure's keep alone", 1, job.getStatsForTest().get(LiveViewRefreshStats.TRUNCATE_ZERO_ROW_KEEP_COUNT));
+                assertNoDepartureTimeline();
+                assertNoDepartureRepairMarker();
+                driveRefreshToQuiescence(job);
+                assertDepartureRows(CHAIN_DECLINED_DEPARTURE_ROWS);
+                commitDeparture(job, SINGLE_DEPARTURE_FORWARD_ROW);
+                Assert.assertEquals("the next row opens a fresh history", 1, departureGeneration());
+                assertDepartureLadder("2026-01-01T00:05:00.000000Z -> 3\n");
+            }
+            assertNoRefreshFaults("lv");
+            assertDepartureRestoresTwiceAfterARetiredZeroRowResume();
+        });
+    }
+
+    @Test
+    public void testZeroRowResumeWhosePrefixTruncateFailsPublishesNothing() throws Exception {
+        // The truncate ahead of the replacement commit fails and retires the timeline, so the
+        // resume holds no prefix: its zero-row replay publishes nothing, and the next row opens a
+        // fresh history.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+        final LogCapture capture = new LogCapture();
+        try {
+            assertMemoryLeak(() -> {
+                createDepartureView("TIMESTAMP", DEPARTURE_SUM + " s FROM base WHERE x > 0", "");
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    driveSeedToCompletion(job, "lv");
+                    final LiveViewInstance instance = commitTwoRootsAboveTheLostDay(job, false);
+                    final long resetsBefore = instance.getCheckpointTimelineResets();
+                    final AtomicBoolean hasReachedThePublication = new AtomicBoolean();
+                    hooks(job).setSimulateResumeHeadSealStart(() -> hasReachedThePublication.set(true));
+                    job.setCheckpointTimelineTestFailureStage(LiveViewCheckpointTimelineStoreWriter.TEST_FAIL_AFTER_METADATA_PUBLISH);
+                    capture.start();
+                    commitDeparture(job, "('2026-01-01T00:02:00.000000Z', 'a', -2.5)");
+                    capture.drain();
+                    capture.stop();
+                    job.setCheckpointTimelineTestFailureStage(0);
+                    hooks(job).setSimulateResumeHeadSealStart(null);
+                    capture.assertLogged("could not preserve live view checkpoint timeline prefix, retiring [view=lv");
+                    Assert.assertFalse("a resume holding no prefix publishes nothing", hasReachedThePublication.get());
+                    assertZeroRowResumeRetired(job, instance, resetsBefore, 0);
+                    assertDepartureRows(CHAIN_DECLINED_DEPARTURE_ROWS);
+                    commitDeparture(job, SINGLE_DEPARTURE_FORWARD_ROW);
+                    Assert.assertEquals("the next row opens a fresh history", 1, departureGeneration());
+                    assertDepartureLadder("2026-01-01T00:05:00.000000Z -> 3\n");
+                }
+                assertNoRefreshFaults("lv");
+                assertDepartureRestoresTwiceAfterARetiredZeroRowResume();
+            });
+        } finally {
+            capture.stop();
+        }
+    }
+
+    @Test
+    public void testZeroRowResumeWhoseFrontierCannotBeReadRetiresItsTruncatedTimeline() throws Exception {
+        // The read of the view's frontier after the replacement fails, so the resume cannot tell
+        // which root sits there: it retires the truncated timeline, as before, and the next row
+        // opens a fresh history.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+        final AtomicReference<String> failedOpenDir = new AtomicReference<>();
+        final AtomicInteger failedOpens = new AtomicInteger();
+        final TestFilesFacadeImpl ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                final String dirName = failedOpenDir.get();
+                if (dirName != null
+                        && Utf8s.containsAscii(name, Files.SEPARATOR + dirName + Files.SEPARATOR)
+                        && Utf8s.endsWithAscii(name, Files.SEPARATOR + TableUtils.TXN_FILE_NAME)
+                        && failedOpenDir.compareAndSet(dirName, null)) {
+                    failedOpens.incrementAndGet();
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+        };
+        final LogCapture capture = new LogCapture();
+        try {
+            assertMemoryLeak(ff, () -> {
+                createDepartureView("TIMESTAMP", DEPARTURE_SUM + " s FROM base WHERE x > 0", "");
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    driveSeedToCompletion(job, "lv");
+                    final LiveViewInstance instance = commitTwoRootsAboveTheLostDay(job, false);
+                    final long resetsBefore = instance.getCheckpointTimelineResets();
+                    hooks(job).setSimulateResumeHeadSealStart(() -> {
+                        // No pooled reader of the view's table may serve the read, so it opens the
+                        // table's files: locking its readers closes the idle ones.
+                        Assert.assertTrue(engine.lockReaders(instance.getLiveViewToken()));
+                        engine.unlockReaders(instance.getLiveViewToken());
+                        failedOpenDir.set(instance.getLiveViewToken().getDirName());
+                    });
+                    capture.start();
+                    commitDeparture(job, "('2026-01-01T00:02:00.000000Z', 'a', -2.5)");
+                    capture.drain();
+                    capture.stop();
+                    hooks(job).setSimulateResumeHeadSealStart(null);
+                    Assert.assertEquals("the read of the frontier fails", 1, failedOpens.get());
+                    capture.assertLogged("could not read the live view frontier after an O3 resume that emitted no row [view=lv, error=");
+                    assertZeroRowResumeRetired(job, instance, resetsBefore, 0);
+                    assertDepartureRows(CHAIN_DECLINED_DEPARTURE_ROWS);
+                    commitDeparture(job, SINGLE_DEPARTURE_FORWARD_ROW);
+                    Assert.assertEquals("the next row opens a fresh history", 1, departureGeneration());
+                    assertDepartureLadder("2026-01-01T00:05:00.000000Z -> 3\n");
+                }
+                assertDepartureRestoresTwiceAfterARetiredZeroRowResume();
+            });
+        } finally {
+            capture.stop();
+        }
+    }
+
+    @Test
+    public void testZeroRowResumeWhosePublicationFailsRetiresItsTruncatedTimeline() throws Exception {
+        // The watermark that would publish the root at the frontier at the repair commit fails:
+        // it counts as a failed seal, and the truncated timeline retires, as when the closing seal
+        // of a truncating resume fails. The next row opens a fresh history.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+        assertMemoryLeak(() -> {
+            createDepartureView("TIMESTAMP", DEPARTURE_SUM + " s FROM base WHERE x > 0", "");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                final LiveViewInstance instance = commitTwoRootsAboveTheLostDay(job, false);
+                final long resetsBefore = instance.getCheckpointTimelineResets();
+                final AtomicBoolean hasReachedThePublication = new AtomicBoolean();
+                hooks(job).setSimulateResumeHeadSealStart(() -> {
+                    job.setCheckpointTimelineTestFailureStage(LiveViewCheckpointTimelineStoreWriter.TEST_FAIL_AFTER_METADATA_PUBLISH);
+                    hasReachedThePublication.set(true);
+                });
+                commitDeparture(job, "('2026-01-01T00:02:00.000000Z', 'a', -2.5)");
+                job.setCheckpointTimelineTestFailureStage(0);
+                hooks(job).setSimulateResumeHeadSealStart(null);
+                Assert.assertTrue("the zero-row resume must reach its publication", hasReachedThePublication.get());
+                assertZeroRowResumeRetired(job, instance, resetsBefore, 1);
+                assertDepartureRows(CHAIN_DECLINED_DEPARTURE_ROWS);
+                commitDeparture(job, SINGLE_DEPARTURE_FORWARD_ROW);
+                Assert.assertEquals("the next row opens a fresh history", 1, departureGeneration());
+                assertDepartureLadder("2026-01-01T00:05:00.000000Z -> 3\n");
+            }
+            assertDepartureRestoresTwiceAfterARetiredZeroRowResume();
+        });
+    }
+
+    @Test
+    public void testZeroRowResumeWhoseReplacementDidNotApplyRetiresItsTruncatedTimeline() throws Exception {
+        // The view's writer is busy when the resume applies its replacement, so the table still
+        // holds the departed row above the anchor: no root sits at that frontier, and the resume
+        // retires the truncated timeline, as before. The next turn applies the replacement.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+        assertMemoryLeak(() -> {
+            createDepartureView("TIMESTAMP", DEPARTURE_SUM + " s FROM base WHERE x > 0", "");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                final LiveViewInstance instance = commitTwoRootsAboveTheLostDay(job, false);
+                final long resetsBefore = instance.getCheckpointTimelineResets();
+                final AtomicLong frontierAtThePublication = new AtomicLong(Numbers.LONG_NULL);
+                execute("INSERT INTO base VALUES ('2026-01-01T00:02:00.000000Z', 'a', -2.5)");
+                drainWalQueue();
+                try (TableWriter ignore = engine.getWriter(instance.getLiveViewToken(), "test holds the view's writer")) {
+                    hooks(job).setSimulateResumeHeadSealStart(() -> {
+                        try (TableReader reader = engine.getReader(instance.getLiveViewToken())) {
+                            frontierAtThePublication.set(reader.getMaxTimestamp());
+                        }
+                    });
+                    runOneDeparturePass(job);
+                    hooks(job).setSimulateResumeHeadSealStart(null);
+                }
+                Assert.assertEquals(
+                        "the replacement has not applied",
+                        ts("2026-01-01T00:02:00.000000Z"),
+                        frontierAtThePublication.get()
+                );
+                assertZeroRowResumeRetired(job, instance, resetsBefore, 0);
+                driveRefreshToQuiescence(job);
+                assertDepartureRows(CHAIN_DECLINED_DEPARTURE_ROWS);
+                commitDeparture(job, SINGLE_DEPARTURE_FORWARD_ROW);
+                Assert.assertEquals("the next row opens a fresh history", 1, departureGeneration());
+                assertDepartureLadder("2026-01-01T00:05:00.000000Z -> 3\n");
+            }
+            assertDepartureRestoresTwiceAfterARetiredZeroRowResume();
+        });
+    }
+
+    @Test
+    public void testZeroRowResumeWhoseRootAtTheFrontierCannotBeReadRetiresItsTruncatedTimeline() throws Exception {
+        // The read of the root at the frontier fails, so the resume cannot vet the root its
+        // watermark would publish: it retires the truncated timeline, as before.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+        final AtomicBoolean isMetaSegmentOpenFailing = new AtomicBoolean();
+        final AtomicInteger failedOpens = new AtomicInteger();
+        final TestFilesFacadeImpl ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (Utf8s.containsAscii(name, Files.SEPARATOR + LiveViewCheckpointLayout.META_DIR_NAME + Files.SEPARATOR + LiveViewCheckpointLayout.META_SEGMENT_PREFIX)
+                        && isMetaSegmentOpenFailing.compareAndSet(true, false)) {
+                    failedOpens.incrementAndGet();
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+        };
+        final LogCapture capture = new LogCapture();
+        try {
+            assertMemoryLeak(ff, () -> {
+                createDepartureView("TIMESTAMP", DEPARTURE_SUM + " s FROM base WHERE x > 0", "");
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    driveSeedToCompletion(job, "lv");
+                    final LiveViewInstance instance = commitTwoRootsAboveTheLostDay(job, false);
+                    final long resetsBefore = instance.getCheckpointTimelineResets();
+                    hooks(job).setSimulateResumeHeadSealStart(() -> isMetaSegmentOpenFailing.set(true));
+                    capture.start();
+                    commitDeparture(job, "('2026-01-01T00:02:00.000000Z', 'a', -2.5)");
+                    capture.drain();
+                    capture.stop();
+                    hooks(job).setSimulateResumeHeadSealStart(null);
+                    Assert.assertEquals("the read of the root at the frontier fails", 1, failedOpens.get());
+                    capture.assertLogged("could not read the live view checkpoint root at the frontier [view=lv, frontier=2026-01-01T00:01:00.000000Z, error=");
+                    assertZeroRowResumeRetired(job, instance, resetsBefore, 0);
+                }
+                assertDepartureRows(CHAIN_DECLINED_DEPARTURE_ROWS);
+                assertNoRefreshFaults("lv");
+            });
+        } finally {
+            capture.stop();
+        }
     }
 
     @Test
@@ -2553,6 +3354,14 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
         });
     }
 
+    private static Path crashImageDir() {
+        return new Path().of(configuration.getDbRoot()).concat("zero_row_resume_crash_image").slash();
+    }
+
+    private static long lastBaseSeqTxn() {
+        return engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("base"));
+    }
+
     private static Path departureCheckpointsDir() {
         return new Path().of(configuration.getDbRoot())
                 .concat(departureView().getLiveViewToken())
@@ -2773,6 +3582,341 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
         });
     }
 
+    /**
+     * The item's trigger with the checkpoint chain declined, over {@code inMemoryClause}: see
+     * {@link #departTheNewestRowWithTheChainDeclined}. A restart right after the departure
+     * restores the view from the root at its new frontier, over the day the base lost, and so
+     * does the one after a forward row.
+     */
+    /**
+     * The item's trigger at the given timestamps, with the checkpoint chain declined: the row of
+     * {@code lostDay}, which the base then drops, when not null, a root at {@code frontierTs} with
+     * x 1.5 and one at {@code departedTs} with x 2.5, then the upsert that moves the newer one out
+     * of the filter. The resume truncates at its anchor, the view's new frontier, and publishes
+     * it at its commit. Each restart restores {@code rows}, and the forward row 4.5 at
+     * {@code forwardTs} between the two adds {@code forwardS}.
+     */
+    private void assertDepartedNewestRootWithTheChainDeclinedKeepsItsTimeline(
+            @Nullable String lostDay,
+            String frontierTs,
+            String departedTs,
+            String forwardTs,
+            String rows,
+            String forwardS
+    ) throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+        assertMemoryLeak(() -> {
+            createDepartureView("TIMESTAMP", DEPARTURE_SUM + " s FROM base WHERE x > 0", "");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                final String lostDayLadder = lostDay != null ? lostDay + "T12:00:00.000000Z -> 1\n" : "";
+                if (lostDay != null) {
+                    commitDeparture(job, "('" + lostDay + "T12:00:00.000000Z', 'a', 0.5)");
+                    execute("ALTER TABLE base DROP PARTITION LIST '" + lostDay + "'");
+                    drainWalQueue();
+                    driveRefreshToQuiescence(job);
+                }
+                final int frontierPosition = lostDay != null ? 2 : 1;
+                commitDeparture(job, "('" + frontierTs + "', 'a', 1.5)");
+                commitDeparture(job, "('" + departedTs + "', 'a', 2.5)");
+                assertDepartureLadder(lostDayLadder
+                        + frontierTs + " -> " + frontierPosition + "\n"
+                        + departedTs + " -> " + (frontierPosition + 1) + "\n");
+                final LiveViewInstance instance = departureView();
+                final long resetsBefore = instance.getCheckpointTimelineResets();
+                final long generationBefore = departureGeneration();
+                commitDeparture(job, "('" + departedTs + "', 'a', -2.5)");
+                Assert.assertEquals("the zero-row resume keeps its timeline", resetsBefore, instance.getCheckpointTimelineResets());
+                Assert.assertEquals(1, job.getStatsForTest().get(LiveViewRefreshStats.TRUNCATE_ZERO_ROW_KEEP_COUNT));
+                assertDepartureLadder(lostDayLadder + frontierTs + " -> " + frontierPosition + "\n");
+                Assert.assertEquals("the truncate and the watermark", generationBefore + 2, departureGeneration());
+                Assert.assertEquals(ts(frontierTs), instance.getHeadCheckpointMaxTs());
+                Assert.assertEquals("at the repair commit", lastBaseSeqTxn(), instance.getHeadCheckpointBaseSeqTxn());
+                assertNoDepartureRepairMarker();
+            }
+            assertDepartureRows(rows);
+            assertNoRefreshFaults("lv");
+            assertDepartureRestoresTwice(rows, "('" + forwardTs + "', 'a', 4.5)", forwardTs + "\ta\t4.5\t" + forwardS + "\n");
+        });
+    }
+
+    private void assertDepartedNewestRowWithTheChainDeclinedKeepsItsTimeline(String inMemoryClause, String departedValue) throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+        assertMemoryLeak(() -> assertDepartedNewestRowWithTheChainDeclinedKeepsItsTimeline(inMemoryClause, departedValue, false));
+    }
+
+    private void assertDepartedNewestRowWithTheChainDeclinedKeepsItsTimeline(
+            String inMemoryClause,
+            String departedValue,
+            boolean isDurationCadence
+    ) throws Exception {
+        createDepartureView("TIMESTAMP", DEPARTURE_SUM + " s FROM base WHERE x > 0", inMemoryClause);
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            driveSeedToCompletion(job, "lv");
+            departTheNewestRowWithTheChainDeclined(job, departedValue, isDurationCadence);
+        }
+        assertDepartureRows(CHAIN_DECLINED_DEPARTURE_ROWS);
+        assertNoRefreshFaults("lv");
+        assertDepartureRestoresTwice(CHAIN_DECLINED_DEPARTURE_ROWS, SINGLE_DEPARTURE_FORWARD_ROW, """
+                2026-01-01T00:05:00.000000Z\ta\t4.5\t6.5
+                """);
+    }
+
+    /**
+     * {@link #departTheNewestRowWithTheChainDeclined} over the view {@code selectTail} describes,
+     * then a forward row at 00:05 in the same process. The watermark carried the runtime's
+     * incremental baseline over the root at the frontier, so the seal of that row builds on it.
+     * Each restart then restores the root that seal wrote, and the row at 00:06 between the two
+     * folds onto it: {@code s1} to {@code s4} are the window values of the rows at 2025-12-31,
+     * 00:01, 00:05 and 00:06.
+     */
+    private void assertDepartedNewestRowWithTheChainDeclinedThenAForwardRowRestores(
+            String selectTail,
+            String s1,
+            String s2,
+            String s3,
+            String s4
+    ) throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+        assertMemoryLeak(() -> {
+            createDepartureView("TIMESTAMP", selectTail, "");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                departTheNewestRowWithTheChainDeclined(job, "-2.5");
+                commitDeparture(job, SINGLE_DEPARTURE_FORWARD_ROW);
+                assertDepartureLadder(CHAIN_DECLINED_DEPARTURE_LADDER + "2026-01-01T00:05:00.000000Z -> 3\n");
+            }
+            final String rows = "ts\tsym\tx\ts\n"
+                    + "2025-12-31T12:00:00.000000Z\ta\t0.5\t" + s1 + "\n"
+                    + "2026-01-01T00:01:00.000000Z\ta\t1.5\t" + s2 + "\n"
+                    + "2026-01-01T00:05:00.000000Z\ta\t4.5\t" + s3 + "\n";
+            assertDepartureRows(rows);
+            assertNoRefreshFaults("lv");
+            assertDepartureRestoresTwice(rows, "('2026-01-01T00:06:00.000000Z', 'a', 1.0)", "2026-01-01T00:06:00.000000Z\ta\t1.0\t" + s4 + "\n");
+        });
+    }
+
+    /**
+     * Over the day the base loses, a root at the row that becomes the frontier, one at the anchor
+     * and one at 00:03. A chained correction moves the anchor's row out of the filter while 00:03
+     * stays, so its splice re-versions the anchor's root with the row below it: a root that holds
+     * no row of its own. With the chain declined, 00:03 then departs: the resume anchors on the
+     * rowless root and replays nothing, so the view's frontier sits below the anchor. A second
+     * truncate drops the anchor, which leaves the root at the frontier the head, and a watermark
+     * publishes it at the repair commit: truncate, frontier truncate and watermark are three
+     * generations, and no checkpoint id is minted. When {@code isNanos}, the anchor sits one
+     * nanosecond above the frontier.
+     */
+    private void assertDepartureAboveARowlessAnchorWithTheChainDeclinedPublishesTheRootAtTheFrontier(boolean isNanos) throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        final String dayTs = isNanos ? "2025-12-31T12:00:00.000000000Z" : "2025-12-31T12:00:00.000000Z";
+        final String frontierTs = isNanos ? "2026-01-01T00:01:00.000000000Z" : "2026-01-01T00:01:00.000000Z";
+        final String anchorTs = isNanos ? "2026-01-01T00:01:00.000000001Z" : "2026-01-01T00:02:00.000000Z";
+        final String departedTs = isNanos ? "2026-01-01T00:03:00.000000000Z" : "2026-01-01T00:03:00.000000Z";
+        final LogCapture capture = new LogCapture();
+        try {
+            assertMemoryLeak(() -> {
+                createDepartureView(isNanos ? "TIMESTAMP_NS" : "TIMESTAMP", DEPARTURE_SUM + " s FROM base WHERE x > 0", "");
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    driveSeedToCompletion(job, "lv");
+                    commitTheDayTheBaseLoses(job);
+                    commitDeparture(job, "('" + frontierTs + "', 'a', 1.5)");
+                    commitDeparture(job, "('" + anchorTs + "', 'a', 2.5)");
+                    commitDeparture(job, "('" + departedTs + "', 'a', 3.5)");
+                    commitDeparture(job, "('" + anchorTs + "', 'a', -2.5)");
+                    final LiveViewInstance instance = departureView();
+                    assertCheckpointLadder(
+                            instance,
+                            isNanos,
+                            dayTs + " -> 1\n" + frontierTs + " -> 2\n" + anchorTs + " -> 2\n" + departedTs + " -> 3\n"
+                    );
+                    setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+                    final long resetsBefore = instance.getCheckpointTimelineResets();
+                    final long generationBefore = departureGeneration();
+                    final long nextCheckpointIdBefore = departureNextCheckpointId();
+                    capture.start();
+                    commitDeparture(job, "('" + departedTs + "', 'a', -3.5)");
+                    capture.drain();
+                    capture.stop();
+                    Assert.assertEquals("the zero-row resume keeps its timeline", resetsBefore, instance.getCheckpointTimelineResets());
+                    Assert.assertEquals(1, job.getStatsForTest().get(LiveViewRefreshStats.TRUNCATE_ZERO_ROW_KEEP_COUNT));
+                    assertCheckpointLadder(instance, isNanos, dayTs + " -> 1\n" + frontierTs + " -> 2\n");
+                    Assert.assertEquals(
+                            "the truncate, the frontier truncate and the watermark",
+                            generationBefore + 3,
+                            departureGeneration()
+                    );
+                    Assert.assertEquals("the watermark mints no checkpoint id", nextCheckpointIdBefore, departureNextCheckpointId());
+                    Assert.assertEquals(snapshotCheckpointLadder(instance).getQuick(2), instance.getHeadCheckpointMaxTs());
+                    Assert.assertEquals("at the repair commit", lastBaseSeqTxn(), instance.getHeadCheckpointBaseSeqTxn());
+                    assertNoDepartureRepairMarker();
+                    capture.assertLogged("live view O3 resume emitted no row below a root above the frontier, truncating at the frontier [view=lv, frontier="
+                            + frontierTs + ", anchorMaxTs=" + anchorTs + "]");
+                }
+                final String rows = "ts\tsym\tx\ts\n"
+                        + dayTs + "\ta\t0.5\t0.5\n"
+                        + frontierTs + "\ta\t1.5\t2.0\n";
+                assertDepartureRows(rows);
+                assertNoRefreshFaults("lv");
+                final String forwardTs = isNanos ? "2026-01-01T00:05:00.000000000Z" : "2026-01-01T00:05:00.000000Z";
+                assertDepartureRestoresTwice(rows, "('" + forwardTs + "', 'a', 4.5)", forwardTs + "\ta\t4.5\t6.5\n");
+            });
+        } finally {
+            capture.stop();
+        }
+    }
+
+    /**
+     * B1's two-corrections shape, with the chain declined for the second departure: over the day
+     * the base loses, a root at 00:01, rows 00:02 and 00:03 under one root at 00:03, and a root at
+     * 00:04. A chained correction moves 00:03 out of the filter: its splice re-versions the root
+     * at 00:03 with the row below it, which holds no row of its own. With the chain declined,
+     * 00:04 then departs: the resume anchors on the rowless root and replays nothing, so the
+     * view's frontier 00:02 sits below the anchor, and no root sits there. The frontier truncate
+     * keeps the root at 00:01, and the seal at the frontier puts a root at 00:02 on it: truncate,
+     * frontier truncate and seal are three generations, and the seal mints one checkpoint id.
+     */
+    private void assertDepartureAboveARowlessAnchorWithTheChainDeclinedSealsTheFrontier(
+            String selectTail,
+            String s1,
+            String s2,
+            String s3,
+            String forwardS
+    ) throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createDepartureView("TIMESTAMP", selectTail, "");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                final LiveViewInstance instance = commitARowlessRootUnderTheNewestRoot(job);
+                setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+                final long resetsBefore = instance.getCheckpointTimelineResets();
+                final long generationBefore = departureGeneration();
+                final long nextCheckpointIdBefore = departureNextCheckpointId();
+                commitDeparture(job, "('2026-01-01T00:04:00.000000Z', 'a', -8.5)");
+                Assert.assertEquals("the zero-row resume keeps its timeline", resetsBefore, instance.getCheckpointTimelineResets());
+                Assert.assertEquals(1, job.getStatsForTest().get(LiveViewRefreshStats.TRUNCATE_ZERO_ROW_KEEP_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(LiveViewRefreshStats.SPLICE_FRONTIER_TRUNCATE_COUNT));
+                assertDepartureLadder(SINGLE_DEPARTURE_LADDER);
+                Assert.assertEquals("the truncate, the frontier truncate and the seal", generationBefore + 3, departureGeneration());
+                Assert.assertEquals("the seal mints one checkpoint id", nextCheckpointIdBefore + 1, departureNextCheckpointId());
+                Assert.assertEquals(ts("2026-01-01T00:02:00.000000Z"), instance.getHeadCheckpointMaxTs());
+                Assert.assertEquals("at the repair commit", lastBaseSeqTxn(), instance.getHeadCheckpointBaseSeqTxn());
+                assertNoDepartureRepairMarker();
+            }
+            final String rows = singleDepartureRows(s1, s2, s3);
+            assertDepartureRows(rows);
+            assertNoRefreshFaults("lv");
+            assertDepartureRestoresTwice(rows, SINGLE_DEPARTURE_FORWARD_ROW, "2026-01-01T00:05:00.000000Z\ta\t4.5\t" + forwardS + "\n");
+        });
+    }
+
+    private void assertNoDepartureRepairMarker() {
+        try (Path dir = departureCheckpointsDir()) {
+            Assert.assertFalse("no repair marker stays", LiveViewCheckpointRepairMarker.exists(configuration.getFilesFacade(), dir));
+        }
+    }
+
+    /**
+     * Each restart after a zero-row resume that retired its truncated timeline and a forward
+     * row at 00:05 that opened a fresh history: the view restores from that row's root.
+     */
+    private void assertDepartureRestoresTwiceAfterARetiredZeroRowResume() throws Exception {
+        final String rows = CHAIN_DECLINED_DEPARTURE_ROWS + "2026-01-01T00:05:00.000000Z\ta\t4.5\t6.5\n";
+        assertDepartureRows(rows);
+        assertDepartureRestoresTwice(rows, "('2026-01-01T00:06:00.000000Z', 'a', 1.0)", """
+                2026-01-01T00:06:00.000000Z\ta\t1.0\t7.0
+                """);
+    }
+
+    // A zero-row resume that held no capture and retired its truncated timeline, as every such
+    // resume did before it could keep it: the timeline and the marker are gone.
+    private void assertZeroRowResumeRetired(LiveViewRefreshJob job, LiveViewInstance instance, long resetsBefore, long sealFailures) {
+        Assert.assertEquals("the truncated timeline retires", resetsBefore + 1, instance.getCheckpointTimelineResets());
+        Assert.assertEquals(sealFailures, instance.getCheckpointSealFailures());
+        Assert.assertEquals(0, job.getStatsForTest().get(LiveViewRefreshStats.TRUNCATE_ZERO_ROW_KEEP_COUNT));
+        assertNoDepartureTimeline();
+        assertNoDepartureRepairMarker();
+    }
+
+    /**
+     * The item's trigger with the chain declined, over the day the base loses when
+     * {@code isDayLost}, and a crash image of the checkpoint directory taken where the zero-row
+     * resume starts its publication: after the replacement commit, under the truncate's marker.
+     * The restart from that image finds the marker live and rebuilds from the applied base.
+     */
+    private void assertCrashAfterAZeroRowResumeCommits(boolean isDayLost) throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+        assertMemoryLeak(() -> {
+            createDepartureView("TIMESTAMP", DEPARTURE_SUM + " s FROM base WHERE x > 0", "");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                if (isDayLost) {
+                    commitTheDayTheBaseLoses(job);
+                }
+                commitDeparture(job, "('2026-01-01T00:01:00.000000Z', 'a', 1.5)");
+                commitDeparture(job, "('2026-01-01T00:02:00.000000Z', 'a', 2.5)");
+                final long generationBefore = departureGeneration();
+                final AtomicBoolean hasCrashed = new AtomicBoolean();
+                try (Path checkpoints = departureCheckpointsDir().slash(); Path crashImage = crashImageDir()) {
+                    hooks(job).setSimulateResumeHeadSealStart(() -> {
+                        TestUtils.copyDirectory(checkpoints, crashImage, configuration.getMkDirMode());
+                        hasCrashed.set(true);
+                    });
+                    commitDeparture(job, "('2026-01-01T00:02:00.000000Z', 'a', -2.5)");
+                    hooks(job).setSimulateResumeHeadSealStart(null);
+                }
+                Assert.assertTrue("the zero-row resume must reach its publication", hasCrashed.get());
+                try (Path crashImage = crashImageDir()) {
+                    Assert.assertTrue(LiveViewCheckpointRepairMarker.exists(configuration.getFilesFacade(), crashImage));
+                    Assert.assertEquals(generationBefore, LiveViewCheckpointRepairMarker.readBaseGeneration(configuration, crashImage));
+                }
+            }
+            final String rows = isDayLost ? CHAIN_DECLINED_DEPARTURE_ROWS : """
+                    ts\tsym\tx\ts
+                    2026-01-01T00:01:00.000000Z\ta\t1.5\t1.5
+                    """;
+            assertDepartureRows(rows);
+            final TableToken viewToken = engine.verifyTableName("lv");
+            engine.getLiveViewRegistry().clear();
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            engine.releaseInactive();
+            try (
+                    Path checkpoints = new Path().of(configuration.getDbRoot()).concat(viewToken).concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME).slash();
+                    Path crashImage = crashImageDir()
+            ) {
+                final FilesFacade ff = configuration.getFilesFacade();
+                Assert.assertTrue(ff.rmdir(checkpoints));
+                TestUtils.copyDirectory(crashImage, checkpoints, configuration.getMkDirMode());
+                Assert.assertTrue(ff.rmdir(crashImage));
+            }
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            try {
+                restartLiveViewsAndRecover();
+                capture.drain();
+                capture.assertLogged("live view restart rebuilding from applied base [view=lv, cause=prefix preservation repair marker present");
+            } finally {
+                capture.stop();
+            }
+            if (isDayLost) {
+                Assert.assertEquals("rebuild_blocked", LiveViewCheckpointRecoveryPhase.routeName(departureView().getCheckpointRestoreRoute()));
+                Assert.assertTrue(departureView().isCheckpointRecoveryBlocked());
+                assertDepartureRows(rows);
+            } else {
+                assertRebuiltFromAppliedBase("lv");
+                Assert.assertFalse(departureView().isCheckpointRecoveryBlocked());
+                assertDepartureRows(rows);
+                assertDepartureMatchesRecompute();
+            }
+        });
+    }
+
     private void assertDepartureLadderNanos(String expected) {
         assertCheckpointLadder(departureView(), true, expected);
     }
@@ -2914,10 +4058,84 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
         assertDepartureRestoresTwice(rows, SINGLE_DEPARTURE_FORWARD_ROW, "2026-01-01T00:05:00.000000Z\ta\t4.5\t" + forwardS + "\n");
     }
 
+    /**
+     * B1's first correction: over the day the base loses, a root at 00:01, rows 00:02 and 00:03
+     * under one root at 00:03, and a root at 00:04, then the chained correction that moves 00:03
+     * out of the filter. Its splice re-versions the root at 00:03 with the row below it, a root
+     * that holds no row of its own, under the root at 00:04.
+     */
+    private LiveViewInstance commitARowlessRootUnderTheNewestRoot(LiveViewRefreshJob job) throws Exception {
+        commitTheDayTheBaseLoses(job);
+        commitDeparture(job, "('2026-01-01T00:01:00.000000Z', 'a', 1.5)");
+        commitDeparture(job, "('2026-01-01T00:02:00.000000Z', 'a', 2.5), ('2026-01-01T00:03:00.000000Z', 'a', 4.5)");
+        commitDeparture(job, "('2026-01-01T00:04:00.000000Z', 'a', 8.5)");
+        commitDeparture(job, "('2026-01-01T00:03:00.000000Z', 'a', -4.5)");
+        assertDepartureLadder("""
+                2025-12-31T12:00:00.000000Z -> 1
+                2026-01-01T00:01:00.000000Z -> 2
+                2026-01-01T00:03:00.000000Z -> 3
+                2026-01-01T00:04:00.000000Z -> 4
+                """);
+        return departureView();
+    }
+
+    // The day the base loses, then a root at 00:01 and one at 00:02, each sealed by its own
+    // commit: at one row per seal, or past the duration cadence when isDurationCadence.
+    private LiveViewInstance commitTwoRootsAboveTheLostDay(LiveViewRefreshJob job, boolean isDurationCadence) throws Exception {
+        commitTheDayTheBaseLoses(job);
+        if (isDurationCadence) {
+            setCurrentMicros(currentMicros + 6 * Micros.MINUTE_MICROS);
+        }
+        commitDeparture(job, "('2026-01-01T00:01:00.000000Z', 'a', 1.5)");
+        if (isDurationCadence) {
+            setCurrentMicros(currentMicros + 6 * Micros.MINUTE_MICROS);
+        }
+        commitDeparture(job, "('2026-01-01T00:02:00.000000Z', 'a', 2.5)");
+        assertDepartureLadder("""
+                2025-12-31T12:00:00.000000Z -> 1
+                2026-01-01T00:01:00.000000Z -> 2
+                2026-01-01T00:02:00.000000Z -> 3
+                """);
+        return departureView();
+    }
+
     private void commitDeparture(LiveViewRefreshJob job, String values) throws Exception {
         execute("INSERT INTO base VALUES " + values);
         drainWalQueue();
         driveRefreshToQuiescence(job);
+    }
+
+    private void departTheNewestRowWithTheChainDeclined(LiveViewRefreshJob job, String departedValue) throws Exception {
+        departTheNewestRowWithTheChainDeclined(job, departedValue, false);
+    }
+
+    /**
+     * The item's trigger, under a checkpoint chain the configuration declines: the day the base
+     * loses and a root each at 00:01 and 00:02 ({@link #commitTwoRootsAboveTheLostDay}), then the
+     * upsert of 00:02 to {@code departedValue}, which the filter rejects. The resume truncates the
+     * timeline at its anchor 00:01 ahead of its replacement commit and replays no row, which leaves
+     * the view's frontier on the anchor: a watermark publishes the truncated generation at the
+     * repair commit, and mints no root.
+     */
+    private void departTheNewestRowWithTheChainDeclined(LiveViewRefreshJob job, String departedValue, boolean isDurationCadence) throws Exception {
+        final LiveViewInstance instance = commitTwoRootsAboveTheLostDay(job, isDurationCadence);
+        final long generationBefore = departureGeneration();
+        final long nextCheckpointIdBefore = departureNextCheckpointId();
+        final long resetsBefore = instance.getCheckpointTimelineResets();
+        final long sealFailuresBefore = instance.getCheckpointSealFailures();
+        final long keepsBefore = job.getStatsForTest().get(LiveViewRefreshStats.TRUNCATE_ZERO_ROW_KEEP_COUNT);
+        commitDeparture(job, "('2026-01-01T00:02:00.000000Z', 'a', " + departedValue + ")");
+        Assert.assertEquals("the zero-row resume keeps its timeline", resetsBefore, instance.getCheckpointTimelineResets());
+        Assert.assertEquals(keepsBefore + 1, job.getStatsForTest().get(LiveViewRefreshStats.TRUNCATE_ZERO_ROW_KEEP_COUNT));
+        Assert.assertEquals(0, job.getStatsForTest().get(LiveViewRefreshStats.SPLICE_FRONTIER_TRUNCATE_COUNT));
+        Assert.assertEquals(0, job.getStatsForTest().get(LiveViewRefreshStats.SPLICE_ZERO_ROW_KEEP_COUNT));
+        assertDepartureLadder(CHAIN_DECLINED_DEPARTURE_LADDER);
+        Assert.assertEquals("the truncate and the watermark", generationBefore + 2, departureGeneration());
+        Assert.assertEquals("the watermark mints no checkpoint id", nextCheckpointIdBefore, departureNextCheckpointId());
+        Assert.assertEquals(ts("2026-01-01T00:01:00.000000Z"), instance.getHeadCheckpointMaxTs());
+        Assert.assertEquals("at the repair commit", lastBaseSeqTxn(), instance.getHeadCheckpointBaseSeqTxn());
+        Assert.assertEquals(sealFailuresBefore, instance.getCheckpointSealFailures());
+        assertNoDepartureRepairMarker();
     }
 
     // One refresh pass, the way one worker turn takes the notifications waiting for it.

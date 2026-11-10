@@ -1651,6 +1651,12 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      * publication is what lets that WAL go without a new root. Appending one would
      * instead duplicate the head's key, which the timeline refuses.
      * <p>
+     * It also closes an out-of-order repair that held no capture and whose replay emitted
+     * no row: the truncate ahead of the repair's commit left the root at the view's new
+     * frontier as the newest, carrying the pre-repair coordinate forward, and the runtime
+     * holds that root's state with nothing fed since, so the root is valid at the repair's
+     * commit, which this publication moves the coordinate to.
+     * <p>
      * The caller names the newest root its head stands on, and the publication refuses
      * when the generation's newest root is a different one: a repair, a truncate or a
      * newer seal in between would make the claim wrong. The covered live-view seqTxn,

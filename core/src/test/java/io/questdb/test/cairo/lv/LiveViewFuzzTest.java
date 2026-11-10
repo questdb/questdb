@@ -351,6 +351,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // shape from it rather than from the run's random sequence, so a pinned-seed batch draws what
     // it drew before they existed.
     private int departureEpisodes;
+    // Departures of a batch that could decline the checkpoint chain: every third one, from the
+    // first, does. See departNewestRows.
+    private int chainDeclineCandidates;
     // Departure episodes of a batch whose departed rows no root sealed, so the resume repairing
     // their departure anchored on the head's own root and emitted nothing: see departNewestRows.
     private int unsealedDepartures;
@@ -601,6 +604,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // departNewestRowsOverSparseRoots for the RANGE-frame runs, which take one shape each.
         coverage.assertReachedStat(LiveViewRefreshStats.SPLICE_FRONTIER_TRUNCATE_COUNT);
         coverage.assertReachedStat(LiveViewRefreshStats.SPLICE_ZERO_ROW_KEEP_COUNT);
+        coverage.assertReachedStat(LiveViewRefreshStats.TRUNCATE_ZERO_ROW_KEEP_COUNT);
         assertReachedEveryHeadMissSpliceOutcome();
         assertReachedEveryRowlessStretchOutcome();
         assertReachedAnOwedSealEpisode();
@@ -946,6 +950,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // departNewestRowsOverSparseRoots for the RANGE-frame runs, which take one shape each.
         coverage.assertReachedStat(LiveViewRefreshStats.SPLICE_FRONTIER_TRUNCATE_COUNT);
         coverage.assertReachedStat(LiveViewRefreshStats.SPLICE_ZERO_ROW_KEEP_COUNT);
+        coverage.assertReachedStat(LiveViewRefreshStats.TRUNCATE_ZERO_ROW_KEEP_COUNT);
         assertReachedEveryHeadMissSpliceOutcome();
         assertReachedEveryRowlessStretchOutcome();
         assertReachedAnOwedSealEpisode();
@@ -2046,7 +2051,29 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             final boolean isCrashDrawn = isFrontierTruncateCrashAllowed
                     && (resumeFrontierTruncateCrashes == 0 || frontierTruncateCrashRnd(rnd).nextInt(3) == 0);
             final long truncatesBefore = job.getStatsForTest().get(LiveViewRefreshStats.SPLICE_FRONTIER_TRUNCATE_COUNT);
-            departNewestBatch(job, baseToken, usedTs, withWhere, departedTs, departedSym, keptTs[3], lateMode, lateTs, lateSym, lateI, lateX, isCrashDrawn);
+            // The first departure of a batch that can reach it, and one in three after it, declines
+            // the checkpoint chain: its resume truncates at the kept batch's root ahead of its
+            // commit and replays no row, so that root, the view's new frontier, is published at the
+            // commit, and the restart restores from it. A late row in the departure's own commit
+            // would give the replay a row to emit, a crash drawn at the splice's frontier truncate
+            // needs the splice, and the batch's first unsealed departure keeps the splice whose
+            // zero-row re-stamp it exists for. Counted rather than drawn, so a pinned-seed batch
+            // draws what it drew before.
+            final boolean isChainDeclined = !isCrashDrawn
+                    && lateMode != 1
+                    && (!isDepartedBatchUnsealed || unsealedDepartures > 0)
+                    && chainDeclineCandidates++ % 3 == 0;
+            final int maxChainedBoundaries = engine.getConfiguration().getLiveViewCheckpointRepairMaxChainedBoundaries();
+            if (isChainDeclined) {
+                setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+            }
+            try {
+                departNewestBatch(job, baseToken, usedTs, withWhere, departedTs, departedSym, keptTs[3], lateMode, lateTs, lateSym, lateI, lateX, isCrashDrawn);
+            } finally {
+                if (isChainDeclined) {
+                    setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, maxChainedBoundaries);
+                }
+            }
             if (frontierTruncateCrash.hasCrashed()) {
                 Assert.assertEquals(
                         "the crash interrupts the resume's frontier truncate",
@@ -4847,23 +4874,20 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 }
             } else if (departNewestRows(rnd, job, engine.verifyTableName("base"), null, symCount, withWhere, anchor == null, anchor == null)) {
                 // An anchored run draws repair knobs that can take the departure off the chained
-                // resume, and one route there does not keep the timeline: a declined chain whose
-                // replay emits no row retires it. The default knobs keep the chain, and only they
-                // crash the departure.
-                final boolean isTimelineKept = anchor == null;
+                // resume, and every route there keeps the timeline, a declined chain whose replay
+                // emits no row included. The default knobs keep the chain, and only they crash the
+                // departure.
                 // A crash the departure drew left the image the restart below comes back from.
                 final boolean isCrashed = frontierTruncateCrash.consumeCrash();
                 commitRowlessStretch(job, null, withWhere, false, anchor == null);
                 long droppedDayTs = Numbers.LONG_NULL;
-                if (isTimelineKept) {
-                    if (isCrashed) {
-                        copyTheBaseToItsShadow(true);
-                    }
-                    final long viewMinTs = queryTimestamp("SELECT min(ts) FROM lv");
-                    rowsBeforeTheDrop = dropTheOldestDayTheViewHolds(rnd, job, oracleOrderedSql, viewOrderedSql);
-                    if (rowsBeforeTheDrop != null) {
-                        droppedDayTs = viewMinTs - viewMinTs % Micros.DAY_MICROS;
-                    }
+                if (isCrashed) {
+                    copyTheBaseToItsShadow(true);
+                }
+                final long viewMinTs = queryTimestamp("SELECT min(ts) FROM lv");
+                rowsBeforeTheDrop = dropTheOldestDayTheViewHolds(rnd, job, oracleOrderedSql, viewOrderedSql);
+                if (rowsBeforeTheDrop != null) {
+                    droppedDayTs = viewMinTs - viewMinTs % Micros.DAY_MICROS;
                 }
                 coverage.absorb(job);
                 job = Misc.free(job);
@@ -4882,7 +4906,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                         // The base holds the day again, so the recompute is the run's oracle.
                         rowsBeforeTheDrop = null;
                     }
-                } else if (isTimelineKept) {
+                } else {
                     // No fault struck the run, so the departure left a root at the view's frontier.
                     assertRestoredFromTimeline("lv");
                 }
@@ -4894,9 +4918,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                     engine.buildViewGraphs();
                     job = new LiveViewRefreshJob(0, engine, 1);
                     driveRefreshToQuiescence(job);
-                    if (isTimelineKept) {
-                        assertRestoredFromTimeline("lv");
-                    }
+                    assertRestoredFromTimeline("lv");
                 }
             }
         } finally {
@@ -5161,7 +5183,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                     // The crash below recovers the lead by restoring a sealed checkpoint root,
                     // but the run can end with no timeline on disk: a boundary above every row
                     // keeps the view empty, so nothing ever seals, and an O3 resume replay that
-                    // emits no row (every row above its anchor fails the WHERE) retires the
+                    // emits no row (every row above its anchor fails the WHERE) over a view it
+                    // leaves empty has no frontier to keep a root at, so it retires the
                     // timeline by design. The un-flushed lead seals nothing either, so the
                     // restart would rebuild from the applied base, which publishes straight to
                     // LV disk and leaves no lead for assertLeadReadBack to find. Flush one

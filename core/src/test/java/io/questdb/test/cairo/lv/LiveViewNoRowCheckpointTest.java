@@ -1387,6 +1387,125 @@ public class LiveViewNoRowCheckpointTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testRejectedLateRowsBelowADepartureWithTheChainDeclinedKeepTheTimeline() throws Exception {
+        // The departure's resume declines the checkpoint chain, truncates at its anchor 00:01 and
+        // replays no row, so the root at 00:01 is the view's new frontier: a watermark publishes it
+        // at the departure's commit. Each late row the filter rejects below the departed row takes
+        // the same resume, a truncate that keeps the ladder as it stands and a watermark at its
+        // commit, so the head and the purge floor follow the commits, and the checkpoint directory
+        // stays the size it was. A rejected row above the departed one is in order, and the cycle
+        // without rows publishes the head at its commit.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+        configureWalPurge();
+        configureCadence(CADENCE_MICROS);
+        assertMemoryLeak(() -> {
+            createDedupBaseView();
+            final String ladder = """
+                    2025-12-31T12:00:00.000000Z -> 1
+                    2026-01-01T00:01:00.000000Z -> 2
+                    """;
+            final String rows = """
+                    ts\tsym\tx\ts
+                    2025-12-31T12:00:00.000000Z\ta\t0.5\t0.5
+                    2026-01-01T00:01:00.000000Z\ta\t1.5\t2.0
+                    """;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(START_MICROS);
+                commitTheDayTheBaseLoses(job);
+                commit(job, minute(1), "a", 1.5, DEPARTURE_STEP_MICROS);
+                commit(job, minute(2), "a", 2.5, DEPARTURE_STEP_MICROS);
+                final LiveViewInstance instance = instance();
+                assertCheckpointLadder(instance, false, ladder + "2026-01-01T00:02:00.000000Z -> 3\n");
+                final long resetsBefore = instance.getCheckpointTimelineResets();
+                final long headMissRepairsBefore = countHeadMissRepairs(job);
+                commit(job, minute(2), "a", -2.5, DEPARTURE_STEP_MICROS);
+                assertCheckpointLadder(instance, false, ladder);
+                Assert.assertEquals(1, truncateZeroRowKeeps(job));
+                Assert.assertEquals(5, instance.getHeadCheckpointBaseSeqTxn());
+                int files = -1;
+                long retirementBytes = -1;
+                for (int i = 0; i < 3; i++) {
+                    final long generationBefore = publishedCheckpointGeneration(instance);
+                    commitLateRejected(job, DrainPath.RAW_WAL, "2026-01-01T00:01:" + (i + 1) + "0.000000Z", "-1.0", DEPARTURE_STEP_MICROS);
+                    Assert.assertEquals(i + 2, truncateZeroRowKeeps(job));
+                    Assert.assertEquals("the truncate and the watermark", generationBefore + 2, publishedCheckpointGeneration(instance));
+                    Assert.assertEquals(6 + i, instance.getHeadCheckpointBaseSeqTxn());
+                    Assert.assertEquals(ts(minute(1)), instance.getHeadCheckpointMaxTs());
+                    // The older of the two superblock slots: the truncate carried the coordinate
+                    // the previous commit's watermark published.
+                    Assert.assertEquals(5 + i, instance.getCheckpointTimelineWalPurgeFloor());
+                    assertCheckpointLadder(instance, false, ladder);
+                    if (i == 1) {
+                        files = checkpointFileCount(instance);
+                        retirementBytes = retirementQueueBytes(instance);
+                    } else if (i == 2) {
+                        Assert.assertEquals(files, checkpointFileCount(instance));
+                        Assert.assertEquals(retirementBytes, retirementQueueBytes(instance));
+                    }
+                }
+                Assert.assertEquals("no rebuild repairs a late row", headMissRepairsBefore, countHeadMissRepairs(job));
+                Assert.assertEquals(resetsBefore, instance.getCheckpointTimelineResets());
+                Assert.assertEquals("the purge must keep only the segments above the floor", 8 - 7, purgeBaseWalAndCountSegments());
+                assertDepartedViewRows(rows);
+
+                final long generationBefore = publishedCheckpointGeneration(instance);
+                commitLateRejected(job, DrainPath.RAW_WAL, "2026-01-01T00:02:30.000000Z", "-1.0", DEPARTURE_STEP_MICROS);
+                Assert.assertEquals(9, instance.getHeadCheckpointBaseSeqTxn());
+                Assert.assertEquals("the watermark alone", generationBefore + 1, publishedCheckpointGeneration(instance));
+                Assert.assertEquals(4, truncateZeroRowKeeps(job));
+                Assert.assertEquals(0, instance.getCheckpointSealFailures());
+                assertCheckpointLadder(instance, false, ladder);
+                assertDepartedViewRows(rows);
+            }
+            assertRestartRestoresTheDepartedRows(rows);
+            assertRestartRestoresTheDepartedRows(rows);
+        });
+    }
+
+    @Test
+    public void testWalPurgeAroundAZeroRowResumeKeepsTheRestoreWal() throws Exception {
+        // A purge between the zero-row resume's commit and its publication finds the truncated
+        // generation still valid at the commit before the departure, and the head cleared: it keeps
+        // the departure's own WAL, which a restore from that generation replays. Once the
+        // watermark publishes the root at the frontier at the departure's commit, the head holds
+        // the base WAL back to it.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+        configureWalPurge();
+        configureCadence(CADENCE_MICROS);
+        assertMemoryLeak(() -> {
+            createDedupBaseView();
+            final String rows = """
+                    ts\tsym\tx\ts
+                    2025-12-31T12:00:00.000000Z\ta\t0.5\t0.5
+                    2026-01-01T00:01:00.000000Z\ta\t1.5\t2.0
+                    """;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(START_MICROS);
+                commitTheDayTheBaseLoses(job);
+                commit(job, minute(1), "a", 1.5, DEPARTURE_STEP_MICROS);
+                commit(job, minute(2), "a", 2.5, DEPARTURE_STEP_MICROS);
+                final LiveViewInstance instance = instance();
+                final AtomicLong segmentsAtThePublication = new AtomicLong(-1);
+                final AtomicLong headBaseAtThePublication = new AtomicLong(-1);
+                hooks(job).setSimulateResumeHeadSealStart(() -> {
+                    headBaseAtThePublication.set(instance.getHeadCheckpointBaseSeqTxn());
+                    segmentsAtThePublication.set(purgeBaseWalAndCountSegments());
+                });
+                commit(job, minute(2), "a", -2.5, DEPARTURE_STEP_MICROS);
+                hooks(job).setSimulateResumeHeadSealStart(null);
+                Assert.assertEquals("the truncate cleared the head", Numbers.LONG_NULL, headBaseAtThePublication.get());
+                Assert.assertEquals("the departure's WAL survives the purge", 5 - 4, segmentsAtThePublication.get());
+                Assert.assertEquals(1, truncateZeroRowKeeps(job));
+                Assert.assertEquals(5, instance.getHeadCheckpointBaseSeqTxn());
+                Assert.assertEquals(4, instance.getCheckpointTimelineWalPurgeFloor());
+                Assert.assertEquals(5 - 4, purgeBaseWalAndCountSegments());
+                assertDepartedViewRows(rows);
+            }
+            assertRestartRestoresTheDepartedRows(rows);
+        });
+    }
+
+    @Test
     public void testRestartAfterNoRowPublicationsRestoresFromTheTimeline() throws Exception {
         configureCadence(CADENCE_MICROS);
         assertMemoryLeak(() -> {
@@ -1725,6 +1844,10 @@ public class LiveViewNoRowCheckpointTest extends AbstractLiveViewTest {
 
     private static long spliceZeroRowKeeps(LiveViewRefreshJob job) {
         return job.getStatsForTest().get(LiveViewRefreshStats.SPLICE_ZERO_ROW_KEEP_COUNT);
+    }
+
+    private static long truncateZeroRowKeeps(LiveViewRefreshJob job) {
+        return job.getStatsForTest().get(LiveViewRefreshStats.TRUNCATE_ZERO_ROW_KEEP_COUNT);
     }
 
     private static void restartCycle() {
