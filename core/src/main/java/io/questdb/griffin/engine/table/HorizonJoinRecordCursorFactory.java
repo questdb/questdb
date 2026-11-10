@@ -602,6 +602,23 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
                 symbolTranslatingRecord.initSources(masterCursor, slaveCursor);
             }
 
+            // The walk looks up the join keys of the master rows alone, so the forward scans may
+            // cache the slave rows of those keys alone, see HorizonJoinTimeFrameHelper#beginKeyTracking.
+            if (symbolTranslatingRecord != null && slaveTimeFrameHelper.isIndexedKeyLookup()) {
+                slaveTimeFrameHelper.beginKeyTracking();
+                final Record masterRecord = masterCursor.getRecord();
+                masterCursor.toTop();
+                while (masterCursor.hasNext()) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                    symbolTranslatingRecord.of(masterRecord);
+                    slaveTimeFrameHelper.trackKeyOf(symbolTranslatingRecord);
+                }
+                symbolTranslatingRecord.resetNonExistentKeyFlag();
+                // the iterator discovered a master row already: start it over
+                masterCursor.toTop();
+                horizonIterator.of(masterCursor, recordBMaster, masterTimestampColumnIndex);
+            }
+
             // Initialize functions
             Function.init(recordFunctions, horizonJoinSymbolTableSource, executionContext, null);
             Function.init(keyFunctions, horizonJoinSymbolTableSource, executionContext, null);

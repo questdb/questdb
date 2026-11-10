@@ -363,6 +363,8 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                     record,
                     masterKeyRecord,
                     baseRowId,
+                    rows,
+                    rows.size(),
                     atom,
                     slaveTimeFrameHelper,
                     asOfJoinMap,
@@ -402,6 +404,8 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             PageFrameMemoryRecord masterRecord,
             Record masterKeyRecord,
             long baseRowId,
+            @Nullable DirectLongList masterRows,
+            long masterRowCount,
             AsyncHorizonJoinNotKeyedAtom atom,
             HorizonJoinTimeFrameHelper slaveTimeFrameHelper,
             Map asOfJoinMap,
@@ -420,6 +424,15 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
         slaveTimeFrameHelper.toTop();
         if (keyedAsOfJoin) {
             asOfJoinMap.clear();
+        }
+        if (keyedAsOfJoin && symbolTranslatingRecord != null && slaveTimeFrameHelper.isIndexedKeyLookup()) {
+            // Every key the walk looks up comes from these rows, so the forward scans may cache theirs alone.
+            slaveTimeFrameHelper.beginKeyTracking();
+            for (long i = 0; i < masterRowCount; i++) {
+                masterRecord.setFilteredRowIndex(masterRows != null ? masterRows.get(i) : i, i);
+                slaveTimeFrameHelper.trackKeyOf(symbolTranslatingRecord);
+            }
+            symbolTranslatingRecord.resetNonExistentKeyFlag();
         }
 
         final long masterTsScale = atom.getMasterTimestampScale();
@@ -525,6 +538,8 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                     record,
                     masterKeyRecord,
                     baseRowId,
+                    null,
+                    frameRowCount,
                     atom,
                     slaveTimeFrameHelper,
                     asOfJoinMap,

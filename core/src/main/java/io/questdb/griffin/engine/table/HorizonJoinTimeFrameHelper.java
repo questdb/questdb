@@ -42,6 +42,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.cairo.sql.TimeFrameCursor;
+import io.questdb.std.BitSet;
 import io.questdb.std.LongIntHashMap;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
@@ -148,6 +149,10 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
     private final LongIntHashMap indexLookupModes = new LongIntHashMap();
     // Rows the current backward scan may still read; Long.MAX_VALUE outside an indexed lookup
     private long scanRowBudget = Long.MAX_VALUE;
+    // The slave keys the forward scan caches while isKeyTracking, see trackKey(); NULL apart
+    private final BitSet trackedKeys = new BitSet();
+    private boolean isKeyTracking;
+    private boolean isNullKeyTracked;
 
     public HorizonJoinTimeFrameHelper(
             CairoConfiguration configuration,
@@ -481,6 +486,10 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
         }
         indexLookupModes.put(modeKey, mode);
         return mode;
+    }
+
+    private boolean isTrackedKey(int slaveKey) {
+        return slaveKey >= 0 ? trackedKeys.get(slaveKey) : slaveKey == SymbolTable.VALUE_IS_NULL && isNullKeyTracked;
     }
 
     // The latest row of the slave symbol key at or below asOfRowId, from the per-frame symbol indexes,
@@ -949,6 +958,47 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
         this.isWindowSwitchEnabled = true;
     }
 
+    /**
+     * Starts a walk over horizon timestamps whose master keys are all passed to {@link #trackKey}
+     * before the first lookup. Until the next {@link #of} or beginKeyTracking(), forward scans cache
+     * only the rows of those keys: the other rows cost a symbol read instead of a key cache write. Every key that a lookup
+     * of the walk asks for is tracked from its start, so the cache holds the same rows for it as
+     * without tracking. Only a helper with the indexed key lookup tracks keys, see
+     * {@link #enableIndexedKeyLookup}: it reads them from the slave's join key column. A caller that
+     * tracks keys must begin again for every walk whose key set may differ.
+     */
+    public void beginKeyTracking() {
+        isKeyTracking = indexedSlaveKeyColumnIndex != -1;
+        if (isKeyTracking) {
+            trackedKeys.clear();
+            isNullKeyTracked = false;
+        }
+    }
+
+    public boolean isKeyTracking() {
+        return isKeyTracking;
+    }
+
+    /**
+     * Adds a key of the walk that {@link #beginKeyTracking()} started: the slave symbol key that the
+     * master row's join key translates to, see {@link SymbolTranslatingRecord#getInt}.
+     */
+    public void trackKey(int slaveKey) {
+        if (slaveKey >= 0) {
+            trackedKeys.set(slaveKey);
+        } else if (slaveKey == SymbolTable.VALUE_IS_NULL) {
+            isNullKeyTracked = true;
+        }
+        // VALUE_NOT_FOUND: no slave row has the key
+    }
+
+    /**
+     * {@link #trackKey} of the join key of the master row that {@code masterKeyRecord} is on.
+     */
+    public void trackKeyOf(SymbolTranslatingRecord masterKeyRecord) {
+        trackKey(masterKeyRecord.getInt(indexedMasterKeyColumnIndex));
+    }
+
     @TestOnly
     public long getIndexLookupCount() {
         return indexLookups;
@@ -1059,7 +1109,7 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
             }
             // Position record and cache the key
             timeFrameCursor.recordAtRowIndex(record, rowIndex);
-            if (filter == null || filter.getBool(record)) {
+            if ((filter == null || filter.getBool(record)) && (!isKeyTracking || isTrackedKey(record.getInt(indexedSlaveKeyColumnIndex)))) {
                 MapKey key = keyToRowIdMap.withKey();
                 key.put(record, slaveAsOfJoinMapSink);
                 MapValue value = key.createValue();
@@ -1119,6 +1169,7 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
 
     public void of(TimeFrameCursor timeFrameCursor, @Nullable MemoryTracker memoryTracker) {
         indexLookups = 0;
+        isKeyTracking = false;
         indexLookupModes.clear();
         if (keyMissMap != null) {
             keyMissMap.close();

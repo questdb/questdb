@@ -427,6 +427,8 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                     horizonIterator,
                     slaveTimeFrameHelper,
                     baseRowId,
+                    rows,
+                    rows.size(),
                     record,
                     masterKeyRecord,
                     asOfJoinMap,
@@ -474,6 +476,8 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             AsyncHorizonTimestampIterator horizonIterator,
             HorizonJoinTimeFrameHelper slaveTimeFrameHelper,
             long baseRowId,
+            @Nullable DirectLongList masterRows,
+            long masterRowCount,
             PageFrameMemoryRecord masterRecord,
             Record masterKeyRecord,
             Map asOfJoinMap,
@@ -500,6 +504,15 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
         slaveTimeFrameHelper.toTop();
         if (keyedAsOfJoin) {
             asOfJoinMap.clear();
+        }
+        if (keyedAsOfJoin && symbolTranslatingRecord != null && slaveTimeFrameHelper.isIndexedKeyLookup()) {
+            // Every key the walk looks up comes from these rows, so the forward scans may cache theirs alone.
+            slaveTimeFrameHelper.beginKeyTracking();
+            for (long i = 0; i < masterRowCount; i++) {
+                masterRecord.setFilteredRowIndex(masterRows != null ? masterRows.get(i) : i, i);
+                slaveTimeFrameHelper.trackKeyOf(symbolTranslatingRecord);
+            }
+            symbolTranslatingRecord.resetNonExistentKeyFlag();
         }
 
         final long masterTsScale = atom.getMasterTimestampScale();
@@ -612,6 +625,8 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                     horizonIterator,
                     slaveTimeFrameHelper,
                     baseRowId,
+                    null,
+                    frameRowCount,
                     record,
                     masterKeyRecord,
                     asOfJoinMap,
