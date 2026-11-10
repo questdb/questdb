@@ -2469,6 +2469,43 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testParquetExportReportsExceptionWithoutMessage() throws Exception {
+        // a failure that carries no message reports its class rather than "null"
+        final AtomicBoolean isFailing = new AtomicBoolean(true);
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public int mkdirs(Path path, int mode) {
+                if (isFailing.get() && path.toString().contains("zzz.copy.")) {
+                    throw new RuntimeException();
+                }
+                return super.mkdirs(path, mode);
+            }
+        };
+        getExportTester()
+                .withFilesFacade(ff)
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("CREATE TABLE unnamed_failure AS (SELECT x FROM long_sequence(3))", sqlExecutionContext);
+                    final String query = "SELECT x, from_base64('QUJD') b FROM unnamed_failure";
+                    final CharSequenceObjHashMap<String> params = new CharSequenceObjHashMap<>();
+                    params.put("query", query);
+                    params.put("fmt", "parquet");
+                    testHttpClient.assertGet(
+                            "/exp",
+                            "{\"query\":\"" + query + "\",\"error\":\"java.lang.RuntimeException\",\"position\":0}",
+                            params,
+                            null,
+                            null
+                    );
+
+                    isFailing.set(false);
+                    try (TestHttpClient httpClient = new TestHttpClient(); var sink = new DirectUtf8Sink(16_384)) {
+                        exportParquet(httpClient, sink, query);
+                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, "unnamed_failure.parquet");
+                    }
+                });
+    }
+
+    @Test
     public void testParquetExportResumability() throws Exception {
         getExportTester()
                 .run((engine, sqlExecutionContext) -> {
@@ -2545,6 +2582,28 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
 
                     params.put("statistics_enabled", "false");
                     testHttpClient.assertGetParquet("/exp", 288, params, "SELECT * FROM statistics_test");
+                });
+    }
+
+    @Test
+    public void testParquetExportTempTableForComputedBinary() throws Exception {
+        // a computed BINARY column rides no page frame path, so the export materializes a temp table
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute(
+                            "CREATE TABLE computed_bin AS (SELECT x, timestamp_sequence(0, 1_000_000L) ts FROM long_sequence(5)) TIMESTAMP(ts) PARTITION BY DAY",
+                            sqlExecutionContext
+                    );
+                    final String query = "SELECT x, from_base64('QUJD') b, ts FROM computed_bin";
+                    try (
+                            SqlCompiler compiler = engine.getSqlCompiler();
+                            TestHttpClient httpClient = new TestHttpClient();
+                            var sink = new DirectUtf8Sink(16_384)
+                    ) {
+                        assertExportMode(compiler, sqlExecutionContext, query, ParquetExportMode.TEMP_TABLE);
+                        exportParquet(httpClient, sink, query);
+                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, "computed_bin.parquet");
+                    }
                 });
     }
 

@@ -2791,6 +2791,129 @@ mod tests {
         Ok(())
     }
 
+    /// Asserts that a bound above every value of row group 0 prunes it, and that the group stays once
+    /// a chunk bound has the wrong width, or `nan` as its minimum when given, as a third-party writer
+    /// may leave them.
+    fn assert_malformed_bounds_keep_row_group(
+        buf: &[u8],
+        column_type: ColumnTypeTag,
+        bound: &[u8],
+        nan: Option<&[u8]>,
+    ) -> ParquetResult<()> {
+        let filters = [make_filter_with_op_and_type(
+            0,
+            1,
+            bound.as_ptr() as u64,
+            FILTER_OP_GT,
+            column_type as i32,
+        )];
+        let buf_end = bound.as_ptr_range().end as u64;
+        assert!(
+            read_decoder(buf)?.can_skip_row_group(0, buf, &filters, buf_end)?,
+            "{column_type:?}"
+        );
+        let rewrites: [fn(&mut parquet_format_safe::Statistics); 2] = [
+            |s| {
+                s.min = Some(vec![1]);
+                s.min_value = Some(vec![1]);
+            },
+            |s| {
+                s.max = Some(vec![1]);
+                s.max_value = Some(vec![1]);
+            },
+        ];
+        for rewrite in rewrites {
+            let mut decoder = read_decoder(buf)?;
+            override_statistics(&mut decoder, rewrite);
+            assert!(
+                !decoder.can_skip_row_group(0, buf, &filters, buf_end)?,
+                "{column_type:?}"
+            );
+        }
+        if let Some(nan) = nan {
+            let mut decoder = read_decoder(buf)?;
+            override_statistics(&mut decoder, |s| {
+                s.min = Some(nan.to_vec());
+                s.min_value = Some(nan.to_vec());
+            });
+            assert!(
+                !decoder.can_skip_row_group(0, buf, &filters, buf_end)?,
+                "{column_type:?}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_bounds_never_prune_numeric_row_groups() -> ParquetResult<()> {
+        use parquet::data_type::{DoubleType, FloatType, Int32Type, Int64Type};
+
+        let ints: Vec<i32> = (1..=10).collect();
+        let longs: Vec<i64> = (1..=10).collect();
+        let floats: Vec<f32> = (1..=10).map(|v| v as f32).collect();
+        let doubles: Vec<f64> = (1..=10).map(f64::from).collect();
+        assert_malformed_bounds_keep_row_group(
+            &gen_typed_parquet::<Int32Type>(
+                PhysicalType::INT32,
+                None,
+                -1,
+                &ints,
+                Some(ColumnTypeTag::IPv4.into_type()),
+            )?,
+            ColumnTypeTag::IPv4,
+            &100u32.to_le_bytes(),
+            None,
+        )?;
+        assert_malformed_bounds_keep_row_group(
+            &gen_typed_parquet::<Int32Type>(
+                PhysicalType::INT32,
+                None,
+                -1,
+                &ints,
+                Some(ColumnTypeTag::Int.into_type()),
+            )?,
+            ColumnTypeTag::Int,
+            &100i32.to_le_bytes(),
+            None,
+        )?;
+        assert_malformed_bounds_keep_row_group(
+            &gen_typed_parquet::<Int64Type>(
+                PhysicalType::INT64,
+                None,
+                -1,
+                &longs,
+                Some(ColumnTypeTag::Long.into_type()),
+            )?,
+            ColumnTypeTag::Long,
+            &100i64.to_le_bytes(),
+            None,
+        )?;
+        assert_malformed_bounds_keep_row_group(
+            &gen_typed_parquet::<FloatType>(
+                PhysicalType::FLOAT,
+                None,
+                -1,
+                &floats,
+                Some(ColumnTypeTag::Float.into_type()),
+            )?,
+            ColumnTypeTag::Float,
+            &100f32.to_le_bytes(),
+            Some(&f32::NAN.to_le_bytes()),
+        )?;
+        assert_malformed_bounds_keep_row_group(
+            &gen_typed_parquet::<DoubleType>(
+                PhysicalType::DOUBLE,
+                None,
+                -1,
+                &doubles,
+                Some(ColumnTypeTag::Double.into_type()),
+            )?,
+            ColumnTypeTag::Double,
+            &100f64.to_le_bytes(),
+            Some(&f64::NAN.to_le_bytes()),
+        )
+    }
+
     #[test]
     fn has_no_sql_nulls_excludes_parquet_nulls_and_long_sentinels() -> ParquetResult<()> {
         let values: Vec<i64> = (100..110).collect();
