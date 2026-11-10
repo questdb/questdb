@@ -39,6 +39,7 @@ import org.junit.Test;
 
 import java.io.File;
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class AddIndexTest extends AbstractCairoTest {
 
@@ -320,6 +321,65 @@ public class AddIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFailedPostingAddIndexReportsBuildFailureWhenRollbackCannotListPartitions() throws Exception {
+        // The build fails reading the active partition's column, then the rollback, which visits the partitions from
+        // the last one, cannot list 2024-01-03 and 2024-01-01, as an exhausted descriptor table would stop it. The
+        // caller still learns why the build failed, with the first listing failure attached, and the rollback goes on
+        // to remove the files of the partitions it can list.
+        final SymbolReadFailingFacade ff = new SymbolReadFailingFacade("2024-01-04", "s.d", "2024-01-03", "2024-01-01");
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE x (s SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('a', 1, '2024-01-01'), ('b', 2, '2024-01-01T12:00'),
+                    ('a', 3, '2024-01-02'), ('b', 4, '2024-01-02T12:00'),
+                    ('a', 5, '2024-01-03'), ('b', 6, '2024-01-03T12:00'),
+                    ('a', 7, '2024-01-04'), ('b', 8, '2024-01-04T12:00')
+                    """);
+            final CairoException e = assertAddIndexFails(ff, "POSTING INCLUDE (v)");
+            Assert.assertEquals(1, e.getSuppressed().length);
+            Assert.assertTrue(e.getSuppressed()[0] instanceof CairoException);
+            final CharSequence rollbackMessage = ((CairoException) e.getSuppressed()[0]).getFlyweightMessage();
+            TestUtils.assertContains(rollbackMessage, "findFirst failed on ");
+            TestUtils.assertContains(rollbackMessage, Files.SEPARATOR + "2024-01-03");
+            Assert.assertEquals(2, ff.listingFailureCount.get());
+            assertColumnFiles("2024-01-02", "[s.d]");
+            assertColumnFiles("2024-01-04", "[s.d]");
+            // The partitions the rollback could not list keep the chains the build sealed there.
+            Assert.assertTrue(new File(partitionDir("2024-01-01"), "s.pk").exists());
+            Assert.assertTrue(new File(partitionDir("2024-01-03"), "s.pk").exists());
+
+            execute("ALTER TABLE x ALTER COLUMN s ADD INDEX TYPE POSTING INCLUDE (v)");
+            assertQuery("SELECT v, ts FROM x WHERE s = 'a'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanContaining("CoveringIndex on: s")
+                    .returns("""
+                            v\tts
+                            1\t2024-01-01T00:00:00.000000Z
+                            3\t2024-01-02T00:00:00.000000Z
+                            5\t2024-01-03T00:00:00.000000Z
+                            7\t2024-01-04T00:00:00.000000Z
+                            """);
+            assertQuery("SELECT v, ts FROM x WHERE s = 'b'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanContaining("CoveringIndex on: s")
+                    .returns("""
+                            v\tts
+                            2\t2024-01-01T12:00:00.000000Z
+                            4\t2024-01-02T12:00:00.000000Z
+                            6\t2024-01-03T12:00:00.000000Z
+                            8\t2024-01-04T12:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testFailedTypeChangeIndexBuildRemovesConvertedColumnOfNonPartitionedTable() throws Exception {
         assertFailedTypeChangeRemovesConvertedColumn("", "default", "default");
     }
@@ -334,13 +394,15 @@ public class AddIndexTest extends AbstractCairoTest {
         );
     }
 
-    private static void assertAddIndexFails(SymbolReadFailingFacade ff, String indexClause) throws Exception {
+    private static CairoException assertAddIndexFails(SymbolReadFailingFacade ff, String indexClause) throws Exception {
         ff.isFailing = true;
         try {
             execute("ALTER TABLE x ALTER COLUMN s ADD INDEX TYPE " + indexClause);
             Assert.fail("the index build must fail");
+            return null;
         } catch (CairoException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), "could not read symbol column during indexing");
+            return e;
         } finally {
             ff.isFailing = false;
         }
@@ -348,14 +410,17 @@ public class AddIndexTest extends AbstractCairoTest {
 
     // Lists the files of column s in a partition directory of table x, or in its table directory for an empty name.
     private static void assertColumnFiles(String partitionName, String expected) {
-        File dir = new File(configuration.getDbRoot(), engine.verifyTableName("x").getDirName());
-        if (!partitionName.isEmpty()) {
-            dir = new File(dir, partitionName);
-        }
+        final File dir = partitionDir(partitionName);
         final String[] files = dir.list((_, name) -> name.startsWith("s."));
         Assert.assertNotNull(files);
         Arrays.sort(files);
         Assert.assertEquals(partitionName, expected, Arrays.toString(files));
+    }
+
+    // A partition directory of table x, or its table directory for an empty name.
+    private static File partitionDir(String partitionName) {
+        final File tableDir = new File(configuration.getDbRoot(), engine.verifyTableName("x").getDirName());
+        return partitionName.isEmpty() ? tableDir : new File(tableDir, partitionName);
     }
 
     private void assertFailedAddIndexKeepsColumn(String indexClause, String plan, boolean isCovering) throws Exception {
@@ -459,16 +524,22 @@ public class AddIndexTest extends AbstractCairoTest {
     }
 
     // Fails every read of one partition's symbol column file while armed: an I/O error in the middle of an index
-    // build.
+    // build. Once a read has failed, it can also fail the listings of other partition directories, the way
+    // FilesFacadeImpl.findFirst reports an exhausted descriptor table.
     private static class SymbolReadFailingFacade extends TestFilesFacadeImpl {
+        private static final int EMFILE = 24;
         private final String fileNamePrefix;
+        private final AtomicInteger listingFailureCount = new AtomicInteger();
+        private final String[] listingFailurePartitionNames;
         private final String partitionName;
         private volatile boolean isFailing;
+        private volatile boolean isReadFailed;
         private volatile long symbolFd = -1;
 
-        private SymbolReadFailingFacade(String partitionName, String fileNamePrefix) {
+        private SymbolReadFailingFacade(String partitionName, String fileNamePrefix, String... listingFailurePartitionNames) {
             this.partitionName = partitionName;
             this.fileNamePrefix = fileNamePrefix;
+            this.listingFailurePartitionNames = listingFailurePartitionNames;
         }
 
         @Override
@@ -477,6 +548,19 @@ public class AddIndexTest extends AbstractCairoTest {
                 symbolFd = -1;
             }
             return super.close(fd);
+        }
+
+        @Override
+        public long findFirst(LPSZ path) {
+            if (isFailing && isReadFailed) {
+                for (String listingFailurePartitionName : listingFailurePartitionNames) {
+                    if (Utf8s.endsWithAscii(path, Files.SEPARATOR + listingFailurePartitionName)) {
+                        listingFailureCount.incrementAndGet();
+                        throw CairoException.critical(EMFILE).put("findFirst failed on ").put(path);
+                    }
+                }
+            }
+            return super.findFirst(path);
         }
 
         @Override
@@ -492,6 +576,7 @@ public class AddIndexTest extends AbstractCairoTest {
         @Override
         public long read(long fd, long buf, long len, long offset) {
             if (isFailing && fd == symbolFd) {
+                isReadFailed = true;
                 return -1;
             }
             return super.read(fd, buf, len, offset);

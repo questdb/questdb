@@ -18480,19 +18480,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void removeIndexFilesInPartition(CharSequence columnName, int columnIndex, byte indexType, long partitionTimestamp, long partitionNameTxn) {
-        setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
-        int plen = path.size();
-        long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
-        if (IndexType.isPosting(indexType)) {
-            // Enumerate every sealed .pv / .pc<N> for this column
-            // instance across all on-disk sealTxn generations.
-            PostingIndexUtils.removeAllSealedFiles(ff, path, plen, columnName, columnNameTxn);
+        try {
+            setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            final int plen = path.size();
+            final long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
+            if (IndexType.isPosting(indexType)) {
+                // Enumerate every sealed .pv / .pc<N> for this column
+                // instance across all on-disk sealTxn generations.
+                PostingIndexUtils.removeAllSealedFiles(ff, path, plen, columnName, columnNameTxn);
+            }
+            removeFileOrLog(ff, keyFileName(indexType, path.trimTo(plen), columnName, columnNameTxn));
+            if (!IndexType.isPosting(indexType)) {
+                removeFileOrLog(ff, valueFileName(indexType, path.trimTo(plen), columnName, columnNameTxn, columnNameTxn));
+            }
+        } finally {
+            path.trimTo(pathSize);
         }
-        removeFileOrLog(ff, keyFileName(indexType, path.trimTo(plen), columnName, columnNameTxn));
-        if (!IndexType.isPosting(indexType)) {
-            removeFileOrLog(ff, valueFileName(indexType, path.trimTo(plen), columnName, columnNameTxn, columnNameTxn));
-        }
-        path.trimTo(pathSize);
     }
 
     private void removeMetaFile() {
@@ -19515,22 +19518,36 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     /**
      * Removes the files of the index a failed {@link #writeIndex} built, and never the column it indexes: ADD INDEX
      * reads a committed column, and a column type change removes the column it converted itself, see
-     * {@link #removeConvertedColumnFiles}.
+     * {@link #removeConvertedColumnFiles}. A partition whose files it cannot remove, such as one it cannot list, keeps
+     * them, and the rollback goes on with the others: no committed index names those files, and the next ADD INDEX
+     * resets them. It throws the first such failure once it has visited every partition.
      *
      * @param indexType the type of the index the build wrote; for ADD INDEX the metadata does not carry it yet
      */
     private void rollbackRemoveIndexFiles(CharSequence columnName, int columnIndex, byte indexType) {
-        try {
-            if (PartitionBy.isPartitioned(partitionBy)) {
-                for (int i = txWriter.getPartitionCount() - 1; i > -1; i--) {
-                    removeIndexFilesInPartition(columnName, columnIndex, indexType, txWriter.getPartitionTimestampByIndex(i), txWriter.getPartitionNameTxn(i));
+        if (!PartitionBy.isPartitioned(partitionBy)) {
+            final long timestamp = txWriter.getLastPartitionTimestamp();
+            removeIndexFilesInPartition(columnName, columnIndex, indexType, timestamp, txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp));
+            return;
+        }
+        CairoException firstFailure = null;
+        for (int i = txWriter.getPartitionCount() - 1; i > -1; i--) {
+            final long partitionTimestamp = txWriter.getPartitionTimestampByIndex(i);
+            try {
+                removeIndexFilesInPartition(columnName, columnIndex, indexType, partitionTimestamp, txWriter.getPartitionNameTxn(i));
+            } catch (CairoException e) {
+                LOG.error().$("could not remove index files of a failed build [table=").$(tableToken)
+                        .$(", column=").$safe(columnName)
+                        .$(", partition=").$ts(timestampDriver, partitionTimestamp)
+                        .$(", error=").$((Throwable) e)
+                        .I$();
+                if (firstFailure == null) {
+                    firstFailure = e;
                 }
-            } else {
-                final long timestamp = txWriter.getLastPartitionTimestamp();
-                removeIndexFilesInPartition(columnName, columnIndex, indexType, timestamp, txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp));
             }
-        } finally {
-            path.trimTo(pathSize);
+        }
+        if (firstFailure != null) {
+            throw firstFailure;
         }
     }
 
@@ -22213,7 +22230,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } catch (Throwable th) {
             Misc.free(indexer);
             LOG.error().$("rolling back index created so far [path=").$substr(pathRootSize, path).I$();
-            rollbackRemoveIndexFiles(columnName, columnIndex, indexType);
+            try {
+                rollbackRemoveIndexFiles(columnName, columnIndex, indexType);
+            } catch (Throwable rollbackError) {
+                // The caller must learn why the build failed, not why its cleanup did. The files the rollback left
+                // belong to no committed index, and the next ADD INDEX resets them.
+                th.addSuppressed(rollbackError);
+            }
             throw th;
         }
     }
