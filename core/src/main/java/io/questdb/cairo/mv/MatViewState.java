@@ -161,9 +161,8 @@ public class MatViewState implements QuietCloseable {
     // UPDATE, TRUNCATE, or schema invalidations even when they advance another watermark.
     private volatile FullRefreshCoverage lastFullRefreshCoverage;
     // Stands for the end of the last refreshed period of a period mat view, exclusive. Refreshes move it forward
-    // as periods complete. An incremental refresh moves it back when it computes an earlier end of the last
-    // complete period: after ALTER MATERIALIZED VIEW ... PERIOD or a clock step back, and for hours after DST
-    // ends in a time zone behind UTC, where it computes that end an hour early.
+    // as periods complete. An incremental refresh moves it back when the last complete period ends earlier, e.g.
+    // after ALTER MATERIALIZED VIEW ... PERIOD or a clock step back.
     private volatile long lastPeriodHi = Numbers.LONG_NULL;
     // Stands for last successful incremental refresh base table reader txn.
     // Increases monotonically as long as mat view stays valid.
@@ -633,10 +632,9 @@ public class MatViewState implements QuietCloseable {
      * completePeriodHi is stored as the new lastPeriodHi value.
      * <p>
      * An incremental refresh stores the end of the last complete period too. When that end
-     * moves earlier, e.g. after ALTER MATERIALIZED VIEW ... PERIOD or a clock step back, or
-     * the refresh computes it an hour early, as it does for hours after DST ends in a time
-     * zone behind UTC, the incremental refresh moves lastPeriodHi back to it, so that the next
-     * range refresh covers the rows in between.
+     * moves earlier, e.g. after ALTER MATERIALIZED VIEW ... PERIOD or a clock step back, the
+     * incremental refresh moves lastPeriodHi back to it, so that the next range refresh covers
+     * the rows in between.
      */
     public long getLastPeriodHi() {
         return lastPeriodHi;

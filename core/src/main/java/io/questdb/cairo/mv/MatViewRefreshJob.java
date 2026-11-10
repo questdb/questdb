@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
@@ -1095,24 +1096,22 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 TimestampSampler periodSampler = viewDefinition.getPeriodSampler();
                 if (periodSampler == null) {
                     periodSampler = TimestampSamplerFactory.getInstance(
-                            driver,
+                            MicrosTimestampDriver.INSTANCE,
                             viewDefinition.getPeriodLength(),
                             viewDefinition.getPeriodLengthUnit(),
                             -1
                     );
                     viewDefinition.setPeriodSampler(periodSampler);
                 }
-                periodSampler.setStart(driver.fromMicros(viewDefinition.getTimerStartUs()));
+                periodSampler.setStart(viewDefinition.getTimerStartUs());
 
-                final long nowLocal = viewDefinition.getTimerTzRulesUs() != null
-                        ? now + driver.fromMicros(viewDefinition.getTimerTzRulesUs().getOffset(driver.toMicros(now)))
-                        : now;
-                final long delay = driver.from(viewDefinition.getPeriodDelay(), viewDefinition.getPeriodDelayUnit());
-                // Period hi is exclusive, but maxTs is inclusive, so we align them.
-                final long periodHiLocal = periodSampler.round(nowLocal - delay) - 1;
-                final long periodHi = viewDefinition.getTimerTzRulesUs() != null
-                        ? periodHiLocal - driver.fromMicros(viewDefinition.getTimerTzRulesUs().getOffset(driver.toMicros(periodHiLocal)))
-                        : periodHiLocal;
+                // A period is complete once its delay has passed since its end, as the period timer has it, so the
+                // last complete period ends where the period that holds now - delay starts. Period hi is exclusive,
+                // but maxTs is inclusive, so we align them.
+                final long delayUs = MicrosTimestampDriver.INSTANCE.from(viewDefinition.getPeriodDelay(), viewDefinition.getPeriodDelayUnit());
+                final long periodHi = driver.fromMicros(
+                        MatViewPeriods.periodStart(periodSampler, viewDefinition.getTimerTzRulesUs(), driver.toMicros(now) - delayUs)
+                ) - 1;
 
                 // Remove incomplete periods from both txn intervals and refresh interval.
                 intersectIntervals(refreshIntervals, Long.MIN_VALUE, periodHi);
@@ -1150,12 +1149,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         // - Starting at the first row would skip a bucket that crosses periodHi when a range
                         //   replace deletes the bucket's rows in the incomplete period: that moves the first row
                         //   past them.
-                        // - lastPeriodHi lies past periodHi after an ALTER that moves the period end earlier, such
-                        //   as a new TIME ZONE or LENGTH, after a clock step back, and for hours after DST ends in a
-                        //   time zone behind UTC. There, periodHi comes out an hour before the end that the period
-                        //   timer recorded: the computation above looks up the offset at the local time read as
-                        //   UTC, which still lies before the transition. Starting at lastPeriodHi would skip the
-                        //   rows that this refresh trims between periodHi and lastPeriodHi, so rewind it.
+                        // - An ALTER that moves the period end earlier, such as a new TIME ZONE or LENGTH, or a
+                        //   clock step back leaves lastPeriodHi past periodHi. Starting there would skip the rows
+                        //   that this refresh trims between periodHi and lastPeriodHi, so rewind it.
                         refreshContext.periodHi = periodHi + 1;
                     }
                 } else {
