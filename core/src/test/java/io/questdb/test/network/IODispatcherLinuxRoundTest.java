@@ -31,6 +31,8 @@ import io.questdb.network.EpollAccessor;
 import io.questdb.network.EpollFacade;
 import io.questdb.network.EpollFacadeImpl;
 import io.questdb.network.IOContext;
+import io.questdb.network.IOContextFactory;
+import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.IODispatcherLinux;
 import io.questdb.network.IOOperation;
 import io.questdb.network.IORequestProcessor;
@@ -38,6 +40,7 @@ import io.questdb.network.Net;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.network.PlainSocket;
+import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
@@ -124,6 +127,28 @@ public class IODispatcherLinuxRoundTest {
                 Assert.assertEquals(1, h.epoll.addCount(c));
                 h.round(read(c));
                 Assert.assertEquals(1, h.publishedCount(c));
+                Assert.assertEquals(0, h.epoll.rejectedCount);
+            }
+        });
+    }
+
+    @Test
+    public void testHandledRowsStayUntilRoundEnds() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (Harness h = new Harness(0)) {
+                final long[] fds = h.connect(8);
+
+                // the rows of handled events stay in the table until the round ends, so every
+                // event of the round sees the table at its starting size, and the round then
+                // removes all three rows in one pass
+                h.round(read(fds[0]), read(fds[1]), read(fds[3]));
+
+                final IntList expectedSizes = new IntList();
+                expectedSizes.add(8);
+                expectedSizes.add(8);
+                expectedSizes.add(8);
+                Assert.assertEquals(expectedSizes, h.dispatcher.publishedSizes);
+                Assert.assertEquals(5, h.dispatcher.pendingSize());
                 Assert.assertEquals(0, h.epoll.rejectedCount);
             }
         });
@@ -500,7 +525,7 @@ public class IODispatcherLinuxRoundTest {
     private static final class Harness implements QuietCloseable {
         final TestClock clock = new TestClock();
         final HashMap<Long, TestContext> contexts = new HashMap<>();
-        final IODispatcherLinux<TestContext> dispatcher;
+        final TestDispatcher dispatcher;
         final FakeEpoll epoll;
         final FakeNetwork network;
         final LongList published = new LongList();
@@ -523,7 +548,7 @@ public class IODispatcherLinuxRoundTest {
                 }
                 return true;
             };
-            dispatcher = new IODispatcherLinux<>(
+            dispatcher = new TestDispatcher(
                     new DefaultIODispatcherConfiguration() {
                         @Override
                         public MillisecondClock getClock() {
@@ -622,6 +647,25 @@ public class IODispatcherLinuxRoundTest {
     private static final class TestContext extends IOContext<TestContext> {
         TestContext(NetworkFacade nf) {
             super(TestSocket::new, nf, LOG);
+        }
+    }
+
+    // records the pending table's size whenever the dispatcher hands an event to the workers
+    private static final class TestDispatcher extends IODispatcherLinux<TestContext> {
+        final IntList publishedSizes = new IntList();
+
+        TestDispatcher(IODispatcherConfiguration configuration, IOContextFactory<TestContext> ioContextFactory) {
+            super(configuration, ioContextFactory);
+        }
+
+        @Override
+        protected void publishOperation(int operation, TestContext context) {
+            publishedSizes.add(pending.size());
+            super.publishOperation(operation, context);
+        }
+
+        int pendingSize() {
+            return pending.size();
         }
     }
 
