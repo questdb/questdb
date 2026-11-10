@@ -42,6 +42,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.cairo.sql.TimeFrameCursor;
+import io.questdb.std.LongIntHashMap;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
@@ -80,6 +81,10 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
     private static final long UNRESOLVED_ROW_ID = -1;
     // backwardScanForKeyMatch() stopped at scanRowBudget without resolving the key
     private static final long SCAN_BUDGET_EXHAUSTED = -2;
+    // How an indexed keyed lookup finds a key in a frame, see indexLookupMode()
+    private static final int LOOKUP_MODE_INDEX = 1;
+    private static final int LOOKUP_MODE_SCAN = 2;
+    private static final int LOOKUP_MODE_SCAN_THEN_INDEX = 3;
     // Adaptive scan thresholds (set at construction, used by findKeyedAsOfMatch)
     private final long bwdScanAbsoluteThreshold;
     private final long bwdScanMinGap;
@@ -88,7 +93,7 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
     // Whether the switch check also covers runs of gaps below the min gap, whether the lookup
     // restarts a forward scan over a long gap, and whether a new position in backward-only mode
     // may keep key cache entries, see the constructor
-    private final boolean isWindowSwitchEnabled;
+    private boolean isWindowSwitchEnabled;
     // Join key -> position with no qualifying row for the key at or below it, valid for the whole cursor.
     private final @Nullable Map keyMissMap;
     private final long lookahead;
@@ -137,8 +142,10 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
     private int indexedSlaveKeyColumnIndex = -1;
     // Rows a keyed lookup scans back before it reads the index instead, see enableIndexedKeyLookup()
     private long indexScanRowBudget;
-    // Keyed lookups that read the index since of(), for tests and plans
+    // Keyed lookups that read the index since of(), for tests
     private long indexLookups;
+    // (frame index, slave key) -> LOOKUP_MODE_*, decided once per frame and key since of()
+    private final LongIntHashMap indexLookupModes = new LongIntHashMap();
     // Rows the current backward scan may still read; Long.MAX_VALUE outside an indexed lookup
     private long scanRowBudget = Long.MAX_VALUE;
 
@@ -440,6 +447,42 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
         return Long.MIN_VALUE;
     }
 
+    // How the keyed lookup of slaveKey at asOfRowId finds it: from the key's rows in the frame of
+    // the ASOF position, which the index counts. The lookup reads the index when they lie more than
+    // the budget apart on average or the frame has none, and scans otherwise; a key that no index
+    // reader counts (a bitmap index, or no reader) scans up to the budget and then reads the index.
+    private int indexLookupMode(long asOfRowId, int slaveKey) {
+        if (slaveKey == SymbolTable.VALUE_NOT_FOUND) {
+            return LOOKUP_MODE_SCAN;
+        }
+        final int frameIndex = Rows.toPartitionIndex(asOfRowId);
+        final long modeKey = ((long) frameIndex << 32) | (slaveKey & 0xFFFF_FFFFL);
+        int mode = indexLookupModes.get(modeKey);
+        if (mode != LongIntHashMap.NO_ENTRY_VALUE) {
+            return mode;
+        }
+        mode = LOOKUP_MODE_SCAN_THEN_INDEX;
+        timeFrameCursor.jumpTo(frameIndex);
+        final long frameRows = timeFrameCursor.open();
+        final IndexReader indexReader = frameRows > 0
+                ? timeFrameCursor.getIndexReaderForCurrentFrame(indexedSlaveKeyColumnIndex, IndexReader.DIR_BACKWARD)
+                : null;
+        if (indexReader != null) {
+            final long indexRowLo = timeFrameCursor.getIndexRowLoForCurrentFrame();
+            try (RowCursor rowCursor = indexReader.getCursor(TableUtils.toIndexKey(slaveKey), indexRowLo + timeFrame.getRowLo(), indexRowLo + timeFrame.getRowHi() - 1)) {
+                final long keyRows = rowCursor.size();
+                if (keyRows == 0) {
+                    // a scan of this frame cannot find the key
+                    mode = LOOKUP_MODE_INDEX;
+                } else if (keyRows > 0) {
+                    mode = frameRows / keyRows > indexScanRowBudget ? LOOKUP_MODE_INDEX : LOOKUP_MODE_SCAN;
+                }
+            }
+        }
+        indexLookupModes.put(modeKey, mode);
+        return mode;
+    }
+
     // The latest row of the slave symbol key at or below asOfRowId, from the per-frame symbol indexes,
     // or Long.MIN_VALUE when there is none. UNRESOLVED_ROW_ID when a frame has no index reader (a lead
     // frame), so that the caller scans instead.
@@ -457,12 +500,17 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
             if (indexReader == null) {
                 return UNRESOLVED_ROW_ID;
             }
-            // the index's own row ids are offset by the frame's first row, and the cursor returns rows relative to minValue
-            final long rowLo = timeFrameCursor.getIndexRowLoForCurrentFrame();
-            try (RowCursor rowCursor = indexReader.getCursor(indexKey, rowLo, rowLo + rowMax)) {
-                if (rowCursor.hasNext()) {
-                    // backward: the first entry is the latest
-                    return Rows.toRowID(frameIndex, rowCursor.next());
+            // The index numbers the frame's rows from getIndexRowLoForCurrentFrame(), and the cursor
+            // returns them relative to its minValue. Rows below the frame's rowLo are not in the frame
+            // (e.g. outside the slave's intervals), so the cursor starts there.
+            final long frameRowLo = timeFrame.getRowLo();
+            final long indexRowLo = timeFrameCursor.getIndexRowLoForCurrentFrame() + frameRowLo;
+            if (rowMax >= frameRowLo) {
+                try (RowCursor rowCursor = indexReader.getCursor(indexKey, indexRowLo, indexRowLo + rowMax - frameRowLo)) {
+                    if (rowCursor.hasNext()) {
+                        // backward: the first entry is the latest
+                        return Rows.toRowID(frameIndex, frameRowLo + rowCursor.next());
+                    }
                 }
             }
             // an empty frame has no rows to bound, so skip it
@@ -822,13 +870,17 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
                     circuitBreaker
             );
         }
-        // A key that the scan does not reach within the budget is looked up in the index: the scan
-        // costs the rows of all keys in between, the index one seek per frame. Stopping the scan
-        // early keeps its state valid, see backwardScanForKeyMatch().
-        scanRowBudget = indexScanRowBudget;
+        // A key whose rows lie further apart than the budget, on average over the frame of the ASOF
+        // position, is looked up in the index: the scan back costs the rows of every other key in
+        // between, the index one seek per frame. The others keep the cached scan. Where the index
+        // cannot count a key's rows (a bitmap index), the scan stops at the budget instead and the
+        // lookup reads the index; stopping the scan early keeps its state valid, see
+        // backwardScanForKeyMatch().
+        final int slaveKey = symbolTranslatingRecord.getInt(indexedMasterKeyColumnIndex);
         long matchRowId;
-        try {
-            matchRowId = backwardScanForKeyMatch(
+        final int mode = indexLookupMode(asOfRowId, slaveKey);
+        if (mode == LOOKUP_MODE_SCAN) {
+            return backwardScanForKeyMatch(
                     asOfRowId,
                     masterKeyRecord,
                     masterAsOfJoinMapSink,
@@ -837,14 +889,28 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
                     symbolTranslatingRecord,
                     circuitBreaker
             );
-        } finally {
-            scanRowBudget = Long.MAX_VALUE;
         }
-        if (matchRowId != SCAN_BUDGET_EXHAUSTED) {
-            return matchRowId;
+        if (mode == LOOKUP_MODE_SCAN_THEN_INDEX) {
+            scanRowBudget = indexScanRowBudget;
+            try {
+                matchRowId = backwardScanForKeyMatch(
+                        asOfRowId,
+                        masterKeyRecord,
+                        masterAsOfJoinMapSink,
+                        slaveAsOfJoinMapSink,
+                        keyToRowIdMap,
+                        symbolTranslatingRecord,
+                        circuitBreaker
+                );
+            } finally {
+                scanRowBudget = Long.MAX_VALUE;
+            }
+            if (matchRowId != SCAN_BUDGET_EXHAUSTED) {
+                return matchRowId;
+            }
         }
         indexLookups++;
-        matchRowId = findIndexedAsOfMatch(asOfRowId, symbolTranslatingRecord.getInt(indexedMasterKeyColumnIndex), circuitBreaker);
+        matchRowId = findIndexedAsOfMatch(asOfRowId, slaveKey, circuitBreaker);
         if (matchRowId != UNRESOLVED_ROW_ID) {
             return matchRowId;
         }
@@ -877,6 +943,10 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
         this.indexedMasterKeyColumnIndex = masterKeyColumnIndex;
         this.indexedSlaveKeyColumnIndex = slaveKeyColumnIndex;
         this.indexScanRowBudget = scanRowBudget;
+        // The lookups of rare keys no longer scan deep, and those deep scans were what switched a
+        // run of closely spaced positions to forward scan mode; the window switch weighs such runs
+        // directly, and it bounds the forward scans over long gaps, where rare keys gain most.
+        this.isWindowSwitchEnabled = true;
     }
 
     @TestOnly
@@ -1049,6 +1119,7 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
 
     public void of(TimeFrameCursor timeFrameCursor, @Nullable MemoryTracker memoryTracker) {
         indexLookups = 0;
+        indexLookupModes.clear();
         if (keyMissMap != null) {
             keyMissMap.close();
             keyMissMap.setMemoryTracker(memoryTracker);
