@@ -36,7 +36,6 @@ import io.questdb.std.PerQueryMemoryTrackerProvider;
 import io.questdb.std.Unsafe;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Assume;
 import org.junit.ClassRule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -51,35 +50,30 @@ public class PerQueryMemoryTrackerTest {
     private static final SecurityContext SEC = AllowAllSecurityContext.INSTANCE;
 
     @Test
-    public void testAcquireAssertsCleanRecycleOnDirtyRelease() throws Exception {
-        // The init() recycle guard is a Java assertion, so it only fires under -ea. QuestDB CI
-        // runs with assertions enabled; skip cleanly if they are off so the test never false-passes.
-        boolean assertionsEnabled = false;
-        //noinspection AssertWithSideEffects,ConstantConditions
-        assert assertionsEnabled = true;
-        Assume.assumeTrue("requires -ea", assertionsEnabled);
-
+    public void testAcquireDropsTrackerChargedWhilePooled() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (PerQueryMemoryTrackerProvider provider = newProvider(0, 0, 0)) {
-                // Charge a tracker and release it without freeing, so it returns to the pool dirty.
                 MemoryTracker t = provider.acquire(SEC, 1, MemoryTrackerWorkload.QUERY);
+                t.close();
+                Assert.assertEquals(1, provider.getPooledCount());
+                // a stray allocation charges the tracker after it went back to the pool
                 long p = Unsafe.malloc(256, MemoryTag.NATIVE_DEFAULT, t);
                 Assert.assertEquals(256, t.getUsed());
-                t.close();
 
-                // Re-acquiring the recycled block must trip the guard at init().
-                try {
-                    provider.acquire(SEC, 2, MemoryTrackerWorkload.QUERY);
-                    Assert.fail("expected AssertionError on dirty recycle");
-                } catch (AssertionError e) {
-                    TestUtils.assertContains(e.getMessage(), "tracker recycled with used=256");
-                }
+                // the next workload gets a clean tracker instead of failing
+                MemoryTracker t2 = provider.acquire(SEC, 2, MemoryTrackerWorkload.QUERY);
+                Assert.assertNotSame(t, t2);
+                Assert.assertEquals(0, t2.getUsed());
+                Assert.assertEquals(2, t2.getQueryId());
+                Assert.assertEquals(0, provider.getPooledCount());
+                t2.close();
 
-                // The failed acquire popped t and left it un-reset and unpooled. Credit the
-                // leaked block back through t, then recycle t cleanly so provider.close() frees it.
+                // the dropped tracker's block stays valid for the outstanding free
                 Unsafe.free(p, 256, MemoryTag.NATIVE_DEFAULT, t);
                 Assert.assertEquals(0, t.getUsed());
+                // recycle it now that it is clean, so that provider.close() frees its block
                 t.close();
+                Assert.assertEquals(2, provider.getPooledCount());
             }
         });
     }
@@ -139,6 +133,25 @@ public class PerQueryMemoryTrackerTest {
                 Assert.assertEquals(MemoryTrackerWorkload.MAT_VIEW_REFRESH, t2.getWorkload());
                 t2.close();
             }
+        });
+    }
+
+    @Test
+    public void testDirtyReleaseAfterProviderCloseKeepsBlock() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final MemoryTracker t;
+            final long p;
+            try (PerQueryMemoryTrackerProvider provider = newProvider(0, 0, 0)) {
+                t = provider.acquire(SEC, 1, MemoryTrackerWorkload.QUERY);
+                p = Unsafe.malloc(256, MemoryTag.NATIVE_DEFAULT, t);
+            }
+            // a release after the provider closed would destroy a clean tracker, but a dirty one
+            // keeps its block for the outstanding free
+            t.close();
+            Unsafe.free(p, 256, MemoryTag.NATIVE_DEFAULT, t);
+            Assert.assertEquals(0, t.getUsed());
+            // now clean: this release destroys the block
+            t.close();
         });
     }
 

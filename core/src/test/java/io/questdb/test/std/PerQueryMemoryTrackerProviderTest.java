@@ -61,58 +61,41 @@ public class PerQueryMemoryTrackerProviderTest {
     private static final SecurityContext SECURITY_CONTEXT = AllowAllSecurityContext.INSTANCE;
 
     @Test
-    public void testAcquireAssertsCleanRecycleOnDirtyRelease() throws Exception {
-        // The init() recycle guard is a Java assertion, so it only fires under -ea. QuestDB CI runs with
-        // assertions enabled; skip cleanly if they are off so the test never false-passes.
-        Assume.assumeTrue("requires -ea", areAssertionsEnabled());
-
+    public void testAcquireAfterDirtyReleaseGetsCleanTracker() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (PerQueryMemoryTrackerProvider provider = newProvider(0, 0, 0, 0)) {
-                // Charge a tracker and release it without freeing, so it returns to the pool dirty. close()
-                // must not assert: it runs from a finally at every production callsite, so throwing there
-                // would mask the in-flight exception and strand the tracker (mirrors OSS
-                // PerQueryMemoryTracker.close).
+                // Charge a tracker and release it without freeing, as a query that leaves an allocation
+                // behind does. close() must not throw: it runs from a finally at every production callsite,
+                // so throwing there would mask the in-flight exception.
                 PerQueryMemoryTracker t = (PerQueryMemoryTracker) provider.acquire(SECURITY_CONTEXT, 1, MemoryTrackerWorkload.QUERY);
-                // pAllocated tracks the 256-byte block. A failing assert below must not leak it -- a leaked
-                // native block trips the surrounding assertMemoryLeak and makes the failure harder to read.
-                // (It does not replace the assertion message: TestUtils.assertMemoryLeak calls skipChecks()
-                // when the body throws, so the real error still surfaces.)
                 long p = 0;
                 boolean pAllocated = false;
                 boolean trackerLive = true;
                 try {
-                    // Inside the try, so a throwing malloc cannot strand the tracker acquired just above.
                     p = Unsafe.malloc(256, MemoryTag.NATIVE_DEFAULT, t);
                     pAllocated = true;
                     Assert.assertEquals(256, t.getUsed());
                     t.close();
-                    Assert.assertEquals(1, provider.getPooledCount());
-
-                    // Re-acquiring the recycled block must trip the guard at init(), the quiescent boundary.
-                    try {
-                        provider.acquire(SECURITY_CONTEXT, 2, MemoryTrackerWorkload.QUERY);
-                        Assert.fail("expected AssertionError on dirty recycle");
-                    } catch (AssertionError e) {
-                        TestUtils.assertContains(e.getMessage(), "tracker recycled with used=256");
-                    }
-
-                    // The tracker is neither pooled nor returned to the caller.
+                    // The dirty tracker is dropped rather than pooled: the next workload must not inherit
+                    // its charge.
                     Assert.assertEquals(0, provider.getPooledCount());
 
-                    // acquire() must NOT have destroyed it. A dirty recycle means an allocation is still
-                    // charged to this tracker, and production frees that allocation through the tracker-aware
-                    // overload -- which decrements the tracker's native {used} block and dispatches through
-                    // the per-tag Rust allocator, both of which destroy() would have freed. Exercise exactly
-                    // that path: it must read live memory, not freed memory.
+                    // The next workload gets a clean tracker and does not fail for the leak it did not cause.
+                    MemoryTracker t2 = provider.acquire(SECURITY_CONTEXT, 2, MemoryTrackerWorkload.QUERY);
+                    Assert.assertNotSame(t, t2);
+                    Assert.assertEquals(0, t2.getUsed());
+                    t2.close();
+                    Assert.assertEquals(1, provider.getPooledCount());
+
+                    // The provider must NOT have destroyed the dropped tracker. Production frees the leftover
+                    // allocation through the tracker-aware overload, which decrements the tracker's native
+                    // {used} block and dispatches through the per-tag Rust allocator, both of which destroy()
+                    // would have freed. Exercise exactly that path: it must read live memory, not freed memory.
                     Unsafe.free(p, 256, MemoryTag.NATIVE_DEFAULT, t);
                     pAllocated = false;
-
-                    // The decrement landed in the tracker's own block, proving it is still mapped. Reading
-                    // getUsed() here is the observation that a destroy() in acquire() would have turned into
-                    // a use-after-free.
                     Assert.assertEquals(0, t.getUsed());
 
-                    // The block is deliberately leaked by acquire(); the test owns it from here.
+                    // The block is deliberately leaked by the provider; the test owns it from here.
                     destroy(t);
                     trackerLive = false;
                 } finally {

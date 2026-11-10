@@ -69,19 +69,14 @@ public class PerQueryMemoryTrackerProvider implements MemoryTrackerProvider {
         assert !closed : "acquire() after close()";
         // A subclass may consult the security context. Resolve before taking ownership of native memory.
         final long limit = limitFor(securityContext, workload);
-        PerQueryMemoryTracker tracker = pool.pop();
+        PerQueryMemoryTracker tracker;
+        do {
+            tracker = pool.pop();
+        } while (tracker != null && isDirty(tracker, "acquire"));
         if (tracker == null) {
             tracker = new PerQueryMemoryTracker(this);
         }
-        try {
-            tracker.init(queryId, workload, limit);
-        } catch (AssertionError e) {
-            // A dirty tracker can still have allocations pointing to its native block and Rust allocators.
-            // Keep them mapped so the outstanding frees cannot write through freed memory.
-            LOG.critical().$("tracker recycled dirty, leaking its native block to avoid a use-after-free [used=")
-                    .$(tracker.getUsed()).I$();
-            throw e;
-        }
+        tracker.init(queryId, workload, limit);
         return tracker;
     }
 
@@ -99,6 +94,27 @@ public class PerQueryMemoryTrackerProvider implements MemoryTrackerProvider {
     @TestOnly
     public int getPooledCount() {
         return pool.count();
+    }
+
+    // A tracker that still has native memory charged to it must not be reused, or the next workload
+    // would inherit the charge. It must not be freed either: the allocations still point to its
+    // native block and Rust allocators, and their frees would write through freed memory. Such a
+    // tracker is dropped, leaking its native block, and the failure is logged rather than thrown,
+    // so that the workload which runs next is not failed for a leak it did not cause.
+    private static boolean isDirty(PerQueryMemoryTracker tracker, String stage) {
+        tracker.reconcileCovered();
+        final long used = tracker.getUsed();
+        if (used == 0) {
+            return false;
+        }
+        final long queryId = tracker.getQueryId();
+        final MemoryTrackerWorkload workload = tracker.getWorkload();
+        LOG.critical().$("tracker dirty on ").$(stage)
+                .$(", leaking its native block to avoid a use-after-free [used=").$(used)
+                .$(", queryId=").$(queryId)
+                .$(", workload=").$(workload)
+                .I$();
+        return true;
     }
 
     private void drainPool() {
@@ -125,6 +141,9 @@ public class PerQueryMemoryTrackerProvider implements MemoryTrackerProvider {
     }
 
     void releaseAfterClosedCheck(PerQueryMemoryTracker tracker, boolean isClosedAtCheck) {
+        if (isDirty(tracker, "release")) {
+            return;
+        }
         if (isClosedAtCheck) {
             tracker.destroy();
         } else {
