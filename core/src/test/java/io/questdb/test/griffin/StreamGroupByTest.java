@@ -75,6 +75,7 @@ import org.junit.runners.Parameterized;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -431,8 +432,11 @@ public class StreamGroupByTest extends AbstractCairoTest {
                 }
                 Assert.assertTrue(breaches > 0);
             }
-            // Cancels the query while the owner waits for the shard merges, the only caller of checkIfTripped().
-            for (int iteration = 0; iteration < 3; iteration++) {
+            // Cancels the query while the owner waits for the shard merges, the only caller of checkIfTripped(). The
+            // workers can finish every merge before the owner waits, and then the query completes uncancelled.
+            int cancellations = 0;
+            for (int iteration = 0; iteration < 3 || (parallel && cancellations == 0 && iteration < 64); iteration++) {
+                final AtomicBoolean isCancelRequested = new AtomicBoolean();
                 try (NetworkSqlExecutionCircuitBreaker network = new NetworkSqlExecutionCircuitBreaker(engine,
                         new DefaultSqlExecutionCircuitBreakerConfiguration() {
                             @Override
@@ -443,6 +447,7 @@ public class StreamGroupByTest extends AbstractCairoTest {
                     final CountingSqlExecutionCircuitBreaker breaker = new CountingSqlExecutionCircuitBreaker(network) {
                         @Override
                         public boolean checkIfTripped() {
+                            isCancelRequested.set(true);
                             network.cancel();
                             return super.checkIfTripped();
                         }
@@ -452,14 +457,17 @@ public class StreamGroupByTest extends AbstractCairoTest {
                          RecordCursorFactory factory = compiler.compile(sql.replace("$table", "trades"), cancellable).getRecordCursorFactory()) {
                         try {
                             Assert.assertEquals(expected, read(factory, cancellable));
-                            Assert.assertFalse(parallel);
+                            Assert.assertFalse(isCancelRequested.get());
                         } catch (CairoException e) {
                             Assert.assertTrue(e.getFlyweightMessage().toString(), e.isInterruption());
+                            Assert.assertTrue(isCancelRequested.get());
+                            cancellations++;
                         }
                         Assert.assertEquals(expected, read(factory, context));
                     }
                 }
             }
+            Assert.assertEquals(parallel, cancellations > 0);
             for (int trip = 1; trip < 4_096; trip <<= 1) {
                 final int checks = trip;
                 final AtomicLong count = new AtomicLong();
