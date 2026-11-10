@@ -70,7 +70,7 @@ The level controls how much of the review below actually runs. Lower levels keep
 
 | Level | What runs |
 |-------|-----------|
-| **0 (default)** | Steps 1, 2, 2.4, 2.5f, 2.6, 3c, 4. Skip the rest of Step 2.5 and the discovery and falsification agents; re-test the earlier findings of 2.5f inline. Review the diff inline against the Review checklists, **algorithmic optimality** included. Build the Step 2.6 coverage map inline. Every candidate still passes the Step 3b admission gate inline from a blank evidence form; do not draft severity, a fix, or report prose first. Step 3c still launches its risk assessors. |
+| **0 (default)** | Steps 1, 2, 2.4, 2.5f, 2.6, 3c, 4. Skip the rest of Step 2.5 and the discovery and falsification agents; re-test the earlier findings of 2.5f inline. Review the diff inline against only the "Correctness & bugs", "Performance & algorithmic optimality", "Test review" and "QuestDB coding standards" checklists. Build the Step 2.6 coverage map inline. Every candidate still passes the Step 3b admission gate inline from a blank evidence form; do not draft severity, a fix, or report prose first. Step 3c still launches its risk assessors. |
 | **1** | Adds Step 2.5a and Step 2.5e when test code is present. Run Agent 1 plus at most **two** applicable roles chosen from Agents 3, 5, 6, 11, and 12. Run an independent falsification task for each surviving atomic candidate. |
 | **2** | Full Step 2.5, with 2.5b restricted to `public`/`protected` symbols. Run Agent 1 plus at most **four** change-relevant roles from Agents 2-7 and 10-12. Run an independent falsification task for each surviving atomic candidate. |
 | **3** | Full Step 2.5 and the complete admission protocol. Select at most **six** applicable discovery roles: Agent 1 always; Agents 2-7 only when their domain is touched; the others by the selection rule in their entries. Depth comes from producer/reachability evidence and independent falsification, not agent count. |
@@ -600,8 +600,9 @@ A finding whose author's reply holds is no defect of this PR: omit it, or keep w
 
 ## Review checklists
 
-These checklists say what to look for. Each discovery agent gets the ones its entry names, and the parent applies
-inline every checklist that no selected agent covers, which at level 0 is all of them.
+These checklists say what to look for. Each selected discovery agent gets the ones its entry names, and at level 0 the
+parent applies the ones the level's row names. No other checklist runs, except where a step names one, as Step 2.6
+does for "Crash fuzz coverage".
 
 ### Correctness & bugs
 - NULL handling: distinguish sentinel NULL vs actual NULL
@@ -731,8 +732,9 @@ loses data and never fails hard on a transient outage.
   mismatch, a parse error or a security error from a writable node, may be
   terminal. A sender that acknowledges past a rejected batch silently loses
   data. A batch rejected again and again with no acknowledgement progress
-  may become terminal only after a bounded number of consecutive rejections
-  of that same batch, never because of a WebSocket close code.
+  becomes terminal after a bounded number of consecutive rejections of that
+  same batch, not before, and never because of a WebSocket close code. Flag
+  a sender that replays such a batch forever: it stalls without erroring.
 
 **Startup.**
 - With `lazy_connect` on, building the client succeeds with no server
