@@ -46,19 +46,20 @@ final class PostingSupersededFileRemover implements PostingIndexUtils.SealedFile
         this.ff = ff;
     }
 
+    // scanSealedFiles() reports the files of the instance columnNameTxn only
     @Override
-    public void onCoverDataFile(int includeIdx, long postingColumnNameTxn, long coveredColumnNameTxn, long sealTxn) {
-        if (postingColumnNameTxn == columnNameTxn && sealTxn != liveSealTxn) {
+    public void onCoverDataFile(int includeIdx, long coveredColumnNameTxn, long sealTxn) {
+        if (sealTxn != liveSealTxn) {
             ff.removeQuiet(PostingIndexUtils.coverDataFileName(
-                    dir.trimTo(dirLen), columnName, includeIdx, postingColumnNameTxn, coveredColumnNameTxn, sealTxn));
+                    dir.trimTo(dirLen), columnName, includeIdx, columnNameTxn, coveredColumnNameTxn, sealTxn));
             dir.trimTo(dirLen);
         }
     }
 
     @Override
-    public void onValueFile(long postingColumnNameTxn, long sealTxn) {
-        if (postingColumnNameTxn == columnNameTxn && sealTxn != liveSealTxn) {
-            ff.removeQuiet(PostingIndexUtils.valueFileName(dir.trimTo(dirLen), columnName, postingColumnNameTxn, sealTxn));
+    public void onValueFile(long sealTxn) {
+        if (sealTxn != liveSealTxn) {
+            ff.removeQuiet(PostingIndexUtils.valueFileName(dir.trimTo(dirLen), columnName, columnNameTxn, sealTxn));
             dir.trimTo(dirLen);
         }
     }
@@ -74,7 +75,7 @@ final class PostingSupersededFileRemover implements PostingIndexUtils.SealedFile
             this.dirLen = dirLen;
             this.columnName = columnName;
             this.columnNameTxn = columnNameTxn;
-            PostingIndexUtils.scanSealedFiles(ff, dir, dirLen, columnName, this);
+            PostingIndexUtils.scanSealedFiles(ff, dir, dirLen, columnName, columnNameTxn, this);
         } finally {
             this.dir = null;
             this.columnName = null;

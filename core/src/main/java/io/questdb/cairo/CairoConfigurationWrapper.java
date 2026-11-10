@@ -44,11 +44,13 @@ import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.CharSink;
+import io.questdb.tasks.ColumnPurgeTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.LongSupplier;
+import java.util.function.ObjIntConsumer;
 
 public class CairoConfigurationWrapper implements CairoConfiguration {
     private final AtomicReference<CairoConfiguration> delegate = new AtomicReference<>();
@@ -222,6 +224,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getColumnPurgeTaskPoolCapacity() {
         return getDelegate().getColumnPurgeTaskPoolCapacity();
+    }
+
+    @Override
+    public @Nullable ObjIntConsumer<ColumnPurgeTask> getColumnPurgeTruncateRefusalListener() {
+        return getDelegate().getColumnPurgeTruncateRefusalListener();
     }
 
     @Override
@@ -672,6 +679,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public long getMatViewRefreshMemoryLimitBytes() {
         return getDelegate().getMatViewRefreshMemoryLimitBytes();
+    }
+
+    @Override
+    public int getMatViewRowExpiryCleanupMaxCachedPartitions() {
+        return getDelegate().getMatViewRowExpiryCleanupMaxCachedPartitions();
+    }
+
+    @Override
+    public double getMatViewRowExpiryCleanupMinExpiredFraction() {
+        return getDelegate().getMatViewRowExpiryCleanupMinExpiredFraction();
     }
 
     @Override
@@ -1436,6 +1453,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlMaxGroupingSets() {
+        return getDelegate().getSqlMaxGroupingSets();
+    }
+
+    @Override
     public int getSqlMaxNegativeLimit() {
         return getDelegate().getSqlMaxNegativeLimit();
     }
@@ -2001,6 +2023,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isMatViewRowExpiryCleanupEnabled() {
+        return getDelegate().isMatViewRowExpiryCleanupEnabled();
+    }
+
+    @Override
     public boolean isMultiKeyDedupEnabled() {
         return getDelegate().isMultiKeyDedupEnabled();
     }
@@ -2063,6 +2090,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isSqlDistinctGroupByRewriteEnabled() {
         return getDelegate().isSqlDistinctGroupByRewriteEnabled();
+    }
+
+    @Override
+    public boolean isSqlLatestOnHoistEnabled() {
+        return getDelegate().isSqlLatestOnHoistEnabled();
     }
 
     @Override

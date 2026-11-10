@@ -323,20 +323,20 @@ public class RecoveryCoordinator {
             return 0;
         }
         final int[] removed = {0};
-        PostingIndexUtils.scanSealedFiles(ff, path, partitionLen, columnName, new PostingIndexUtils.SealedFileVisitor() {
+        PostingIndexUtils.scanSealedFiles(ff, path, partitionLen, columnName, columnNameTxn, new PostingIndexUtils.SealedFileVisitor() {
             @Override
-            public void onCoverDataFile(int includeIdx, long filePostingColumnNameTxn, long coveredColumnNameTxn, long sealTxn) {
-                if (filePostingColumnNameTxn == columnNameTxn && namedSealTxns.indexOf(sealTxn) < 0
-                        && ff.removeQuiet(PostingIndexUtils.coverDataFileName(path.trimTo(partitionLen), columnName, includeIdx, filePostingColumnNameTxn, coveredColumnNameTxn, sealTxn))) {
+            public void onCoverDataFile(int includeIdx, long coveredColumnNameTxn, long sealTxn) {
+                if (namedSealTxns.indexOf(sealTxn) < 0
+                        && ff.removeQuiet(PostingIndexUtils.coverDataFileName(path.trimTo(partitionLen), columnName, includeIdx, columnNameTxn, coveredColumnNameTxn, sealTxn))) {
                     removed[0]++;
                 }
                 path.trimTo(partitionLen);
             }
 
             @Override
-            public void onValueFile(long fileColumnNameTxn, long sealTxn) {
-                if (fileColumnNameTxn == columnNameTxn && namedSealTxns.indexOf(sealTxn) < 0
-                        && ff.removeQuiet(PostingIndexUtils.valueFileName(path.trimTo(partitionLen), columnName, fileColumnNameTxn, sealTxn))) {
+            public void onValueFile(long sealTxn) {
+                if (namedSealTxns.indexOf(sealTxn) < 0
+                        && ff.removeQuiet(PostingIndexUtils.valueFileName(path.trimTo(partitionLen), columnName, columnNameTxn, sealTxn))) {
                     removed[0]++;
                 }
                 path.trimTo(partitionLen);

@@ -30,6 +30,8 @@ import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnPurgeJob;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnVersionReader;
+import io.questdb.cairo.ColumnVersionWriter;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.EntryUnavailableException;
@@ -44,8 +46,6 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
-import io.questdb.cairo.TxWriter;
-import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
@@ -3162,6 +3162,85 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRollbackRestoresColumnVersionWhenTxnCommitFails() throws Exception {
+        // An O3 commit into a partition that predates column c changes _cv. When the _cv commit lands
+        // and the _txn commit fails, rollback() must restore the _cv the committed _txn references:
+        // otherwise a new reader waits for a _cv version that never comes.
+        final TxnExtendFailingFacade ff = new TxnExtendFailingFacade("nt");
+        // one O3 row into 2024-01-01 and one row into each of 300 new partitions: the partition table
+        // outgrows the first 4 KB of the _txn file, so the _txn commit extends the file, see
+        // TxnExtendFailingFacade
+        final String o3Insert = """
+                INSERT INTO nt
+                SELECT * FROM (SELECT 5 v, '2024-01-01T00:30:00.000000Z'::TIMESTAMP ts, 50 c)
+                UNION ALL
+                SELECT (1000 + x)::INT, '2024-01-02T00:00:00.000000Z'::TIMESTAMP + x * 86_400_000_000L, 1 FROM long_sequence(300)""";
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE nt (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO nt VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z'), (3, '2024-01-02T00:00:00.000000Z')");
+            execute("ALTER TABLE nt ADD COLUMN c INT");
+            execute("INSERT INTO nt VALUES (4, '2024-01-02T01:00:00.000000Z', 40)");
+            final long columnVersionBefore;
+            final long txnBefore;
+            try (TableReader reader = getReader("nt")) {
+                columnVersionBefore = reader.getTxFile().getColumnVersion();
+                txnBefore = reader.getTxn();
+            }
+            final String rowsBefore = """
+                    v\tts\tc
+                    1\t2024-01-01T00:00:00.000000Z\tnull
+                    2\t2024-01-01T01:00:00.000000Z\tnull
+                    3\t2024-01-02T00:00:00.000000Z\tnull
+                    4\t2024-01-02T01:00:00.000000Z\t40
+                    """;
+
+            ff.isArmed.set(true);
+            assertExceptionNoLeakCheck(o3Insert, -1, "No space left");
+            Assert.assertFalse(ff.isArmed.get());
+            // checked before a reader opens: a reader waits for _cv to match _txn
+            Assert.assertEquals(columnVersionBefore, readColumnVersionFileVersion("nt"));
+
+            engine.releaseInactive();
+            try (TableReader reader = getReader("nt")) {
+                Assert.assertEquals(txnBefore, reader.getTxn());
+                Assert.assertEquals(columnVersionBefore, reader.getTxFile().getColumnVersion());
+                Assert.assertEquals(columnVersionBefore, reader.getColumnVersionReader().getVersion());
+            }
+            assertQuery("SELECT v, ts, c FROM nt")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(rowsBefore);
+
+            execute(o3Insert);
+            try (TableReader reader = getReader("nt")) {
+                Assert.assertEquals(txnBefore + 1, reader.getTxn());
+                // the commit that failed before changes _cv
+                Assert.assertTrue(reader.getTxFile().getColumnVersion() > columnVersionBefore);
+            }
+            assertQuery("SELECT v, ts, c FROM nt WHERE ts < '2024-01-03'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            v\tts\tc
+                            1\t2024-01-01T00:00:00.000000Z\tnull
+                            5\t2024-01-01T00:30:00.000000Z\t50
+                            2\t2024-01-01T01:00:00.000000Z\tnull
+                            3\t2024-01-02T00:00:00.000000Z\tnull
+                            4\t2024-01-02T01:00:00.000000Z\t40
+                            """);
+            assertQuery("SELECT count(), min(v), max(v), sum(c) FROM nt WHERE ts >= '2024-01-03'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count\tmin\tmax\tsum
+                            300\t1001\t1300\t300
+                            """);
+        });
+    }
+
+    @Test
     public void testSetAppendPositionFailureBin2() throws Exception {
         testSetAppendPositionFailure();
     }
@@ -3293,336 +3372,6 @@ public class TableWriterTest extends AbstractCairoTest {
 
                 path.of(configuration.getDbRoot()).concat(PRODUCT).concat(WalUtils.SEQ_DIR_DEPRECATED).slash$();
                 Assert.assertTrue(ff.exists(path.$()));
-            }
-        });
-    }
-
-    @Test
-    public void testSwitchNativePartitionWithParquetActivePartition() throws Exception {
-        assertMemoryLeak(() -> {
-            int N = 10000;
-            create(FF, PartitionBy.DAY, N);
-
-            Rnd rnd = new Rnd();
-            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
-            long interval = 60000L * 1000L;
-
-            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
-                populateProducts(writer, rnd, ts, N, interval);
-                writer.commit();
-            }
-
-            // Find the last (active) partition timestamp
-            long activePartitionTimestamp;
-            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
-                activePartitionTimestamp = writer.getTxWriter().getMaxTimestamp();
-
-                // switchNativePartitionWithParquet on the active partition should return SWITCH_SKIPPED
-                // without throwing an exception
-                Assert.assertEquals(TableWriter.SWITCH_SKIPPED, writer.switchNativePartitionWithParquet(activePartitionTimestamp, -1));
-
-                // Partition should remain native (not converted)
-                TxWriter txWriter = writer.getTxWriter();
-                int partitionIndex = txWriter.getPartitionIndex(
-                        txWriter.getLogicalPartitionTimestamp(activePartitionTimestamp)
-                );
-                Assert.assertFalse("Active partition should not be converted to parquet",
-                        txWriter.isPartitionParquet(partitionIndex));
-            }
-        });
-    }
-
-    @Test
-    public void testSwitchNativePartitionWithParquetLinksPmSidecar() throws Exception {
-        assertMemoryLeak(() -> {
-            int N = 10000;
-            create(FF, PartitionBy.DAY, N);
-
-            Rnd rnd = new Rnd();
-            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
-            long interval = 60000L * 1000L;
-
-            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
-                populateProducts(writer, rnd, ts, N, interval);
-                writer.commit();
-            }
-
-            final TableToken token;
-            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
-                token = writer.getTableToken();
-                TxWriter tx = writer.getTxWriter();
-
-                long partitionTs = tx.getPartitionTimestampByIndex(0);
-                int partitionIndex = tx.getPartitionIndex(partitionTs);
-                long partitionNameTxn = tx.getPartitionNameTxn(partitionIndex);
-
-                // Stamp data.parquet and _pm stubs into the non-active partition dir.
-                // switchNativePartitionWithParquet only checks existence and hard-links,
-                // so empty stubs exercise the code path without needing a real encode.
-                try (Path p = new Path()) {
-                    p.of(configuration.getDbRoot()).concat(token);
-                    TableUtils.setPathForParquetPartition(p, timestampType, PartitionBy.DAY, partitionTs, partitionNameTxn);
-                    Assert.assertTrue("failed to touch data.parquet", FF.touch(p.$()));
-
-                    p.of(configuration.getDbRoot()).concat(token);
-                    TableUtils.setPathForParquetPartitionMetadata(p, timestampType, PartitionBy.DAY, partitionTs, partitionNameTxn);
-                    Assert.assertTrue("failed to touch _pm", FF.touch(p.$()));
-                }
-
-                // Bump writer.txn past partition.nameTxn so the switch creates a
-                // distinct destination dir.
-                populateRow(writer, rnd, tx.getMaxTimestamp(), timestampDriver.fromMicros(interval));
-                writer.commit();
-
-                // Mark the partition as parquet-generated so the switch passes the
-                // isPartitionParquetGenerated guard.
-                tx.setPartitionParquetGenerated(partitionIndex, true);
-
-                int rc = writer.switchNativePartitionWithParquet(partitionTs, 0L);
-                Assert.assertEquals(TableWriter.SWITCH_OK, rc);
-            }
-
-            try (TableReader reader = engine.getReader(token)) {
-                long partitionTs = reader.getTxFile().getPartitionTimestampByIndex(0);
-                long newNameTxn = reader.getTxFile().getPartitionNameTxn(0);
-                try (Path p = new Path()) {
-                    p.of(configuration.getDbRoot()).concat(token);
-                    TableUtils.setPathForParquetPartitionMetadata(p, timestampType, PartitionBy.DAY, partitionTs, newNameTxn);
-                    Assert.assertTrue("_pm must survive switchNativePartitionWithParquet", FF.exists(p.$()));
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testSwitchNativePartitionWithParquetLinksPostingIndexFiles() throws Exception {
-        // Regression: linkPartitionIndexFiles hard-linked only the bitmap
-        // .k / .v files. A posting-indexed symbol column has no .v -- its
-        // data lives in .pv.<colTxn>.<sealTxn> plus the .pci / .pc<N>.*
-        // sidecars
-        assertMemoryLeak(() -> {
-            final String tableName = "posting_switch";
-            TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
-                    .col("sym", ColumnType.SYMBOL).symbolCapacity(16).indexed(true, 256, IndexType.POSTING)
-                    .timestamp("ts", timestampType);
-            AbstractCairoTest.create(model);
-
-            Rnd rnd = new Rnd();
-            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
-            long interval = timestampDriver.fromMicros(60_000L * 1000L);
-
-            // Populate across multiple partitions so partition 0 is
-            // non-active and has data for the posting-indexed column.
-            try (TableWriter writer = newOffPoolWriter(configuration, tableName)) {
-                for (int i = 0; i < 2_000; i++) {
-                    TableWriter.Row r = writer.newRow(ts += interval);
-                    r.putSym(0, rnd.nextString(4));
-                    r.append();
-                }
-                writer.commit();
-            }
-
-            final TableToken token;
-            long partitionTs;
-            try (TableWriter writer = newOffPoolWriter(configuration, tableName)) {
-                token = writer.getTableToken();
-                TxWriter tx = writer.getTxWriter();
-
-                partitionTs = tx.getPartitionTimestampByIndex(0);
-                int partitionIndex = tx.getPartitionIndex(partitionTs);
-                long partitionNameTxn = tx.getPartitionNameTxn(partitionIndex);
-
-                // Empty data.parquet + _pm stubs are enough -- the switch
-                // only checks existence and hard-links them, same trick as
-                // the sister LinksPmSidecar test.
-                try (Path p = new Path()) {
-                    p.of(configuration.getDbRoot()).concat(token);
-                    TableUtils.setPathForParquetPartition(p, timestampType, PartitionBy.DAY, partitionTs, partitionNameTxn);
-                    Assert.assertTrue("failed to touch data.parquet", FF.touch(p.$()));
-
-                    p.of(configuration.getDbRoot()).concat(token);
-                    TableUtils.setPathForParquetPartitionMetadata(p, timestampType, PartitionBy.DAY, partitionTs, partitionNameTxn);
-                    Assert.assertTrue("failed to touch _pm", FF.touch(p.$()));
-                }
-
-                // Bump writer.txn past partition.nameTxn so the switch
-                // creates a distinct destination dir.
-                TableWriter.Row r = writer.newRow(tx.getMaxTimestamp() + interval);
-                r.putSym(0, rnd.nextString(4));
-                r.append();
-                writer.commit();
-
-                tx.setPartitionParquetGenerated(partitionIndex, true);
-
-                int rc = writer.switchNativePartitionWithParquet(partitionTs, 0L);
-                Assert.assertEquals(TableWriter.SWITCH_OK, rc);
-                Assert.assertTrue(
-                        "partition must be parquet after the switch",
-                        writer.getTxWriter().isPartitionParquet(partitionIndex)
-                );
-            }
-        });
-    }
-
-    @Test
-    public void testSwitchNativePartitionWithParquetMissingPmDoesNotOrphanNewDir() throws Exception {
-        assertMemoryLeak(() -> {
-            int N = 10000;
-            create(FF, PartitionBy.DAY, N);
-
-            Rnd rnd = new Rnd();
-            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
-            long interval = 60000L * 1000L;
-
-            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
-                populateProducts(writer, rnd, ts, N, interval);
-                writer.commit();
-            }
-
-            final TableToken token;
-            long partitionTs;
-            long destTxn;
-            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
-                token = writer.getTableToken();
-                TxWriter tx = writer.getTxWriter();
-
-                partitionTs = tx.getPartitionTimestampByIndex(0);
-                int partitionIndex = tx.getPartitionIndex(partitionTs);
-                long partitionNameTxn = tx.getPartitionNameTxn(partitionIndex);
-
-                // Stamp data.parquet but NOT _pm in the source partition dir to
-                // simulate a partition predating Mig941 or one whose _pm was
-                // manually removed. The switch must abort and leave nothing on
-                // disk for the destination version.
-                try (Path p = new Path()) {
-                    p.of(configuration.getDbRoot()).concat(token);
-                    TableUtils.setPathForParquetPartition(p, timestampType, PartitionBy.DAY, partitionTs, partitionNameTxn);
-                    Assert.assertTrue("failed to touch data.parquet", FF.touch(p.$()));
-                }
-
-                // Bump writer.txn past partition.nameTxn so the switch creates
-                // a distinct destination dir.
-                populateRow(writer, rnd, tx.getMaxTimestamp(), timestampDriver.fromMicros(interval));
-                writer.commit();
-
-                // Mark the partition as parquet-generated so the switch passes
-                // the isPartitionParquetGenerated guard and reaches the _pm
-                // existence check.
-                tx.setPartitionParquetGenerated(partitionIndex, true);
-
-                destTxn = writer.getTxn();
-                int rc = writer.switchNativePartitionWithParquet(partitionTs, 0L);
-                Assert.assertEquals(TableWriter.SWITCH_NO_PARQUET, rc);
-            }
-
-            // The switch must clean up the destination dir it created before
-            // it discovered _pm was missing. Otherwise the hard-linked
-            // data.parquet remains on disk in a directory _txn never
-            // references.
-            try (Path p = new Path()) {
-                p.of(configuration.getDbRoot()).concat(token);
-                TableUtils.setPathForNativePartition(p, timestampType, PartitionBy.DAY, partitionTs, destTxn);
-                Assert.assertFalse(
-                        "orphan partition dir [path=" + p + "]",
-                        FF.exists(p.$())
-                );
-            }
-        });
-    }
-
-    @Test
-    public void testSwitchNativePartitionWithParquetSkipsRowlessPostingColumn() throws Exception {
-        // Regression: linkPartitionIndexFiles skipped only the absent case
-        // (columnTop == -1). A posting-indexed column that is row-less on the
-        // partition (columnTop >= partition size) also has no .pk / .pv files --
-        // the seal sweep never builds them -- yet the old guard did not skip it,
-        // so linkColumnIndexFiles threw "index files do not exist". The guard now
-        // mirrors copyOrRebuildColumnIndexes.
-        assertMemoryLeak(() -> {
-            final String tableName = "posting_switch_rowless";
-            TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
-                    .col("sym", ColumnType.SYMBOL).symbolCapacity(16).indexed(true, 256, IndexType.POSTING)
-                    .timestamp("ts", timestampType);
-            AbstractCairoTest.create(model);
-
-            Rnd rnd = new Rnd();
-            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
-            long interval = timestampDriver.fromMicros(60_000L * 1000L);
-
-            // Span two partitions so partition 0 is non-active when `extra` is added.
-            try (TableWriter writer = newOffPoolWriter(configuration, tableName)) {
-                for (int i = 0; i < 2_000; i++) {
-                    TableWriter.Row r = writer.newRow(ts += interval);
-                    r.putSym(0, rnd.nextString(4));
-                    r.append();
-                }
-                writer.commit();
-            }
-
-            long partitionTs;
-            try (TableWriter writer = newOffPoolWriter(configuration, tableName)) {
-                final TableToken token = writer.getTableToken();
-                TxWriter tx = writer.getTxWriter();
-
-                partitionTs = tx.getPartitionTimestampByIndex(0);
-                int partitionIndex = tx.getPartitionIndex(partitionTs);
-                long partitionNameTxn = tx.getPartitionNameTxn(partitionIndex);
-
-                // `extra` is added while partition 0 is historic, so it never gets
-                // a .pk on partition 0.
-                writer.addColumn("extra", ColumnType.SYMBOL, 16, false, IndexType.POSTING, 256, false, AllowAllSecurityContext.INSTANCE);
-
-                try (Path p = new Path()) {
-                    p.of(configuration.getDbRoot()).concat(token);
-                    TableUtils.setPathForParquetPartition(p, timestampType, PartitionBy.DAY, partitionTs, partitionNameTxn);
-                    Assert.assertTrue("failed to touch data.parquet", FF.touch(p.$()));
-
-                    p.of(configuration.getDbRoot()).concat(token);
-                    TableUtils.setPathForParquetPartitionMetadata(p, timestampType, PartitionBy.DAY, partitionTs, partitionNameTxn);
-                    Assert.assertTrue("failed to touch _pm", FF.touch(p.$()));
-                }
-
-                // Bump writer.txn past partition.nameTxn so the switch creates a
-                // distinct destination dir.
-                TableWriter.Row r = writer.newRow(tx.getMaxTimestamp() + interval);
-                r.putSym(0, rnd.nextString(4));
-                r.append();
-                writer.commit();
-
-                // Stamp `extra` row-less on partition 0 (columnTop == partition
-                // size): a column-version record with no .pk, the state an O3
-                // add-column race produces.
-                writer.upsertColumnVersion(partitionTs, writer.getColumnIndex("extra"), tx.getPartitionSize(partitionIndex));
-
-                tx.setPartitionParquetGenerated(partitionIndex, true);
-
-                int rc = writer.switchNativePartitionWithParquet(partitionTs, 0L);
-                Assert.assertEquals(TableWriter.SWITCH_OK, rc);
-                Assert.assertTrue(
-                        "partition must be parquet after the switch",
-                        writer.getTxWriter().isPartitionParquet(partitionIndex)
-                );
-
-                // linkPartitionIndexFiles must link sym's .pk (it has rows) and skip
-                // extra's (row-less, no .pk). The positive sym check pins the link arm:
-                // an over-broad guard that also dropped the live sym would link nothing
-                // yet still return SWITCH_OK, which rc alone cannot catch.
-                long symNameTxn = writer.getColumnNameTxn(partitionTs, writer.getColumnIndex("sym"));
-                long extraNameTxn = writer.getColumnNameTxn(partitionTs, writer.getColumnIndex("extra"));
-                long newNameTxn = writer.getTxWriter().getPartitionNameTxn(partitionIndex);
-                try (Path p = new Path()) {
-                    p.of(configuration.getDbRoot()).concat(token);
-                    TableUtils.setPathForNativePartition(p, timestampType, PartitionBy.DAY, partitionTs, newNameTxn);
-                    int dirLen = p.size();
-                    Assert.assertTrue(
-                            "sym .pk must be linked into the parquet partition dir",
-                            FF.exists(IndexFactory.keyFileName(IndexType.POSTING, p, "sym", symNameTxn))
-                    );
-                    Assert.assertFalse(
-                            "row-less extra must have no .pk in the parquet partition dir",
-                            FF.exists(IndexFactory.keyFileName(IndexType.POSTING, p.trimTo(dirLen), "extra", extraNameTxn))
-                    );
-                }
             }
         });
     }
@@ -3945,6 +3694,55 @@ public class TableWriterTest extends AbstractCairoTest {
                 TestUtils.assertEquals(something, r.getStrA(0));
                 TestUtils.assertEquals(boring, r.getSymA(1));
             }
+        }
+    }
+
+    @Test
+    public void testWriterOpenRejectsColumnVersionTwoAheadOfTxn() throws Exception {
+        // _cv one version ahead of _txn is an aborted column version change the writer rolls back;
+        // two versions ahead cannot come from one failed transaction: neither area of _cv holds the
+        // version _txn names, and the previous _txn record of a new table is not verified
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE nt (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO nt VALUES (1, '2024-01-01T00:00:00.000000Z')");
+            final long txnColumnVersion;
+            final long partitionTimestamp;
+            try (TableReader reader = getReader("nt")) {
+                txnColumnVersion = reader.getTxFile().getColumnVersion();
+                partitionTimestamp = reader.getPartitionTimestampByIndex(0);
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(engine.verifyTableName("nt")).concat(TableUtils.COLUMN_VERSION_FILE_NAME);
+                try (ColumnVersionWriter columnVersionWriter = new ColumnVersionWriter(configuration, path.$(), true)) {
+                    columnVersionWriter.upsertColumnTop(partitionTimestamp, 0, 1);
+                    columnVersionWriter.commit();
+                    columnVersionWriter.upsertColumnTop(partitionTimestamp, 0, 2);
+                    columnVersionWriter.commit();
+                }
+            }
+            try (TableWriter ignore = getWriter("nt")) {
+                Assert.fail("the writer must not open");
+            } catch (CairoException e) {
+                TestUtils.assertContains(
+                        e.getFlyweightMessage(),
+                        "_cv cannot serve the column version _txn names; refusing to write from the previous transaction: "
+                                + "the previous _txn record is not verified"
+                );
+                TestUtils.assertContains(
+                        e.getFlyweightMessage(),
+                        ", columnVersion=" + txnColumnVersion + ", cvVersion=" + (txnColumnVersion + 2) + ']'
+                );
+            }
+        });
+    }
+
+    private static long readColumnVersionFileVersion(String tableName) {
+        try (ColumnVersionReader columnVersionReader = new ColumnVersionReader(); Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(engine.verifyTableName(tableName)).concat(TableUtils.COLUMN_VERSION_FILE_NAME);
+            columnVersionReader.ofRO(configuration.getFilesFacade(), path.$());
+            return columnVersionReader.readUnsafe();
         }
     }
 

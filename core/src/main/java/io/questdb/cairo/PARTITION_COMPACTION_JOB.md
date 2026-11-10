@@ -76,10 +76,11 @@ targetTimestamp, targetNameTxn, targetGeneration, expiry, writerId)`.
 - A record is pruned when its target has moved on (which landing the swap does), when its writer is closed,
   distressed, evicted or replaced, or when the table is dropped. A write into a different folder of the same
   logical partition does not prune it.
-- The expiry is not a TTL. A command a writer consumed without moving `_txn` - refused, or its rename failed
-  - would otherwise park its logical partition for the life of that writer. `swap.timeout` (30 min) after the
-  record was taken, the sweep takes the writer out of the pool and ticks it, which drains the queue; only then
-  does it forget the record.
+- A record is also pruned once the writer has applied its command - landed, refused, or failed - which the
+  command itself reports: a refusal does not move `_txn`, so nothing else would show it.
+- The expiry is not a TTL. A command queued on a writer that stopped ticking would otherwise park its logical
+  partition for the life of that writer. `swap.timeout` (30 min) after the record was taken, the sweep takes the
+  writer out of the pool and ticks it, which drains the queue; only then does it forget the record.
 - After an inline swap, `notifyWalApplyIfLagging` re-sends the WAL apply notification dropped while the
   writer was out of the pool.
 

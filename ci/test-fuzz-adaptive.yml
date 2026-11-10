@@ -1,11 +1,10 @@
-# Temporary soak-fuzz pipeline for the nw_adaptive_commit branch (PR #7411).
+# Soak-fuzz pipeline for the adaptive commit mode (PR #7411), scheduled on master.
 #
 # This file backs its own ADO definition, separate from Fuzz Tests
 # (definition 25, ci/test-fuzz.yml), so the soak runs register under a
 # different pipeline name and stay out of the builds channel subscription.
-# One-time setup in ADO: create a new pipeline from this file (suggested
-# name: Adaptive Commit Fuzz) with default branch nw_adaptive_commit, and
-# do not subscribe it to the builds channel.
+# ADO setup: the pipeline is named Adaptive Commit Fuzz, its default branch
+# is master, and it is not subscribed to the builds channel.
 #
 # Failures alert through the Slack webhook in the
 # TMP_ADAPTIVE_COMMIT_ALERT_WEBHOOK secret variable instead. Set it in the
@@ -29,8 +28,7 @@
 # fuzz suite ~12 min. Hence a ~10m first pass plus roughly two loop iterations inside the hour.
 #
 # A full-suite pass still runs once nightly, sharded into separate JVMs so a long/OOM-prone sweep cannot
-# poison the rest of the suite. Delete this file after the squash-merge; the branch deletion leaves the
-# definition with nothing to schedule.
+# poison the rest of the suite.
 #
 # The soak cron deliberately skips 00:00-01:59 so the 01:00 nightly gets the pool to itself: the pool runs
 # one agent at a time, so a soak queued mid-nightly does not just delay itself, it wedges between two nightly
@@ -124,13 +122,13 @@ schedules:
     displayName: Run continuous soak (outside nightly window)
     branches:
       include:
-        - nw_adaptive_commit
+        - master
     always: true
   - cron: "0 1 * * *"
     displayName: Run adaptive crash nightly
     branches:
       include:
-        - nw_adaptive_commit
+        - master
     always: true
   # The durability battery. Live since build 270631, which ran the whole battery green on
   # this agent: controls t06/t07/t10 passed, then all three arms returned verdicts
@@ -156,7 +154,7 @@ schedules:
     displayName: Run durability sweep
     branches:
       include:
-        - nw_adaptive_commit
+        - master
     always: true
 
 variables:
@@ -305,7 +303,7 @@ stages:
               includeTests: "**/cairo/crash/RandomizedAdaptiveCrashFuzzTest.java"
               excludeTests: ""
             crash_sweeps:
-              includeTests: "**/cairo/crash/AdaptiveIndexedSymbolLazyGapCrashSweepTest.java,**/cairo/crash/AdaptiveMatViewLazyGapCrashSweepTest.java,**/cairo/crash/AdaptiveMultiPartitionLazyGapCrashSweepTest.java,**/cairo/crash/AdaptiveMultiTableLazyGapCrashSweepTest.java,**/cairo/crash/AdaptiveO3CrashSweepTest.java,**/cairo/crash/AdaptiveO3LazyGapCrashSweepTest.java,**/cairo/crash/AdaptiveRebootOrphanReclaimCrashTest.java"
+              includeTests: "**/cairo/crash/AdaptiveIndexedSymbolLazyGapCrashSweepTest.java,**/cairo/crash/AdaptiveMatViewLazyGapCrashSweepTest.java,**/cairo/crash/AdaptiveMultiPartitionLazyGapCrashSweepTest.java,**/cairo/crash/AdaptiveMultiTableLazyGapCrashSweepTest.java,**/cairo/crash/AdaptiveO3CrashSweepTest.java,**/cairo/crash/AdaptiveO3LazyGapCrashSweepTest.java,**/cairo/crash/AdaptiveRebootOrphanReclaimCrashTest.java,**/cairo/crash/AdaptiveRowExpiryCrashSweepTest.java"
               excludeTests: ""
             soak_self_check:
               includeTests: "**/cairo/crash/AdaptiveCrashSweepSelfCheckTest.java,**/cairo/crash/AdaptiveSoakCrashTest.java"
@@ -853,6 +851,7 @@ stages:
           #      t09 the report is honest      t11 the env builders agree
           #      t12 a verdict token means one thing
           #      t13 a lost table is judged by its own arm's watermark
+          #      t15 a store-and-forward replay is judged by what the client recovered
           #      t14 the recorder keeps overlapping flushes in order
           - bash: |
               set -uo pipefail
@@ -866,12 +865,13 @@ stages:
               run_phase t11-builder-parity 2 bash test/t11-builder-parity.sh                  || rc=1
               run_phase t12-verdict-vocab  2 bash test/t12-verdict-vocabulary.sh              || rc=1
               run_phase t13-absent-table   2 bash test/t13-absent-table-watermark.sh          || rc=1
+              run_phase t15-sf-replay      2 bash test/t15-sf-replay-grading.sh               || rc=1
               run_phase t08-state-reaper   2 bash test/t08-state-reaper.sh                    || rc=1
               run_phase t09-junit-xml      2 bash test/t09-junit-xml.sh                       || rc=1
 
               # As load-bearing as the VM controls, so they gate the sweeps the same way.
               for t in t10-judge-selftest t06-selftest t11-builder-parity t12-verdict-vocab \
-                       t13-absent-table t08-state-reaper t09-junit-xml; do
+                       t13-absent-table t15-sf-replay t08-state-reaper t09-junit-xml; do
                 grep -q "^$t .* rc=0$" "$(Agent.TempDirectory)/durability-timing.txt" 2>/dev/null \
                   || { echo "VM-free control did not complete: $t"; rc=1; }
               done

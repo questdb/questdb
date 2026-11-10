@@ -3629,6 +3629,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         //                      parameter values.
 
         // Considering all the above, we are performing a 3-way merge of the existing states.
+        sqlExecutionContext.awaitPageFrameSequences();
         final BindVariableService bindVariableService = sqlExecutionContext.getBindVariableService();
         bindVariableService.clear();
         long lo = parameterValueArenaPtr;

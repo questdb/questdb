@@ -85,6 +85,14 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         return 50 + rnd.nextInt(9951);
     }
 
+    /**
+     * Small enough that fuzz parquet partitions span several row groups; with one row group every
+     * O3 merge rewrites the file and the in-place update path is never fuzzed.
+     */
+    public static int getRndSmallParquetRowGroupSize(Rnd rnd) {
+        return 4 + rnd.nextInt(29);
+    }
+
     public static long getRndPartitionCompactionCheckInterval(Rnd rnd) {
         // 70% of runs: near-zero, so PartitionCompactionScanJob's cool-off is bypassed and it
         // sweeps on effectively every drain() call - the interesting, bug-finding regime that
@@ -193,7 +201,6 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, TestUtils.randomSymbolIndexTypeName(setUpRnd));
         super.setUp();
         fuzzer.withDb(engine, sqlExecutionContext);
-        fuzzer.clearSeeds();
     }
 
     @After

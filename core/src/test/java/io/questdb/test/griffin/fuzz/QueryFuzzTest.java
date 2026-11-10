@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.fuzz;
 
+import io.questdb.Metrics;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.RecordCursor;
@@ -32,14 +33,20 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.TextPlanSink;
+import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.mp.WorkerPoolMode;
 import io.questdb.mp.WorkerPoolUtils;
+import io.questdb.mp.continuation.FiberTask;
+import io.questdb.mp.continuation.LaunchResult;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.TestListener;
 import io.questdb.test.cairo.fuzz.FailureFileFacade;
 import io.questdb.test.griffin.fuzz.expr.BindContext;
 import io.questdb.test.mp.TestWorkerPool;
@@ -51,6 +58,11 @@ import java.io.BufferedWriter;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.nio.file.Paths;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicReferenceArray;
 
 /**
  * Seeded random query fuzzer. Generates 1..3 WAL tables with all supported
@@ -138,9 +150,9 @@ import java.nio.file.Paths;
  *         master-side only, so the FUNCTION fault is woven there like the
  *         other shapes.</li>
  *     <li>{@code -Dquestdb.fuzz.hashjoin=true|false} &mdash; generate
- *         equi-join GROUP BY shapes (an INNER, LEFT or RIGHT join on the INT
- *         or SYMBOL key under a keyed or scalar aggregate), the shape the fused
- *         hash join GROUP BY replaces (default true). Their band is carved from
+ *         equi-join GROUP BY shapes (an INNER, LEFT, RIGHT or FULL join on one
+ *         or two of the shared key columns under a keyed or scalar aggregate),
+ *         the shape the fused hash join GROUP BY replaces (default true). Their band is carved from
  *         the GROUP BY range, so the other shapes' frequencies are unchanged;
  *         pass {@code false} to give the band back to GROUP BY.</li>
  *     <li>{@code -Dquestdb.fuzz.diff.fused=true|false} &mdash; run every
@@ -148,8 +160,16 @@ import java.nio.file.Paths;
  *         GROUP BY disabled and compare the two materializations (default
  *         true). The JIT, storage and bind axes run the fused plan on both of
  *         their sides, so only this axis sees a fused plan that returns wrong
- *         rows. The run asserts that the fused plan actually ran on a minimum
- *         share of the comparisons whose query compiled.</li>
+ *         rows. The run asserts that the fused plan ran on enough of the
+ *         comparisons whose query compiled to rule out a planner that has
+ *         stopped selecting it.</li>
+ *     <li>{@code -Dquestdb.fuzz.diff.mappage=true|false} &mdash; run every
+ *         query once more, and an equi-join GROUP BY query several more times,
+ *         with {@code cairo.sql.small.map.page.size} cut to between 8 and 512
+ *         bytes, and compare each run with the default-page one (default
+ *         true). The tables are too small to grow a map with the
+ *         default page, so only this axis runs operators over maps that grow
+ *         while they hold cursors and flyweights into them.</li>
  *     <li>{@code -Dquestdb.fuzz.hashjoin.payload=row_ids|copied} &mdash; force
  *         every fused hash join GROUP BY to read its build's payload columns
  *         where they live, or from the copy its build makes (default: neither,
@@ -181,9 +201,29 @@ import java.nio.file.Paths;
  * failure.
  */
 public class QueryFuzzTest extends AbstractCairoTest {
+    private static final int CONCURRENT_PAGE_FRAME_ROWS = 100;
+    private static final long CONCURRENT_STALL_NANOS = 60_000_000_000L;
     // Per-constant chance, in percent, of substituting a bindable literal
     // with a bind variable inside the bind variant.
     private static final int CONSTANT_BIND_PROBABILITY_PCT = 50;
+    // Share of the fused on/off axis's completed comparisons (the pivot compiled and ran) that a
+    // working planner runs on the fused hash join GROUP BY, as runFuzz's guard models it. The share
+    // is well below 100% because the generator sends a minority of its queries through features the
+    // fused planner refuses, and a RIGHT join takes the fused plan only under the conditions that
+    // HashJoinGroupByClause describes. Sixty default runs, each on its own random schema, measured
+    // 44% over 1_872 completed comparisons, with per-run shares from 21% to 62% over 16 to 46
+    // comparisons that scatter around the mean as binomial draws do; eight 5_000-query runs measured
+    // 42% to 52%. The baseline sits below the measured share, so that a small drift in the
+    // generator's mix does not raise the guard's false-alarm rate.
+    private static final double FUSED_SHARE_BASELINE = 0.4;
+    // Chance, at FUSED_SHARE_BASELINE, that a run's fused count falls low enough for runFuzz's guard
+    // to fail it. No fixed percentage floor stays both safe and useful over the default budget's 20
+    // to 45 comparisons: the old 15% floor failed about one run in 3_000 at the measured share, and
+    // CI ran into it with 2 fused of 26. The exact binomial tail fails a run at the measured share
+    // less than once in a million, still fails every guarded run of a planner that stops fusing
+    // (0.6^25 = 2.8e-6 at the smallest guarded sample), and on a 5_000-query soak of about 170
+    // comparisons fails a share of 24% or less.
+    private static final double FUSED_SHARE_FALSE_ALARM = 1e-5;
     // Lowest share, in percent, of a shape's differential queries that must actually run rather
     // than be skipped on an expected error. Skips are normal - a fuzzed expression can overflow, a
     // cast can be inconvertible - and how often they happen swings with the randomly generated
@@ -205,19 +245,6 @@ public class QueryFuzzTest extends AbstractCairoTest {
     // measured per-arm fire rates run 49-88% by type, so at a pessimistic 30% it takes 20 arms for
     // an all-miss run to drop below 1e-3. See the guard in runFuzz.
     private static final int MIN_FAULT_QUERIES_PER_TYPE_FOR_FIRE_FLOOR = 20;
-    // Lowest share, in percent, of the fused on/off axis's completed comparisons (the pivot compiled
-    // and ran) whose pivot must have used the fused hash join GROUP BY. Without it a planner that
-    // stops selecting the fused plan leaves the axis comparing the ordinary plan with itself while
-    // the run stays green. The share is well below 100% because the generator sends a minority of
-    // its queries through features the fused planner refuses, and a RIGHT join takes the fused plan
-    // only under the conditions that HashJoinGroupByClause describes. Eight 5_000-query runs, each on
-    // its own random schema, measured 42% to 52% over 159 to 187 completed comparisons, 46% over
-    // all of them, and ten default runs 32% to 62% over 23 to 39. At the smallest guarded sample of
-    // MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR (25) comparisons and a 46% share, a run falls below this
-    // floor (3 or fewer fused) with an exact binomial probability of about 3.4e-4; the integer step
-    // makes 27 comparisons the worst guarded sample, at about 6.7e-4. A planner that stops fusing
-    // (a 0% share) fails every guarded run.
-    private static final int MIN_FUSED_SELECTED_PCT = 15;
     // Differential queries a run needs before runFuzz asserts that a shape it could draw generated
     // at least one query. The rarest such shape takes ~4% of the differential queries, so at this
     // sample size an all-miss run sits below 1e-8; under it a zero is small-sample noise and
@@ -243,8 +270,190 @@ public class QueryFuzzTest extends AbstractCairoTest {
     // QUERY_POOL_NAME + '_' + workerId, which the FILE fault's query-execution
     // scope matches to admit reduce workers alongside the test thread.
     private static final String QUERY_POOL_NAME = "fuzzQuery";
+    private static final boolean[] SERIAL_FLAGS = new boolean[7];
     // Per-query chance, in percent, of running with parallel SQL execution disabled.
     private static final int SERIAL_PROBABILITY_PCT = 5;
+
+    @Test
+    public void testBinomialLowerTail() {
+        // Exact rational arithmetic computed the expected values, outside the code under test.
+        assertBinomialLowerTail(2.84302880299297e-06, 0, 25);
+        assertBinomialLowerTail(5.022684218620914e-05, 1, 25);
+        assertBinomialLowerTail(2.7766914642564675e-04, 2, 26);
+        assertBinomialLowerTail(1.5917802375868418e-03, 3, 26);
+        assertBinomialLowerTail(9.416824245541328e-06, 41, 170);
+        assertBinomialLowerTail(1.9811797371565857e-05, 42, 170);
+        // The first term, 0.6^2000, underflows a double, and the terms near k carry the tail.
+        assertBinomialLowerTail(2.371628584995946e-06, 700, 2_000);
+        assertBinomialLowerTail(0.5097100085964106, 800, 2_000);
+        Assert.assertEquals(0.0, binomialLowerTail(0, 2_000, 0.4), 0.0);
+        Assert.assertEquals(1.0, binomialLowerTail(26, 26, 0.4), 1e-12);
+    }
+
+    @Test
+    public void testConcurrentFiberQueryFuzz() throws Exception {
+        assertMemoryLeak(() -> {
+            final Long s0 = Long.getLong("questdb.fuzz.s0");
+            final Long s1 = Long.getLong("questdb.fuzz.s1");
+            final Rnd rnd = s0 != null && s1 != null ? TestUtils.generateRandom(LOG, s0, s1) : TestUtils.generateRandom(LOG);
+            final FuzzConfig config = FuzzConfig.forConcurrency(rnd);
+            final int queryWorkerCount = 1 + rnd.nextInt(2);
+            final int ownerWorkerCount = 2 + rnd.nextInt(2);
+            final int ownerCount = ownerWorkerCount * (2 + rnd.nextInt(3));
+            LOG.info().$("concurrent fuzz config: tables=").$(config.getNumTables())
+                    .$(", rows=").$(config.getRowsPerTable())
+                    .$(", queries=").$(config.getNumQueries())
+                    .$(", queryWorkers=").$(queryWorkerCount)
+                    .$(", ownerWorkers=").$(ownerWorkerCount)
+                    .$(", owners=").$(ownerCount)
+                    .$();
+            if (config.getHashJoinPayloadLayout() != null) {
+                config.getHashJoinPayloadLayout().apply(node1.getConfigurationOverrides());
+            }
+            config.getHashJoinBuildMode().applyProperties(node1.getConfigurationOverrides());
+            setProperty(PropertyKey.CAIRO_SQL_LATEST_BY_JIT_ENABLED, Boolean.toString(rnd.nextBoolean()));
+
+            final WorkerPool queryPool = new TestWorkerPool(QUERY_POOL_NAME, queryWorkerCount, Metrics.DISABLED, WorkerPoolMode.FIBER_HOST);
+            WorkerPoolUtils.setupQueryJobs(queryPool, engine, true);
+            final WorkerPool writerPool = TestWorkerPool.createWithRandomMode(rnd, new WorkerPoolConfiguration() {
+                @Override
+                public String getPoolName() {
+                    return "fuzzWriter";
+                }
+
+                @Override
+                public int getWorkerCount() {
+                    return 2;
+                }
+            });
+            WorkerPoolUtils.setupWriterJobs(writerPool, engine);
+            final WorkerPool ownerPool = new TestWorkerPool("fuzzOwner", ownerWorkerCount, Metrics.DISABLED, WorkerPoolMode.FIBER_HOST);
+            queryPool.start(LOG);
+            writerPool.start(LOG);
+            ownerPool.start(LOG);
+            final ObjList<SqlExecutionContextImpl> contexts = new ObjList<>();
+            try {
+                final SqlExecutionContextImpl buildContext = newFuzzContext(queryWorkerCount);
+                contexts.add(buildContext);
+                final ObjList<FuzzTable> tables = createTables(rnd, config, buildContext);
+                engine.releaseInactive();
+                writerPool.halt();
+
+                final ObjList<GeneratedQuery> queries = new ObjList<>();
+                final boolean[] isSerial = new boolean[config.getNumQueries()];
+                for (int q = 0; q < config.getNumQueries(); q++) {
+                    final long preGenS0 = rnd.getSeed0();
+                    final long preGenS1 = rnd.getSeed1();
+                    GeneratedQuery query = generateConcurrentQuery(rnd, tables, null, config);
+                    if (rnd.nextInt(100) < QUERY_BIND_PROBABILITY_PCT) {
+                        final long bindS0 = rnd.nextLong();
+                        final long bindS1 = rnd.nextLong();
+                        rnd.reset(preGenS0, preGenS1);
+                        final BindContext bindContext = new BindContext(new Rnd(bindS0, bindS1), CONSTANT_BIND_PROBABILITY_PCT);
+                        final GeneratedQuery bindForm = generateConcurrentQuery(rnd, tables, bindContext, config);
+                        if (bindContext.getBindValues().size() > 0) {
+                            query = query.withBind(bindForm.sql(), bindContext.getBindNames(), bindContext.getBindValues());
+                        }
+                    }
+                    queries.add(query);
+                    isSerial[q] = rnd.nextInt(100) < SERIAL_PROBABILITY_PCT;
+                }
+
+                final CountDownLatch doneLatch = new CountDownLatch(ownerCount);
+                final AtomicInteger completedCount = new AtomicInteger();
+                final AtomicReferenceArray<String> runningSql = new AtomicReferenceArray<>(ownerCount);
+                final AtomicReference<Throwable> ownerError = new AtomicReference<>();
+                final ObjList<QueryRunner.Result> failures = new ObjList<>();
+                for (int o = 0; o < ownerCount; o++) {
+                    final int ownerIndex = o;
+                    final SqlExecutionContextImpl context = newFuzzContext(queryWorkerCount);
+                    contexts.add(context);
+                    context.changePageFrameSizes(CONCURRENT_PAGE_FRAME_ROWS, CONCURRENT_PAGE_FRAME_ROWS);
+                    final QueryRunner runner = new QueryRunner(
+                            engine,
+                            context,
+                            config.isDiffJitEnabled(),
+                            config.isDiffShadowEnabled(),
+                            config.isDiffFusedEnabled(),
+                            null,
+                            config.isVerifyCursorEnabled(),
+                            tables,
+                            QUERY_POOL_NAME + '_'
+                    );
+                    final FiberTask owner = new FiberTask() {
+                        @Override
+                        protected void onError(Throwable th) {
+                            ownerError.compareAndSet(null, th);
+                        }
+
+                        @Override
+                        protected boolean runStep() {
+                            try {
+                                final boolean[] parallelFlags = parallelFlags(context);
+                                for (int i = ownerIndex, n = queries.size(); i < n; i += ownerCount) {
+                                    final GeneratedQuery query = queries.getQuick(i);
+                                    runningSql.set(ownerIndex, query.sql());
+                                    final QueryRunner.Result result;
+                                    if (isSerial[i]) {
+                                        setParallelFlags(context, SERIAL_FLAGS);
+                                        try {
+                                            result = runner.run(query);
+                                        } finally {
+                                            setParallelFlags(context, parallelFlags);
+                                        }
+                                    } else {
+                                        result = runner.run(query);
+                                    }
+                                    if (result.isFailed()) {
+                                        synchronized (failures) {
+                                            failures.add(result);
+                                        }
+                                    }
+                                    completedCount.incrementAndGet();
+                                }
+                                runningSql.set(ownerIndex, null);
+                            } finally {
+                                doneLatch.countDown();
+                            }
+                            return true;
+                        }
+                    };
+                    Assert.assertSame(LaunchResult.LAUNCHED, ownerPool.getFiberRuntime().launch(owner));
+                }
+
+                int lastCompletedCount = -1;
+                long lastProgressNanos = System.nanoTime();
+                while (!doneLatch.await(100, TimeUnit.MILLISECONDS)) {
+                    final int completed = completedCount.get();
+                    if (completed != lastCompletedCount) {
+                        lastCompletedCount = completed;
+                        lastProgressNanos = System.nanoTime();
+                    } else if (System.nanoTime() - lastProgressNanos > CONCURRENT_STALL_NANOS) {
+                        TestListener.dumpThreadStacks();
+                        final StringBuilder running = new StringBuilder();
+                        for (int o = 0; o < ownerCount; o++) {
+                            final String sql = runningSql.get(o);
+                            if (sql != null) {
+                                running.append("\n  ").append(sql);
+                            }
+                        }
+                        Assert.fail("concurrent query fuzz stalled after " + completed + " of " + queries.size() + " queries, running:" + running);
+                    }
+                }
+                if (ownerError.get() != null) {
+                    throw new AssertionError("query owner failed", ownerError.get());
+                }
+                if (failures.size() > 0) {
+                    throw buildFailure(failures);
+                }
+            } finally {
+                haltQuietly(queryPool);
+                haltQuietly(ownerPool);
+                haltQuietly(writerPool);
+                Misc.freeObjList(contexts);
+            }
+        });
+    }
 
     @Test
     public void testDecimalAggregationOverflowToleratedByOracle() throws Exception {
@@ -266,7 +475,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                     "('2024-01-01T00:00:00', 'a', " + nearMax + "), " +
                     "('2024-01-01T00:01:00', 'a', " + nearMax + ")");
 
-            QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, false, false, true, new ObjList<>(), null);
+            QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, false, false, null, true, new ObjList<>(), null);
 
             QueryRunner.Result avgResult = runner.run(
                     new GeneratedQuery("SELECT avg(d) OVER (PARTITION BY g ORDER BY ts) c FROM t", true));
@@ -290,6 +499,22 @@ public class QueryFuzzTest extends AbstractCairoTest {
             Assert.assertFalse(okResult.isSkipped());
             Assert.assertFalse(okResult.isFailed());
         });
+    }
+
+    @Test
+    public void testFusedShareGuard() {
+        // A working planner drew 2 fused of 26 completed comparisons on CI, which the old 15% floor
+        // failed. Every share at or above the baseline passes.
+        Assert.assertFalse(isFusedShareImplausible(2, 26));
+        Assert.assertFalse(isFusedShareImplausible(1, 26));
+        Assert.assertFalse(isFusedShareImplausible(11, 26));
+        Assert.assertFalse(isFusedShareImplausible(26, 26));
+        // A planner that stops fusing fails at the smallest guarded sample.
+        Assert.assertTrue(isFusedShareImplausible(0, MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR));
+        Assert.assertFalse(isFusedShareImplausible(1, MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR));
+        // A soak's larger sample holds the share to more: 41 of 170 (24%) fails and 42 passes.
+        Assert.assertTrue(isFusedShareImplausible(41, 170));
+        Assert.assertFalse(isFusedShareImplausible(42, 170));
     }
 
     @Test
@@ -525,7 +750,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 // surfaces a failed axis, so the regression assertion is that the
                 // run is not failed; without isPlannerSensitivityAsymmetry the
                 // storage axis would report a divergence and the run would fail.
-                final QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, true, false, false, tables, null);
+                final QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, true, false, null, false, tables, null);
                 final QueryRunner.Result result = runner.run(new GeneratedQuery(String.format(horizonJoin, "p", "p"), true));
                 Assert.assertFalse(
                         "storage divergence must be tolerated, not failed: "
@@ -554,7 +779,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
             final String nines = "9".repeat(76);
             execute("INSERT INTO cmp VALUES (" + nines + "m, 1.0m), (-" + nines + "m, 1.0m)");
 
-            QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, false, false, true, new ObjList<>(), null);
+            QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, false, false, null, true, new ObjList<>(), null);
             QueryRunner.Result result = runner.run(
                     new GeneratedQuery("SELECT count() c FROM cmp WHERE a > b", true));
             Assert.assertFalse("comparison must not be skipped: " + result.getSkipReason(), result.isSkipped());
@@ -694,6 +919,82 @@ public class QueryFuzzTest extends AbstractCairoTest {
         return new AssertionError(sb.toString(), failures.getQuick(0).getFailure());
     }
 
+    private static ObjList<FuzzTable> createTables(Rnd rnd, FuzzConfig config, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        final FuzzTableFactory factory = new FuzzTableFactory(config);
+        final ObjList<FuzzTable> tables = new ObjList<>();
+        for (int i = 0; i < config.getNumTables(); i++) {
+            final FuzzTable t = factory.create(
+                    rnd,
+                    "fuzz_t" + i,
+                    sql -> engine.execute(sql, sqlExecutionContext),
+                    QueryFuzzTest::drainWalQueue
+            );
+            tables.add(t);
+            logSchema(t);
+            if (t.getShadow() != null) {
+                logSchema(t.getShadow());
+            }
+        }
+        return tables;
+    }
+
+    private static void assertBinomialLowerTail(double expected, int k, int n) {
+        Assert.assertEquals(expected, binomialLowerTail(k, n, 0.4), expected * 1e-9);
+    }
+
+    /**
+     * Returns the exact binomial lower tail: the chance that {@code n} independent draws, each a
+     * success with probability {@code p}, yield at most {@code k} successes. The loop builds each
+     * term from the one before in log space, because the first term, (1 - p)^n, underflows a double
+     * at a few thousand draws, while the terms near {@code k} still carry the sum.
+     */
+    private static double binomialLowerTail(int k, int n, double p) {
+        final double logOdds = Math.log(p) - Math.log1p(-p);
+        double logTerm = n * Math.log1p(-p);
+        double tail = Math.exp(logTerm);
+        for (int i = 1; i <= k; i++) {
+            logTerm += Math.log((double) (n - i + 1) / i) + logOdds;
+            tail += Math.exp(logTerm);
+        }
+        return tail;
+    }
+
+    private static GeneratedQuery generateConcurrentQuery(Rnd rnd, ObjList<FuzzTable> tables, BindContext bindContext, FuzzConfig config) {
+        return QueryGenerator.generate(
+                rnd,
+                tables,
+                bindContext,
+                false,
+                false,
+                config.isLatestOnEnabled(),
+                config.isHorizonJoinEnabled(),
+                config.isWindowJoinEnabled(),
+                config.isHashJoinEnabled(),
+                config.isGroupingSetsEnabled()
+        );
+    }
+
+    /**
+     * Says whether a working planner, one that runs FUSED_SHARE_BASELINE of the completed
+     * comparisons on the fused plan, would run {@code selected} or fewer of {@code completed} on it
+     * with a chance below FUSED_SHARE_FALSE_ALARM.
+     */
+    private static boolean isFusedShareImplausible(int selected, int completed) {
+        return binomialLowerTail(selected, completed, FUSED_SHARE_BASELINE) < FUSED_SHARE_FALSE_ALARM;
+    }
+
+    private static boolean[] parallelFlags(SqlExecutionContext context) {
+        return new boolean[]{
+                context.isParallelFilterEnabled(),
+                context.isParallelGroupByEnabled(),
+                context.isParallelHashJoinGroupByEnabled(),
+                context.isParallelHorizonJoinEnabled(),
+                context.isParallelReadParquetEnabled(),
+                context.isParallelTopKEnabled(),
+                context.isParallelWindowJoinEnabled()
+        };
+    }
+
     private static String planOf(String sql) throws SqlException {
         try (RecordCursorFactory factory = engine.select(sql, sqlExecutionContext)) {
             TextPlanSink sink = new TextPlanSink();
@@ -722,6 +1023,9 @@ public class QueryFuzzTest extends AbstractCairoTest {
     private static String describeUngeneratableShape(QueryShape shape, FuzzConfig config, ObjList<FuzzTable> tables) {
         return switch (shape) {
             case GROUP_BY, SAMPLE_BY, SIMPLE -> null;
+            case GROUPING_SETS -> config.isGroupingSetsEnabled()
+                    ? null
+                    : "-D" + FuzzConfig.GROUPING_SETS_PROP + "=false";
             case HASH_JOIN_GROUP_BY -> config.isHashJoinEnabled()
                     ? describeMissingJoinTables(tables)
                     : "-D" + FuzzConfig.HASH_JOIN_PROP + "=false";
@@ -805,6 +1109,13 @@ public class QueryFuzzTest extends AbstractCairoTest {
         return sink.toString();
     }
 
+    private static SqlExecutionContextImpl newFuzzContext(int workerCount) {
+        final SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, workerCount)
+                .with(securityContext, new BindVariableServiceImpl(configuration), null, -1, null);
+        context.initNow();
+        return context;
+    }
+
     private static BufferedWriter openDump(String path) throws IOException {
         if (path == null || path.isEmpty()) {
             return null;
@@ -846,6 +1157,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 .$(", windowJoin=").$(config.isWindowJoinEnabled())
                 .$(", hashJoin=").$(config.isHashJoinEnabled())
                 .$(", diffFused=").$(config.isDiffFusedEnabled())
+                .$(", diffMapPage=").$(config.isDiffMapPageEnabled())
                 .$(", hashJoinPayload=").$(config.getHashJoinPayloadLayout() != null ? config.getHashJoinPayloadLayout().name() : "rule")
                 .$(", hashJoinBuild=").$(config.getHashJoinBuildMode().name())
                 .$();
@@ -854,21 +1166,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
         }
         config.getHashJoinBuildMode().applyProperties(node1.getConfigurationOverrides());
 
-        FuzzTableFactory factory = new FuzzTableFactory(config);
-        ObjList<FuzzTable> tables = new ObjList<>();
-        for (int i = 0; i < config.getNumTables(); i++) {
-            FuzzTable t = factory.create(
-                    rnd,
-                    "fuzz_t" + i,
-                    sql -> engine.execute(sql, sqlExecutionContext),
-                    QueryFuzzTest::drainWalQueue
-            );
-            tables.add(t);
-            logSchema(t);
-            if (t.getShadow() != null) {
-                logSchema(t.getShadow());
-            }
-        }
+        ObjList<FuzzTable> tables = createTables(rnd, config, sqlExecutionContext);
 
         // Writes are done: close the build-phase writers and halt the writer pool
         // so the query loop runs background-silent (see testQueryFuzz). A column
@@ -883,6 +1181,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 config.isDiffJitEnabled(),
                 config.isDiffShadowEnabled(),
                 config.isDiffFusedEnabled(),
+                config.isDiffMapPageEnabled() ? node1.getConfigurationOverrides() : null,
                 config.isVerifyCursorEnabled(),
                 tables,
                 queryWorkerNamePrefix
@@ -925,7 +1224,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 boolean injectFaultFn = faultType == FaultType.FUNCTION;
                 long preGenS0 = rnd.getSeed0();
                 long preGenS1 = rnd.getSeed1();
-                GeneratedQuery query = QueryGenerator.generate(rnd, tables, null, injectFaultFn, config.isWindowEnabled(), config.isLatestOnEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled(), config.isHashJoinEnabled());
+                GeneratedQuery query = QueryGenerator.generate(rnd, tables, null, injectFaultFn, config.isWindowEnabled(), config.isLatestOnEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled(), config.isHashJoinEnabled(), config.isGroupingSetsEnabled());
                 QueryRunner.Result result;
                 if (faultType != null) {
                     // Fault queries use a crash-and-recover oracle, not the
@@ -988,7 +1287,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                         long bindS1 = rnd.nextLong();
                         rnd.reset(preGenS0, preGenS1);
                         BindContext ctx = new BindContext(new Rnd(bindS0, bindS1), CONSTANT_BIND_PROBABILITY_PCT);
-                        GeneratedQuery bindForm = QueryGenerator.generate(rnd, tables, ctx, injectFaultFn, config.isWindowEnabled(), config.isLatestOnEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled(), config.isHashJoinEnabled());
+                        GeneratedQuery bindForm = QueryGenerator.generate(rnd, tables, ctx, injectFaultFn, config.isWindowEnabled(), config.isLatestOnEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled(), config.isHashJoinEnabled(), config.isGroupingSetsEnabled());
                         if (ctx.getBindValues().size() > 0) {
                             query = query.withBind(bindForm.sql(), ctx.getBindNames(), ctx.getBindValues());
                             bindGen++;
@@ -1066,6 +1365,10 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 .$(generatedByShape[QueryShape.HASH_JOIN_GROUP_BY.ordinal()]).$(" equi-join GROUP BY queries; ")
                 .$(runner.getBuildChoiceRuns()).$(" runs picked the build per execution")
                 .$();
+        LOG.info().$("fuzz map page axis: ").$(runner.getMapPageAxisRuns()).$(" comparisons").$();
+        LOG.info().$("fuzz reference axis: ").$(runner.getReferenceAxisRuns()).$(" comparisons across ")
+                .$(generatedByShape[QueryShape.GROUPING_SETS.ordinal()]).$(" grouping sets queries")
+                .$();
 
         if (failures.size() > 0) {
             throw buildFailure(failures);
@@ -1126,8 +1429,9 @@ public class QueryFuzzTest extends AbstractCairoTest {
         // when the pivot selected the fused hash join GROUP BY, and a planner change that stops
         // selecting it leaves every comparison ordinary against ordinary. The share counts only
         // completed comparisons: the serial arm and the fault branch never run the axis, and a
-        // query that fails to compile fails in both plans. It is held to the same sample floor as
-        // the accepted rate above, and logged below it.
+        // query that fails to compile fails in both plans. The guard fails a run only when a working
+        // planner would select the fused plan this rarely with a chance below FUSED_SHARE_FALSE_ALARM.
+        // It holds the run to the same sample floor as the accepted rate above, and logs below it.
         final int fusedCompleted = runner.getFusedAxisCompletedRuns();
         if (config.isDiffFusedEnabled() && generatedByShape[QueryShape.HASH_JOIN_GROUP_BY.ordinal()] > 0) {
             if (fusedCompleted < MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR) {
@@ -1136,12 +1440,27 @@ public class QueryFuzzTest extends AbstractCairoTest {
                         .$(" completed comparisons; raise -D").$(FuzzConfig.QUERIES_PROP).$(" to guard it")
                         .$();
             } else {
-                Assert.assertTrue(
-                        "the fused hash join GROUP BY ran on only " + runner.getFusedAxisSelected() + " of "
-                                + fusedCompleted + " completed comparisons; the fused on/off axis looks vacuous",
-                        100L * runner.getFusedAxisSelected() >= (long) MIN_FUSED_SELECTED_PCT * fusedCompleted
+                final int fusedSelected = runner.getFusedAxisSelected();
+                Assert.assertFalse(
+                        "the fused hash join GROUP BY ran on only " + fusedSelected + " of " + fusedCompleted
+                                + " completed comparisons, which a planner that fuses " + Math.round(100 * FUSED_SHARE_BASELINE)
+                                + "% of them does with probability "
+                                + binomialLowerTail(fusedSelected, fusedCompleted, FUSED_SHARE_BASELINE)
+                                + "; the fused on/off axis looks vacuous",
+                        isFusedShareImplausible(fusedSelected, fusedCompleted)
                 );
             }
+        }
+        // Guard the reference axis against going vacuous. It compares only when a grouping sets
+        // query and its UNION ALL rewrite both run, so a rewrite that stops compiling would leave
+        // every grouping sets query unchecked against it while the shape still counts as accepted.
+        final int groupingSetsGenerated = generatedByShape[QueryShape.GROUPING_SETS.ordinal()];
+        if (groupingSetsGenerated >= MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR) {
+            Assert.assertTrue(
+                    "the reference axis compared none of the " + groupingSetsGenerated
+                            + " grouping sets queries; the UNION ALL rewrite looks out of step with the engine",
+                    runner.getReferenceAxisRuns() > 0
+            );
         }
         // Guard the fault injector against a silent disarm. It has several ways to stop biting while
         // the run stays green and tests nothing but the happy path: dev mode off (test_fault() folds
@@ -1182,5 +1501,15 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 );
             }
         }
+    }
+
+    private static void setParallelFlags(SqlExecutionContext context, boolean[] flags) {
+        context.setParallelFilterEnabled(flags[0]);
+        context.setParallelGroupByEnabled(flags[1]);
+        context.setParallelHashJoinGroupByEnabled(flags[2]);
+        context.setParallelHorizonJoinEnabled(flags[3]);
+        context.setParallelReadParquetEnabled(flags[4]);
+        context.setParallelTopKEnabled(flags[5]);
+        context.setParallelWindowJoinEnabled(flags[6]);
     }
 }

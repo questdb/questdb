@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.parquet;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.PartitionFormat;
@@ -118,18 +119,25 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
 
             String oracleTable = walTable + "_oracle";
             fuzzer.createInitialTableNonWal(oracleTable, null);
+            // Native WAL twin: takes the same WAL transactions without the parquet conversion.
+            String twinTable = walTable + "_twin";
+            fuzzer.createInitialTableWal(twinTable, initialRowCount);
+            drainWalQueue();
 
             // Convert the last (and only) partition to Parquet — all partitions are now parquet.
             final long partitionTs;
             StringSink partName = new StringSink();
             try (TableReader reader = engine.getReader(walTable)) {
                 Assert.assertEquals("expected exactly 1 partition", 1, reader.getPartitionCount());
-                partitionTs = reader.getPartitionTimestampByIndex(0);
+                final int timestampType = reader.getMetadata().getTimestampType();
+                final long partitionTsNative = reader.getPartitionTimestampByIndex(0);
+                // FuzzRunner.generateTransactions() takes micros regardless of the table timestamp type
+                partitionTs = ColumnType.getTimestampDriver(timestampType).toMicros(partitionTsNative);
                 PartitionBy.setSinkForPartition(
                         partName,
-                        reader.getMetadata().getTimestampType(),
+                        timestampType,
                         reader.getPartitionedBy(),
-                        partitionTs
+                        partitionTsNative
                 );
             }
             execute("ALTER TABLE " + walTable + " CONVERT PARTITION TO PARQUET LIST '" + partName + "'");
@@ -196,7 +204,10 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
                 ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(walTable, rnd, start, end);
                 try {
                     fuzzer.applyNonWal(transactions, oracleTable, rnd);
+                    // The twin applies with the same random choices as the WAL table.
+                    Rnd twinRnd = new Rnd(rnd.getSeed0(), rnd.getSeed1());
                     fuzzer.applyWal(transactions, walTable, 1, rnd);
+                    fuzzer.applyWal(transactions, twinTable, 1, twinRnd);
                 } finally {
                     Misc.freeObjListAndClear(transactions);
                 }
@@ -205,6 +216,9 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
 
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, oracleTable, walTable, LOG);
+                // assertSqlCursors ignores the order of rows with equal timestamps; the native twin
+                // pins it: an O3 row goes after every stored row of its timestamp
+                TestUtils.assertEqualsExactOrder(compiler, sqlExecutionContext, twinTable, walTable);
             }
 
             assertRowGroupSizes(walTable, rowGroupSize);
@@ -280,11 +294,15 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
             // Create non-WAL oracle from the same data.
             String oracleTable = walTable + "_oracle";
             fuzzer.createInitialTableNonWal(oracleTable, null);
+            // Native WAL twin: takes the same WAL transactions without the parquet conversion.
+            String twinTable = walTable + "_twin";
+            fuzzer.createInitialTableWal(twinTable, initialRowCount);
 
             // Insert rows into the next day so that 2022-02-24 is no longer
             // the active (last) partition and can be converted to Parquet.
             execute("INSERT INTO " + walTable + "(ts) VALUES ('2022-02-25T00:00:00.000000Z'), ('2022-02-25T00:00:01.000000Z')");
             execute("INSERT INTO " + oracleTable + "(ts) VALUES ('2022-02-25T00:00:00.000000Z'), ('2022-02-25T00:00:01.000000Z')");
+            execute("INSERT INTO " + twinTable + "(ts) VALUES ('2022-02-25T00:00:00.000000Z'), ('2022-02-25T00:00:01.000000Z')");
             drainWalQueue();
 
             // Convert the first partition (2022-02-24) to Parquet.
@@ -292,12 +310,15 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
             StringSink partName = new StringSink();
             try (TableReader reader = engine.getReader(walTable)) {
                 Assert.assertTrue("expected at least 2 partitions", reader.getPartitionCount() >= 2);
-                partitionTs = reader.getPartitionTimestampByIndex(0);
+                final int timestampType = reader.getMetadata().getTimestampType();
+                final long partitionTsNative = reader.getPartitionTimestampByIndex(0);
+                // FuzzRunner.generateTransactions() takes micros regardless of the table timestamp type
+                partitionTs = ColumnType.getTimestampDriver(timestampType).toMicros(partitionTsNative);
                 PartitionBy.setSinkForPartition(
                         partName,
-                        reader.getMetadata().getTimestampType(),
+                        timestampType,
                         reader.getPartitionedBy(),
-                        partitionTs
+                        partitionTsNative
                 );
             }
             execute("ALTER TABLE " + walTable + " CONVERT PARTITION TO PARQUET LIST '" + partName + "'");
@@ -377,7 +398,10 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
                     fuzzer.applyNonWal(transactions, oracleTable, rnd);
                     // Apply to WAL table (writes via WalWriter, then drains WAL queue
                     // which triggers O3 merge with the Parquet partition).
+                    // The twin applies with the same random choices as the WAL table.
+                    Rnd twinRnd = new Rnd(rnd.getSeed0(), rnd.getSeed1());
                     fuzzer.applyWal(transactions, walTable, 1, rnd);
+                    fuzzer.applyWal(transactions, twinTable, 1, twinRnd);
                 } finally {
                     Misc.freeObjListAndClear(transactions);
                 }
@@ -387,6 +411,9 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
             // Verify WAL+Parquet table matches the non-WAL oracle.
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, oracleTable, walTable, LOG);
+                // assertSqlCursors ignores the order of rows with equal timestamps; the native twin
+                // pins it: an O3 row goes after every stored row of its timestamp
+                TestUtils.assertEqualsExactOrder(compiler, sqlExecutionContext, twinTable, walTable);
             }
 
             assertRowGroupSizes(walTable, rowGroupSize);
@@ -462,12 +489,15 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
             StringSink partName = new StringSink();
             try (TableReader reader = engine.getReader(walTable)) {
                 Assert.assertTrue("expected at least 2 partitions", reader.getPartitionCount() >= 2);
-                partitionTs = reader.getPartitionTimestampByIndex(0);
+                final int timestampType = reader.getMetadata().getTimestampType();
+                final long partitionTsNative = reader.getPartitionTimestampByIndex(0);
+                // FuzzRunner.generateTransactions() takes micros regardless of the table timestamp type
+                partitionTs = ColumnType.getTimestampDriver(timestampType).toMicros(partitionTsNative);
                 PartitionBy.setSinkForPartition(
                         partName,
-                        reader.getMetadata().getTimestampType(),
+                        timestampType,
                         reader.getPartitionedBy(),
-                        partitionTs
+                        partitionTsNative
                 );
             }
             execute("ALTER TABLE " + walTable + " CONVERT PARTITION TO PARQUET LIST '" + partName + "'");
@@ -591,12 +621,15 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
             StringSink partName = new StringSink();
             try (TableReader reader = engine.getReader(walTable)) {
                 Assert.assertTrue("expected at least 2 partitions", reader.getPartitionCount() >= 2);
-                partitionTs = reader.getPartitionTimestampByIndex(0);
+                final int timestampType = reader.getMetadata().getTimestampType();
+                final long partitionTsNative = reader.getPartitionTimestampByIndex(0);
+                // FuzzRunner.generateTransactions() takes micros regardless of the table timestamp type
+                partitionTs = ColumnType.getTimestampDriver(timestampType).toMicros(partitionTsNative);
                 PartitionBy.setSinkForPartition(
                         partName,
-                        reader.getMetadata().getTimestampType(),
+                        timestampType,
                         reader.getPartitionedBy(),
-                        partitionTs
+                        partitionTsNative
                 );
             }
             execute("ALTER TABLE " + walTable + " CONVERT PARTITION TO PARQUET LIST '" + partName + "'");
@@ -751,12 +784,15 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
             StringSink partName = new StringSink();
             try (TableReader reader = engine.getReader(walTable)) {
                 Assert.assertTrue("expected at least 2 partitions", reader.getPartitionCount() >= 2);
-                partitionTs = reader.getPartitionTimestampByIndex(0);
+                final int timestampType = reader.getMetadata().getTimestampType();
+                final long partitionTsNative = reader.getPartitionTimestampByIndex(0);
+                // FuzzRunner.generateTransactions() takes micros regardless of the table timestamp type
+                partitionTs = ColumnType.getTimestampDriver(timestampType).toMicros(partitionTsNative);
                 PartitionBy.setSinkForPartition(
                         partName,
-                        reader.getMetadata().getTimestampType(),
+                        timestampType,
                         reader.getPartitionedBy(),
-                        partitionTs
+                        partitionTsNative
                 );
             }
             execute("ALTER TABLE " + walTable + " CONVERT PARTITION TO PARQUET LIST '" + partName + "'");
