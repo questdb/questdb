@@ -969,6 +969,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
         context.initNow();
         return context;
     }
+
     private static void runFuzz(SqlExecutionContext sqlExecutionContext, WorkerPool writerPool, String queryWorkerNamePrefix) throws Exception {
         Long s0 = Long.getLong("questdb.fuzz.s0");
         Long s1 = Long.getLong("questdb.fuzz.s1");
