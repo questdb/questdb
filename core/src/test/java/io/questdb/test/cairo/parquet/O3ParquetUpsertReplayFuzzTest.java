@@ -64,7 +64,13 @@ public class O3ParquetUpsertReplayFuzzTest extends AbstractCairoTest {
         // the commits whose first O3 row replays a stored row of row group 0 past the tops, with a later O3 row
         // that changes the partition: their first MERGE holds the NULLs of the kept tops
         final int[] keptTopReplayCount = new int[1];
-        for (int iteration = 0; iteration < iterationCount; iteration++) {
+        final boolean isKeptTopReplayRequired = iterationCount >= 10;
+        // the run goes on past iterationCount, up to 200 iterations, until it makes such a commit
+        for (
+                int iteration = 0;
+                iteration < iterationCount || (isKeptTopReplayRequired && keptTopReplayCount[0] == 0 && iteration < 200);
+                iteration++
+        ) {
             final int rowGroupSize = 4 + rnd.nextInt(5);
             final boolean isStatistics = rnd.nextInt(5) > 0;
             final boolean isRewrite = rnd.nextInt(4) == 0;
@@ -81,7 +87,7 @@ public class O3ParquetUpsertReplayFuzzTest extends AbstractCairoTest {
             assertMemoryLeak(() -> keptTopReplayCount[0] += runIteration(rnd, rowGroupSize, isStatistics));
         }
         LOG.info().$("upsert replay fuzz [keptTopReplays=").$(keptTopReplayCount[0]).I$();
-        if (iterationCount >= 10) {
+        if (isKeptTopReplayRequired) {
             Assert.assertTrue("no commit replayed a row past the kept tops", keptTopReplayCount[0] > 0);
         }
     }
