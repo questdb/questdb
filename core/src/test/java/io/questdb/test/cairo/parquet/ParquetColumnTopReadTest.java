@@ -108,6 +108,30 @@ public class ParquetColumnTopReadTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConvertToNativeAfterLazyAlterKeepsLaterColumnTops() throws Exception {
+        // The lazy ALTER reads the top of the second folder as NULL, which CONVERT TO NATIVE must keep.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        for (String[] conversion : new String[][]{{"BYTE", "DOUBLE"}, {"SHORT", "VARCHAR"}, {"BOOLEAN", "STRING"}, {"SHORT", "DECIMAL(18,3)"}}) {
+            final String sourceType = conversion[0];
+            final String targetType = conversion[1];
+            assertMemoryLeak(() -> {
+                createSplitTwins(sourceType, "BOOLEAN".equals(sourceType) ? "true" : "7");
+                convertToParquet();
+                twins("ALTER TABLE %s ALTER COLUMN b TYPE " + targetType);
+                execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '" + DAY + "'");
+                drainWalQueue();
+                assertNotSuspended();
+                assertTwins(sourceType + " -> " + targetType + ", native");
+                assertQuery("SELECT count() FROM pt WHERE b IS NULL AND ts < '2024-01-02'")
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("count\n201\n");
+                dropTwins();
+            });
+        }
+    }
+
+    @Test
     public void testConvertToNativeKeepsOnlyTheLeadingColumnTop() throws Exception {
         // One row group holds the whole day: the stored values of the first folder, then the top of the second.
         // A native column holds a column top only ahead of its first value, so CONVERT TO NATIVE stores the 0 or
