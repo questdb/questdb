@@ -27,6 +27,7 @@ package io.questdb.test.cairo;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
@@ -52,7 +53,8 @@ import java.util.Collection;
 /**
  * A non-WAL commit has to grow _txn and cannot: the disk is full, or the remap of the grown file fails. The
  * statement fails, and the table stays consistent and usable through the same writer: no JVM crash, no torn
- * _txn, the failed rows never become visible, and the next write lands.
+ * _txn, the failed rows never become visible, and the next write lands. A failed TRUNCATE is the exception: it
+ * leaves its writer distressed, and the pool opens another one.
  */
 @RunWith(Parameterized.class)
 public class TxnGrowthFailureTest extends AbstractCairoTest {
@@ -241,6 +243,18 @@ public class TxnGrowthFailureTest extends AbstractCairoTest {
         });
     }
 
+    // The truncated record lands past the part of _txn a new writer maps, and _txn cannot grow. TRUNCATE maps that
+    // record before it removes anything: the table keeps its rows, its symbol table and its column versions.
+    @Test
+    public void testTruncateGrowingTxn() throws Exception {
+        testTruncateGrowingTxn("TRUNCATE TABLE t");
+    }
+
+    @Test
+    public void testTruncateKeepSymbolMapsGrowingTxn() throws Exception {
+        testTruncateGrowingTxn("TRUNCATE TABLE t KEEP SYMBOL MAPS");
+    }
+
     // The truncated record of a non-partitioned table keeps its default partition: TxWriter.truncate() maps the area
     // before it drops the partitions, and asserts the size it mapped.
     @Test
@@ -267,6 +281,22 @@ public class TxnGrowthFailureTest extends AbstractCairoTest {
                 .timestamp("ts")
                 .expectSize()
                 .returns(EXPECTED_AFTER_NEXT_INSERT);
+    }
+
+    // _cv holds the version _txn names, not one ahead of it that readers would wait for
+    private static void assertColumnVersionMatchesTxn() {
+        final TableToken token = engine.verifyTableName("t");
+        try (
+                Path path = new Path().of(configuration.getDbRoot()).concat(token);
+                TxReader txReader = new TxReader(configuration.getFilesFacade());
+                ColumnVersionReader columnVersionReader = new ColumnVersionReader()
+        ) {
+            final int tableDirLen = path.size();
+            txReader.ofRO(path.concat(TableUtils.TXN_FILE_NAME).$(), ColumnType.TIMESTAMP, PartitionBy.DAY);
+            Assert.assertTrue(txReader.unsafeLoadAll());
+            columnVersionReader.ofRO(configuration.getFilesFacade(), path.trimTo(tableDirLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$());
+            Assert.assertEquals(txReader.getColumnVersion(), columnVersionReader.readUnsafe());
+        }
     }
 
     private static TableWriter createTable() throws Exception {
@@ -358,6 +388,58 @@ public class TxnGrowthFailureTest extends AbstractCairoTest {
                             a\t2\t2\t1\t2
                             x\t400\t400\t1\t400
                             """);
+        });
+    }
+
+    private void testTruncateGrowingTxn(String truncateSql) throws Exception {
+        final String rowsQuery = "SELECT s, count() n, min(v) lo, max(v) hi, min(ts) ts_lo, max(ts) ts_hi, count(z) nz FROM t ORDER BY s";
+        final String insertSql = "INSERT INTO t VALUES ('y', 9, '2025-06-01T00:00:00.000000Z', 7)";
+        final String insertedRow = "y\t1\t9\t9\t2025-06-01T00:00:00.000000Z\t2025-06-01T00:00:00.000000Z\t1\n";
+        final String rowsBeforeTruncate = """
+                s\tn\tlo\thi\tts_lo\tts_hi\tnz
+                a\t120\t1\t120\t2024-01-01T00:00:00.000000Z\t2024-04-29T00:00:00.000000Z\t0
+                b\t1\t1000\t1000\t2024-04-29T01:00:00.000000Z\t2024-04-29T01:00:00.000000Z\t1
+                """;
+        final TxnExtendFailingFacade ff = txnFailingFacade();
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE t (s SYMBOL, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            // 120 daily partitions: a record of almost 4 KB
+            execute("INSERT INTO t (s, v, ts) SELECT 'a', x::INT, dateadd('d', (x - 1)::INT, '2024-01-01T00:00:00.000000Z'::TIMESTAMP) FROM long_sequence(120)");
+            // a column added after the data gives _cv records, which TRUNCATE commits
+            execute("ALTER TABLE t ADD COLUMN z INT");
+            // this commit writes its record at the start of _txn, and the truncated record goes right after it,
+            // across the first 4 KB
+            execute("INSERT INTO t VALUES ('b', 1000, '2024-04-29T01:00:00.000000Z', 0)");
+            // a new writer maps the first 4 KB of _txn only
+            engine.releaseAllWriters();
+            final TableWriter writer = pooledWriter();
+
+            ff.isArmed.set(true);
+            try {
+                execute(truncateSql);
+                Assert.fail("the TRUNCATE did not fail");
+            } catch (CairoException e) {
+                assertInjectedFailure(ff, e);
+            }
+            // the pool closed the writer that the failed TRUNCATE left distressed
+            Assert.assertFalse(writer.isOpen());
+            Assert.assertEquals(3, txnOnDisk());
+            assertColumnVersionMatchesTxn();
+            assertQuery(rowsQuery)
+                    .expectSize()
+                    .returns(rowsBeforeTruncate);
+
+            execute(insertSql);
+            Assert.assertNotSame(writer, pooledWriter());
+            assertQuery(rowsQuery)
+                    .expectSize()
+                    .returns(rowsBeforeTruncate + insertedRow);
+
+            execute(truncateSql);
+            execute(insertSql);
+            assertQuery(rowsQuery)
+                    .expectSize()
+                    .returns("s\tn\tlo\thi\tts_lo\tts_hi\tnz\n" + insertedRow);
         });
     }
 

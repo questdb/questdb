@@ -519,6 +519,17 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         return false;
     }
 
+    /**
+     * Maps the area that {@link #truncate(long, ObjList)} writes its record to: growing _txn is the step of the
+     * truncate that can fail. A caller that removes data before it truncates _txn calls this first, so that a _txn
+     * that cannot grow fails the caller before it removed anything. Nothing may commit _txn in between: the area
+     * depends on the live record.
+     */
+    public void mapTruncatedRecordArea() {
+        final int areaSize = calculateTruncatedRecordSize();
+        mapWriteArea(calculateWriteOffset(areaSize), areaSize);
+    }
+
     @Override
     public TxWriter ofRO(@Transient LPSZ path, int timestampType, int partitionBy) {
         throw new IllegalStateException();
@@ -932,17 +943,12 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     public void truncate(long columnVersion, ObjList<? extends SymbolCountProvider> symbolCountProviders) {
-        // The truncated record keeps no partitions but the default one of a non-partitioned table.
-        final boolean isPartitioned = PartitionBy.isPartitioned(partitionBy);
-        final int areaSize = calculateTxRecordSize(
-                symbolColumnCount * Long.BYTES,
-                isPartitioned ? 0 : LONGS_PER_TX_ATTACHED_PARTITION * Long.BYTES
-        );
+        final int areaSize = calculateTruncatedRecordSize();
         final int areaOffset = calculateWriteOffset(areaSize);
         mapWriteArea(areaOffset, areaSize);
 
         removeAllPartitions();
-        if (!isPartitioned) {
+        if (!PartitionBy.isPartitioned(partitionBy)) {
             attachedPartitions.setPos(LONGS_PER_TX_ATTACHED_PARTITION);
             initPartitionAt(0, DEFAULT_PARTITION_TIMESTAMP, 0L, -1L);
         }
@@ -1070,6 +1076,14 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             );
         }
         return combineTxnBodyChecksum(hashTxnBodyHeader(areaAddr), partitionTableHash.power, partitionTableHash.hash);
+    }
+
+    // The truncated record keeps no partitions but the default one of a non-partitioned table.
+    private int calculateTruncatedRecordSize() {
+        return calculateTxRecordSize(
+                symbolColumnCount * Long.BYTES,
+                PartitionBy.isPartitioned(partitionBy) ? 0 : LONGS_PER_TX_ATTACHED_PARTITION * Long.BYTES
+        );
     }
 
     private int calculateWriteOffset(int areaSize) {

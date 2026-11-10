@@ -5571,10 +5571,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Truncates table including symbol tables. When the operation is unsuccessful, it throws CairoException.
-     * With that truncate can be retried or alternatively, the table can be closed. The outcome of any other operation
-     * with the table is undefined and likely to cause a segmentation fault. When the table re-opens, any partial
-     * truncate will be retried.
+     * Truncates table including symbol tables. When the operation is unsuccessful, it throws and leaves this writer
+     * distressed: the writer must be closed, and the pool closes it instead of handing it out again. When the table
+     * re-opens, any partial truncate will be retried.
      */
     @Override
     public final void truncate() {
@@ -5582,10 +5581,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Truncates table, but keeps symbol tables. When the operation is unsuccessful, it throws CairoException.
-     * With that truncate can be retried or alternatively, the table can be closed. The outcome of any other operation
-     * with the table is undefined and likely to cause a segmentation fault. When the table re-opens, any partial
-     * truncate will be retried.
+     * Truncates table, but keeps symbol tables. When the operation is unsuccessful, it throws and leaves this writer
+     * distressed: the writer must be closed, and the pool closes it instead of handing it out again. When the table
+     * re-opens, any partial truncate will be retried.
      */
     @Override
     public final void truncateSoft() {
@@ -21911,17 +21909,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try {
             truncate0(keepSymbolTables);
         } catch (Throwable th) {
+            // A failed truncate0() may have emptied symbol tables and columns, scheduled the removal of every
+            // partition and committed _cv, none of which inTransaction() sees. The pool would hand this writer out
+            // again without a rollback, and its next commit would publish the half-done truncate. The pool closes a
+            // distressed writer instead: the close drops the scheduled removals and rolls back a _cv version that
+            // _txn does not name.
+            distressed = true;
             // A non-WAL TRUNCATE reports to the statement: a failed data sync stops the engine here
-            if (engine.isDataSyncFailureFatal(th)) {
-                distressed = true;
-                engine.handleDataSyncFailure(th);
-            }
+            engine.handleDataSyncFailure(th);
             throw th;
         }
     }
 
     private void truncate0(boolean keepSymbolTables) {
         rollback();
+        // Growing _txn for the truncated record can fail: disk full, a failed remap. Map the record before the steps
+        // below remove anything, so that such a failure leaves the table as it was; txWriter.truncate() then writes
+        // inside the mapping.
+        txWriter.mapTruncatedRecordArea();
 
         boolean hasNonEmptySymbolTables = false;
         if (!keepSymbolTables) {
