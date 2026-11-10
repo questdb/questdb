@@ -320,7 +320,16 @@ fn decode_page_ref(
         num_values: d.num_values,
         is_sorted: d.is_sorted,
     });
-    decode_page(black_box(&pg), dp.as_ref(), bufs, col_info, row_lo, row_hi).expect("decode_page");
+    decode_page(
+        black_box(&pg),
+        dp.as_ref(),
+        bufs,
+        col_info,
+        row_lo,
+        row_hi,
+        None,
+    )
+    .expect("decode_page");
 }
 
 fn bench_decode_rle(c: &mut Criterion) {

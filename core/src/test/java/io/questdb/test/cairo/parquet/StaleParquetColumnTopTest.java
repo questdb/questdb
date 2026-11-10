@@ -24,17 +24,13 @@
 
 package io.questdb.test.cairo.parquet;
 
-import io.questdb.PropertyKey;
-import io.questdb.cairo.ColumnVersionReader;
-import io.questdb.cairo.PartitionCompactionScanJob;
+import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableToken;
-import io.questdb.cairo.sql.TableMetadata;
-import io.questdb.std.datetime.Clock;
-import io.questdb.std.datetime.microtime.MicrosFormatUtils;
-import io.questdb.std.datetime.microtime.Micros;
-import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -45,9 +41,8 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 /**
- * Repairs the stale {@code _cv} column top left behind by QuestDB 9.3.4 - 10.0.1 after an in-place O3 merge into a
- * parquet partition: {@code PartitionCompactionScanJob} picks such a partition, rebuilds its indexes from row 0 and
- * zeroes the stale tops.
+ * Reproduces the stale {@code _cv} column top left behind by QuestDB 9.3.4 - 10.0.1 after an in-place O3
+ * merge into a parquet partition.
  * <p>
  * The fixtures in {@code resources/parquet-stale-cv-top} are real WAL tables written by QuestDB 10.0.1 (docker
  * image {@code questdb/questdb:10.0.1}, started with {@code QDB_CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE=10},
@@ -86,275 +81,12 @@ import java.util.zip.ZipInputStream;
  * covered column marked absent ({@code covered_absent}) still returned the right values, so it has no fixture.
  * <p>
  * {@code stale_top~10} is {@code bitmap_absent} plus {@code dedup enable upsert keys(ts, s)}, for the dedup and
- * CONVERT TO NATIVE tests, except that {@code v} was added after day 1 had its rows, like {@code s}, rather than created
- * with the table: {@code v} reads NULL on day 1's original rows.
- * <p>
- * {@code compacted_absent~9} is {@code bitmap_absent} written by 10.0.1 and then compacted by QuestDB Enterprise
- * 4.1.0 (docker image {@code questdb-enterprise:4.1.0-trial}, started on the 10.0.1 data directory with
- * {@code QDB_CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT=1s}, {@code ..._CHECK_INTERVAL=1000} and
- * {@code ..._DEAD_MIN_SIZE=0}). That compaction dropped the dead bytes the merge left but kept the stale {@code _cv}
- * top, so only the stale top makes the partition not compact.
+ * CONVERT TO NATIVE tests, which still reproduce unfixed bugs.
  */
 public class StaleParquetColumnTopTest extends AbstractCairoTest {
-    private static final long DAY1 = parseTimestamp("2024-01-01T00:00:00.000000Z");
     private static final String ROW_A = "ts\tx\tv\ts\n2024-01-01T05:05:00.000000Z\t-1\t42\ta\n";
-    private static final String STALE_INDEX_ERROR = "index does not cover parquet partition data, partition compaction rebuilds it [table=";
+    private static final String STALE_INDEX_ERROR = "index does not cover parquet partition data, rebuild it with ALTER TABLE ";
 
-    @Test
-    public void testBitmapIndexColumnAbsent() throws Exception {
-        assertCompactionRepairsIndex("bitmap_absent~9", "bitmap_absent", "select ts, x, v, s from bitmap_absent where s = 'a'", "s", "a", "ts\tx\tv\ts\n2024-01-01T05:05:00.000000Z\t-1\t42\ta\n", "ts\tx\tv\ts\n");
-    }
-
-    @Test
-    public void testBitmapIndexColumnTop() throws Exception {
-        assertCompactionRepairsIndex("bitmap_top~10", "bitmap_top", "select ts, x, v, s from bitmap_top where s = 'a'", "s", "a", "ts\tx\tv\ts\n2024-01-01T05:05:00.000000Z\t-1\t42\ta\n", "ts\tx\tv\ts\n");
-    }
-
-    @Test
-    public void testCompactionKeepsColumnAddedAfterConversion() throws Exception {
-        // The file lacks z, so the copy is fully materialized: z is written as NULLs from row 0.
-        assertMemoryLeak(() -> {
-            loadFixture("stale_top~10");
-            execute("alter table stale_top add column z int");
-            drainWalQueue();
-
-            compactDay1("stale_top");
-
-            assertQuery("select ts, x, v, s, z from stale_top where s = 'a' and ts in '2024-01-01'")
-                    .timestamp("ts")
-                    .returns("""
-                            ts\tx\tv\ts\tz
-                            2024-01-01T05:05:00.000000Z\t-1\t42\ta\tnull
-                            """);
-            assertQuery("select count() from stale_top where z != null").expectSize().noRandomAccess().returns("count\n0\n");
-        });
-    }
-
-    @Test
-    public void testCompactionRepairsConvertToNative() throws Exception {
-        assertMemoryLeak(() -> {
-            loadFixture("stale_top~10");
-
-            compactDay1("stale_top");
-            execute("alter table stale_top convert partition to native list '2024-01-01'");
-            drainWalQueue();
-
-            assertQuery("select ts, x, v, s from stale_top where v != null")
-                    .timestamp("ts")
-                    .returns("""
-                            ts\tx\tv\ts
-                            2024-01-01T05:05:00.000000Z\t-1\t42\ta
-                            2024-01-01T05:06:00.000000Z\t-2\t43\tb
-                            """);
-            assertQuery("select ts, x, v, s from stale_top where s = 'a'")
-                    .timestamp("ts")
-                    .returns("""
-                            ts\tx\tv\ts
-                            2024-01-01T05:05:00.000000Z\t-1\t42\ta
-                            """);
-        });
-    }
-
-    @Test
-    public void testCompactionRepairsDedup() throws Exception {
-        // Dedup on (ts, s): the new row must replace the merged ('05:05', 'a') row, which a stale top of s would
-        // have the parquet dedup merge read as NULL.
-        assertMemoryLeak(() -> {
-            loadFixture("stale_top~10");
-
-            compactDay1("stale_top");
-            execute("insert into stale_top (ts, x, v, s) values ('2024-01-01T05:05:00.000000Z', -10, 99, 'a')");
-            drainWalQueue();
-
-            assertQuery("select ts, x, v, s from stale_top where ts in '2024-01-01T05:05'")
-                    .timestamp("ts")
-                    .returns("""
-                            ts\tx\tv\ts
-                            2024-01-01T05:05:00.000000Z\t-10\t99\ta
-                            """);
-        });
-    }
-
-    @Test
-    public void testCompactionRepairsStaleColumnTopsWithoutDeadBytes() throws Exception {
-        // A pre-repair compaction left the stale top and no dead bytes: the stale top alone must have it rebuilt.
-        assertMemoryLeak(() -> {
-            loadFixture("compacted_absent~9");
-            final TableToken token = engine.verifyTableName("compacted_absent");
-            assertNoDeadBytes(token);
-            assertExceptionNoLeakCheck(
-                    "select ts, x, v, s from compacted_absent where s = 'a'",
-                    -1,
-                    STALE_INDEX_ERROR + "compacted_absent, partition=2024-01-01, index=s, column=s]",
-                    sqlExecutionContext
-            );
-
-            compactDay1("compacted_absent");
-
-            Assert.assertEquals(0, getColumnTop(token, DAY1, "s"));
-            assertQuery("select ts, x, v, s from compacted_absent where s = 'a'")
-                    .timestamp("ts")
-                    .withPlanContaining("Index forward scan on: s")
-                    .returns(ROW_A);
-        });
-    }
-
-    @Test
-    public void testCoveredColumnTop() throws Exception {
-        // s is fine; the covered v reads NULL for the merged row inside v's stale top
-        assertCompactionRepairsIndex("covered_top~18", "covered_top", "select ts, v from covered_top where s = 'k1'", "v", "k1", """
-                ts\tv
-                2024-01-01T05:05:00.000000Z\t42
-                2024-01-01T05:10:00.000000Z\tnull
-                2024-01-01T05:40:00.000000Z\tnull
-                """, """
-                ts\tv
-                2024-01-02T00:10:00.000000Z\t1
-                2024-01-02T00:40:00.000000Z\t4
-                2024-01-02T01:10:00.000000Z\t7
-                2024-01-02T01:40:00.000000Z\t10
-                """);
-    }
-
-    @Test
-    public void testCoveringIndexColumnAbsent() throws Exception {
-        assertCompactionRepairsIndex("covering_absent~13", "covering_absent", "select ts, v from covering_absent where s = 'a'", "s", "a", "ts\tv\n2024-01-01T05:05:00.000000Z\t42\n", "ts\tv\n");
-    }
-
-    @Test
-    public void testCoveringIndexColumnAbsentNonCoveredQuery() throws Exception {
-        // x is not covered: the query reads the posting index, then the columns
-        assertCompactionRepairsIndex("covering_absent~13", "covering_absent", "select ts, x, v, s from covering_absent where s = 'a'", "s", "a", "ts\tx\tv\ts\n2024-01-01T05:05:00.000000Z\t-1\t42\ta\n", "ts\tx\tv\ts\n");
-    }
-
-    @Test
-    public void testParquetPartitionsWithColumnTopsAreCompact() throws Exception {
-        // No false positives: parquet partitions written by this version carry column tops (a column absent from
-        // day 1, a part-way top on day 2) and their indexes are sound. Compaction leaves them, and their tops, alone.
-        assertMemoryLeak(() -> {
-            execute("create table t (ts timestamp, x long) timestamp(ts) partition by day wal");
-            execute("insert into t select dateadd('h', x::int, '2024-01-01T00:00:00.000000Z'), x from long_sequence(20)");
-            execute("insert into t select dateadd('h', x::int, '2024-01-02T00:00:00.000000Z'), x from long_sequence(5)");
-            drainWalQueue();
-            execute("alter table t add column v long");
-            execute("alter table t add column b symbol index");
-            execute("alter table t add column p symbol index type posting");
-            execute("alter table t add column c symbol");
-            execute("alter table t alter column c add index type posting include (v)");
-            execute("alter table t add column bool boolean");
-            execute("insert into t values ('2024-01-02T08:00:00.000000Z', 100, 7, 'a', 'a', 'a', true), ('2024-01-02T09:00:00.000000Z', 101, 8, 'b', 'b', 'b', true)");
-            execute("insert into t values ('2024-01-03T00:00:00.000000Z', 102, 9, 'a', 'a', 'a', true)");
-            drainWalQueue();
-            execute("alter table t convert partition to parquet list '2024-01-01', '2024-01-02'");
-            drainWalQueue();
-
-            final TableToken token = engine.verifyTableName("t");
-            final long day2 = parseTimestamp("2024-01-02T00:00:00.000000Z");
-            final long day2BoolTop = getColumnTop(token, day2, "bool");
-            Assert.assertTrue(isParquetPartitionCompact(token, 0));
-            Assert.assertTrue(isParquetPartitionCompact(token, 1));
-            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, -1);
-            try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine)) {
-                Assert.assertTrue(engine.getPartitionCompactionRequestQueue().tryRequest(token, DAY1));
-                Assert.assertTrue(engine.getPartitionCompactionRequestQueue().tryRequest(token, day2));
-                Assert.assertFalse("sound partitions must not be rebuilt", job.run());
-            }
-            engine.releaseAllReaders();
-            engine.releaseAllWriters();
-            Assert.assertEquals(day2BoolTop, getColumnTop(token, day2, "bool"));
-
-            final String expected = """
-                    ts\tx\tv
-                    2024-01-02T08:00:00.000000Z\t100\t7
-                    2024-01-03T00:00:00.000000Z\t102\t9
-                    """;
-            assertQuery("select ts, x, v from t where b = 'a'")
-                    .timestamp("ts")
-                    .withPlanContaining("Index forward scan on: b")
-                    .returns(expected);
-            assertQuery("select ts, x, v from t where p = 'a'")
-                    .timestamp("ts")
-                    .withPlanContaining("Index forward scan on: p")
-                    .returns(expected);
-            assertQuery("select ts, v from t where c = 'a'")
-                    .timestamp("ts")
-                    .noRandomAccess()
-                    .expectSize()
-                    .withPlanContaining("CoveringIndex on: c")
-                    .returns("""
-                            ts\tv
-                            2024-01-02T08:00:00.000000Z\t7
-                            2024-01-03T00:00:00.000000Z\t9
-                            """);
-            assertQuery("select count() from t where b is null")
-                    .withPlanContaining("Index forward scan on: b")
-                    .expectSize()
-                    .noRandomAccess()
-                    .returns("count\n25\n");
-            assertQuery("select count() from t where bool")
-                    .expectSize()
-                    .noRandomAccess()
-                    .returns("count\n3\n");
-        });
-    }
-
-    @Test
-    public void testParquetScanSeesMergedValues() throws Exception {
-        // Sanity: the parquet data itself is intact; a scan does not use the index.
-        assertMemoryLeak(() -> {
-            loadFixture("stale_top~10");
-
-            assertQuery("select ts, x, v, s from stale_top where ts between '2024-01-01T05:00' and '2024-01-01T05:10'")
-                    .timestamp("ts")
-                    .returns("""
-                            ts\tx\tv\ts
-                            2024-01-01T05:00:00.000000Z\t30\tnull\t
-                            2024-01-01T05:05:00.000000Z\t-1\t42\ta
-                            2024-01-01T05:06:00.000000Z\t-2\t43\tb
-                            2024-01-01T05:10:00.000000Z\t31\tnull\t
-                            """);
-        });
-    }
-
-    @Test
-    public void testPostingIndexColumnAbsent() throws Exception {
-        assertCompactionRepairsIndex("posting_absent~11", "posting_absent", "select ts, x, v, s from posting_absent where s = 'a'", "s", "a", "ts\tx\tv\ts\n2024-01-01T05:05:00.000000Z\t-1\t42\ta\n", "ts\tx\tv\ts\n");
-    }
-
-    @Test
-    public void testPostingIndexColumnTop() throws Exception {
-        assertCompactionRepairsIndex("posting_top~12", "posting_top", "select ts, x, v, s from posting_top where s = 'a'", "s", "a", "ts\tx\tv\ts\n2024-01-01T05:05:00.000000Z\t-1\t42\ta\n", "ts\tx\tv\ts\n");
-    }
-
-    @Test
-    public void testSweepRepairsStaleColumnTops() throws Exception {
-        // The background sweep, not just a request, picks the stale partition although it has no dead bytes.
-        assertMemoryLeak(() -> {
-            loadFixture("compacted_absent~9");
-            final TableToken token = engine.verifyTableName("compacted_absent");
-            assertNoDeadBytes(token);
-            Assert.assertFalse(isParquetPartitionCompact(token, 0));
-
-            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "1h");
-            // The idle gate reads the parquet file's modification time, which is real wall-clock time.
-            final Clock pastTheIdleTimeout = () -> MicrosecondClockImpl.INSTANCE.getTicks() + 2 * Micros.HOUR_MICROS;
-            try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine, configuration.getFilesFacade(), pastTheIdleTimeout)) {
-                job.run();
-            }
-            engine.releaseAllReaders();
-            engine.releaseAllWriters();
-
-            Assert.assertTrue(isParquetPartitionCompact(token, 0));
-            Assert.assertEquals(0, getColumnTop(token, DAY1, "s"));
-            assertQuery("select ts, x, v, s from compacted_absent where s = 'a' and ts in '2024-01-01'")
-                    .timestamp("ts")
-                    .returns(ROW_A);
-        });
-    }
-
-    /**
-     * Unpacks a fixture table directory from {@code resources/parquet-stale-cv-top} into the db root and registers it.
-     */
     public static void loadFixture(String tableDirName) throws Exception {
         final byte[] buffer = new byte[1024 * 1024];
         final File root = new File(configuration.getDbRoot().toString());
@@ -384,56 +116,364 @@ public class StaleParquetColumnTopTest extends AbstractCairoTest {
         engine.reconcileTableNameRegistryState();
     }
 
-    private static void assertNoDeadBytes(TableToken token) {
-        try (TableReader reader = engine.getReader(token)) {
-            reader.openPartition(0);
-            Assert.assertEquals("the fixture must have no dead row-group bytes", 0, reader.getAndInitParquetPartitionDecoder(0).metadata().getUnusedBytes());
-        }
+    @Test
+    public void testAddCoveringIndexRepairsStaleColumnTops() throws Exception {
+        assertMemoryLeak(() -> {
+            loadFixture("covered_top~18");
+            execute("alter table covered_top alter column s drop index");
+            drainWalQueue();
+            execute("alter table covered_top alter column s add index type posting include (v)");
+            drainWalQueue();
+
+            assertIndexQuery("select ts, v from covered_top where s = 'k1' and ts in '2024-01-01T05'", true, """
+                    ts\tv
+                    2024-01-01T05:05:00.000000Z\t42
+                    2024-01-01T05:10:00.000000Z\tnull
+                    2024-01-01T05:40:00.000000Z\tnull
+                    """);
+        });
     }
 
-    private static void compactDay1(String table) {
-        final TableToken token = engine.verifyTableName(table);
-        Assert.assertFalse("stale column tops make the partition not compact", isParquetPartitionCompact(token, 0));
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, -1);
-        try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine)) {
-            Assert.assertTrue(engine.getPartitionCompactionRequestQueue().tryRequest(token, DAY1));
-            Assert.assertTrue("the request must dispatch the rebuild", job.run());
-        }
-        engine.releaseAllReaders();
-        engine.releaseAllWriters();
-        Assert.assertTrue("the rebuilt partition must be compact", isParquetPartitionCompact(token, 0));
-        try (TableReader reader = engine.getReader(token)) {
-            Assert.assertTrue(reader.getTxFile().isPartitionParquet(0));
-        }
+    @Test
+    public void testAddIndexRepairsStaleColumnTops() throws Exception {
+        assertMemoryLeak(() -> {
+            loadFixture("bitmap_top~10");
+            final File tableDir = new File(configuration.getDbRoot().toString(), "bitmap_top~10");
+            execute("alter table bitmap_top alter column s drop index");
+            drainWalQueue();
+            execute("alter table bitmap_top alter column s add index type posting");
+            drainWalQueue();
+            releaseSavePointHolds("bitmap_top");
+
+            // the stale partition got a new directory version with zeroed tops, the index covers the merged rows
+            final String[] day1Dirs = tableDir.list((dir, name) -> name.startsWith("2024-01-01"));
+            Assert.assertNotNull(day1Dirs);
+            Assert.assertEquals(1, day1Dirs.length);
+            Assert.assertNotEquals("2024-01-01.4", day1Dirs[0]);
+            assertIndexQuery("select ts, x, v, s from bitmap_top where s = 'a' and ts in '2024-01-01T05'", false, ROW_A);
+            assertIndexQuery("select ts, x, v, s from bitmap_top where s = 'k1' and ts in '2024-01-02T00:10'", false, """
+                    ts\tx\tv\ts
+                    2024-01-02T00:10:00.000000Z\t1\t1\tk1
+                    """);
+        });
     }
 
-    private static long getColumnTop(TableToken token, long partitionTimestamp, String columnName) {
-        try (TableReader reader = engine.getReader(token)) {
-            final TableMetadata metadata = reader.getMetadata();
-            final ColumnVersionReader cvr = reader.getColumnVersionReader();
-            return cvr.getColumnTop(partitionTimestamp, metadata.getWriterIndex(metadata.getColumnIndex(columnName)));
-        }
+    @Test
+    public void testBitmapIndexColumnAbsent() throws Exception {
+        assertIndexQueryFails("bitmap_absent~9", "bitmap_absent", "select ts, x, v, s from bitmap_absent where s = 'a'", "s", "a", "ts\tx\tv\ts\n2024-01-01T05:05:00.000000Z\t-1\t42\ta\n", "ts\tx\tv\ts\n");
     }
 
-    private static boolean isParquetPartitionCompact(TableToken token, int partitionIndex) {
-        try (TableReader reader = engine.getReader(token)) {
-            reader.openPartition(partitionIndex);
-            return PartitionCompactionScanJob.isParquetPartitionCompact(
-                    reader.getTxFile(),
-                    partitionIndex,
-                    reader.getMetadata(),
-                    reader.getColumnVersionReader(),
-                    reader.getAndInitParquetPartitionDecoder(partitionIndex).metadata()
+    @Test
+    public void testBitmapIndexColumnTop() throws Exception {
+        assertIndexQueryFails("bitmap_top~10", "bitmap_top", "select ts, x, v, s from bitmap_top where s = 'a'", "s", "a", "ts\tx\tv\ts\n2024-01-01T05:05:00.000000Z\t-1\t42\ta\n", "ts\tx\tv\ts\n");
+    }
+
+    @Test
+    public void testColdPartitionIndexErrorNamesNoRemedy() throws Exception {
+        assertMemoryLeak(() -> {
+            loadFixture("bitmap_top~10");
+            // Cold: parquet served from the object store, FORCE REINDEX cannot rebuild its index
+            try (TableWriter writer = getWriter("bitmap_top")) {
+                writer.getTxWriter().setPartitionParquetGenerated(0, false);
+                writer.getTxWriter().setPartitionRemote(0, true);
+                writer.bumpPartitionTableVersion();
+                writer.commit();
+            }
+            assertExceptionNoLeakCheck(
+                    "select ts, x, v, s from bitmap_top where s = 'a'",
+                    -1,
+                    "index does not cover parquet partition data [table=bitmap_top, partition=2024-01-01, index=s, column=s]",
+                    sqlExecutionContext
             );
-        }
+        });
     }
 
-    private static long parseTimestamp(String timestamp) {
-        try {
-            return MicrosFormatUtils.parseTimestamp(timestamp);
-        } catch (Exception e) {
-            throw new AssertionError(e);
-        }
+    @Test
+    public void testCoveredColumnTop() throws Exception {
+        // s is fine; the covered v reads NULL for the merged row below v's stale top
+        assertIndexQueryFails("covered_top~18", "covered_top", "select ts, v from covered_top where s = 'k1'", "v", "k1", """
+                ts\tv
+                2024-01-01T05:05:00.000000Z\t42
+                2024-01-01T05:10:00.000000Z\tnull
+                2024-01-01T05:40:00.000000Z\tnull
+                """, """
+                ts\tv
+                2024-01-02T00:10:00.000000Z\t1
+                2024-01-02T00:40:00.000000Z\t4
+                2024-01-02T01:10:00.000000Z\t7
+                2024-01-02T01:40:00.000000Z\t10
+                """);
+    }
+
+    @Test
+    public void testCoveringIndexColumnAbsent() throws Exception {
+        assertIndexQueryFails("covering_absent~13", "covering_absent", "select ts, v from covering_absent where s = 'a'", "s", "a", "ts\tv\n2024-01-01T05:05:00.000000Z\t42\n", "ts\tv\n");
+    }
+
+    @Test
+    public void testCoveringIndexColumnAbsentNonCoveredQuery() throws Exception {
+        // x is not covered: the query reads the posting index, then the columns
+        assertIndexQueryFails("covering_absent~13", "covering_absent", "select ts, x, v, s from covering_absent where s = 'a'", "s", "a", "ts\tx\tv\ts\n2024-01-01T05:05:00.000000Z\t-1\t42\ta\n", "ts\tx\tv\ts\n");
+    }
+
+    @Test
+    public void testDedupOnParquetPartitionWithAbsentKeyColumn() throws Exception {
+        // No regression: day 1 predates the key column s, which reads NULL there. A NULL-key late row upserts the
+        // existing row, a non-NULL one does not match it.
+        assertMemoryLeak(() -> {
+            execute("create table d (ts timestamp, x long) timestamp(ts) partition by day wal");
+            execute("insert into d select dateadd('m', x::int * 10, '2024-01-01T00:00:00.000000Z'), x from long_sequence(100)");
+            execute("insert into d select dateadd('m', x::int * 10, '2024-01-02T00:00:00.000000Z'), x from long_sequence(10)");
+            execute("alter table d add column s symbol");
+            execute("alter table d dedup enable upsert keys(ts, s)");
+            execute("alter table d convert partition to parquet list '2024-01-01'");
+            drainWalQueue();
+
+            execute("insert into d (ts, x, s) values ('2024-01-01T05:00:00.000000Z', 999, null), ('2024-01-01T05:10:00.000000Z', 888, 'q')");
+            drainWalQueue();
+
+            assertQuery("select ts, x, s from d where ts between '2024-01-01T05:00' and '2024-01-01T05:10'")
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tx\ts
+                            2024-01-01T05:00:00.000000Z\t999\t
+                            2024-01-01T05:10:00.000000Z\t31\t
+                            2024-01-01T05:10:00.000000Z\t888\tq
+                            """);
+        });
+    }
+
+    @Test
+    public void testDedupMatchesMergedKey() throws Exception {
+        // Dedup on (ts, s): the new row must replace the merged ('05:05', 'a') row. The parquet dedup merge
+        // takes s's column top from the stale _cv, treats the existing 'a' as NULL and keeps both rows.
+        assertMemoryLeak(() -> {
+            loadFixture("stale_top~10");
+
+            execute("insert into stale_top (ts, x, v, s) values ('2024-01-01T05:05:00.000000Z', -10, 99, 'a')");
+            drainWalQueue();
+
+            assertQuery("select ts, x, v, s from stale_top where ts in '2024-01-01T05:05'")
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tx\tv\ts
+                            2024-01-01T05:05:00.000000Z\t-10\t99\ta
+                            """);
+        });
+    }
+
+    @Test
+    public void testIndexQueriesOnParquetPartitionsWithColumnTops() throws Exception {
+        // No false positives: parquet partitions written by this version carry column tops (a column absent from
+        // day 1, a mid-partition top on day 2) and their indexes are sound.
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x long) timestamp(ts) partition by day bypass wal");
+            execute("insert into t select dateadd('h', x::int, '2024-01-01T00:00:00.000000Z'), x from long_sequence(20)");
+            execute("insert into t select dateadd('h', x::int, '2024-01-02T00:00:00.000000Z'), x from long_sequence(5)");
+            execute("alter table t add column v long");
+            execute("alter table t add column b symbol index");
+            execute("alter table t add column p symbol index type posting");
+            execute("alter table t add column c symbol");
+            execute("alter table t alter column c add index type posting include (v)");
+            execute("insert into t values ('2024-01-02T08:00:00.000000Z', 100, 7, 'a', 'a', 'a'), ('2024-01-02T09:00:00.000000Z', 101, 8, 'b', 'b', 'b')");
+            execute("insert into t values ('2024-01-03T00:00:00.000000Z', 102, 9, 'a', 'a', 'a')");
+            execute("alter table t convert partition to parquet list '2024-01-01', '2024-01-02'");
+
+            for (int pass = 0; pass < 2; pass++) {
+                if (pass == 1) {
+                    // a reindex of sound partitions changes no result
+                    execute("alter table t force reindex parquet");
+                }
+                final String expected = """
+                        ts\tx\tv
+                        2024-01-02T08:00:00.000000Z\t100\t7
+                        2024-01-03T00:00:00.000000Z\t102\t9
+                        """;
+                assertQuery("select ts, x, v from t where b = 'a'")
+                        .timestamp("ts")
+                        .withPlanContaining("Index forward scan on: b")
+                        .returns(expected);
+                assertQuery("select ts, x, v from t where p = 'a'")
+                        .timestamp("ts")
+                        .withPlanContaining("Index forward scan on: p")
+                        .returns(expected);
+                assertQuery("select ts, v from t where c = 'a'")
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .expectSize()
+                        .withPlanContaining("CoveringIndex on: c")
+                        .returns("""
+                                ts\tv
+                                2024-01-02T08:00:00.000000Z\t7
+                                2024-01-03T00:00:00.000000Z\t9
+                                """);
+                assertQuery("select count() from t where b is null")
+                        .withPlanContaining("Index forward scan on: b")
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("count\n25\n");
+            }
+
+            // Conversion materializes the NULL rows; reindex keeps the resulting zero column tops.
+            try (TableReader reader = getReader("t")) {
+                final long day1 = reader.getPartitionMinTimestampFromMetadata(0);
+                Assert.assertEquals(0, reader.getColumnVersionReader().getColumnTop(day1, reader.getMetadata().getWriterIndex(reader.getMetadata().getColumnIndex("v"))));
+                Assert.assertEquals(0, reader.getColumnVersionReader().getColumnTop(day1, reader.getMetadata().getWriterIndex(reader.getMetadata().getColumnIndex("b"))));
+            }
+
+            // a single index of a single partition
+            execute("alter table t force reindex parquet column b partition list '2024-01-02'");
+            assertQuery("select ts, x, v from t where b = 'a'")
+                    .timestamp("ts")
+                    .withPlanContaining("Index forward scan on: b")
+                    .returns("""
+                            ts\tx\tv
+                            2024-01-02T08:00:00.000000Z\t100\t7
+                            2024-01-03T00:00:00.000000Z\t102\t9
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateRowRewritesBitmapIndexColumnAbsent() throws Exception {
+        assertLateRowRewritesPartition("bitmap_absent~9", "bitmap_absent", "select ts, x, v, s from bitmap_absent where s = 'a'", ROW_A);
+    }
+
+    @Test
+    public void testLateRowRewritesBitmapIndexColumnTop() throws Exception {
+        assertLateRowRewritesPartition("bitmap_top~10", "bitmap_top", "select ts, x, v, s from bitmap_top where s = 'a'", ROW_A);
+    }
+
+    @Test
+    public void testLateRowRewritesCoveredColumnTop() throws Exception {
+        assertLateRowRewritesPartition("covered_top~18", "covered_top", "select ts, v from covered_top where s = 'k1'", """
+                ts\tv
+                2024-01-01T05:05:00.000000Z\t42
+                2024-01-01T05:10:00.000000Z\tnull
+                2024-01-01T05:40:00.000000Z\tnull
+                """);
+    }
+
+    @Test
+    public void testLateRowRewritesCoveringIndexColumnAbsent() throws Exception {
+        assertLateRowRewritesPartition("covering_absent~13", "covering_absent", "select ts, v from covering_absent where s = 'a'", "ts\tv\n2024-01-01T05:05:00.000000Z\t42\n");
+    }
+
+    @Test
+    public void testLateRowRewritesPostingIndexColumnAbsent() throws Exception {
+        assertLateRowRewritesPartition("posting_absent~11", "posting_absent", "select ts, x, v, s from posting_absent where s = 'a'", ROW_A);
+    }
+
+    @Test
+    public void testLateRowRewritesPostingIndexColumnTop() throws Exception {
+        assertLateRowRewritesPartition("posting_top~12", "posting_top", "select ts, x, v, s from posting_top where s = 'a'", ROW_A);
+    }
+
+    @Test
+    public void testParquetScanSeesMergedValues() throws Exception {
+        // Sanity: the parquet data itself is intact; a scan does not use the index.
+        assertMemoryLeak(() -> {
+            loadFixture("stale_top~10");
+
+            assertQuery("select ts, x, v, s from stale_top where ts between '2024-01-01T05:00' and '2024-01-01T05:10'")
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tx\tv\ts
+                            2024-01-01T05:00:00.000000Z\t30\tnull\t
+                            2024-01-01T05:05:00.000000Z\t-1\t42\ta
+                            2024-01-01T05:06:00.000000Z\t-2\t43\tb
+                            2024-01-01T05:10:00.000000Z\t31\tnull\t
+                            """);
+        });
+    }
+
+    @Test
+    public void testReindexKeepsPartitionVersionOfOpenReader() throws Exception {
+        assertMemoryLeak(() -> {
+            loadFixture("bitmap_top~10");
+            final File tableDir = new File(configuration.getDbRoot().toString(), "bitmap_top~10");
+            final File oldDir = new File(tableDir, "2024-01-01.4");
+
+            try (RecordCursorFactory factory = select("select ts, x, v, s from bitmap_top where ts in '2024-01-01T05:00;10m'")) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    execute("alter table bitmap_top force reindex parquet");
+                    // the open cursor's reader still holds the replaced version
+                    Assert.assertTrue(oldDir.exists());
+                    println(factory, cursor);
+                    TestUtils.assertEquals("""
+                            ts\tx\tv\ts
+                            2024-01-01T05:00:00.000000Z\t30\t30\t
+                            2024-01-01T05:05:00.000000Z\t-1\t42\ta
+                            2024-01-01T05:06:00.000000Z\t-2\t43\tb
+                            """, sink);
+                }
+            }
+
+            engine.releaseAllReaders();
+            releaseSavePointHolds("bitmap_top");
+            try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1)) {
+                //noinspection StatementWithEmptyBody
+                while (purgeJob.run()) {
+                }
+            }
+            Assert.assertFalse(oldDir.exists());
+            assertQuery("select ts, x, v, s from bitmap_top where s = 'a' and ts in '2024-01-01T05'")
+                    .timestamp("ts")
+                    .returns("ts\tx\tv\ts\n2024-01-01T05:05:00.000000Z\t-1\t42\ta\n");
+        });
+    }
+
+    @Test
+    public void testReindexRepairsConvertToNative() throws Exception {
+        assertMemoryLeak(() -> {
+            loadFixture("stale_top~10");
+
+            execute("alter table stale_top force reindex parquet");
+            execute("alter table stale_top convert partition to native list '2024-01-01'");
+            drainWalQueue();
+
+            assertQuery("select ts, x, v, s from stale_top where v != null")
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tx\tv\ts
+                            2024-01-01T05:05:00.000000Z\t-1\t42\ta
+                            2024-01-01T05:06:00.000000Z\t-2\t43\tb
+                            """);
+            assertQuery("select ts, x, v, s from stale_top where s = 'a'")
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tx\tv\ts
+                            2024-01-01T05:05:00.000000Z\t-1\t42\ta
+                            """);
+        });
+    }
+
+    @Test
+    public void testReindexRepairsDedup() throws Exception {
+        assertMemoryLeak(() -> {
+            loadFixture("stale_top~10");
+
+            execute("alter table stale_top force reindex parquet");
+            execute("insert into stale_top (ts, x, v, s) values ('2024-01-01T05:05:00.000000Z', -10, 99, 'a')");
+            drainWalQueue();
+
+            assertQuery("select ts, x, v, s from stale_top where ts in '2024-01-01T05:05'")
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tx\tv\ts
+                            2024-01-01T05:05:00.000000Z\t-10\t99\ta
+                            """);
+        });
+    }
+
+    @Test
+    public void testPostingIndexColumnAbsent() throws Exception {
+        assertIndexQueryFails("posting_absent~11", "posting_absent", "select ts, x, v, s from posting_absent where s = 'a'", "s", "a", "ts\tx\tv\ts\n2024-01-01T05:05:00.000000Z\t-1\t42\ta\n", "ts\tx\tv\ts\n");
+    }
+
+    @Test
+    public void testPostingIndexColumnTop() throws Exception {
+        assertIndexQueryFails("posting_top~12", "posting_top", "select ts, x, v, s from posting_top where s = 'a'", "s", "a", "ts\tx\tv\ts\n2024-01-01T05:05:00.000000Z\t-1\t42\ta\n", "ts\tx\tv\ts\n");
     }
 
     private void assertIndexQuery(String query, boolean covering, String expected) throws Exception {
@@ -445,10 +485,39 @@ public class StaleParquetColumnTopTest extends AbstractCairoTest {
     }
 
     /**
-     * The index query on the broken day 1 fails, a scan still sees the merged row and the native day 2 index still
-     * answers. A compaction of day 1 then repairs it: its index answers, its stale tops are zeroed and it is compact.
+     * A late row into the broken day 1 takes the rewrite path: the commit zeroes the column tops and the indexes are
+     * rebuilt from row 0 in a new partition directory, so the index answers again.
      */
-    private void assertCompactionRepairsIndex(
+    private void assertLateRowRewritesPartition(String fixture, String table, String indexQuery, String day1Hour5Result) throws Exception {
+        final boolean covering = indexQuery.startsWith("select ts, v from");
+        assertMemoryLeak(() -> {
+            loadFixture(fixture);
+            final File tableDir = new File(configuration.getDbRoot().toString(), fixture);
+            final String[] before = tableDir.list((dir, name) -> name.startsWith("2024-01-01"));
+            Assert.assertNotNull(before);
+            Assert.assertEquals(1, before.length);
+
+            execute("insert into " + table + " (ts, x, s) values ('2024-01-01T07:07:00.000000Z', -7, 'z')");
+            drainWalQueue();
+            releaseSavePointHolds(table);
+
+            final String[] after = tableDir.list((dir, name) -> name.startsWith("2024-01-01"));
+            Assert.assertNotNull(after);
+            Assert.assertEquals(1, after.length);
+            Assert.assertNotEquals(before[0], after[0]);
+            assertIndexQuery(indexQuery + " and ts in '2024-01-01T05'", covering, day1Hour5Result);
+            assertQuery("select count() from " + table + " where s = 'z'")
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
+        });
+    }
+
+    /**
+     * The index query on the broken day 1 fails, a scan still sees the merged row and the native day 2 index still
+     * answers. FORCE REINDEX then repairs day 1.
+     */
+    private void assertIndexQueryFails(
             String fixture,
             String table,
             String indexQuery,
@@ -467,7 +536,8 @@ public class StaleParquetColumnTopTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     indexQuery,
                     -1,
-                    STALE_INDEX_ERROR + table + ", partition=2024-01-01, index=s, column=" + staleColumn + ']',
+                    STALE_INDEX_ERROR + table + " FORCE REINDEX PARQUET PARTITION LIST '2024-01-01' [table=" + table
+                            + ", partition=2024-01-01, index=s, column=" + staleColumn + ']',
                     sqlExecutionContext
             );
             // the data is intact: a scan sees the merged row
@@ -477,16 +547,20 @@ public class StaleParquetColumnTopTest extends AbstractCairoTest {
             // the native partition's index still answers
             assertIndexQuery(indexQuery + " and ts in '2024-01-02'", covering, day2Result);
 
-            compactDay1(table);
+            execute("alter table " + table + " force reindex parquet");
 
-            final TableToken token = engine.verifyTableName(table);
-            Assert.assertEquals(0, getColumnTop(token, DAY1, "s"));
-            Assert.assertEquals(0, getColumnTop(token, DAY1, "v"));
             assertIndexQuery(indexQuery + " and ts in '2024-01-01T05'", covering, day1Hour5Result);
             assertIndexQuery(indexQuery + " and ts in '2024-01-02'", covering, day2Result);
-            // the whole-table index query agrees with a scan of the same filter
-            printSql(indexQuery.replace(" where s = ", " where s::string = "));
-            assertIndexQuery(indexQuery, covering, sink.toString());
+            // a second run finds nothing to repair and rebuilds the same index; the fixtures added it by ALTER,
+            // which the WAL sequencer metadata does not record
+            execute("alter table " + table + " force reindex parquet column s partition list '2024-01-01'");
+            assertIndexQuery(indexQuery + " and ts in '2024-01-01T05'", covering, day1Hour5Result);
+            // each run writes a new partition directory version and removes the replaced one
+            final File tableDir = new File(configuration.getDbRoot().toString(), fixture);
+            final String[] day1Dirs = tableDir.list((dir, name) -> name.startsWith("2024-01-01"));
+            Assert.assertNotNull(day1Dirs);
+            Assert.assertEquals(1, day1Dirs.length);
+            Assert.assertNotEquals("2024-01-01.4", day1Dirs[0]);
         });
     }
 }
