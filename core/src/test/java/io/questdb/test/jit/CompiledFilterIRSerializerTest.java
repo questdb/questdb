@@ -1683,6 +1683,8 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         assertDateVariableCheckCount("atimestamp IN '[$today - 1bd]'", 1);
         assertDateVariableCheckCount("atimestamp IN '$todayT09:30;1h'", 1);
         assertDateVariableCheckCount("atimestamp IN '[$today]T[09:30,14:30];1h'", 2);
+        // The list stores a repeated date variable once.
+        assertDateVariableCheckCount("atimestamp IN '[$today, $today, $yesterday]T[09:30,14:30];1h'", 4);
         assertDateVariableCheckCount("atimestamp IN '[$yesterday, 2020-01-01]'", 2);
         assertDateVariableCheckCount("atimestamp IN '[$yesterday, 2020-01-[01..03]]'", 2);
         assertDateVariableCheckCount("atimestamp IN '[$today, 2020-01-[01..10]]'", 2);

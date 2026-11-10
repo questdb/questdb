@@ -590,6 +590,31 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDateVariableIntervalRepeatedElementsRunOnJit() throws Exception {
+        // The list stores a repeated date variable once, so eleven copies of $today take one range
+        // check, and $yesterday, nine copies of $today and $yesterday again take two: within the IN
+        // list threshold (10 by default), so the JIT runs them.
+        assertMemoryLeak(() -> {
+            // One row a day at 10:00:30 through 2024.
+            execute("CREATE TABLE x (k INT, dt DATE, tm TIMESTAMP, tn TIMESTAMP_NS, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x
+                    SELECT k, t::DATE, t, t::TIMESTAMP_NS, t
+                    FROM (SELECT x::INT k, dateadd('d', (x - 1)::INT, '2024-01-01T10:00:30.000000Z'::TIMESTAMP) t FROM long_sequence(366))
+                    """);
+            // $today matches no row on 2025-06-01, and the row of 2024-12-30 on that day, and
+            // $yesterday the row of 2024-12-29.
+            final long jun2025 = Micros.toMicros(2025, 6, 1, 1, 0);
+            final long dec2024 = Micros.toMicros(2024, 12, 30, 1, 0);
+            for (String c : new String[]{"dt", "tm", "tn"}) {
+                final String query = "SELECT count() FROM x WHERE " + c;
+                assertCountFollowsClock(query + " IN '[" + "$today,".repeat(10) + "$today]'", true, jun2025, 0, dec2024, 1);
+                assertCountFollowsClock(query + " IN '[$yesterday," + "$today,".repeat(9) + "$yesterday]'", true, jun2025, 0, dec2024, 2);
+            }
+        });
+    }
+
+    @Test
     public void testDateVariableIntervalWithExchangeCalendarFollowsClock() throws Exception {
         // TestTickCalendarService holds the 2025 XNYS sessions: 14:30 to 21:00 UTC in January.
         final FactoryProvider previousFactoryProvider = factoryProvider;

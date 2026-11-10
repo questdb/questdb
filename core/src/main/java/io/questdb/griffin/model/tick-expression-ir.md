@@ -18,7 +18,7 @@ ir[5+D .. 5+D+3T)              time override triples   (T triples, 3 longs each)
 ir[5+D+3T .. end)              elements                (variable-length)
 ```
 
-Each count takes a whole slot, so no count is capped.
+Each count takes a whole slot, so no count overflows its slot.
 
 ## Header — `ir[0]`
 
@@ -250,8 +250,8 @@ does not know, for any other range, and when the sum exceeds `cap`.
    placeholders at `ir[0..5)`
 2. Append duration parts at `ir[5..5+D)`
 3. Append time override triples at `ir[5+D..5+D+3T)`
-4. Append elements at `ir[5+D+3T..)`: the date variable elements in list
-   order, then the STATIC entries of the list
+4. Append elements at `ir[5+D+3T..)`: the distinct date variable elements in
+   list order, then the STATIC entries of the list
 5. Write the header at `ir[0]` and the counts at `ir[2..5)`
 
 The compiler collects the intervals of the static elements of a list in a
@@ -267,6 +267,15 @@ compiler unions the collected intervals whenever they exceed the cap and the
 merge threshold together, and once more at the end when they exceed the cap,
 and fails if the union still exceeds the cap.
 
+Every `evaluate()` also emits up to `max(1, T)` intervals for each date variable
+element of a list, per day of a range, so the list keeps the distinct date
+variable elements times `max(1, T)` within the interval cap, and fails at the
+first element over it, with the same error as the static intervals. An element
+that repeats an earlier one, the same SINGLE_VAR word or the same pair of
+RANGE words, emits the same intervals for every "now", so the compiler stores
+and counts it once: `$today` and `$TODAY` are one element, as are `$today - 1d`
+and `$today-01d`, while `$today` and `$today + 0d` are two.
+
 This produces exactly **one `LongList`** for the stored IR. Compile-time
-temporaries (`StringSink`s and two `LongList`s) are thread-local and reused
-across all parsing phases via `clear()` between uses.
+temporaries (`StringSink`s, two `LongList`s and a `LongLongHashSet`) are
+thread-local and reused across all parsing phases via `clear()` between uses.

@@ -36,6 +36,7 @@ import io.questdb.std.FiberLocal;
 import io.questdb.std.Interval;
 import io.questdb.std.LongGroupSort;
 import io.questdb.std.LongList;
+import io.questdb.std.LongLongHashSet;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjectStackPool;
@@ -69,13 +70,18 @@ public final class IntervalUtils {
     // Day filter bitmask constants (bit 0 = Monday, bit 6 = Sunday)
     private static final int DAY_FILTER_WORKDAY = (1 << (MONDAY - 1)) | (1 << (TUESDAY - 1)) | (1 << (WEDNESDAY - 1))
             | (1 << (THURSDAY - 1)) | (1 << (FRIDAY - 1)); // Mon-Fri
-    // compileTickExpr thread-locals (3 sinks + 2 LongLists):
+    // compileTickExpr thread-locals (3 sinks + 2 LongLists + 1 LongLongHashSet):
+    //   tlCompileDateVarElements — the date variable elements of the date list being compiled, by
+    //                              their IR words
     //   tlCompileSink1  — day-filter stripping (effectiveSeq)
     //   tlCompileSink2  — time override parsing (parseSink)
     //   tlCompileSink3  — bracket expansion inside static elements (expansionSink)
     //   tlCompileStaticIntervals — the static intervals of the date list being compiled, with the
     //                              day filter and the time zone applied
     //   tlCompileTmp    — scratch list for intermediate parsing
+    private static final FiberLocal<LongLongHashSet> tlCompileDateVarElements = new FiberLocal<>(
+            () -> new LongLongHashSet(16, 0.5, Long.MIN_VALUE, LongLongHashSet.LONG_LONG_STRATEGY)
+    );
     private static final FiberLocal<StringSink> tlCompileSink1 = new FiberLocal<>(StringSink::new);
     private static final FiberLocal<StringSink> tlCompileSink2 = new FiberLocal<>(StringSink::new);
     private static final FiberLocal<StringSink> tlCompileSink3 = new FiberLocal<>(StringSink::new);
@@ -153,7 +159,9 @@ public final class IntervalUtils {
      * @param lim             end index (exclusive) within seq
      * @param position        source position for error reporting
      * @return a compiled expression that can be re-evaluated with different "now" values
-     * @throws SqlException if the expression is structurally invalid
+     * @throws SqlException if the expression is structurally invalid, or if a date list yields more
+     *                      intervals than the interval cap
+     *                      ({@code cairo.sql.interval.max.intervals.after.merge}) allows
      */
     public static CompiledTickExpression compileTickExpr(
             TimestampDriver timestampDriver,
@@ -302,7 +310,7 @@ public final class IntervalUtils {
         int elemCount = compileElements(
                 timestampDriver, configuration, effectiveSeq,
                 elemListLo, elemListHi, isBareVar,
-                timeLo, timeHi, tzMarkerPos, durationSemicolon, durationHi, tzContentHi,
+                timeLo, timeHi, timeOverrideCount, tzMarkerPos, durationSemicolon, durationHi, tzContentHi,
                 dayFilterMask, exchangeSchedule, numericTzOffset, tzRules,
                 position, irList, parseSink, tmp
         );
@@ -1812,9 +1820,11 @@ public final class IntervalUtils {
     }
 
     /**
-     * Iterates comma-separated elements within a bracket list. Appends each date variable element to
-     * irList, collects the intervals of the static elements with the day filter and the time zone
-     * applied, and appends one STATIC entry per collected interval after the date variable elements.
+     * Iterates comma-separated elements within a bracket list. Appends each distinct date variable
+     * element to irList, collects the intervals of the static elements with the day filter and the
+     * time zone applied, and appends one STATIC entry per collected interval after the date variable
+     * elements. Fails when the distinct date variable elements times max(1, timeOverrideCount)
+     * exceed the interval cap.
      *
      * @return number of elements appended
      */
@@ -1826,6 +1836,7 @@ public final class IntervalUtils {
             int elemListHi,
             int timeLo,
             int timeHi,
+            int timeOverrideCount,
             int tzMarkerPos,
             int durationSemicolon,
             int durationHi,
@@ -1843,6 +1854,14 @@ public final class IntervalUtils {
         // of them, as parseTickExpr() keeps a list within the cap.
         final LongList staticIntervals = tlCompileStaticIntervals.get();
         staticIntervals.clear();
+        // evaluate() emits up to max(1, T) intervals for each date variable element, per day of a
+        // range, on every execution, so the list keeps at most the cap of them, as parseTickExpr()
+        // keeps a list within the cap. An element that repeats an earlier one emits the same
+        // intervals for every "now", so the list stores and counts it once.
+        final LongLongHashSet dateVarElements = tlCompileDateVarElements.get();
+        dateVarElements.clear();
+        final int dateVarIntervalsPerElement = Math.max(1, timeOverrideCount);
+        long dateVarIntervalCount = 0;
         final int maxIntervalsAfterMerge = configuration.getSqlIntervalMaxIntervalsAfterMerge();
         final int mergeThreshold = configuration.getSqlIntervalIncrementalMergeThreshold();
         int elemCount = 0;
@@ -1873,8 +1892,20 @@ public final class IntervalUtils {
                 }
 
                 if (effectiveSeq.charAt(es) == '$') {
+                    final int elementLo = irList.size();
                     compileVarElement(effectiveSeq, es, ee, position, irList);
-                    elemCount++;
+                    // a RANGE takes two words, a SINGLE_VAR one
+                    final long secondWord = irList.size() - elementLo > 1 ? irList.getQuick(elementLo + 1) : 0;
+                    if (dateVarElements.add(irList.getQuick(elementLo), secondWord)) {
+                        elemCount++;
+                        dateVarIntervalCount += dateVarIntervalsPerElement;
+                        if (dateVarIntervalCount > maxIntervalsAfterMerge) {
+                            throw SqlException.$(position, "Bracket expansion produces too many intervals (max ")
+                                    .put(maxIntervalsAfterMerge).put(')');
+                        }
+                    } else {
+                        irList.setPos(elementLo);
+                    }
                 } else {
                     compileStaticElement(
                             timestampDriver, configuration, effectiveSeq,
@@ -1954,6 +1985,7 @@ public final class IntervalUtils {
             boolean isBareVar,
             int timeLo,
             int timeHi,
+            int timeOverrideCount,
             int tzMarkerPos,
             int durationSemicolon,
             int durationHi,
@@ -1974,7 +2006,7 @@ public final class IntervalUtils {
         return compileBracketListElements(
                 timestampDriver, configuration, effectiveSeq,
                 elemListLo, elemListHi,
-                timeLo, timeHi, tzMarkerPos, durationSemicolon, durationHi, tzContentHi,
+                timeLo, timeHi, timeOverrideCount, tzMarkerPos, durationSemicolon, durationHi, tzContentHi,
                 dayFilterMask, exchangeSchedule, numericTzOffset, tzRules,
                 position, irList, parseSink, tmp
         );

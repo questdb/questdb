@@ -240,14 +240,16 @@ public class TickCalendarTest {
     @Test
     public void testCompiledCalendarListFuzz() throws SqlException {
         // Builds random date lists of 2025 days, hours, pairs of hours, minutes and day ranges with a
-        // date variable, under the XNYS or XHKG calendar and maybe a zone, and expects evaluate() at
-        // random nows of 2025 to return what parseTickExpr returns at the same now, and the parts of
-        // the sessions that the union of the list covers, from java.time and the test calendar. Half of
-        // the lists add six copies of the days 1-20 of each month, which take the static intervals
-        // past the cap and the merge threshold (1,024 + 256), so that the compiler unions them before
-        // the calendar runs. The other elements fall on a trading day after the 20th, within one of
-        // its sessions. The lists must reach each shape that the assertions at the end name, so the
-        // test builds more lists, up to ten times as many, until they do.
+        // date variable, written one to three times in random spellings, under the XNYS or XHKG
+        // calendar and maybe a zone, and expects evaluate() at random nows of 2025 to return what
+        // parseTickExpr returns at the same now, and the parts of the sessions that the union of the
+        // list covers, from java.time and the test calendar. The compiled list keeps one IR element
+        // for the copies of the date variable. Half of the lists add six copies of the days 1-20 of
+        // each month, which take the static intervals past the cap and the merge threshold
+        // (1,024 + 256), so that the compiler unions them before the calendar runs. The other
+        // elements fall on a trading day after the 20th, within one of its sessions. The lists must
+        // reach each shape that the assertions at the end name, so the test builds more lists, up to
+        // ten times as many, until they do.
         final int listCount = Integer.getInteger("questdb.fuzz.tick.lists", 200);
         final Rnd rnd = TestUtils.generateRandom(LOG);
         final TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP);
@@ -263,6 +265,8 @@ public class TickCalendarTest {
         final LongList parsedIntervals = new LongList();
         final LongList modelIntervals = new LongList();
         final StringSink expression = new StringSink();
+        final StringSink staticElementList = new StringSink();
+        final StringSink spelling = new StringSink();
         boolean hasNestedPairInSession = false;
         boolean hasDateVariableAcrossJoinedParts = false;
         for (int i = 0; i < listCount || (i < 10 * listCount && !(hasNestedPairInSession && hasDateVariableAcrossJoinedParts)); i++) {
@@ -339,18 +343,35 @@ public class TickCalendarTest {
             }
             final boolean isRange = rnd.nextInt(3) > 0;
             final int rangeHours = rnd.nextBoolean() ? 1 : 2 + rnd.nextInt(2);
-            expression.clear();
-            expression.put('[').put(isRange ? "$now - " + rangeHours + "h..$now" : "$today");
-            for (int e = 0, n = elements.size(); e < n; e++) {
-                expression.put(',').put(elements.getQuick(e));
-            }
             if (hasCopies) {
-                expression.put(',').put(copies);
+                elements.add(copies);
             }
-            expression.put(']').put(isZoned ? "@-05:00" : "").put('#').put(exchange);
-            final String tick = expression.toString();
+            // the date variable one to three times, each at a random place in a random spelling
+            for (int c = 0, copyCount = 1 + rnd.nextInt(3); c < copyCount; c++) {
+                spelling.clear();
+                appendDateVariableSpelling(rnd, spelling, isRange, rangeHours);
+                elements.insert(rnd.nextInt(elements.size() + 1), 1, spelling.toString());
+            }
+            // the list, and the list without the date variable
+            expression.clear();
+            staticElementList.clear();
+            for (int e = 0, n = elements.size(); e < n; e++) {
+                final String element = elements.getQuick(e);
+                expression.put(e == 0 ? '[' : ',').put(element);
+                if (element.charAt(0) != '$') {
+                    staticElementList.put(staticElementList.length() == 0 ? '[' : ',').put(element);
+                }
+            }
+            final String listSuffix = ']' + (isZoned ? "@-05:00" : "") + '#' + exchange;
+            final String tick = expression + listSuffix;
+            final String staticElements = staticElementList + listSuffix;
 
-            try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(driver, configuration, tick, 0, tick.length(), 0)) {
+            try (
+                    CompiledTickExpression compiled = IntervalUtils.compileTickExpr(driver, configuration, tick, 0, tick.length(), 0);
+                    CompiledTickExpression staticOnly = IntervalUtils.compileTickExpr(driver, configuration, staticElements, 0, staticElements.length(), 0)
+            ) {
+                // one IR element for the copies of the date variable, next to the STATIC entries
+                Assert.assertEquals(tick, staticOnly.getElementCount() + 1, compiled.getElementCount());
                 for (int trial = 0; trial < 3; trial++) {
                     // The first now falls in the second hour of a pair, so that a range of an hour or more
                     // crosses the start of that hour. The others fall anywhere in 2025. A now off the full
@@ -439,6 +460,25 @@ public class TickCalendarTest {
         }
         Assert.assertEquals(expected, intervalToString(driver, out));
         assertTickIntervalNanos(expected, "[2025-01-08," + days + "]#XNYS");
+    }
+
+    @Test
+    public void testCompiledRepeatedDateVariableWithCalendar() throws SqlException {
+        // The list stores the copies of $today, in any case, as one element. The calendar runs on the
+        // union of the list, so they yield what one copy yields: the hour 15:00 of 2025-01-02 within
+        // its XNYS session, and the session of $today, the Monday 2025-01-06.
+        final TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP);
+        final String expression = "[$today,2025-01-02T15,$TODAY,$today]#XNYS";
+        final LongList out = new LongList();
+        try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(driver, configuration, expression, 0, expression.length(), 0)) {
+            Assert.assertEquals(2, compiled.getElementCount());
+            compiled.evaluate(out, Micros.toMicros(2025, 1, 6, 1, 0));
+        }
+        Assert.assertEquals(
+                "[{lo=2025-01-02T15:00:00.000000Z, hi=2025-01-02T15:59:59.999999Z},"
+                        + "{lo=2025-01-06T14:30:00.000000Z, hi=2025-01-06T20:59:59.999999Z}]",
+                intervalToString(driver, out)
+        );
     }
 
     @Test
@@ -1652,6 +1692,45 @@ public class TickCalendarTest {
             if (isKept.test(toUtcDateTime(schedule.getQuick(i)).toLocalDate())) {
                 out.add(schedule.getQuick(i), schedule.getQuick(i + 1));
             }
+        }
+    }
+
+    // Appends $today, or $now - rangeHours h..$now when isRange is set, in a random spelling, which
+    // the IR encodes as the date variable: names in a random case, spaces around the operators and
+    // before the unit, and a leading zero
+    private static void appendDateVariableSpelling(Rnd rnd, StringSink sink, boolean isRange, int rangeHours) {
+        if (!isRange) {
+            appendRandomCase(rnd, sink, "$today");
+            return;
+        }
+        appendRandomCase(rnd, sink, "$now");
+        appendRandomSpaces(rnd, sink);
+        sink.put('-');
+        appendRandomSpaces(rnd, sink);
+        if (rnd.nextBoolean()) {
+            sink.put('0');
+        }
+        sink.put(rangeHours);
+        appendRandomSpaces(rnd, sink);
+        sink.put('h');
+        appendRandomSpaces(rnd, sink);
+        sink.put("..");
+        appendRandomSpaces(rnd, sink);
+        appendRandomCase(rnd, sink, "$now");
+    }
+
+    // Appends the name with each letter in a random case
+    private static void appendRandomCase(Rnd rnd, StringSink sink, String name) {
+        for (int k = 0, n = name.length(); k < n; k++) {
+            final char c = name.charAt(k);
+            sink.put(rnd.nextBoolean() ? Character.toUpperCase(c) : c);
+        }
+    }
+
+    // Appends 0 to 2 spaces
+    private static void appendRandomSpaces(Rnd rnd, StringSink sink) {
+        for (int k = rnd.nextInt(3); k > 0; k--) {
+            sink.put(' ');
         }
     }
 

@@ -911,6 +911,87 @@ public class IntervalFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInDateVariableListOverMaxIntervals() throws Exception {
+        // A date variable list compiles once, and every execution evaluates each of its date variables
+        // for each time list value, so the list keeps at most the cap (1,024) of them: its distinct
+        // date variables x time list values, as parseTickExpr keeps a list within the cap. One row a
+        // minute from 2024-01-06 for three days; now is 01:00 on the Monday 2024-01-08.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE t (tm #TIMESTAMP, d DATE, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", timestampType.getTypeName());
+            execute("""
+                    INSERT INTO t
+                    SELECT '2024-01-06'::TIMESTAMP + (x - 1) * 60_000_000L,
+                           ('2024-01-06'::TIMESTAMP + (x - 1) * 60_000_000L)::DATE,
+                           '2024-01-06'::TIMESTAMP + (x - 1) * 60_000_000L
+                    FROM long_sequence(4_320)
+                    """);
+            executeWithRewriteTimestamp("CREATE TABLE base (v LONG, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL", timestampType.getTypeName());
+            setCurrentMicros(Micros.toMicros(2024, 1, 8, 1, 0));
+
+            // 5 days x 205 minutes two minutes apart; $today and $today + 0d, which encode apart, x
+            // 513 minutes; and two ranges of a day x 513 minutes
+            final String fiveDays = "'[$today,$yesterday,$today-2d,$today-3d,$today-4d]T[" + minutesOfDay(205, 2) + "]'";
+            final String[] overCapLists = {
+                    fiveDays,
+                    "'[$today, $today + 0d]T[" + minutesOfDay(513, 2) + "]'",
+                    "'[$today..$today, $yesterday..$yesterday]T[" + minutesOfDay(513, 2) + "]'"
+            };
+            for (String tick : overCapLists) {
+                assertOverMaxIntervalsError("SELECT ts FROM t WHERE ts IN " + tick);
+                assertOverMaxIntervalsError("SELECT ts FROM t WHERE tm IN " + tick);
+            }
+            assertOverMaxIntervalsError("SELECT ts FROM t WHERE ts NOT IN " + fiveDays);
+            assertOverMaxIntervalsError("SELECT ts FROM t WHERE ts IN '$today' OR ts IN " + fiveDays);
+            assertOverMaxIntervalsError("SELECT ts FROM t WHERE ts IN " + fiveDays + " OR ts IN '$today'");
+            assertOverMaxIntervalsError("SELECT ts FROM t WHERE ts IN " + fiveDays + " AND ts > dateadd('y', -30, now())");
+            assertOverMaxIntervalsError("SELECT ts FROM t WHERE ts > dateadd('y', -30, now()) AND ts IN " + fiveDays);
+            assertOverMaxIntervalsError("SELECT ts FROM t WHERE d IN " + fiveDays);
+            assertOverMaxIntervalsError("SELECT ts IN " + fiveDays + " FROM t");
+            assertOverMaxIntervalsError("SELECT * FROM (SELECT ts FROM t WHERE ts IN " + fiveDays + ")");
+            assertOverMaxIntervalsError("WITH c AS (SELECT ts FROM t WHERE ts IN " + fiveDays + ") SELECT * FROM c");
+            assertOverMaxIntervalsError("SELECT ts FROM t UNION ALL SELECT ts FROM t WHERE ts IN " + fiveDays);
+            assertOverMaxIntervalsError("SELECT a.ts FROM t a JOIN t b ON a.ts = b.ts WHERE b.ts IN " + fiveDays);
+            assertOverMaxIntervalsError("SELECT ts, count() FROM t WHERE ts IN " + fiveDays + " SAMPLE BY 1h");
+            assertOverMaxIntervalsError("EXPLAIN SELECT ts FROM t WHERE ts IN " + fiveDays);
+            assertOverMaxIntervalsError("CREATE VIEW v AS (SELECT ts FROM t WHERE ts IN " + fiveDays + ")");
+            assertOverMaxIntervalsError("CREATE MATERIALIZED VIEW mv2 AS (SELECT ts, count() FROM base WHERE ts IN " + fiveDays + " SAMPLE BY 1h)");
+            // the EXPIRE ROWS validator reports every predicate error at the name of the view
+            assertExceptionNoLeakCheck(
+                    "CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS WHEN ts IN " + fiveDays,
+                    25,
+                    "invalid EXPIRE ROWS predicate: Bracket expansion produces too many intervals (max 1024)"
+            );
+            Assert.assertNull(engine.getTableTokenIfExists("v"));
+            Assert.assertNull(engine.getTableTokenIfExists("mv"));
+            Assert.assertNull(engine.getTableTokenIfExists("mv2"));
+            // A bind variable string resolves when the cursor opens, and the interval scan of the
+            // designated timestamp swallows the error of parseTickExpr, which keeps the list within
+            // the cap too: IN keeps no row, and NOT IN keeps every row.
+            bindVariableService.clear();
+            bindVariableService.setStr("p", fiveDays.substring(1, fiveDays.length() - 1));
+            assertQuery("SELECT ts FROM t WHERE ts IN :p").noLeakCheck().timestamp("ts").returns("ts\n");
+            assertQuery("SELECT count() FROM t WHERE ts NOT IN :p").noLeakCheck().expectSize().noRandomAccess().returns("count\n4320\n");
+
+            // The list stores a repeated date variable once: 2,000 copies of $today next to
+            // $yesterday x 300 minutes two minutes apart, from 00:00 to 09:58, and $today twice x
+            // 1,024 minutes, from 00:00 to 17:03, stay within the cap. Neither list has a bound
+            // within the IN list threshold of the JIT.
+            assertInOnEveryColumn(
+                    '[' + "$today,".repeat(2_000) + " $yesterday]T[" + minutesOfDay(300, 2) + ']',
+                    "ts >= '2024-01-07' AND ts < '2024-01-09' AND hour(ts) < 10 AND minute(ts) % 2 = 0",
+                    600,
+                    false
+            );
+            assertInOnEveryColumn(
+                    "[$today,$today]T[" + minutesOfDay(1_024, 1) + ']',
+                    "ts >= '2024-01-08' AND ts < '2024-01-08T17:04'",
+                    1_024,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testInDateVariableRangeElementDayFilter() throws Exception {
         // the six days from $today, the Monday 2024-01-08, hold one Monday (row 3)
         assertMemoryLeak(() -> {
@@ -3051,6 +3132,15 @@ public class IntervalFilterTest extends AbstractCairoTest {
         final StringBuilder values = new StringBuilder();
         for (int k = 0; k < count; k++) {
             values.append(k == 0 ? "" : ",").append(twoDigits(2 * k / 60)).append(':').append(twoDigits(2 * k % 60));
+        }
+        return values.toString();
+    }
+
+    // The time list values HH:MM of count minutes of a day stepMinutes apart from 00:00
+    private static String minutesOfDay(int count, int stepMinutes) {
+        final StringBuilder values = new StringBuilder();
+        for (int k = 0; k < count; k++) {
+            values.append(k == 0 ? "" : ",").append(twoDigits(k * stepMinutes / 60)).append(':').append(twoDigits(k * stepMinutes % 60));
         }
         return values.toString();
     }
