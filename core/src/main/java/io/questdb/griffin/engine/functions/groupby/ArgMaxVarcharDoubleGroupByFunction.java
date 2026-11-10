@@ -159,6 +159,11 @@ public class ArgMaxVarcharDoubleGroupByFunction extends VarcharFunction implemen
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return true;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return false;
     }

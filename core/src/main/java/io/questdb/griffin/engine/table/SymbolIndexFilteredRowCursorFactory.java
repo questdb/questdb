@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlExecutionContext;
 
 public class SymbolIndexFilteredRowCursorFactory implements SymbolFunctionRowCursorFactory {
     private final int columnIndex;
@@ -67,6 +68,11 @@ public class SymbolIndexFilteredRowCursorFactory implements SymbolFunctionRowCur
 
     public int getSymbolKey() {
         return cursor.getSymbolKey() == 0 ? SymbolTable.VALUE_IS_NULL : cursor.getSymbolKey() - 1;
+    }
+
+    @Override
+    public void init(PageFrameCursor pageFrameCursor, SqlExecutionContext sqlExecutionContext) {
+        cursor.init(sqlExecutionContext.getCircuitBreaker());
     }
 
     @Override

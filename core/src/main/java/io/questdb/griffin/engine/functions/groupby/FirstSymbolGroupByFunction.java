@@ -112,6 +112,11 @@ public class FirstSymbolGroupByFunction extends SymbolFunction implements GroupB
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return true;
+    }
+
+    @Override
     public boolean isSymbolTableStatic() {
         return arg.isSymbolTableStatic();
     }

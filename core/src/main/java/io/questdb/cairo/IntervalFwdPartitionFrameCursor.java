@@ -50,6 +50,20 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
 
     @Override
     public void calculateSize(RecordCursor.Counter counter) {
+        calculateSize0(counter, false);
+    }
+
+    /**
+     * Like {@link #calculateSize(RecordCursor.Counter)}, but counts a partition that lies wholly
+     * inside an interval from the metadata, without opening it: only the partitions an interval
+     * boundary cuts are opened and searched, at most two per interval.
+     */
+    @Override
+    public void calculateSizeUpperBound(RecordCursor.Counter counter) {
+        calculateSize0(counter, true);
+    }
+
+    private void calculateSize0(RecordCursor.Counter counter, boolean skipInnerPartitions) {
         int intervalsLo1 = this.intervalsLo;
         int intervalsHi1 = this.intervalsHi;
         int partitionLo1 = this.partitionLo;
@@ -77,6 +91,15 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                 final long partitionTimestampHiApprox = timestampFinder.maxTimestampApproxFromMetadata();
                 // interval is wholly above partition, skip partition
                 if (partitionTimestampHiApprox < intervalLo) {
+                    partitionLimit1 = -1;
+                    partitionLo1++;
+                    continue;
+                }
+
+                // the metadata bounds hold every row of the partition: all of it is in the interval
+                if (skipInnerPartitions && partitionLimit1 <= 0
+                        && partitionTimestampLoApprox >= intervalLo && partitionTimestampHiApprox <= intervalHi) {
+                    size += rowCount;
                     partitionLimit1 = -1;
                     partitionLo1++;
                     continue;

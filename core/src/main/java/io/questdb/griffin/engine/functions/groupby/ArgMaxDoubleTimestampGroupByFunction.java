@@ -116,6 +116,11 @@ public class ArgMaxDoubleTimestampGroupByFunction extends DoubleFunction impleme
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return true;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return BinaryFunction.super.isThreadSafe();
     }

@@ -103,6 +103,28 @@ public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
     StaticSymbolTable getSymbolTable(int columnIndex);
 
     /**
+     * Asks the cursor, before its first {@link #next()}, to hand out the native frames of this
+     * execution without their column addresses, which a
+     * {@link PageFrame#getDeferredAddressFiller() filler} then computes on whichever thread first
+     * needs each frame. Only a consumer that reads frames solely through a
+     * {@link PageFrameAddressCache} and {@link PageFrameMemoryPool} may ask, since the cache is what
+     * calls the filler. The request lasts until the cursor is opened again.
+     *
+     * @return whether the cursor will defer them; false for a cursor that cannot
+     */
+    default boolean deferFrameAddresses() {
+        return false;
+    }
+
+    /**
+     * The number of frames this cursor is expected to yield, or -1 when it cannot tell cheaply: a
+     * hint for sizing what holds the frames, which may be too high or too low.
+     */
+    default long getFrameCountHint() {
+        return -1;
+    }
+
+    /**
      * Returns true when the cursor drops whole parquet row groups up front using pushed-down filter
      * conditions, so its iteration is not a 1:1 pass over the physical partition rows.
      * <p>

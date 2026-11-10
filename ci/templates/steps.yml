@@ -237,7 +237,8 @@ steps:
   # library a rust-build-job.yml job published instead of compiling the crate; RUST_NATIVE_ARGS
   # carries the Maven flags for that. It is set on every agent, empty where Maven compiles the
   # crate itself, because an undefined $(VAR) would reach Maven as literal text. Coverage legs
-  # never pass an artifact: they need the library instrumented for coverage (qdbr-coverage).
+  # never pass an artifact: when the Rust sources change, they need the library instrumented for
+  # coverage (qdbr-coverage, see "Select the Rust library for coverage").
   - ${{ if ne(parameters.prebuiltRustArtifact, '') }}:
       - task: DownloadPipelineArtifact@2
         displayName: "Download prebuilt Rust library"
@@ -385,6 +386,27 @@ steps:
             eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
         )
       )
+  # Only a run that changes the Rust sources turns the Rust profile into a report (the LCOV steps
+  # below), so only such a run builds libquestdbr unoptimized and instrumented (qdbr-coverage).
+  # Every other run tests against the release library "Pre-build for Coverage" built: Parquet
+  # and the other Rust paths run several times faster in it.
+  - bash: |
+      if [ "${RUST_SOURCE_CODE_CHANGED:-}" = "true" ]; then
+        echo "##vso[task.setvariable variable=QDBR_COVERAGE_PROFILE],qdbr-coverage"
+      else
+        echo "##vso[task.setvariable variable=QDBR_COVERAGE_PROFILE]"
+      fi
+    displayName: "Select the Rust library for coverage"
+    condition: |
+      and(
+        succeeded(),
+        startsWith(variables['testset'], 'coverage'),
+        ne(variables['System.PullRequest.IsFork'], 'true'),
+        or(
+            eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'),
+            eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
+        )
+      )
   - task: Maven@3
     displayName: "Run tests with Coverage (jemalloc)"
     inputs:
@@ -396,7 +418,7 @@ steps:
       options: "-s $(MAVEN_SETTINGS_FILE) --batch-mode -Dtest.include=$(includeTests)
         -Dtest.exclude=$(excludeTests)
         -Dout=$(Build.SourcesDirectory)/ci/qlog.conf
-        -P jacoco,qdbr-coverage,build-web-console
+        -P jacoco$(QDBR_COVERAGE_PROFILE),build-web-console
         $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)
     env:

@@ -30,6 +30,7 @@ import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.MetadataCacheWriter;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.O3PartitionJob;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -40,6 +41,7 @@ import io.questdb.cutlass.parquet.CopyExportRequestJob;
 import io.questdb.cutlass.parquet.ParquetExportMode;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.ops.CreateTableOperationImpl;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.griffin.engine.table.parquet.ParquetFileDecoder;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
@@ -80,6 +82,16 @@ import static org.junit.Assert.assertTrue;
 
 public class CopyExportTest extends AbstractCairoTest {
 
+    // t from createDescExportSource() ordered by ts DESC
+    private static final String DESC_EXPORT_ROWS = """
+            ts\tx
+            2024-01-03T12:00:00.000000Z\t6
+            2024-01-03T00:00:00.000000Z\t5
+            2024-01-02T12:00:00.000000Z\t4
+            2024-01-02T00:00:00.000000Z\t3
+            2024-01-01T12:00:00.000000Z\t2
+            2024-01-01T00:00:00.000000Z\t1
+            """;
     static HashSet<Class<?>> exceptionTypesToCatch = new HashSet<>();
 
     @BeforeClass
@@ -213,9 +225,272 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyAscTempTableKeepsDesignatedTimestamp() throws Exception {
+        // Regression guard: an ascending SELECT through a non-partitioned temp table keeps its
+        // designated timestamp in the exported file.
+        assertMemoryLeak(() -> {
+            createDescExportSource(" PARTITION BY DAY");
+            CopyExportRunnable stmt = () -> runAndFetchCopyExportID(
+                    "COPY (SELECT ts, x, b FROM t WHERE x > 0) TO 'asc_filter' WITH FORMAT PARQUET",
+                    sqlExecutionContext
+            );
+            CopyExportRunnable test = () -> assertEventually(() -> {
+                assertQuery("SELECT num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("num_exported_files\tstatus\n1\tfinished\n");
+                assertQuery("SELECT ts, x FROM read_parquet('" + exportRoot + File.separator + "asc_filter.parquet')")
+                        .noLeakCheck()
+                        .expectSize()
+                        .timestamp("ts")
+                        .returns("""
+                                ts\tx
+                                2024-01-01T00:00:00.000000Z\t1
+                                2024-01-01T12:00:00.000000Z\t2
+                                2024-01-02T00:00:00.000000Z\t3
+                                2024-01-02T12:00:00.000000Z\t4
+                                2024-01-03T00:00:00.000000Z\t5
+                                2024-01-03T12:00:00.000000Z\t6
+                                """);
+            });
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
     public void testCopyCancelSyntaxError() throws Exception {
         assertQuery("copy 'foobar' cancel aw beans;")
                 .fails(21, "unexpected token [aw]");
+    }
+
+    @Test
+    public void testCopyDescTempTableAcrossBatches() throws Exception {
+        // The temp table commits every 2 rows and the encoder cuts a row group every 2 rows, so the
+        // 6 descending rows cross both boundaries twice and must keep their order across them.
+        node1.setProperty(PropertyKey.CAIRO_PARQUET_EXPORT_BATCH_SIZE, 2);
+        assertMemoryLeak(() -> {
+            createDescExportSource(" PARTITION BY DAY");
+            assertTempTableCopyExport(
+                    "SELECT ts, x, b FROM t WHERE x > 0 ORDER BY ts DESC",
+                    " ROW_GROUP_SIZE 2",
+                    "desc_batches",
+                    DESC_EXPORT_ROWS,
+                    true
+            );
+            assertParquetRowGroupCount(exportRoot + File.separator + "desc_batches.parquet", 3);
+        });
+    }
+
+    @Test
+    public void testCopyDescTempTableBinaryFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            createDescExportSource(" PARTITION BY DAY");
+            assertTempTableCopyExport("SELECT ts, x, b FROM t WHERE x > 0 ORDER BY ts DESC", "", "desc_filter", DESC_EXPORT_ROWS, true);
+        });
+    }
+
+    @Test
+    public void testCopyDescTempTableBinaryLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            createDescExportSource(" PARTITION BY DAY");
+            assertTempTableCopyExport(
+                    "SELECT ts, x, b FROM t ORDER BY ts DESC LIMIT 4",
+                    "",
+                    "desc_limit",
+                    """
+                            ts\tx
+                            2024-01-03T12:00:00.000000Z\t6
+                            2024-01-03T00:00:00.000000Z\t5
+                            2024-01-02T12:00:00.000000Z\t4
+                            2024-01-02T00:00:00.000000Z\t3
+                            """,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testCopyDescTempTableComputedBinary() throws Exception {
+        assertMemoryLeak(() -> {
+            createDescExportSource(" PARTITION BY DAY");
+            // rnd_bin() is unseeded, so only ts and x can be compared
+            assertTempTableCopyExport("SELECT ts, x, rnd_bin(4, 4, 0) b FROM t ORDER BY ts DESC", "", "desc_computed", DESC_EXPORT_ROWS, false);
+        });
+    }
+
+    @Test
+    public void testCopyDescTempTableCte() throws Exception {
+        assertMemoryLeak(() -> {
+            createDescExportSource(" PARTITION BY DAY");
+            assertTempTableCopyExport(
+                    "WITH q AS (SELECT ts, x, b FROM t WHERE x > 0 ORDER BY ts DESC) SELECT * FROM q",
+                    "",
+                    "desc_cte",
+                    DESC_EXPORT_ROWS,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testCopyDescTempTableEmptyResult() throws Exception {
+        assertMemoryLeak(() -> {
+            createDescExportSource(" PARTITION BY DAY");
+            assertTempTableCopyExport("SELECT ts, x, b FROM t WHERE x < 0 ORDER BY ts DESC", "", "desc_empty", "ts\tx\n", true);
+        });
+    }
+
+    @Test
+    public void testCopyDescTempTableMixedParquetNative() throws Exception {
+        assertMemoryLeak(() -> {
+            createDescExportSource(" PARTITION BY DAY");
+            // only the first day is parquet, the other two stay native
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            assertTempTableCopyExport("SELECT ts, x, b FROM t WHERE x > 0 ORDER BY ts DESC", "", "desc_mixed", DESC_EXPORT_ROWS, true);
+        });
+    }
+
+    @Test
+    public void testCopyDescTempTableNanosTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP_NS, x LONG, b BINARY) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t SELECT timestamp_sequence('2024-01-01', 43_200_000_000L)::TIMESTAMP_NS, x, rnd_bin(4, 4, 0) FROM long_sequence(6)");
+            assertTempTableCopyExport(
+                    "SELECT ts, x, b FROM t WHERE x > 0 ORDER BY ts DESC",
+                    "",
+                    "desc_nanos",
+                    """
+                            ts\tx
+                            2024-01-03T12:00:00.000000000Z\t6
+                            2024-01-03T00:00:00.000000000Z\t5
+                            2024-01-02T12:00:00.000000000Z\t4
+                            2024-01-02T00:00:00.000000000Z\t3
+                            2024-01-01T12:00:00.000000000Z\t2
+                            2024-01-01T00:00:00.000000000Z\t1
+                            """,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testCopyDescTempTableNegativeLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            createDescExportSource(" PARTITION BY DAY");
+            // the last 4 rows of the descending order
+            assertTempTableCopyExport(
+                    "SELECT ts, x, b FROM t ORDER BY ts DESC LIMIT -4",
+                    "",
+                    "desc_neg_limit",
+                    """
+                            ts\tx
+                            2024-01-02T12:00:00.000000Z\t4
+                            2024-01-02T00:00:00.000000Z\t3
+                            2024-01-01T12:00:00.000000Z\t2
+                            2024-01-01T00:00:00.000000Z\t1
+                            """,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testCopyDescTempTableNonPartitionedSource() throws Exception {
+        assertMemoryLeak(() -> {
+            createDescExportSource("");
+            assertTempTableCopyExport("SELECT ts, x, b FROM t WHERE x > 0 ORDER BY ts DESC", "", "desc_non_part", DESC_EXPORT_ROWS, true);
+        });
+    }
+
+    @Test
+    public void testCopyDescTempTableNullAndPreEpochTimestamps() throws Exception {
+        assertMemoryLeak(() -> {
+            // A designated timestamp cannot be stored before 1970, so src keeps ts as a plain column
+            // and the SELECT declares it designated after sorting.
+            execute("CREATE TABLE src (ts TIMESTAMP, x LONG, b BINARY)");
+            execute("""
+                    INSERT INTO src VALUES
+                        ('1970-01-01T00:00:00.000000Z', NULL, NULL),
+                        ('2024-01-01T00:00:00.000000Z', 3, NULL)
+                    """);
+            execute("INSERT INTO src SELECT '1969-12-31T23:59:59.999999Z'::TIMESTAMP, 1, rnd_bin(4, 4, 0) FROM long_sequence(1)");
+            assertTempTableCopyExport(
+                    "SELECT ts, x, b FROM ((src ORDER BY ts) TIMESTAMP(ts)) ORDER BY ts DESC",
+                    "",
+                    "desc_pre_epoch",
+                    """
+                            ts\tx
+                            2024-01-01T00:00:00.000000Z\t3
+                            1970-01-01T00:00:00.000000Z\tnull
+                            1969-12-31T23:59:59.999999Z\t1
+                            """,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testCopyDescTempTableRetypedParquetColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            // x went from INT to LONG after its first day became parquet, which sends the export
+            // through the temp table to convert the column
+            execute("CREATE TABLE t (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t SELECT timestamp_sequence('2024-01-01', 43_200_000_000L), x::INT FROM long_sequence(6)");
+            drainWalQueue();
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            execute("ALTER TABLE t ALTER COLUMN x TYPE LONG");
+            drainWalQueue();
+            assertTempTableCopyExport("SELECT ts, x FROM t ORDER BY ts DESC", "", "desc_retyped", DESC_EXPORT_ROWS, true);
+        });
+    }
+
+    @Test
+    public void testCopyDescTempTableSingleRow() throws Exception {
+        assertMemoryLeak(() -> {
+            createDescExportSource(" PARTITION BY DAY");
+            assertTempTableCopyExport(
+                    "SELECT ts, x, b FROM t WHERE x = 3 ORDER BY ts DESC",
+                    "",
+                    "desc_single",
+                    """
+                            ts\tx
+                            2024-01-02T00:00:00.000000Z\t3
+                            """,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testCopyDescWithPartitionBy() throws Exception {
+        // Regression guard: a partitioned export temp table keeps the designated timestamp for a
+        // descending SELECT, and its O3 sort writes every day's file in ascending order.
+        assertMemoryLeak(() -> {
+            createDescExportSource(" PARTITION BY DAY");
+            final String outDir = exportRoot + File.separator + "desc_by_day" + File.separator;
+            CopyExportRunnable stmt = () -> runAndFetchCopyExportID(
+                    "COPY (SELECT ts, x, b FROM t WHERE x > 0 ORDER BY ts DESC) TO 'desc_by_day' WITH FORMAT PARQUET PARTITION_BY DAY",
+                    sqlExecutionContext
+            );
+            CopyExportRunnable test = () -> assertEventually(() -> {
+                assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("export_path\tnum_exported_files\tstatus\n" + outDir + "\t3\tfinished\n");
+                for (int day = 1; day <= 3; day++) {
+                    final long x = 2L * day - 1;
+                    assertQuery("SELECT ts, x FROM read_parquet('" + outDir + "2024-01-0" + day + ".parquet')")
+                            .noLeakCheck()
+                            .expectSize()
+                            .timestamp("ts")
+                            .returns("ts\tx\n"
+                                    + "2024-01-0" + day + "T00:00:00.000000Z\t" + x + "\n"
+                                    + "2024-01-0" + day + "T12:00:00.000000Z\t" + (x + 1) + "\n");
+                }
+            });
+            testCopyExport(stmt, test);
+        });
     }
 
     @Test
@@ -338,6 +613,45 @@ public class CopyExportTest extends AbstractCairoTest {
     @Test
     public void testCopyFusedSymbolKeyJoinGroupBySurvivesBuildTableGrowthAfterQueue() throws Exception {
         assertMemoryLeak(() -> assertCopyOfFusedJoinGroupByAfterBuildTableGrowth("SYMBOL", "('k' || (x % 5))::SYMBOL", "", "fused_symbol_growth"));
+    }
+
+    @Test
+    public void testCopyKeyedGroupByTempTable() throws Exception {
+        // A keyed GROUP BY returns its rows in hash order and TIMESTAMP(ts) re-attaches a designated
+        // timestamp, so the SELECT declares no scan direction. The computed BINARY column sends the
+        // export through the temp table, which must take every row whatever order they come in.
+        assertMemoryLeak(() -> {
+            createDescExportSource(" PARTITION BY DAY");
+            final String parquetPath = exportRoot + File.separator + "keyed_group_by.parquet";
+            CopyExportRunnable stmt = () -> runAndFetchCopyExportID(
+                    "COPY (SELECT ts, x, rnd_bin(4, 4, 0) b FROM ((SELECT ts, count() x FROM t GROUP BY ts) TIMESTAMP(ts)))" +
+                            " TO 'keyed_group_by' WITH FORMAT PARQUET",
+                    sqlExecutionContext
+            );
+            CopyExportRunnable test = () -> assertEventually(() -> {
+                assertQuery("SELECT num_exported_files, status, message FROM \"sys.copy_export_log\" LIMIT -1")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("num_exported_files\tstatus\tmessage\n1\tfinished\t\n");
+                // the file declares no designated timestamp, as its rows need not ascend
+                assertParquetHasNoDesignatedTimestamp(parquetPath);
+                // the hash table decides the row order, so compare sorted
+                assertQuery("SELECT ts, x FROM read_parquet('" + parquetPath + "') ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .timestamp("ts")
+                        .returns("""
+                                ts\tx
+                                2024-01-01T00:00:00.000000Z\t1
+                                2024-01-01T12:00:00.000000Z\t1
+                                2024-01-02T00:00:00.000000Z\t1
+                                2024-01-02T12:00:00.000000Z\t1
+                                2024-01-03T00:00:00.000000Z\t1
+                                2024-01-03T12:00:00.000000Z\t1
+                                """);
+            });
+            testCopyExport(stmt, test);
+        });
     }
 
     @Test
@@ -3015,6 +3329,116 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyTempTableRevalidateOtherAfterForwardDropsTimestamp() throws Exception {
+        // COPY validates the temp table against the SELECT when it queues the export, and the export
+        // job validates it again after compiling the SELECT afresh. When the second compile has no
+        // scan direction, the operation must drop the designated timestamp the first one inherited.
+        assertMemoryLeak(() -> {
+            createDescExportSource(" PARTITION BY DAY");
+            try (
+                    RecordCursorFactory forward = select("SELECT ts, x, b FROM t WHERE x > 0");
+                    RecordCursorFactory other = select("(SELECT ts, x, b FROM t WHERE x > 3 UNION ALL SELECT ts, x, b FROM t WHERE x <= 3) TIMESTAMP(ts)");
+                    CreateTableOperationImpl createOp = new CreateTableOperationImpl(
+                            "SELECT ts, x, b FROM t",
+                            "revalidate_tmp",
+                            PartitionBy.NONE,
+                            false,
+                            128,
+                            "COPY",
+                            false
+                    )
+            ) {
+                Assert.assertEquals(RecordCursorFactory.SCAN_DIRECTION_FORWARD, forward.getScanDirection());
+                Assert.assertEquals(RecordCursorFactory.SCAN_DIRECTION_OTHER, other.getScanDirection());
+                createOp.setTableKind(TableUtils.TABLE_KIND_TEMP_PARQUET_EXPORT);
+                createOp.validateAndUpdateMetadataFromSelect(forward.getMetadata(), forward.getScanDirection());
+                Assert.assertEquals(0, createOp.getTimestampIndex());
+                createOp.validateAndUpdateMetadataFromSelect(other.getMetadata(), other.getScanDirection());
+                Assert.assertEquals(-1, createOp.getTimestampIndex());
+            }
+        });
+    }
+
+    @Test
+    public void testCopyTempTableRevalidateWithoutTimestampDropsTimestamp() throws Exception {
+        // the second compile of the SELECT declares no designated timestamp at all, so the operation
+        // must drop the one the first validation inherited
+        assertMemoryLeak(() -> {
+            createDescExportSource(" PARTITION BY DAY");
+            try (
+                    RecordCursorFactory forward = select("SELECT ts, x, b FROM t WHERE x > 0");
+                    RecordCursorFactory noTimestamp = select("SELECT ts, x, b FROM (SELECT ts, x, b FROM t WHERE x > 0 ORDER BY x)");
+                    CreateTableOperationImpl createOp = new CreateTableOperationImpl(
+                            "SELECT ts, x, b FROM t",
+                            "revalidate_tmp",
+                            PartitionBy.NONE,
+                            false,
+                            128,
+                            "COPY",
+                            false
+                    )
+            ) {
+                Assert.assertEquals(-1, noTimestamp.getMetadata().getTimestampIndex());
+                createOp.setTableKind(TableUtils.TABLE_KIND_TEMP_PARQUET_EXPORT);
+                createOp.validateAndUpdateMetadataFromSelect(forward.getMetadata(), forward.getScanDirection());
+                Assert.assertEquals(0, createOp.getTimestampIndex());
+                createOp.validateAndUpdateMetadataFromSelect(noTimestamp.getMetadata(), noTimestamp.getScanDirection());
+                Assert.assertEquals(-1, createOp.getTimestampIndex());
+            }
+        });
+    }
+
+    @Test
+    public void testCopyUnionAllDisjointAscendingTempTable() throws Exception {
+        // a holds the first day and c the next two, so the concatenation is ascending, yet the union
+        // declares no scan direction. The export cannot tell this from an interleaved union before it
+        // writes the rows, so the file keeps every row in union order and declares no designated
+        // timestamp.
+        assertMemoryLeak(() -> {
+            createUnionExportSources("2024-01-01", 1, 2, "2024-01-02", 3, 4);
+            assertTempTableCopyExport(
+                    "(SELECT ts, x, b FROM a WHERE x > 0 UNION ALL SELECT ts, x, b FROM c WHERE x > 0) TIMESTAMP(ts)",
+                    "",
+                    "union_disjoint",
+                    """
+                            ts\tx
+                            2024-01-01T00:00:00.000000Z\t1
+                            2024-01-01T12:00:00.000000Z\t2
+                            2024-01-02T00:00:00.000000Z\t3
+                            2024-01-02T12:00:00.000000Z\t4
+                            2024-01-03T00:00:00.000000Z\t5
+                            2024-01-03T12:00:00.000000Z\t6
+                            """,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testCopyUnionAllInterleavedTempTable() throws Exception {
+        // a holds the last two days and c the first, so the union steps back in time at the branch
+        // boundary; the file keeps the union order: a's rows, then c's.
+        assertMemoryLeak(() -> {
+            createUnionExportSources("2024-01-02", 3, 4, "2024-01-01", 1, 2);
+            assertTempTableCopyExport(
+                    "(SELECT ts, x, b FROM a WHERE x > 0 UNION ALL SELECT ts, x, b FROM c WHERE x > 0) TIMESTAMP(ts)",
+                    "",
+                    "union_interleaved",
+                    """
+                            ts\tx
+                            2024-01-02T00:00:00.000000Z\t3
+                            2024-01-02T12:00:00.000000Z\t4
+                            2024-01-03T00:00:00.000000Z\t5
+                            2024-01-03T12:00:00.000000Z\t6
+                            2024-01-01T00:00:00.000000Z\t1
+                            2024-01-01T12:00:00.000000Z\t2
+                            """,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testCopyUseInsert() throws Exception {
         assertMemoryLeak(() -> {
             engine.execute("CREATE TABLE reject_non_select_test AS (SELECT x FROM long_sequence(2))", sqlExecutionContext);
@@ -3669,6 +4093,57 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyWithPartitionByOverUnionAllSelect() throws Exception {
+        assertMemoryLeak(() -> {
+            // pa holds 2024-01-01, -03 and -05, pb holds -02, -04 and -06, 24 hourly rows each.
+            // "pa UNION ALL pb" concatenates the branches, so the timestamp restarts at the branch
+            // boundary and the union declares an INDETERMINATE scan direction. A partitioned export
+            // goes through a temp table, which O3-sorts on insert, so that direction is irrelevant.
+            execute("create table pa (ts timestamp, v long) timestamp(ts) partition by day");
+            execute("create table pb (ts timestamp, v long) timestamp(ts) partition by day");
+            execute("insert into pa select timestamp_sequence('2024-01-01T00:00:00.000000Z', 3600000000L) ts, x v from long_sequence(24)");
+            execute("insert into pa select timestamp_sequence('2024-01-03T00:00:00.000000Z', 3600000000L) ts, 100 + x v from long_sequence(24)");
+            execute("insert into pa select timestamp_sequence('2024-01-05T00:00:00.000000Z', 3600000000L) ts, 200 + x v from long_sequence(24)");
+            execute("insert into pb select timestamp_sequence('2024-01-02T00:00:00.000000Z', 3600000000L) ts, 300 + x v from long_sequence(24)");
+            execute("insert into pb select timestamp_sequence('2024-01-04T00:00:00.000000Z', 3600000000L) ts, 400 + x v from long_sequence(24)");
+            execute("insert into pb select timestamp_sequence('2024-01-06T00:00:00.000000Z', 3600000000L) ts, 500 + x v from long_sequence(24)");
+
+            final String outDir = exportRoot + File.separator + "union_output" + File.separator;
+            // every exported file, and the v range that identifies the rows it must hold
+            final String[] days = {"2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05", "2024-01-06"};
+            final String[] vRanges = {"1\t24", "301\t324", "101\t124", "401\t424", "201\t224", "501\t524"};
+
+            CopyExportRunnable stmt = () -> runAndFetchCopyExportID(
+                    "copy ((pa union all pb) timestamp(ts)) to 'union_output' with format parquet partition_by DAY",
+                    sqlExecutionContext
+            );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" + outDir + "\t6\tfinished\n");
+                        // each file holds exactly the day its name claims - all 24 of its rows, no
+                        // row from a neighbouring day, and the values the source put on that day
+                        for (int i = 0; i < days.length; i++) {
+                            assertQuery("select count() c, min(ts) lo, max(ts) hi, min(v) vlo, max(v) vhi" +
+                                    " from read_parquet('" + outDir + days[i] + ".parquet')")
+                                    .noLeakCheck()
+                                    .noRandomAccess()
+                                    .expectSize()
+                                    .returns("c\tlo\thi\tvlo\tvhi\n24\t"
+                                            + days[i] + "T00:00:00.000000Z\t"
+                                            + days[i] + "T23:00:00.000000Z\t"
+                                            + vRanges[i] + "\n");
+                        }
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
     public void testCopyWithPartitionByTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test_table (ts timestamp, x int) timestamp(ts) partition by DAY");
@@ -4238,6 +4713,32 @@ public class CopyExportTest extends AbstractCairoTest {
                     });
 
             testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testRegularTableOperationKeepsTimestampOfOtherSelect() throws Exception {
+        // Contrast with the export temp table: a regular non-partitioned CREATE TABLE AS keeps the
+        // designated timestamp of a SELECT with no scan direction, and leaves the order to the writer.
+        assertMemoryLeak(() -> {
+            createDescExportSource(" PARTITION BY DAY");
+            try (
+                    RecordCursorFactory other = select("(SELECT ts, x, b FROM t WHERE x > 3 UNION ALL SELECT ts, x, b FROM t WHERE x <= 3) TIMESTAMP(ts)");
+                    CreateTableOperationImpl createOp = new CreateTableOperationImpl(
+                            "SELECT ts, x, b FROM t",
+                            "regular_dst",
+                            PartitionBy.NONE,
+                            false,
+                            128,
+                            "CREATE TABLE regular_dst AS (...)",
+                            false
+                    )
+            ) {
+                Assert.assertEquals(RecordCursorFactory.SCAN_DIRECTION_OTHER, other.getScanDirection());
+                Assert.assertEquals(TableUtils.TABLE_KIND_REGULAR_TABLE, createOp.getTableKind());
+                createOp.validateAndUpdateMetadataFromSelect(other.getMetadata(), other.getScanDirection());
+                Assert.assertEquals(0, createOp.getTimestampIndex());
+            }
         });
     }
 
@@ -4822,6 +5323,90 @@ public class CopyExportTest extends AbstractCairoTest {
                 });
 
         testCopyExport(stmt, test);
+    }
+
+    /**
+     * Exports {@code select} with COPY into a single file and checks the export log, the file's ts and x
+     * columns in file order, and that the file declares no designated timestamp (no {@code .timestamp()}),
+     * since its rows do not ascend. When the SELECT is deterministic, the whole file, BINARY payloads
+     * included, must also match the SELECT run directly.
+     */
+    private void assertTempTableCopyExport(
+            String select,
+            String options,
+            String fileName,
+            String expectedTsAndX,
+            boolean isDeterministic
+    ) throws Exception {
+        final String parquetPath = exportRoot + File.separator + fileName + ".parquet";
+        CopyExportRunnable stmt = () -> runAndFetchCopyExportID(
+                "COPY (" + select + ") TO '" + fileName + "' WITH FORMAT PARQUET" + options,
+                sqlExecutionContext
+        );
+        CopyExportRunnable test = () -> assertEventually(() -> {
+            assertQuery("SELECT export_path, num_exported_files, status, message FROM \"sys.copy_export_log\" LIMIT -1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("export_path\tnum_exported_files\tstatus\tmessage\n" + parquetPath + "\t1\tfinished\t\n");
+            assertQuery("SELECT ts, x FROM read_parquet('" + parquetPath + "')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedTsAndX);
+            if (isDeterministic) {
+                assertParquetMatchesQuery(select, parquetPath);
+            }
+        });
+        testCopyExport(stmt, test);
+    }
+
+    private void assertParquetHasNoDesignatedTimestamp(String parquetPath) throws SqlException {
+        try (RecordCursorFactory factory = select("read_parquet('" + parquetPath + "')")) {
+            Assert.assertEquals(-1, factory.getMetadata().getTimestampIndex());
+        }
+    }
+
+    private void assertParquetRowGroupCount(String parquetPath, int expectedRowGroupCount) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        long fd = -1;
+        long addr = 0;
+        long fileSize = 0;
+        try (Path path = new Path(); ParquetFileDecoder decoder = new ParquetFileDecoder()) {
+            path.of(parquetPath).$();
+            fd = TableUtils.openRO(ff, path.$(), LogFactory.getLog(CopyExportTest.class));
+            fileSize = ff.length(fd);
+            addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            decoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+            Assert.assertEquals(expectedRowGroupCount, decoder.metadata().getRowGroupCount());
+        } finally {
+            if (addr != 0) {
+                ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            }
+            if (fd != -1) {
+                ff.close(fd);
+            }
+        }
+    }
+
+    /**
+     * Creates {@code t (ts, x, b BINARY)} with 6 rows, ts = 2024-01-01 + 12h * (x - 1) and x = 1..6, so
+     * ORDER BY ts DESC returns {@link #DESC_EXPORT_ROWS}.
+     */
+    private void createDescExportSource(String partitionByClause) throws Exception {
+        execute("CREATE TABLE t (ts TIMESTAMP, x LONG, b BINARY) TIMESTAMP(ts)" + partitionByClause);
+        execute("INSERT INTO t SELECT timestamp_sequence('2024-01-01', 43_200_000_000L), x, rnd_bin(4, 4, 0) FROM long_sequence(6)");
+    }
+
+    /**
+     * Creates tables {@code a} and {@code c (ts, x, b BINARY)}; each holds its row count at 12h steps from
+     * its start, with x counting up from its first value.
+     */
+    private void createUnionExportSources(String aStart, long aFirstX, int aRows, String cStart, long cFirstX, int cRows) throws Exception {
+        execute("CREATE TABLE a (ts TIMESTAMP, x LONG, b BINARY) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE c (ts TIMESTAMP, x LONG, b BINARY) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("INSERT INTO a SELECT timestamp_sequence('" + aStart + "', 43_200_000_000L), x + " + (aFirstX - 1)
+                + ", rnd_bin(4, 4, 0) FROM long_sequence(" + aRows + ")");
+        execute("INSERT INTO c SELECT timestamp_sequence('" + cStart + "', 43_200_000_000L), x + " + (cFirstX - 1)
+                + ", rnd_bin(4, 4, 0) FROM long_sequence(" + cRows + ")");
     }
 
     /**

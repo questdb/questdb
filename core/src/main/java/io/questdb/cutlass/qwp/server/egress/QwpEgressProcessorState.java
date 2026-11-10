@@ -51,6 +51,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.AssociativeCache;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
@@ -80,6 +81,9 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     public static volatile int defaultMaxDictEntriesOverrideForTest = -1;
     @TestOnly
     public static volatile int defaultMaxDictHeapBytesOverrideForTest = -1;
+    // Test-only: when non-negative, replaces qwp.egress.symbol.dense.max.keys for new connections.
+    @TestOnly
+    public static volatile int symbolDenseMaxKeysOverrideForTest = -1;
     private final QwpResultBatchBuffer batchBuffer = new QwpResultBatchBuffer();
     private final BindVariableServiceImpl bindVariableService;
     private final CairoConfiguration cairoConfiguration;
@@ -252,6 +256,8 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     // streamingPageFrameRowHi). Cleared on {@link #endStreaming}.
     private PageFrame streamingCurrentPageFrame;
     private RecordCursor streamingCursor;
+    // streamingCursor.supportsRecordBlocks(), asked once when the cursor is handed over
+    private boolean streamingCursorSupportsBlocks;
     private RecordCursorFactory streamingFactory;
     private PageFrameCursor streamingPageFrameCursor;
     private int streamingPageFrameIndex;
@@ -279,6 +285,12 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      * {@link QwpEgressUpgradeProcessor} reaches the cache-put site.
      */
     private String streamingSqlText;
+    // A finished query's factory waiting for endStreaming to close its cursor before it goes back to
+    // the select cache. The cache can be shared by every network worker, so a factory must never be
+    // visible in it while a cursor of it is still open on this connection.
+    private AssociativeCache<RecordCursorFactory> pendingCache;
+    private RecordCursorFactory pendingCacheFactory;
+    private String pendingCacheSqlText;
     private boolean wsHandshakeSent;
     // Native ZSTD_CCtx handle (pointer from Zstd.createCCtx). 0 means not yet
     // allocated. Lives across queries on the same connection because the
@@ -294,6 +306,10 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     public QwpEgressProcessorState(CairoConfiguration cairoConfiguration) {
         this.cairoConfiguration = cairoConfiguration;
         this.bindVariableService = new BindVariableServiceImpl(cairoConfiguration);
+        final int symbolDenseMaxKeysOverride = symbolDenseMaxKeysOverrideForTest;
+        batchBuffer.setSymbolDenseMaxKeys(symbolDenseMaxKeysOverride >= 0
+                ? symbolDenseMaxKeysOverride
+                : cairoConfiguration.getQwpEgressSymbolDenseMaxKeys());
         // Pick up any test-only default overrides active at construction time
         // so tests that need tiny soft caps don't have to reach into every
         // per-connection state instance.
@@ -408,6 +424,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         this.streamingRequestId = requestId;
         this.streamingFactory = factory;
         this.streamingCursor = cursor;
+        this.streamingCursorSupportsBlocks = cursor != null && cursor.supportsRecordBlocks();
         this.streamingColumnCount = columnCount;
         this.streamingBatchSeq = 0;
         this.streamingBatchSeqCommitted = false;
@@ -510,6 +527,8 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         negotiatedVersion = QwpConstants.VERSION;
         maxBatchRows = 0;  // reset to "unset"; will be set per-connection in onHeadersReady
         batchBuffer.reset();
+        // the pooled state outlives the connection: drop the symbol key -> id arrays a query grew
+        batchBuffer.releaseConnKeyMaps();
         bindVariableService.clear();
         // Connection dropped/reset -- client cannot reuse the delta dict on a
         // new connection so we discard it too. On a clean close() this is idempotent.
@@ -621,6 +640,24 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      * Returns {@code null} if streaming isn't active or the factory has
      * already been detached; callers should null-check before caching.
      */
+    /**
+     * Hands the finished query's factory to {@code cache}: it leaves the state's ownership now and is
+     * put into the cache by {@link #endStreaming()}, after the query's cursors are closed (or freed,
+     * if closing them failed). Returns false, and leaves the factory to the state, when there is no
+     * factory or no SQL text to cache it under.
+     */
+    public boolean cacheStreamingFactoryOnEnd(AssociativeCache<RecordCursorFactory> cache) {
+        if (streamingFactory == null || streamingSqlText == null) {
+            return false;
+        }
+        Misc.free(pendingCacheFactory); // never set twice for one query; belt and braces
+        pendingCacheFactory = streamingFactory;
+        pendingCacheSqlText = streamingSqlText;
+        pendingCache = cache;
+        streamingFactory = null;
+        return true;
+    }
+
     public RecordCursorFactory detachStreamingFactory() {
         RecordCursorFactory detached = streamingFactory;
         streamingFactory = null;
@@ -648,6 +685,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         streamingCurrentPageFrame = null;
         final RecordCursor streamingCursor = this.streamingCursor;
         this.streamingCursor = null;
+        this.streamingCursorSupportsBlocks = false;
         final PageFrameCursor streamingPageFrameCursor = this.streamingPageFrameCursor;
         this.streamingPageFrameCursor = null;
         final RecordCursorFactory streamingFactory = this.streamingFactory;
@@ -680,6 +718,24 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, streamingCursor);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, streamingPageFrameCursor);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, streamingFactory);
+        final RecordCursorFactory pendingFactory = this.pendingCacheFactory;
+        final AssociativeCache<RecordCursorFactory> pendingCache = this.pendingCache;
+        final String pendingSqlText = this.pendingCacheSqlText;
+        this.pendingCacheFactory = null;
+        this.pendingCache = null;
+        this.pendingCacheSqlText = null;
+        if (pendingFactory != null) {
+            if (cleanupFailure == null) {
+                // the cursors are closed: the factory is idle and can be reused by any worker
+                try {
+                    pendingCache.put(pendingSqlText, pendingFactory);
+                } catch (Throwable th) {
+                    cleanupFailure = th;
+                }
+            } else {
+                cleanupFailure = Misc.freeBestEffort(cleanupFailure, pendingFactory);
+            }
+        }
 
         streamingColumnCount = 0;
         streamingBatchSeq = 0;
@@ -877,6 +933,14 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      */
     public boolean isStreamingCreditSuspended() {
         return streamingCreditSuspended;
+    }
+
+    /**
+     * Whether the streaming cursor can offer {@link io.questdb.cairo.sql.RecordBlock}s, see
+     * {@link RecordCursor#supportsRecordBlocks()}, as it answered when streaming began.
+     */
+    public boolean isStreamingCursorSupportingBlocks() {
+        return streamingCursorSupportsBlocks;
     }
 
     public boolean isStreamingFactoryCacheable() {

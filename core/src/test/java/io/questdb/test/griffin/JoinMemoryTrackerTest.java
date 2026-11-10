@@ -30,6 +30,7 @@ import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.engine.join.AsOfJoinDenseDualSymbolRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinDenseRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinDenseSingleSymbolRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinFastRecordCursorFactory;
@@ -77,12 +78,29 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAsOfJoinDenseFailsOnLargeInput() throws Exception {
-        // asof_dense + multi-key routes to AsOfJoinDenseRecordCursorFactory. Its scan maps memorize every
-        // distinct join key (no eviction without TOLERANCE), so a high-cardinality join grows them past the limit.
+    public void testAsOfJoinDenseDualSymbolFailsOnLargeInput() throws Exception {
+        // Two static-SYMBOL keys route to AsOfJoinDenseDualSymbolRecordCursorFactory, which packs both
+        // translated symbol ints into one long map key. The scan maps still memorize every distinct key,
+        // so a high-cardinality join grows them past the limit.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE m AS (SELECT x::SYMBOL k1, x::SYMBOL k2, (x * 1_000_000L)::timestamp ts FROM long_sequence(40_000)) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE s AS (SELECT x::SYMBOL k1, x::SYMBOL k2, (x * 1_000_000L)::timestamp ts FROM long_sequence(40_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            drainWalQueue();
+            final String sql = "SELECT /*+ asof_dense(m s) */ m.k1 FROM m ASOF JOIN s ON (m.k1 = s.k1 AND m.k2 = s.k2)";
+            assertUsesFactory(sql, AsOfJoinDenseDualSymbolRecordCursorFactory.class);
+            assertQueryBreaches(sql);
+        });
+    }
+
+    @Test
+    public void testAsOfJoinDenseFailsOnLargeInput() throws Exception {
+        // asof_dense + multi-key routes to AsOfJoinDenseRecordCursorFactory. Its scan maps memorize every
+        // distinct join key (no eviction without TOLERANCE), so a high-cardinality join grows them past the limit.
+        // k2 is a LONG on purpose: two static-SYMBOL keys would route to the packed dual-symbol factory
+        // instead (see testAsOfJoinDenseDualSymbolFailsOnLargeInput).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m AS (SELECT x::SYMBOL k1, x k2, (x * 1_000_000L)::timestamp ts FROM long_sequence(40_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s AS (SELECT x::SYMBOL k1, x k2, (x * 1_000_000L)::timestamp ts FROM long_sequence(40_000)) TIMESTAMP(ts) PARTITION BY DAY");
             drainWalQueue();
             final String sql = "SELECT /*+ asof_dense(m s) */ m.k1 FROM m ASOF JOIN s ON (m.k1 = s.k1 AND m.k2 = s.k2)";
             assertUsesFactory(sql, AsOfJoinDenseRecordCursorFactory.class);
@@ -96,8 +114,8 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
         // tracker-bound SingleRecordSinks; a tiny limit breaches that reopen. The reuse loop asserts the
         // open-error path frees each cursor once and leaves the factory reusable (assertMemoryLeak guards leaks).
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE m AS (SELECT x::SYMBOL k1, x::SYMBOL k2, (x * 1_000_000L)::timestamp ts FROM long_sequence(4)) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE s AS (SELECT x::SYMBOL k1, x::SYMBOL k2, (x * 1_000_000L)::timestamp ts FROM long_sequence(4)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE m AS (SELECT x::SYMBOL k1, x k2, (x * 1_000_000L)::timestamp ts FROM long_sequence(4)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s AS (SELECT x::SYMBOL k1, x k2, (x * 1_000_000L)::timestamp ts FROM long_sequence(4)) TIMESTAMP(ts) PARTITION BY DAY");
             drainWalQueue();
             // Set the tiny limit only after table creation so the populating SELECT does not breach it.
             setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 4L);
@@ -113,8 +131,8 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
         // The reuse loop cycles the dense cursor's sinks and scan maps; assertMemoryLeak is the load-bearing
         // check that their malloc/free stays symmetric on the per-query counter after the of() reorder.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE m AS (SELECT x::SYMBOL k1, x::SYMBOL k2, (x * 1_000_000L)::timestamp ts FROM long_sequence(50)) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE s AS (SELECT x::SYMBOL k1, x::SYMBOL k2, (x * 1_000_000L)::timestamp ts FROM long_sequence(50)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE m AS (SELECT x::SYMBOL k1, x k2, (x * 1_000_000L)::timestamp ts FROM long_sequence(50)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s AS (SELECT x::SYMBOL k1, x k2, (x * 1_000_000L)::timestamp ts FROM long_sequence(50)) TIMESTAMP(ts) PARTITION BY DAY");
             drainWalQueue();
             final String sql = "SELECT /*+ asof_dense(m s) */ m.k1 FROM m ASOF JOIN s ON (m.k1 = s.k1 AND m.k2 = s.k2)";
             assertUsesFactory(sql, AsOfJoinDenseRecordCursorFactory.class);
@@ -192,7 +210,7 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
 
     @Test
     public void testAsOfJoinFastOpenFailureReleasesAllocations() throws Exception {
-        // A keyed ASOF join over a time-frame slave routes to AsOfJoinFastRecordCursorFactory, whose of()
+        // A keyed ASOF join over a time-frame slave, under the asof_fast hint, routes to AsOfJoinFastRecordCursorFactory, whose of()
         // reopens two tracker-bound SingleRecordSinks; a tiny limit breaches that reopen. The reuse loop
         // asserts the open-error path frees each cursor once and leaves the factory reusable.
         assertMemoryLeak(() -> {
@@ -202,7 +220,7 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
             // Tiny limit set after table creation so the populating SELECT does not breach it.
             setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 4L);
             assertOpenFailureReleasesAllocations(
-                    "SELECT m.k FROM m ASOF JOIN s ON k",
+                    "SELECT /*+ asof_fast(m s) */ m.k FROM m ASOF JOIN s ON k",
                     AsOfJoinFastRecordCursorFactory.class
             );
         });
@@ -216,7 +234,7 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
             execute("CREATE TABLE m AS (SELECT x::SYMBOL k, (x * 1_000_000L)::timestamp ts FROM long_sequence(50)) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE s AS (SELECT x::SYMBOL k, (x * 1_000_000L)::timestamp ts FROM long_sequence(50)) TIMESTAMP(ts) PARTITION BY DAY");
             drainWalQueue();
-            final String sql = "SELECT m.k FROM m ASOF JOIN s ON k";
+            final String sql = "SELECT /*+ asof_fast(m s) */ m.k FROM m ASOF JOIN s ON k";
             assertUsesFactory(sql, AsOfJoinFastRecordCursorFactory.class);
             try (SqlCompiler compiler = engine.getSqlCompiler();
                  RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
@@ -249,7 +267,7 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
             execute("CREATE TABLE m AS (SELECT x::SYMBOL k, (x * 1_000_000L)::timestamp ts FROM long_sequence(40_000)) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE s AS (SELECT (x - 1)::SYMBOL k, ((x - 1) * 1_000_000L)::timestamp ts FROM long_sequence(40_001)) TIMESTAMP(ts) PARTITION BY DAY");
             drainWalQueue();
-            final String sql = "SELECT count(), count(s.k), count(CASE WHEN s.k::STRING = m.k::STRING THEN 1 END) FROM m ASOF JOIN s ON k";
+            final String sql = "SELECT /*+ asof_fast(m s) */ count(), count(s.k), count(CASE WHEN s.k::STRING = m.k::STRING THEN 1 END) FROM m ASOF JOIN s ON k";
             assertUsesFactory(sql, AsOfJoinFastRecordCursorFactory.class);
             assertQuery(sql).noLeakCheck().noRandomAccess().expectSize().returns("""
                     count\tcount1\tcount2
@@ -260,7 +278,7 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
 
     @Test
     public void testAsOfJoinFastSymbolKeyMappingCacheFailsOnLargeInput() throws Exception {
-        // A single-key SYMBOL ASOF join over a time-frame slave routes to AsOfJoinFastRecordCursorFactory with
+        // A single-key SYMBOL ASOF join over a time-frame slave, under the asof_fast hint, routes to AsOfJoinFastRecordCursorFactory with
         // a SymbolToSymbolJoinKeyMapping, which caches one master-to-slave key translation per distinct master
         // symbol that the slave holds. Each master row finds its key in the slave row with the same timestamp,
         // so the backward slave scan stays short and the fixed-size key sinks stay tiny, while 40K distinct
@@ -273,7 +291,7 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
             execute("CREATE TABLE m AS (SELECT x::SYMBOL k, (x * 1_000_000L)::timestamp ts FROM long_sequence(40_000)) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE s AS (SELECT x::SYMBOL k, (x * 1_000_000L)::timestamp ts FROM long_sequence(40_000)) TIMESTAMP(ts) PARTITION BY DAY");
             drainWalQueue();
-            final String sql = "SELECT m.k FROM m ASOF JOIN s ON k";
+            final String sql = "SELECT /*+ asof_fast(m s) */ m.k FROM m ASOF JOIN s ON k";
             assertUsesFactory(sql, AsOfJoinFastRecordCursorFactory.class);
             try (SqlCompiler compiler = engine.getSqlCompiler();
                  RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
@@ -308,7 +326,7 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
             execute("CREATE TABLE m AS (SELECT x::SYMBOL k1, x::SYMBOL k2, (x * 1_000_000L)::timestamp ts FROM long_sequence(40_000)) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE s AS (SELECT (x + 39_999)::SYMBOL k1, (x + 39_999)::SYMBOL k2, (x * 1_000_000L)::timestamp ts FROM long_sequence(1)) TIMESTAMP(ts) PARTITION BY DAY");
             drainWalQueue();
-            final String sql = "SELECT count(), count(s.k1) FROM m ASOF JOIN s ON (m.k1 = s.k1 AND m.k2 = s.k2)";
+            final String sql = "SELECT /*+ asof_fast(m s) */ count(), count(s.k1) FROM m ASOF JOIN s ON (m.k1 = s.k1 AND m.k2 = s.k2)";
             assertUsesFactory(sql, AsOfJoinFastRecordCursorFactory.class);
             assertQuery(sql).noLeakCheck().noRandomAccess().expectSize().returns("""
                     count\tcount1
@@ -319,7 +337,7 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
 
     @Test
     public void testAsOfJoinFastSymbolTranslationCacheFailsOnLargeInput() throws Exception {
-        // A multi-key SYMBOL ASOF join over a time-frame slave routes to AsOfJoinFastRecordCursorFactory with
+        // A multi-key SYMBOL ASOF join over a time-frame slave, under the asof_fast hint, routes to AsOfJoinFastRecordCursorFactory with
         // a SymbolTranslatingRecord (a single SYMBOL key takes the SymbolKeyMappingRecordCopier path instead),
         // which caches one master-to-slave key translation per distinct master symbol and key column. The
         // one-row slave keeps the backward slave scan and the fixed-size key sinks tiny, while 40K distinct
@@ -333,7 +351,7 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
             execute("CREATE TABLE m AS (SELECT x::SYMBOL k1, x::SYMBOL k2, (x * 1_000_000L)::timestamp ts FROM long_sequence(40_000)) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE s AS (SELECT x::SYMBOL k1, x::SYMBOL k2, (x * 1_000_000L)::timestamp ts FROM long_sequence(1)) TIMESTAMP(ts) PARTITION BY DAY");
             drainWalQueue();
-            final String sql = "SELECT m.k1 FROM m ASOF JOIN s ON (m.k1 = s.k1 AND m.k2 = s.k2)";
+            final String sql = "SELECT /*+ asof_fast(m s) */ m.k1 FROM m ASOF JOIN s ON (m.k1 = s.k1 AND m.k2 = s.k2)";
             assertUsesFactory(sql, AsOfJoinFastRecordCursorFactory.class);
             assertQuery(sql).noLeakCheck().assertsPlanContaining("symbolKeyJoin: true");
             try (SqlCompiler compiler = engine.getSqlCompiler();

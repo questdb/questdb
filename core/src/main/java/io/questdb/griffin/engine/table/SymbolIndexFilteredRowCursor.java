@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.Misc;
 
 class SymbolIndexFilteredRowCursor implements RowCursor {
@@ -38,7 +39,11 @@ class SymbolIndexFilteredRowCursor implements RowCursor {
     private final Function filter;
     private final int indexDirection;
     private final PageFrameMemoryRecord record;
+    // null until init(): a filter may reject a dense key's rows for a whole 16M-row index frame
+    // without returning, so the cursor consults the breaker every 2^20 rows it tests
+    private SqlExecutionCircuitBreaker circuitBreaker;
     private RowCursor rowCursor;
+    private int rowsSinceBreakerCheck;
     private long rowIndex;
     private int symbolKey;
 
@@ -72,6 +77,9 @@ class SymbolIndexFilteredRowCursor implements RowCursor {
     public boolean hasNext() {
         while (rowCursor.hasNext()) {
             final long rowIndex = rowCursor.next();
+            if ((++rowsSinceBreakerCheck & PageFrameRecordCursorImpl.IN_FRAME_BREAKER_CHECK_MASK) == 0 && circuitBreaker != null) {
+                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+            }
             record.setRowIndex(rowIndex);
             if (filter.getBool(record)) {
                 this.rowIndex = rowIndex;
@@ -100,6 +108,14 @@ class SymbolIndexFilteredRowCursor implements RowCursor {
         record.init(pageFrameMemory);
         record.setRowIndex(0);
         return this;
+    }
+
+    /**
+     * The breaker of the execution the cursor serves, consulted every 2^20 rows the filter tests.
+     */
+    void init(SqlExecutionCircuitBreaker circuitBreaker) {
+        this.circuitBreaker = circuitBreaker;
+        this.rowsSinceBreakerCheck = 0;
     }
 
     Function getFilter() {

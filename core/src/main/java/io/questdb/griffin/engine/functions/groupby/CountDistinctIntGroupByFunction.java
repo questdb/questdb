@@ -83,4 +83,9 @@ public class CountDistinctIntGroupByFunction extends AbstractCountDistinctIntGro
             }
         }
     }
+
+    @Override
+    public boolean isOrderSensitive() {
+        return false;
+    }
 }

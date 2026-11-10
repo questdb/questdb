@@ -1288,6 +1288,11 @@ public class FactoryCloseContractTest extends AbstractCairoTest {
         }
 
         @Override
+        public int getScanDirection() {
+            return SCAN_DIRECTION_FORWARD;
+        }
+
+        @Override
         protected void _close() {
             super._close();
             closeCallback.run();
@@ -1395,6 +1400,11 @@ public class FactoryCloseContractTest extends AbstractCairoTest {
         }
 
         @Override
+        public int getScanDirection() {
+            return SCAN_DIRECTION_FORWARD;
+        }
+
+        @Override
         protected void _close() {
             super._close();
             throw closeFailure;
@@ -1417,6 +1427,11 @@ public class FactoryCloseContractTest extends AbstractCairoTest {
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
             return EmptyTableRecordCursor.INSTANCE;
+        }
+
+        @Override
+        public int getScanDirection() {
+            return SCAN_DIRECTION_FORWARD;
         }
 
         @Override
@@ -1452,6 +1467,11 @@ public class FactoryCloseContractTest extends AbstractCairoTest {
                 throw metadataFailure;
             }
             return super.getMetadata();
+        }
+
+        @Override
+        public int getScanDirection() {
+            return SCAN_DIRECTION_FORWARD;
         }
     }
 
@@ -1563,6 +1583,11 @@ public class FactoryCloseContractTest extends AbstractCairoTest {
         @Override
         public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) {
             return pageFrameCursor;
+        }
+
+        @Override
+        public int getScanDirection() {
+            return SCAN_DIRECTION_FORWARD;
         }
 
         @Override

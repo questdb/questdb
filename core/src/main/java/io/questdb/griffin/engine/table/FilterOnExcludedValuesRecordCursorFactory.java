@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.RowCursorFactory;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -50,7 +51,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.Comparator;
 
-public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrameRecordCursorFactory {
+public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrameRecordCursorFactory implements KeyMajorScanFactory {
     private final int columnIndex;
     private final Comparator<SymbolFunctionRowCursorFactory> comparator;
     private final Comparator<SymbolFunctionRowCursorFactory> comparatorDesc;
@@ -62,12 +63,13 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
     private final boolean heapCursorUsed;
     private final int indexDirection;
     private final int maxSymbolNotEqualsCount;
+    private final RowCursorFactory rowCursorFactory;
     // Drives the cursorFactories sort and the plan's symbolOrder attribute. It keeps reading the
-    // withdrawn key-column claim on purpose: recalculateIncludedValues() sorts so that
+    // key-column claim on purpose: recalculateIncludedValues() sorts so that
     // upsertRowCursorFactory() groups equal symbols, and the sort direction is plan-visible, so it
-    // must not follow followedOrderByAdvice() into "false".
+    // must not follow followedOrderByAdvice() into "false" for the heap cursor.
     private final boolean symbolOrderAsc;
-    private PageFrameRecordCursorImpl cursor;
+    private AbstractPageFrameRecordCursor cursor;
     private Function filter;
     private ObjList<Function> keyExcludedValueFunctions = new ObjList<>();
     private StaticSymbolTable symbolMapReader;
@@ -99,29 +101,36 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
         cursorFactories = new ObjList<>(keyValues.size());
         if (orderByMnemonic == OrderByMnemonic.ORDER_BY_INVARIANT && !orderByTimestamp) {
             heapCursorUsed = false;
-            cursor = new PageFrameRecordCursorImpl(
-                    configuration,
-                    metadata,
-                    new SequentialRowCursorFactory(cursorFactories, cursorFactoriesIdx),
-                    false,
-                    filter
+            final SequentialRowCursorFactory sequentialFactory = new SequentialRowCursorFactory(
+                    cursorFactories,
+                    cursorFactoriesIdx,
+                    columnIndex,
+                    indexDirection
             );
+            rowCursorFactory = sequentialFactory;
+            if (orderByKeyColumn) {
+                // ORDER BY the key column: walk each key across all page frames, not just
+                // within one, so that the output is in key order as a whole
+                cursor = new KeyMajorPageFrameRecordCursor(
+                        configuration,
+                        metadata,
+                        sequentialFactory,
+                        partitionFrameCursorFactory.getOrder(),
+                        filter
+                );
+            } else {
+                cursor = new PageFrameRecordCursorImpl(configuration, metadata, sequentialFactory, false, filter);
+            }
         } else {
             heapCursorUsed = true;
-            cursor = new PageFrameRecordCursorImpl(
-                    configuration,
-                    metadata,
-                    new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx),
-                    false,
-                    filter
-            );
+            rowCursorFactory = new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx);
+            cursor = new PageFrameRecordCursorImpl(configuration, metadata, rowCursorFactory, false, filter);
         }
-        // SequentialRowCursorFactory rebuilds one cursor per key for the page frame it is handed and
-        // restarts at key 0 on the next frame, so an "ORDER BY key" claim would hold only while the
-        // scan produced a single frame. Only the timestamp claim survives frame concatenation: it
-        // forces HeapRowCursorFactory, which emits rows in row-id order within a frame, and the
-        // frames themselves arrive in timestamp order.
-        this.followedOrderByAdvice = orderByTimestamp;
+        // The heap cursor merges keys into row order, so it never follows ORDER BY the key column.
+        // The sequential cursor does only through KeyMajorPageFrameRecordCursor, which walks each
+        // key across all page frames: a per-frame SequentialRowCursorFactory restarts at key 0 on
+        // every frame, so its key order holds only within a frame.
+        this.followedOrderByAdvice = (orderByKeyColumn && !heapCursorUsed) || orderByTimestamp;
 
         comparator = this::compareStrFunctions;
         comparatorDesc = this::compareStrFunctionsDesc;
@@ -133,11 +142,22 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
     }
 
     @Override
+    public int getKeyMajorColumnIndex() {
+        return cursor instanceof KeyMajorPageFrameRecordCursor ? columnIndex : -1;
+    }
+
+    @Override
     public int getScanDirection() {
         if (partitionFrameCursorFactory.getOrder() == PartitionFrameCursorFactory.ORDER_ASC && heapCursorUsed) {
             return SCAN_DIRECTION_FORWARD;
         }
         return SCAN_DIRECTION_OTHER;
+    }
+
+    @Override
+    public boolean hasDistinctKeys() {
+        // the included keys are a set
+        return true;
     }
 
     public void recalculateIncludedValues(PageFrameCursor pageFrameCursor) {
@@ -192,7 +212,10 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
         }
         sink.attr("symbolFilter").putBaseColumnName(columnIndex).val(" not in ").val(keyExcludedValueFunctions);
         sink.optAttr("filter", filter);
-        sink.child(cursor.getRowCursorFactory());
+        if (cursor instanceof KeyMajorPageFrameRecordCursor) {
+            sink.attr("keyMajor").val(true);
+        }
+        sink.child(rowCursorFactory);
         sink.child(partitionFrameCursorFactory);
     }
 
@@ -227,16 +250,16 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
             return;
         }
 
-        final SymbolFunctionRowCursorFactory rowCursorFactory;
+        final SymbolFunctionRowCursorFactory keyFactory;
         if (filter == null) {
-            rowCursorFactory = new SymbolIndexRowCursorFactory(
+            keyFactory = new SymbolIndexRowCursorFactory(
                     columnIndex,
                     symbolKey,
                     indexDirection,
                     null
             );
         } else {
-            rowCursorFactory = new SymbolIndexFilteredRowCursorFactory(
+            keyFactory = new SymbolIndexFilteredRowCursorFactory(
                     columnIndex,
                     symbolKey,
                     filter,
@@ -244,19 +267,19 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
                     null
             );
         }
-        cursorFactories.add(rowCursorFactory);
+        cursorFactories.add(keyFactory);
         cursorFactoriesIdx[0]++;
     }
 
     @Override
     protected void _close() {
-        final PageFrameRecordCursorImpl cursor = this.cursor;
+        final AbstractPageFrameRecordCursor cursor = this.cursor;
         this.cursor = null;
         final Function filter = this.filter;
         this.filter = null;
         final ObjList<Function> keyExcludedValueFunctions = this.keyExcludedValueFunctions;
         this.keyExcludedValueFunctions = null;
-        final var rowCursorFactory = cursor != null ? cursor.getRowCursorFactory() : null;
+        final RowCursorFactory rowCursorFactory = this.rowCursorFactory;
         Throwable failure = null;
         try {
             super._close();

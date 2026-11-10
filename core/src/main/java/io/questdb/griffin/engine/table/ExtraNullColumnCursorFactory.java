@@ -137,6 +137,17 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         }
     }
 
+    /**
+     * Page-frame transparent: a page-frame consumer asking this wrapper is served the BASE's
+     * frames, so it must be told the base's page-frame direction. Inheriting the default --
+     * which forwards to {@link #getScanDirection()} -- degrades the narrow answer back to the
+     * wide one at the first wrapper, which is exactly what the narrow answer exists to avoid.
+     */
+    @Override
+    public int getPageFrameScanDirection() {
+        return base.getPageFrameScanDirection();
+    }
+
     @Override
     public int getScanDirection() {
         return base.getScanDirection();

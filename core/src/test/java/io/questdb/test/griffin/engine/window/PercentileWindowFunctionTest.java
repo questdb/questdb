@@ -26,12 +26,16 @@ package io.questdb.test.griffin.engine.window;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.engine.functions.window.BaseWindowFunction;
 import io.questdb.griffin.engine.window.CachedWindowLightRecordCursorFactory;
 import io.questdb.griffin.engine.window.CachedWindowMapGroups;
 import io.questdb.griffin.engine.window.CachedWindowRecordCursorFactory;
+import io.questdb.griffin.engine.window.WindowFunction;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -1783,6 +1787,45 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
                             a\t0\t-9223372036854775807\t9223372036854775807\t0\t9223372036854775807
                             s\t42\t-9223372036854775807\t9223372036854775807\t42\t42
                             """);
+        });
+    }
+
+    @Test
+    public void testPercentileDiscLongCarriesArgumentFlags() throws Exception {
+        // The planner asks a window function whether it keeps state from call to call, draws from
+        // a generator, or can change within the execution (SqlCodeGenerator.isRowPure()).
+        // percentile_disc() over a LONG answers for its argument, its PARTITION BY keys and its
+        // percentile, which has to be a constant and adds nothing: each answer is the argument's,
+        // in both forms of the window.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k SYMBOL, l LONG)");
+            execute("INSERT INTO t VALUES ('a', 1), ('b', 2)");
+            final String[] arguments = {"l", "rnd_long(1, 10, 0)", "timestamp_sequence(0, 1)"};
+            for (String over : new String[]{"OVER ()", "OVER (PARTITION BY k)"}) {
+                for (String argument : arguments) {
+                    final String sql = "SELECT percentile_disc(" + argument + ", 0.5) " + over + " p FROM t";
+                    try (
+                            SqlCompiler compiler = engine.getSqlCompiler();
+                            RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)
+                    ) {
+                        final RecordCursorFactory windowFactory = windowFactoryOf(factory);
+                        final ObjList<WindowFunction> functions = windowFactory instanceof CachedWindowRecordCursorFactory cached
+                                ? cached.getAllWindowFunctions()
+                                : ((CachedWindowLightRecordCursorFactory) windowFactory).getAllWindowFunctions();
+                        Assert.assertEquals(sql, 1, functions.size());
+                        final WindowFunction window = functions.getQuick(0);
+                        final Function arg = ((BaseWindowFunction) window).getWindowArgument();
+                        Assert.assertEquals(sql, arg.hasPerCallState(), window.hasPerCallState());
+                        Assert.assertEquals(sql, arg.isRandom(), window.isRandom());
+                        Assert.assertEquals(sql, arg.isNonDeterministic(), window.isNonDeterministic());
+                        Assert.assertEquals(sql, arg.isStableWithinExecution(), window.isStableWithinExecution());
+                        // the arguments differ in what they answer
+                        Assert.assertEquals(sql, argument.startsWith("timestamp_sequence"), window.hasPerCallState());
+                        Assert.assertEquals(sql, argument.startsWith("rnd_long"), window.isRandom());
+                        Assert.assertEquals(sql, argument.equals("l"), window.isStableWithinExecution());
+                    }
+                }
+            }
         });
     }
 

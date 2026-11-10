@@ -1814,6 +1814,11 @@ public class ViewAuditTest extends AbstractCairoTest {
         }
 
         @Override
+        public int getScanDirection() {
+            return base.getScanDirection();
+        }
+
+        @Override
         public void close() {
             base.close();
         }

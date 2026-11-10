@@ -41,6 +41,8 @@ import io.questdb.std.Numbers;
 
 public class AsOfJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final AsOfJoinFastRecordCursor cursor;
+    private final int columnSplit;
+    private final long toleranceInterval;
 
     public AsOfJoinNoKeyFastRecordCursorFactory(
             CairoConfiguration configuration,
@@ -52,6 +54,8 @@ public class AsOfJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCurs
     ) {
         super(metadata, null, masterFactory, slaveFactory);
         assert slaveFactory.supportsTimeFrameCursor();
+        this.columnSplit = columnSplit;
+        this.toleranceInterval = toleranceInterval;
         this.cursor = new AsOfJoinFastRecordCursor(
                 columnSplit,
                 NullRecordFactory.getInstance(slaveFactory.getMetadata()),
@@ -62,6 +66,31 @@ public class AsOfJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCurs
                 configuration.getSqlAsOfJoinLookAhead(),
                 toleranceInterval
         );
+    }
+
+    public int getColumnSplit() {
+        return columnSplit;
+    }
+
+    public RecordCursorFactory getMasterFactory() {
+        return masterFactory;
+    }
+
+    public RecordCursorFactory getSlaveFactory() {
+        return slaveFactory;
+    }
+
+    public long getToleranceInterval() {
+        return toleranceInterval;
+    }
+
+    /**
+     * Hands the master and the slave over to the caller, which takes them out of this factory's
+     * close, see AsOfLookup.
+     */
+    public void releaseMasterAndSlave() {
+        masterFactory = null;
+        slaveFactory = null;
     }
 
     @Override

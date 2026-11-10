@@ -30,7 +30,8 @@ import io.questdb.std.IntHashSet;
 /**
  * Represents page frame as a set of per column contiguous memory.
  * For native partitions, it's simply a slice of mmapped memory.
- * For Parquet partitions, it's a deserialized in-memory native format.
+ * For Parquet partitions, it's a deserialized in-memory native format, and so it is for a frame
+ * that a covering index serves, whose columns are decoded from the index; see {@link #isStable()}.
  */
 public interface PageFrameMemory {
     /**
@@ -145,4 +146,18 @@ public interface PageFrameMemory {
      * conversion for parquet partitions with ALTER COLUMN TYPE).
      */
     boolean hasColumnTypeCasts();
+
+    /**
+     * Whether the frame's column memory stays valid until the query ends, so that a reader may
+     * keep a pointer into it after it moves to another frame: the mapped columns of a native
+     * partition, and the columns of a frame that a covering index serves, decoded into a pool that
+     * keeps them for the query, see {@link PageFrameMemoryPool#setKeepsCoveredFramesForQuery}. A
+     * decoded Parquet frame lives only until its pool releases it, and so does a covered frame of
+     * a pool that does not keep it, such as a reduce queue task's, so a reader that keeps a value
+     * past the frame copies it. A {@link PageFrameMemoryRecord} bound to this memory reports the
+     * same through {@link PageFrameMemoryRecord#isStable()}.
+     */
+    default boolean isStable() {
+        return getFrameFormat() == PartitionFormat.NATIVE;
+    }
 }

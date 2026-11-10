@@ -46,11 +46,12 @@ import io.questdb.std.histogram.org.HdrHistogram.Histogram;
 
 public class MultiApproxPercentileLongGroupByFunction extends ArrayFunction implements UnaryFunction, GroupByFunction {
     private final Function exprFunc;
+    private ObjList<Histogram> histograms = new ObjList<>();
     private final Function percentileFunc;
     private final int percentilesPos;
     private final int precision;
     private int histogramIndex;
-    private ObjList<Histogram> histograms = new ObjList<>();
+    // a copy that reads the primary's histograms (a shared GROUP BY cursor, JOIN LATERAL)
     private boolean isShared;
     private DirectArray out;
     private int valueIndex;
@@ -66,13 +67,14 @@ public class MultiApproxPercentileLongGroupByFunction extends ArrayFunction impl
 
     @Override
     public void clear() {
-        if (!isShared) {
-            histograms.clear();
-            histogramIndex = 0;
-        }
         if (out != null) {
             out.clear();
         }
+        if (isShared) {
+            return;
+        }
+        histograms.clear();
+        histogramIndex = 0;
     }
 
     @Override
@@ -189,6 +191,11 @@ public class MultiApproxPercentileLongGroupByFunction extends ArrayFunction impl
 
     @Override
     public boolean isConstant() {
+        return false;
+    }
+
+    @Override
+    public boolean isOrderSensitive() {
         return false;
     }
 

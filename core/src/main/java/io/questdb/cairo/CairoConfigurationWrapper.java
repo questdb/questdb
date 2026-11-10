@@ -1148,6 +1148,41 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getSqlAsOfAdaptiveBackScanBudget() {
+        return getDelegate().getSqlAsOfAdaptiveBackScanBudget();
+    }
+
+    @Override
+    public boolean isSqlAsOfAutoAlgoEnabled() {
+        return getDelegate().isSqlAsOfAutoAlgoEnabled();
+    }
+
+    @Override
+    public int getSqlAsOfIndexMaxMasterBp() {
+        return getDelegate().getSqlAsOfIndexMaxMasterBp();
+    }
+
+    @Override
+    public int getSqlAsOfIndexPostingMaxMasterBp() {
+        return getDelegate().getSqlAsOfIndexPostingMaxMasterBp();
+    }
+
+    @Override
+    public int getSqlAsOfMultiKeyFastMaxBackScanPct() {
+        return getDelegate().getSqlAsOfMultiKeyFastMaxBackScanPct();
+    }
+
+    @Override
+    public int getSqlAsOfMultiKeyFastMaxMasterBp() {
+        return getDelegate().getSqlAsOfMultiKeyFastMaxMasterBp();
+    }
+
+    @Override
+    public int getSqlAsOfMemoizedDenseRunThreshold() {
+        return getDelegate().getSqlAsOfMemoizedDenseRunThreshold();
+    }
+
+    @Override
     public int getQueryRegistryPoolSize() {
         return getDelegate().getQueryRegistryPoolSize();
     }
@@ -1155,6 +1190,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getQwpEgressForcedZstdLevel() {
         return getDelegate().getQwpEgressForcedZstdLevel();
+    }
+
+    @Override
+    public int getQwpEgressSymbolDenseMaxKeys() {
+        return getDelegate().getQwpEgressSymbolDenseMaxKeys();
     }
 
     @Override
@@ -1368,6 +1408,21 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlIndexKeyMajorMaxKeys() {
+        return getDelegate().getSqlIndexKeyMajorMaxKeys();
+    }
+
+    @Override
+    public long getSqlIndexKeyMajorMaxPartitionPasses() {
+        return getDelegate().getSqlIndexKeyMajorMaxPartitionPasses();
+    }
+
+    @Override
+    public int getSqlIndexScanPageFrameMaxRows() {
+        return getDelegate().getSqlIndexScanPageFrameMaxRows();
+    }
+
+    @Override
     public int getSqlIntervalIncrementalMergeThreshold() {
         return getDelegate().getSqlIntervalIncrementalMergeThreshold();
     }
@@ -1405,6 +1460,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getSqlJitMaxInListSizeThreshold() {
         return getDelegate().getSqlJitMaxInListSizeThreshold();
+    }
+
+    @Override
+    public int getSqlSymbolInBitsetMaxKeys() {
+        return getDelegate().getSqlSymbolInBitsetMaxKeys();
     }
 
     @Override
@@ -1585,6 +1645,36 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public long getSqlSortValueMaxBytes() {
         return getDelegate().getSqlSortValueMaxBytes();
+    }
+
+    @Override
+    public long getSqlParallelWindowMaxKeyRows() {
+        return getDelegate().getSqlParallelWindowMaxKeyRows();
+    }
+
+    @Override
+    public int getSqlParallelWindowMaxRounds() {
+        return getDelegate().getSqlParallelWindowMaxRounds();
+    }
+
+    @Override
+    public long getSqlParallelWindowMinRows() {
+        return getDelegate().getSqlParallelWindowMinRows();
+    }
+
+    @Override
+    public long getSqlParallelWindowPrefixRows() {
+        return getDelegate().getSqlParallelWindowPrefixRows();
+    }
+
+    @Override
+    public long getSqlParallelWindowRoundRows() {
+        return getDelegate().getSqlParallelWindowRoundRows();
+    }
+
+    @Override
+    public long getSqlParallelWindowTaskRows() {
+        return getDelegate().getSqlParallelWindowTaskRows();
     }
 
     @Override
@@ -2103,6 +2193,31 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlJitSymbolInBitsetEnabled() {
+        return getDelegate().isSqlJitSymbolInBitsetEnabled();
+    }
+
+    @Override
+    public boolean isSqlAsOfJoinVirtualKeyEnabled() {
+        return getDelegate().isSqlAsOfJoinVirtualKeyEnabled();
+    }
+
+    @Override
+    public boolean isSqlJitScalarSubQueryEnabled() {
+        return getDelegate().isSqlJitScalarSubQueryEnabled();
+    }
+
+    @Override
+    public boolean isSqlJitSymbolEmptyConstantEnabled() {
+        return getDelegate().isSqlJitSymbolEmptyConstantEnabled();
+    }
+
+    @Override
+    public boolean isSqlSymbolInBitsetEnabled() {
+        return getDelegate().isSqlSymbolInBitsetEnabled();
+    }
+
+    @Override
     public boolean isSqlLatestByJitEnabled() {
         return getDelegate().isSqlLatestByJitEnabled();
     }
@@ -2118,13 +2233,93 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlParallelGroupByBatchKernelsEnabled() {
+        return getDelegate().isSqlParallelGroupByBatchKernelsEnabled();
+    }
+
+    @Override
+    public double getSqlIndexScanChoiceMaxSelectivity() {
+        return getDelegate().getSqlIndexScanChoiceMaxSelectivity();
+    }
+
+    @Override
+    public double getSqlCoveringScanChoiceMaxSelectivity() {
+        return getDelegate().getSqlCoveringScanChoiceMaxSelectivity();
+    }
+
+    @Override
+    public double getSqlCoveringGroupByScanChoiceMaxSelectivity() {
+        return getDelegate().getSqlCoveringGroupByScanChoiceMaxSelectivity();
+    }
+
+    @Override
+    public int getSqlParallelIndexGroupByFrameRows() {
+        return getDelegate().getSqlParallelIndexGroupByFrameRows();
+    }
+
+    @Override
+    public long getSqlParallelCoveringFrameRows() {
+        return getDelegate().getSqlParallelCoveringFrameRows();
+    }
+
+    @Override
+    public long getSqlParallelCoveringLocalMaxRows() {
+        return getDelegate().getSqlParallelCoveringLocalMaxRows();
+    }
+
+    @Override
+    public boolean isSqlParallelFrameDispatchEnabled() {
+        return getDelegate().isSqlParallelFrameDispatchEnabled();
+    }
+
+    @Override
+    public long getSqlParallelIndexGroupByTaskRows() {
+        return getDelegate().getSqlParallelIndexGroupByTaskRows();
+    }
+
+    @Override
+    public boolean isSqlIndexScanChoiceEnabled() {
+        return getDelegate().isSqlIndexScanChoiceEnabled();
+    }
+
+    @Override
+    public boolean isSqlParallelIndexGroupByEnabled() {
+        return getDelegate().isSqlParallelIndexGroupByEnabled();
+    }
+
+    @Override
+    public boolean isSqlDistinctGroupByKeyPruningEnabled() {
+        return getDelegate().isSqlDistinctGroupByKeyPruningEnabled();
+    }
+
+    @Override
+    public boolean isSqlParallelApproxPercentileEnabled() {
+        return getDelegate().isSqlParallelApproxPercentileEnabled();
+    }
+
+    @Override
     public boolean isSqlParallelGroupByEnabled() {
         return getDelegate().isSqlParallelGroupByEnabled();
     }
 
     @Override
+    public boolean isSqlPivotFuseSourceEnabled() {
+        return getDelegate().isSqlPivotFuseSourceEnabled();
+    }
+
+    @Override
     public boolean isSqlParallelHashJoinGroupByEnabled() {
         return getDelegate().isSqlParallelHashJoinGroupByEnabled();
+    }
+
+    @Override
+    public boolean isSqlParallelHashJoinProbeEnabled() {
+        return getDelegate().isSqlParallelHashJoinProbeEnabled();
+    }
+
+    @Override
+    public boolean isSqlParallelHashJoinProbeUniqueBuildAssumed() {
+        return getDelegate().isSqlParallelHashJoinProbeUniqueBuildAssumed();
     }
 
     @Override
@@ -2143,8 +2338,38 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlParallelWindowEnabled() {
+        return getDelegate().isSqlParallelWindowEnabled();
+    }
+
+    @Override
+    public boolean isSqlParallelWindowMinMaxRewriteEnabled() {
+        return getDelegate().isSqlParallelWindowMinMaxRewriteEnabled();
+    }
+
+    @Override
     public boolean isSqlParallelWindowJoinEnabled() {
         return getDelegate().isSqlParallelWindowJoinEnabled();
+    }
+
+    @Override
+    public boolean isSqlParallelAsOfJoinEnabled() {
+        return getDelegate().isSqlParallelAsOfJoinEnabled();
+    }
+
+    @Override
+    public boolean isSqlParallelWindowKeyRunsEnabled() {
+        return getDelegate().isSqlParallelWindowKeyRunsEnabled();
+    }
+
+    @Override
+    public boolean isSqlParallelWindowChainEnabled() {
+        return getDelegate().isSqlParallelWindowChainEnabled();
+    }
+
+    @Override
+    public boolean isSqlParallelWindowShardEnabled() {
+        return getDelegate().isSqlParallelWindowShardEnabled();
     }
 
     @Override

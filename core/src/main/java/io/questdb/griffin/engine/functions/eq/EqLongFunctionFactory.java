@@ -25,10 +25,12 @@
 package io.questdb.griffin.engine.functions.eq;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.ColumnwiseComparison;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -48,9 +50,19 @@ public class EqLongFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0), args.getQuick(1));
     }
 
-    private static class Func extends AbstractEqBinaryFunction {
+    private static class Func extends AbstractEqBinaryFunction implements ColumnwiseComparison {
         public Func(Function left, Function right) {
             super(left, right);
+        }
+
+        @Override
+        public int getColumnwiseComparison() {
+            return ColumnwiseComparison.CMP_EQ;
+        }
+
+        @Override
+        public int getColumnwiseOperandType() {
+            return ColumnType.LONG;
         }
 
         @Override

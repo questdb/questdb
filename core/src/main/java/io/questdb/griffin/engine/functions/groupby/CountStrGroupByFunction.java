@@ -87,4 +87,9 @@ public class CountStrGroupByFunction extends AbstractCountGroupByFunction {
     public int getComputeBatchArgType() {
         return ColumnType.STRING;
     }
+
+    @Override
+    public boolean isOrderSensitive() {
+        return false;
+    }
 }

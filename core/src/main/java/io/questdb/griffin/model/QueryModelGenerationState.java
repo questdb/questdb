@@ -39,9 +39,8 @@ import java.util.function.Consumer;
 public final class QueryModelGenerationState implements Mutable {
     private final IdentityHashMap<IQueryModel, Integer> active = new IdentityHashMap<>();
     private final IdentityHashMap<Object, ObjList<Object>> graph = new IdentityHashMap<>();
-    private final IdentityHashMap<ExpressionNode, Boolean> markers = new IdentityHashMap<>();
     private final ObjList<IQueryModel> scopes = new ObjList<>();
-    private final IdentityHashMap<IQueryModel, Selection> selections = new IdentityHashMap<>();
+    private final IdentityHashMap<IQueryModel, QueryModelSelection> selections = new IdentityHashMap<>();
     private int discoveryCount;
     private boolean isReady;
     private int preparationCount;
@@ -59,11 +58,7 @@ public final class QueryModelGenerationState implements Mutable {
             IdentityHashMap<ExpressionNode, ExpressionNode> copies = new IdentityHashMap<>();
             for (Object node : graph.keySet()) {
                 if (node instanceof IQueryModel model) {
-                    selections.put(model, new Selection(model, copies));
-                    saveMarker(model.getLimitLo());
-                    saveMarker(model.getLimitHi());
-                    saveMarker(model.getLimitAdviceLo());
-                    saveMarker(model.getLimitAdviceHi());
+                    selections.put(model, new QueryModelSelection(model, copies));
                 }
             }
             prepare(root, pool, false);
@@ -79,7 +74,6 @@ public final class QueryModelGenerationState implements Mutable {
     public void clear() {
         active.clear();
         graph.clear();
-        markers.clear();
         scopes.clear();
         selections.clear();
         isReady = false;
@@ -138,7 +132,7 @@ public final class QueryModelGenerationState implements Mutable {
 
     @TestOnly
     public int getRetainedNodeCount() {
-        return graph.size() + selections.size() + markers.size() + active.size() + scopes.size();
+        return graph.size() + selections.size() + active.size() + scopes.size();
     }
 
     @TestOnly
@@ -151,7 +145,7 @@ public final class QueryModelGenerationState implements Mutable {
         preparationHook = hook;
     }
 
-    private static void add(ObjList<Object> edges, Object node) {
+    static void add(ObjList<Object> edges, Object node) {
         if (node != null) {
             edges.add(node instanceof IQueryModel model ? unwrap(model) : node);
         }
@@ -204,26 +198,85 @@ public final class QueryModelGenerationState implements Mutable {
         return false;
     }
 
-    private static ExpressionNode copy(ExpressionNode node, IdentityHashMap<ExpressionNode, ExpressionNode> memo, ObjectPool<ExpressionNode> pool) {
-        if (node == null) {
-            return null;
-        }
-        ExpressionNode result = memo.get(node);
-        if (result == null) {
-            result = pool == null ? ExpressionNode.FACTORY.newInstance() : pool.next();
-            result.copyFrom(node);
-            result.implemented = node.implemented;
-            memo.put(node, result);
-            result.lhs = copy(node.lhs, memo, pool);
-            result.rhs = copy(node.rhs, memo, pool);
-            for (int i = 0; i < node.args.size(); i++) {
-                result.args.setQuick(i, copy(node.args.getQuick(i), memo, pool));
+    /**
+     * Adds to {@code edges} what a node of a model tree references: for a model, its nested,
+     * union, UPDATE and join models and every expression it holds; for an expression, its
+     * sub-query model, operands, arguments and window clauses. A shared model is added as its
+     * delegate. Returns whether the node shares a model, or has a window over a sub-query, which
+     * a generation compiles more than once.
+     */
+    static boolean addEdges(Object node, ObjList<Object> edges, ObjList<ExpressionNode> windowArguments) {
+        boolean hasSharing = false;
+        if (node instanceof IQueryModel model) {
+            hasSharing |= model.hasSharedRefs()
+                    || model.getNestedModel() instanceof QueryModelWrapper
+                    || model.getUnionModel() instanceof QueryModelWrapper
+                    || model.getUpdateTableModel() instanceof QueryModelWrapper;
+            add(edges, model.getNestedModel());
+            add(edges, model.getUnionModel());
+            add(edges, model.getUpdateTableModel());
+            for (int i = 1; i < model.getJoinModels().size(); i++) {
+                IQueryModel child = model.getJoinModels().getQuick(i);
+                hasSharing |= child instanceof QueryModelWrapper;
+                add(edges, child);
             }
+            // Window generation may compile an argument once for its streaming probe and
+            // again for the cached layout. Restore sub-query predicates on the second pass
+            // just as we do for explicitly shared models.
+            hasSharing |= addColumns(edges, model.getBottomUpColumns(), windowArguments);
+            hasSharing |= addColumns(edges, model.getTopDownColumns(), windowArguments);
+            addExpressions(edges, model.getExpressionModels());
+            addExpressions(edges, model.getLatestBy());
+            addExpressions(edges, model.getOrderBy());
+            addExpressions(edges, model.getOrderByAdvice());
+            addExpressions(edges, model.getGroupBy());
+            addExpressions(edges, model.getJoinColumns());
+            addExpressions(edges, model.getUpdateExpressions());
+            addExpressions(edges, model.getUnnestExpressions());
+            addExpressions(edges, model.getSampleByFill());
+            addExpressions(edges, model.getFillValues());
+            add(edges, model.getWhereClause());
+            add(edges, model.getBackupWhereClause());
+            add(edges, model.getPostJoinWhereClause());
+            add(edges, model.getConstWhereClause());
+            add(edges, model.getOuterJoinExpressionClause());
+            add(edges, model.getJoinCriteria());
+            add(edges, model.getLimitLo());
+            add(edges, model.getLimitHi());
+            add(edges, model.getLimitAdviceLo());
+            add(edges, model.getLimitAdviceHi());
+            add(edges, model.getTableNameExpr());
+            add(edges, model.getTimestamp());
+            add(edges, model.getSampleBy());
+            add(edges, model.getSampleByFrom());
+            add(edges, model.getSampleByTo());
+            add(edges, model.getSampleByOffset());
+            add(edges, model.getSampleByTimezoneName());
+            add(edges, model.getSubsample());
+            add(edges, model.getFillFrom());
+            add(edges, model.getFillTo());
+            add(edges, model.getFillStride());
+            add(edges, model.getFillOffset());
+            add(edges, model.getFillTimezoneName());
+            add(edges, model.getAsOfJoinTolerance());
+            add(edges, model.getLateralCountCoalesceGuard());
+            WindowJoinContext windowJoin = model.getWindowJoinContext();
+            if (windowJoin != null) {
+                add(edges, windowJoin.getLoExpr());
+                add(edges, windowJoin.getHiExpr());
+            }
+        } else if (node instanceof ExpressionNode expression) {
+            hasSharing |= expression.queryModel instanceof QueryModelWrapper;
+            add(edges, expression.queryModel);
+            add(edges, expression.lhs);
+            add(edges, expression.rhs);
+            addExpressions(edges, expression.args);
+            addWindow(edges, expression.windowExpression);
         }
-        return result;
+        return hasSharing;
     }
 
-    private static IQueryModel unwrap(IQueryModel model) {
+    static IQueryModel unwrap(IQueryModel model) {
         return model instanceof QueryModelWrapper wrapper ? wrapper.getDelegate() : model;
     }
 
@@ -240,72 +293,7 @@ public final class QueryModelGenerationState implements Mutable {
             discoveryCount++;
             ObjList<Object> edges = new ObjList<>();
             graph.put(node, edges);
-            if (node instanceof IQueryModel model) {
-                hasSharing |= model.hasSharedRefs()
-                        || model.getNestedModel() instanceof QueryModelWrapper
-                        || model.getUnionModel() instanceof QueryModelWrapper
-                        || model.getUpdateTableModel() instanceof QueryModelWrapper;
-                add(edges, model.getNestedModel());
-                add(edges, model.getUnionModel());
-                add(edges, model.getUpdateTableModel());
-                for (int i = 1; i < model.getJoinModels().size(); i++) {
-                    IQueryModel child = model.getJoinModels().getQuick(i);
-                    hasSharing |= child instanceof QueryModelWrapper;
-                    add(edges, child);
-                }
-                // Window generation may compile an argument once for its streaming probe and
-                // again for the cached layout. Restore sub-query predicates on the second pass
-                // just as we do for explicitly shared models.
-                hasSharing |= addColumns(edges, model.getBottomUpColumns(), windowArguments);
-                hasSharing |= addColumns(edges, model.getTopDownColumns(), windowArguments);
-                addExpressions(edges, model.getExpressionModels());
-                addExpressions(edges, model.getLatestBy());
-                addExpressions(edges, model.getOrderBy());
-                addExpressions(edges, model.getOrderByAdvice());
-                addExpressions(edges, model.getGroupBy());
-                addExpressions(edges, model.getJoinColumns());
-                addExpressions(edges, model.getUpdateExpressions());
-                addExpressions(edges, model.getUnnestExpressions());
-                addExpressions(edges, model.getSampleByFill());
-                addExpressions(edges, model.getFillValues());
-                add(edges, model.getWhereClause());
-                add(edges, model.getBackupWhereClause());
-                add(edges, model.getPostJoinWhereClause());
-                add(edges, model.getConstWhereClause());
-                add(edges, model.getOuterJoinExpressionClause());
-                add(edges, model.getJoinCriteria());
-                add(edges, model.getLimitLo());
-                add(edges, model.getLimitHi());
-                add(edges, model.getLimitAdviceLo());
-                add(edges, model.getLimitAdviceHi());
-                add(edges, model.getTableNameExpr());
-                add(edges, model.getTimestamp());
-                add(edges, model.getSampleBy());
-                add(edges, model.getSampleByFrom());
-                add(edges, model.getSampleByTo());
-                add(edges, model.getSampleByOffset());
-                add(edges, model.getSampleByTimezoneName());
-                add(edges, model.getSubsample());
-                add(edges, model.getFillFrom());
-                add(edges, model.getFillTo());
-                add(edges, model.getFillStride());
-                add(edges, model.getFillOffset());
-                add(edges, model.getFillTimezoneName());
-                add(edges, model.getAsOfJoinTolerance());
-                add(edges, model.getLateralCountCoalesceGuard());
-                WindowJoinContext windowJoin = model.getWindowJoinContext();
-                if (windowJoin != null) {
-                    add(edges, windowJoin.getLoExpr());
-                    add(edges, windowJoin.getHiExpr());
-                }
-            } else if (node instanceof ExpressionNode expression) {
-                hasSharing |= expression.queryModel instanceof QueryModelWrapper;
-                add(edges, expression.queryModel);
-                add(edges, expression.lhs);
-                add(edges, expression.rhs);
-                addExpressions(edges, expression.args);
-                addWindow(edges, expression.windowExpression);
-            }
+            hasSharing |= addEdges(node, edges, windowArguments);
             pending.addAll(edges);
         }
         return hasSharing;
@@ -340,13 +328,9 @@ public final class QueryModelGenerationState implements Mutable {
                 if (active.containsKey(model)) {
                     continue;
                 }
-                Selection selection = selections.get(model);
+                QueryModelSelection selection = selections.get(model);
                 if (selection != null) {
                     selection.apply(model, copies, pool);
-                    resetMarker(model.getLimitLo());
-                    resetMarker(model.getLimitHi());
-                    resetMarker(model.getLimitAdviceLo());
-                    resetMarker(model.getLimitAdviceHi());
                 }
             }
             ObjList<Object> edges = graph.get(node);
@@ -368,53 +352,5 @@ public final class QueryModelGenerationState implements Mutable {
         }
         preparationCount += visited.size();
         workingCopyCount += copies.size();
-    }
-
-    private void resetMarker(ExpressionNode node) {
-        Boolean value = markers.get(node);
-        if (value != null) {
-            node.implemented = value;
-        }
-    }
-
-    private void saveMarker(ExpressionNode node) {
-        if (node != null) {
-            markers.put(node, node.implemented);
-        }
-    }
-
-    private static final class Selection {
-        private final ExpressionNode backupWhere;
-        private final ExpressionNode constWhere;
-        private final boolean isSkipped;
-        private final ObjList<ExpressionNode> latestBy = new ObjList<>();
-        private final ExpressionNode outerJoin;
-        private final ExpressionNode postJoinWhere;
-        private final ExpressionNode where;
-
-        private Selection(IQueryModel model, IdentityHashMap<ExpressionNode, ExpressionNode> copies) {
-            where = copy(model.getWhereClause(), copies, null);
-            backupWhere = copy(model.getBackupWhereClause(), copies, null);
-            constWhere = copy(model.getConstWhereClause(), copies, null);
-            postJoinWhere = copy(model.getPostJoinWhereClause(), copies, null);
-            outerJoin = copy(model.getOuterJoinExpressionClause(), copies, null);
-            isSkipped = model.isSkipped();
-            for (int i = 0; i < model.getLatestBy().size(); i++) {
-                latestBy.add(copy(model.getLatestBy().getQuick(i), copies, null));
-            }
-        }
-
-        private void apply(IQueryModel model, IdentityHashMap<ExpressionNode, ExpressionNode> copies, ObjectPool<ExpressionNode> pool) {
-            model.setWhereClause(copy(where, copies, pool));
-            model.setBackupWhereClause(copy(backupWhere, copies, pool));
-            model.setConstWhereClause(copy(constWhere, copies, pool));
-            model.setPostJoinWhereClause(copy(postJoinWhere, copies, pool));
-            model.setOuterJoinExpressionClause(copy(outerJoin, copies, pool));
-            model.setSkipped(isSkipped);
-            model.getLatestBy().clear();
-            for (int i = 0; i < latestBy.size(); i++) {
-                model.addLatestBy(copy(latestBy.getQuick(i), copies, pool));
-            }
-        }
     }
 }

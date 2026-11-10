@@ -132,13 +132,23 @@ public class NativeFrameBoundariesAbsentColumnTest extends AbstractCairoTest {
             createMasters();
 
             // The same fixture with no index on the join key: the fast ASOF cursor reads the slave through
-            // the same lazily built time frames.
+            // the same lazily built time frames. Keyed ASOF defaults to a Dense cursor, so the hint selects
+            // the fast one.
+            engine.releaseAllReaders();
+            assertQuery("SELECT /*+ asof_fast(m q) */ sum(q.v) sv, count(q.v) cv, count(q.extra) ce, count() c" +
+                    " FROM m ASOF JOIN q ON (s)")
+                    .expectSize()
+                    .noRandomAccess()
+                    .withPlanContaining("AsOf Join Fast")
+                    .returns("sv\tcv\tce\tc\n40000455\t50\t0\t50\n");
+
+            // the default cursor reads the same slave and returns the same rows
             engine.releaseAllReaders();
             assertQuery("SELECT sum(q.v) sv, count(q.v) cv, count(q.extra) ce, count() c" +
                     " FROM m ASOF JOIN q ON (s)")
                     .expectSize()
                     .noRandomAccess()
-                    .withPlanContaining("AsOf Join Fast")
+                    .withPlanContaining("AsOf Join Dense Single Symbol")
                     .returns("sv\tcv\tce\tc\n40000455\t50\t0\t50\n");
         });
     }

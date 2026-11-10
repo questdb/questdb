@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.functions.table;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -96,6 +97,9 @@ public class WaitWalTableFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testWaitFunctionInScalarSubQueryDoesNotDisableParallelFilter() throws Exception {
+        // keeps the comparison on the Java filter, whose thread-safety decides between the async and
+        // the serial filter: by default the JIT binds the scalar sub-query, see ScalarSubQueryJitTest
+        setProperty(PropertyKey.CAIRO_SQL_JIT_SCALAR_SUBQUERY_ENABLED, "false");
         assertMemoryLeak(() -> {
             execute("CREATE TABLE notwal (v INT)");
             try (

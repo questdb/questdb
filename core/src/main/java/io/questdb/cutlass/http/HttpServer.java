@@ -39,6 +39,7 @@ import io.questdb.cutlass.http.processors.TextImportProcessor;
 import io.questdb.cutlass.http.processors.WarningsProcessor;
 import io.questdb.cutlass.qwp.server.QwpIngressHttpProcessor;
 import io.questdb.cutlass.qwp.server.egress.QwpEgressHttpProcessor;
+import io.questdb.cutlass.qwp.server.egress.QwpEgressUpgradeProcessor;
 import io.questdb.mp.ConcurrentPool;
 import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
@@ -244,7 +245,13 @@ public class HttpServer implements Closeable {
                 }
             });
 
-            // QWP egress endpoint (query results, WebSocket only)
+            // QWP egress endpoint (query results, WebSocket only). One select cache for every
+            // worker's processor: a connection's requests are served by whichever worker picks them
+            // up, so per-worker caches recompiled a plan each time a request changed worker.
+            final AssociativeCache<RecordCursorFactory> qwpSelectCache = QwpEgressUpgradeProcessor.newSelectCache(httpServerConfiguration);
+            if (qwpSelectCache instanceof ConcurrentAssociativeCache) {
+                server.registerClosable(qwpSelectCache);
+            }
             server.bind(new HttpRequestHandlerFactory() {
                 @Override
                 public ObjHashSet<String> getUrls() {
@@ -253,7 +260,7 @@ public class HttpServer implements Closeable {
 
                 @Override
                 public HttpRequestHandler newInstance() {
-                    return new QwpEgressHttpProcessor(cairoEngine, httpServerConfiguration, sharedQueryWorkerCount);
+                    return new QwpEgressHttpProcessor(cairoEngine, httpServerConfiguration, sharedQueryWorkerCount, qwpSelectCache);
                 }
             });
         }

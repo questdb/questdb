@@ -108,9 +108,7 @@ public class MessageBusImpl implements MessageBus {
     private final RingQueue<PageFrameReduceTask>[] pageFrameReduceQueue;
     private final int pageFrameReduceShardCount;
     private final MCSequence[] pageFrameReduceSubSeq;
-    private final MPSequence postingSealPurgePubSeq;
-    private final RingQueue<PostingSealPurgeTask> postingSealPurgeQueue;
-    private final SCSequence postingSealPurgeSubSeq;
+    private final ConcurrentQueue<PostingSealPurgeTask> postingSealPurgeQueue;
     private final MPSequence queryCacheEventPubSeq;
     private final MCSequence queryCacheEventSubSeq;
     private final ConcurrentQueue<QueryTrace> queryTraceQueue;
@@ -186,14 +184,10 @@ public class MessageBusImpl implements MessageBus {
             this.columnPurgePubSeq = new MPSequence(this.columnPurgeQueue.getCycle());
             this.columnPurgePubSeq.then(this.columnPurgeSubSeq).then(this.columnPurgePubSeq);
 
-            // POSTING-seal purge queue. Multi-producer (every TableWriter
-            // commit thread can publish) → single-consumer (PostingSealPurgeJob).
-            // Reuses the column-purge capacity knob — publish rate is bounded
-            // by seal frequency (one per ~MAX_GEN_COUNT commits per column).
-            this.postingSealPurgeQueue = new RingQueue<>(PostingSealPurgeTask::new, configuration.getColumnPurgeQueueCapacity());
-            this.postingSealPurgeSubSeq = new SCSequence();
-            this.postingSealPurgePubSeq = new MPSequence(this.postingSealPurgeQueue.getCycle());
-            this.postingSealPurgePubSeq.then(this.postingSealPurgeSubSeq).then(this.postingSealPurgePubSeq);
+            // Writers must hand off ready purge tasks before releasing their indexers,
+            // even when the purge job falls behind. The queue copies each task so the
+            // producer can immediately reuse its holder.
+            this.postingSealPurgeQueue = ConcurrentQueue.createConcurrentQueue(PostingSealPurgeTask::new);
 
             this.pageFrameReduceShardCount = configuration.getPageFrameReduceShardCount();
 
@@ -270,7 +264,7 @@ public class MessageBusImpl implements MessageBus {
     @TestOnly
     public void clear() {
         columnPurgeSubSeq.clear();
-        postingSealPurgeSubSeq.clear();
+        postingSealPurgeQueue.clear();
         groupByLongTopKSubSeq.clear();
         groupByMergeShardSubSeq.clear();
         indexerSubSeq.clear();
@@ -547,18 +541,8 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public MPSequence getPostingSealPurgePubSeq() {
-        return postingSealPurgePubSeq;
-    }
-
-    @Override
-    public RingQueue<PostingSealPurgeTask> getPostingSealPurgeQueue() {
+    public ConcurrentQueue<PostingSealPurgeTask> getPostingSealPurgeQueue() {
         return postingSealPurgeQueue;
-    }
-
-    @Override
-    public SCSequence getPostingSealPurgeSubSeq() {
-        return postingSealPurgeSubSeq;
     }
 
     @Override

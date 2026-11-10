@@ -64,6 +64,11 @@ public class AbstractSampleByRecordCursorFactoryTest {
                 sampleToFunc
         ) {
             @Override
+            public int getScanDirection() {
+                return SCAN_DIRECTION_FORWARD;
+            }
+
+            @Override
             protected AbstractNoRecordSampleByCursor getRawCursor() {
                 return null;
             }
@@ -113,6 +118,11 @@ public class AbstractSampleByRecordCursorFactoryTest {
 
         private TrackingBaseFactory() {
             super(null);
+        }
+
+        @Override
+        public int getScanDirection() {
+            return SCAN_DIRECTION_FORWARD;
         }
 
         @Override

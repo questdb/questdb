@@ -520,11 +520,13 @@ public class SubsampleWildcardProjectionTest extends AbstractCairoTest {
                     .timestamp("ts").withPlanContaining("over (order by [ts])").returns(primaryRows());
             assertQuery("SELECT * FROM (SELECT ca.* FROM ca SUBSAMPLE uniform(4)) q SUBSAMPLE uniform(2)")
                     .timestamp("ts").withPlanContaining("over (order by [ts])").returns(primaryRows());
-            // UNION ALL wrapper with an explicit TIMESTAMP(ts): the first branch's projection names it
+            // UNION ALL wrapper with an explicit TIMESTAMP(ts): the first branch's projection names it.
+            // SUBSAMPLE preserves its input order, so the concatenating union remains unordered even
+            // though this fixture's empty second branch makes the returned timestamps look ascending.
             assertQuery("SELECT * FROM (SELECT ts, x FROM ca UNION ALL SELECT ts, x FROM ca WHERE x < 0) TIMESTAMP(ts) SUBSAMPLE uniform(2)")
-                    .timestamp("ts").withPlanContaining("over (order by [ts])").returns(primaryRows());
+                    .timestampUnordered("ts").withPlanContaining("over (order by [ts])").returns(primaryRows());
             assertQuery("SELECT * FROM (SELECT ca.* FROM ca UNION ALL SELECT ca.* FROM ca WHERE x < 0) TIMESTAMP(ts) SUBSAMPLE uniform(2)")
-                    .timestamp("ts").withPlanContaining("over (order by [ts])").returns(primaryRows());
+                    .timestampUnordered("ts").withPlanContaining("over (order by [ts])").returns(primaryRows());
             // wrapper over a JOIN whose primary branch is an unaliased-star subquery
             final String joinRows = """
                     ts\tx\tts1\ty
@@ -751,10 +753,12 @@ public class SubsampleWildcardProjectionTest extends AbstractCairoTest {
                     1970-01-01T00:00:00.000010Z\t10.0
                     1970-01-01T00:00:00.000020Z\t90.0
                     """;
+            // SUBSAMPLE preserves the UNION ALL input order; numeric widening does not turn the
+            // concatenating set operation into an ordered merge.
             assertQuery("SELECT ts, x" + source + " SUBSAMPLE minmax(x, 2)")
-                    .timestamp("ts").withPlanContaining("CachedWindow").returns(rows);
+                    .timestampUnordered("ts").withPlanContaining("CachedWindow").returns(rows);
             assertQuery("SELECT *" + source + " SUBSAMPLE minmax(x, 2)")
-                    .timestamp("ts").withPlanContaining("CachedWindow").returns(rows);
+                    .timestampUnordered("ts").withPlanContaining("CachedWindow").returns(rows);
         });
     }
 
@@ -1066,6 +1070,11 @@ public class SubsampleWildcardProjectionTest extends AbstractCairoTest {
                                     cursor.toTop();
                                 }
                             };
+                        }
+
+                        @Override
+                        public int getScanDirection() {
+                            return base.getScanDirection();
                         }
 
                         @Override

@@ -94,6 +94,11 @@ public interface BinaryFunction extends Function {
         return getLeft().isNonDeterministic() || getRight().isNonDeterministic();
     }
 
+    @Override
+    default boolean hasPerCallState() {
+        return getLeft().hasPerCallState() || getRight().hasPerCallState();
+    }
+
     // used in generic toSink implementation
     default boolean isOperator() {
         return false;

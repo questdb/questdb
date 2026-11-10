@@ -48,6 +48,7 @@ import io.questdb.cairo.lv.LiveViewStatePageReader;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.FunctionFlags;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.WindowExpression;
@@ -456,6 +457,26 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
             sink.val('(').val(argY).val(',').val(argX).val(')');
             sink.val(" over (rows between current row and current row)");
         }
+
+        @Override
+        public boolean hasPerCallState() {
+            return super.hasPerCallState() || FunctionFlags.hasPerCallState(argY);
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return super.isNonDeterministic() || FunctionFlags.isNonDeterministic(argY);
+        }
+
+        @Override
+        public boolean isRandom() {
+            return super.isRandom() || FunctionFlags.isRandom(argY);
+        }
+
+        @Override
+        public boolean isStableWithinExecution() {
+            return super.isStableWithinExecution() && FunctionFlags.isStableWithinExecution(argY);
+        }
     }
 
     // Handles bivariate stat over (partition by x), order by absent or whole-partition frame.
@@ -568,6 +589,26 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
             sink.val("partition by ");
             sink.val(partitionByRecord.getFunctions());
             sink.val(')');
+        }
+
+        @Override
+        public boolean hasPerCallState() {
+            return super.hasPerCallState() || FunctionFlags.hasPerCallState(argY);
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return super.isNonDeterministic() || FunctionFlags.isNonDeterministic(argY);
+        }
+
+        @Override
+        public boolean isRandom() {
+            return super.isRandom() || FunctionFlags.isRandom(argY);
+        }
+
+        @Override
+        public boolean isStableWithinExecution() {
+            return super.isStableWithinExecution() && FunctionFlags.isStableWithinExecution(argY);
         }
     }
 
@@ -885,6 +926,26 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
             memory.truncate();
             freeList.clear();
         }
+
+        @Override
+        public boolean hasPerCallState() {
+            return super.hasPerCallState() || FunctionFlags.hasPerCallState(argY);
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return super.isNonDeterministic() || FunctionFlags.isNonDeterministic(argY);
+        }
+
+        @Override
+        public boolean isRandom() {
+            return super.isRandom() || FunctionFlags.isRandom(argY);
+        }
+
+        @Override
+        public boolean isStableWithinExecution() {
+            return super.isStableWithinExecution() && FunctionFlags.isStableWithinExecution(argY);
+        }
     }
 
     // Handles bivariate stat over (partition by x [order by o] rows between y and z).
@@ -1123,6 +1184,26 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         public void toTop() {
             super.toTop();
             memory.truncate();
+        }
+
+        @Override
+        public boolean hasPerCallState() {
+            return super.hasPerCallState() || FunctionFlags.hasPerCallState(argY);
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return super.isNonDeterministic() || FunctionFlags.isNonDeterministic(argY);
+        }
+
+        @Override
+        public boolean isRandom() {
+            return super.isRandom() || FunctionFlags.isRandom(argY);
+        }
+
+        @Override
+        public boolean isStableWithinExecution() {
+            return super.isStableWithinExecution() && FunctionFlags.isStableWithinExecution(argY);
         }
     }
 
@@ -1411,6 +1492,26 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
             sumYY = 0.0;
             sumXY = 0.0;
         }
+
+        @Override
+        public boolean hasPerCallState() {
+            return super.hasPerCallState() || FunctionFlags.hasPerCallState(argY);
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return super.isNonDeterministic() || FunctionFlags.isNonDeterministic(argY);
+        }
+
+        @Override
+        public boolean isRandom() {
+            return super.isRandom() || FunctionFlags.isRandom(argY);
+        }
+
+        @Override
+        public boolean isStableWithinExecution() {
+            return super.isStableWithinExecution() && FunctionFlags.isStableWithinExecution(argY);
+        }
     }
 
     // Handles bivariate stat over ([order by o] rows between y and z); no partition key.
@@ -1607,6 +1708,26 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
                 buffer.putDouble((long) i * SLOT_SIZE, Double.NaN);
                 buffer.putDouble((long) i * SLOT_SIZE + Double.BYTES, Double.NaN);
             }
+        }
+
+        @Override
+        public boolean hasPerCallState() {
+            return super.hasPerCallState() || FunctionFlags.hasPerCallState(argY);
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return super.isNonDeterministic() || FunctionFlags.isNonDeterministic(argY);
+        }
+
+        @Override
+        public boolean isRandom() {
+            return super.isRandom() || FunctionFlags.isRandom(argY);
+        }
+
+        @Override
+        public boolean isStableWithinExecution() {
+            return super.isStableWithinExecution() && FunctionFlags.isStableWithinExecution(argY);
         }
     }
 
@@ -1849,6 +1970,26 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
             super.toTop();
             tombstoneCount = 0;
         }
+
+        @Override
+        public boolean hasPerCallState() {
+            return super.hasPerCallState() || FunctionFlags.hasPerCallState(argY);
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return super.isNonDeterministic() || FunctionFlags.isNonDeterministic(argY);
+        }
+
+        @Override
+        public boolean isRandom() {
+            return super.isRandom() || FunctionFlags.isRandom(argY);
+        }
+
+        @Override
+        public boolean isStableWithinExecution() {
+            return super.isStableWithinExecution() && FunctionFlags.isStableWithinExecution(argY);
+        }
     }
 
     // Handles bivariate stat over (rows between unbounded preceding and current row); no partition key.
@@ -1947,6 +2088,26 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
             sumYY = 0.0;
             sumXY = 0.0;
         }
+
+        @Override
+        public boolean hasPerCallState() {
+            return super.hasPerCallState() || FunctionFlags.hasPerCallState(argY);
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return super.isNonDeterministic() || FunctionFlags.isNonDeterministic(argY);
+        }
+
+        @Override
+        public boolean isRandom() {
+            return super.isRandom() || FunctionFlags.isRandom(argY);
+        }
+
+        @Override
+        public boolean isStableWithinExecution() {
+            return super.isStableWithinExecution() && FunctionFlags.isStableWithinExecution(argY);
+        }
     }
 
     // Bivariate stat over () - empty clause, no partition by, no order by, default frame.
@@ -2041,6 +2202,26 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
             sumXX = 0.0;
             sumYY = 0.0;
             sumXY = 0.0;
+        }
+
+        @Override
+        public boolean hasPerCallState() {
+            return super.hasPerCallState() || FunctionFlags.hasPerCallState(argY);
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return super.isNonDeterministic() || FunctionFlags.isNonDeterministic(argY);
+        }
+
+        @Override
+        public boolean isRandom() {
+            return super.isRandom() || FunctionFlags.isRandom(argY);
+        }
+
+        @Override
+        public boolean isStableWithinExecution() {
+            return super.isStableWithinExecution() && FunctionFlags.isStableWithinExecution(argY);
         }
     }
 

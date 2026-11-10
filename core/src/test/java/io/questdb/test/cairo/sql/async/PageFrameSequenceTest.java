@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.sql.async;
 
 import io.questdb.DefaultFactoryProvider;
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.RecordCursor;
@@ -68,6 +69,9 @@ public class PageFrameSequenceTest extends AbstractCairoTest {
                 };
             }
         };
+        // Frame dispatch groups small native frames into one task, which would make the owner steal
+        // both frames at once. One frame per task keeps the count at one steal per frame.
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FRAME_DISPATCH_ENABLED, "false");
         assertMemoryLeak(() -> {
             // two daily partitions, so two page frames
             execute("""

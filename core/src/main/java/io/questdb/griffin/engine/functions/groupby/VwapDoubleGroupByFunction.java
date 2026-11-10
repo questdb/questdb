@@ -123,6 +123,11 @@ public class VwapDoubleGroupByFunction extends DoubleFunction implements GroupBy
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return false;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return BinaryFunction.super.isThreadSafe();
     }

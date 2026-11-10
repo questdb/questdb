@@ -872,6 +872,11 @@ public class SqlCodeGeneratorWorkerFunctionExtractionTest extends AbstractCairoT
         }
 
         @Override
+        public boolean isOrderSensitive() {
+            return false;
+        }
+
+        @Override
         public void setNull(MapValue mapValue) {
         }
     }

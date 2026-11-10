@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.ColumnwiseFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.constants.LongConstant;
 import io.questdb.std.IntList;
@@ -69,13 +70,18 @@ public class AddLongFunctionFactory implements FunctionFactory {
         return new AddLongFunc(left, right);
     }
 
-    private static class AddLongFunc extends LongFunction implements ArithmeticBinaryFunction {
+    private static class AddLongFunc extends LongFunction implements ArithmeticBinaryFunction, ColumnwiseFunction {
         private final Function left;
         private final Function right;
 
         public AddLongFunc(Function left, Function right) {
             this.left = left;
             this.right = right;
+        }
+
+        @Override
+        public int getColumnwiseOp() {
+            return ColumnwiseFunction.OP_ADD;
         }
 
         @Override

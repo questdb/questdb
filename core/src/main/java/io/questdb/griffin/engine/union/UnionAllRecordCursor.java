@@ -25,15 +25,19 @@
 package io.questdb.griffin.engine.union;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordBlock;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.Nullable;
 
 class UnionAllRecordCursor extends AbstractUnionSymbolSourceCursor implements NoRandomAccessRecordCursor {
     private final NextMethod nextB = this::nextB;
@@ -41,7 +45,13 @@ class UnionAllRecordCursor extends AbstractUnionSymbolSourceCursor implements No
     private NextMethod nextMethod;
     private final NextMethod nextA = this::nextA;
 
-    public UnionAllRecordCursor(ObjList<Function> castFunctionsA, ObjList<Function> castFunctionsB) {
+    // the rows of a branch are this cursor's rows as they are: no casts, no symbols to remap
+    private final boolean canOfferBlocks;
+    private boolean blocksA;
+    private boolean blocksB;
+
+    public UnionAllRecordCursor(ObjList<Function> castFunctionsA, ObjList<Function> castFunctionsB, boolean canOfferBlocks) {
+        this.canOfferBlocks = canOfferBlocks;
         if (castFunctionsA != null && castFunctionsB != null) {
             this.record = new UnionCastRecord(castFunctionsA, castFunctionsB);
         } else {
@@ -79,6 +89,47 @@ class UnionAllRecordCursor extends AbstractUnionSymbolSourceCursor implements No
     @Override
     public boolean hasNext() {
         return nextMethod.next();
+    }
+
+    /**
+     * Whether the union's rows can be offered as its branches' record blocks: no cast functions,
+     * and no SYMBOL column, whose keys are the branches' own.
+     */
+    static boolean canOfferBlocks(RecordMetadata metadata, ObjList<Function> castFunctionsA) {
+        if (castFunctionsA != null) {
+            return false;
+        }
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (ColumnType.isSymbol(metadata.getColumnType(i))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    @Override
+    public @Nullable RecordBlock peekRecordBlock(int maxRows) {
+        // the branch the next rows come from offers them; none while A has ended and the union
+        // has not moved on to B
+        if (isUsingCursorA) {
+            return blocksA ? cursorA.peekRecordBlock(maxRows) : null;
+        }
+        return blocksB ? cursorB.peekRecordBlock(maxRows) : null;
+    }
+
+    @Override
+    public void skipRecordBlock(int rowCount) {
+        (isUsingCursorA ? cursorA : cursorB).skipRecordBlock(rowCount);
+    }
+
+    @Override
+    public boolean supportsRecordBlocks() {
+        if (!canOfferBlocks) {
+            return false;
+        }
+        blocksA = cursorA.supportsRecordBlocks();
+        blocksB = cursorB.supportsRecordBlocks();
+        return blocksA || blocksB;
     }
 
     @Override

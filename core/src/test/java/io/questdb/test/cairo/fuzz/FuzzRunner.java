@@ -1271,7 +1271,10 @@ public class FuzzRunner {
             String whereClause,
             boolean alsoCompareUnindexed
     ) throws SqlException {
-        final String covered = "select " + projection + " from " + tableName + whereClause;
+        // use_index keeps the covering plan of a key that selects a large share of a big table, which
+        // the planner would otherwise replace with a table scan, see
+        // SqlCodeGenerator.scanInPlaceOfFrequentCovering()
+        final String covered = "select /*+ use_index */ " + projection + " from " + tableName + whereClause;
         final String uncovered = "select /*+ no_covering */ " + projection + " from " + tableName + whereClause;
 
         final StringSink plan = new StringSink();

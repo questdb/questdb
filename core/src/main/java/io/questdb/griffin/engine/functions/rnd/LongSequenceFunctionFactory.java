@@ -105,6 +105,11 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
             this.cursor = new LongSequenceRecordCursor(Math.max(0L, recordCount));
         }
 
+        @Override
+        public int getScanDirection() {
+            return SCAN_DIRECTION_FORWARD;
+        }
+
         // The produced relation is always 1..N; deterministic by construction.
         @Override
         public boolean isNonDeterministic() {
@@ -223,6 +228,11 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
             super(metadata);
             this.cursor = new LongSequenceRecordCursor(Math.max(0L, recordCount));
             this.rnd = new Rnd(this.seedLo = seedLo, this.seedHi = seedHi);
+        }
+
+        @Override
+        public int getScanDirection() {
+            return SCAN_DIRECTION_FORWARD;
         }
 
         // The produced relation is always 1..N and the rnd seeds are fixed constructor arguments

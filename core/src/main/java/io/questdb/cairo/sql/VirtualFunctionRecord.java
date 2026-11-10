@@ -67,6 +67,13 @@ public class VirtualFunctionRecord implements ColumnTypes, Record, QuietCloseabl
         return baseRecord;
     }
 
+    /**
+     * The record the functions read: this record's own columns, then the base record's.
+     */
+    public Record getFunctionInput() {
+        return internalJoinRecord;
+    }
+
     @Override
     public BinarySequence getBin(int col) {
         return getFunction(col).getBin(internalJoinRecord);

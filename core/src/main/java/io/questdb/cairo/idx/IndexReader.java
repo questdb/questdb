@@ -93,15 +93,15 @@ public interface IndexReader extends Closeable {
     }
 
     /**
-     * Acquire a NON-pooled covering cursor that a single worker thread owns
-     * outright, for use during parallel covered decode. Unlike {@link #getCursor},
-     * the returned cursor is never drawn from / returned to the reader's shared
-     * free-cursor pool, so N such cursors are safe to iterate concurrently over
-     * ONE reader provided the reader was made read-only first (warmed + frozen).
-     * Positioning matches {@link #getCursor(int, long, long, int[])}; only the
-     * construct/close lifecycle differs. Implemented by the forward posting
-     * reader (the reader carried on covered frames); other readers do not support
-     * it.
+     * Acquire a covering cursor that a single worker thread owns outright, for
+     * use during parallel covered decode. Unlike {@link #getCursor}, the returned
+     * cursor is never drawn from / returned to the reader's owner free-cursor
+     * pool; it is reused through a synchronized per-reader detached pool, so N
+     * such cursors are safe to iterate concurrently over ONE reader provided the
+     * reader was made read-only first (warmed + frozen). Positioning matches
+     * {@link #getCursor(int, long, long, int[])}; only the construct/close
+     * lifecycle differs. Implemented by the posting readers; other readers do
+     * not support it.
      */
     default RowCursor getDetachedCursor(int key, long minValue, long maxValue, int[] requiredCoverColumns) {
         throw new UnsupportedOperationException();
