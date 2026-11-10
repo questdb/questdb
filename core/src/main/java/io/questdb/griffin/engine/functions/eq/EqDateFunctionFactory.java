@@ -25,11 +25,18 @@
 package io.questdb.griffin.engine.functions.eq;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.MillisTimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.TimestampBounds;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class EqDateFunctionFactory implements FunctionFactory {
@@ -45,7 +52,21 @@ public class EqDateFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new EqDateFunctionFactory.EqDateFunction(args.getQuick(0), args.getQuick(1));
+        final Function left = args.getQuick(0);
+        final Function right = args.getQuick(1);
+        // A constant or runtime-constant side, text with digits finer than a millisecond included, turns into the
+        // one DATE value that equals it. When no value equals it, nothing matches.
+        if (left.isConstant() != right.isConstant()) {
+            final Function constant = left.isConstant() ? left : right;
+            if (TimestampBounds.point(MillisTimestampDriver.INSTANCE, constant) == Numbers.LONG_NULL && !TimestampBounds.isNull(constant)) {
+                Misc.free(left);
+                Misc.free(right);
+                return BooleanConstant.FALSE;
+            }
+        } else if (!left.isConstant() && left.isRuntimeConstant() != right.isRuntimeConstant()) {
+            return left.isRuntimeConstant() ? new RunTimeConstFunc(left, right, right, left) : new RunTimeConstFunc(left, right, left, right);
+        }
+        return new EqDateFunctionFactory.EqDateFunction(left, right);
     }
 
     private static class EqDateFunction extends AbstractEqBinaryFunction {
@@ -56,6 +77,33 @@ public class EqDateFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             return negated != (left.getDate(rec) == right.getDate(rec));
+        }
+    }
+
+    // values compared with a runtime constant, read once per execution
+    private static class RunTimeConstFunc extends AbstractEqBinaryFunction {
+        private final Function bound;
+        private final Function column;
+        private boolean hasValue;
+        private long value;
+
+        public RunTimeConstFunc(Function left, Function right, Function column, Function bound) {
+            super(left, right);
+            this.column = column;
+            this.bound = bound;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return negated != (hasValue && value == column.getDate(rec));
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            value = TimestampBounds.point(MillisTimestampDriver.INSTANCE, bound);
+            // NULL equals NULL
+            hasValue = value != Numbers.LONG_NULL || TimestampBounds.isNull(bound);
         }
     }
 }

@@ -24,27 +24,55 @@
 
 package io.questdb.griffin.engine.functions.constants;
 
+import io.questdb.cairo.MillisTimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.DateFunction;
+import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
+import org.jetbrains.annotations.Nullable;
 
 public class DateConstant extends DateFunction implements ConstantFunction {
     public static final DateConstant NULL = new DateConstant(Numbers.LONG_NULL);
+    // the text of a literal whose value drops some of its digits, so that comparisons can read it exactly
+    private final @Nullable String sourceText;
     private final long value;
 
     public DateConstant(long value) {
+        this(value, null);
+    }
+
+    private DateConstant(long value, @Nullable String sourceText) {
         this.value = value;
+        this.sourceText = sourceText;
     }
 
     public static DateConstant newInstance(long value) {
         return value != Numbers.LONG_NULL ? new DateConstant(value) : NULL;
     }
 
+    /**
+     * A constant for a date literal. The text is kept only when the value drops some of its digits, those finer
+     * than a millisecond.
+     */
+    public static DateConstant newInstance(long value, CharSequence text) {
+        if (value == Numbers.LONG_NULL || MillisTimestampDriver.INSTANCE.isExactText(text, 0, text.length())) {
+            return newInstance(value);
+        }
+        return new DateConstant(value, Chars.toString(text));
+    }
+
     @Override
     public long getDate(Record rec) {
         return value;
+    }
+
+    /**
+     * The literal's text when the value drops some of its digits, otherwise null and the value is exact.
+     */
+    public @Nullable CharSequence getSourceText() {
+        return sourceText;
     }
 
     @Override
@@ -53,7 +81,7 @@ public class DateConstant extends DateFunction implements ConstantFunction {
             return true;
         }
         if (obj instanceof DateConstant that) {
-            return this.value == that.value;
+            return this.value == that.value && Chars.equalsNullable(this.sourceText, that.sourceText);
         }
         return false;
     }

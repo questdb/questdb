@@ -1504,8 +1504,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     args.set(k, TimestampConstant.newInstance(timestamp, adaptiveType, timestampStr));
                 } else if (sigArgTypeTag == ColumnType.DATE) {
                     int position = argPositions.getQuick(k);
-                    long millis = parseDate(arg.getStrA(null), position);
-                    args.set(k, DateConstant.newInstance(millis));
+                    final CharSequence dateStr = arg.getStrA(null);
+                    long millis = parseDate(dateStr, position);
+                    args.set(k, DateConstant.newInstance(millis, dateStr));
                 }
             } else if (argTypeTag == ColumnType.UUID && sigArgTypeTag == ColumnType.STRING) {
                 args.setQuick(k, new CastUuidToStrFunctionFactory.Func(arg));

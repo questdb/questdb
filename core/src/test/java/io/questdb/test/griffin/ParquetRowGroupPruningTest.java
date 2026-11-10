@@ -365,12 +365,10 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                             val
                             2020-06-15T00:00:00.000Z
                             """);
+            // text finer than a millisecond compares exactly and matches no DATE value
             assertQuery("SELECT val FROM x WHERE val = '2020-06-15T00:00:00.000000001Z'")
                     .noLeakCheck()
-                    .returns("""
-                            val
-                            2020-06-15T00:00:00.000Z
-                            """);
+                    .returns("val\n");
         });
     }
 

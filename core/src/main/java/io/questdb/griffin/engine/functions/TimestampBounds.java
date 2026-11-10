@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.engine.functions.constants.DateConstant;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
@@ -144,6 +145,9 @@ public final class TimestampBounds {
      */
     public static @Nullable CharSequence textOf(Function operand) {
         if (operand instanceof TimestampConstant constant) {
+            return constant.getSourceText();
+        }
+        if (operand instanceof DateConstant constant) {
             return constant.getSourceText();
         }
         switch (ColumnType.tagOf(operand.getType())) {
