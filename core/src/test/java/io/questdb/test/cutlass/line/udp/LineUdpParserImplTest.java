@@ -1145,6 +1145,93 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRepeatedColumnKeepsFirstValueInWideTable() throws Exception {
+        // the parser marks the columns a line has set in a list that has room for 16 at first; in a table of
+        // 24 columns, repeats of columns past the 16th keep the first value, as does a repeat of a column the
+        // line adds as the 26th
+        assertMemoryLeak(() -> {
+            final TableModel model = new TableModel(configuration, "w", PartitionBy.NONE);
+            for (int i = 0; i < 24; i++) {
+                model.col("c" + i, ColumnType.DOUBLE);
+            }
+            AbstractCairoTest.create(model.timestamp());
+            try (
+                    LineUdpParserImpl parser = new LineUdpParserImpl(engine, new DefaultLineUdpReceiverConfiguration());
+                    LineUdpLexer lexer = new LineUdpLexer(4096)
+            ) {
+                lexer.withParser(parser);
+                parseDatagram(lexer, """
+                        w c20=1.5,c0=2.5,c20=9.5 1000000000
+                        w c23=3.5,C23=9.5,c16=4.5,c16=9.5 2000000000
+                        w n=5.5,n=9.5,c20=6.5,N=9.5 3000000000
+                        """);
+                lexer.parseLast();
+                parser.commitAll();
+            }
+            assertQuery("SELECT c0, c16, c20, c23, timestamp, n FROM w")
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns("""
+                            c0\tc16\tc20\tc23\ttimestamp\tn
+                            2.5\tnull\t1.5\tnull\t1970-01-01T00:00:01.000000Z\tnull
+                            null\t4.5\tnull\t3.5\t1970-01-01T00:00:02.000000Z\tnull
+                            null\tnull\t6.5\tnull\t1970-01-01T00:00:03.000000Z\t5.5
+                            """);
+            assertQuery("SELECT count() FROM w WHERE " + String.join(" OR ", wideTableColumnsEqual(9.5)))
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n0\n");
+        });
+    }
+
+    @Test
+    public void testRepeatedColumnKeepsFirstValueOfEveryType() throws Exception {
+        // a repeated column keeps its first value whatever its type, fixed or variable size; each repeat is a
+        // value the column takes, so only the repeat check can drop it; an empty first value keeps the column
+        // NULL and an empty repeat leaves the first value
+        assertRepeatKeepsFirstValue(ColumnType.BOOLEAN, "true", "false", "true");
+        assertRepeatKeepsFirstValue(ColumnType.BYTE, "1i", "2i", "1");
+        assertRepeatKeepsFirstValue(ColumnType.SHORT, "1i", "2i", "1");
+        assertRepeatKeepsFirstValue(ColumnType.INT, "1i", "2i", "1");
+        assertRepeatKeepsFirstValue(ColumnType.LONG, "1i", "2i", "1");
+        assertRepeatKeepsFirstValue(ColumnType.DATE, "1000i", "2000i", "1970-01-01T00:00:01.000Z");
+        assertRepeatKeepsFirstValue(ColumnType.TIMESTAMP, "1000000t", "2000000t", "1970-01-01T00:00:01.000000Z");
+        assertRepeatKeepsFirstValue(ColumnType.FLOAT, "1.5", "2.5", "1.5");
+        assertRepeatKeepsFirstValue(ColumnType.DOUBLE, "1.5", "2.5", "1.5");
+        assertRepeatKeepsFirstValue(ColumnType.DOUBLE, "", "2.5", "null");
+        assertRepeatKeepsFirstValue(ColumnType.STRING, "\"ab\"", "\"cd\"", "ab");
+        assertRepeatKeepsFirstValue(ColumnType.VARCHAR, "\"ab\"", "\"cd\"", "ab");
+        assertRepeatKeepsFirstValue(ColumnType.VARCHAR, "\"ab\"", "", "ab");
+        assertRepeatKeepsFirstValue(ColumnType.CHAR, "\"a\"", "\"b\"", "a");
+        assertRepeatKeepsFirstValue(ColumnType.IPv4, "\"1.2.3.4\"", "\"5.6.7.8\"", "1.2.3.4");
+        assertRepeatKeepsFirstValue(ColumnType.SYMBOL, "\"ab\"", "\"cd\"", "ab");
+        assertRepeatKeepsFirstValue(
+                ColumnType.UUID,
+                "\"11111111-2222-3333-4444-555555555555\"",
+                "\"66666666-7777-8888-9999-000000000000\"",
+                "11111111-2222-3333-4444-555555555555"
+        );
+        assertRepeatKeepsFirstValue(ColumnType.LONG256, "0x01i", "0x02i", "0x01");
+        assertRepeatKeepsFirstValue(ColumnType.getGeoHashTypeWithBits(5), "\"u\"", "\"v\"", "u");
+        assertRepeatKeepsFirstValue(ColumnType.getGeoHashTypeWithBits(15), "\"u33\"", "\"v33\"", "u33");
+        assertRepeatKeepsFirstValue(ColumnType.getGeoHashTypeWithBits(30), "\"u33d8b\"", "\"v33d8b\"", "u33d8b");
+        assertRepeatKeepsFirstValue(
+                ColumnType.getGeoHashTypeWithBits(60),
+                "\"u33d8b121234\"",
+                "\"v33d8b121234\"",
+                "u33d8b121234"
+        );
+        assertRepeatKeepsFirstValue(ColumnType.getDecimalType(2, 1), "1.5", "2.5", "1.5");
+        assertRepeatKeepsFirstValue(ColumnType.getDecimalType(4, 2), "1.5", "2.5", "1.50");
+        assertRepeatKeepsFirstValue(ColumnType.getDecimalType(9, 2), "1.5", "2.5", "1.50");
+        assertRepeatKeepsFirstValue(ColumnType.getDecimalType(18, 2), "1.5", "2.5", "1.50");
+        assertRepeatKeepsFirstValue(ColumnType.getDecimalType(38, 2), "1.5", "2.5", "1.50");
+        assertRepeatKeepsFirstValue(ColumnType.getDecimalType(76, 2), "1.5", "2.5", "1.50");
+    }
+
+    @Test
     public void testReservedName() throws Exception {
         final String expected = """
                 sym\tdouble\tint\tbool\tstr\ttimestamp
@@ -1197,15 +1284,10 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                         x a="abc",n=1i 1000000000
                         x n=2i 2000000000
                         """, configuration, new DefaultLineUdpReceiverConfiguration());
-                refreshTablesInBaseEngine();
-                try (
-                        TableReader reader = newOffPoolReader(configuration, "x");
-                        TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
-                ) {
-                    Assert.assertTrue("dimensions: " + nDims, cursor.hasNext());
-                    Assert.assertEquals("dimensions: " + nDims, 2, cursor.getRecord().getInt(1));
-                    Assert.assertFalse("dimensions: " + nDims, cursor.hasNext());
-                }
+                assertTable("""
+                        a\tn\ttimestamp
+                        null\t2\t1970-01-01T00:00:02.000000Z
+                        """, "x");
                 execute("DROP TABLE x");
             }
         });
@@ -1659,6 +1741,16 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         };
     }
 
+    // "cN = value" for every column of the table that testRepeatedColumnKeepsFirstValueInWideTable writes
+    private static String[] wideTableColumnsEqual(double value) {
+        final String[] conditions = new String[25];
+        for (int i = 0; i < 24; i++) {
+            conditions[i] = "c" + i + " = " + value;
+        }
+        conditions[24] = "n = " + value;
+        return conditions;
+    }
+
     // a quoted string is a VARCHAR on a server and a STRING with the legacy setting, so the lines run
     // against a fresh table once with each
     private void assertForEachStringDefault(String expected, String lines, TableModel model) throws Exception {
@@ -1693,6 +1785,17 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         ) {
             assertCursorTwoPass(expected, cursor, reader.getMetadata());
         }
+    }
+
+    // a line that names column v of the given type twice stores the first value
+    private void assertRepeatKeepsFirstValue(int columnType, String first, String repeat, String stored) throws Exception {
+        AbstractCairoTest.create(new TableModel(configuration, "t", PartitionBy.NONE).col("v", columnType).timestamp());
+        assertThat(
+                "v\ttimestamp\n" + stored + "\t1970-01-01T00:00:01.000000Z\n",
+                "t v=" + first + ",v=" + repeat + " 1000000000\n",
+                "t"
+        );
+        execute("DROP TABLE t");
     }
 
     private void assertThat(String expected, String lines, CharSequence tableName, CairoConfiguration configuration, LineUdpReceiverConfiguration udpConfiguration) throws Exception {
