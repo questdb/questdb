@@ -2527,8 +2527,9 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
     /**
      * Estimates the rows a gathered read returns and the bytes each of them takes in its record chain. The index counts
      * the rows of a read that it orders, and the share of the rows of the first Parquet page frame of the scan that the
-     * read keeps scales the rows of the scan otherwise. That page frame also samples the bytes of var-size values and
-     * the share of its rows the filter keeps.
+     * read keeps scales the rows of the scan otherwise. The rows the read keeps in that page frame also sample the bytes
+     * of var-size values and, under a filter, the share of the rows its index holds for the keys there that the filter
+     * keeps; the filter reads no other row.
      */
     private void sampleGatheredRows() {
         gatherRowBytes = chainRowSize;
@@ -2550,29 +2551,28 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
                 final long frameRowCount = frame.getPartitionHi() - frame.getPartitionLo();
                 if (frame.getFormat() == PartitionFormat.PARQUET && frameRowCount > 0) {
                     final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
-                    if (!isReadRowCountExact) {
-                        long keptRowCount = 0;
-                        try (RowCursor keptRows = keyOrderedFactory.getCursor(frame, frameMemory, 0, keyCount)) {
-                            while (keptRows.hasNext()) {
-                                keptRows.next();
-                                keptRowCount++;
-                            }
+                    recordA.init(frameMemory);
+                    long keptRowCount = 0;
+                    long rowBytes = 0;
+                    try (RowCursor keptRows = keyOrderedFactory.getCursor(frame, frameMemory, 0, keyCount)) {
+                        while (keptRows.hasNext()) {
+                            recordA.setRowIndex(keptRows.next());
+                            keptRowCount++;
+                            rowBytes += getRowBytes(recordA);
                         }
+                    }
+                    if (!isReadRowCountExact) {
                         readRowCount = (long) Math.ceil((double) readRowCount * keptRowCount / frameRowCount);
                     }
-                    recordA.init(frameMemory);
-                    long rowBytes = 0;
-                    long filteredRowCount = 0;
-                    for (long row = 0; row < frameRowCount; row++) {
-                        recordA.setRowIndex(row);
-                        rowBytes += getRowBytes(recordA);
-                        if (filter != null && filter.getBool(recordA)) {
-                            filteredRowCount++;
-                        }
+                    if (keptRowCount > 0) {
+                        gatherRowBytes = (double) rowBytes / keptRowCount;
                     }
-                    gatherRowBytes = (double) rowBytes / frameRowCount;
                     if (filter != null) {
-                        windowBoundScale = (double) frameRowCount / Math.max(filteredRowCount, 1);
+                        final long indexRowCount = hasVaryingIndexShift(frame) ? -1
+                                : keyOrderedFactory.getIndexRowCount(frame, 0, keyCount, frame.getPartitionLo(), frame.getPartitionHi() - 1, Long.MAX_VALUE);
+                        if (indexRowCount > 0) {
+                            windowBoundScale = (double) indexRowCount / Math.max(keptRowCount, 1);
+                        }
                     }
                     return;
                 }

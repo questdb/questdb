@@ -776,6 +776,30 @@ public class KeyOrderedPageFrameRecordCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFilteredGatherSamplesOnlyRowsOfItsKeys() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 8);
+        assertMemoryLeak(() -> {
+            createGatherTable();
+            final String sql = "SELECT * FROM t WHERE ts IN '1970-01-01' AND s IN ('k1', 'k2') AND id > 0 AND test_latched_counter() ORDER BY s, ts";
+            try (RecordCursorFactory factory = select(sql)) {
+                TestLatchedCounterFunctionFactory.reset(null);
+                try (RecordCursor cursor = factory.getBaseFactory().getCursor(sqlExecutionContext)) {
+                    // the first row group holds ids 1 to 8, of keys k1 to k8
+                    Assert.assertEquals(2, TestLatchedCounterFunctionFactory.getCount());
+                    int count = 0;
+                    while (cursor.hasNext()) {
+                        count++;
+                    }
+                    // k1 and k2 each hold the ids of one residue modulo 256 up to 2_080
+                    Assert.assertEquals(18, count);
+                } finally {
+                    TestLatchedCounterFunctionFactory.reset(null);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testFilteredGatherPassLandsPastKeptRowsOfItsFirstKey() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
         node1.setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 4 * 1024L);
@@ -1463,7 +1487,7 @@ public class KeyOrderedPageFrameRecordCursorTest extends AbstractCairoTest {
                 Assert.assertEquals(7, count);
                 Assert.assertTrue("the rows outgrow the budget of the gather", cursor.getRecord() instanceof DelegatingRecord);
                 // the size pass goes over every window, and the skip lands in the last of them, which the read holds
-                Assert.assertEquals(840, sizeDecodes);
+                Assert.assertEquals(800, sizeDecodes);
                 Assert.assertEquals(sizeDecodes, pool.getDecodeCount());
             }
         });
