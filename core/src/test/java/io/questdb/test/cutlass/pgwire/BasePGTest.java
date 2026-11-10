@@ -73,6 +73,7 @@ import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.util.Properties;
 import java.util.TimeZone;
+import java.util.concurrent.Callable;
 
 import static io.questdb.std.Numbers.hexDigits;
 import static io.questdb.test.cutlass.pgwire.Port0PGConfiguration.getPGWirePort;
@@ -88,6 +89,8 @@ public abstract class BasePGTest extends AbstractCairoTest {
     public static final long CONN_AWARE_SIMPLE = 2;
     public static final long CONN_AWARE_ALL = CONN_AWARE_SIMPLE | CONN_AWARE_EXTENDED;
     protected static int sharedQueryWorkerCount = 0;
+    // Runs on the export job's worker before each export, when a test sets it before the server starts.
+    protected @Nullable Callable<Exception> copyExportCallback = null;
     protected CopyExportRequestJob copyExportRequestJob = null;
     protected CopyImportRequestJob copyImportRequestJob = null;
     protected int forceRecvFragmentationChunkSize = 1024 * 1024;
@@ -532,8 +535,15 @@ public abstract class BasePGTest extends AbstractCairoTest {
         workerPool.assign(copyImportRequestJob);
         workerPool.freeOnExit(copyImportRequestJob);
 
-        copyExportRequestJob = new CopyExportRequestJob(engine);
-        workerPool.assign(copyExportRequestJob);
+        if (copyExportCallback == null) {
+            copyExportRequestJob = new CopyExportRequestJob(engine);
+            workerPool.assign(copyExportRequestJob);
+        } else {
+            copyExportRequestJob = new CopyExportRequestJob(engine, copyExportCallback);
+            // Every worker but the first runs a clone of the job, which has no callback, so the first worker alone
+            // runs the exports.
+            workerPool.assign(0, copyExportRequestJob);
+        }
         workerPool.freeOnExit(copyExportRequestJob);
 
         return createPGWireServer(

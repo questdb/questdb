@@ -42,6 +42,7 @@ import java.io.File;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * A server-side prepared statement keeps its compiled COPY and runs it on each execution. Of the connection modes that
@@ -119,6 +120,46 @@ public class PGCopyExportTest extends BasePGTest {
                 final long compressedSize = fileSize(parquetPath);
                 Assert.assertTrue("sym must be compressed, file size: " + compressedSize, compressedSize < 2_000_000);
             }
+        });
+    }
+
+    @Test
+    public void testPreparedCopyRecompilesStaleSelectOnEveryExecution() throws Exception {
+        // Before each export runs, the table gains a column, which makes the plan that the COPY compiled when it queued
+        // the export stale. The export compiles its select again, with the bind value of its execution.
+        final AtomicInteger addedColumnCount = new AtomicInteger();
+        copyExportCallback = () -> {
+            execute("ALTER TABLE t ADD COLUMN extra" + addedColumnCount.getAndIncrement() + " INT");
+            return null;
+        };
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            addedColumnCount.set(0);
+            execute("CREATE TABLE t (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    (3, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-02T00:00:00.000000Z'),
+                    (1, '2024-01-03T00:00:00.000000Z')
+                    """);
+            final String parquetPath = exportRoot + File.separator + "pgr.parquet";
+            try (PreparedStatement statement = connection.prepareStatement("COPY (SELECT * FROM t WHERE x <= ?) TO 'pgr' WITH FORMAT PARQUET")) {
+                statement.setInt(1, 1);
+                final String firstId = executeCopy(statement);
+                assertParquetRows(parquetPath, """
+                        x\tts\textra0
+                        1\t2024-01-03T00:00:00.000000Z\tnull
+                        """);
+
+                statement.setInt(1, 2);
+                final String secondId = executeCopy(statement);
+                Assert.assertNotEquals(firstId, secondId);
+                assertParquetRows(parquetPath, """
+                        x\tts\textra0\textra1
+                        2\t2024-01-02T00:00:00.000000Z\tnull\tnull
+                        1\t2024-01-03T00:00:00.000000Z\tnull\tnull
+                        """);
+            }
+            Assert.assertEquals(2, addedColumnCount.get());
         });
     }
 

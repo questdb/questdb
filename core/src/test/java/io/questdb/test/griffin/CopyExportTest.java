@@ -36,10 +36,12 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriterMetrics;
+import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.parquet.CopyExportRequestJob;
 import io.questdb.cutlass.parquet.ParquetExportMode;
+import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
@@ -65,9 +67,11 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.QueryAssertion;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.ParquetTestUtils;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
@@ -80,12 +84,22 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.Assert.assertTrue;
 
 
 public class CopyExportTest extends AbstractCairoTest {
 
+    // the copy_export_log rows of a streaming export that fails
+    private static final String FAILED_STREAMING_EXPORT_LOG = """
+            phase\tstatus
+            wait_to_run\tstarted
+            wait_to_run\tfinished
+            stream_sending_data\tstarted
+            stream_sending_data\tfailed
+            """;
     // the 10_000-char symbol of sym_src, which createSymbolExportTables() creates
     private static final String LONG_SYMBOL = "L" + "z".repeat(9_999);
     // metric, c, total and ts of the tables createTableWithParquetSettings*() create
@@ -99,6 +113,111 @@ public class CopyExportTest extends AbstractCairoTest {
             (20, 7, 2000, '2024-01-03T00:00:00.000000Z'),
             (40, 8, 4000, '2024-01-03T08:00:00.000000Z'),
             (NULL, 9, NULL, '2024-01-03T16:00:00.000000Z')
+            """;
+    // the streaming exports of the table that createStaleExportTable() creates
+    private static final StaleExportShape[] STALE_EXPORT_SHAPES = {
+            new StaleExportShape(
+                    "SELECT * FROM t",
+                    ParquetExportMode.DIRECT_PAGE_FRAME,
+                    "ts",
+                    0,
+                    """
+                            x\ts\tts
+                            3\ta\t2024-01-01T00:00:00.000000Z
+                            2\tb\t2024-01-02T00:00:00.000000Z
+                            1\ta\t2024-01-03T00:00:00.000000Z
+                            """,
+                    """
+                            x\ts\tts\textra
+                            3\ta\t2024-01-01T00:00:00.000000Z\tnull
+                            2\tb\t2024-01-02T00:00:00.000000Z\tnull
+                            1\ta\t2024-01-03T00:00:00.000000Z\tnull
+                            """
+            ),
+            new StaleExportShape(
+                    "SELECT x + 1 AS y, * FROM t",
+                    ParquetExportMode.PAGE_FRAME_BACKED,
+                    "ts",
+                    1,
+                    """
+                            y\tx\ts\tts
+                            4\t3\ta\t2024-01-01T00:00:00.000000Z
+                            3\t2\tb\t2024-01-02T00:00:00.000000Z
+                            2\t1\ta\t2024-01-03T00:00:00.000000Z
+                            """,
+                    """
+                            y\tx\ts\tts\textra
+                            4\t3\ta\t2024-01-01T00:00:00.000000Z\tnull
+                            3\t2\tb\t2024-01-02T00:00:00.000000Z\tnull
+                            2\t1\ta\t2024-01-03T00:00:00.000000Z\tnull
+                            """
+            ),
+            new StaleExportShape(
+                    "SELECT * FROM t ORDER BY x",
+                    ParquetExportMode.CURSOR_BASED,
+                    null,
+                    0,
+                    """
+                            x\ts\tts
+                            1\ta\t2024-01-03T00:00:00.000000Z
+                            2\tb\t2024-01-02T00:00:00.000000Z
+                            3\ta\t2024-01-01T00:00:00.000000Z
+                            """,
+                    """
+                            x\ts\tts\textra
+                            1\ta\t2024-01-03T00:00:00.000000Z\tnull
+                            2\tb\t2024-01-02T00:00:00.000000Z\tnull
+                            3\ta\t2024-01-01T00:00:00.000000Z\tnull
+                            """
+            ),
+            new StaleExportShape(
+                    "WITH c AS (SELECT * FROM t) SELECT * FROM c",
+                    ParquetExportMode.DIRECT_PAGE_FRAME,
+                    "ts",
+                    0,
+                    """
+                            x\ts\tts
+                            3\ta\t2024-01-01T00:00:00.000000Z
+                            2\tb\t2024-01-02T00:00:00.000000Z
+                            1\ta\t2024-01-03T00:00:00.000000Z
+                            """,
+                    """
+                            x\ts\tts\textra
+                            3\ta\t2024-01-01T00:00:00.000000Z\tnull
+                            2\tb\t2024-01-02T00:00:00.000000Z\tnull
+                            1\ta\t2024-01-03T00:00:00.000000Z\tnull
+                            """
+            ),
+            // a projection over a filter, which has no page frames to pass through
+            new StaleExportShape(
+                    "SELECT x + 1 AS y, * FROM t WHERE x > 0",
+                    ParquetExportMode.CURSOR_BASED,
+                    "ts",
+                    1,
+                    """
+                            y\tx\ts\tts
+                            4\t3\ta\t2024-01-01T00:00:00.000000Z
+                            3\t2\tb\t2024-01-02T00:00:00.000000Z
+                            2\t1\ta\t2024-01-03T00:00:00.000000Z
+                            """,
+                    """
+                            y\tx\ts\tts\textra
+                            4\t3\ta\t2024-01-01T00:00:00.000000Z\tnull
+                            3\t2\tb\t2024-01-02T00:00:00.000000Z\tnull
+                            2\t1\ta\t2024-01-03T00:00:00.000000Z\tnull
+                            """
+            )
+    };
+    // the copy_export_log rows of a streaming export that succeeds
+    private static final String STREAMING_EXPORT_LOG = """
+            phase\tstatus
+            wait_to_run\tstarted
+            wait_to_run\tfinished
+            stream_sending_data\tstarted
+            stream_sending_data\tfinished
+            move_files\tstarted
+            move_files\tfinished
+            success\tfinished
             """;
     static HashSet<Class<?>> exceptionTypesToCatch = new HashSet<>();
 
@@ -1234,6 +1353,8 @@ public class CopyExportTest extends AbstractCairoTest {
 
     @Test
     public void testCopyFilteredQuerySurvivesPartitionFormatChangeAfterQueue() throws Exception {
+        // The callback converts the first day after COPY queues the export and before the export starts, to Parquet and
+        // back, which makes the queued plan stale: the export compiles the select again and writes the same rows.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO x VALUES (1, '2024-01-01'), (-1, '2024-01-01T01:00:00'), (2, '2024-01-02')");
@@ -4236,6 +4357,707 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyQueuedExportCancelledAfterRecompile() throws Exception {
+        // The user cancels the export while it compiles its stale select again: the export stops as cancelled, leaves no
+        // file behind, and the next export of the table runs.
+        assertMemoryLeak(() -> {
+            createStaleExportTable("BYPASS WAL");
+            final String exportId = queueCopy("COPY (SELECT * FROM t) TO 'cancelled' WITH FORMAT PARQUET");
+            execute("ALTER TABLE t ADD COLUMN extra INT");
+            final CopyExportContext copyContext = engine.getCopyExportContext();
+            Assert.assertEquals(1, runExportJobCountingCompiles(
+                    _ -> Assert.assertTrue(copyContext.cancel(copyContext.getActiveExportId(), null))
+            ));
+            assertExportLog(exportId, """
+                    phase\tstatus
+                    wait_to_run\tstarted
+                    wait_to_run\tfinished
+                    stream_sending_data\tstarted
+                    stream_sending_data\tcancelled
+                    """);
+            assertExportFailure(exportId, "cancelled", "cancelled by user");
+            Assert.assertFalse(exportFileExists("cancelled"));
+            assertNoTempDirLeft();
+
+            copyToParquet("COPY (SELECT * FROM t) TO 'after_cancel' WITH FORMAT PARQUET");
+            assertParquetMatchesQuery("SELECT * FROM t", parquetPath("after_cancel"));
+        });
+    }
+
+    @Test
+    public void testCopyQueuedExportFailsWhenRecompiledSelectFails() throws Exception {
+        // The export compiles its stale select again, and that compile, or the set-up of the new plan, fails as the same
+        // COPY issued after the change fails. The export logs the error and leaves no file behind, and the next export of
+        // the table runs. A table dropped and created again under its name is a stale plan, which compiles again over the
+        // new table.
+        assertMemoryLeak(() -> {
+            createStaleExportTable("BYPASS WAL");
+            String exportId = queueCopy("COPY (SELECT x, ts FROM t) TO 'renamed_column' WITH FORMAT PARQUET");
+            execute("ALTER TABLE t RENAME COLUMN x TO x2");
+            Assert.assertEquals(1, runExportJobCountingCompiles());
+            assertExportLog(exportId, FAILED_STREAMING_EXPORT_LOG);
+            assertExportFailure(exportId, "failed", "Invalid column: x");
+            Assert.assertFalse(exportFileExists("renamed_column"));
+            assertNoTempDirLeft();
+            copyToParquet("COPY (SELECT x2, ts FROM t) TO 'after_renamed_column' WITH FORMAT PARQUET");
+            assertParquetMatchesQuery("SELECT x2, ts FROM t", parquetPath("after_renamed_column"));
+
+            execute("ALTER TABLE t ADD COLUMN extra INT");
+            exportId = queueCopy("COPY (SELECT * FROM t) TO 'dropped_bloom_column' WITH FORMAT PARQUET BLOOM_FILTER_COLUMNS 'extra'");
+            execute("ALTER TABLE t DROP COLUMN extra");
+            Assert.assertEquals(1, runExportJobCountingCompiles());
+            assertExportLog(exportId, FAILED_STREAMING_EXPORT_LOG);
+            assertExportFailure(exportId, "failed", "bloom_filter_columns contains non-existent column: extra");
+            Assert.assertFalse(exportFileExists("dropped_bloom_column"));
+            assertNoTempDirLeft();
+            copyToParquet("COPY (SELECT * FROM t) TO 'after_dropped_bloom_column' WITH FORMAT PARQUET BLOOM_FILTER_COLUMNS 'x2'");
+            assertParquetMatchesQuery("SELECT * FROM t", parquetPath("after_dropped_bloom_column"));
+
+            exportId = queueCopy("COPY (SELECT * FROM t) TO 'recreated_table' WITH FORMAT PARQUET");
+            execute("DROP TABLE t");
+            execute("CREATE TABLE t (x INT, s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t VALUES (5, 'c', '2024-02-01T00:00:00.000000Z')");
+            Assert.assertEquals(1, runExportJobCountingCompiles());
+            assertExportLog(exportId, STREAMING_EXPORT_LOG);
+            assertParquetRows("recreated_table", "ts", """
+                    x\ts\tts
+                    5\tc\t2024-02-01T00:00:00.000000Z
+                    """);
+            assertNoTempDirLeft();
+        });
+    }
+
+    @Test
+    public void testCopyQueuedExportFollowsParquetSettingChangedAfterQueue() throws Exception {
+        // A PARQUET(...) setting that changes after COPY queues the export makes the queued plan stale. The export
+        // compiles its select again and encodes x by the new setting, in each streaming mode.
+        assertMemoryLeak(() -> {
+            final FilesFacade ff = configuration.getFilesFacade();
+            for (StaleExportShape shape : STALE_EXPORT_SHAPES) {
+                try {
+                    createStaleExportTable("WAL");
+                    assertExportMode(shape.query(), shape.mode());
+                    final String exportId = queueCopy("COPY (" + shape.query() + ") TO 'parquet_setting' WITH FORMAT PARQUET");
+                    execute("ALTER TABLE t ALTER COLUMN x SET PARQUET(DELTA_BINARY_PACKED)");
+                    drainWalAndViewQueues();
+                    // A pooled reader keeps the PARQUET(...) setting it loaded before the ALTER (#8191), so the test
+                    // releases the readers for the export to compile its select over the new setting.
+                    engine.releaseAllReaders();
+                    Assert.assertEquals(1, runExportJobCountingCompiles());
+                    assertExportLog(exportId, STREAMING_EXPORT_LOG);
+                    assertParquetRows("parquet_setting", shape.timestampColumn(), shape.rows());
+                    ParquetTestUtils.assertColumnsUseEncoding(parquetPath("parquet_setting"), ff, ParquetEncoding.ENCODING_DELTA_BINARY_PACKED, shape.xColumnIndex());
+                    ParquetTestUtils.assertColumnsDoNotUseDictionaryEncoding(parquetPath("parquet_setting"), ff, shape.xColumnIndex());
+                    assertNoTempDirLeft();
+                    execute("DROP TABLE t");
+                    drainWalQueue();
+                } catch (AssertionError e) {
+                    throw new AssertionError(shape.query(), e);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCopyQueuedExportMaterializesWhenRecompiledSelectNeedsTempTable() throws Exception {
+        // The table gains a BINARY column after COPY queues the export, and the export of a sorted select cannot write a
+        // BINARY column that it reads row by row. The export compiles its select again and, as COPY issued after the
+        // change does, materializes the new plan through a temp table, which it drops at the end.
+        assertMemoryLeak(() -> {
+            for (String walMode : new String[]{"WAL", "BYPASS WAL"}) {
+                createStaleExportTable(walMode);
+                final String query = "SELECT * FROM t ORDER BY x";
+                assertExportMode(query, ParquetExportMode.CURSOR_BASED);
+                final String exportId = queueCopy("COPY (" + query + ") TO 'rerouted' WITH FORMAT PARQUET");
+                execute("ALTER TABLE t ADD COLUMN b BINARY");
+                drainWalQueue();
+                assertExportMode(query, ParquetExportMode.TEMP_TABLE);
+                // the compile of the select and the CREATE TABLE AS SELECT of the temp table
+                Assert.assertEquals(walMode, 2, runExportJobCountingCompiles());
+                assertExportLog(exportId, """
+                        phase\tstatus
+                        wait_to_run\tstarted
+                        wait_to_run\tfinished
+                        stream_sending_data\tstarted
+                        populating_data_to_temp_table\tstarted
+                        populating_data_to_temp_table\tfinished
+                        converting_partitions\tstarted
+                        converting_partitions\tfinished
+                        move_files\tstarted
+                        move_files\tfinished
+                        dropping_temp_table\tstarted
+                        dropping_temp_table\tfinished
+                        success\tfinished
+                        """);
+                assertExportedFileCount(exportId, 1);
+                assertParquetRows("rerouted", null, """
+                        x\ts\tts\tb
+                        1\ta\t2024-01-03T00:00:00.000000Z\t
+                        2\tb\t2024-01-02T00:00:00.000000Z\t
+                        3\ta\t2024-01-01T00:00:00.000000Z\t
+                        """);
+                assertParquetMatchesQuery(query, parquetPath("rerouted"));
+                Assert.assertNull("the temp table must be dropped", engine.getTableTokenIfExists("copy." + exportId));
+                // No check for a temp directory left behind: an export through a temp table that writes one file keeps
+                // its empty tmp_<id> directory (a known bug of SQLSerialParquetExporter.process()).
+                execute("DROP TABLE t");
+                drainWalQueue();
+            }
+        });
+    }
+
+    @Test
+    public void testCopyQueuedExportOfColumnRetypedAfterQueueOverParquetPartition() throws Exception {
+        // s turns from INT to LONG after COPY queues the export, while the first day of pt is a Parquet partition, which
+        // keeps s as INT. The export compiles its select again and writes s as LONG, with the same values.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE pt (s INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO pt SELECT x::INT, timestamp_sequence('2024-01-01', 3_600_000_000) FROM long_sequence(30)");
+            drainWalQueue();
+            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            final String query = "SELECT * FROM pt";
+            assertExportMode(query, ParquetExportMode.DIRECT_PAGE_FRAME);
+            final String exportId = queueCopy("COPY (" + query + ") TO 'retyped_after_queue' WITH FORMAT PARQUET");
+            execute("ALTER TABLE pt ALTER COLUMN s TYPE LONG");
+            drainWalQueue();
+            runExportJob();
+            assertExportSucceeded(exportId);
+            final String parquetPath = parquetPath("retyped_after_queue");
+            ParquetTestUtils.assertColumnTypes(parquetPath, configuration.getFilesFacade(), ColumnType.LONG, 0);
+            // s holds 1 to 30, one per hour from 2024-01-01T00:00
+            assertQuery("SELECT count(), min(s), max(s), sum(s), min(ts), max(ts) FROM read_parquet('" + parquetPath + "')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count\tmin\tmax\tsum\tmin1\tmax1
+                            30\t1\t30\t465\t2024-01-01T00:00:00.000000Z\t2024-01-02T05:00:00.000000Z
+                            """);
+            assertParquetMatchesQuery(query, parquetPath);
+            // No check for a temp directory left behind: an export through a temp table that writes one file keeps its
+            // empty tmp_<id> directory (a known bug of SQLSerialParquetExporter.process()).
+        });
+    }
+
+    @Test
+    public void testCopyQueuedExportOfEmptyTableRecompiles() throws Exception {
+        // An empty, non-partitioned table whose plan goes stale in the queue exports a file of its columns, the new one
+        // included, and no rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE e (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY NONE");
+            assertExportMode("SELECT * FROM e", ParquetExportMode.DIRECT_PAGE_FRAME);
+            final String exportId = queueCopy("COPY (SELECT * FROM e) TO 'empty_table' WITH FORMAT PARQUET");
+            execute("ALTER TABLE e ADD COLUMN extra INT");
+            Assert.assertEquals(1, runExportJobCountingCompiles());
+            assertExportLog(exportId, STREAMING_EXPORT_LOG);
+            assertExportedFileCount(exportId, 1);
+            assertParquetRows("empty_table", "ts", "x\tts\textra\n");
+            assertNoTempDirLeft();
+        });
+    }
+
+    @Test
+    public void testCopyQueuedExportOfTableDroppedRenamedOrTruncated() throws Exception {
+        // A dropped or renamed table is no stale plan: the open of the plan fails with "table does not exist", and the
+        // export fails without compiling its select again, whether the table goes before the export starts or after the
+        // export compiled its stale select again. A truncated table exports its columns and no rows.
+        assertMemoryLeak(() -> {
+            for (StaleExportShape shape : new StaleExportShape[]{STALE_EXPORT_SHAPES[0], STALE_EXPORT_SHAPES[2]}) {
+                final String query = shape.query();
+                for (String change : new String[]{"DROP TABLE t", "RENAME TABLE t TO t2"}) {
+                    try {
+                        createStaleExportTable("BYPASS WAL");
+                        String exportId = queueCopy("COPY (" + query + ") TO 'gone' WITH FORMAT PARQUET");
+                        execute(change);
+                        Assert.assertEquals(0, runExportJobCountingCompiles());
+                        assertExportLog(exportId, FAILED_STREAMING_EXPORT_LOG);
+                        assertExportFailure(exportId, "failed", "table does not exist [table=t]");
+                        Assert.assertFalse(exportFileExists("gone"));
+                        assertNoTempDirLeft();
+                        execute("DROP TABLE IF EXISTS t2");
+
+                        createStaleExportTable("BYPASS WAL");
+                        exportId = queueCopy("COPY (" + query + ") TO 'gone_after_compile' WITH FORMAT PARQUET");
+                        execute("ALTER TABLE t ADD COLUMN extra INT");
+                        Assert.assertEquals(1, runExportJobCountingCompiles(_ -> execute(change)));
+                        assertExportLog(exportId, FAILED_STREAMING_EXPORT_LOG);
+                        assertExportFailure(exportId, "failed", "table does not exist [table=t]");
+                        Assert.assertFalse(exportFileExists("gone_after_compile"));
+                        assertNoTempDirLeft();
+
+                        // the export queue still works, and so does a renamed table
+                        final String remainingTable = change.startsWith("RENAME") ? "t2" : "t";
+                        if (remainingTable.equals("t")) {
+                            createStaleExportTable("BYPASS WAL");
+                        }
+                        copyToParquet("COPY (SELECT * FROM " + remainingTable + ") TO 'after_gone' WITH FORMAT PARQUET");
+                        assertParquetMatchesQuery("SELECT * FROM " + remainingTable, parquetPath("after_gone"));
+                        execute("DROP TABLE " + remainingTable);
+                    } catch (AssertionError e) {
+                        throw new AssertionError(query + ", " + change, e);
+                    }
+                }
+
+                createStaleExportTable("BYPASS WAL");
+                String exportId = queueCopy("COPY (" + query + ") TO 'truncated' WITH FORMAT PARQUET");
+                execute("TRUNCATE TABLE t");
+                Assert.assertEquals(0, runExportJobCountingCompiles());
+                assertExportLog(exportId, STREAMING_EXPORT_LOG);
+                assertExportedFileCount(exportId, 1);
+                assertParquetRows("truncated", shape.timestampColumn(), "x\ts\tts\n");
+                assertNoTempDirLeft();
+
+                exportId = queueCopy("COPY (" + query + ") TO 'truncated_after_compile' WITH FORMAT PARQUET");
+                execute("INSERT INTO t VALUES (4, 'd', '2024-01-04T00:00:00.000000Z')");
+                execute("ALTER TABLE t ADD COLUMN extra INT");
+                Assert.assertEquals(1, runExportJobCountingCompiles(_ -> execute("TRUNCATE TABLE t")));
+                assertExportLog(exportId, STREAMING_EXPORT_LOG);
+                assertExportedFileCount(exportId, 1);
+                assertParquetRows("truncated_after_compile", shape.timestampColumn(), "x\ts\tts\textra\n");
+                assertNoTempDirLeft();
+                execute("DROP TABLE t");
+            }
+        });
+    }
+
+    @Test
+    public void testCopyQueuedExportPrunesPartitionConvertedAfterQueue() throws Exception {
+        // The first day of x turns to Parquet after COPY queues the export, which makes the queued plan, which has no
+        // Parquet row group filter, stale. The export compiles its select again, and the new plan skips the one row group
+        // of the first day, whose val values all fail the filter, as a fresh compile of the select does.
+        assertMemoryLeak(() -> {
+            for (String walMode : new String[]{"WAL", "BYPASS WAL"}) {
+                execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY " + walMode);
+                execute("""
+                        INSERT INTO x VALUES
+                        (-1, '2024-01-01T00:00:00.000000Z'),
+                        (-2, '2024-01-01T01:00:00.000000Z'),
+                        (2, '2024-01-02T00:00:00.000000Z')
+                        """);
+                drainWalQueue();
+                final String query = "SELECT * FROM x WHERE val > 0";
+                assertExportMode(query, ParquetExportMode.CURSOR_BASED);
+                final String exportId = queueCopy("COPY (" + query + ") TO 'pruned' WITH FORMAT PARQUET");
+                execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                drainWalQueue();
+                ParquetRowGroupFilter.resetRowGroupsSkipped();
+                Assert.assertEquals(walMode, 1, runExportJobCountingCompiles());
+                Assert.assertEquals(walMode, 1, ParquetRowGroupFilter.getRowGroupsSkipped());
+                assertExportLog(exportId, STREAMING_EXPORT_LOG);
+                assertParquetRows("pruned", "ts", """
+                        val\tts
+                        2\t2024-01-02T00:00:00.000000Z
+                        """);
+                assertNoTempDirLeft();
+                execute("DROP TABLE x");
+                drainWalQueue();
+            }
+        });
+    }
+
+    @Test
+    public void testCopyQueuedExportRecompileTakesBindVariables() throws Exception {
+        // The export compiles its stale select again with the bind values that COPY took when it queued the export.
+        assertMemoryLeak(() -> {
+            createStaleExportTable("BYPASS WAL");
+            final String query = "SELECT * FROM t WHERE x <= $1";
+            bindVariableService.clear();
+            bindVariableService.setInt(0, 2);
+            assertExportMode(query, ParquetExportMode.CURSOR_BASED);
+            final String exportId = queueCopy("COPY (" + query + ") TO 'bind_variable' WITH FORMAT PARQUET");
+            // a bind value set after COPY queued the export is not the export's
+            bindVariableService.setInt(0, 3);
+            execute("ALTER TABLE t ADD COLUMN extra INT");
+            Assert.assertEquals(1, runExportJobCountingCompiles());
+            bindVariableService.setInt(0, 2);
+            assertParquetMatchesQuery(query, parquetPath("bind_variable"));
+            bindVariableService.clear();
+            assertExportLog(exportId, STREAMING_EXPORT_LOG);
+            assertParquetRows("bind_variable", "ts", """
+                    x\ts\tts\textra
+                    2\tb\t2024-01-02T00:00:00.000000Z\tnull
+                    1\ta\t2024-01-03T00:00:00.000000Z\tnull
+                    """);
+            assertNoTempDirLeft();
+        });
+    }
+
+    @Test
+    public void testCopyQueuedExportRecompilesAfterAddColumn() throws Exception {
+        // COPY compiles the select when it queues the export, and a column that the table gains before the export runs
+        // makes that plan stale. The export compiles its select again, once, and writes the rows of the new plan, with s
+        // kept as SYMBOL. The same export with no change in between compiles nothing.
+        assertMemoryLeak(() -> {
+            for (String walMode : new String[]{"WAL", "BYPASS WAL"}) {
+                for (StaleExportShape shape : STALE_EXPORT_SHAPES) {
+                    try {
+                        createStaleExportTable(walMode);
+                        assertExportMode(shape.query(), shape.mode());
+
+                        final String freshId = queueCopy("COPY (" + shape.query() + ") TO 'fresh' WITH FORMAT PARQUET");
+                        Assert.assertEquals("a current plan compiles nothing on the export's thread", 0, runExportJobCountingCompiles());
+                        assertExportLog(freshId, STREAMING_EXPORT_LOG);
+                        assertParquetRows("fresh", shape.timestampColumn(), shape.rows());
+
+                        final String staleId = queueCopy("COPY (" + shape.query() + ") TO 'stale' WITH FORMAT PARQUET");
+                        execute("ALTER TABLE t ADD COLUMN extra INT");
+                        drainWalQueue();
+                        Assert.assertEquals(1, runExportJobCountingCompiles());
+                        assertExportLog(staleId, STREAMING_EXPORT_LOG);
+                        assertParquetRows("stale", shape.timestampColumn(), shape.rowsWithExtra());
+                        assertParquetMatchesQuery(shape.query(), parquetPath("stale"));
+                        assertSymbolColumnsKept(parquetPath("stale"), shape.xColumnIndex() + 1);
+                        assertNoTempDirLeft();
+                        execute("DROP TABLE t");
+                        drainWalQueue();
+                    } catch (AssertionError e) {
+                        throw new AssertionError(walMode + ": " + shape.query(), e);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCopyQueuedExportRecompilesIndexedSymbolFilter() throws Exception {
+        // A filter on an indexed, or a non-indexed, symbol whose plan goes stale in the queue.
+        assertMemoryLeak(() -> {
+            for (boolean isSymbolIndexed : new boolean[]{true, false}) {
+                createStaleExportTable("BYPASS WAL", isSymbolIndexed);
+                final String query = "SELECT * FROM t WHERE s = 'a'";
+                final String exportId = queueCopy("COPY (" + query + ") TO 'symbol_filter' WITH FORMAT PARQUET");
+                execute("ALTER TABLE t ADD COLUMN extra INT");
+                Assert.assertEquals(1, runExportJobCountingCompiles());
+                assertExportLog(exportId, STREAMING_EXPORT_LOG);
+                assertParquetRows("symbol_filter", "ts", """
+                        x\ts\tts\textra
+                        3\ta\t2024-01-01T00:00:00.000000Z\tnull
+                        1\ta\t2024-01-03T00:00:00.000000Z\tnull
+                        """);
+                assertParquetMatchesQuery(query, parquetPath("symbol_filter"));
+                assertNoTempDirLeft();
+                execute("DROP TABLE t");
+            }
+        });
+    }
+
+    @Test
+    public void testCopyQueuedExportRecompilesIntoAnotherMode() throws Exception {
+        // A view redefined after COPY queues the export of a select over it makes the queued plan stale. The export
+        // compiles its select again and writes the rows of the new definition, in the mode of the new plan. That holds
+        // also for a plan whose set-up over page frames went stale before the plan that reads rows from a cursor.
+        assertMemoryLeak(() -> {
+            createStaleExportTable("WAL");
+            execute("CREATE VIEW v AS (SELECT * FROM t)");
+            drainWalAndViewQueues();
+            final String query = "SELECT * FROM v";
+            assertExportMode(query, ParquetExportMode.DIRECT_PAGE_FRAME);
+            String exportId = queueCopy("COPY (" + query + ") TO 'direct_to_cursor' WITH FORMAT PARQUET");
+            execute("ALTER VIEW v AS (SELECT * FROM t ORDER BY x)");
+            drainWalAndViewQueues();
+            assertExportMode(query, ParquetExportMode.CURSOR_BASED);
+            Assert.assertEquals(1, runExportJobCountingCompiles());
+            assertExportLog(exportId, STREAMING_EXPORT_LOG);
+            assertParquetRows("direct_to_cursor", null, """
+                    x\ts\tts
+                    1\ta\t2024-01-03T00:00:00.000000Z
+                    2\tb\t2024-01-02T00:00:00.000000Z
+                    3\ta\t2024-01-01T00:00:00.000000Z
+                    """);
+
+            exportId = queueCopy("COPY (" + query + ") TO 'cursor_to_direct' WITH FORMAT PARQUET");
+            execute("ALTER VIEW v AS (SELECT * FROM t)");
+            drainWalAndViewQueues();
+            assertExportMode(query, ParquetExportMode.DIRECT_PAGE_FRAME);
+            Assert.assertEquals(1, runExportJobCountingCompiles());
+            assertExportLog(exportId, STREAMING_EXPORT_LOG);
+            assertParquetRows("cursor_to_direct", "ts", """
+                    x\ts\tts
+                    3\ta\t2024-01-01T00:00:00.000000Z
+                    2\tb\t2024-01-02T00:00:00.000000Z
+                    1\ta\t2024-01-03T00:00:00.000000Z
+                    """);
+
+            // The sub-query of the projection over the table p reads u, which gains a column after COPY queues the
+            // export, so the set-up of the projection over the page frames of p fails. Right after the export compiled
+            // its select again, a view that sorts t takes the place of p, so the export compiles the select once more
+            // and reads the rows from a cursor.
+            execute("CREATE TABLE u (y INT)");
+            execute("INSERT INTO u VALUES (1), (2)");
+            execute("CREATE TABLE p (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO p VALUES (7, '2024-02-01T00:00:00.000000Z')");
+            final String projectionQuery = "SELECT x > (SELECT max(y) FROM u) b, ts FROM p";
+            assertExportMode(projectionQuery, ParquetExportMode.PAGE_FRAME_BACKED);
+            exportId = queueCopy("COPY (" + projectionQuery + ") TO 'page_frame_backed_to_cursor' WITH FORMAT PARQUET");
+            execute("ALTER TABLE u ADD COLUMN z INT");
+            Assert.assertEquals(2, runExportJobCountingCompiles(compileCount -> {
+                if (compileCount == 1) {
+                    execute("DROP TABLE p");
+                    execute("CREATE VIEW p AS (SELECT * FROM t ORDER BY x)");
+                    drainWalAndViewQueues();
+                }
+            }));
+            assertExportMode(projectionQuery, ParquetExportMode.CURSOR_BASED);
+            assertExportLog(exportId, STREAMING_EXPORT_LOG);
+            assertParquetRows("page_frame_backed_to_cursor", null, """
+                    b\tts
+                    false\t2024-01-03T00:00:00.000000Z
+                    false\t2024-01-02T00:00:00.000000Z
+                    true\t2024-01-01T00:00:00.000000Z
+                    """);
+            assertNoTempDirLeft();
+        });
+    }
+
+    @Test
+    public void testCopyQueuedExportRecompilesOverManyRowGroups() throws Exception {
+        // More rows than one page frame and one row group: the export of a plan that it compiled again streams all of
+        // them, in row groups of ROW_GROUP_SIZE rows, or, with ROW_GROUP_SIZE 0, in batches and a row group of the default
+        // size, 100_000 rows.
+        assertMemoryLeak(() -> {
+            final FilesFacade ff = configuration.getFilesFacade();
+            // 1_000 rows a day for 3 days
+            execute("CREATE TABLE t2 AS (SELECT x::INT x, timestamp_sequence('2024-01-01', 86_400_000L) ts FROM long_sequence(3_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            final String directQuery = "SELECT * FROM t2";
+            assertExportMode(directQuery, ParquetExportMode.DIRECT_PAGE_FRAME);
+            String exportId = queueCopy("COPY (" + directQuery + ") TO 'direct_row_groups' WITH FORMAT PARQUET ROW_GROUP_SIZE 100");
+            execute("ALTER TABLE t2 ADD COLUMN extra INT");
+            Assert.assertEquals(1, runExportJobCountingCompiles());
+            assertExportLog(exportId, STREAMING_EXPORT_LOG);
+            assertParquetMatchesQuery(directQuery, parquetPath("direct_row_groups"));
+            assertQuery("SELECT count(), sum(x), count(extra) FROM read_parquet('" + parquetPath("direct_row_groups") + "')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\tsum\tcount1\n3000\t4501500\t0\n");
+            ParquetTestUtils.assertRowGroupCount(parquetPath("direct_row_groups"), ff, 30);
+
+            final String cursorQuery = "SELECT * FROM t2 ORDER BY x DESC";
+            assertExportMode(cursorQuery, ParquetExportMode.CURSOR_BASED);
+            exportId = queueCopy("COPY (" + cursorQuery + ") TO 'cursor_default_row_group' WITH FORMAT PARQUET ROW_GROUP_SIZE 0");
+            execute("ALTER TABLE t2 ADD COLUMN extra2 INT");
+            Assert.assertEquals(1, runExportJobCountingCompiles());
+            assertExportLog(exportId, STREAMING_EXPORT_LOG);
+            assertParquetMatchesQuery(cursorQuery, parquetPath("cursor_default_row_group"));
+            assertQuery("SELECT count(), sum(x), count(extra2) FROM read_parquet('" + parquetPath("cursor_default_row_group") + "')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\tsum\tcount1\n3000\t4501500\t0\n");
+            ParquetTestUtils.assertRowGroupCount(parquetPath("cursor_default_row_group"), ff, 1);
+            assertNoTempDirLeft();
+        });
+    }
+
+    @Test
+    public void testCopyQueuedExportRecompilesStaleProjectionSubQuery() throws Exception {
+        // The projection's sub-query reads u, which gains a column after COPY queues the export, so the queued plan goes
+        // stale when the export sets the projection up over the page frames of t. The export compiles its select again
+        // and sets the new plan up from scratch, also over more than one page frame and row group.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE u (y INT)");
+            execute("INSERT INTO u VALUES (1), (2)");
+            createStaleExportTable("BYPASS WAL");
+            final String query = "SELECT x > (SELECT max(y) FROM u) b, ts FROM t";
+            assertExportMode(query, ParquetExportMode.PAGE_FRAME_BACKED);
+            String exportId = queueCopy("COPY (" + query + ") TO 'sub_query' WITH FORMAT PARQUET");
+            execute("ALTER TABLE u ADD COLUMN z INT");
+            Assert.assertEquals(1, runExportJobCountingCompiles());
+            assertExportLog(exportId, STREAMING_EXPORT_LOG);
+            assertParquetRows("sub_query", "ts", """
+                    b\tts
+                    true\t2024-01-01T00:00:00.000000Z
+                    false\t2024-01-02T00:00:00.000000Z
+                    false\t2024-01-03T00:00:00.000000Z
+                    """);
+            assertParquetMatchesQuery(query, parquetPath("sub_query"));
+            assertNoTempDirLeft();
+
+            // 1_000 rows a day for 3 days, in row groups of 100 rows
+            execute("CREATE TABLE t2 AS (SELECT x::INT x, timestamp_sequence('2024-01-01', 86_400_000L) ts FROM long_sequence(3_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            final String largeQuery = "SELECT x > (SELECT max(y) FROM u) b, ts FROM t2";
+            assertExportMode(largeQuery, ParquetExportMode.PAGE_FRAME_BACKED);
+            exportId = queueCopy("COPY (" + largeQuery + ") TO 'sub_query_row_groups' WITH FORMAT PARQUET ROW_GROUP_SIZE 100");
+            execute("ALTER TABLE u ADD COLUMN z2 INT");
+            Assert.assertEquals(1, runExportJobCountingCompiles());
+            assertExportLog(exportId, STREAMING_EXPORT_LOG);
+            final String parquetPath = parquetPath("sub_query_row_groups");
+            assertParquetMatchesQuery(largeQuery, parquetPath);
+            // max(y) is 2, so only x 1 and 2 fail the comparison
+            assertQuery("SELECT b, count(), min(ts), max(ts) FROM read_parquet('" + parquetPath + "') ORDER BY b")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            b\tcount\tmin\tmax
+                            false\t2\t2024-01-01T00:00:00.000000Z\t2024-01-01T00:01:26.400000Z
+                            true\t2998\t2024-01-01T00:02:52.800000Z\t2024-01-03T23:58:33.600000Z
+                            """);
+            ParquetTestUtils.assertRowGroupCount(parquetPath, configuration.getFilesFacade(), 30);
+            assertNoTempDirLeft();
+
+            // c of tc turns from INT to VARCHAR right after the export compiled its select again, so the export compiles
+            // it once more, and sets up a projection that computes cc as VARCHAR, with a buffer for the offsets of its
+            // values, where the set-up of the stale plan computed an INT.
+            execute("CREATE TABLE tc (x INT, c INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tc VALUES
+                    (3, 30, '2024-01-01T00:00:00.000000Z'),
+                    (2, 20, '2024-01-02T00:00:00.000000Z'),
+                    (1, 10, '2024-01-03T00:00:00.000000Z')
+                    """);
+            final String retypedQuery = "SELECT x > (SELECT max(y) FROM u) b, coalesce(c, c) cc, ts FROM tc";
+            assertExportMode(retypedQuery, ParquetExportMode.PAGE_FRAME_BACKED);
+            exportId = queueCopy("COPY (" + retypedQuery + ") TO 'sub_query_retyped' WITH FORMAT PARQUET");
+            execute("ALTER TABLE u ADD COLUMN z3 INT");
+            Assert.assertEquals(2, runExportJobCountingCompiles(compileCount -> {
+                if (compileCount == 1) {
+                    execute("ALTER TABLE tc ALTER COLUMN c TYPE VARCHAR");
+                }
+            }));
+            assertExportLog(exportId, STREAMING_EXPORT_LOG);
+            assertParquetRows("sub_query_retyped", "ts", """
+                    b\tcc\tts
+                    true\t30\t2024-01-01T00:00:00.000000Z
+                    false\t20\t2024-01-02T00:00:00.000000Z
+                    false\t10\t2024-01-03T00:00:00.000000Z
+                    """);
+            ParquetTestUtils.assertColumnTypes(parquetPath("sub_query_retyped"), configuration.getFilesFacade(), ColumnType.VARCHAR, 1);
+            assertParquetMatchesQuery(retypedQuery, parquetPath("sub_query_retyped"));
+            assertNoTempDirLeft();
+        });
+    }
+
+    @Test
+    public void testCopyQueuedExportRecompilesUpToServerDefaultAttempts() throws Exception {
+        // After each compile of the stale select, the table gains another column before the export opens the new plan,
+        // so the open finds that plan stale again, as long as the columns keep coming. With the server default of 10
+        // attempts, the export compiles its select 10 times and opens at most 11 plans: it succeeds when the plan of the
+        // 10th compile stays current, and fails when that plan goes stale too.
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_SQL_MAX_RECOMPILE_ATTEMPTS, 10);
+            for (int staleCompileCount : new int[]{9, 10}) {
+                createStaleExportTable("BYPASS WAL");
+                final String fileName = "stale_compiles_" + staleCompileCount;
+                final String exportId = queueCopy("COPY (SELECT * FROM t) TO '" + fileName + "' WITH FORMAT PARQUET");
+                execute("ALTER TABLE t ADD COLUMN extra0 INT");
+                Assert.assertEquals(10, runExportJobCountingCompiles(compileCount -> {
+                    if (compileCount <= staleCompileCount) {
+                        execute("ALTER TABLE t ADD COLUMN extra" + compileCount + " INT");
+                    }
+                }));
+                if (staleCompileCount == 9) {
+                    assertExportLog(exportId, STREAMING_EXPORT_LOG);
+                    final StringSink expectedRows = new StringSink();
+                    expectedRows.put("x\ts\tts");
+                    for (int i = 0; i < 10; i++) {
+                        expectedRows.put("\textra").put(i);
+                    }
+                    final String nulls = "\tnull".repeat(10);
+                    expectedRows.put('\n')
+                            .put("3\ta\t2024-01-01T00:00:00.000000Z").put(nulls).put('\n')
+                            .put("2\tb\t2024-01-02T00:00:00.000000Z").put(nulls).put('\n')
+                            .put("1\ta\t2024-01-03T00:00:00.000000Z").put(nulls).put('\n');
+                    assertParquetRows(fileName, "ts", expectedRows.toString());
+                } else {
+                    assertExportLog(exportId, FAILED_STREAMING_EXPORT_LOG);
+                    // t has the metadata version 0 when created, and each of its 11 columns adds one
+                    final int tableId = engine.verifyTableName("t").getTableId();
+                    assertExportFailure(exportId, "failed", "cached query plan cannot be used because table schema has changed [table=t'" +
+                            ", expectedTableId=" + tableId + ", actualTableId=" + tableId +
+                            ", expectedMetadataVersion=10, actualMetadataVersion=11]");
+                    Assert.assertFalse(exportFileExists(fileName));
+                }
+                assertNoTempDirLeft();
+                execute("DROP TABLE t");
+            }
+        });
+    }
+
+    @Test
+    public void testCopyQueuedExportStopsRecompilingAtMaxAttempts() throws Exception {
+        // test_table_reference_out_of_date() reports its plan stale on every open, so the export compiles its select as
+        // many times as cairo.sql.max.recompile.attempts allows and then fails with the message of the last open.
+        assertMemoryLeak(() -> {
+            for (int maxRecompileAttempts : new int[]{0, 2}) {
+                node1.setProperty(PropertyKey.CAIRO_SQL_MAX_RECOMPILE_ATTEMPTS, maxRecompileAttempts);
+                final String exportId = queueCopy("COPY (SELECT * FROM test_table_reference_out_of_date()) TO 'always_stale' WITH FORMAT PARQUET");
+                Assert.assertEquals(maxRecompileAttempts, runExportJobCountingCompiles());
+                assertExportLog(exportId, FAILED_STREAMING_EXPORT_LOG);
+                assertExportFailure(exportId, "failed", "cached query plan cannot be used because table schema has changed [table=test_table_reference_out_of_date]");
+                Assert.assertFalse(exportFileExists("always_stale"));
+                assertNoTempDirLeft();
+            }
+
+            // A negative setting allows no compile either, even of a plan that one compile would make current.
+            node1.setProperty(PropertyKey.CAIRO_SQL_MAX_RECOMPILE_ATTEMPTS, -1);
+            createStaleExportTable("BYPASS WAL");
+            final String exportId = queueCopy("COPY (SELECT * FROM t) TO 'negative_attempts' WITH FORMAT PARQUET");
+            execute("ALTER TABLE t ADD COLUMN extra INT");
+            Assert.assertEquals(0, runExportJobCountingCompiles());
+            assertExportLog(exportId, FAILED_STREAMING_EXPORT_LOG);
+            final int tableId = engine.verifyTableName("t").getTableId();
+            assertExportFailure(exportId, "failed", "cached query plan cannot be used because table schema has changed [table=t'" +
+                    ", expectedTableId=" + tableId + ", actualTableId=" + tableId +
+                    ", expectedMetadataVersion=0, actualMetadataVersion=1]");
+            Assert.assertFalse(exportFileExists("negative_attempts"));
+            assertNoTempDirLeft();
+        });
+    }
+
+    @Test
+    public void testCopyQueuedExportsReuseExporterAfterRecompileAndReroute() throws Exception {
+        // One export job runs an export whose projection sub-query went stale, then an export that its compile re-routes
+        // to a temp table, then current exports in each streaming mode, then a DIRECT_PAGE_FRAME export whose new plan
+        // has a column more than the one before, and one as wide. Each export starts from the state that the one before
+        // it left in the job's exporter.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE u (y INT)");
+            execute("INSERT INTO u VALUES (1), (2)");
+            createStaleExportTable("BYPASS WAL");
+            final String subQueryQuery = "SELECT x > (SELECT max(y) FROM u) b, ts FROM t";
+            final String reroutedQuery = "SELECT * FROM t ORDER BY x";
+            final String[] currentQueries = {"SELECT * FROM t", "SELECT x + 1 AS y, * FROM t", "SELECT x, s, ts FROM t ORDER BY x"};
+            final ParquetExportMode[] currentModes = {ParquetExportMode.DIRECT_PAGE_FRAME, ParquetExportMode.PAGE_FRAME_BACKED, ParquetExportMode.CURSOR_BASED};
+            try (CopyExportRequestJob job = new CopyExportRequestJob(engine)) {
+                assertExportMode(subQueryQuery, ParquetExportMode.PAGE_FRAME_BACKED);
+                queueCopy("COPY (" + subQueryQuery + ") TO 'reused_sub_query' WITH FORMAT PARQUET");
+                execute("ALTER TABLE u ADD COLUMN z INT");
+                Assert.assertTrue(job.run());
+                assertParquetMatchesQuery(subQueryQuery, parquetPath("reused_sub_query"));
+
+                assertExportMode(reroutedQuery, ParquetExportMode.CURSOR_BASED);
+                queueCopy("COPY (" + reroutedQuery + ") TO 'reused_rerouted' WITH FORMAT PARQUET");
+                execute("ALTER TABLE t ADD COLUMN b BINARY");
+                Assert.assertTrue(job.run());
+                assertParquetMatchesQuery(reroutedQuery, parquetPath("reused_rerouted"));
+
+                for (int i = 0; i < currentQueries.length; i++) {
+                    assertExportMode(currentQueries[i], currentModes[i]);
+                    queueCopy("COPY (" + currentQueries[i] + ") TO 'reused_current_" + i + "' WITH FORMAT PARQUET");
+                    Assert.assertTrue(job.run());
+                    assertParquetMatchesQuery(currentQueries[i], parquetPath("reused_current_" + i));
+                }
+
+                queueCopy("COPY (SELECT * FROM t) TO 'reused_wider' WITH FORMAT PARQUET");
+                execute("ALTER TABLE t ADD COLUMN extra INT");
+                Assert.assertTrue(job.run());
+                assertParquetMatchesQuery("SELECT * FROM t", parquetPath("reused_wider"));
+                queueCopy("COPY (SELECT * FROM t) TO 'reused_as_wide' WITH FORMAT PARQUET");
+                Assert.assertTrue(job.run());
+                assertParquetMatchesQuery("SELECT * FROM t", parquetPath("reused_as_wide"));
+            }
+            assertQuery("SELECT count() FROM \"" + configuration.getSystemTableNamePrefix() + "copy_export_log\" WHERE phase = 'success' AND status = 'finished'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n7\n");
+            // No check for a temp directory left behind: an export through a temp table that writes one file keeps its
+            // empty tmp_<id> directory (a known bug of SQLSerialParquetExporter.process()).
+        });
+    }
+
+    @Test
     public void testCopySampleByFillConstantOnSymbolAggregateExportsText() throws Exception {
         // The fill rows of a text constant on a SYMBOL aggregate hold keys that its symbol table does not resolve to the
         // constant, so the export writes the aggregate as text, which holds the constant, as the query returns it.
@@ -6146,6 +6968,12 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     // Helper methods for copy export operations
+    // The export removes its temp directory when it fails, and when it streams its file.
+    private static void assertNoTempDirLeft() {
+        final File[] tmpDirs = new File(exportRoot).listFiles(f -> f.isDirectory() && f.getName().startsWith("tmp_"));
+        Assert.assertTrue("temp directory must be removed", tmpDirs == null || tmpDirs.length == 0);
+    }
+
     private static void awaitExportsDrained() {
         while (engine.getCopyExportContext().getActiveExportId() != -1) {
             Os.pause();
@@ -6170,6 +6998,13 @@ public class CopyExportTest extends AbstractCairoTest {
         }
     }
 
+    // Runs the COPY on this thread and returns the id of the export it queued, which no job runs yet.
+    private static String queueCopy(String copySql) throws SqlException {
+        try (RecordCursorFactory factory = select(copySql)) {
+            return runCopy(factory);
+        }
+    }
+
     // Runs the COPY of a factory that the test holds and returns the id of the export it queued.
     private static String runCopy(RecordCursorFactory factory) throws SqlException {
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -6185,6 +7020,46 @@ public class CopyExportTest extends AbstractCairoTest {
         try (CopyExportRequestJob job = new CopyExportRequestJob(engine)) {
             Assert.assertTrue("the queued export must be picked up", job.run());
         }
+    }
+
+    private static int runExportJobCountingCompiles() throws Exception {
+        return runExportJobCountingCompiles(_ -> {
+        });
+    }
+
+    /**
+     * Runs the queued export on this thread to its end and returns how many SQL compilers it borrowed from the engine's
+     * pool: one for each compile of its select, and one for the CREATE TABLE AS SELECT of a temp table. The export
+     * hands a compiler back before it opens the plan that the compiler built, and onCompile runs right then, with the
+     * number of the compile, from 1. The compilers that onCompile borrows do not count.
+     */
+    private static int runExportJobCountingCompiles(CompileAction onCompile) throws Exception {
+        final long exportThreadId = Thread.currentThread().threadId();
+        final AtomicInteger compileCount = new AtomicInteger();
+        final AtomicBoolean isActionRunning = new AtomicBoolean();
+        final AtomicReference<Throwable> actionFailure = new AtomicReference<>();
+        engine.getSqlCompilerPool().setPoolListener((_, thread, _, event, _, _) -> {
+            if (event == PoolListener.EV_RETURN && thread == exportThreadId && isActionRunning.compareAndSet(false, true)) {
+                try {
+                    onCompile.run(compileCount.incrementAndGet());
+                } catch (Throwable th) {
+                    // The pool calls the listener before it frees the compiler's slot, which a throw would leak.
+                    actionFailure.compareAndSet(null, th);
+                } finally {
+                    isActionRunning.set(false);
+                }
+            }
+        });
+        try {
+            runExportJob();
+        } finally {
+            engine.getSqlCompilerPool().setPoolListener(null);
+        }
+        final Throwable failure = actionFailure.get();
+        if (failure != null) {
+            throw new AssertionError("the action on a compile of the export failed", failure);
+        }
+        return compileCount.get();
     }
 
     // The lines of a query's printed rows, header first and the rows sorted.
@@ -6332,9 +7207,10 @@ public class CopyExportTest extends AbstractCairoTest {
             String fileName
     ) throws Exception {
         // f holds 10 rows and d holds 5, so the fused GROUP BY builds d and presizes its key table
-        // by d's rows. COPY compiles the SELECT when it queues the export, and the export job runs
-        // that factory later with no way to compile it again. The callback grows d to 21 rows,
-        // past twice f's rows, after the export is queued and before it starts.
+        // by d's rows. COPY compiles the SELECT when it queues the export. The callback grows d to
+        // 21 rows, past twice f's rows, after the export is queued and before it starts, so the
+        // queued factory asks for a recompile when the export opens it, and the export compiles
+        // the SELECT again, once: the new compile reads the new sizes and passes the check.
         execute("CREATE TABLE f (k " + keyType + ", v LONG)");
         execute("CREATE TABLE d (k " + keyType + ", g SYMBOL)");
         execute("INSERT INTO f SELECT " + keyExpr + ", x FROM long_sequence(10)");
@@ -6354,8 +7230,13 @@ public class CopyExportTest extends AbstractCairoTest {
                 "COPY (" + selectSql + ") TO '" + fileName + "' WITH FORMAT PARQUET",
                 sqlExecutionContext
         );
+        // The callback records the thread that runs the export after its own insert, so that the
+        // listener counts only the compiles of the export.
+        final AtomicLong exportThreadId = new AtomicLong(-1);
+        final AtomicInteger exportCompileCount = new AtomicInteger();
         Callable<Exception> callback = () -> {
             execute(insertIntoD + "16)");
+            exportThreadId.set(Thread.currentThread().threadId());
             return null;
         };
         CopyExportRunnable test = () -> assertEventually(() -> {
@@ -6368,7 +7249,17 @@ public class CopyExportTest extends AbstractCairoTest {
                     .expectSize()
                     .returns(expected);
         });
-        testCopyExport(statement, test, callback);
+        engine.getSqlCompilerPool().setPoolListener((_, thread, _, event, _, _) -> {
+            if (event == PoolListener.EV_RETURN && thread == exportThreadId.get()) {
+                exportCompileCount.incrementAndGet();
+            }
+        });
+        try {
+            testCopyExport(statement, test, callback);
+        } finally {
+            engine.getSqlCompilerPool().setPoolListener(null);
+        }
+        Assert.assertEquals("the export compiles the SELECT again once", 1, exportCompileCount.get());
 
         // A new compile of the same SELECT returns the rows that the export wrote.
         assertQuery(selectSql + " ORDER BY g")
@@ -6465,11 +7356,27 @@ public class CopyExportTest extends AbstractCairoTest {
         TestUtils.assertEventually(assertion, 5, exceptionTypesToCatch);
     }
 
+    // Asserts the message of the one row with which the export logged its failure or cancellation while it streamed
+    // its file; the expected status tells the two apart.
+    private void assertExportFailure(String exportId, String expectedStatus, String expectedMessage) throws Exception {
+        assertQuery("SELECT phase, message FROM \"" + configuration.getSystemTableNamePrefix() + "copy_export_log\"" +
+                " WHERE id = '" + exportId + "' AND status = '" + expectedStatus + "'")
+                .noLeakCheck()
+                .returns("phase\tmessage\nstream_sending_data\t" + expectedMessage + '\n');
+    }
+
     private void assertExportFinished() throws Exception {
         assertQuery("SELECT status FROM \"" + configuration.getSystemTableNamePrefix() + "copy_export_log\" LIMIT -1")
                 .noLeakCheck()
                 .expectSize()
                 .returns("status\nfinished\n");
+    }
+
+    // Asserts the phases and statuses that the export logged, in their order.
+    private void assertExportLog(String exportId, String expectedPhases) throws Exception {
+        assertQuery("SELECT phase, status FROM \"" + configuration.getSystemTableNamePrefix() + "copy_export_log\" WHERE id = '" + exportId + "'")
+                .noLeakCheck()
+                .returns(expectedPhases);
     }
 
     // An export through a select logs the temp table named after the export, an export that reads the table logs the
@@ -6491,6 +7398,12 @@ public class CopyExportTest extends AbstractCairoTest {
         assertQuery("SELECT status FROM \"" + configuration.getSystemTableNamePrefix() + "copy_export_log\" WHERE id = '" + exportId + "' AND phase = 'success'")
                 .noLeakCheck()
                 .returns("status\nfinished\n");
+    }
+
+    private void assertExportedFileCount(String exportId, int expectedFileCount) throws Exception {
+        assertQuery("SELECT num_exported_files FROM \"" + configuration.getSystemTableNamePrefix() + "copy_export_log\" WHERE id = '" + exportId + "' AND phase = 'success'")
+                .noLeakCheck()
+                .returns("num_exported_files\n" + expectedFileCount + '\n');
     }
 
     private void assertFirstPartitionOfCtComposite() {
@@ -6742,6 +7655,17 @@ public class CopyExportTest extends AbstractCairoTest {
         Assert.assertEquals(query, sortedLines(expectedSink), sortedLines(actualSink));
     }
 
+    // Asserts the rows of the file in the order that the export wrote them, and the designated timestamp of the file.
+    private void assertParquetRows(String fileName, @Nullable String timestampColumn, String expectedRows) throws Exception {
+        final QueryAssertion assertion = assertQuery("SELECT * FROM read_parquet('" + parquetPath(fileName) + "')")
+                .noLeakCheck()
+                .expectSize();
+        if (timestampColumn != null) {
+            assertion.timestamp(timestampColumn);
+        }
+        assertion.returns(expectedRows);
+    }
+
     private void assertQueriesPrintAlike(String expectedQuery, String actualQuery) throws Exception {
         final StringSink expectedSink = new StringSink();
         final StringSink actualSink = new StringSink();
@@ -6793,6 +7717,23 @@ public class CopyExportTest extends AbstractCairoTest {
                 """);
         execute("ALTER TABLE fl ADD COLUMN late SYMBOL");
         execute("INSERT INTO fl VALUES ('x', 'f', 8, '2024-01-02T04:00:00.000000Z', 'L1'), ('x', 'g', 9, '2024-01-02T04:30:00.000000Z', NULL)");
+    }
+
+    private void createStaleExportTable(String walMode) throws Exception {
+        createStaleExportTable(walMode, false);
+    }
+
+    // t holds x falling as ts rises, so that an export ordered by x writes its rows in the reverse of their storage
+    // order, one per day, and s holds a symbol twice.
+    private void createStaleExportTable(String walMode, boolean isSymbolIndexed) throws Exception {
+        execute("CREATE TABLE t (x INT, s SYMBOL" + (isSymbolIndexed ? " INDEX" : "") + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY " + walMode);
+        execute("""
+                INSERT INTO t VALUES
+                (3, 'a', '2024-01-01T00:00:00.000000Z'),
+                (2, 'b', '2024-01-02T00:00:00.000000Z'),
+                (1, 'a', '2024-01-03T00:00:00.000000Z')
+                """);
+        drainWalQueue();
     }
 
     /**
@@ -6861,10 +7802,30 @@ public class CopyExportTest extends AbstractCairoTest {
         }, 5, exceptionTypesToCatch);
     }
 
+    // What a test does on the export's thread right after the export compiled its select again, before it opens the new
+    // plan.
+    @FunctionalInterface
+    private interface CompileAction {
+        void run(int compileCount) throws Exception;
+    }
+
     private enum ConvertedColumnExportSource {
         TABLE,
         VIEW_CREATED_AFTER_TYPE_CHANGE,
         VIEW_CREATED_BEFORE_TYPE_CHANGE
+    }
+
+    // A streaming export of the table that createStaleExportTable() creates: its query, its mode, the designated timestamp
+    // of its file, the index of x in its file, which s follows, and its rows before and after the table gains the INT
+    // column extra.
+    private record StaleExportShape(
+            String query,
+            ParquetExportMode mode,
+            @Nullable String timestampColumn,
+            int xColumnIndex,
+            String rows,
+            String rowsWithExtra
+    ) {
     }
 
     // A query that a CURSOR_BASED export runs, with the SYMBOL columns of its file that the export keeps as SYMBOL and
