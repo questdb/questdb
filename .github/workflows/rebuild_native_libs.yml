@@ -44,6 +44,22 @@ jobs:
           export MACOSX_DEPLOYMENT_TARGET=13.0
           cmake -B build/release -DCMAKE_BUILD_TYPE=Release
           cmake --build build/release --config Release
+      - name: Check CXX Library for outlined code
+        # core/CMakeLists.txt passes -mno-outline because outlined hot loops made keyed aggregates up to 2.2x
+        # slower. Outlined code shows up as local OUTLINED_FUNCTION_* symbols, so the check first makes sure
+        # the library still has local symbols; without them it would pass whatever the code looks like.
+        run: |
+          lib=core/target/classes/io/questdb/bin-local/libquestdb.dylib
+          symbols=$(nm "$lib")
+          if ! grep -q ' t ' <<< "$symbols"; then
+            echo "Failure: $lib has no local symbols, so outlined code cannot be detected"
+            exit 1
+          fi
+          outlined=$(grep -c 'OUTLINED_FUNCTION_' <<< "$symbols" || true)
+          if [ "$outlined" -ne 0 ]; then
+            echo "Failure: $lib has $outlined outlined functions; core/CMakeLists.txt must pass -mno-outline on macOS"
+            exit 1
+          fi
       - name: Copy darwin-aarch64 CXX Library to the final directory
         run: |
           mkdir -p core/src/main/resources/io/questdb/bin/darwin-aarch64/
