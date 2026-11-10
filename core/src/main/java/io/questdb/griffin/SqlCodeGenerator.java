@@ -11252,7 +11252,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 if (whereClause == null || distinctIntrinsic != null) {
                                     TableColumnMetadata srcCol = tableMeta.getColumnMetadata(colIdx);
                                     GenericRecordMetadata distinctMeta = new GenericRecordMetadata();
-                                    distinctMeta.add(new TableColumnMetadata(
+                                    final TableColumnMetadata distinctColumn = new TableColumnMetadata(
                                             SqlUtil.toColumnName(outColName),
                                             tableMeta.getColumnType(colIdx),
                                             tableMeta.getColumnIndexType(colIdx),
@@ -11264,7 +11264,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             0,
                                             srcCol.isSymbolCacheFlag(),
                                             srcCol.getSymbolCapacity()
-                                    ));
+                                    );
+                                    // The DISTINCT key passes its column through, so it keeps the column's
+                                    // PARQUET(...) setting.
+                                    distinctColumn.setParquetEncodingConfig(srcCol.getParquetEncodingConfig());
+                                    distinctMeta.add(distinctColumn);
                                     IntList colIndexes = new IntList();
                                     colIndexes.add(colIdx);
                                     ExpressionNode viewExpr = tableModel.getViewNameExpr();
@@ -11396,28 +11400,29 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final int indexInBase = tempKeyIndexesInBase.getQuick(i);
                     final int type = arrayColumnTypes.getColumnType(i);
 
+                    final TableColumnMetadata keyMetadata;
                     if (isSymbol(type)) {
-                        meta.add(
-                                indexInThis,
-                                new TableColumnMetadata(
-                                        SqlUtil.toColumnName(columns.getQuick(indexInThis).getName()),
-                                        type,
-                                        IndexType.NONE,
-                                        0,
-                                        baseMetadata.isSymbolTableStatic(indexInBase),
-                                        null
-                                )
+                        keyMetadata = new TableColumnMetadata(
+                                SqlUtil.toColumnName(columns.getQuick(indexInThis).getName()),
+                                type,
+                                IndexType.NONE,
+                                0,
+                                baseMetadata.isSymbolTableStatic(indexInBase),
+                                null
                         );
                     } else {
-                        meta.add(
-                                indexInThis,
-                                new TableColumnMetadata(
-                                        SqlUtil.toColumnName(columns.getQuick(indexInThis).getName()),
-                                        type,
-                                        null
-                                )
+                        keyMetadata = new TableColumnMetadata(
+                                SqlUtil.toColumnName(columns.getQuick(indexInThis).getName()),
+                                type,
+                                null
                         );
                     }
+                    // A column key passes its column through, so it keeps the column's PARQUET(...) setting. The
+                    // hour() key computes an INT from a timestamp, so it keeps the default.
+                    if (indexInThis != hourIndex) {
+                        keyMetadata.setParquetEncodingConfig(baseMetadata.getColumnMetadata(indexInBase).getParquetEncodingConfig());
+                    }
+                    meta.add(indexInThis, keyMetadata);
                 }
 
                 // Add the aggregate functions.

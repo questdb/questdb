@@ -277,9 +277,9 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                     } else if (isParquet && state.parquetExportMode == ParquetExportMode.CURSOR_BASED) {
                         RecordCursorFactory unwrapped = ParquetExportMode.unwrapFactory(state.recordCursorFactory);
                         if (unwrapped instanceof VirtualRecordCursorFactory vf) {
-                            state.materializer.setUpCursorBacked(vf);
+                            state.materializer.setUpCursorBacked(vf, state.cursor);
                         } else {
-                            state.materializer.setUp(state.recordCursorFactory.getMetadata());
+                            state.materializer.setUp(state.recordCursorFactory.getMetadata(), state.cursor);
                         }
                     }
                     state.metadata = state.recordCursorFactory.getMetadata();

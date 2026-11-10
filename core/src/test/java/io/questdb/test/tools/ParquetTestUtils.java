@@ -25,15 +25,22 @@
 package io.questdb.test.tools;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.constants.VarcharConstant;
+import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
+import io.questdb.griffin.engine.table.PushdownFilterExtractor;
 import io.questdb.griffin.engine.table.parquet.ParquetEncoding;
 import io.questdb.griffin.engine.table.parquet.ParquetFileDecoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 import org.junit.Assert;
 
@@ -71,6 +78,21 @@ public final class ParquetTestUtils {
         }));
     }
 
+    /**
+     * Asserts that the QuestDB metadata of the file gives each listed column the type {@code columnType}.
+     */
+    public static void assertColumnTypes(String parquetFilePath, FilesFacade ff, int columnType, int... columnIndexes) {
+        withDecoder(parquetFilePath, ff, decoder -> {
+            for (int columnIndex : columnIndexes) {
+                Assert.assertEquals(
+                        "type of column " + columnIndex,
+                        ColumnType.nameOf(columnType),
+                        ColumnType.nameOf(decoder.metadata().getColumnType(columnIndex))
+                );
+            }
+        });
+    }
+
     public static void assertColumnsDoNotUseDictionaryEncoding(String parquetFilePath, FilesFacade ff, int... columnIndexes) {
         assertEncoding(parquetFilePath, ff, ParquetEncoding.ENCODING_RLE_DICTIONARY, false, columnIndexes);
     }
@@ -105,6 +127,41 @@ public final class ParquetTestUtils {
         // bf names no encoding, so it keeps the INT default, PLAIN
         assertColumnsDoNotUseEncoding(parquetFilePath, ff, ParquetEncoding.ENCODING_RLE_DICTIONARY, 29);
         assertColumnsDoNotUseEncoding(parquetFilePath, ff, ParquetEncoding.ENCODING_DELTA_BINARY_PACKED, 29);
+    }
+
+    /**
+     * Returns whether the min/max statistics and the bloom filter of a row group rule out {@code columnName = value}
+     * for a SYMBOL column of the file, as the row group pruning of a table's Parquet partition asks.
+     */
+    public static boolean canSkipRowGroupOnSymbolEquals(
+            String parquetFilePath,
+            FilesFacade ff,
+            int rowGroupIndex,
+            String columnName,
+            String value
+    ) {
+        final boolean[] canSkip = new boolean[1];
+        withDecoder(parquetFilePath, ff, decoder -> {
+            final ObjList<PushdownFilterExtractor.PushdownFilterCondition> conditions = new ObjList<>();
+            try (
+                    PushdownFilterExtractor.PushdownFilterCondition condition = new PushdownFilterExtractor.PushdownFilterCondition(columnName, -1, ColumnType.SYMBOL);
+                    DirectLongList filterList = new DirectLongList(ParquetRowGroupFilter.LONGS_PER_FILTER, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER, true);
+                    MemoryCARWImpl filterValues = new MemoryCARWImpl(
+                            ParquetRowGroupFilter.FILTER_BUFFER_PAGE_SIZE,
+                            ParquetRowGroupFilter.FILTER_BUFFER_MAX_PAGES,
+                            MemoryTag.NATIVE_PARQUET_PARTITION_DECODER
+                    )
+            ) {
+                condition.addValueFunction(new VarcharConstant(value));
+                conditions.add(condition);
+                Assert.assertTrue(
+                        "the filter must apply to the column",
+                        ParquetRowGroupFilter.prepareFilterList(decoder.metadata(), conditions, filterList, filterValues, false)
+                );
+                canSkip[0] = decoder.canSkipRowGroup(rowGroupIndex, filterList, filterValues.getAddress() + filterValues.getAppendOffset());
+            }
+        });
+        return canSkip[0];
     }
 
     public static void assertRowGroupCount(String parquetFilePath, FilesFacade ff, int expectedRowGroupCount) {

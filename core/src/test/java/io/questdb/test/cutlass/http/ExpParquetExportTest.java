@@ -1319,6 +1319,130 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testParquetExportCursorBasedKeepsSymbol() throws Exception {
+        // CURSOR_BASED exports of shapes that pass a table's symbol keys through, on one keep-alive connection with random
+        // send buffers and row group sizes: every file holds the query's rows and keeps the SYMBOL columns. The first
+        // three exports reuse the export state for a SYMBOL at column 0, an INT at column 0 and a SYMBOL at column 2,
+        // and no SYMBOL.
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    createSymbolTables(engine, sqlExecutionContext);
+                    final String[] queries = {
+                            "SELECT h.sym, h.v FROM hsym h CROSS JOIN long_sequence(1)",
+                            "SELECT h.v, h.ts, h.k FROM hsym h CROSS JOIN long_sequence(1)",
+                            "SELECT h.v, h.ts FROM hsym h CROSS JOIN long_sequence(1)",
+                            "SELECT sym, k, count() c FROM hsym ORDER BY sym, k",
+                            "SELECT h.sym, d.sym dsym, d.w FROM hsym h LEFT JOIN hdim d ON h.sym = d.sym",
+                            "SELECT * FROM hsym ORDER BY v DESC"
+                    };
+                    final int[][] keptColumns = {{0}, {2}, {}, {0, 1}, {0, 1}, {0, 1}};
+                    for (String query : queries) {
+                        assertExportMode(engine, sqlExecutionContext, query, ParquetExportMode.CURSOR_BASED);
+                    }
+                    final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+                    try (
+                            TestHttpClient httpClient = new TestHttpClient();
+                            DirectUtf8Sink sink = new DirectUtf8Sink(16_384)
+                    ) {
+                        httpClient.setKeepConnection(true);
+                        for (int i = 0; i < 3 * queries.length; i++) {
+                            final int index = i < queries.length ? i : rnd.nextInt(queries.length);
+                            final HttpClient.Request req = httpClient.getHttpClient().newRequest("localhost", 9001);
+                            req.GET().url("/exp");
+                            req.query("query", queries[index]);
+                            req.query("fmt", "parquet");
+                            req.query("row_group_size", String.valueOf(1 + rnd.nextInt(300)));
+                            sink.clear();
+                            httpClient.reqToSink(req, sink, null, null, null, null);
+                            final String fileName = "cursor_symbol_" + i + ".parquet";
+                            assertParquetMatchesQuery(engine, sqlExecutionContext, sink, queries[index], fileName);
+                            if (keptColumns[index].length > 0) {
+                                ParquetTestUtils.assertColumnTypes(root + "/export/" + fileName, ff, ColumnType.SYMBOL, keptColumns[index]);
+                            }
+                        }
+                    }
+                });
+    }
+
+    @Test
+    public void testParquetExportCursorBasedSymbolAfterDroppedConnection() throws Exception {
+        // A client drops the connection while the export of a kept SYMBOL column streams, and the next export of the
+        // column runs.
+        assertMemoryLeak(() -> getExportTester()
+                .runNoLeakCheck(null, (engine, sqlExecutionContext) -> {
+                    createSymbolTables(engine, sqlExecutionContext);
+                    final HttpClient client = testHttpClient.getHttpClient();
+                    final HttpClient.Request req = client.newRequest("localhost", 9001);
+                    req.GET().url("/exp").query("query", "SELECT h.sym, x.x FROM hsym h CROSS JOIN long_sequence(1_000_000_000) x");
+                    req.query("fmt", "parquet");
+                    req.query("row_group_size", "500");
+                    try (var ignore = req.send()) {
+                        for (int i = 0; i < 50; i++) {
+                            if (engine.getCopyExportContext().getActiveExportId() != -1) {
+                                break;
+                            }
+                            Os.sleep(100);
+                        }
+                    }
+                    client.disconnect();
+                    for (int i = 0; i < 100; i++) {
+                        if (engine.getCopyExportContext().getActiveExportId() == -1) {
+                            break;
+                        }
+                        if (i == 99) {
+                            Assert.fail("Failed to cancel export");
+                        }
+                        Os.sleep(100);
+                    }
+
+                    final String query = "SELECT h.sym, h.k, h.v FROM hsym h CROSS JOIN long_sequence(1)";
+                    try (
+                            TestHttpClient httpClient = new TestHttpClient();
+                            DirectUtf8Sink sink = new DirectUtf8Sink(16_384)
+                    ) {
+                        exportParquet(httpClient, sink, query);
+                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, "after_drop.parquet");
+                        ParquetTestUtils.assertColumnTypes(root + "/export/after_drop.parquet", engine.getConfiguration().getFilesFacade(), ColumnType.SYMBOL, 0, 1);
+                    }
+                }));
+    }
+
+    @Test
+    public void testParquetExportCursorBasedSymbolAfterTruncateAndInsert() throws Exception {
+        // The same /exp query exports a kept SYMBOL column again after TRUNCATE empties its table, and after inserts
+        // bring new symbols.
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("CREATE TABLE tsym (sym SYMBOL, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", sqlExecutionContext);
+                    engine.execute("INSERT INTO tsym VALUES ('a', 1, '2024-01-01T00:00:00.000000Z'), ('b', 2, '2024-01-01T01:00:00.000000Z')", sqlExecutionContext);
+                    final String query = "SELECT t.sym, t.v FROM tsym t CROSS JOIN long_sequence(1)";
+                    final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+                    try (
+                            TestHttpClient httpClient = new TestHttpClient();
+                            DirectUtf8Sink sink = new DirectUtf8Sink(16_384)
+                    ) {
+                        httpClient.setKeepConnection(true);
+                        exportParquet(httpClient, sink, query);
+                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, "before_truncate.parquet");
+                        assertReadParquet(engine, sqlExecutionContext, "before_truncate.parquet", "sym\tv\na\t1\nb\t2\n");
+                        ParquetTestUtils.assertColumnTypes(root + "/export/before_truncate.parquet", ff, ColumnType.SYMBOL, 0);
+
+                        engine.execute("TRUNCATE TABLE tsym", sqlExecutionContext);
+                        exportParquet(httpClient, sink, query);
+                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, "after_truncate.parquet");
+                        assertReadParquet(engine, sqlExecutionContext, "after_truncate.parquet", "sym\tv\n");
+                        ParquetTestUtils.assertColumnTypes(root + "/export/after_truncate.parquet", ff, ColumnType.SYMBOL, 0);
+
+                        engine.execute("INSERT INTO tsym VALUES ('c', 3, '2024-01-02T00:00:00.000000Z'), ('a', 4, '2024-01-02T01:00:00.000000Z')", sqlExecutionContext);
+                        exportParquet(httpClient, sink, query);
+                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, "after_insert.parquet");
+                        assertReadParquet(engine, sqlExecutionContext, "after_insert.parquet", "sym\tv\nc\t3\na\t4\n");
+                        ParquetTestUtils.assertColumnTypes(root + "/export/after_insert.parquet", ff, ColumnType.SYMBOL, 0);
+                    }
+                });
+    }
+
+    @Test
     public void testParquetExportDataPageSizeInvalid() throws Exception {
         getExportTester()
                 .run((engine, sqlExecutionContext) -> {
@@ -2830,6 +2954,18 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
         }
     }
 
+    // hsym's sym holds 36 symbols and NULL in every 5th row; hdim's symbol map holds two of them and one other.
+    private static void createSymbolTables(CairoEngine engine, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        engine.execute("CREATE TABLE hsym (sym SYMBOL, k SYMBOL, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", sqlExecutionContext);
+        engine.execute(
+                "INSERT INTO hsym SELECT CASE WHEN x % 5 = 0 THEN NULL ELSE 'sym' || (x % 37) END, 'k' || (x % 3), x::INT,"
+                        + " timestamp_sequence('2024-01-01', 60_000_000L) FROM long_sequence(2_000)",
+                sqlExecutionContext
+        );
+        engine.execute("CREATE TABLE hdim (sym SYMBOL, w INT)", sqlExecutionContext);
+        engine.execute("INSERT INTO hdim VALUES ('sym1', 1), ('sym2', 2), ('other', 3)", sqlExecutionContext);
+    }
+
     private static @NotNull Thread startCancelThread(CairoEngine engine, SqlExecutionContext sqlExecutionContext) {
         return new Thread(() -> {
             try {
@@ -3044,6 +3180,17 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
         TestUtils.printSql(engine, sqlExecutionContext, query, expectedSink);
         TestUtils.printSql(engine, sqlExecutionContext, selectFromParquet, actualSink);
         TestUtils.assertEquals(expectedSink, actualSink);
+    }
+
+    private void assertReadParquet(
+            CairoEngine engine,
+            SqlExecutionContext sqlExecutionContext,
+            String fileName,
+            String expectedRows
+    ) throws SqlException {
+        final StringSink actualSink = new StringSink();
+        TestUtils.printSql(engine, sqlExecutionContext, "read_parquet('" + fileName + "')", actualSink);
+        TestUtils.assertEquals(expectedRows, actualSink);
     }
 
     private void exportParquet(TestHttpClient httpClient, DirectUtf8Sink sink, String query) {

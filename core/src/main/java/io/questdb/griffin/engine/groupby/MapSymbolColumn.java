@@ -60,6 +60,14 @@ public class MapSymbolColumn extends SymbolFunction {
         return rec.getInt(mapColumnIndex);
     }
 
+    /**
+     * The symbol table that {@link #init} took from its source for the key column, which resolves the keys
+     * {@link #getInt} returns, or null before init().
+     */
+    public @Nullable SymbolTable getSourceSymbolTable() {
+        return symbolTable;
+    }
+
     @Override
     public @Nullable StaticSymbolTable getStaticSymbolTable() {
         if (symbolTable instanceof StaticSymbolTable) {

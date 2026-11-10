@@ -550,9 +550,9 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
             } else {
                 cursor = factory.getCursor(sqlExecutionContext);
                 if (factory instanceof VirtualRecordCursorFactory vf) {
-                    streamBuffers.setUpCursorBacked(vf);
+                    streamBuffers.setUpCursorBacked(vf, cursor);
                 } else {
-                    streamBuffers.setUp(factory.getMetadata());
+                    streamBuffers.setUp(factory.getMetadata(), cursor);
                 }
                 exporter.setUp(streamBuffers.getAdjustedMetadata());
             }

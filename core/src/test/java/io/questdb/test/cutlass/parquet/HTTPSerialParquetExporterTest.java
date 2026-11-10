@@ -24,6 +24,8 @@
 
 package io.questdb.test.cutlass.parquet;
 
+import io.questdb.PropertyKey;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
@@ -48,15 +50,132 @@ import io.questdb.std.DirectLongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
+import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.LogCapture;
+import io.questdb.test.tools.ParquetTestUtils;
+import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
+import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class HTTPSerialParquetExporterTest extends AbstractCairoTest {
+
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        // read_parquet() reads the exported files from the input root
+        inputRoot = TestUtils.unchecked(() -> temp.newFolder("export").getAbsolutePath());
+        staticOverrides.setProperty(PropertyKey.CAIRO_SQL_COPY_ROOT, inputRoot);
+        AbstractCairoTest.setUpStatic();
+    }
+
+    @Test
+    public void testCursorExportKeepsSymbolMapWhileTableGrows() throws Exception {
+        // A slow client suspends a CURSOR_BASED export of a kept SYMBOL column between row groups, and a writer commits
+        // rows with new symbols before the export resumes. The export holds its cursor, and the table reader with its
+        // symbol map under it, so the file holds the rows and symbols of the query from before the insert.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE growing (sym SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO growing SELECT 's' || (x % 7), x, timestamp_sequence('2024-01-01', 60_000_000L) FROM long_sequence(50)");
+            drainWalQueue();
+            final String query = "SELECT g.sym, g.v FROM growing g CROSS JOIN long_sequence(1)";
+            printSql(query);
+            final String expectedRows = sink.toString();
+
+            final CopyExportContext copyExportContext = engine.getCopyExportContext();
+            final CopyExportContext.ExportTaskEntry entry = copyExportContext.assignExportEntry(
+                    sqlExecutionContext.getSecurityContext(),
+                    "growing table test",
+                    "",
+                    null,
+                    CopyExportContext.CopyTrigger.HTTP
+            );
+            final AtomicInteger callbackCount = new AtomicInteger();
+            final ByteArrayOutputStream fileBytes = new ByteArrayOutputStream();
+            final TestExporter exporter = new TestExporter();
+            RecordCursorFactory factory = null;
+            RecordCursor cursor = null;
+            HybridColumnMaterializer materializer = null;
+            DirectLongList columnData = null;
+            CopyExportRequestTask task = null;
+            try {
+                factory = select(query);
+                Assert.assertEquals(ParquetExportMode.CURSOR_BASED, ParquetExportMode.determineExportMode(factory, false, sqlExecutionContext));
+                cursor = factory.getCursor(sqlExecutionContext);
+                materializer = new HybridColumnMaterializer();
+                materializer.setUp(factory.getMetadata(), cursor);
+                Assert.assertEquals(ColumnType.SYMBOL, materializer.getAdjustedMetadata().getColumnType(0));
+                columnData = new DirectLongList(8, MemoryTag.NATIVE_PARQUET_EXPORTER);
+                task = new CopyExportRequestTask();
+                task.of(
+                        entry,
+                        null,
+                        "growing",
+                        "",
+                        configuration.getParquetExportCompressionCodec(),
+                        configuration.getParquetExportCompressionLevel(),
+                        10,
+                        configuration.getParquetExportDataPageSize(),
+                        configuration.isParquetExportStatisticsEnabled(),
+                        configuration.getParquetExportVersion(),
+                        configuration.isParquetExportRawArrayEncoding(),
+                        sqlExecutionContext.getNowTimestampType(),
+                        sqlExecutionContext.getNow(sqlExecutionContext.getNowTimestampType()),
+                        false,
+                        null,
+                        factory.getMetadata(),
+                        (dataPtr, dataLen) -> {
+                            if (callbackCount.getAndIncrement() == 0) {
+                                // The client is slow to read the first row group: the export resends it later.
+                                execute("INSERT INTO growing SELECT 'new' || x, 1_000 + x, timestamp_sequence('2024-01-03', 60_000_000L) FROM long_sequence(20)");
+                                drainWalQueue();
+                                throw PeerIsSlowToReadException.INSTANCE;
+                            }
+                            for (long i = 0; i < dataLen; i++) {
+                                fileBytes.write(Unsafe.getByte(dataPtr + i));
+                            }
+                        },
+                        ParquetExportMode.CURSOR_BASED,
+                        null,
+                        null,
+                        -1,
+                        configuration.getParquetExportBloomFilterFpp(),
+                        null
+                );
+                task.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
+                task.getStreamPartitionParquetExporter().setUp(materializer.getAdjustedMetadata());
+                exporter.of(task);
+                exporter.setExportMode(ParquetExportMode.CURSOR_BASED);
+                exporter.setupCursorBasedExport(cursor, materializer, columnData);
+                cursor = null;
+
+                Assert.assertThrows(PeerIsSlowToReadException.class, exporter::process);
+                Assert.assertEquals("the table must hold the new rows before the export resumes", "count\n70\n", queryGrowingCount());
+                Assert.assertEquals(CopyExportRequestTask.Phase.SUCCESS, exporter.process());
+                Assert.assertTrue("the export must write several row groups", callbackCount.get() > 2);
+            } finally {
+                exporter.clearExportResources();
+                Misc.free(cursor);
+                Misc.free(task);
+                Misc.free(materializer);
+                Misc.free(columnData);
+                Misc.free(factory);
+                copyExportContext.releaseEntry(entry);
+            }
+
+            final String parquetPath = inputRoot + File.separator + "growing.parquet";
+            java.nio.file.Files.write(java.nio.file.Path.of(parquetPath), fileBytes.toByteArray());
+            ParquetTestUtils.assertRowGroupCount(parquetPath, configuration.getFilesFacade(), 5);
+            ParquetTestUtils.assertColumnTypes(parquetPath, configuration.getFilesFacade(), ColumnType.SYMBOL, 0);
+            printSql("SELECT * FROM read_parquet('" + parquetPath + "')");
+            TestUtils.assertEquals(expectedRows, sink);
+        });
+    }
 
     @Test
     public void testHybridCompletionRetainsTotalRowsAfterCallbackResume() throws Exception {
@@ -83,7 +202,7 @@ public class HTTPSerialParquetExporterTest extends AbstractCairoTest {
                 factory = select("hybrid_progress");
                 cursor = factory.getCursor(sqlExecutionContext);
                 materializer = new HybridColumnMaterializer();
-                materializer.setUp(factory.getMetadata());
+                materializer.setUp(factory.getMetadata(), cursor);
                 columnData = new DirectLongList(8, MemoryTag.NATIVE_PARQUET_EXPORTER);
                 task = new CopyExportRequestTask();
                 task.of(
@@ -321,6 +440,11 @@ public class HTTPSerialParquetExporterTest extends AbstractCairoTest {
                 }
             }
         }
+    }
+
+    private String queryGrowingCount() throws Exception {
+        printSql("SELECT count() FROM growing");
+        return sink.toString();
     }
 
     private static final class ProbeTask extends CopyExportRequestTask {

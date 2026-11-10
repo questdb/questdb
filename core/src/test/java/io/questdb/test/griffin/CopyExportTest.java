@@ -31,6 +31,7 @@ import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.MetadataCacheWriter;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.O3PartitionJob;
+import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -73,16 +74,20 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.io.File;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.Assert.assertTrue;
 
 
 public class CopyExportTest extends AbstractCairoTest {
 
+    // the 10_000-char symbol of sym_src, which createSymbolExportTables() creates
+    private static final String LONG_SYMBOL = "L" + "z".repeat(9_999);
     // metric, c, total and ts of the tables createTableWithParquetSettings*() create
     private static final String PARQUET_SETTINGS_TABLE_ROWS = """
             (10, 1, 1000, '2024-01-01T00:00:00.000000Z'),
@@ -231,6 +236,758 @@ public class CopyExportTest extends AbstractCairoTest {
     public void testCopyCancelSyntaxError() throws Exception {
         assertQuery("copy 'foobar' cancel aw beans;")
                 .fails(21, "unexpected token [aw]");
+    }
+
+    @Test
+    public void testCopyCursorExportKeepsMemoizedSymbolAlias() throws Exception {
+        // With function memoization, as in production, the outer projection reads the alias through a memoizer over the
+        // inner projection's column, which passes the table's keys through.
+        assertMemoryLeak(() -> {
+            allowFunctionMemoization();
+            createSymbolExportTables("BYPASS WAL");
+            final String query = "SELECT a, a || 'x' c FROM (SELECT sym AS a, v + 1 AS vp FROM sym_src CROSS JOIN long_sequence(1))";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlanContaining("memoize(a)");
+            assertCursorExportOfSymbols(query, "memoized", new int[]{0}, new int[]{});
+        });
+    }
+
+    @Test
+    public void testCopyCursorExportKeepsSymbolValues() throws Exception {
+        // A CURSOR_BASED export keeps a table's SYMBOL columns as SYMBOL and encodes them as the DIRECT export of the
+        // same columns does: the same values, and the same encodings in every column.
+        assertMemoryLeak(() -> {
+            final FilesFacade ff = configuration.getFilesFacade();
+            for (String walMode : new String[]{"WAL", "BYPASS WAL"}) {
+                createSymbolExportTables(walMode);
+                final String query = "SELECT t.* FROM sym_src t CROSS JOIN long_sequence(1)";
+                assertExportMode(query, ParquetExportMode.CURSOR_BASED);
+                assertExportMode("SELECT * FROM sym_src", ParquetExportMode.DIRECT_PAGE_FRAME);
+                copyToParquet("COPY (SELECT * FROM sym_src) TO 'sym_direct' WITH FORMAT PARQUET");
+                copyToParquet("COPY (" + query + ") TO 'sym_cursor' WITH FORMAT PARQUET");
+
+                final String parquetPath = parquetPath("sym_cursor");
+                assertParquetMatchesQuery(query, parquetPath);
+                assertQuery("SELECT sym, sym IS NULL sym_is_null, k, k IS NULL k_is_null, v, ts FROM read_parquet('" + parquetPath + "')")
+                        .noLeakCheck()
+                        .expectSize()
+                        .timestamp("ts")
+                        .returns("""
+                                sym\tsym_is_null\tk\tk_is_null\tv\tts
+                                a\tfalse\tk1\tfalse\t1\t2024-01-01T00:00:00.000000Z
+                                a\tfalse\tk2\tfalse\t9\t2024-01-01T00:30:00.000000Z
+                                \ttrue\tk2\tfalse\t2\t2024-01-01T01:00:00.000000Z
+                                \tfalse\tk1\tfalse\t3\t2024-01-01T02:00:00.000000Z
+                                é\tfalse\tk2\tfalse\t4\t2024-01-02T00:00:00.000000Z
+                                Ж\tfalse\t\ttrue\t5\t2024-01-02T01:00:00.000000Z
+                                €\tfalse\tk1\tfalse\t6\t2024-01-02T02:00:00.000000Z
+                                😀\tfalse\tk2\tfalse\t7\t2024-01-03T00:00:00.000000Z
+                                """ + LONG_SYMBOL + "\tfalse\tk1\tfalse\t8\t2024-01-03T01:00:00.000000Z\n");
+                assertSymbolColumnsKept(parquetPath, 0, 1);
+                ParquetTestUtils.assertColumnEncodingsMatch(parquetPath("sym_direct"), parquetPath, ff);
+                ParquetTestUtils.assertColumnsUseDictionaryEncoding(parquetPath, ff, 0, 1, 2);
+                execute("DROP TABLE sym_src");
+                execute("DROP TABLE sym_dim");
+            }
+        });
+    }
+
+    @Test
+    public void testCopyCursorExportOfMatViewKeepsSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            createSymbolExportTables("WAL");
+            execute("CREATE MATERIALIZED VIEW sym_mv AS (SELECT ts, sym, count() c FROM sym_src SAMPLE BY 1d) PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+            assertCursorExportOfSymbols("SELECT m.* FROM sym_mv m CROSS JOIN long_sequence(1)", "mat_view", new int[]{1}, new int[]{});
+        });
+    }
+
+    @Test
+    public void testCopyCursorExportSymbolBloomFilter() throws Exception {
+        // The file holds 'a' and 'c' of a symbol map that also holds 'b', so its min and max cannot rule out 'b', and
+        // only a bloom filter of the symbols the row group uses lets a reader skip the row group. read_parquet() reads
+        // a SYMBOL column of a file as VARCHAR and pushes no filter down to it, so the test asks the row group
+        // pruning that a table's Parquet partitions run for a SYMBOL column.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE bl (sym SYMBOL, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO bl VALUES
+                        ('a', 1, '2024-01-01T00:00:00.000000Z'),
+                        ('b', 2, '2024-01-01T01:00:00.000000Z'),
+                        ('c', 3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            final String query = "SELECT b.sym, b.v FROM bl b CROSS JOIN long_sequence(1) WHERE b.v <> 2";
+            assertExportMode(query, ParquetExportMode.CURSOR_BASED);
+            for (boolean hasBloomFilter : new boolean[]{true, false}) {
+                final String fileName = hasBloomFilter ? "bloom" : "no_bloom";
+                copyToParquet("COPY (" + query + ") TO '" + fileName + "' WITH FORMAT PARQUET" + (hasBloomFilter ? " BLOOM_FILTER_COLUMNS 'sym'" : ""));
+                final String parquetPath = parquetPath(fileName);
+                assertParquetMatchesQuery(query, parquetPath);
+                assertSymbolColumnsKept(parquetPath, 0);
+
+                final FilesFacade ff = configuration.getFilesFacade();
+                Assert.assertEquals(hasBloomFilter, ParquetTestUtils.canSkipRowGroupOnSymbolEquals(parquetPath, ff, 0, "sym", "b"));
+                // The bloom filter holds the symbols the row group uses.
+                Assert.assertFalse(ParquetTestUtils.canSkipRowGroupOnSymbolEquals(parquetPath, ff, 0, "sym", "a"));
+                Assert.assertFalse(ParquetTestUtils.canSkipRowGroupOnSymbolEquals(parquetPath, ff, 0, "sym", "c"));
+                assertQuery("SELECT sym FROM read_parquet('" + parquetPath + "') WHERE sym = 'b'")
+                        .noLeakCheck()
+                        .returns("sym\n");
+                assertQuery("SELECT sym, v FROM read_parquet('" + parquetPath + "') WHERE sym = 'a'")
+                        .noLeakCheck()
+                        .returns("sym\tv\na\t1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testCopyCursorExportSymbolCancel() throws Exception {
+        // A cancelled export of a kept SYMBOL column stops between row groups, and the next export of the column runs.
+        assertMemoryLeak(() -> {
+            createSymbolExportTables("BYPASS WAL");
+            CopyExportRunnable stmt = () -> runAndFetchCopyExportID(
+                    "COPY (SELECT t.sym, t.k, x.x FROM sym_src t CROSS JOIN long_sequence(1_000_000_000) x) TO 'cancelled' WITH FORMAT PARQUET ROW_GROUP_SIZE 1000",
+                    sqlExecutionContext
+            );
+            CopyExportRunnable test = () -> {
+                try {
+                    long copyID;
+                    do {
+                        copyID = engine.getCopyExportContext().getActiveExportId();
+                    } while (copyID == -1);
+                    final StringSink sink = new StringSink();
+                    Numbers.appendHex(sink, copyID, true);
+                    final String copyIDStr = sink.toString();
+                    assertQuery("COPY '" + copyIDStr + "' CANCEL")
+                            .noLeakCheck()
+                            .returnsOnce("id\tstatus\n" + copyIDStr + "\tcancelled\n");
+                    do {
+                        copyID = engine.getCopyExportContext().getActiveExportId();
+                    } while (copyID != -1);
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            };
+            testCopyExport(stmt, test, false, 1);
+            assertQuery("SELECT status FROM \"" + configuration.getSystemTableNamePrefix() + "copy_export_log\" LIMIT -1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("status\ncancelled\n");
+            Assert.assertFalse(exportFileExists("cancelled"));
+
+            assertCursorExportOfSymbols("SELECT t.sym, t.k, x.x FROM sym_src t CROSS JOIN long_sequence(3) x", "after_cancel", new int[]{0, 1}, new int[]{});
+        });
+    }
+
+    @Test
+    public void testCopyCursorExportSymbolDataShapes() throws Exception {
+        assertMemoryLeak(() -> {
+            createSymbolExportTables("BYPASS WAL");
+
+            // An empty result writes a file without row groups that still types the column.
+            final String emptyQuery = "SELECT t.sym, t.v FROM sym_src t CROSS JOIN long_sequence(1) WHERE t.v > 100";
+            assertCursorExportOfSymbols(emptyQuery, "empty", new int[]{0}, new int[]{});
+            assertQuery("SELECT * FROM read_parquet('" + parquetPath("empty") + "')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("sym\tv\n");
+
+            final String singleRowQuery = "SELECT t.sym, t.v FROM sym_src t CROSS JOIN long_sequence(1) WHERE t.v = 7";
+            assertCursorExportOfSymbols(singleRowQuery, "single_row", new int[]{0}, new int[]{});
+            assertQuery("SELECT * FROM read_parquet('" + parquetPath("single_row") + "')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("sym\tv\n😀\t7\n");
+
+            // A column of NULLs over an empty symbol map: late is added after the rows and never set.
+            execute("ALTER TABLE sym_src ADD COLUMN late SYMBOL");
+            final String emptyMapQuery = "SELECT t.v, t.late FROM sym_src t CROSS JOIN long_sequence(1) WHERE t.v < 4";
+            assertCursorExportOfSymbols(emptyMapQuery, "empty_map", new int[]{1}, new int[]{});
+            assertQuery("SELECT v, late, late IS NULL late_is_null FROM read_parquet('" + parquetPath("empty_map") + "')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v\tlate\tlate_is_null
+                            1\t\ttrue
+                            2\t\ttrue
+                            3\t\ttrue
+                            """);
+
+            // A column of NULLs over a symbol map that holds symbols
+            final String nullRowsQuery = "SELECT t.v, t.sym FROM sym_src t CROSS JOIN long_sequence(1) WHERE t.sym IS NULL";
+            assertCursorExportOfSymbols(nullRowsQuery, "null_rows", new int[]{1}, new int[]{});
+            assertQuery("SELECT v, sym, sym IS NULL sym_is_null FROM read_parquet('" + parquetPath("null_rows") + "')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v\tsym\tsym_is_null
+                            2\t\ttrue
+                            """);
+        });
+    }
+
+    @Test
+    public void testCopyCursorExportSymbolDictionaryHoldsOnlyUsedSymbols() throws Exception {
+        // A kept SYMBOL column's dictionary holds the symbols its row group uses, so the file of a few rows stays small
+        // whatever keys they have. hs holds 1_000_000 symbols, s1 to s1000000 with keys 0 to 999_999; a dictionary of
+        // every key up to the largest used one writes at least 4 bytes per key, 4_000_000 bytes for s1000000.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE hs (s SYMBOL CAPACITY 1_048_576 NOCACHE, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO hs SELECT 's' || x, x, (x * 1000)::TIMESTAMP FROM long_sequence(1_000_000)");
+            execute("CREATE TABLE one (v LONG)");
+            execute("INSERT INTO one VALUES (1_000_000)");
+            final String[] queries = {
+                    "SELECT * FROM hs ORDER BY ts DESC LIMIT 1",
+                    "SELECT * FROM hs WHERE v = 1_000_000",
+                    "SELECT s, count() c FROM hs WHERE v > 999_998",
+                    "SELECT h.s, h.v FROM hs h JOIN one o ON h.v = o.v"
+            };
+            for (int i = 0; i < queries.length; i++) {
+                assertCursorExportOfSymbols(queries[i], "few_rows_" + i, new int[]{0}, new int[]{}, " COMPRESSION_CODEC UNCOMPRESSED");
+                final long fileSize = parquetFileSize("few_rows_" + i);
+                Assert.assertTrue(queries[i] + ", file size: " + fileSize, fileSize < 10_000);
+            }
+            assertQuery("SELECT * FROM read_parquet('" + parquetPath("few_rows_0") + "')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            s\tv\tts
+                            s1000000\t1000000\t1970-01-01T00:16:40.000000Z
+                            """);
+
+            // Three row groups of two rows, each with its own dictionary
+            final String rowGroupsQuery = "SELECT * FROM hs WHERE v IN (1, 2, 3, 500_000, 999_998, 999_999) ORDER BY v DESC";
+            assertCursorExportOfSymbols(rowGroupsQuery, "row_groups", new int[]{0}, new int[]{}, " COMPRESSION_CODEC UNCOMPRESSED ROW_GROUP_SIZE 2");
+            ParquetTestUtils.assertRowGroupCount(parquetPath("row_groups"), configuration.getFilesFacade(), 3);
+            final long fileSize = parquetFileSize("row_groups");
+            Assert.assertTrue("file size: " + fileSize, fileSize < 10_000);
+            assertQuery("SELECT s, v FROM read_parquet('" + parquetPath("row_groups") + "')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s\tv
+                            s999999\t999999
+                            s999998\t999998
+                            s500000\t500000
+                            s3\t3
+                            s2\t2
+                            s1\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testCopyCursorExportSymbolExecutionModes() throws Exception {
+        assertMemoryLeak(() -> {
+            createSymbolExportTables("BYPASS WAL");
+            final FilesFacade ff = configuration.getFilesFacade();
+
+            // Parallel and serial GROUP BY keep the keys and their PARQUET(...) settings.
+            for (boolean isParallel : new boolean[]{true, false}) {
+                sqlExecutionContext.setParallelGroupByEnabled(isParallel);
+                try {
+                    final String suffix = isParallel ? "parallel" : "serial";
+                    assertCursorExportOfSymbols("SELECT sym, k, count() c FROM sym_src", "keys_" + suffix, new int[]{0, 1}, new int[]{});
+                    assertCursorExportOfSymbols("SELECT sym, count() c FROM sym_src", "key_" + suffix, new int[]{0}, new int[]{});
+                    copyToParquet("COPY (SELECT v, count() c FROM sym_src) TO 'int_key_" + suffix + "' WITH FORMAT PARQUET");
+                    assertParquetMatchesQueryInAnyOrder("SELECT v, count() c FROM sym_src", parquetPath("int_key_" + suffix));
+                    ParquetTestUtils.assertColumnsUseDictionaryEncoding(parquetPath("int_key_" + suffix), ff, 0);
+                } finally {
+                    sqlExecutionContext.setParallelGroupByEnabled(true);
+                }
+            }
+
+            // A table without partitions
+            execute("CREATE TABLE np (sym SYMBOL, v INT)");
+            execute("INSERT INTO np VALUES ('p', 1), (NULL, 2), ('q', 3), ('p', 4)");
+            assertCursorExportOfSymbols("SELECT n.* FROM np n CROSS JOIN long_sequence(2)", "no_partitions", new int[]{0}, new int[]{});
+
+            // A column added after data exists holds NULL above its column top.
+            execute("CREATE TABLE added (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO added VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-02T00:00:00.000000Z')");
+            execute("ALTER TABLE added ADD COLUMN late SYMBOL");
+            execute("INSERT INTO added VALUES (3, '2024-01-02T01:00:00.000000Z', 'l1'), (4, '2024-01-03T00:00:00.000000Z', NULL), (5, '2024-01-03T01:00:00.000000Z', 'l2')");
+            assertCursorExportOfSymbols("SELECT a.* FROM added a CROSS JOIN long_sequence(1)", "added_column", new int[]{2}, new int[]{});
+            assertQuery("SELECT v, late, late IS NULL late_is_null FROM read_parquet('" + parquetPath("added_column") + "')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v\tlate\tlate_is_null
+                            1\t\ttrue
+                            2\t\ttrue
+                            3\tl1\tfalse
+                            4\t\ttrue
+                            5\tl2\tfalse
+                            """);
+
+            // Parquet partitions decode the table's own symbol keys.
+            execute("ALTER TABLE sym_src CONVERT PARTITION TO PARQUET LIST '2024-01-01', '2024-01-02'");
+            drainWalQueue();
+            assertCursorExportOfSymbols("SELECT t.* FROM sym_src t CROSS JOIN long_sequence(1)", "parquet_cross_join", new int[]{0, 1}, new int[]{});
+            assertCursorExportOfSymbols("SELECT sym, k, count() c FROM sym_src", "parquet_group_by", new int[]{0, 1}, new int[]{});
+            assertCursorExportOfSymbols("SELECT * FROM sym_src ORDER BY v DESC", "parquet_order_by", new int[]{0, 1}, new int[]{});
+        });
+    }
+
+    @Test
+    public void testCopyCursorExportSymbolFailedWriteCleansUp() throws Exception {
+        // The second write of the export file fails: the export fails, leaves no temp directory behind, and the same
+        // export runs again.
+        final AtomicInteger exportFileWriteCount = new AtomicInteger();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            private volatile long exportFd = -1;
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                final long fd = super.openRW(name, opts);
+                if (Utf8s.containsAscii(name, "tmp_") && Utf8s.endsWithAscii(name, "export.parquet")) {
+                    exportFd = fd;
+                }
+                return fd;
+            }
+
+            @Override
+            public long write(long fd, long address, long len, long offset) {
+                if (fd == exportFd && exportFileWriteCount.incrementAndGet() == 2) {
+                    return -1;
+                }
+                return super.write(fd, address, len, offset);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            createSymbolExportTables("BYPASS WAL");
+            final String query = "SELECT t.sym, t.k, t.v FROM sym_src t CROSS JOIN long_sequence(1)";
+            final String copySql = "COPY (" + query + ") TO 'failed_write' WITH FORMAT PARQUET ROW_GROUP_SIZE 2";
+            runAndFetchCopyExportID(copySql, sqlExecutionContext);
+            runExportJob();
+            assertQuery("SELECT status, message FROM \"" + configuration.getSystemTableNamePrefix() + "copy_export_log\" LIMIT -1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("status\tmessage\nfailed\tfailed to write parquet data to temp file\n");
+            Assert.assertEquals(2, exportFileWriteCount.get());
+            final File[] tmpDirs = new File(exportRoot).listFiles(f -> f.isDirectory() && f.getName().startsWith("tmp_"));
+            Assert.assertTrue("temp directory must be removed", tmpDirs == null || tmpDirs.length == 0);
+            Assert.assertFalse(exportFileExists("failed_write"));
+
+            copyToParquet(copySql);
+            assertParquetMatchesQuery(query, parquetPath("failed_write"));
+            assertSymbolColumnsKept(parquetPath("failed_write"), 0, 1);
+            ParquetTestUtils.assertRowGroupCount(parquetPath("failed_write"), configuration.getFilesFacade(), 5);
+        });
+    }
+
+    @Test
+    public void testCopyCursorExportSymbolFilterWithJitOnAndOff() throws Exception {
+        // A filter on a non-indexed symbol, compiled by the JIT or not. The JIT does not compile a comparison with an
+        // empty symbol, so the filter selects the row of '' by v.
+        assertMemoryLeak(() -> {
+            createSymbolExportTables("BYPASS WAL");
+            final String query = "SELECT * FROM sym_src WHERE sym = '😀' OR v = 3";
+            final int jitMode = sqlExecutionContext.getJitMode();
+            try {
+                for (boolean isJitEnabled : new boolean[]{true, false}) {
+                    sqlExecutionContext.setJitMode(isJitEnabled ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+                    assertQuery(query)
+                            .noLeakCheck()
+                            .assertsPlanContaining(isJitEnabled ? "Async JIT Filter" : "Async Filter");
+                    final String fileName = isJitEnabled ? "jit_filter" : "filter";
+                    assertCursorExportOfSymbols(query, fileName, new int[]{0, 1}, new int[]{});
+                    assertQuery("SELECT sym, sym IS NULL sym_is_null, k, v FROM read_parquet('" + parquetPath(fileName) + "')")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
+                                    sym\tsym_is_null\tk\tv
+                                    \tfalse\tk1\t3
+                                    😀\tfalse\tk2\t7
+                                    """);
+                }
+            } finally {
+                sqlExecutionContext.setJitMode(jitMode);
+            }
+        });
+    }
+
+    @Test
+    public void testCopyCursorExportSymbolKeepsParquetCompression() throws Exception {
+        // A kept SYMBOL column takes the compression of its PARQUET(...) setting, and so does a GROUP BY or DISTINCT
+        // key over it. The 100_000 distinct 66-byte symbols take more than 6 MB as an uncompressed dictionary, and the
+        // ZSTD(3) setting of zsym compresses their common prefixes to well under 2 MB.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE zsym (sym SYMBOL CAPACITY 131_072 NOCACHE INDEX TYPE POSTING PARQUET(default, ZSTD(3)), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO zsym SELECT 'symbol_' || lpad(x::STRING, 59, '0'), timestamp_sequence('2024-01-01', 1_000_000L) FROM long_sequence(100_000)");
+            execute("CREATE TABLE psym (sym SYMBOL CAPACITY 131_072 NOCACHE INDEX TYPE POSTING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO psym SELECT sym, ts FROM zsym");
+            final String[] queryTemplates = {
+                    // HybridColumnMaterializer.setUp()
+                    "SELECT t.sym FROM %s t CROSS JOIN long_sequence(1)",
+                    // a key of the vectorized GROUP BY
+                    "SELECT sym, count() c FROM %s",
+                    // a key of the async GROUP BY, over 100_000 distinct symbols
+                    "SELECT sym, first(ts) f FROM %s",
+                    // a key of the posting index DISTINCT
+                    "SELECT DISTINCT sym FROM %s"
+            };
+            for (int i = 0; i < queryTemplates.length; i++) {
+                for (String tableName : new String[]{"zsym", "psym"}) {
+                    final String fileName = tableName + "_" + i;
+                    assertCursorExportOfSymbols(queryTemplates[i].replace("%s", tableName), fileName, new int[]{0}, new int[]{}, " COMPRESSION_CODEC UNCOMPRESSED");
+                }
+                final long compressedSize = parquetFileSize("zsym_" + i);
+                Assert.assertTrue(queryTemplates[i] + ": sym must be compressed, file size: " + compressedSize, compressedSize < 2_000_000);
+                final long uncompressedSize = parquetFileSize("psym_" + i);
+                Assert.assertTrue(queryTemplates[i] + ": sym without a setting must not be compressed, file size: " + uncompressedSize, uncompressedSize >= 6_000_000);
+            }
+        });
+    }
+
+    @Test
+    public void testCopyCursorExportSymbolLegacySampleByFirstLast() throws Exception {
+        // The legacy SAMPLE BY of first() and last() over an indexed symbol filter reads the stored keys of the bucket's
+        // first and last rows, and serves the table's symbol map, so the export keeps them as SYMBOL. The same query
+        // without ALIGN TO FIRST OBSERVATION runs as GROUP BY, whose first() and last() compute their symbols.
+        assertMemoryLeak(() -> {
+            createFirstLastTable();
+            final String query = "SELECT ts, first(s) f, last(s) l FROM fl WHERE k = 'x' SAMPLE BY 1h ALIGN TO FIRST OBSERVATION";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlanContaining("SampleByFirstLast");
+            assertCursorExportOfSymbols(query, "legacy_first_last", new int[]{1, 2}, new int[]{});
+            assertQuery("SELECT ts, f, f IS NULL f_is_null, l, l IS NULL l_is_null FROM read_parquet('" + parquetPath("legacy_first_last") + "')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tf\tf_is_null\tl\tl_is_null
+                            2024-01-01T00:00:00.000000Z\ta\tfalse\t\ttrue
+                            2024-01-01T01:00:00.000000Z\tc\tfalse\tc\tfalse
+                            2024-01-02T00:00:00.000000Z\td\tfalse\td\tfalse
+                            2024-01-02T03:00:00.000000Z\t\ttrue\t\ttrue
+                            2024-01-02T04:00:00.000000Z\tf\tfalse\tg\tfalse
+                            """);
+
+            // With a key and a column added after the rows
+            final String keyedQuery = "SELECT ts, k, first(s) f, last(s) l, last(late) ll FROM fl WHERE k = 'x' SAMPLE BY 1h ALIGN TO FIRST OBSERVATION";
+            assertQuery(keyedQuery)
+                    .noLeakCheck()
+                    .assertsPlanContaining("SampleByFirstLast");
+            assertCursorExportOfSymbols(keyedQuery, "legacy_first_last_keyed", new int[]{1, 2, 3, 4}, new int[]{});
+
+            final String groupByQuery = "SELECT ts, first(s) f, last(s) l FROM fl WHERE k = 'x' SAMPLE BY 1h";
+            assertCursorExportOfSymbols(groupByQuery, "group_by_first_last", new int[]{}, new int[]{1, 2});
+        });
+    }
+
+    @Test
+    public void testCopyCursorExportSymbolNullsWithoutNullInMap() throws Exception {
+        // sym_dim's symbol map holds no NULL, yet the outer joins return NULL for the rows they do not match.
+        assertMemoryLeak(() -> {
+            createSymbolExportTables("BYPASS WAL");
+            final String leftJoinQuery = "SELECT t.v, t.sym, d.sym dsym, d.w FROM sym_src t LEFT JOIN sym_dim d ON t.sym = d.sym ORDER BY t.v";
+            assertCursorExportOfSymbols(leftJoinQuery, "left_join", new int[]{1, 2}, new int[]{});
+            assertQuery("SELECT v, sym, dsym, dsym IS NULL dsym_is_null, w FROM read_parquet('" + parquetPath("left_join") + "')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v\tsym\tdsym\tdsym_is_null\tw
+                            1\ta\ta\tfalse\t10
+                            2\t\t\ttrue\tnull
+                            3\t\t\ttrue\tnull
+                            4\té\té\tfalse\t40
+                            5\tЖ\t\ttrue\tnull
+                            6\t€\t\ttrue\tnull
+                            7\t😀\t😀\tfalse\t70
+                            """ + "8\t" + LONG_SYMBOL + "\t\ttrue\tnull\n" + """
+                            9\ta\ta\tfalse\t10
+                            """);
+
+            final String rightJoinQuery = "SELECT t.v, t.sym, d.sym dsym, d.w FROM sym_src t RIGHT JOIN sym_dim d ON t.sym = d.sym ORDER BY d.w, t.v";
+            assertCursorExportOfSymbols(rightJoinQuery, "right_join", new int[]{1, 2}, new int[]{});
+            assertQuery("SELECT v, sym, sym IS NULL sym_is_null, dsym, w FROM read_parquet('" + parquetPath("right_join") + "')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v\tsym\tsym_is_null\tdsym\tw
+                            1\ta\tfalse\ta\t10
+                            9\ta\tfalse\ta\t10
+                            4\té\tfalse\té\t40
+                            7\t😀\tfalse\t😀\t70
+                            null\t\ttrue\tzz\t99
+                            """);
+
+            final String fullJoinQuery = "SELECT t.v, t.sym, d.sym dsym, d.w FROM sym_src t FULL JOIN sym_dim d ON t.sym = d.sym ORDER BY t.v, d.w";
+            assertCursorExportOfSymbols(fullJoinQuery, "full_join", new int[]{1, 2}, new int[]{});
+            assertQuery("SELECT v, sym, sym IS NULL sym_is_null, dsym, dsym IS NULL dsym_is_null, w FROM read_parquet('" + parquetPath("full_join") + "')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v\tsym\tsym_is_null\tdsym\tdsym_is_null\tw
+                            null\t\ttrue\tzz\tfalse\t99
+                            1\ta\tfalse\ta\tfalse\t10
+                            2\t\ttrue\t\ttrue\tnull
+                            3\t\tfalse\t\ttrue\tnull
+                            4\té\tfalse\té\tfalse\t40
+                            5\tЖ\tfalse\t\ttrue\tnull
+                            6\t€\tfalse\t\ttrue\tnull
+                            7\t😀\tfalse\t😀\tfalse\t70
+                            """ + "8\t" + LONG_SYMBOL + "\tfalse\t\ttrue\tnull\n" + """
+                            9\ta\tfalse\ta\tfalse\t10
+                            """);
+        });
+    }
+
+    @Test
+    public void testCopyCursorExportSymbolReusesExporterAcrossExports() throws Exception {
+        // One export job runs four exports in turn: a kept SYMBOL column at column 0, a PAGE_FRAME_BACKED export, an INT
+        // at column 0 and a kept SYMBOL column at column 2 of another table, and no SYMBOL column. Each export sets the
+        // columns up afresh.
+        assertMemoryLeak(() -> {
+            createSymbolExportTables("BYPASS WAL");
+            final String[] queries = {
+                    "SELECT t.sym, t.v FROM sym_src t CROSS JOIN long_sequence(1)",
+                    "SELECT sym, v + 1 vp FROM sym_src",
+                    "SELECT d.w, d.ts, d.sym FROM sym_dim d CROSS JOIN long_sequence(1)",
+                    "SELECT t.v, t.ts FROM sym_src t CROSS JOIN long_sequence(1)"
+            };
+            assertExportMode(queries[0], ParquetExportMode.CURSOR_BASED);
+            assertExportMode(queries[1], ParquetExportMode.PAGE_FRAME_BACKED);
+            assertExportMode(queries[2], ParquetExportMode.CURSOR_BASED);
+            assertExportMode(queries[3], ParquetExportMode.CURSOR_BASED);
+            for (int i = 0; i < queries.length; i++) {
+                runAndFetchCopyExportID("COPY (" + queries[i] + ") TO 'reuse_" + i + "' WITH FORMAT PARQUET", sqlExecutionContext);
+            }
+            try (CopyExportRequestJob job = new CopyExportRequestJob(engine)) {
+                for (int i = 0; i < queries.length; i++) {
+                    Assert.assertTrue("the queued export must be picked up", job.run());
+                }
+            }
+            for (int i = 0; i < queries.length; i++) {
+                assertParquetMatchesQuery(queries[i], parquetPath("reuse_" + i));
+            }
+            assertSymbolColumnsKept(parquetPath("reuse_0"), 0);
+            assertSymbolColumnsKept(parquetPath("reuse_1"), 0);
+            assertSymbolColumnsKept(parquetPath("reuse_2"), 2);
+            ParquetTestUtils.assertColumnTypes(parquetPath("reuse_2"), configuration.getFilesFacade(), ColumnType.INT, 0);
+            ParquetTestUtils.assertColumnTypes(parquetPath("reuse_3"), configuration.getFilesFacade(), ColumnType.INT, 0);
+        });
+    }
+
+    @Test
+    public void testCopyCursorExportSymbolRowGroupsAndPages() throws Exception {
+        // 10_000 rows of 50 symbols, NULL in every 7th row, and 'only_rg2' in a few rows of the second of 1000-row row
+        // groups. Every row group builds its own dictionary.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE rg (sym SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO rg SELECT
+                        CASE
+                            WHEN x % 7 = 0 THEN NULL
+                            WHEN x BETWEEN 1_001 AND 2_000 AND x % 100 = 0 THEN 'only_rg2'
+                            ELSE 'sym' || (x % 50)
+                        END,
+                        x,
+                        timestamp_sequence('2024-01-01', 10_000_000L)
+                    FROM long_sequence(10_000)
+                    """);
+            final FilesFacade ff = configuration.getFilesFacade();
+            final String query = "SELECT r.* FROM rg r CROSS JOIN long_sequence(1)";
+            final String[] copyOptions = {" ROW_GROUP_SIZE 1000", " DATA_PAGE_SIZE 1024", ""};
+            for (int i = 0; i < copyOptions.length; i++) {
+                assertCursorExportOfSymbols(query, "pages_" + i, new int[]{0}, new int[]{}, copyOptions[i]);
+                assertParquetMatchesQuery(query, parquetPath("pages_" + i));
+                copyToParquet("COPY (SELECT * FROM rg) TO 'pages_direct_" + i + "' WITH FORMAT PARQUET" + copyOptions[i]);
+                ParquetTestUtils.assertColumnEncodingsMatch(parquetPath("pages_direct_" + i), parquetPath("pages_" + i), ff);
+            }
+            ParquetTestUtils.assertRowGroupCount(parquetPath("pages_0"), ff, 10);
+            ParquetTestUtils.assertRowGroupCount(parquetPath("pages_2"), ff, 1);
+            assertQuery("SELECT * FROM read_parquet('" + parquetPath("pages_0") + "') WHERE sym = 'only_rg2'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            sym\tv\tts
+                            only_rg2\t1100\t2024-01-01T03:03:10.000000Z
+                            only_rg2\t1200\t2024-01-01T03:19:50.000000Z
+                            only_rg2\t1300\t2024-01-01T03:36:30.000000Z
+                            only_rg2\t1500\t2024-01-01T04:09:50.000000Z
+                            only_rg2\t1600\t2024-01-01T04:26:30.000000Z
+                            only_rg2\t1700\t2024-01-01T04:43:10.000000Z
+                            only_rg2\t1800\t2024-01-01T04:59:50.000000Z
+                            only_rg2\t1900\t2024-01-01T05:16:30.000000Z
+                            only_rg2\t2000\t2024-01-01T05:33:10.000000Z
+                            """);
+            assertQueriesPrintAlike("SELECT * FROM rg WHERE sym = 'only_rg2'", "SELECT * FROM read_parquet('" + parquetPath("pages_0") + "') WHERE sym = 'only_rg2'");
+
+            // One row per row group
+            final String twentyRowsQuery = "SELECT r.* FROM rg r CROSS JOIN long_sequence(1) WHERE r.v <= 20";
+            assertCursorExportOfSymbols(twentyRowsQuery, "row_per_row_group", new int[]{0}, new int[]{}, " ROW_GROUP_SIZE 1");
+            ParquetTestUtils.assertRowGroupCount(parquetPath("row_per_row_group"), ff, 20);
+        });
+    }
+
+    @Test
+    public void testCopyCursorExportSymbolShapes() throws Exception {
+        // A CURSOR_BASED export keeps a SYMBOL column whose cursor passes a table column's symbol keys through, and
+        // writes a SYMBOL that a function computes, a cast or a set operation produces as STRING, as before.
+        assertMemoryLeak(() -> {
+            createSymbolExportTables("BYPASS WAL");
+            createFirstLastTable();
+            execute("CREATE TABLE pidx (p SYMBOL INDEX TYPE POSTING, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO pidx VALUES ('p1', 1, '2024-01-01T00:00:00.000000Z'), ('p2', 2, '2024-01-01T01:00:00.000000Z'), (NULL, 3, '2024-01-02T00:00:00.000000Z'), ('p1', 4, '2024-01-02T01:00:00.000000Z')");
+            execute("CREATE TABLE idx (isym SYMBOL INDEX, s2 SYMBOL, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO idx VALUES ('x', 'p', 1, '2024-01-01T00:00:00.000000Z'), ('y', 'q', 2, '2024-01-01T01:00:00.000000Z'), ('x', NULL, 3, '2024-01-02T00:00:00.000000Z'), ('x', 'r', 4, '2024-01-02T01:00:00.000000Z')");
+            execute("CREATE VIEW sym_v AS (SELECT * FROM sym_src)");
+            drainWalAndViewQueues();
+
+            final SymbolExportShape[] shapes = {
+                    // joins, both sides
+                    new SymbolExportShape("SELECT t.sym, t.k, x.x FROM sym_src t CROSS JOIN long_sequence(2) x", 0, 1),
+                    new SymbolExportShape("SELECT t.sym, d.sym dsym, t.v, d.w FROM sym_src t JOIN sym_dim d ON t.sym = d.sym", 0, 1),
+                    new SymbolExportShape("SELECT t.sym, d.sym dsym, t.v, d.w FROM sym_src t LEFT JOIN sym_dim d ON t.sym = d.sym", 0, 1),
+                    new SymbolExportShape("SELECT t.sym, d.sym dsym, t.v, d.w FROM sym_src t RIGHT JOIN sym_dim d ON t.sym = d.sym", 0, 1),
+                    new SymbolExportShape("SELECT t.sym, d.sym dsym, t.v, d.w FROM sym_src t FULL JOIN sym_dim d ON t.sym = d.sym", 0, 1),
+                    new SymbolExportShape("SELECT t.ts, t.sym, d.sym dsym FROM sym_src t ASOF JOIN sym_dim d", 1, 2),
+                    new SymbolExportShape("SELECT t.ts, t.sym, d.sym dsym FROM sym_src t ASOF JOIN sym_dim d ON (sym)", 1, 2),
+                    new SymbolExportShape("SELECT t.ts, t.sym, d.sym dsym FROM sym_src t LT JOIN sym_dim d ON (sym)", 1, 2),
+                    new SymbolExportShape("SELECT t.ts, t.sym, d.sym dsym FROM sym_src t SPLICE JOIN sym_dim d", 1, 2),
+                    new SymbolExportShape("SELECT a.sym, b.sym bsym, a.v FROM sym_src a JOIN sym_src b ON a.v = b.v", 0, 1),
+                    new SymbolExportShape("SELECT t.sym, d.sym dsym, t.v FROM sym_src t JOIN sym_dim d ON t.sym = d.sym WHERE t.v > 1", 0, 1),
+                    // filters, sorts and limits
+                    new SymbolExportShape("SELECT * FROM sym_src WHERE v > 1", 0, 1),
+                    new SymbolExportShape("SELECT * FROM sym_src ORDER BY v DESC", 0, 1),
+                    new SymbolExportShape("SELECT * FROM sym_src ORDER BY v LIMIT 2", 0, 1),
+                    new SymbolExportShape("SELECT * FROM sym_src LIMIT -2", 0, 1),
+                    new SymbolExportShape("SELECT * FROM sym_src LATEST ON ts PARTITION BY k", 0, 1),
+                    new SymbolExportShape("SELECT * FROM idx WHERE isym = 'x' ORDER BY v DESC", 0, 1),
+                    // window functions pass the column through
+                    new SymbolExportShape("SELECT sym, k, row_number() OVER (PARTITION BY k ORDER BY ts) rn, ts FROM sym_src", 0, 1),
+                    new SymbolExportShape("SELECT sym, sum(v) OVER (PARTITION BY k ORDER BY ts DESC) sv, ts FROM sym_src", 0),
+                    // set operations that return rows of their first query
+                    new SymbolExportShape("SELECT sym FROM sym_src EXCEPT SELECT sym FROM sym_dim", 0),
+                    new SymbolExportShape("SELECT sym FROM sym_src INTERSECT SELECT sym FROM sym_dim", 0),
+                    // GROUP BY, DISTINCT and SAMPLE BY keys
+                    new SymbolExportShape("SELECT sym, k, count() c FROM sym_src", 0, 1),
+                    new SymbolExportShape("SELECT sym, count() c FROM sym_src", 0),
+                    new SymbolExportShape("SELECT sym AS s, count() c FROM sym_src", 0),
+                    new SymbolExportShape("SELECT d.sym dsym, count() c FROM sym_src t ASOF JOIN sym_dim d ON (sym)", 0),
+                    new SymbolExportShape("SELECT DISTINCT sym FROM sym_src", 0),
+                    new SymbolExportShape("SELECT DISTINCT sym, k FROM sym_src", 0, 1),
+                    new SymbolExportShape("SELECT DISTINCT p FROM pidx", 0),
+                    new SymbolExportShape("SELECT sym, k, count() c FROM sym_src GROUP BY GROUPING SETS ((sym), (k), ())", 0, 1),
+                    new SymbolExportShape("SELECT sym, k, count() c FROM sym_src GROUP BY ROLLUP (sym, k)", 0, 1),
+                    new SymbolExportShape("SELECT ts, sym, count() c FROM sym_src SAMPLE BY 1d", 1),
+                    new SymbolExportShape("SELECT ts, sym, count() c FROM sym_src SAMPLE BY 12h FILL(NULL)", 1),
+                    new SymbolExportShape("SELECT ts, sym, count() c FROM sym_src SAMPLE BY 12h FILL(PREV)", 1),
+                    new SymbolExportShape("SELECT ts, sym, avg(v) a FROM sym_src SAMPLE BY 12h FILL(LINEAR)", 1),
+                    new SymbolExportShape("SELECT ts, sym, count() c FROM sym_src SAMPLE BY 12h ALIGN TO FIRST OBSERVATION", 1),
+                    new SymbolExportShape("SELECT h.offset, t.sym, count() c FROM sym_src t HORIZON JOIN sym_dim p LIST (0s, 1s) AS h", 1),
+                    new SymbolExportShape("SELECT t.ts, t.sym, first(p.w) fw FROM sym_src t WINDOW JOIN sym_dim p RANGE BETWEEN 1 hour PRECEDING AND 1 hour FOLLOWING", 1),
+                    new SymbolExportShape("SELECT sym, max(ts) mts FROM sym_src GROUP BY sym ORDER BY 2 DESC LIMIT 2", 0),
+                    // sub-query, CTE, view and a cast to the column's own type
+                    new SymbolExportShape("SELECT * FROM (SELECT t.sym, t.v FROM sym_src t CROSS JOIN long_sequence(1)) WHERE v > 2", 0),
+                    new SymbolExportShape("WITH c AS (SELECT t.sym, t.v FROM sym_src t CROSS JOIN long_sequence(1)) SELECT * FROM c", 0),
+                    new SymbolExportShape("SELECT * FROM sym_v ORDER BY v DESC", 0, 1),
+                    new SymbolExportShape("SELECT sym::SYMBOL cs, ts FROM sym_src CROSS JOIN long_sequence(1)", 0),
+
+                    // STRING: set operations that mix symbol maps
+                    SymbolExportShape.string("SELECT sym, ts FROM sym_src UNION ALL SELECT sym, ts FROM sym_dim", 0),
+                    SymbolExportShape.string("SELECT sym FROM sym_src UNION SELECT sym FROM sym_dim", 0),
+                    SymbolExportShape.string("SELECT sym, count() c FROM (SELECT sym FROM sym_src UNION ALL SELECT sym FROM sym_dim)", 0),
+                    SymbolExportShape.string("SELECT u.sym, u.sym || 'x' c FROM (SELECT sym FROM sym_src UNION ALL SELECT sym FROM sym_dim) u", 0),
+                    // STRING: casts that compute a symbol
+                    SymbolExportShape.string("SELECT (t.sym || 'x')::SYMBOL cs, t.v FROM sym_src t CROSS JOIN long_sequence(1)", 0),
+                    SymbolExportShape.string("SELECT t.v::SYMBOL vs, t.v FROM sym_src t CROSS JOIN long_sequence(1)", 0),
+                    // STRING: aggregate and window functions
+                    SymbolExportShape.string("SELECT first(sym) f, last(sym) l, mode(sym) m FROM sym_src", 0, 1, 2),
+                    new SymbolExportShape("SELECT k, first(sym) f, last(sym) l FROM sym_src", new int[]{0}, new int[]{1, 2}),
+                    SymbolExportShape.string("SELECT ts, first(sym) fs, count() c FROM sym_src SAMPLE BY 12h FILL(NULL)", 1),
+                    SymbolExportShape.string("SELECT ts, first(sym) fs, count() c FROM sym_src SAMPLE BY 12h FILL(PREV)", 1),
+                    SymbolExportShape.string("SELECT lag(sym) OVER (ORDER BY ts) l, ts FROM sym_src", 0),
+                    SymbolExportShape.string("SELECT lag(sym, 0) OVER (ORDER BY ts) l, ts FROM sym_src", 0),
+                    new SymbolExportShape("SELECT t.ts, t.sym, first(p.sym) fp FROM sym_src t WINDOW JOIN sym_dim p RANGE BETWEEN 1 hour PRECEDING AND 1 hour FOLLOWING", new int[]{1}, new int[]{2}),
+                    SymbolExportShape.string("SELECT fs, count() c FROM (SELECT ts, first(sym) fs FROM sym_src SAMPLE BY 12h FILL(NULL))", 0),
+                    // STRING: a join side that the optimizer made an empty table, whose symbol map has no memory
+                    new SymbolExportShape("SELECT t.sym, e.sym esym FROM sym_src t LEFT JOIN (SELECT * FROM sym_dim WHERE 1 = 2) e ON t.v = e.w", new int[]{0}, new int[]{1})
+            };
+            for (int i = 0; i < shapes.length; i++) {
+                final SymbolExportShape shape = shapes[i];
+                assertCursorExportOfSymbols(shape.query(), "shape_" + i, shape.keptColumns(), shape.stringColumns());
+            }
+
+            // STRING: the fused hash join GROUP BY resolves its keys through copies of the symbol maps.
+            final String fusedQuery = "SELECT t.sym, count() c FROM sym_src t JOIN sym_dim d ON t.sym = d.sym GROUP BY t.sym";
+            assertQuery(fusedQuery)
+                    .noLeakCheck()
+                    .assertsPlanContaining("Async Hash Join Group By");
+            assertCursorExportOfSymbols(fusedQuery, "fused", new int[]{}, new int[]{0});
+
+            // A bind variable, with two values
+            final String bindQuery = "SELECT t.sym, t.v FROM sym_src t CROSS JOIN long_sequence(1) WHERE t.v > $1";
+            bindVariableService.clear();
+            bindVariableService.setInt(0, 5);
+            assertCursorExportOfSymbols(bindQuery, "bind_5", new int[]{0}, new int[]{});
+            bindVariableService.setInt(0, 7);
+            assertCursorExportOfSymbols(bindQuery, "bind_7", new int[]{0}, new int[]{});
+            assertQuery("SELECT * FROM read_parquet('" + parquetPath("bind_7") + "')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("sym\tv\na\t9\n" + LONG_SYMBOL + "\t8\n");
+        });
+    }
+
+    @Test
+    public void testCopyCursorExportSymbolStorageVariants() throws Exception {
+        // Symbol storage options do not change what the export keeps.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE sv (
+                        c SYMBOL CACHE,
+                        nc SYMBOL NOCACHE,
+                        small SYMBOL CAPACITY 4,
+                        bi SYMBOL INDEX,
+                        pi SYMBOL INDEX TYPE POSTING INCLUDE (v),
+                        bf SYMBOL PARQUET(BLOOM_FILTER),
+                        v INT,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            execute("""
+                    INSERT INTO sv SELECT
+                        CASE WHEN x % 11 = 0 THEN NULL ELSE 'c' || (x % 20) END,
+                        'n' || (x % 20),
+                        CASE WHEN x % 13 = 0 THEN NULL ELSE 's' || (x % 20) END,
+                        'b' || (x % 7),
+                        CASE WHEN x % 9 = 0 THEN NULL ELSE 'p' || (x % 5) END,
+                        'f' || (x % 3),
+                        x::INT,
+                        timestamp_sequence('2024-01-01', 3_600_000_000L)
+                    FROM long_sequence(60)
+                    """);
+            final String query = "SELECT s.* FROM sv s CROSS JOIN long_sequence(1)";
+            assertCursorExportOfSymbols(query, "storage_variants", new int[]{0, 1, 2, 3, 4, 5}, new int[]{});
+            assertParquetMatchesQuery(query, parquetPath("storage_variants"));
+            copyToParquet("COPY (SELECT * FROM sv) TO 'storage_variants_direct' WITH FORMAT PARQUET");
+            ParquetTestUtils.assertColumnEncodingsMatch(parquetPath("storage_variants_direct"), parquetPath("storage_variants"), configuration.getFilesFacade());
+        });
+    }
+
+    @Test
+    public void testCopyCursorExportSymbolWithLoneSurrogateFailsAsDirectExport() throws Exception {
+        // A symbol of a lone UTF-16 surrogate has no UTF-8 form, so the export of a row group that uses it fails, as the
+        // DIRECT export of the column does. A row group that does not use it exports.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ls (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO ls VALUES ('ok', '2024-01-01T00:00:00.000000Z'), ('\uD800', '2024-01-01T01:00:00.000000Z')");
+            assertQuery("SELECT length(sym) len FROM ls")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("len\n2\n1\n");
+            final String directMessage = failedExportMessage("COPY (SELECT * FROM ls) TO 'surrogate_direct' WITH FORMAT PARQUET");
+            final String cursorMessage = failedExportMessage("COPY (SELECT l.* FROM ls l CROSS JOIN long_sequence(1)) TO 'surrogate_cursor' WITH FORMAT PARQUET");
+            Assert.assertEquals(directMessage, cursorMessage);
+            TestUtils.assertContains(cursorMessage, "unpaired surrogate found: d800");
+            Assert.assertFalse(exportFileExists("surrogate_cursor"));
+            assertCursorExportOfSymbols("SELECT l.* FROM ls l CROSS JOIN long_sequence(1) WHERE l.sym = 'ok'", "surrogate_unused", new int[]{0}, new int[]{});
+        });
     }
 
     @Test
@@ -542,6 +1299,82 @@ public class CopyExportTest extends AbstractCairoTest {
     @Test
     public void testCopyFusedSymbolKeyJoinGroupBySurvivesBuildTableGrowthAfterQueue() throws Exception {
         assertMemoryLeak(() -> assertCopyOfFusedJoinGroupByAfterBuildTableGrowth("SYMBOL", "('k' || (x % 5))::SYMBOL", "", "fused_symbol_growth"));
+    }
+
+    @Test
+    public void testCopyGroupByKeysKeepParquetSettingsOfEveryType() throws Exception {
+        // A GROUP BY key passes its column through, so it keeps the column's PARQUET(...) setting, whatever its type.
+        // The DIRECT export of the same columns is the reference. BINARY and arrays cannot be GROUP BY keys.
+        assertMemoryLeak(() -> {
+            ParquetTestUtils.createTableWithParquetSettingPerType(engine, sqlExecutionContext, "ty");
+            final String columns = "b, sh, ch, i, l, dt, t, tn, f, d, u, l256, ip, g1, g2, g4, g8, d8, d16, d32, d64, d128, d256, s, vc, sym, bo, bf, bfe";
+            final String query = "SELECT DISTINCT " + columns + " FROM ty";
+            assertExportMode(query, ParquetExportMode.CURSOR_BASED);
+            copyToParquet("COPY (SELECT " + columns + " FROM ty) TO 'ty_columns' WITH FORMAT PARQUET");
+            copyToParquet("COPY (" + query + ") TO 'ty_distinct' WITH FORMAT PARQUET");
+
+            final String parquetPath = parquetPath("ty_distinct");
+            final FilesFacade ff = configuration.getFilesFacade();
+            assertParquetMatchesQueryInAnyOrder(query, parquetPath);
+            ParquetTestUtils.assertColumnEncodingsMatch(parquetPath("ty_columns"), parquetPath, ff);
+            // b, sh, ch, l, dt, t, ip, g1, g2, g4 and g8 default to PLAIN
+            ParquetTestUtils.assertColumnsUseEncoding(parquetPath, ff, ParquetEncoding.ENCODING_DELTA_BINARY_PACKED, 0, 1, 2, 4, 5, 6, 12, 13, 14, 15, 16);
+            // i, tn, f, d, u, l256, the six decimals and bfe default to PLAIN, s and vc to DELTA_LENGTH_BYTE_ARRAY
+            ParquetTestUtils.assertColumnsUseEncoding(parquetPath, ff, ParquetEncoding.ENCODING_RLE_DICTIONARY, 3, 7, 8, 9, 10, 11, 17, 18, 19, 20, 21, 22, 23, 24, 28);
+            assertSymbolColumnsKept(parquetPath, 25);
+        });
+    }
+
+    @Test
+    public void testCopyGroupByOutputKeepsParquetSettingsOfKeys() throws Exception {
+        // GROUP BY, SAMPLE BY and the joins that aggregate keep the PARQUET(...) setting of a key column they pass
+        // through, under any name. Aggregates, function keys and the bucket timestamp of SAMPLE BY compute their values,
+        // so they keep their type's default.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE kt (v INT PARQUET(RLE_DICTIONARY), w INT, ts TIMESTAMP PARQUET(RLE_DICTIONARY)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO kt VALUES
+                        (1, 10, '2024-01-01T00:00:00.000000Z'),
+                        (2, 20, '2024-01-01T05:00:00.000000Z'),
+                        (1, 30, '2024-01-02T00:00:00.000000Z'),
+                        (NULL, 40, '2024-01-02T07:00:00.000000Z'),
+                        (2, 50, '2024-01-03T00:00:00.000000Z')
+                    """);
+            execute("CREATE TABLE f (k INT, x LONG)");
+            execute("INSERT INTO f VALUES (1, 100), (2, 200), (3, 300), (1, 400)");
+            execute("CREATE TABLE d (k INT, gi INT PARQUET(RLE_DICTIONARY))");
+            execute("INSERT INTO d VALUES (1, 7), (2, 8), (3, 7)");
+            final FilesFacade ff = configuration.getFilesFacade();
+
+            // the vectorized GROUP BY, its key under its own name and under an alias
+            assertCursorExportEncodesKeys("SELECT v, count() c FROM kt", "rosti", 0);
+            assertCursorExportEncodesKeys("SELECT v AS vk, count() c FROM kt", "rosti_alias", 0);
+            // the async GROUP BY
+            assertCursorExportEncodesKeys("SELECT v, first(w) fw FROM kt", "async", 0);
+            assertCursorExportEncodesKeys("SELECT v AS vk, first(w) fw FROM kt", "async_alias", 0);
+            ParquetTestUtils.assertColumnsDoNotUseDictionaryEncoding(parquetPath("async_alias"), ff, 1);
+            assertCursorExportEncodesKeys("SELECT DISTINCT v FROM kt", "distinct", 0);
+            assertCursorExportEncodesKeys("SELECT v, count() c FROM kt GROUP BY ROLLUP (v)", "rollup", 0);
+            // hour(ts) computes an INT key from ts
+            assertCursorExportEncodesKeys("SELECT hour(ts) h, count() c FROM kt", "rosti_hour");
+            ParquetTestUtils.assertColumnsDoNotUseDictionaryEncoding(parquetPath("rosti_hour"), ff, 0);
+            // SAMPLE BY computes its bucket timestamp, which takes the designated timestamp's default encoding
+            for (String align : new String[]{" ALIGN TO FIRST OBSERVATION", ""}) {
+                final String fileName = align.isEmpty() ? "sample_by" : "sample_by_first_observation";
+                assertCursorExportEncodesKeys("SELECT ts, v, count() c FROM kt SAMPLE BY 1d" + align, fileName, 1);
+                ParquetTestUtils.assertColumnsUseEncoding(parquetPath(fileName), ff, ParquetEncoding.ENCODING_DELTA_BINARY_PACKED, 0);
+                ParquetTestUtils.assertColumnsDoNotUseDictionaryEncoding(parquetPath(fileName), ff, 0);
+            }
+            // the fused hash join GROUP BY
+            final String fusedQuery = "SELECT d.gi, sum(f.x) s FROM f JOIN d ON f.k = d.k GROUP BY d.gi";
+            assertQuery(fusedQuery)
+                    .noLeakCheck()
+                    .assertsPlanContaining("Async Hash Join Group By");
+            assertCursorExportEncodesKeys(fusedQuery, "fused", 0);
+            // the master columns of WINDOW JOIN and the keys of HORIZON JOIN
+            assertCursorExportEncodesKeys("SELECT t.ts, t.v, first(p.w) fw FROM kt t WINDOW JOIN kt p RANGE BETWEEN 1 hour PRECEDING AND 1 hour FOLLOWING", "window_join", 1);
+            assertCursorExportEncodesKeys("SELECT h.offset, t.v, count() c FROM kt t HORIZON JOIN kt p LIST (0s, 1s) AS h", "horizon_join", 1);
+        });
     }
 
     @Test
@@ -1223,8 +2056,17 @@ public class CopyExportTest extends AbstractCairoTest {
             // read the same metadata, so the export of the same query that streams is the oracle. The set
             // operations do not see the retyped column, so PARTITION_BY routes them to the temp table.
             createTableWithParquetSettings("streamed");
+            final FilesFacade ff = configuration.getFilesFacade();
+            // A GROUP BY or SAMPLE BY key keeps the setting of its column, and an aggregate takes its type's default.
             assertCopyThroughTempTableEncodesLikeStreaming("SELECT metric, count() FROM %s ORDER BY metric", "", "group_by");
+            ParquetTestUtils.assertColumnsUseDictionaryEncoding(parquetPath("group_by"), ff, 0);
+            ParquetTestUtils.assertColumnsUseDictionaryEncoding(parquetPath("group_by_streamed"), ff, 0);
             assertCopyThroughTempTableEncodesLikeStreaming("SELECT ts, last(metric) lm, sum(total) st FROM %s SAMPLE BY 1d", "", "sample_by");
+            ParquetTestUtils.assertColumnsDoNotUseDictionaryEncoding(parquetPath("sample_by"), ff, 1);
+            ParquetTestUtils.assertColumnsDoNotUseDictionaryEncoding(parquetPath("sample_by_streamed"), ff, 1);
+            assertCopyThroughTempTableEncodesLikeStreaming("SELECT ts, metric, count() c FROM %s SAMPLE BY 1d", "", "sample_by_key");
+            ParquetTestUtils.assertColumnsUseDictionaryEncoding(parquetPath("sample_by_key"), ff, 1);
+            ParquetTestUtils.assertColumnsUseDictionaryEncoding(parquetPath("sample_by_key_streamed"), ff, 1);
             assertCopyThroughTempTableEncodesLikeStreaming("SELECT * FROM %s LATEST ON ts PARTITION BY metric", "", "latest_on");
             assertCopyThroughTempTableEncodesLikeStreaming("SELECT metric, total, ts, row_number() OVER (PARTITION BY metric ORDER BY ts) rn FROM %s", "", "window");
             assertCopyThroughTempTableEncodesLikeStreaming(
@@ -2573,7 +3415,7 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCopyQuerySymbolWithDictionaryEncodingDropsOverride() throws Exception {
+    public void testCopyQuerySymbolKeepsDictionaryEncoding() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE dict_sym_src (
@@ -2589,8 +3431,8 @@ public class CopyExportTest extends AbstractCairoTest {
                     """);
 
             // Force CURSOR_BASED mode via CROSS JOIN (base no longer supports
-            // page frame cursor). In the cursor path, SYMBOL is materialised
-            // as STRING, so the RLE_DICTIONARY override must NOT survive.
+            // page frame cursor). The cursor path keeps the table's SYMBOL
+            // column as SYMBOL, with its dictionary encoding.
             final String query = """
                     SELECT label, ts, label || '!' AS computed_label
                     FROM dict_sym_src
@@ -2613,11 +3455,14 @@ public class CopyExportTest extends AbstractCairoTest {
                                         parquetPath + "\t1\tfinished\n");
                         assertParquetMatchesQuery(query, parquetPath);
 
-                        // Col 0 (label, SYMBOL->STRING) is type-changed; col 2 (computed_label)
-                        // is a computed expression. Neither should inherit the RLE_DICTIONARY
-                        // override of the source symbol column.
+                        // Col 0 (label) stays SYMBOL, read back as VARCHAR, and uses RLE_DICTIONARY;
+                        // col 2 (computed_label) is a computed expression and must not inherit it.
+                        assertSymbolColumnsKept(parquetPath, 0);
+                        ParquetTestUtils.assertColumnsUseDictionaryEncoding(
+                                parquetPath, configuration.getFilesFacade(), 0
+                        );
                         ParquetTestUtils.assertColumnsDoNotUseDictionaryEncoding(
-                                parquetPath, configuration.getFilesFacade(), 0, 2
+                                parquetPath, configuration.getFilesFacade(), 2
                         );
                     });
 
@@ -3371,6 +4216,40 @@ public class CopyExportTest extends AbstractCairoTest {
                     );
 
             testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopySampleByFillConstantOnSymbolAggregateExportsText() throws Exception {
+        // The fill rows of a text constant on a SYMBOL aggregate hold keys that its symbol table does not resolve to the
+        // constant, so the export writes the aggregate as text, which holds the constant, as the query returns it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE s1 (sym SYMBOL, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO s1 VALUES
+                        ('a', 1, '2024-01-01T00:00:00.000000Z'),
+                        (NULL, 2, '2024-01-01T01:00:00.000000Z'),
+                        ('b', 3, '2024-01-02T00:00:00.000000Z'),
+                        ('a', 4, '2024-01-02T05:00:00.000000Z')
+                    """);
+            for (String constant : new String[]{"1", "zz", "42"}) {
+                final String query = "SELECT ts, first(sym) fs, sum(v) s FROM s1 SAMPLE BY 6h FILL('" + constant + "', 0)";
+                final String fileName = "fill_" + constant;
+                assertCursorExportOfSymbols(query, fileName, new int[]{}, new int[]{1});
+                assertParquetMatchesQuery(query, parquetPath(fileName));
+                assertQuery("SELECT * FROM read_parquet('" + parquetPath(fileName) + "')")
+                        .noLeakCheck()
+                        .expectSize()
+                        .timestamp("ts")
+                        .returns("""
+                                ts\tfs\ts
+                                2024-01-01T00:00:00.000000Z\ta\t3
+                                2024-01-01T06:00:00.000000Z\t%c\t0
+                                2024-01-01T12:00:00.000000Z\t%c\t0
+                                2024-01-01T18:00:00.000000Z\t%c\t0
+                                2024-01-02T00:00:00.000000Z\tb\t7
+                                """.replace("%c", constant));
+            }
         });
     }
 
@@ -5292,6 +6171,13 @@ public class CopyExportTest extends AbstractCairoTest {
         }
     }
 
+    // The lines of a query's printed rows, header first and the rows sorted.
+    private static String sortedLines(CharSequence printedRows) {
+        final String[] lines = printedRows.toString().split("\n");
+        Arrays.sort(lines, 1, lines.length);
+        return String.join("\n", lines);
+    }
+
     private synchronized static void testCopyExport(CopyExportRunnable statement, CopyExportRunnable test, boolean blocked, int waitCount) throws Exception {
         testCopyExport(statement, test, blocked, waitCount, null);
     }
@@ -5517,6 +6403,46 @@ public class CopyExportTest extends AbstractCairoTest {
         copyToParquet("COPY (" + streamedQuery + ") TO '" + fileName + "_streamed' WITH FORMAT PARQUET");
         assertParquetMatchesQuery(query, parquetPath(fileName));
         ParquetTestUtils.assertColumnEncodingsMatch(parquetPath(fileName + "_streamed"), parquetPath(fileName), configuration.getFilesFacade());
+    }
+
+    // Exports the query through CURSOR_BASED and asserts the rows of the file and that the listed key columns use the
+    // RLE_DICTIONARY encoding of their PARQUET(...) setting.
+    private void assertCursorExportEncodesKeys(String query, String fileName, int... dictionaryEncodedColumns) throws Exception {
+        assertExportMode(query, ParquetExportMode.CURSOR_BASED);
+        copyToParquet("COPY (" + query + ") TO '" + fileName + "' WITH FORMAT PARQUET");
+        assertParquetMatchesQueryInAnyOrder(query, parquetPath(fileName));
+        if (dictionaryEncodedColumns.length > 0) {
+            ParquetTestUtils.assertColumnsUseDictionaryEncoding(parquetPath(fileName), configuration.getFilesFacade(), dictionaryEncodedColumns);
+        }
+    }
+
+    private void assertCursorExportOfSymbols(String query, String fileName, int[] keptColumns, int[] stringColumns) throws Exception {
+        assertCursorExportOfSymbols(query, fileName, keptColumns, stringColumns, "");
+    }
+
+    // Exports the query through CURSOR_BASED and asserts the rows of the file, in any order, and the type of each of its
+    // SYMBOL columns: kept as SYMBOL, or written as STRING.
+    private void assertCursorExportOfSymbols(
+            String query,
+            String fileName,
+            int[] keptColumns,
+            int[] stringColumns,
+            String copyOptions
+    ) throws Exception {
+        try {
+            assertExportMode(query, ParquetExportMode.CURSOR_BASED);
+            copyToParquet("COPY (" + query + ") TO '" + fileName + "' WITH FORMAT PARQUET" + copyOptions);
+            final String parquetPath = parquetPath(fileName);
+            assertParquetMatchesQueryInAnyOrder(query, parquetPath);
+            if (keptColumns.length > 0) {
+                assertSymbolColumnsKept(parquetPath, keptColumns);
+            }
+            if (stringColumns.length > 0) {
+                assertSymbolColumnsWrittenAsString(parquetPath, stringColumns);
+            }
+        } catch (AssertionError e) {
+            throw new AssertionError(query, e);
+        }
     }
 
     private void assertEventually(TestUtils.EventualCode assertion) throws Exception {
@@ -5790,12 +6716,114 @@ public class CopyExportTest extends AbstractCairoTest {
         TestUtils.assertEquals(expectedSink, actualSink);
     }
 
+    // Compares the rows of the file with the rows of the query in any order, for a query whose row order no ORDER BY
+    // fixes.
+    private void assertParquetMatchesQueryInAnyOrder(String query, String parquetPath) throws Exception {
+        final StringSink expectedSink = new StringSink();
+        final StringSink actualSink = new StringSink();
+        TestUtils.printSql(engine, sqlExecutionContext, query, expectedSink);
+        TestUtils.printSql(engine, sqlExecutionContext, "SELECT * FROM read_parquet('" + parquetPath + "')", actualSink);
+        Assert.assertEquals(query, sortedLines(expectedSink), sortedLines(actualSink));
+    }
+
+    private void assertQueriesPrintAlike(String expectedQuery, String actualQuery) throws Exception {
+        final StringSink expectedSink = new StringSink();
+        final StringSink actualSink = new StringSink();
+        TestUtils.printSql(engine, sqlExecutionContext, expectedQuery, expectedSink);
+        TestUtils.printSql(engine, sqlExecutionContext, actualQuery, actualSink);
+        TestUtils.assertEquals(expectedSink, actualSink);
+    }
+
+    private void assertReadParquetColumnTypes(String parquetPath, int expectedType, int... columnIndexes) throws SqlException {
+        try (RecordCursorFactory factory = select("SELECT * FROM read_parquet('" + parquetPath + "')")) {
+            for (int columnIndex : columnIndexes) {
+                Assert.assertEquals(
+                        "read_parquet() type of column " + columnIndex,
+                        ColumnType.nameOf(expectedType),
+                        ColumnType.nameOf(factory.getMetadata().getColumnType(columnIndex))
+                );
+            }
+        }
+    }
+
+    // Asserts that the file holds the listed columns as SYMBOL, which read_parquet() reads as VARCHAR, as the DIRECT
+    // export of a table's SYMBOL column writes it.
+    private void assertSymbolColumnsKept(String parquetPath, int... columnIndexes) throws SqlException {
+        ParquetTestUtils.assertColumnTypes(parquetPath, configuration.getFilesFacade(), ColumnType.SYMBOL, columnIndexes);
+        assertReadParquetColumnTypes(parquetPath, ColumnType.VARCHAR, columnIndexes);
+    }
+
+    // Asserts that the file holds the listed columns as STRING, which read_parquet() reads as STRING.
+    private void assertSymbolColumnsWrittenAsString(String parquetPath, int... columnIndexes) throws SqlException {
+        ParquetTestUtils.assertColumnTypes(parquetPath, configuration.getFilesFacade(), ColumnType.STRING, columnIndexes);
+        assertReadParquetColumnTypes(parquetPath, ColumnType.STRING, columnIndexes);
+    }
+
+    /**
+     * Creates the table fl, whose k is indexed, so that a SAMPLE BY ALIGN TO FIRST OBSERVATION of first() and last()
+     * filtered on k runs the legacy SampleByFirstLast factory. Its late column is added after the first rows.
+     */
+    private void createFirstLastTable() throws Exception {
+        execute("CREATE TABLE fl (k SYMBOL INDEX, s SYMBOL, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO fl VALUES
+                    ('x', 'a', 1, '2024-01-01T00:00:00.000000Z'),
+                    ('y', 'b', 2, '2024-01-01T00:10:00.000000Z'),
+                    ('x', NULL, 3, '2024-01-01T00:20:00.000000Z'),
+                    ('x', 'c', 4, '2024-01-01T01:30:00.000000Z'),
+                    ('x', 'd', 5, '2024-01-02T00:00:00.000000Z'),
+                    ('y', 'e', 6, '2024-01-02T00:30:00.000000Z'),
+                    ('x', NULL, 7, '2024-01-02T03:00:00.000000Z')
+                """);
+        execute("ALTER TABLE fl ADD COLUMN late SYMBOL");
+        execute("INSERT INTO fl VALUES ('x', 'f', 8, '2024-01-02T04:00:00.000000Z', 'L1'), ('x', 'g', 9, '2024-01-02T04:30:00.000000Z', NULL)");
+    }
+
+    /**
+     * Creates sym_src, whose sym holds NULL, an empty string, symbols of 2-, 3- and 4-byte UTF-8 characters and
+     * {@link #LONG_SYMBOL}, has a PARQUET(...) setting and one out-of-order row, and sym_dim, whose symbol map holds no
+     * NULL and only some of sym's symbols.
+     */
+    private void createSymbolExportTables(String walMode) throws Exception {
+        execute("CREATE TABLE sym_src (sym SYMBOL PARQUET(RLE_DICTIONARY, ZSTD(3)), k SYMBOL, v INT PARQUET(RLE_DICTIONARY), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY " + walMode);
+        execute("INSERT INTO sym_src VALUES " + """
+                ('a', 'k1', 1, '2024-01-01T00:00:00.000000Z'),
+                (NULL, 'k2', 2, '2024-01-01T01:00:00.000000Z'),
+                ('', 'k1', 3, '2024-01-01T02:00:00.000000Z'),
+                ('é', 'k2', 4, '2024-01-02T00:00:00.000000Z'),
+                ('Ж', NULL, 5, '2024-01-02T01:00:00.000000Z'),
+                ('€', 'k1', 6, '2024-01-02T02:00:00.000000Z'),
+                ('😀', 'k2', 7, '2024-01-03T00:00:00.000000Z'),
+                """ + "('" + LONG_SYMBOL + "', 'k1', 8, '2024-01-03T01:00:00.000000Z')");
+        execute("INSERT INTO sym_src VALUES ('a', 'k2', 9, '2024-01-01T00:30:00.000000Z')");
+        execute("CREATE TABLE sym_dim (sym SYMBOL, w INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY " + walMode);
+        execute("""
+                INSERT INTO sym_dim VALUES
+                    ('a', 10, '2024-01-01T00:00:00.000000Z'),
+                    ('é', 40, '2024-01-02T00:00:00.000000Z'),
+                    ('😀', 70, '2024-01-03T00:00:00.000000Z'),
+                    ('zz', 99, '2024-01-03T01:00:00.000000Z')
+                """);
+        drainWalQueue();
+    }
+
     private boolean exportFileExists(String fileName) {
         final FilesFacade ff = configuration.getFilesFacade();
         try (Path path = new Path()) {
             path.of(exportRoot).concat(fileName).put(".parquet").$();
             return ff.exists(path.$());
         }
+    }
+
+    // Runs the COPY on this thread, asserts that its export fails and returns the message of the failure.
+    private String failedExportMessage(String copySql) throws Exception {
+        runAndFetchCopyExportID(copySql, sqlExecutionContext);
+        runExportJob();
+        printSql("SELECT status, message FROM \"" + configuration.getSystemTableNamePrefix() + "copy_export_log\" LIMIT -1");
+        final String[] lines = sink.toString().split("\n");
+        Assert.assertEquals(sink.toString(), 2, lines.length);
+        Assert.assertTrue(sink.toString(), lines[1].startsWith("failed\t"));
+        return lines[1].substring("failed\t".length());
     }
 
     private long parquetFileSize(String fileName) {
@@ -5821,6 +6849,18 @@ public class CopyExportTest extends AbstractCairoTest {
         TABLE,
         VIEW_CREATED_AFTER_TYPE_CHANGE,
         VIEW_CREATED_BEFORE_TYPE_CHANGE
+    }
+
+    // A query that a CURSOR_BASED export runs, with the SYMBOL columns of its file that the export keeps as SYMBOL and
+    // those that it writes as STRING.
+    private record SymbolExportShape(String query, int[] keptColumns, int[] stringColumns) {
+        SymbolExportShape(String query, int... keptColumns) {
+            this(query, keptColumns, new int[0]);
+        }
+
+        static SymbolExportShape string(String query, int... stringColumns) {
+            return new SymbolExportShape(query, new int[0], stringColumns);
+        }
     }
 
     @FunctionalInterface

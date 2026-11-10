@@ -330,6 +330,113 @@ mod tests {
         Ok(())
     }
 
+    // The values of decoded VARCHAR aux entries whose values are all inlined or NULL.
+    fn inlined_varchar_values(aux: &[u8]) -> Vec<Option<String>> {
+        const HEADER_FLAG_INLINED: u8 = 1;
+        const HEADER_FLAG_NULL: u8 = 1 << 2;
+        aux.chunks_exact(16)
+            .map(|entry| {
+                let header = entry[0];
+                if header & HEADER_FLAG_NULL != 0 {
+                    return None;
+                }
+                assert_ne!(header & HEADER_FLAG_INLINED, 0, "expected an inlined value");
+                let len = (header >> 4) as usize;
+                Some(String::from_utf8(entry[1..1 + len].to_vec()).expect("utf8"))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn dense_symbol_chunk_decoded_as_symbol_fails() -> ParquetResult<()> {
+        // The dictionary indices of a dense symbol column chunk are not the table's symbol
+        // keys, so its file does not mark the column LocalKeyIsGlobal: a decode into a
+        // SYMBOL column fails instead of taking indices for keys, while a decode into
+        // VARCHAR reads the values through the dictionary.
+        use crate::parquet_write::file::ParquetWriter;
+        use crate::parquet_write::schema::{Column, Partition};
+
+        // QuestDB's symbol map layout: per symbol a 4-byte length and its UTF-16 chars, and
+        // the offset of each symbol in that buffer.
+        let mut chars: Vec<u8> = Vec::new();
+        let mut offsets: Vec<u64> = Vec::new();
+        for symbol in ["s0", "s1", "s2", "s3"] {
+            offsets.push(chars.len() as u64);
+            let utf16: Vec<u16> = symbol.encode_utf16().collect();
+            chars.extend_from_slice(&(utf16.len() as u32).to_le_bytes());
+            for unit in utf16 {
+                chars.extend_from_slice(&unit.to_le_bytes());
+            }
+        }
+        let keys: Vec<i32> = vec![3, i32::MIN, 1, 3];
+        let mut column = Column::from_raw_data(
+            0,
+            "sym",
+            ColumnTypeTag::Symbol.into_type().code(),
+            0,
+            keys.len(),
+            keys.as_ptr() as *const u8,
+            std::mem::size_of_val(keys.as_slice()),
+            chars.as_ptr(),
+            chars.len(),
+            offsets.as_ptr(),
+            offsets.len(),
+            false,
+            false,
+            0,
+        )?;
+        column.dense_symbol_dictionary = true;
+        let mut buf = Cursor::new(Vec::new());
+        ParquetWriter::new(&mut buf)
+            .finish(Partition { table: "t".to_string(), columns: vec![column] })?;
+        let file = buf.into_inner();
+        let file_len = file.len() as u64;
+
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let decoder = ParquetDecoder::read(allocator.clone(), &mut Cursor::new(&file), file_len)?;
+
+        let mut rgb = RowGroupBuffers::new(allocator.clone());
+        let mut ctx = DecodeContext::new(file.as_ptr(), file_len);
+        let err = decoder
+            .decode_row_group(
+                &mut ctx,
+                &mut rgb,
+                &[(0, ColumnTypeTag::Symbol.into_type())],
+                0,
+                0,
+                keys.len() as u32,
+            )
+            .expect_err("a dense symbol chunk must not decode into a SYMBOL column");
+        assert!(
+            err.to_string()
+                .contains("only special LocalKeyIsGlobal-encoded symbol columns are supported"),
+            "got: {err}"
+        );
+
+        let mut rgb = RowGroupBuffers::new(allocator);
+        let mut ctx = DecodeContext::new(file.as_ptr(), file_len);
+        decoder.decode_row_group(
+            &mut ctx,
+            &mut rgb,
+            &[(0, ColumnTypeTag::Varchar.into_type())],
+            0,
+            0,
+            keys.len() as u32,
+        )?;
+        let bufs = &rgb.column_buffers()[0];
+        assert_eq!(
+            inlined_varchar_values(&bufs.aux_vec),
+            vec![
+                Some("s3".to_string()),
+                None,
+                Some("s1".to_string()),
+                Some("s3".to_string())
+            ]
+        );
+        Ok(())
+    }
+
     #[test]
     fn decode_row_group_error_releases_varchar_slice_bufs() -> ParquetResult<()> {
         let tas = TestAllocatorState::new();

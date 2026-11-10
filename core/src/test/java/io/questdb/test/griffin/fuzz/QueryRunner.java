@@ -36,6 +36,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cutlass.parquet.HybridColumnMaterializer;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -50,6 +51,7 @@ import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHashJoinGroupByRecordCursorFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
+import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
@@ -208,6 +210,8 @@ public final class QueryRunner {
     private final boolean diffShadow;
     private final CairoEngine engine;
     private final SqlExecutionContext executionContext;
+    // The columns of the cursor that checkExportedSymbolKeys() reads the keys of
+    private final IntList exportedSymbolColumns = new IntList();
     // The engine's FilesFacade when it is a FailureFileFacade, which enables FILE
     // faults; null otherwise (then FILE is dropped from faultTypes).
     private final FailureFileFacade failureFf;
@@ -1239,6 +1243,60 @@ public final class QueryRunner {
     }
 
     /**
+     * Verifies the contract a CURSOR_BASED Parquet export relies on for every SYMBOL column it keeps as
+     * SYMBOL: the export writes the column's keys and the table's symbol map instead of the symbols, so
+     * each row's key must resolve through the cursor's symbol table to the row's symbol, and a key
+     * below zero must go with a NULL symbol. {@link HybridColumnMaterializer} picks the columns the
+     * export keeps. A violation is a real bug, either in the cursor or in that pick, and throws
+     * {@link CursorCheckException}. Leaves the cursor exhausted.
+     */
+    private void checkExportedSymbolKeys(String sql, RecordCursor cursor, RecordMetadata metadata, int columnCount) {
+        exportedSymbolColumns.clear();
+        try (HybridColumnMaterializer materializer = new HybridColumnMaterializer()) {
+            materializer.setUp(metadata, cursor);
+            final RecordMetadata exportMetadata = materializer.getAdjustedMetadata();
+            for (int i = 0; i < columnCount; i++) {
+                if (ColumnType.isSymbol(exportMetadata.getColumnType(i))) {
+                    exportedSymbolColumns.add(i);
+                }
+            }
+        }
+        if (exportedSymbolColumns.size() == 0) {
+            return;
+        }
+        try {
+            cursor.toTop();
+            final Record record = cursor.getRecord();
+            for (int row = 0; cursor.hasNext(); row++) {
+                for (int k = 0, n = exportedSymbolColumns.size(); k < n; k++) {
+                    final int column = exportedSymbolColumns.getQuick(k);
+                    final int key = record.getInt(column);
+                    final CharSequence symbol = record.getSymA(column);
+                    final CharSequence resolved = key < 0 ? null : cursor.getSymbolTable(column).valueOf(key);
+                    if (key < 0 ? symbol != null : !Chars.equalsNc(resolved, symbol)) {
+                        throw new CursorCheckException(
+                                "the key of an exported SYMBOL column does not resolve to its symbol [column="
+                                        + metadata.getColumnName(column) + ", row=" + row + ", key=" + key
+                                        + ", symbol=" + symbol + ", resolved=" + resolved + "]\n  sql: " + sql,
+                                null
+                        );
+                    }
+                }
+            }
+        } catch (CursorCheckException e) {
+            throw e;
+        } catch (Exception e) {
+            // A per-row cast error past a parallel filter's LIMIT cutoff can surface on one pass and
+            // not another, as checkToTop() describes. Any other throw is a defect.
+            if (isPerRowRuntimeError(e)) {
+                throw new CursorCheckException("exported symbol key re-pass surfaced " + e.getClass().getSimpleName()
+                        + " absent on the first pass (parallel-filter LIMIT non-determinism)", e, true);
+            }
+            throw new CursorCheckException("exported symbol key re-pass threw after a clean first pass:\n  sql: " + sql, e);
+        }
+    }
+
+    /**
      * Verifies two {@link RecordCursor#toTop()} invariants on a cursor the first
      * pass has fully materialized. First, {@code toTop()} must preserve precomputed
      * state, so {@link RecordCursor#preComputedStateSize()} must read the same value
@@ -1713,6 +1771,7 @@ public final class QueryRunner {
                 if (verifyCursor) {
                     checkToTop(sql, cursor, metadata, columnCount, rows, rowsRead, deterministic);
                     checkCalculateSize(sql, cursor, rows, rowsRead);
+                    checkExportedSymbolKeys(sql, cursor, metadata, columnCount);
                 }
             }
             planSink.of(factory, executionContext);

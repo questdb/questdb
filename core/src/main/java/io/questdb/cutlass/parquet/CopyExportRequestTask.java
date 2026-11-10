@@ -692,9 +692,13 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
          * Unified writer setup for all export modes.
          *
          * @param meta          column metadata to encode
-         * @param pfc           page frame cursor for SYMBOL table lookup (null when cursor-based)
+         * @param pfc           page frame cursor for SYMBOL table lookup, or null for the cursor-based path,
+         *                      whose SYMBOL columns take the plain type, never the no-null hint, since a cursor
+         *                      can return a NULL symbol that the table's symbol map does not hold, and whose
+         *                      writer builds each row group's symbol dictionary from the symbols it uses
          * @param baseColumnMap per-output-column base index for hybrid path, or null for
          *                      direct/temp-table path (where every column is a real table column)
+         *                      and for the cursor-based path
          */
         public void setUp(RecordMetadata meta, PageFrameCursor pfc, IntList baseColumnMap) {
             metadata = meta;
@@ -720,7 +724,9 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                 // real table column.  In the hybrid path (baseColumnMap != null)
                 // only pass-through columns (baseColumnMap >= 0) qualify;
                 // in the direct path (baseColumnMap == null) every column is real.
+                // The cursor-based path (pfc == null) has none.
                 boolean isPassThroughSymbol = ColumnType.isSymbol(columnType)
+                        && pfc != null
                         && (baseColumnMap == null || baseColumnMap.getQuick(i) >= 0);
 
                 if (isPassThroughSymbol) {
@@ -775,7 +781,8 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                     bloomFilterIndexesPtr,
                     bloomFilterCount,
                     fpp,
-                    0.0
+                    0.0,
+                    pfc == null
             );
         }
 

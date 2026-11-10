@@ -25,6 +25,7 @@
 package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.griffin.engine.table.parquet.ParquetEncoding;
 import io.questdb.std.FilesFacade;
@@ -86,6 +87,39 @@ public class PGCopyExportTest extends BasePGTest {
                 ff.rmdir(path);
             }
         }
+    }
+
+    @Test
+    public void testPreparedCopyOfGroupByKeepsSymbolAndFollowsParquetSetting() throws Exception {
+        // The GROUP BY key passes the table's symbol keys through, so its export keeps it as SYMBOL with the PARQUET(...)
+        // setting of sym that holds at each execution. The 100_000 distinct 66-byte symbols take more than 6 MB as an
+        // uncompressed dictionary, and ZSTD(3) compresses their common prefixes to well under 2 MB.
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            execute("CREATE TABLE ps (sym SYMBOL CAPACITY 131_072 NOCACHE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO ps SELECT 'symbol_' || lpad(x::STRING, 59, '0'), timestamp_sequence('2024-01-01', 1_000_000L) FROM long_sequence(100_000)");
+            drainWalQueue();
+            final String parquetPath = exportRoot + File.separator + "pgs.parquet";
+            final FilesFacade ff = configuration.getFilesFacade();
+            try (PreparedStatement statement = connection.prepareStatement("COPY (SELECT sym, count() c FROM ps) TO 'pgs' WITH FORMAT PARQUET COMPRESSION_CODEC UNCOMPRESSED")) {
+                final String firstId = executeCopy(statement);
+                assertGroupByRowsExported(parquetPath);
+                ParquetTestUtils.assertColumnTypes(parquetPath, ff, ColumnType.SYMBOL, 0);
+                final long uncompressedSize = fileSize(parquetPath);
+                Assert.assertTrue("sym without a setting must not be compressed, file size: " + uncompressedSize, uncompressedSize >= 6_000_000);
+
+                execute("ALTER TABLE ps ALTER COLUMN sym SET PARQUET(default, ZSTD(3))");
+                drainWalAndViewQueues();
+                // A pooled reader keeps the PARQUET(...) setting it loaded before the ALTER (#8191), so the test releases
+                // the readers for the export to compile its select over the new setting.
+                engine.releaseAllReaders();
+                final String secondId = executeCopy(statement);
+                Assert.assertNotEquals(firstId, secondId);
+                assertGroupByRowsExported(parquetPath);
+                ParquetTestUtils.assertColumnTypes(parquetPath, ff, ColumnType.SYMBOL, 0);
+                final long compressedSize = fileSize(parquetPath);
+                Assert.assertTrue("sym must be compressed, file size: " + compressedSize, compressedSize < 2_000_000);
+            }
+        });
     }
 
     @Test
@@ -175,6 +209,19 @@ public class PGCopyExportTest extends BasePGTest {
         drainWalAndViewQueues();
         execute("CREATE VIEW pe_v AS (SELECT * FROM pe)");
         drainWalAndViewQueues();
+    }
+
+    private static long fileSize(String path) {
+        return new File(path).length();
+    }
+
+    // the GROUP BY of ps exports its 100_000 symbols, one row each
+    private void assertGroupByRowsExported(String parquetPath) throws Exception {
+        assertQuery("SELECT count() n, count_distinct(sym) symbols, sum(c) total, min(sym) mn FROM read_parquet('" + parquetPath + "')")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("n\tsymbols\ttotal\tmn\n100000\t100000\t100000\tsymbol_" + "0".repeat(58) + "1\n");
     }
 
     private void assertParquetRows(String parquetPath, String expectedRows) throws Exception {
