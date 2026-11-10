@@ -33,17 +33,14 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.mp.Sequence;
 import io.questdb.std.Chars;
 import io.questdb.std.LongList;
-import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.test.cairo.fuzz.FailureFileFacade;
 
 // VACUUM reads the applied table, independently of this writer's WAL position.
 public class FuzzVacuumOperation implements FuzzTransactionOperation {
     private static final String COLUMN_PURGE_QUEUE_FULL_MESSAGE = "failed to schedule column version purge, queue is full";
-    private static final long NO_COLUMN_PURGE_CONSUMER_NANOS = 1_000_000_000L;
     private static final String PURGE_DISCOVERY_QUEUE_FULL_MESSAGE = "cannot schedule vacuum action, queue is full";
     private static final long QUEUE_FULL_TIMEOUT_NANOS = 30_000_000_000L;
 
@@ -55,8 +52,7 @@ public class FuzzVacuumOperation implements FuzzTransactionOperation {
              SqlCompiler compiler = engine.getSqlCompiler();
              O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1)
         ) {
-            vacuum(compiler, context, purgeJob, engine.getMessageBus().getColumnPurgeSubSeq(),
-                    "VACUUM TABLE \"" + tableWriter.getTableToken().getTableName().replace("\"", "\"\"") + "\"");
+            vacuum(compiler, context, purgeJob, "VACUUM TABLE \"" + tableWriter.getTableToken().getTableName().replace("\"", "\"\"") + "\"");
             purgeJob.drain(0);
         } catch (SqlException e) {
             if (failureFileFacade != null && failureFileFacade.failureGenerated() > failuresObserved || e.isTableDoesNotExist()) {
@@ -78,19 +74,12 @@ public class FuzzVacuumOperation implements FuzzTransactionOperation {
     // VACUUM rejects work while the partition purge discovery queue or ColumnPurgeJob's input queue is full
     // and asks the caller to retry. With VACUUM before every transaction from several writer threads, the
     // purge workers can fall behind on a loaded host, and a single-writer WAL run queues every operation
-    // before any apply worker starts. Retrying is safe: VACUUM rescans the table directory and re-discovers
-    // every stale partition and column version. A test that drives FuzzRunner itself runs no ColumnPurgeJob,
-    // so nothing drains that queue: VACUUM gives up once the queue's consumer stops moving.
-    private static void vacuum(
-            SqlCompiler compiler,
-            SqlExecutionContext context,
-            O3PartitionPurgeJob purgeJob,
-            Sequence columnPurgeSubSeq,
-            String sql
-    ) throws SqlException {
+    // before any apply worker starts. This thread drains the discovery queue itself and retries. A full
+    // ColumnPurgeJob queue skips the VACUUM instead: a test that drives FuzzRunner itself runs no
+    // ColumnPurgeJob, so nothing would drain it. Neither loses work: the next VACUUM rescans the table
+    // directory and re-discovers every stale partition and column version.
+    private static void vacuum(SqlCompiler compiler, SqlExecutionContext context, O3PartitionPurgeJob purgeJob, String sql) throws SqlException {
         final long deadline = System.nanoTime() + QUEUE_FULL_TIMEOUT_NANOS;
-        long consumed = columnPurgeSubSeq.current();
-        long consumedAt = System.nanoTime();
         while (true) {
             try {
                 compiler.compile(sql, context);
@@ -102,17 +91,10 @@ public class FuzzVacuumOperation implements FuzzTransactionOperation {
                 // This thread consumes the discovery queue itself, so the retry does not depend on another worker.
                 purgeJob.drain(0);
             } catch (CairoException e) {
-                final long now = System.nanoTime();
-                if (!Chars.contains(e.getFlyweightMessage(), COLUMN_PURGE_QUEUE_FULL_MESSAGE) || now > deadline) {
+                if (!Chars.contains(e.getFlyweightMessage(), COLUMN_PURGE_QUEUE_FULL_MESSAGE)) {
                     throw e;
                 }
-                if (columnPurgeSubSeq.current() != consumed) {
-                    consumed = columnPurgeSubSeq.current();
-                    consumedAt = now;
-                } else if (now - consumedAt > NO_COLUMN_PURGE_CONSUMER_NANOS) {
-                    return;
-                }
-                Os.sleep(1);
+                return;
             }
         }
     }
