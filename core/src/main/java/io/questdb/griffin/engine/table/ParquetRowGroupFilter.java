@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
@@ -43,6 +44,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Uuid;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.TestOnly;
 
@@ -427,7 +429,7 @@ public final class ParquetRowGroupFilter {
                                 Function f = valueFunctions.getQuick(j);
                                 int vType = f.getType();
                                 if (ColumnType.isTimestamp(vType)) {
-                                    filterValues.putLong(f.getDate(null));
+                                    filterValues.putLong(dateBound(f.getTimestamp(null), ColumnType.getTimestampType(vType), opType));
                                 } else if (vType == ColumnType.FLOAT || vType == ColumnType.DOUBLE) {
                                     // Same as the TIMESTAMP arm: getLong() throws on a FLOAT/DOUBLE
                                     // function, and the row-level filter compares at double width.
@@ -644,6 +646,20 @@ public final class ParquetRowGroupFilter {
             return Integer.MIN_VALUE + 1;
         }
         return (int) v;
+    }
+
+    /**
+     * The DATE bound of a timestamp of {@code timestampType}. A finer bound rounds to the millisecond on the side that
+     * keeps every row the comparison keeps, as the TIMESTAMP arm does, before 1970 too.
+     */
+    private static long dateBound(long timestamp, int timestampType, int opType) {
+        if (timestamp == Numbers.LONG_NULL) {
+            return Numbers.LONG_NULL;
+        }
+        if (opType == PushdownFilterExtractor.OP_LT || opType == PushdownFilterExtractor.OP_GE) {
+            return -Math.floorDiv(-MicrosTimestampDriver.INSTANCE.ceilFrom(timestamp, timestampType), Micros.MILLI_MICROS);
+        }
+        return Math.floorDiv(MicrosTimestampDriver.INSTANCE.floorFrom(timestamp, timestampType), Micros.MILLI_MICROS);
     }
 
     private static long encodeColumnCountAndOp(int columnIndex, int count, int op) {

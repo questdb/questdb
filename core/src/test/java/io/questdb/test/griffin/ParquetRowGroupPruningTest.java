@@ -2826,6 +2826,71 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMinMaxPruningDateWithSubMillisecondBound() throws Exception {
+        // A TIMESTAMP bound compares with a DATE row at microsecond precision, so its millisecond bound must round
+        // to the side that keeps every row the comparison keeps, before 1970 too.
+        assertMemoryLeak(() -> {
+            final String rows = """
+                    (1, (-5)::DATE, '2024-01-01T00:00:00.000000Z'),
+                    (2, (-1)::DATE, '2024-01-01T00:00:00.000001Z'),
+                    (3, 0::DATE, '2024-01-02T00:00:00.000000Z'),
+                    (4, 5::DATE, '2024-01-02T00:00:00.000001Z'),
+                    (5, 9::DATE, '2024-01-03T00:00:00.000000Z')
+                    """;
+            execute("CREATE TABLE p (id LONG, d DATE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE n (id LONG, d DATE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO p VALUES " + rows);
+            execute("INSERT INTO n VALUES " + rows);
+            execute("ALTER TABLE p CONVERT PARTITION TO PARQUET LIST '2024-01-01', '2024-01-02'");
+
+            final String[] bounds = {
+                    "-5001", "-5000", "-4999", "-1001", "-1000", "-999", "-1", "0", "1", "4999", "5000", "5001", "NULL"
+            };
+            final String[] comparisons = {
+                    "d < %s", "d <= %s", "d > %s", "d >= %s", "d = %s",
+                    "NOT (d < %s)", "NOT (d <= %s)", "NOT (d > %s)", "NOT (d >= %s)"
+            };
+            for (String comparison : comparisons) {
+                for (String bound : bounds) {
+                    final String predicate = String.format(comparison, "(" + bound + ")::TIMESTAMP");
+                    assertSqlCursors("SELECT id FROM n WHERE " + predicate + " ORDER BY id", "SELECT id FROM p WHERE " + predicate + " ORDER BY id");
+                }
+                for (String bound : new String[]{"-1", "1"}) {
+                    final String predicate = String.format(comparison, "(" + bound + ")::TIMESTAMP_NS");
+                    assertSqlCursors("SELECT id FROM n WHERE " + predicate + " ORDER BY id", "SELECT id FROM p WHERE " + predicate + " ORDER BY id");
+                }
+                for (long bound : new long[]{-1001, -1, 1, 4999}) {
+                    bindVariableService.clear();
+                    bindVariableService.setTimestamp(0, bound);
+                    final String predicate = String.format(comparison, "$1");
+                    assertSqlCursors("SELECT id FROM n WHERE " + predicate + " ORDER BY id", "SELECT id FROM p WHERE " + predicate + " ORDER BY id");
+                }
+            }
+
+            // 0ms is before 1us, so the negated JOIN predicate keeps row 3
+            bindVariableService.clear();
+            bindVariableService.setTimestamp(0, 1);
+            assertQuery("SELECT p.id FROM long_sequence(5) q JOIN p ON q.x = p.id AND NOT (p.d >= $1) ORDER BY p.id")
+                    .noLeakCheck()
+                    .returns("""
+                            id
+                            1
+                            2
+                            3
+                            """);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT id FROM p WHERE d < (-1000)::TIMESTAMP")
+                    .noLeakCheck()
+                    .returns("""
+                            id
+                            1
+                            """);
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
     public void testMinMaxPruningDecimal128() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (val DECIMAL(30,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
