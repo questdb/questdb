@@ -713,6 +713,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     DEBUG_CAIRO_O3_COLUMN_MEMORY_SIZE("debug.cairo.o3.column.memory.size", false, true),
     DEBUG_CAIRO_COPIER_TYPE("debug.cairo.copier.type", false, true),
     DEBUG_CAIRO_WRITER_INVARIANT_CHECK_ENABLED("debug.cairo.writer.invariant.check.enabled", false, true),
+    DEBUG_CAIRO_FREED_BUFFER_POISON_ENABLED("debug.cairo.freed.buffer.poison.enabled", false, true),
     CAIRO_DEFAULT_SEQ_PART_TXN_COUNT("cairo.default.sequencer.part.txn.count"),
     POSTHOG_API_KEY("posthog.api.key"),
     POSTHOG_ENABLED("posthog.enabled"),

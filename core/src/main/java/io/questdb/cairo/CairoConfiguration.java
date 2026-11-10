@@ -1557,6 +1557,13 @@ public interface CairoConfiguration {
     boolean isCopierChunkedEnabled();
 
     /**
+     * Debug-only: when true, a decoded buffer that a slice may point into is overwritten with a
+     * poison byte when its last owner releases it, so a read that outlives the buffer returns a
+     * wrong value instead of plausible stale bytes. Enabled by the test harness, never in production.
+     */
+    boolean isDebugFreedBufferPoisonEnabled();
+
+    /**
      * Debug-only: when true, {@link TableWriter} verifies its column-mapping and truncation invariants after
      * every commit, structural change and close, and reports violations to {@link WriterInvariantChecker}.
      * Index writers are not checked. Enabled by the test harness, never in production.
