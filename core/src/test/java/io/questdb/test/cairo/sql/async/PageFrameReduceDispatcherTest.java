@@ -5034,6 +5034,12 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                 public SqlExecutionCircuitBreaker getCircuitBreaker() {
                     return SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
                 }
+
+                // Its frame goes into the owner's ring, so its progress must signal that ring.
+                @Override
+                public int getShard() {
+                    return ownerSequence.getShard();
+                }
             };
             final SCSequence collectSubSeq = new SCSequence();
             final AtomicBoolean isStopped = new AtomicBoolean();
