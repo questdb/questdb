@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.HashJoinKeyLayout;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -67,6 +68,11 @@ import org.jetbrains.annotations.Nullable;
  * The stage owns its build input, its filters with their worker copies, and its steppers, the
  * hidden-class copies of {@link HashJoinStageStepperTemplate} that probe the stage's build on the
  * workers, so that every stage's lookups profile its own key and probe classes alone.
+ * <p>
+ * The planner also records which columns of the joined row each filter reads, so that a probe task
+ * decodes the probe columns that the filters read before it joins a Parquet frame; see
+ * {@link AsyncHashJoinSpec#newProbeTaskColumns(boolean)}. A filter whose columns the planner did not
+ * record reads, as far as the join knows, every column.
  */
 public final class HashJoinStageSpec implements Plannable, QuietCloseable {
     private final HashJoinInput buildInput;
@@ -96,7 +102,13 @@ public final class HashJoinStageSpec implements Plannable, QuietCloseable {
     private boolean isInputSwapPossible;
     private boolean isPayloadCopyable;
     private Function onFilter;
+    // The joined row's columns that the ON residual reads; null while unknown.
+    @Nullable
+    private IntHashSet onFilterColumns;
     private Function postFilter;
+    // The joined row's columns that the post-join filter reads; null while unknown.
+    @Nullable
+    private IntHashSet postFilterColumns;
     private ObjList<Function> workerOnFilters;
     private ObjList<Function> workerPostFilters;
 
@@ -201,6 +213,28 @@ public final class HashJoinStageSpec implements Plannable, QuietCloseable {
         payloadColumns.addAll(buildInput.getColumnMap());
     }
 
+    /**
+     * Adds to the sink the joined row's columns that the stage's ON residual and post-join filter
+     * read, by their index in the joined rows' metadata, and returns true; returns false, and leaves
+     * the sink in no defined state, when the stage has a filter whose columns the planner did not
+     * record.
+     */
+    public boolean addFilterColumns(IntHashSet sink) {
+        if (onFilter != null) {
+            if (onFilterColumns == null) {
+                return false;
+            }
+            sink.addAll(onFilterColumns);
+        }
+        if (postFilter != null) {
+            if (postFilterColumns == null) {
+                return false;
+            }
+            sink.addAll(postFilterColumns);
+        }
+        return true;
+    }
+
     @Override
     public void close() {
         Throwable failure = Misc.freeObjListBestEffort(null, workerOnFilters);
@@ -293,9 +327,33 @@ public final class HashJoinStageSpec implements Plannable, QuietCloseable {
      * @param workerPostFilters each worker's copy of the filter, null when it is thread safe
      */
     public void ofPostFilter(@Nullable Function postFilter, @Nullable ObjList<Function> workerPostFilters) {
+        ofPostFilter(postFilter, workerPostFilters, null);
+    }
+
+    /**
+     * Takes the post-join filter and its worker copies as {@link #ofPostFilter(Function, ObjList)}
+     * does, with the joined row's columns that the filter reads.
+     *
+     * @param postFilterColumns the joined row's columns that the filter reads, by their index in the
+     *                          joined rows' metadata; null when unknown
+     */
+    public void ofPostFilter(
+            @Nullable Function postFilter,
+            @Nullable ObjList<Function> workerPostFilters,
+            @Nullable IntHashSet postFilterColumns
+    ) {
         assert postFilter == null ? workerPostFilters == null : this.postFilter == null && joinMetadata != null;
         this.postFilter = postFilter;
         this.workerPostFilters = workerPostFilters;
+        this.postFilterColumns = postFilter != null ? postFilterColumns : null;
+    }
+
+    /**
+     * Records the joined row's columns that the ON residual reads, by their index in the joined rows'
+     * metadata, which the planner collects from the residual's expression.
+     */
+    public void setOnFilterColumns(@Nullable IntHashSet onFilterColumns) {
+        this.onFilterColumns = onFilterColumns;
     }
 
     @Override

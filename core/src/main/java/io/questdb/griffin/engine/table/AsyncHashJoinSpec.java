@@ -27,10 +27,13 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.HashJoinKeyLayout;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 /**
@@ -323,6 +326,59 @@ public final class AsyncHashJoinSpec implements QuietCloseable {
             payloadTypesB.add(payloadTypes.getQuick(i));
         }
         return new MultiHashJoinRecord(columnSources, columnIndexes, payloadTypes, columnSourcesB, columnIndexesB, payloadTypesB);
+    }
+
+    /**
+     * The columns of the probe scan's frames that a probe task reads in the given orientation, as
+     * opposed to those that only the consumer reads: the columns that the probe input's stolen filter
+     * reads, the probe-side key columns of every stage whose keys read the probe scan, and the probe
+     * scan's columns that the stages' ON residuals and post-join filters read off the joined row. In
+     * the query's orientation every stage's keys read the left input's frames; swapped, only the first
+     * stage's keys read the probe scan, the right input's, and the later stages read theirs off the
+     * first stage's payload. A task decodes these columns of a Parquet frame first and the others only
+     * for the frame's rows that the consumer reads; see {@link AsyncHashJoinAtom}.
+     *
+     * @return a new set, by frame column, or null when a task reads every column of the frames, or
+     * when the planner did not record which columns a filter reads, so that a task decodes whole
+     * frames
+     */
+    @Nullable
+    public IntHashSet newProbeTaskColumns(boolean isSwapped) {
+        assert !isSwapped || isSwapCandidate;
+        final HashJoinInput probeInput = isSwapped ? stages.getQuick(0).getBuildInput() : leftInput;
+        final IntHashSet columns = new IntHashSet();
+        if (probeInput.hasStolenFilter()) {
+            final IntHashSet filterColumns = probeInput.getFilterContext().getFilterUsedColumnIndexes();
+            if (filterColumns == null) {
+                return null;
+            }
+            columns.addAll(filterColumns);
+        }
+        if (isSwapped) {
+            final HashJoinKeyLayout swapKeyLayout = stages.getQuick(0).getSwapKeyLayout();
+            assert swapKeyLayout != null;
+            columns.addAll(swapKeyLayout.getProbeKeyColumns());
+        } else {
+            for (int k = 0, n = stages.size(); k < n; k++) {
+                columns.addAll(stages.getQuick(k).getKeyLayout().getProbeKeyColumns());
+            }
+        }
+        // The filters read the joined row, whose columns the probe scan holds when their source is 0.
+        final IntHashSet filterColumns = new IntHashSet();
+        for (int k = 0, n = stages.size(); k < n; k++) {
+            if (!stages.getQuick(k).addFilterColumns(filterColumns)) {
+                return null;
+            }
+        }
+        final IntList sources = isSwapped ? columnSourcesB : columnSources;
+        final IntList indexes = isSwapped ? columnIndexesB : columnIndexes;
+        for (int i = 0, n = filterColumns.size(); i < n; i++) {
+            final int column = filterColumns.get(i);
+            if (sources.getQuick(column) == 0) {
+                columns.add(indexes.getQuick(column));
+            }
+        }
+        return columns.size() < probeInput.getMetadata().getColumnCount() ? columns : null;
     }
 
     /**

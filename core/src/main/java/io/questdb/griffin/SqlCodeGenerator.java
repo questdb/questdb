@@ -3095,6 +3095,29 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     /**
+     * The columns that a filter of a parallel hash join reads, by their index in the metadata the
+     * filter compiled against, which a probe task decodes first in a Parquet frame: a filter that the
+     * join steals from an input, which reads its base's columns, or a LEFT join's ON residual or a
+     * post-join filter, which reads the joined row's. Null without a filter.
+     *
+     * @param filterExpr the expression the filter compiled from, which every filter the join takes
+     *                   has
+     */
+    private @Nullable IntHashSet collectParallelHashJoinFilterColumns(
+            @Nullable Function filter,
+            @Nullable ExpressionNode filterExpr,
+            RecordMetadata metadata
+    ) {
+        if (filter == null) {
+            return null;
+        }
+        assert filterExpr != null;
+        final IntHashSet columns = new IntHashSet();
+        collectColumnIndexes(sqlNodeStack, metadata, filterExpr, columns);
+        return columns;
+    }
+
+    /**
      * Compiles the workers' copies of the filter that a parallel hash join steals from an input that
      * {@link #isParallelHashJoinInput(RecordCursorFactory)} accepts, from the filter's expression and
      * against the columns of its base, or returns null when the input has no filter or its filter is
@@ -8611,6 +8634,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     (AsyncHashJoinRecordCursorFactory) master,
                                     filter,
                                     postFilterPerWorkerFilters,
+                                    collectParallelHashJoinFilterColumns(filter, filterExpr, postJoinFilterMetadata),
                                     executionContext
                             );
                             postFilterPerWorkerFilters = null;
@@ -10350,13 +10374,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             AsyncHashJoinRecordCursorFactory join,
             Function filter,
             @Nullable ObjList<Function> workerFilters,
+            @Nullable IntHashSet filterColumns,
             SqlExecutionContext executionContext
     ) {
         final AsyncHashJoinSpec spec = join.stealSpec();
         final HashJoinStageSpec stage = spec.getStage(spec.getStageCount() - 1);
         try {
             join.halfClose();
-            stage.ofPostFilter(filter, workerFilters);
+            stage.ofPostFilter(filter, workerFilters, filterColumns);
             // The constructor leaves the spec here when it fails, and takes it once it returns.
             return new AsyncHashJoinRecordCursorFactory(
                     executionContext.getCairoEngine(),
@@ -10459,6 +10484,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             onFilterOwned = null;
             stage = new HashJoinStageSpec(buildInput, keyLayout, swapKeyLayout, joinType == IQueryModel.JOIN_LEFT_OUTER, condition,
                     joinMetadata, onFilter, workerOnFiltersToTransfer);
+            stage.setOnFilterColumns(collectParallelHashJoinFilterColumns(onFilter, slaveModel.getOuterJoinExpressionClause(), joinMetadata));
             final AsyncHashJoinSpec spec = new AsyncHashJoinSpec(leftInput, stage, joinMetadata, isLeftOrderByAdviceFollowed, leftScanDirection);
             // The constructor leaves the spec here when it fails, and takes it once it returns.
             return new AsyncHashJoinRecordCursorFactory(
@@ -15965,6 +15991,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 final CompiledFilter compiledFilter = input.getCompiledFilter();
                 final MemoryCARW bindVarMemory = input.getBindVarMemory();
                 final ObjList<Function> bindVarFunctions = input.getBindVarFunctions();
+                // The base's columns that the filter reads, which a probe task decodes first in a
+                // Parquet frame.
+                final IntHashSet filterColumns = collectParallelHashJoinFilterColumns(filter, input.getStealFilterExpr(), base.getMetadata());
                 // A halfClose() that throws steals nothing, and the catch closes the whole input, its
                 // filter included.
                 input.halfClose();
@@ -15974,7 +16003,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // The context takes the stolen handles and the worker filters on entry, and frees them
                 // when its constructor fails.
                 filterContext = new AsyncFilterContext(configuration, compiledFilter, bindVarMemory, bindVarFunctions, filter,
-                        null, workerFiltersToTransfer, workerCount, 0, 0, 0);
+                        filterColumns, workerFiltersToTransfer, workerCount, 0, 0, 0);
             }
             return new HashJoinInput(frameScan, frameColumns, filterContext);
         } catch (Throwable th) {
@@ -16340,6 +16369,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             buildInput = null;
             stage = new HashJoinStageSpec(buildInputToTransfer, keyLayout, joinType == IQueryModel.JOIN_LEFT_OUTER, condition,
                     joinMetadata, onFilter, workerOnFiltersToTransfer, swapKeySourceLayout);
+            stage.setOnFilterColumns(collectParallelHashJoinFilterColumns(onFilter, slaveModel.getOuterJoinExpressionClause(), joinMetadata));
             // The spec takes the stage and the join's metadata.
             spec.addStage(stage, joinMetadata);
             stage = null;

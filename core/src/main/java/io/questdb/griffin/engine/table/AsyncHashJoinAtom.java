@@ -48,6 +48,7 @@ import io.questdb.griffin.engine.join.HashJoinPayloadSource;
 import io.questdb.griffin.engine.join.SymbolKeyTranslator;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
@@ -109,6 +110,15 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
  * rest of the frame, which its task left to a continuation, on the owner's slot, see
  * {@link #countFrameRest}.
  * <p>
+ * A Parquet probe frame is decoded late, as {@code Async Filter} decodes its frames: the task first
+ * decodes the columns that it reads itself, those of the probe filter, the stages' keys and their
+ * filters, see {@link AsyncHashJoinSpec#newProbeTaskColumns(boolean)}, and once it has joined the
+ * frame, the other columns only for the rows that the consumer reads, the probe rows of its tuples
+ * and the rows that a continuation may join, if any; a frame whose rows all fail the probe filter or
+ * miss an INNER join decodes no more. A count-only task's frame never decodes the rest, which no one
+ * reads. As for {@code Async Filter}, each slot keeps the share of its frames' rows that the consumer
+ * read, and once that share stops being low, the slot decodes its frames whole, in one pass.
+ * <p>
  * {@link #clear()} requires every task to have finished and the consumer to be done with the tuples
  * and the payload readers.
  */
@@ -130,6 +140,14 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
     // A swapped execution trades the first two.
     private final int[] scanBySource;
     private final ObjList<Slot> slots = new ObjList<>();
+    // The probe scan's frame columns that a probe task reads in the query's orientation, which a
+    // Parquet frame decodes first; null when a task decodes whole frames. See
+    // AsyncHashJoinSpec.newProbeTaskColumns().
+    @Nullable
+    private final IntHashSet probeTaskColumnsA;
+    // The same in a swapped execution; null when a task decodes whole frames or the join never swaps.
+    @Nullable
+    private final IntHashSet probeTaskColumnsB;
     // The stages as compiled, which the atom borrows for their join types and steppers.
     private final ObjList<HashJoinStageSpec> specs = new ObjList<>();
     // The runtime stages in the query's orientation: the first one hashes the right input.
@@ -163,10 +181,18 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
     // moment it opens them until it picks the execution's orientation; null otherwise.
     private PageFrameCursor pendingLeftCursor;
     private PageFrameCursor pendingRightCursor;
+    // The columns of the execution's probe scan.
+    private int probeColumnCount;
     // The probe input's stolen filter, with its worker copies and JIT code, which the atom borrows;
     // a context without a filter when the probe input has none. The left input's in the query's
-    // orientation, the right input's in a swapped execution.
+    // orientation, the right input's in a swapped execution. A probe task also lists the rows of its
+    // Parquet frame that the consumer reads in its slot's row list, and keeps the share of them in
+    // its slot's selectivity statistics, since the join reads its frames through the tasks' memory
+    // rather than the context's pools and lists.
     private AsyncFilterContext probeFilterContext;
+    // The execution's probe task columns: probeTaskColumnsA or, swapped, probeTaskColumnsB.
+    @Nullable
+    private IntHashSet probeTaskColumns;
     // The first stage's stepper in the execution's orientation.
     private HashJoinStageStepper stepper;
 
@@ -260,6 +286,8 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
         } else {
             swapStage = null;
         }
+        probeTaskColumnsA = spec.newProbeTaskColumns(false);
+        probeTaskColumnsB = swapStage != null ? spec.newProbeTaskColumns(true) : null;
         for (int i = -1; i < workerCount; i++) {
             final Slot slot = new Slot(stageCount, spec.newJoinedRecord());
             for (int k = 0; k < stageCount; k++) {
@@ -354,10 +382,48 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
         return continuationCount;
     }
 
+    /**
+     * The probe columns that the last execution's tasks decoded since its cursor opened, summed over
+     * the Parquet probe frames they read: for a frame decoded late, the columns the task reads, see
+     * {@link #getProbeTaskColumns()}, and, if the consumer reads any of the frame's rows, the probe
+     * scan's other columns; for a frame decoded whole, every column of the probe scan.
+     */
+    @TestOnly
+    public long getDecodedProbeColumnCount() {
+        long count = 0;
+        for (int i = 0, n = slots.size(); i < n; i++) {
+            count += slots.getQuick(i).decodedColumnCount;
+        }
+        return count;
+    }
+
+    /**
+     * The Parquet probe frames that the last execution's tasks read since its cursor opened.
+     */
+    @TestOnly
+    public long getParquetProbeFrameCount() {
+        long count = 0;
+        for (int i = 0, n = slots.size(); i < n; i++) {
+            count += slots.getQuick(i).parquetFrameCount;
+        }
+        return count;
+    }
+
     @Override
     @TestOnly
     public PerWorkerLocks getPerWorkerLocks() {
         return perWorkerLocks;
+    }
+
+    /**
+     * The probe scan's frame columns that the open cursor's tasks read themselves, and decode first in
+     * a Parquet frame; null when they decode whole frames. See
+     * {@link AsyncHashJoinSpec#newProbeTaskColumns(boolean)}.
+     */
+    @Nullable
+    @TestOnly
+    public IntHashSet getProbeTaskColumns() {
+        return probeTaskColumns;
     }
 
     /**
@@ -407,6 +473,8 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
             slot.probeRecord.of(symbolTableSource);
             // The stages bind their payload readers to the record when they build.
             slot.record.setOrientation(isSwapped);
+            slot.decodedColumnCount = 0;
+            slot.parquetFrameCount = 0;
         }
         // The workers' copies of the probe filter take symbol tables of their own, and the bind
         // variables of a compiled filter go to its bind variable memory, for this execution's values.
@@ -647,10 +715,24 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
      * still reads the tuples of a frame that shares its entry. Its probe filter writes its kept rows
      * into the task's list, as any task's does, through the compiled filter's overload that takes the
      * list and reserves a row per frame row in it.
+     * <p>
+     * A Parquet frame decodes the columns that the task reads first, and the others once the frame is
+     * joined, only for the rows that the consumer reads, unless the slot's frames lately passed too
+     * many rows on to the consumer; a count-only task's frame decodes the task's columns alone. See
+     * the class documentation.
      */
     void probeFrame(int slotId, PageFrameReduceTask task, SqlExecutionCircuitBreaker circuitBreaker) {
         final Slot slot = getSlot(slotId);
-        final PageFrameMemory frameMemory = task.populateFrameMemory();
+        final boolean isParquetFrame = task.isParquetFrame();
+        final IntHashSet taskColumns = probeTaskColumns;
+        final boolean isLateMaterialized = isParquetFrame
+                && taskColumns != null
+                && (task.isCountOnly() || probeFilterContext.getSelectivityStats(slotId).shouldUseLateMaterialization());
+        final PageFrameMemory frameMemory = isLateMaterialized ? task.populateFrameMemory(taskColumns) : task.populateFrameMemory();
+        if (isParquetFrame) {
+            slot.parquetFrameCount++;
+            slot.decodedColumnCount += isLateMaterialized ? taskColumns.size() : probeColumnCount;
+        }
         slot.probeRecord.init(frameMemory);
         final DirectLongList rows;
         if (isProbeFiltered) {
@@ -667,8 +749,11 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
         }
         final long tupleCount = joinRows(slot, task, rows, 0, circuitBreaker);
         // A cancelled task's tuples are not read: the consumer drops the frames of a cancelled
-        // execution.
+        // execution, and neither are the rest of its frame's columns.
         task.setFilteredRowCount(Math.max(0, tupleCount));
+        if (isParquetFrame && tupleCount != HashJoinStageStepper.CANCELLED) {
+            decodeConsumerColumns(slotId, slot, task, rows, isLateMaterialized);
+        }
     }
 
     /**
@@ -749,6 +834,100 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
                     rows,
                     rowCount
             );
+        }
+    }
+
+    /**
+     * Lists, ascending and once each, the rows of a joined frame that the consumer reads: the probe
+     * rows of the frame's tuples and, when the task left the rest of the frame to a continuation, the
+     * rows that the continuation joins, all of the frame's rows or of the rows its probe filter kept
+     * from the ring's resume position on, in the probe scan's order. The tuples hold their probe rows
+     * in that order, ascending or, for a backward scan, descending, and each probe row's tuples one
+     * after another. The rows a continuation joins come after the joined ones in the scan's order,
+     * so they hold the frame's highest rows, or, for a backward scan, its lowest.
+     *
+     * @param keptRows the rows the probe filter kept, ascending; null without a probe filter
+     * @param sink     the list of the rows, or null to count them only
+     * @return the rows
+     */
+    private long collectConsumerRows(PageFrameReduceTask task, @Nullable DirectLongList keptRows, @Nullable DirectLongList sink) {
+        final int frameIndex = task.getFrameIndex();
+        final DirectLongList tuples = ring.getTuples(frameIndex);
+        final int stride = ring.getTupleStride();
+        final long tupleCount = tuples.size() / stride;
+        final long resumePosition = ring.getResumePosition(frameIndex);
+        final long rowCount = keptRows != null ? keptRows.size() : task.getFrameRowCount();
+        final long restCount = resumePosition < 0 ? 0 : rowCount - resumePosition;
+        if (sink != null) {
+            sink.clear();
+            sink.ensureCapacity(Math.min(tupleCount, rowCount) + restCount);
+        }
+        long count = 0;
+        if (isProbeDescending) {
+            // The rest of a backward scan's frame holds its lowest rows.
+            for (long i = 0; i < restCount; i++) {
+                count++;
+                if (sink != null) {
+                    sink.add(keptRows != null ? keptRows.get(i) : i);
+                }
+            }
+            long lastRow = -1;
+            for (long t = tupleCount - 1; t > -1; t--) {
+                final long row = tuples.get(t * stride);
+                if (row != lastRow) {
+                    lastRow = row;
+                    count++;
+                    if (sink != null) {
+                        sink.add(row);
+                    }
+                }
+            }
+        } else {
+            long lastRow = -1;
+            for (long t = 0; t < tupleCount; t++) {
+                final long row = tuples.get(t * stride);
+                if (row != lastRow) {
+                    lastRow = row;
+                    count++;
+                    if (sink != null) {
+                        sink.add(row);
+                    }
+                }
+            }
+            for (long p = rowCount - restCount; p < rowCount; p++) {
+                count++;
+                if (sink != null) {
+                    sink.add(keptRows != null ? keptRows.get(p) : p);
+                }
+            }
+        }
+        return count;
+    }
+
+    /**
+     * Once a task joined a Parquet frame, decodes the frame's other columns, those that only the
+     * consumer reads, for the rows it reads, if the task decoded the frame late, and records in the
+     * slot's selectivity statistics the share of the frame's rows that the consumer reads, which
+     * decides whether the slot's next frames decode late. Decodes nothing when the consumer reads
+     * no row of the frame.
+     *
+     * @param keptRows the rows the probe filter kept, null without a probe filter
+     */
+    private void decodeConsumerColumns(int slotId, Slot slot, PageFrameReduceTask task, @Nullable DirectLongList keptRows, boolean isLateMaterialized) {
+        // The slot's row list of the probe input's context serves no other purpose while a task joins.
+        final DirectLongList consumerRows = isLateMaterialized ? probeFilterContext.getFilteredRows(slotId) : null;
+        final long consumerRowCount = collectConsumerRows(task, keptRows, consumerRows);
+        probeFilterContext.getSelectivityStats(slotId).update(consumerRowCount, task.getFrameRowCount());
+        if (consumerRows != null) {
+            final IntHashSet taskColumns = probeTaskColumns;
+            assert taskColumns != null;
+            if (task.populateRemainingColumns(taskColumns, consumerRows, true)) {
+                slot.decodedColumnCount += probeColumnCount - taskColumns.size();
+            } else {
+                // Only a frame whose rows the consumer reads none of decodes no more: the task's
+                // columns are never all of the frame's.
+                assert consumerRowCount == 0;
+            }
         }
     }
 
@@ -833,6 +1012,8 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
         scanBySource[1] = isSwapped ? 0 : 1;
         final HashJoinInput probeInput = isSwapped ? rightInput : leftInput;
         probeFilterContext = probeInput.getFilterContext();
+        probeTaskColumns = isSwapped ? probeTaskColumnsB : probeTaskColumnsA;
+        probeColumnCount = probeInput.getMetadata().getColumnCount();
         isProbeFiltered = probeInput.hasStolenFilter();
         isProbeDescending = probeInput.getOrder() == ORDER_DESC;
         final HashJoinStageSpec firstSpec = specs.getQuick(0);
@@ -860,6 +1041,9 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
         // The joined row of the current probe row and the stages' current matches.
         final MultiHashJoinRecord record;
         private final ObjList<StageProbe> stageProbes = new ObjList<>();
+        // The probe columns that the slot's tasks decoded in the open cursor's execution, summed over
+        // its Parquet frames; see AsyncHashJoinAtom.getDecodedProbeColumnCount().
+        long decodedColumnCount;
         // True while the slot counts a frame's joined rows rather than writes its tuples; see
         // ofCount().
         boolean isCountOnly;
@@ -870,6 +1054,8 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
         long pairMultiplier;
         // The pairs left before the next check of the circuit breaker.
         long pairsUntilCheck;
+        // The Parquet frames that the slot's tasks read in the open cursor's execution.
+        long parquetFrameCount;
         // The current probe row, by its index in the frame.
         long probeRow;
         // The ring entry of the frame the slot joins; null between frames.

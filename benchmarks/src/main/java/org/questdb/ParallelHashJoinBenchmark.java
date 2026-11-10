@@ -91,7 +91,9 @@ import java.util.concurrent.locks.LockSupport;
  *       post-join filter), {@code SINGLE_*} with one dimension each, {@code WIDE} reads every column
  *       of the star (consumer bound), {@code LIMIT_*} stop after 100 rows, {@code FANOUT_*} join a
  *       dimension with hot duplicate keys (no predicate, an ON residual, a post-join filter),
- *       {@code PARQUET_*} and {@code MIXED_PROBE} read Parquet partitions, {@code COUNT_STAR} counts
+ *       {@code PARQUET_*} and {@code MIXED_PROBE} read Parquet partitions, the Parquet probe also
+ *       under a selective probe filter and under an INNER lookup that most rows miss,
+ *       {@code COUNT_STAR} counts
  *       the star and {@code STACK4_RESIDUAL} is a worker-bound stack of four LEFT joins with
  *       residuals.</li>
  *   <li>{@code workers}: the size of the query worker pool, and the context's worker count.</li>
@@ -157,7 +159,7 @@ public class ParallelHashJoinBenchmark {
             "WIDE",
             "LIMIT_1K", "LIMIT_LARGE",
             "FANOUT_DEFERRED", "FANOUT_RESIDUAL", "FANOUT_POST_FILTER",
-            "PARQUET_PROBE", "PARQUET_BUILD", "MIXED_PROBE",
+            "PARQUET_PROBE", "PARQUET_PROBE_FILTER", "PARQUET_PROBE_INNER_MISS", "PARQUET_BUILD", "MIXED_PROBE",
             "COUNT_STAR",
             "STACK4_RESIDUAL"
     })
@@ -500,6 +502,11 @@ public class ParallelHashJoinBenchmark {
             case "FANOUT_RESIDUAL" -> "SELECT f.id, f.v, x.w FROM fact f LEFT JOIN dup x ON f.k1 = x.k AND x.w > f.v * 0.5";
             case "FANOUT_POST_FILTER" -> "SELECT f.id, f.v, x.w FROM fact f JOIN dup x ON f.k1 = x.k WHERE x.w > f.v * 0.5";
             case "PARQUET_PROBE" -> starSql("fact_pq", STAR_JOINS);
+            // The Parquet star under a filter that keeps 1% of the fact rows.
+            case "PARQUET_PROBE_FILTER" -> starSql("fact_pq", STAR_JOINS) + " WHERE f.sel = 7";
+            // An INNER join that 99% of the Parquet fact rows miss, whose output reads more fact
+            // columns than its key.
+            case "PARQUET_PROBE_INNER_MISS" -> "SELECT f.id, f.v, f.sym, f.note, d1.w FROM fact_pq f JOIN d1 ON f.k2 = d1.k";
             case "PARQUET_BUILD" -> "SELECT f.id, f.v, d.w FROM fact f JOIN d3_pq d ON f.k3 = d.k";
             case "MIXED_PROBE" -> starSql("fact_mixed", STAR_JOINS);
             case "COUNT_STAR" -> "SELECT count(*) FROM fact f" + STAR_JOINS;
