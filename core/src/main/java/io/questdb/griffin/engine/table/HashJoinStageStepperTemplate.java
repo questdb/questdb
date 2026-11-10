@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.griffin.engine.join.FrozenHashJoinBuild;
 import io.questdb.std.DirectLongList;
@@ -37,52 +38,54 @@ import io.questdb.std.DirectLongList;
 final class HashJoinStageStepperTemplate extends HashJoinStageStepper {
 
     @Override
-    void probeRows(AsyncHashJoinAtom.Slot slot, long rowCount, boolean isDescending) {
+    long probeRows(AsyncHashJoinAtom.Slot slot, long rowCount, long from, boolean isDescending, long tupleCap) {
         final PageFrameMemoryRecord probeRecord = slot.probeRecord;
-        for (long i = 0; i < rowCount; i++) {
+        final DirectLongList tuples = slot.tuples;
+        for (long i = from; i < rowCount; i++) {
             final long row = isDescending ? rowCount - 1 - i : i;
             probeRecord.setRowIndex(row);
             slot.probeRow = row;
-            step(slot, 0);
+            if (!step(slot, 0)) {
+                return CANCELLED;
+            }
+            if (tuples.size() >= tupleCap) {
+                return i + 1;
+            }
         }
+        return rowCount;
     }
 
     @Override
-    void probeRows(AsyncHashJoinAtom.Slot slot, DirectLongList rows, boolean isDescending) {
+    long probeRows(AsyncHashJoinAtom.Slot slot, DirectLongList rows, long from, boolean isDescending, long tupleCap) {
         final PageFrameMemoryRecord probeRecord = slot.probeRecord;
-        for (long p = 0, n = rows.size(); p < n; p++) {
+        final DirectLongList tuples = slot.tuples;
+        final long n = rows.size();
+        for (long p = from; p < n; p++) {
             final long row = rows.get(isDescending ? n - 1 - p : p);
             probeRecord.setRowIndex(row);
             slot.probeRow = row;
-            step(slot, 0);
+            if (!step(slot, 0)) {
+                return CANCELLED;
+            }
+            if (tuples.size() >= tupleCap) {
+                return p + 1;
+            }
         }
+        return n;
     }
 
     @Override
-    void step(AsyncHashJoinAtom.Slot slot, int stage) {
+    boolean step(AsyncHashJoinAtom.Slot slot, int stage) {
         final AsyncHashJoinAtom.StageProbe s = slot.getStageProbe(stage);
+        if (isEnumerated) {
+            return enumerate(slot, stage, s);
+        }
         final long entry;
         if (s.isBuildUnique) {
             // A build of one row per key positions its payload on the lookup itself.
-            final boolean isFound;
-            if (keyKind == KEY_STAGED) {
-                isFound = s.recordProbe.findSingleUnchecked(s.keyRecord);
-            } else if (keyKind == KEY_SYMBOL) {
-                isFound = s.intProbe.findSingleUnchecked(s.symbolKeyView.translate(s.keySource.getInt(keyColumn)));
-            } else {
-                isFound = s.intProbe.findSingleUnchecked(s.keySource.getInt(keyColumn));
-            }
-            entry = isFound ? s.reader.locator() : NO_MATCH;
+            entry = findSingle(s) ? s.reader.locator() : NO_MATCH;
         } else {
-            final FrozenHashJoinBuild.Probe probe;
-            if (keyKind == KEY_STAGED) {
-                s.recordProbe.findUnchecked(s.keyRecord);
-                probe = s.recordProbe;
-            } else {
-                final int key = s.keySource.getInt(keyColumn);
-                s.intProbe.findUnchecked(keyKind == KEY_SYMBOL ? s.symbolKeyView.translate(key) : key);
-                probe = s.intProbe;
-            }
+            final FrozenHashJoinBuild.Probe probe = find(s);
             final long head = probe.chainHead();
             if (head == 0) {
                 entry = NO_MATCH;
@@ -97,5 +100,84 @@ final class HashJoinStageStepperTemplate extends HashJoinStageStepper {
             slot.entries[stage] = entry;
             slot.appendTuple();
         }
+        return true;
+    }
+
+    // Walks the key's matches in chain order and appends a tuple for each pair that passes the
+    // stage's filters, and, for a LEFT join's probe row whose pairs all fail the ON residual or that
+    // has no match, one tuple without a match, if that row passes the post-join filter.
+    private boolean enumerate(AsyncHashJoinAtom.Slot slot, int stage, AsyncHashJoinAtom.StageProbe s) {
+        boolean isMatched = false;
+        if (s.isBuildUnique) {
+            // The lookup positions the payload reader on the key's one row, if it finds one.
+            if (findSingle(s)) {
+                if (isInterrupted(slot)) {
+                    return false;
+                }
+                isMatched = joinPair(slot, stage, s);
+            }
+        } else {
+            final FrozenHashJoinBuild.Probe probe = find(s);
+            while (probe.hasNext()) {
+                if (isInterrupted(slot)) {
+                    return false;
+                }
+                probe.next();
+                isMatched |= joinPair(slot, stage, s);
+            }
+        }
+        if (!isMatched && isOuter) {
+            slot.entries[stage] = NO_MATCH;
+            slot.record.setHasMatch(stage, false);
+            final Function postFilter = s.postFilter;
+            if (postFilter == null || postFilter.getBool(slot.record)) {
+                slot.appendTuple();
+            }
+        }
+        return true;
+    }
+
+    // Looks the probe row's key up and returns the probe, which lists the key's matches.
+    private FrozenHashJoinBuild.Probe find(AsyncHashJoinAtom.StageProbe s) {
+        if (keyKind == KEY_STAGED) {
+            s.recordProbe.findUnchecked(s.keyRecord);
+            return s.recordProbe;
+        }
+        final int key = s.keySource.getInt(keyColumn);
+        s.intProbe.findUnchecked(keyKind == KEY_SYMBOL ? s.symbolKeyView.translate(key) : key);
+        return s.intProbe;
+    }
+
+    // Looks the probe row's key up in a build of one row per key, which positions the payload reader
+    // on the key's row, and returns whether the build has one.
+    private boolean findSingle(AsyncHashJoinAtom.StageProbe s) {
+        if (keyKind == KEY_STAGED) {
+            return s.recordProbe.findSingleUnchecked(s.keyRecord);
+        }
+        final int key = s.keySource.getInt(keyColumn);
+        return s.intProbe.findSingleUnchecked(keyKind == KEY_SYMBOL ? s.symbolKeyView.translate(key) : key);
+    }
+
+    // Counts a pair and, every so many pairs, checks whether the execution was cancelled.
+    private boolean isInterrupted(AsyncHashJoinAtom.Slot slot) {
+        return --slot.pairsUntilCheck == 0 && slot.isInterrupted();
+    }
+
+    // Runs the stage's filters over the pair of the probe row and the match the payload reader is
+    // positioned on, and appends the pair's tuple if it passes both. Returns whether the pair passed
+    // the ON residual, which makes the probe row matched whether or not it passes the post-join
+    // filter.
+    private boolean joinPair(AsyncHashJoinAtom.Slot slot, int stage, AsyncHashJoinAtom.StageProbe s) {
+        slot.entries[stage] = s.reader.locator();
+        slot.record.setHasMatch(stage, true);
+        final Function onFilter = s.onFilter;
+        if (onFilter != null && !onFilter.getBool(slot.record)) {
+            return false;
+        }
+        final Function postFilter = s.postFilter;
+        if (postFilter == null || postFilter.getBool(slot.record)) {
+            slot.appendTuple();
+        }
+        return true;
     }
 }

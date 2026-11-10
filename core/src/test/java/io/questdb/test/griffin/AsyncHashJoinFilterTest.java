@@ -924,7 +924,7 @@ public class AsyncHashJoinFilterTest extends AbstractCairoTest {
         metadata.setTimestampIndex(probeMetadata.getTimestampIndex());
         final AsyncHashJoinSpec spec = new AsyncHashJoinSpec(
                 probe,
-                new HashJoinStageSpec(build, keyLayout, true, "b.k=t.k"),
+                new HashJoinStageSpec(build, keyLayout, true, "b.k=t.k", null, null, null),
                 metadata,
                 probe.getFactory().followedOrderByAdvice(),
                 probe.getFactory().getScanDirection()

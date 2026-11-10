@@ -2120,6 +2120,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return input.supportsPageFrameCursor() || input.getScanDirection() == input.getBaseFactory().getScanDirection();
     }
 
+    /**
+     * True for a filter that a parallel hash join can run on its workers, for each pair of a probe
+     * row and a match, in place of the ordinary plan, which runs it once per joined row as the
+     * consumer reads them: a LEFT join's ON residual, or a post-join filter. The filter must support
+     * parallel execution, through worker copies when it is not thread safe, and its value for a row
+     * must not change within an execution, since the workers run it ahead of the consumer and in
+     * another order.
+     */
+    private static boolean isParallelHashJoinFilter(Function filter) {
+        return filter.supportsParallelism() && filter.isStableWithinExecution();
+    }
+
     private static boolean isSingleColumnFunction(ExpressionNode ast, CharSequence name) {
         return ast.type == FUNCTION && ast.paramCount == 1 && Chars.equalsIgnoreCase(ast.token, name) && ast.rhs.type == LITERAL;
     }
@@ -7306,6 +7318,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 ObjList<Function> perWorkerWindowHiFuncs = null;
                 ObjList<GroupByFunction> groupByFunctions = null;
                 boolean closeSlaveOnFailure = true;
+                // True once this join compiled to a parallel hash join, which may absorb its
+                // post-join filter.
+                boolean isParallelHashJoinPlanned = false;
                 try {
                     // Skip synthetic horizon offset model - it's handled as part of HORIZON JOIN
                     if (isHorizonOffsetModel(slaveModel)) {
@@ -8331,13 +8346,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 );
                                 if (parallelHashJoinKeys != null) {
                                     // The parallel hash join steals the inputs' filters, which cannot
-                                    // be undone, so it owns both inputs from here on and frees them on
-                                    // failure, while the join's metadata stays with this frame until
-                                    // the factory adopts it.
+                                    // be undone, so it owns both inputs and the ON residual from here
+                                    // on and frees them on failure, while the join's metadata stays
+                                    // with this frame until the factory adopts it.
                                     final RecordCursorFactory masterToTransfer = master;
                                     final RecordCursorFactory slaveToTransfer = slaveToFree;
+                                    final Function joinFilterToTransfer = joinFilter;
                                     master = null;
                                     slaveToFree = null;
+                                    joinFilter = null;
                                     closeSlaveOnFailure = false;
                                     master = generateParallelHashJoin(
                                             masterToTransfer,
@@ -8346,9 +8363,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             slaveModel,
                                             joinMetadata,
                                             joinType,
+                                            joinFilterToTransfer,
                                             parallelHashJoinKeys,
                                             executionContext
                                     );
+                                    isParallelHashJoinPlanned = true;
                                 } else {
                                     master = createHashJoin(
                                             joinMetadata,
@@ -8413,6 +8432,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             // branch that builds EmptyTableRecordCursorFactory over the freed
                             // master's JoinRecordMetadata - no incrementRefCount is needed here.
                             master = new RuntimeConstGateRecordCursorFactory(master, filter, deepClone(expressionNodePool, filterExpr));
+                        } else if (isParallelHashJoinPlanned && isParallelHashJoinFilter(filter)) {
+                            // The parallel hash join runs the filter on its workers, for each pair,
+                            // with worker copies that compile before the join gives up anything.
+                            postFilterPerWorkerFilters = compileWorkerFiltersConditionally(
+                                    executionContext,
+                                    filter,
+                                    executionContext.getSharedQueryWorkerCount(),
+                                    filterExpr,
+                                    postJoinFilterMetadata
+                            );
+                            master = absorbParallelHashJoinPostFilter(
+                                    (AsyncHashJoinRecordCursorFactory) master,
+                                    filter,
+                                    postFilterPerWorkerFilters,
+                                    executionContext
+                            );
+                            postFilterPerWorkerFilters = null;
                         } else if (executionContext.isParallelFilterEnabled() && master.supportsPageFrameCursor()) {
                             IntHashSet filterUsedColumnIndexes = new IntHashSet();
                             collectColumnIndexes(sqlNodeStack, postJoinFilterMetadata, filterExpr, filterUsedColumnIndexes);
@@ -10136,6 +10172,44 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     /**
+     * Rebuilds a parallel hash join with a post-join filter in its last stage, which then runs on the
+     * workers, for each pair, rather than in a filter over the join. The join gives up its spec,
+     * frees what its executions use, and a new join takes the spec over. The caller compiled the
+     * filter, and its worker copies, against the join's metadata.
+     * <p>
+     * On success the new join owns the filter and its worker copies, and the old join holds nothing.
+     * On failure the method frees the spec and the caller keeps the filter, its worker copies and the
+     * old join, which holds nothing either, to free them.
+     */
+    private RecordCursorFactory absorbParallelHashJoinPostFilter(
+            AsyncHashJoinRecordCursorFactory join,
+            Function filter,
+            @Nullable ObjList<Function> workerFilters,
+            SqlExecutionContext executionContext
+    ) {
+        final AsyncHashJoinSpec spec = join.stealSpec();
+        final HashJoinStageSpec stage = spec.getStage(spec.getStageCount() - 1);
+        try {
+            join.halfClose();
+            stage.ofPostFilter(filter, workerFilters);
+            // The constructor leaves the spec here when it fails, and takes it once it returns.
+            return new AsyncHashJoinRecordCursorFactory(
+                    executionContext.getCairoEngine(),
+                    configuration,
+                    executionContext.getMessageBus(),
+                    spec,
+                    reduceTaskFactory,
+                    executionContext.getSharedQueryWorkerCount()
+            );
+        } catch (Throwable th) {
+            // The caller frees the filter and its worker copies, so the stage lets go of them first.
+            stage.ofPostFilter(null, null);
+            Misc.free(spec, th);
+            throw th;
+        }
+    }
+
+    /**
      * Plans the hash join of the first join of a query as a parallel hash join, whose eligibility
      * {@link #getParallelHashJoinKeys} checked. The join's inputs compiled already, in the ordinary
      * order, so their bind variables carry the types that the ordinary plan infers. An input with a
@@ -10143,8 +10217,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * the input's frames, on the workers, with the worker copies that this compiles first, before
      * either input gives up anything.
      * <p>
-     * The method owns both inputs on entry, and frees them on failure; the join's metadata stays
-     * with the caller until the factory adopts it.
+     * A LEFT join's ON residual runs on the workers too, for each pair, against the joined rows'
+     * metadata, with worker copies of its own.
+     * <p>
+     * The method owns both inputs and the ON residual on entry, and frees them on failure; the
+     * join's metadata stays with the caller until the factory adopts it.
      */
     private RecordCursorFactory generateParallelHashJoin(
             RecordCursorFactory master,
@@ -10153,14 +10230,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             IQueryModel slaveModel,
             JoinRecordMetadata joinMetadata,
             int joinType,
+            @Nullable Function onFilter,
             HashJoinGroupByKeys keys,
             SqlExecutionContext executionContext
     ) throws SqlException {
+        assert onFilter == null || joinType == IQueryModel.JOIN_LEFT_OUTER;
         final int workerCount = executionContext.getSharedQueryWorkerCount();
         RecordCursorFactory masterOwned = master;
         RecordCursorFactory slaveOwned = slave;
+        Function onFilterOwned = onFilter;
         ObjList<Function> masterWorkerFilters = null;
         ObjList<Function> slaveWorkerFilters = null;
+        ObjList<Function> workerOnFilters = null;
         HashJoinInput leftInput = null;
         HashJoinInput buildInput = null;
         HashJoinStageSpec stage = null;
@@ -10181,6 +10262,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final String condition = toConditionText(slaveModel.getJoinContext());
             masterWorkerFilters = compileParallelHashJoinWorkerFilters(master, workerCount, executionContext);
             slaveWorkerFilters = compileParallelHashJoinWorkerFilters(slave, workerCount, executionContext);
+            workerOnFilters = compileWorkerFiltersConditionally(executionContext, onFilter, workerCount,
+                    slaveModel.getOuterJoinExpressionClause(), joinMetadata);
             // Each input takes its factory and its worker filters on entry, whether it returns or throws.
             final ObjList<Function> masterWorkerFiltersToTransfer = masterWorkerFilters;
             masterWorkerFilters = null;
@@ -10190,7 +10273,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             slaveWorkerFilters = null;
             slaveOwned = null;
             buildInput = newParallelHashJoinInput(slave, slaveWorkerFiltersToTransfer, workerCount);
-            stage = new HashJoinStageSpec(buildInput, keyLayout, joinType == IQueryModel.JOIN_LEFT_OUTER, condition);
+            // The stage takes the ON residual and its worker copies on entry.
+            final ObjList<Function> workerOnFiltersToTransfer = workerOnFilters;
+            workerOnFilters = null;
+            onFilterOwned = null;
+            stage = new HashJoinStageSpec(buildInput, keyLayout, joinType == IQueryModel.JOIN_LEFT_OUTER, condition,
+                    joinMetadata, onFilter, workerOnFiltersToTransfer);
             final AsyncHashJoinSpec spec = new AsyncHashJoinSpec(leftInput, stage, joinMetadata, isLeftOrderByAdviceFollowed, leftScanDirection);
             // The constructor leaves the spec here when it fails, and takes it once it returns.
             return new AsyncHashJoinRecordCursorFactory(
@@ -10204,6 +10292,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         } catch (Throwable th) {
             Misc.freeObjList(masterWorkerFilters, th);
             Misc.freeObjList(slaveWorkerFilters, th);
+            Misc.freeObjList(workerOnFilters, th);
+            Misc.free(onFilterOwned, th);
             Misc.free(masterOwned, th);
             Misc.free(slaveOwned, th);
             Misc.free(leftInput, th);
@@ -15010,9 +15100,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * ordinary plan, which {@code createHashJoin()} then compiles from the same state. Both inputs
      * must be page frame scans or stealable filters over one, possibly under projections, see
      * {@link #isParallelHashJoinInput(RecordCursorFactory)}, and the join an INNER or LEFT OUTER equi
-     * join without an ON condition beyond its keys, whose keys reconcile as the ordinary plan
-     * reconciles them. The keys address the columns of the inputs' frame scans, which the join's
-     * records read; see {@link #parallelHashJoinFrameColumns(RecordCursorFactory)}. An INNER join
+     * join whose keys reconcile as the ordinary plan reconciles them. A LEFT join's ON condition
+     * beyond its keys, its residual, runs on the workers for each pair, so it must be one that the
+     * workers can run, see {@link #isParallelHashJoinFilter(Function)}. The keys address the
+     * columns of the inputs' frame scans, which the join's records read; see
+     * {@link #parallelHashJoinFrameColumns(RecordCursorFactory)}. An INNER join
      * whose ordinary plan may swap its inputs at execution, which it does when its left input is
      * smaller, keeps the ordinary plan: it swaps unless its left input lacks random access or either
      * input reports no size, as the cursor of a filter and that of a scan of timestamp intervals do.
@@ -15032,7 +15124,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // UPDATE reads the rows it updates by row id, which the operator does not serve.
                 || model.isUpdate()
                 || (joinType != IQueryModel.JOIN_INNER && joinType != IQueryModel.JOIN_LEFT_OUTER)
-                || joinFilter != null
+                // A LEFT join's ON residual runs on the workers, for each pair; an INNER join has none.
+                || (joinFilter != null && !isParallelHashJoinFilter(joinFilter))
                 || !isParallelHashJoinInput(master)
                 || !isParallelHashJoinInput(slave)
                 // The serial plan for a slave without random access chains duplicates oldest first.

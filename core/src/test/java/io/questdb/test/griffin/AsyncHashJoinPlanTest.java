@@ -203,8 +203,8 @@ public class AsyncHashJoinPlanTest extends AbstractCairoTest {
         // RIGHT and FULL joins.
         assertOrdinaryPlan("SELECT t.k, d.w FROM t RIGHT JOIN d ON t.k = d.k", sqlExecutionContext);
         assertOrdinaryPlan("SELECT t.k, d.w FROM t FULL JOIN d ON t.k = d.k", sqlExecutionContext);
-        // A LEFT join's ON condition beyond its keys.
-        assertOrdinaryPlan("SELECT t.k, d.w FROM t LEFT JOIN d ON t.k = d.k AND d.w > 2", sqlExecutionContext);
+        // A LEFT join's ON condition beyond its keys whose value may change within an execution.
+        assertOrdinaryPlan("SELECT t.k, d.w FROM t LEFT JOIN d ON t.k = d.k AND (d.w > 2 OR systimestamp() < t.ts)", sqlExecutionContext);
         // An INNER join whose ordinary plan may swap its inputs: neither scans an interval.
         assertOrdinaryPlan("SELECT t.k, d.w FROM t JOIN d ON t.k = d.k", sqlExecutionContext);
         assertOrdinaryPlan("SELECT t.k, d.w FROM (SELECT k, ts FROM t) t JOIN d ON t.k = d.k", sqlExecutionContext);

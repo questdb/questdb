@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
@@ -38,7 +37,6 @@ import io.questdb.griffin.engine.join.HashJoinPayloadSource;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 
 /**
@@ -50,6 +48,12 @@ import io.questdb.std.Os;
  * build row, a LEFT join's miss, which reads the stage's columns as typed NULLs, or the head of a
  * chain of several matches, which the consumer walks itself, in chain order, with the stage's
  * output probe; see {@link HashJoinStageStepper}. The consumer hashes nothing and evaluates no key.
+ * <p>
+ * A task that reached its cap of tuples left the rest of its frame to the consumer, which, once it
+ * has read the task's tuples, joins the frame's next chunk itself, on the owner's slot, and reads
+ * that, until the frame is done; see {@link AsyncHashJoinAtom#continueFrame}. Before it reads a
+ * task, and before it runs a chunk, the consumer checks that the execution was not cancelled, and
+ * drops the frame if it was: the interruption then surfaces once the frames in flight are collected.
  * <p>
  * The cursor passes every {@code next()} the execution's effective dispatch limit, the size of the
  * atom's tuple ring, which keeps frames in flight from sharing an entry; see
@@ -88,28 +92,12 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
     private DirectLongList tuples;
 
     AsyncHashJoinRecordCursor(AsyncHashJoinSpec spec) {
-        final HashJoinInput leftInput = spec.getLeftInput();
         assert spec.getStageCount() == 1;
-        final HashJoinStageSpec stage = spec.getStage(0);
-        this.leftColumnMap = leftInput.getColumnMap();
+        this.leftColumnMap = spec.getLeftInput().getColumnMap();
         this.columnSplit = leftColumnMap.size();
-        this.payloadColumns = stage.getPayloadColumns();
-        final int columnCount = spec.getMetadata().getColumnCount();
-        final IntList columnSources = new IntList(columnCount);
-        final IntList columnIndexes = new IntList(columnCount);
-        for (int c = 0; c < columnSplit; c++) {
-            columnSources.add(0);
-            columnIndexes.add(leftColumnMap.getQuick(c));
-        }
-        // The payload reader reads its payload columns by their payload index.
-        for (int c = columnSplit; c < columnCount; c++) {
-            columnSources.add(1);
-            columnIndexes.add(c - columnSplit);
-        }
+        this.payloadColumns = spec.getStage(0).getPayloadColumns();
         // A LEFT join's miss reads the payload columns as typed NULLs, by their payload index.
-        final ObjList<ColumnTypes> payloadTypes = new ObjList<>();
-        payloadTypes.add(stage.getBuildInput().getColumnTypes());
-        this.record = new MultiHashJoinRecord(columnSources, columnIndexes, payloadTypes, null, null, null);
+        this.record = spec.newJoinedRecord();
         record.setProbeRecord(probeRecord);
     }
 
@@ -169,16 +157,23 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
             }
             chainProbe = null;
         }
-        if (tupleIndex < tupleCount) {
-            positionTuple();
-            return true;
-        }
-        collectCursor(false);
-        if (frameIndex < frameLimit) {
-            fetchNextFrame();
+        while (true) {
             if (tupleIndex < tupleCount) {
                 positionTuple();
                 return true;
+            }
+            // A frame whose task stopped at its cap of tuples goes on in another chunk.
+            if (cursor > -1 && continueFrame()) {
+                continue;
+            }
+            collectCursor(false);
+            if (frameIndex >= frameLimit) {
+                break;
+            }
+            fetchNextFrame();
+            if (tupleIndex >= tupleCount) {
+                // The frames ran out without a tuple.
+                break;
             }
         }
         if (!allFramesActive) {
@@ -244,6 +239,32 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
         }
     }
 
+    /**
+     * Joins the next chunk of the frame the cursor holds, if its task, or its last chunk, stopped at
+     * the cap, on the owner's slot, and returns true with the chunk's tuples to read. Returns false
+     * when the frame is done, and when the execution was cancelled, which drops the frame.
+     */
+    private boolean continueFrame() {
+        if (atom.getRing().getResumePosition(frameIndex) < 0) {
+            return false;
+        }
+        // The breaker is checked before each chunk, as the reduce jobs check it before each frame,
+        // and the chunk checks it every so many pairs.
+        if (!AsyncHashJoinAtom.isInterrupted(circuitBreaker, frameSequence)) {
+            final long chunkTupleCount = atom.continueFrame(frameSequence.getTask(cursor), circuitBreaker);
+            if (chunkTupleCount != HashJoinStageStepper.CANCELLED) {
+                tuples = atom.getRing().getTuples(frameIndex);
+                tupleIndex = 0;
+                tupleCount = chunkTupleCount;
+                return true;
+            }
+        }
+        // A cancelled execution's frames hold nothing to read.
+        allFramesActive = false;
+        tupleCount = 0;
+        return false;
+    }
+
     private void collectCursor(boolean forceCollect) {
         if (cursor > -1) {
             frameSequence.collect(cursor, forceCollect);
@@ -271,7 +292,9 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
                     probeRecord.init(task.getFrameMemory());
                     return;
                 }
-                // A cancelled or failed sequence's frames hold nothing to read.
+                // A cancelled or failed sequence's frames hold nothing to read. A task stops at its
+                // cap only once it wrote tuples, so a frame without any left nothing to continue.
+                assert tupleCount > 0 || !frameSequence.isActive() || atom.getRing().getResumePosition(frameIndex) < 0;
                 tupleCount = 0;
                 collectCursor(false);
             } else {

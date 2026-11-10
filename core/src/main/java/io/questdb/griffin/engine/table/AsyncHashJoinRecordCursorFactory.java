@@ -49,6 +49,8 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
+import java.util.concurrent.atomic.AtomicInteger;
+
 /**
  * An INNER or LEFT OUTER equi hash join that runs on the shared query workers: the build input is
  * hashed, in parallel when it is large, and the probe input's page frames are joined on the workers,
@@ -69,6 +71,8 @@ import org.jetbrains.annotations.TestOnly;
  */
 public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final PageFrameReducer REDUCER = AsyncHashJoinRecordCursorFactory::probeFrame;
+    @TestOnly
+    private static final AtomicInteger constructionsBeforeFailureForTesting = new AtomicInteger();
     @TestOnly
     private static volatile RuntimeException constructorFailureForTesting;
     private final SCSequence collectSubSeq = new SCSequence();
@@ -115,7 +119,7 @@ public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursor
                     workerCount
             );
             final RuntimeException constructorFailure = constructorFailureForTesting;
-            if (constructorFailure != null) {
+            if (constructorFailure != null && constructionsBeforeFailureForTesting.getAndDecrement() <= 0) {
                 throw constructorFailure;
             }
             cursor = new AsyncHashJoinRecordCursor(spec);
@@ -132,11 +136,13 @@ public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursor
     }
 
     /**
-     * Answers as the left input as compiled answered, as the serial join asks its master.
+     * Answers as the left input as compiled answered, as the serial join asks its master, unless a
+     * stage runs a post-join filter: the serial plan's filter over a join answers false without
+     * asking the join, and so does this join once it absorbed such a filter.
      */
     @Override
     public boolean followedOrderByAdvice() {
-        return spec.isLeftOrderByAdviceFollowed();
+        return !spec.hasPostFilter() && spec.isLeftOrderByAdviceFollowed();
     }
 
     @Override
@@ -205,9 +211,36 @@ public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursor
         return spec.getStage(stage).getStepper().getClass();
     }
 
+    /**
+     * Frees what the factory's executions use, its cursor, its frame sequences and their atoms, and
+     * keeps the spec, which a caller took with {@link #stealSpec()} to build another join from:
+     * one that absorbs a post-join filter into its last stage.
+     */
+    @Override
+    public void halfClose() {
+        Throwable failure = Misc.freeBestEffort(null, cursor);
+        cursor = null;
+        failure = Misc.freeBestEffort(failure, frameSequence);
+        frameSequence = null;
+        failure = Misc.freeBestEffort(failure, buildRounds);
+        buildRounds = null;
+        CairoException.rethrowCleanupFailure(failure);
+    }
+
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
+    }
+
+    /**
+     * Hands the spec over to the caller, which then owns it: the factory no longer frees it. The
+     * caller then half-closes the factory, see {@link #halfClose()}, while the spec's inputs are
+     * open, since the atoms borrow them.
+     */
+    public AsyncHashJoinSpec stealSpec() {
+        final AsyncHashJoinSpec spec = this.spec;
+        this.spec = null;
+        return spec;
     }
 
     @Override
@@ -255,6 +288,17 @@ public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursor
      */
     @TestOnly
     public static void setConstructorFailureForTesting(@Nullable RuntimeException failure) {
+        setConstructorFailureForTesting(failure, 0);
+    }
+
+    /**
+     * Makes the constructor throw this failure, as {@link #setConstructorFailureForTesting(RuntimeException)}
+     * does, from the construction after the given number of constructions on: a join that absorbs a
+     * post-join filter is constructed twice.
+     */
+    @TestOnly
+    public static void setConstructorFailureForTesting(@Nullable RuntimeException failure, int constructionsBeforeFailure) {
+        constructionsBeforeFailureForTesting.set(constructionsBeforeFailure);
         constructorFailureForTesting = failure;
     }
 
@@ -282,7 +326,7 @@ public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursor
         // reading the frame decodes Parquet and can breach the per-query memory limit, and so can the
         // frame's tuples.
         try {
-            atom.probeFrame(slotId, task);
+            atom.probeFrame(slotId, task, circuitBreaker);
         } finally {
             atom.release(slotId);
         }

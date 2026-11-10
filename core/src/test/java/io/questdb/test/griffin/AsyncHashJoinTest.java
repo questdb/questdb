@@ -1051,7 +1051,10 @@ public class AsyncHashJoinTest extends AbstractCairoTest {
                         new HashJoinInput(build, buildColumns, new AsyncFilterContext(configuration, null, null, null, null, null, null, 1, 0, 0, 0)),
                         keyLayout,
                         true,
-                        "b.k=t.k"
+                        "b.k=t.k",
+                        null,
+                        null,
+                        null
                 ),
                 metadata,
                 probe.followedOrderByAdvice(),
