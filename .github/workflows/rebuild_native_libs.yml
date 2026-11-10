@@ -26,8 +26,8 @@ env:
 
 jobs:
   build-macos-aarch64:
-    # macos-14 = ARM M1
-    runs-on: macos-14
+    # macos-15 = Apple Silicon
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v5
         with:
