@@ -155,9 +155,10 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
                 CharSequence viewSql,
                 SqlExecutionContext executionContext,
                 LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies,
-                SqlUtil.ViewCompileRecord compileRecord
+                SqlUtil.ViewCompileRecord compileRecord,
+                boolean isOrderByKept
         ) throws SqlException {
-            delegate.collectOtherReadDependencies(viewSql, executionContext, dependencies, compileRecord);
+            delegate.collectOtherReadDependencies(viewSql, executionContext, dependencies, compileRecord, isOrderByKept);
         }
 
         @Override

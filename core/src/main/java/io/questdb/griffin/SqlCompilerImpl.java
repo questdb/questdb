@@ -478,7 +478,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             CharSequence viewSql,
             SqlExecutionContext executionContext,
             LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies,
-            SqlUtil.ViewCompileRecord compileRecord
+            SqlUtil.ViewCompileRecord compileRecord,
+            boolean isOrderByKept
     ) throws SqlException {
         clear();
         try {
@@ -495,12 +496,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             SqlUtil.collectTableAndColumnReferences(engine, (IQueryModel) model, otherReadDependencies, viewWildcardSources);
             final IQueryModel queryModel;
             optimiser.setSubQueryKeptWhole(true);
+            optimiser.setOrderByKept(isOrderByKept);
             optimiser.setPivotInValueSource(compileRecord);
+            // the PIVOT IN sub-queries run as the caller's compile ran them, whichever compile of this SELECT ran before
+            compileRecord.restartPivotInReplay();
             try {
                 // a throw closes the table functions optimise() opened
                 queryModel = optimiser.optimise(countRowsOf((IQueryModel) model), executionContext, this);
             } finally {
                 optimiser.setSubQueryKeptWhole(false);
+                optimiser.setOrderByKept(false);
                 optimiser.setPivotInValueSource(null);
             }
             // Nothing generates the model, so nothing takes over the table functions optimise() opened. The
@@ -508,6 +513,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             CairoException.rethrowCleanupFailure(optimiser.freeUnclaimedTableFactories(null));
             // a table the caller's plan scans has to be the one this compile scans
             SqlUtil.collectTableColumnReads(engine, queryModel, otherReadDependencies, viewWildcardSources, compileRecord, false);
+            // Nothing opens the plan of this compile, which would check that the principal may read the columns it
+            // scans in the tables the SELECT reads itself, and the view lends them to its readers.
+            viewWildcardSources.authorizeOwnReads(executionContext.getSecurityContext());
             // the view lends these columns only to a read that sets none of its OVERRIDABLE variables
             SqlUtil.addOtherReadDependencies(dependencies, otherReadDependencies);
         } finally {
@@ -7080,9 +7088,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     // view, see SqlUtil.collectTableAndColumnReferences(). The optimised one resolves the columns the view
     // reads, those of a row-expiry read filter included, which the parsed model hides behind its synthetic
     // sub-query, and which wildcards it keeps whole, see SqlUtil.collectTableColumnReads(). The columns of
-    // the reads of the view the plan of the SELECT does not read come from another compile of viewSql, see
-    // collectOtherReadDependencies(). optimise() changes the model in place, so the parsed references are
-    // collected before it runs.
+    // the reads of the view the plan of the SELECT does not read come from other compiles of viewSql, see
+    // collectOtherReadDependencies(): one for the reads that may leave a sub-query without columns or drop the
+    // ORDER BY that gives a temporal join or a SAMPLE BY its timestamp, and one for the reads that keep an ORDER
+    // BY the plan of the SELECT drops, as a read that joins the view to something before it does. optimise()
+    // changes the model in place, so the parsed references are collected before it runs.
     private IQueryModel optimiseViewQuery(
             CharSequence viewSql,
             IQueryModel parsedModel,
@@ -7097,6 +7107,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             viewCompileRecord.recordViews(parsedModel.getReferencedViews());
             final IQueryModel queryModel;
             optimiser.setPivotInValueRecorder(viewCompileRecord);
+            optimiser.setOrderByKept(false);
             try {
                 // A reader's SELECT inherits the view's order, including a sub-query's ORDER BY under an
                 // aggregate or window. Keep it here too, so the dependencies cover that reader's scan columns.
@@ -7104,11 +7115,18 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             } finally {
                 optimiser.setPivotInValueRecorder(null);
             }
+            final boolean isOrderByCleared = optimiser.isOrderByCleared();
             SqlUtil.collectTableColumnReads(engine, queryModel, dependencies, viewWildcardSources, viewCompileRecord, true);
-            if (viewWildcardSources.hasReadPlannedOtherwise()) {
+            final boolean isReadPlannedOtherwise = viewWildcardSources.hasReadPlannedOtherwise();
+            if (isReadPlannedOtherwise || isOrderByCleared) {
                 // before generation, which then finds a table that changed meanwhile out of date
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                    compiler.collectOtherReadDependencies(viewSql, executionContext, dependencies, viewCompileRecord);
+                    if (isReadPlannedOtherwise) {
+                        compiler.collectOtherReadDependencies(viewSql, executionContext, dependencies, viewCompileRecord, false);
+                    }
+                    if (isOrderByCleared) {
+                        compiler.collectOtherReadDependencies(viewSql, executionContext, dependencies, viewCompileRecord, true);
+                    }
                 }
             }
             return queryModel;

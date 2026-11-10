@@ -2692,6 +2692,18 @@ public class SqlParser {
         return EXPIRE_BOUNDARY_NONE;
     }
 
+    // Flags the read of the view the parser is expanding as one that sets a variable of the view when the body
+    // reads, under the name, the value the statement declared, decl: under a variable the view declares
+    // OVERRIDABLE, or under a name the view does not declare, which the view's body takes from the statement
+    // unchecked, see QueryModel.copyDeclsFrom(). The body reads it in an expression, see
+    // RewriteDeclaredVariablesInExpressionVisitor, or in place of a table it reads, such as one named like the
+    // variable, see parseFromClause() and parseSelectFrom().
+    private void flagStatementValueRead(CharSequence name, @Nullable ExpressionNode decl) {
+        if (viewReaderDecls != null && decl != null && viewReaderDecls.get(name) == decl) {
+            isViewReadOverridden = true;
+        }
+    }
+
     private void generateColumnAlias(GenericLexer lexer, QueryColumn qc, boolean hasFrom) throws SqlException {
         CharSequence token = qc.getAst().token;
         if (qc.getAst().isWildcard() && !hasFrom) {
@@ -6462,6 +6474,10 @@ public class SqlParser {
                 tok = setModelAliasAndTimestamp(lexer, model);
                 // expect "(" in case of sub-query
             } else if (Chars.equals(tok, '(') || declaredQuery != null) {
+                if (declaredQuery != null) {
+                    // the sub-query the statement declared takes the place of a table a view reads
+                    flagStatementValueRead(tok, model.getDecls().get(tok));
+                }
                 IQueryModel proposedNested = declaredQuery != null
                         ? takeDeclaredQuery(declaredQuery, sqlParserCallback)
                         : parseAsSubQueryAndExpectClosingBrace(lexer, masterModel.getWithClauses(), false, sqlParserCallback, model.getDecls());
@@ -8395,7 +8411,9 @@ public class SqlParser {
         if (model.getDecls().contains(expr.token)) {
             if (expr.type == ExpressionNode.LITERAL) {
                 // replace it if so
-                expr = model.getDecls().get(expr.token).rhs;
+                final ExpressionNode decl = model.getDecls().get(expr.token);
+                flagStatementValueRead(expr.token, decl);
+                expr = decl.rhs;
             } else {
                 throw SqlException.$(lexer.lastTokenPosition(), "expected literal table name or subquery");
             }
@@ -10582,12 +10600,7 @@ public class SqlParser {
                 // until clear(). The parser refuses the reference whose copy would take the
                 // statement past its budget, before copying anything.
                 final ExpressionNode decl = decls.get(node.token);
-                if (viewReaderDecls != null && viewReaderDecls.get(node.token) == decl) {
-                    // The body of a view the parser is expanding reads a value the statement declared: under a
-                    // variable the view declares OVERRIDABLE, or under a name the view does not declare, which
-                    // the view's body takes from the statement unchecked, see QueryModel.copyDeclsFrom().
-                    isViewReadOverridden = true;
-                }
+                flagStatementValueRead(node.token, decl);
                 final ExpressionNode value = decl.rhs;
                 final int countedLo = declaredVariableNodeCount;
                 countDeclaredValueNodes(value);

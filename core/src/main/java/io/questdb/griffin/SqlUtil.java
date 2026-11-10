@@ -31,6 +31,7 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.MillisTimestampDriver;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TimestampDriver;
@@ -2365,6 +2366,14 @@ public class SqlUtil {
         addTableDependency(depMap, tableName).add(Chars.toString(columnName));
     }
 
+    // Adds a column a scan of a table the SELECT reads itself reads to ownReads, when the walk collects them, see
+    // collectTableScanColumns().
+    private static void addOwnRead(@Nullable LowerCaseCharSequenceHashSet ownReads, @NotNull CharSequence columnName) {
+        if (ownReads != null) {
+            ownReads.add(Chars.toString(columnName));
+        }
+    }
+
     // Adds a column a scan reads to the columns of its table, columns. The scan of a view the SELECT reads, whose
     // dependencies list innerColumns for the table, reads the column through that view, and the column is lent to the
     // reads that view lends it to: one that view lends only to the reads that set none of its OVERRIDABLE variables
@@ -2706,7 +2715,10 @@ public class SqlUtil {
     // Collects the columns the scan of a table model reads: its top-down columns, which
     // SqlCodeGenerator.buildQueryMetadata() reads, and the timestamp it adds when the plan requires one.
     // Records the scan in wildcardSources for collectKeptWildcardReferences(), and the table it scans for the
-    // compiles of the same SELECT that have to see the same table, see ViewCompileRecord.
+    // compiles of the same SELECT that have to see the same table, see ViewCompileRecord. In the compile of the
+    // reads planned otherwise, also records the columns a scan of a table the SELECT reads itself, rather than
+    // through a view, reads, which the principal that records the view has to be allowed to read, see
+    // ViewWildcardSources.authorizeOwnReads().
     private static void collectTableScanColumns(
             @NotNull CairoEngine engine,
             @NotNull IQueryModel model,
@@ -2728,11 +2740,17 @@ public class SqlUtil {
         // the scan of a view the SELECT reads lends no more than that view does, see addReadColumn()
         final LowerCaseCharSequenceHashSet innerColumns = innerViewColumns(model, tableToken.getTableName());
         final boolean isOtherReadLent = isOtherReadLent(model);
-        final boolean isUnlentColumnDropped = !wildcardSources.isRecordingCompile && isReadThroughView(model);
+        final boolean isReadThroughView = isReadThroughView(model);
+        final boolean isUnlentColumnDropped = !wildcardSources.isRecordingCompile && isReadThroughView;
+        final LowerCaseCharSequenceHashSet ownReads = !wildcardSources.isRecordingCompile && !isReadThroughView
+                ? wildcardSources.ownReadsOf(tableToken)
+                : null;
         final StringSink sink = wildcardSources.otherReadColumnName;
         final ObjList<QueryColumn> topDownColumns = model.getTopDownColumns();
         for (int i = 0, n = topDownColumns.size(); i < n; i++) {
-            addReadColumn(columns, innerColumns, isOtherReadLent, topDownColumns.getQuick(i).getName(), sink, isUnlentColumnDropped);
+            final CharSequence columnName = topDownColumns.getQuick(i).getName();
+            addReadColumn(columns, innerColumns, isOtherReadLent, columnName, sink, isUnlentColumnDropped);
+            addOwnRead(ownReads, columnName);
         }
         if (!isTimestampRequired && !SqlCodeGenerator.joinsRequiringTimestamp[model.getJoinType()]) {
             return;
@@ -2748,6 +2766,7 @@ public class SqlUtil {
                 final int timestampIndex = metadata.getTimestampIndex();
                 if (timestampIndex > -1) {
                     addReadColumn(columns, innerColumns, isOtherReadLent, metadata.getColumnName(timestampIndex), sink, isUnlentColumnDropped);
+                    addOwnRead(ownReads, metadata.getColumnName(timestampIndex));
                 }
             }
             return;
@@ -2758,6 +2777,7 @@ public class SqlUtil {
             timestampName = timestampName.subSequence(dot + 1, timestampName.length());
         }
         addReadColumn(columns, innerColumns, isOtherReadLent, unquote(timestampName), sink, isUnlentColumnDropped);
+        addOwnRead(ownReads, unquote(timestampName));
     }
 
     // Adds "*" for the tables a parsed SELECT reads every column of, see collectTableAndColumnReferences().
@@ -3304,6 +3324,15 @@ public class SqlUtil {
         }
 
         /**
+         * Makes the next compile of the same SELECT take the values of the PIVOT IN sub-queries from the first one
+         * recorded on, see {@link #takePivotIn}: each compile of the reads planned otherwise runs them in the order
+         * the compile that plans the SELECT recorded them.
+         */
+        void restartPivotInReplay() {
+            pivotInReplayIndex = 0;
+        }
+
+        /**
          * Returns the index of the recorded PIVOT IN sub-query the next sub-query a compile of the same SELECT
          * runs corresponds to. Both compiles expand the same views, see {@link #checkViews}, and optimise the
          * SELECT the same way up to the PIVOT IN sub-queries, so they run them in the same order, at the same
@@ -3375,6 +3404,12 @@ public class SqlUtil {
         private final ObjList<IQueryModel> holders = new ObjList<>();
         // a column name with ViewDefinition.OTHER_READ_COLUMN_PREFIX, to look it up in a set of dependencies
         private final StringSink otherReadColumnName = new StringSink();
+        // Per table the SELECT reads itself rather than through a view, the columns the scans of the compile of the
+        // reads planned otherwise read, see authorizeOwnReads(), the table those scans read, and the list of the
+        // names of the columns, sorted, that it authorizes. Nothing opens the plan of that compile.
+        private final ObjList<CharSequence> ownReadColumnNames = new ObjList<>();
+        private final LowerCaseCharSequenceObjHashMap<TableToken> ownReadTables = new LowerCaseCharSequenceObjHashMap<>();
+        private final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> ownReads = new LowerCaseCharSequenceObjHashMap<>();
         // the models the current search of isReachable() has visited
         private final ObjHashSet<IQueryModel> reachedModels = new ObjHashSet<>();
         // the models reachable from the root of the current optimised SELECT, shared by all holder checks
@@ -3420,6 +3455,35 @@ public class SqlUtil {
             return hasReadPlannedOtherwise;
         }
 
+        /**
+         * Checks that the principal may read the columns that the last walk of the reads planned otherwise found the
+         * scans of the tables the SELECT reads itself read, see {@link SqlCompiler#collectOtherReadDependencies}:
+         * the view lends them to its readers. The compile that plans the SELECT opens its plan, which checks the
+         * columns that plan reads, and the view lends a column it reads through another view only as far as that
+         * view lends it, see {@link SqlUtil#collectTableColumnReads}. It checks the tables the scans read, not the
+         * ones their names resolve to now.
+         *
+         * @param securityContext the context of the principal that records the view
+         */
+        void authorizeOwnReads(SecurityContext securityContext) {
+            final ObjList<CharSequence> tableNames = ownReads.keys();
+            for (int i = 0, n = tableNames.size(); i < n; i++) {
+                final CharSequence tableName = tableNames.getQuick(i);
+                final LowerCaseCharSequenceHashSet columns = ownReads.get(tableName);
+                ownReadColumnNames.clear();
+                for (int j = 0, m = columns.getKeyCount(); j < m; j++) {
+                    final CharSequence columnName = columns.getKey(j);
+                    if (columnName != null) {
+                        ownReadColumnNames.add(columnName);
+                    }
+                }
+                if (ownReadColumnNames.size() > 0) {
+                    ownReadColumnNames.sort(Chars::compare);
+                    securityContext.authorizeSelect(ownReadTables.get(tableName), ownReadColumnNames);
+                }
+            }
+        }
+
         @TestOnly
         long getVisitCount() {
             return visitCount;
@@ -3454,6 +3518,9 @@ public class SqlUtil {
         // Forgets what the walks of an optimised SELECT recorded, and keeps the tables the walk of the parsed
         // SELECT recorded.
         private void clearReads() {
+            ownReadColumnNames.clear();
+            ownReadTables.clear();
+            ownReads.clear();
             reachedModels.clear();
             rootReachableModels.clear();
             scans.clear();
@@ -3539,6 +3606,17 @@ public class SqlUtil {
                 isReachable0(root, null, rootReachableModels);
             }
             return rootReachableModels.contains(target);
+        }
+
+        // the columns the scans of the table read in the compile of the reads planned otherwise, see authorizeOwnReads()
+        private LowerCaseCharSequenceHashSet ownReadsOf(TableToken tableToken) {
+            LowerCaseCharSequenceHashSet columns = ownReads.get(tableToken.getTableName());
+            if (columns == null) {
+                columns = new LowerCaseCharSequenceHashSet();
+                ownReads.put(tableToken.getTableName(), columns);
+                ownReadTables.put(tableToken.getTableName(), tableToken);
+            }
+            return columns;
         }
     }
 

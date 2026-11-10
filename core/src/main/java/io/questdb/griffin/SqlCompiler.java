@@ -54,12 +54,17 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
      * it alone. The plan of such a read computes every column of the sub-query, as the plan of
      * {@code SELECT n FROM v} does for a view {@code SELECT count() n, sum(a) s FROM (SELECT * FROM x)}. A read
      * that counts the rows of the view drops the ORDER BY of a sub-query, and a temporal join or a SAMPLE BY that
-     * took its timestamp from it takes the timestamp of the source of the sub-query instead. This compiles the
-     * SELECT again, as a sub-query of a read that counts its rows, with every sub-query some read leaves without
-     * columns kept whole, and collects what that plan reads, including a {@code *} for each wildcard it keeps
-     * whole. It adds those columns marked, see {@link SqlUtil#addOtherReadDependencies}: the view lends them only to
-     * a read that sets none of its OVERRIDABLE variables, which could otherwise read any of them through the view.
-     * Nothing opens the plan of that read, so nothing checks the permission of the principal on what it reads: it
+     * took its timestamp from it takes the timestamp of the source of the sub-query instead. A read that places the
+     * view on a side of a join other than the first keeps the ORDER BY of every sub-query instead, also one the plan
+     * of the view's own SELECT drops because a SELECT above it orders the rows again, see
+     * {@code SqlOptimiser.isOrderByCleared()}. This compiles the SELECT again, as a sub-query of a read that counts
+     * its rows, with every sub-query some read leaves without columns kept whole, and either every ORDER BY a read
+     * that counts the rows drops dropped, or, with isOrderByKept, every ORDER BY kept. It collects what that plan
+     * reads, including a {@code *} for each wildcard it keeps whole, and adds those columns marked, see
+     * {@link SqlUtil#addOtherReadDependencies}: the view lends them only to a read that sets none of its OVERRIDABLE
+     * variables, which could otherwise read any of them through the view.
+     * Nothing opens the plan of that read, which would check the permission of the principal on what it reads, so
+     * this checks that the principal may read the columns it reads from the tables the SELECT reads itself, and it
      * adds no column that a view the SELECT reads lends to no read of the SELECT, such as one that view lends only
      * to the reads that set none of its OVERRIDABLE variables when the SELECT sets one, see
      * {@link SqlUtil#collectTableColumnReads}.
@@ -70,15 +75,19 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
      * {@link SqlUtil.ViewCompileRecord}.
      *
      * @param viewSql          the SELECT of the view
-     * @param executionContext the context to compile the SELECT in
+     * @param executionContext the context to compile the SELECT in, whose principal records the view
      * @param dependencies     the dependency map of the view, which this adds to
      * @param compileRecord    what the compile that optimised the SELECT of the view to plan it recorded
+     * @param isOrderByKept    whether the compile keeps the ORDER BY of every sub-query, as a read that places the
+     *                         view on a side of a join other than the first does, rather than drops it, as a read
+     *                         that counts the rows of the view does
      */
     void collectOtherReadDependencies(
             CharSequence viewSql,
             SqlExecutionContext executionContext,
             LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies,
-            SqlUtil.ViewCompileRecord compileRecord
+            SqlUtil.ViewCompileRecord compileRecord,
+            boolean isOrderByKept
     ) throws SqlException;
 
     CompiledQuery compile(CharSequence sqlText, SqlExecutionContext ctx) throws SqlException;
