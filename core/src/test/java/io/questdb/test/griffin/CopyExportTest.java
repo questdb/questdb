@@ -619,9 +619,19 @@ public class CopyExportTest extends AbstractCairoTest {
             execute("INSERT INTO zsym SELECT 'symbol_' || lpad(x::STRING, 59, '0'), timestamp_sequence('2024-01-01', 1_000_000L) FROM long_sequence(100_000)");
             execute("CREATE TABLE psym (sym SYMBOL CAPACITY 131_072 NOCACHE INDEX TYPE POSTING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO psym SELECT sym, ts FROM zsym");
+            final String virtualProjectionTemplate = "SELECT t.sym, true b FROM %s t CROSS JOIN long_sequence(1)";
+            try (RecordCursorFactory factory = select(virtualProjectionTemplate.replace("%s", "zsym"))) {
+                Assert.assertTrue(
+                        "the export must set up a virtual factory with setUpCursorBacked()",
+                        ParquetExportMode.unwrapFactory(factory) instanceof VirtualRecordCursorFactory
+                );
+            }
             final String[] queryTemplates = {
                     // HybridColumnMaterializer.setUp()
                     "SELECT t.sym FROM %s t CROSS JOIN long_sequence(1)",
+                    // HybridColumnMaterializer.setUpCursorBacked(), where a kept column takes the setting of the base
+                    // column it references
+                    virtualProjectionTemplate,
                     // a key of the vectorized GROUP BY
                     "SELECT sym, count() c FROM %s",
                     // a key of the async GROUP BY, over 100_000 distinct symbols
@@ -1353,6 +1363,12 @@ public class CopyExportTest extends AbstractCairoTest {
             assertCursorExportEncodesKeys("SELECT v, first(w) fw FROM kt", "async", 0);
             assertCursorExportEncodesKeys("SELECT v AS vk, first(w) fw FROM kt", "async_alias", 0);
             ParquetTestUtils.assertColumnsDoNotUseDictionaryEncoding(parquetPath("async_alias"), ff, 1);
+            // a key on the designated timestamp passes ts through, unlike the bucket timestamp of SAMPLE BY below
+            final String timestampKeyQuery = "SELECT ts, first(w) fw FROM kt";
+            assertQuery(timestampKeyQuery)
+                    .noLeakCheck()
+                    .assertsPlanContaining("Async Group By");
+            assertCursorExportEncodesKeys(timestampKeyQuery, "async_ts", 0);
             assertCursorExportEncodesKeys("SELECT DISTINCT v FROM kt", "distinct", 0);
             assertCursorExportEncodesKeys("SELECT v, count() c FROM kt GROUP BY ROLLUP (v)", "rollup", 0);
             // hour(ts) computes an INT key from ts
