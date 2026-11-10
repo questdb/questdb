@@ -264,14 +264,13 @@ qdbr toolchain; the script prints the command when it is missing.
   and most QWP tests import it. A hand-forged frame encodes the contract you
   *assume* the client implements, so it passes even when the pinned client
   disagrees. If a test names a client class in a comment to justify an
-  assertion, it must import that class instead.
+  assertion, it must import that class instead. Any change to a wire constant
+  or wire format needs such a test: a green OSS build does not otherwise prove
+  the pinned client agrees.
 - Fake sockets (`MockRawSocket`, `TestableContext`) remain valid for *transport fault
   injection only* — partial sends, `PeerIsSlowToWriteException` resume paths, and
   malformed frames a correct client would never emit. They must never encode what a
   correct client would send in response to the server.
-- **Any change to a wire constant or wire format requires a test that exercises the
-  pinned submodule client.** A green OSS build does not otherwise prove the pinned
-  client agrees.
 - use execute() to run non-queries (DDL)
 - prefer UPPERCASE for SQL keywords (CREATE TABLE, INSERT, SELECT ... AS ... FROM,
   etc.), but mixing cases is acceptable since SQL is case-insensitive
@@ -292,14 +291,12 @@ qdbr toolchain; the script prints the command when it is missing.
   many PRs a day, CI is the bottleneck, not review: a full run is long and can
   go red on an unrelated flake. Splitting one branch into N "logically clean"
   PRs multiplies that cost — N× CI time, N× flake exposure, PRs failing on each
-  other's flakes, and N× the babysitting to shepherd them all to merge. The
-  squash-merge collapses everything into one tidy `master` commit anyway, so
-  multiple fixes on a branch cost nothing at merge time. Default to adding the
-  change to the PR/branch already in flight, especially when the fixes share a
-  CI lineage (one change is what makes the other's CI go green). When a branch
-  carries more than one fix, give each its own bullet in the PR body instead of
-  opening another PR. Only split if the user explicitly asks, or if the changes
-  must merge/revert independently.
+  other's flakes, and N× the babysitting to shepherd them all to merge. Default
+  to adding the change to the PR/branch already in flight, especially when the
+  fixes share a CI lineage (one change is what makes the other's CI go green).
+  When a branch carries more than one fix, give each its own bullet in the PR
+  body instead of opening another PR. Only split if the user explicitly asks, or
+  if the changes must merge/revert independently.
 - **When asked to "send a change to PR #N" / update PR metadata:** push the
   commit(s) to that PR's branch (rebase onto the remote head first if it moved),
   then bring the PR title and body up to date with the branch's net effects.
