@@ -325,54 +325,34 @@ qdbr toolchain; the script prints the command when it is missing.
   the type they revert.
   - Good: `chore(build): speed up builds by recompiling only changed files`
   - Avoid: `chore(build): add incremental compilation to core`
-- A PR body has up to three sections, each under a bold label on a line of
-  its own: **Background.**, **Effects.** and **Approach.**, in that order.
-  Links to tandem PRs follow the last section, on one line, by PR number.
-  - **Background** gives a reviewer who knows QuestDB, but not this area,
-    the context the other two sections build on. It describes the code and
-    its behavior before the PR, and defines every term that Effects and
-    Approach use and such a reviewer would not know: features, settings,
-    test families, CI pipelines, internal concepts. Define each term by the
-    property the PR depends on and nothing more; a test's workload, for
-    example, stays out when the PR changes only how the test is split. Do
-    not list the changed files or classes: the diff shows them. Leave the
-    section out when every term in Effects and Approach is common QuestDB
-    vocabulary, as in most SQL fixes.
-    - Good: `A crash sweep simulates a power loss at each durability op of
-      a commit and checks what recovery leaves. A sweep too long for the
-      20-minute test timeout runs as several test methods, each covering a
-      range of crash points.`
-    - Avoid: `This PR touches four test classes: ...`
-  - **Effects** has one bullet per net effect, at most 20 words. State what
-    users gain or no longer suffer (for a technical type, developers), not
-    what changed in the code, in terms that Background defines or that are
-    common QuestDB vocabulary. Put `Fixes #NNN` on the bullet for that
-    issue.
+- PR bodies are short: bullets for the problem or feature, then the approach:
+  - One bullet per net effect, at most 15 words. State what users gain or no
+    longer suffer (for a technical type, developers), not what changed in the
+    code. Put `Fixes #NNN` on the bullet for that issue.
     - Good: `IPv4 filters with < or > no longer return wrong rows. Fixes #NNN`
     - Avoid: `Use unsigned comparison for IPv4 in the JIT backend`
-  - **Approach** has one bullet per fix or feature, in the order of the
-    effects it explains. Each bullet names the root cause or the design,
-    then how the change addresses it, in one to three sentences per effect.
+  - After the bullets, the approach: one to three sentences per fix or
+    feature, naming the root cause or the design and how the change
+    addresses it.
     - Good: `The JIT compared IPv4 values as signed integers; it now compares
       them as unsigned.`
   - Measure effects against the base branch: fixing a bug the PR itself
-    introduced is not an effect. When new commits land, rewrite the body
-    from the branch's net effects; never append to it.
-  - Give each regression, tradeoff and breaking change its own Effects
-    bullet, as plainly as the gains, and each slowdown its measured size,
-    such as `up to 3x slower`. Don't sell: no superlatives, no bold numbers.
-    Known bugs the PR ships with are the exception (below).
-  - A change made for speed, or one on a data path, adds its JMH results as
-    a table after Approach: case, before, after, with the slower cases
-    included.
+    introduced is not an effect. When new commits land, rewrite the bullets
+    and the approach from the branch's net effects; never append to the body.
+  - Give each regression, tradeoff and breaking change its own bullet, as
+    plainly as the gains, and each slowdown its measured size, such as
+    `up to 3x slower`. Don't sell: no superlatives, no bold numbers. Known
+    bugs the PR ships with are the exception (below).
+  - A change made for speed, or one on a data path, adds its JMH results as a
+    table: case, before, after, with the slower cases included.
+  - Link tandem PRs on one line, by PR number.
   - Leave out what goes stale as the branch moves: commit hashes, a tandem
     PR's head and submodule pointers included, and counts of tests, files,
     lines or commits. The review records the revisions it reviewed.
-  - Nothing else: no test plan, coverage numbers, fuzz seeds, file
-    walkthrough, narrative beyond Background and Approach, or investigation
-    output (probe results, "fails without the fix" evidence, lists of
-    covered shapes or configs, "Not changed" lists). The code and its tests
-    carry those.
+  - Nothing else: no test plan, coverage numbers, fuzz seeds, file walkthrough,
+    design narrative beyond the approach, or investigation output (probe
+    results, "fails without the fix" evidence, lists of covered shapes or
+    configs, "Not changed" lists). The code and its tests carry those.
 - **A PR may ship with known bugs whose risk is low.** `review-pr` rates each
   bug a change introduces by what a user who hits it loses and how likely
   users are to hit it (`.pi/agents/risk-assessor.md`); only Critical and High
