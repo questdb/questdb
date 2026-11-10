@@ -559,6 +559,27 @@ public class GroupingSetsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCastToSymbolNestedInPrefixKeyReleasesQueryMemory() throws Exception {
+        // A cast to SYMBOL nested in a STRING prefix key builds a dictionary of its own, next to the
+        // dictionary of the direct cast key before it. The cursor close must free both: it notifies
+        // every key function, whatever its type, and concat() passes the notification on to its
+        // arguments. The reference spells the ROLLUP out as one plain GROUP BY per grouping set.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT x % 4 l, ('k' || (x % 50))::VARCHAR v, ('s' || (x % 3))::SYMBOL s, (x * 1_000_000L)::TIMESTAMP ts
+                        FROM long_sequence(1_000)
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            final String keys = "cast(l AS SYMBOL) k1, concat(cast(v AS SYMBOL), '-') k2";
+            final String query = "SELECT " + keys + ", s, count() c FROM t GROUP BY k1, k2, ROLLUP(s) ORDER BY k1, k2, s";
+            final String reference = "SELECT * FROM (SELECT " + keys + ", s, count() c FROM t GROUP BY k1, k2, s"
+                    + " UNION ALL SELECT " + keys + ", NULL::SYMBOL s, count() c FROM t GROUP BY k1, k2) ORDER BY k1, k2, s";
+            assertQuery(query).noLeakCheck().assertsPlanContaining("GroupBy vectorized: false", "groupingSets: true", "keys: [k1,k2,s]");
+            assertCachedQueryReleasesCastDictionaries(query, printReference(reference), true);
+        });
+    }
+
+    @Test
     public void testCastToSymbolPrefixKeyReleasesQueryMemory() throws Exception {
         // A cast to SYMBOL of a VARCHAR, CHAR, numeric, DATE or TIMESTAMP key interns each distinct
         // value into a native dictionary charged to the query's memory tracker. Grouping sets
