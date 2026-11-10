@@ -11879,19 +11879,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * The BITMAP index writers {@link #configureIndexersForClosedActivePartition()} binds on an append-blocked last
-     * partition are never appended through: the O3 executor indexes that partition with writers of its own, which
-     * grow the same .k/.v past the sizes these cached when bound. Released, without truncation, before the executor
-     * runs, so that none is left holding those sizes for a later close to truncate the files back to - a commit that
-     * fails never reaches {@link #finishO3Commit}, which binds them again.
+     * The index writers bound on an append-blocked last partition are never appended through: the O3 executor indexes
+     * that partition with writers of its own, which grow the same .k/.v past the sizes these cached when bound.
+     * Released, without truncation, before the executor runs, so that none is left holding those sizes for a later
+     * close to truncate the files back to - a commit that fails never reaches {@link #finishO3Commit}, which binds them
+     * again - and none keeps open the empty posting index ADD COLUMN created, which the executor replaces.
      */
-    private void releaseBitmapIndexWritersOfClosedActivePartition() {
+    private void releaseIndexWritersOfClosedActivePartition() {
         if (!isLastPartitionAppendBlocked() || !isLastPartitionClosed()) {
             return;
         }
         for (int i = 0, n = Math.min(columnCount, indexers.size()); i < n; i++) {
             final ColumnIndexer indexer = indexers.getQuick(i);
-            if (indexer != null && !IndexType.isPosting(indexer.getWriter().getIndexType())) {
+            if (indexer != null) {
                 indexer.releaseIndexWriterNoTruncate();
             }
         }
@@ -15321,7 +15321,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (configuration.isO3PartitionMergeAppendEnabled()) {
             releaseCoveringSidecarWriteMappings();
         }
-        releaseBitmapIndexWritersOfClosedActivePartition();
+        releaseIndexWritersOfClosedActivePartition();
 
         // Read by every partition task of this block that decides a MOVE-TAIL, so it is computed once here,
         // on the writer thread, before any task runs.

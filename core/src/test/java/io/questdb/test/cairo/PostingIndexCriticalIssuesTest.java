@@ -255,6 +255,24 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAddPostingColumnThenWriteToPartitionRemovesNoHeldFile() throws Exception {
+        // ADD COLUMN creates the empty .pk and binds the writer's indexer to it. Every row of the partition is below
+        // the column top, so the O3 executor creates the index anew and removes that .pk first.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        ff = new HeldFileRemoveRefusingFacade();
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE t_add_col_held (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t_add_col_held VALUES (1, '2020-01-01T01:00'), (2, '2020-01-01T02:00')");
+            drainWalQueue();
+            execute("ALTER TABLE t_add_col_held ADD COLUMN s SYMBOL INDEX TYPE POSTING");
+            execute("INSERT INTO t_add_col_held (x, s, ts) VALUES (3, 'a', '2020-01-01T03:00')");
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("t_add_col_held")));
+            assertQuery("SELECT x FROM t_add_col_held WHERE s = 'a'").sizeMayVary().returns("x\n3\n");
+        });
+    }
+
+    @Test
     public void testAlterRenameColumnRebindCarriesArmedTxnAtSeal() throws Exception {
         // TableWriter.renameColumn rebinds the column's indexer to the new
         // (name, columnNameTxn) so later seals write .pv files under the new
@@ -14071,6 +14089,117 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
         int getFailureCount() {
             return failureCount;
+        }
+    }
+
+    /**
+     * Removes posting index files the way Windows does: never while the file is open or mapped.
+     */
+    private static class HeldFileRemoveRefusingFacade extends TestFilesFacadeImpl {
+        private final ConcurrentHashMap<String, Integer> holdCounts = new ConcurrentHashMap<>();
+        private final ConcurrentHashMap<Long, String> mappedPaths = new ConcurrentHashMap<>();
+        private final ConcurrentHashMap<Long, String> openPaths = new ConcurrentHashMap<>();
+
+        @Override
+        public boolean close(long fd) {
+            release(openPaths.remove(fd));
+            return super.close(fd);
+        }
+
+        @Override
+        public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+            return onMapped(super.mmap(fd, len, offset, flags, memoryTag), fd);
+        }
+
+        @Override
+        public long mmapNoCache(long fd, long len, long offset, int flags, int memoryTag) {
+            return onMapped(super.mmapNoCache(fd, len, offset, flags, memoryTag), fd);
+        }
+
+        @Override
+        public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+            return onRemapped(super.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag), addr);
+        }
+
+        @Override
+        public long mremapNoCache(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+            return onRemapped(super.mremapNoCache(fd, addr, previousSize, newSize, offset, mode, memoryTag), addr);
+        }
+
+        @Override
+        public void munmap(long address, long size, int memoryTag) {
+            release(mappedPaths.remove(address));
+            super.munmap(address, size, memoryTag);
+        }
+
+        @Override
+        public long openCleanRW(LPSZ name, long size) {
+            return onOpened(super.openCleanRW(name, size), name);
+        }
+
+        @Override
+        public long openRO(LPSZ name) {
+            return onOpened(super.openRO(name), name);
+        }
+
+        @Override
+        public long openRONoCache(LPSZ name) {
+            return onOpened(super.openRONoCache(name), name);
+        }
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            return onOpened(super.openRW(name, opts), name);
+        }
+
+        @Override
+        public long openRWNoCache(LPSZ name, int opts) {
+            return onOpened(super.openRWNoCache(name, opts), name);
+        }
+
+        @Override
+        public boolean removeQuiet(LPSZ name) {
+            final String path = Utf8s.stringFromUtf8Bytes(name);
+            if ((path.contains(".pk.") || path.contains(".pv.")) && holdCounts.getOrDefault(path, 0) > 0) {
+                return false;
+            }
+            return super.removeQuiet(name);
+        }
+
+        private void hold(String path) {
+            holdCounts.merge(path, 1, Integer::sum);
+        }
+
+        private long onMapped(long address, long fd) {
+            final String path = openPaths.get(fd);
+            if (address != -1 && path != null) {
+                mappedPaths.put(address, path);
+                hold(path);
+            }
+            return address;
+        }
+
+        private long onOpened(long fd, LPSZ name) {
+            if (fd > -1) {
+                final String path = Utf8s.stringFromUtf8Bytes(name);
+                openPaths.put(fd, path);
+                hold(path);
+            }
+            return fd;
+        }
+
+        private long onRemapped(long newAddress, long oldAddress) {
+            final String path = mappedPaths.remove(oldAddress);
+            if (path != null && newAddress != -1) {
+                mappedPaths.put(newAddress, path);
+            }
+            return newAddress;
+        }
+
+        private void release(String path) {
+            if (path != null) {
+                holdCounts.merge(path, -1, Integer::sum);
+            }
         }
     }
 
