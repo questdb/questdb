@@ -78,8 +78,8 @@ import static io.questdb.test.griffin.ParallelHashJoinTestUtils.*;
  * print as EXPLAIN shows them.
  * <p>
  * The first join of a stack never swaps its inputs in this suite: it is a LEFT join, or an INNER one
- * whose left input has a filter or scans an interval, since a first join that may swap takes no
- * later join.
+ * whose left input has a filter or scans an interval. {@link AsyncHashJoinStackSwapTest} covers the
+ * stacks whose first join may swap.
  */
 public class AsyncHashJoinStackTest extends AbstractCairoTest {
     // Eight stages over t: duplicate and unique builds, INT, staged LONG and translated SYMBOL keys,
@@ -759,35 +759,37 @@ public class AsyncHashJoinStackTest extends AbstractCairoTest {
                                             Row forward scan
                                             Frame forward scan on: d2
                             """);
-            // A first join that may swap its inputs takes no later join yet.
+            // A first join that may swap its inputs takes a later join as a stage of its own, whose keys
+            // read the left input's columns in either orientation; only the first join names the swap.
             assertQuery("SELECT t.k, d1.w, d2.w2 FROM t JOIN d1 ON t.k = d1.k JOIN d2 ON t.lk = d2.lk")
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Hash Join Light
-                                  condition: d2.lk=t.lk
-                                    Async Hash Join workers: 1
-                                      stages: 1
-                                        Probe
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: t
-                                        Build
-                                          joinType: inner
-                                          condition: d1.k=t.k
-                                          inputSwap: when the left input is smaller
-                                          buildPayload: copied when the probe is large enough
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: d1
-                                    Hash
+                                Async Hash Join workers: 1
+                                  stages: 2
+                                    Probe
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                                    Build
+                                      joinType: inner
+                                      condition: d1.k=t.k
+                                      inputSwap: when the left input is smaller
+                                      buildPayload: copied when the probe is large enough
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: d1
+                                    Build
+                                      joinType: inner
+                                      condition: d2.lk=t.lk
+                                      buildPayload: copied when the probe is large enough
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: d2
                             """);
+            assertStack("SELECT t.k, d1.w, d2.w2 FROM t JOIN d1 ON t.k = d1.k JOIN d2 ON t.lk = d2.lk", 2);
             for (String sql : new String[]{
                     "SELECT t.k, d1.w, x.w2 FROM t LEFT JOIN d1 ON t.k = d1.k LEFT JOIN d2 x ON d1.w = x.w2",
-                    "SELECT t.k, d1.w, d2.w2 FROM t JOIN d1 ON t.k = d1.k JOIN d2 ON t.lk = d2.lk",
                     // A build that exposes no page frames.
                     "SELECT t.k, d1.w, g.w2 FROM t LEFT JOIN d1 ON t.k = d1.k LEFT JOIN (SELECT lk, max(w2) w2 FROM d2) g ON t.lk = g.lk",
                     // A RIGHT and a FULL join.

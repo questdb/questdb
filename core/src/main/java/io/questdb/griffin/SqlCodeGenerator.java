@@ -2226,6 +2226,35 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     /**
+     * Reconciles the keys of a later join of a stack whose first join may swap its inputs as an
+     * execution that swaps them reads them: the probe side reads the left input's columns from the
+     * first stage's payload, which holds them in the order the left input as compiled lists them,
+     * the order in which they lead the master's columns. The keys therefore address the master's
+     * columns themselves, where the keys of the query's orientation address the frame columns that
+     * hold them; see {@link #newParallelHashJoinKeys(RecordMetadata, IntList, ListColumnFilter, RecordCursorFactory, ListColumnFilter)}.
+     * <p>
+     * They never fail where those keys did not: the build side is the same, each probe column has the
+     * same type, and two keys that read one master column read one frame column too, so the keys
+     * conflict here only where those did.
+     *
+     * @param stack           the master, a stack whose first join may swap its inputs
+     * @param probeKeyColumns the key columns of the master, in key order
+     * @param buildKeyColumns the key columns of the build input, in key order
+     */
+    private static HashJoinGroupByKeys newParallelHashJoinStackSwapKeys(
+            AsyncHashJoinRecordCursorFactory stack,
+            ListColumnFilter probeKeyColumns,
+            RecordCursorFactory build,
+            ListColumnFilter buildKeyColumns
+    ) {
+        final int leftColumnCount = stack.getSpec().getLeftInput().getColumnMap().size();
+        final HashJoinGroupByKeys keys = newParallelHashJoinKeys(stack.getMetadata(), identityColumns(leftColumnCount),
+                probeKeyColumns, build, buildKeyColumns);
+        assert keys != null : "the keys over the first stage's payload reconcile as those over the probe scan";
+        return keys;
+    }
+
+    /**
      * For each column of a parallel hash join input, the column of its page frame scan that holds
      * it: the scan is the input itself, or the base of the filter under its projections, which hold
      * the scan's columns in another order, some of them twice and some not at all; see
@@ -8454,6 +8483,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     if (parallelHashJoinSwapKeys == null) {
                                         parallelHashJoinKeys = null;
                                     }
+                                } else if (parallelHashJoinKeys != null
+                                        && master instanceof AsyncHashJoinRecordCursorFactory stack
+                                        && stack.getSpec().isSwapCandidate()) {
+                                    // A later join of a stack whose first join may swap its inputs
+                                    // reads the left input's columns, which an execution that swaps
+                                    // them reads from the first stage's payload: the left input's
+                                    // columns as compiled, which lead the master's columns.
+                                    parallelHashJoinSwapKeys = newParallelHashJoinStackSwapKeys(stack, listColumnFilterB, slaveToFree, listColumnFilterA);
                                 }
                                 if (parallelHashJoinKeys != null) {
                                     // The parallel hash join steals the inputs' filters, which cannot
@@ -8478,6 +8515,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 joinType,
                                                 joinFilterToTransfer,
                                                 parallelHashJoinKeys,
+                                                parallelHashJoinSwapKeys,
                                                 executionContext
                                         );
                                     } else {
@@ -15245,9 +15283,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * join whose keys reconcile as the ordinary plan reconciles them. A later join whose master is a
      * parallel hash join becomes a stage of that join instead, when its keys read the columns of the
      * join's left input alone, a star join, and the join runs fewer than
-     * {@link AsyncHashJoinSpec#MAX_STAGE_COUNT} stages and never swaps its inputs; the keys then
-     * address the left input's frame columns, which the probe record reads for every stage. A later
-     * join never swaps its inputs, since its master, a join, offers no random access. A LEFT join's ON condition
+     * {@link AsyncHashJoinSpec#MAX_STAGE_COUNT} stages; the keys then address the left input's frame
+     * columns, which the probe record reads for every stage. A later join never swaps its inputs,
+     * since its master, a join, offers no random access, but when the master's first join may swap
+     * its own inputs, the caller also compiles the keys that a swapped execution reads from the first
+     * stage's payload; see {@link #newParallelHashJoinStackSwapKeys}. A LEFT join's ON condition
      * beyond its keys, its residual, runs on the workers for each pair, so it must be one that the
      * workers can run, see {@link #isParallelHashJoinFilter(Function)}. The keys address the
      * columns of the inputs' frame scans, which the join's records read; see
@@ -15281,7 +15321,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
         if (master instanceof AsyncHashJoinRecordCursorFactory join) {
             final AsyncHashJoinSpec spec = join.getSpec();
-            if (spec.getStageCount() >= AsyncHashJoinSpec.MAX_STAGE_COUNT || spec.isSwapCandidate()) {
+            if (spec.getStageCount() >= AsyncHashJoinSpec.MAX_STAGE_COUNT) {
                 return null;
             }
             // The master's leading columns are its left input's, as compiled, and its probe record
@@ -16228,8 +16268,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * use, the slave gives up its filter, the spec takes the stage, and a new join takes the spec
      * over, with the stages before, their steppers, and the order answers recorded so far.
      * <p>
+     * A master whose first join may swap its inputs takes the stage's keys as an execution that swaps
+     * them reads them too: from the first stage's payload, whose columns are the left input's as
+     * compiled, the leading columns of the master's metadata, which the spec keeps for the stage's
+     * key sinks.
+     * <p>
      * The method owns the master, the slave and the ON residual on entry, and frees them on failure;
      * the join's metadata stays with the caller until the new join adopts it.
+     *
+     * @param swapKeys the keys with the probe side read from the first stage's payload, for a master
+     *                 whose first join may swap its inputs; null for one that never swaps
      */
     private RecordCursorFactory stackParallelHashJoin(
             AsyncHashJoinRecordCursorFactory master,
@@ -16239,6 +16287,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             int joinType,
             @Nullable Function onFilter,
             HashJoinGroupByKeys keys,
+            @Nullable HashJoinGroupByKeys swapKeys,
             SqlExecutionContext executionContext
     ) throws SqlException {
         assert onFilter == null || joinType == IQueryModel.JOIN_LEFT_OUTER;
@@ -16261,6 +16310,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // The left input is a page frame scan, whose SYMBOL columns' symbol tables are static, and
             // so is the slave's.
             assert keyLayout.hasStaticSymbolTables();
+            // Swapped, the keys read the first stage's payload, which lays the left input's columns
+            // out as they lead the master's metadata.
+            assert (swapKeys != null) == master.getSpec().isSwapCandidate();
+            final RecordMetadata masterMetadata = master.getMetadata();
+            final HashJoinKeyLayout swapKeySourceLayout = swapKeys != null
+                    ? new HashJoinKeyLayout(configuration, asm, swapKeys, null, masterMetadata,
+                    identityColumns(masterMetadata.getColumnCount()), slaveModel.getName(), slaveFrameMetadata,
+                    identityColumns(slaveFrameMetadata.getColumnCount()))
+                    : null;
+            assert swapKeySourceLayout == null || swapKeySourceLayout.hasStaticSymbolTables();
             final String condition = toConditionText(slaveModel.getJoinContext());
             slaveWorkerFilters = compileParallelHashJoinWorkerFilters(slave, workerCount, executionContext);
             workerOnFilters = compileWorkerFiltersConditionally(executionContext, onFilter, workerCount,
@@ -16280,7 +16339,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final HashJoinInput buildInputToTransfer = buildInput;
             buildInput = null;
             stage = new HashJoinStageSpec(buildInputToTransfer, keyLayout, joinType == IQueryModel.JOIN_LEFT_OUTER, condition,
-                    joinMetadata, onFilter, workerOnFiltersToTransfer);
+                    joinMetadata, onFilter, workerOnFiltersToTransfer, swapKeySourceLayout);
             // The spec takes the stage and the join's metadata.
             spec.addStage(stage, joinMetadata);
             stage = null;

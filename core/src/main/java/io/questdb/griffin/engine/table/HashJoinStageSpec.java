@@ -58,7 +58,11 @@ import org.jetbrains.annotations.Nullable;
  * The first join of a parallel hash join may swap its inputs at execution, as the serial hash join
  * does, see {@link AsyncHashJoinSpec#isSwapCandidate()}: it then hashes its left input and streams
  * its build input. Such a stage also holds its keys with the inputs' roles swapped, its swap key
- * layout, and a stepper of its own for that orientation.
+ * layout, and a stepper of its own for that orientation. A later join of a stack over such a first
+ * join reads its keys off the left input's columns, which a swapped execution holds in the first
+ * stage's build rather than in the probe scan: the later stage then also holds its keys as they read
+ * the first stage's payload, its swap key source layout, whose probe side lays the left input's
+ * columns out as the payload does, in the order the left input as compiled lists them.
  * <p>
  * The stage owns its build input, its filters with their worker copies, and its steppers, the
  * hidden-class copies of {@link HashJoinStageStepperTemplate} that probe the stage's build on the
@@ -80,6 +84,11 @@ public final class HashJoinStageSpec implements Plannable, QuietCloseable {
     // for a stage that never swaps.
     @Nullable
     private final HashJoinKeyLayout swapKeyLayout;
+    // The keys of a later join of a stack whose first join may swap its inputs, as a swapped execution
+    // reads them: from the first stage's payload, which then holds the left input's rows; null for a
+    // stage that never reads its keys there.
+    @Nullable
+    private final HashJoinKeyLayout swapKeySourceLayout;
     @Nullable
     private final HashJoinStageStepper swapStepper;
     // True while the stage, the first join of a swap candidate, may still swap its inputs; see
@@ -115,7 +124,31 @@ public final class HashJoinStageSpec implements Plannable, QuietCloseable {
             @Nullable Function onFilter,
             @Nullable ObjList<Function> workerOnFilters
     ) {
-        this(buildInput, keyLayout, null, isOuter, condition, joinMetadata, onFilter, workerOnFilters);
+        this(buildInput, keyLayout, null, null, isOuter, condition, joinMetadata, onFilter, workerOnFilters);
+    }
+
+    /**
+     * A later join of a stack, as
+     * {@link #HashJoinStageSpec(HashJoinInput, HashJoinKeyLayout, boolean, String, RecordMetadata, Function, ObjList)}
+     * takes its arguments, with its keys as an execution that swaps the first join's inputs reads
+     * them too.
+     *
+     * @param swapKeySourceLayout the equality keys with the probe side read from the first stage's
+     *                            payload, which holds the left input's columns in the order the left
+     *                            input as compiled lists them; null for a stack whose first join never
+     *                            swaps its inputs
+     */
+    public HashJoinStageSpec(
+            HashJoinInput buildInput,
+            HashJoinKeyLayout keyLayout,
+            boolean isOuter,
+            String condition,
+            @Nullable RecordMetadata joinMetadata,
+            @Nullable Function onFilter,
+            @Nullable ObjList<Function> workerOnFilters,
+            @Nullable HashJoinKeyLayout swapKeySourceLayout
+    ) {
+        this(buildInput, keyLayout, null, swapKeySourceLayout, isOuter, condition, joinMetadata, onFilter, workerOnFilters);
     }
 
     /**
@@ -137,12 +170,28 @@ public final class HashJoinStageSpec implements Plannable, QuietCloseable {
             @Nullable Function onFilter,
             @Nullable ObjList<Function> workerOnFilters
     ) {
+        this(buildInput, keyLayout, swapKeyLayout, null, isOuter, condition, joinMetadata, onFilter, workerOnFilters);
+    }
+
+    private HashJoinStageSpec(
+            HashJoinInput buildInput,
+            HashJoinKeyLayout keyLayout,
+            @Nullable HashJoinKeyLayout swapKeyLayout,
+            @Nullable HashJoinKeyLayout swapKeySourceLayout,
+            boolean isOuter,
+            String condition,
+            @Nullable RecordMetadata joinMetadata,
+            @Nullable Function onFilter,
+            @Nullable ObjList<Function> workerOnFilters
+    ) {
         assert onFilter == null || isOuter : "an INNER join has no ON residual";
         assert onFilter == null || joinMetadata != null;
         assert swapKeyLayout == null || !isOuter : "only an INNER join swaps its inputs";
+        assert swapKeyLayout == null || swapKeySourceLayout == null : "the first join reads its keys off its inputs";
         this.buildInput = buildInput;
         this.keyLayout = keyLayout;
         this.swapKeyLayout = swapKeyLayout;
+        this.swapKeySourceLayout = swapKeySourceLayout;
         this.swapStepper = swapKeyLayout != null ? HashJoinStageStepper.newInstance() : null;
         this.isOuter = isOuter;
         this.condition = condition;
@@ -219,6 +268,16 @@ public final class HashJoinStageSpec implements Plannable, QuietCloseable {
     @Nullable
     public HashJoinKeyLayout getSwapKeyLayout() {
         return swapKeyLayout;
+    }
+
+    /**
+     * A later join's keys as an execution that swaps the first join's inputs reads them: from the
+     * first stage's payload, which then holds the left input's rows; null for a stage that never reads
+     * its keys there.
+     */
+    @Nullable
+    public HashJoinKeyLayout getSwapKeySourceLayout() {
+        return swapKeySourceLayout;
     }
 
     public boolean isOuter() {

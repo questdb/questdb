@@ -111,6 +111,16 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
  * the serial hash join chains them over the input's cursor, and keeps one more slot than the
  * workers and the owner: the output slot, whose probe and payload reader the join's consumer
  * positions on the matches that the workers found; see {@link #getOutputSlot()}.
+ * <p>
+ * A later stage of a parallel hash join whose first join may swap its inputs reads its probe keys
+ * off the left input's columns from one of two key sources, as each execution's orientation has
+ * it: the probe scan's record, or, once the execution swaps the first join's inputs, the first
+ * stage's payload reader, which lays the columns out as the left input as compiled lists them rather
+ * than as its frames hold them. Such a stage keeps a second key layout for the second source, see
+ * {@link #setKeySourceSwapped(boolean)}: a staged key then takes a key sink, a translating record
+ * and record probes of each layout in every slot that probes, and an INT key reads the column that
+ * its stepper picks. The build itself, and the SYMBOL key translation, whose dictionaries are the
+ * left input's in either orientation, stay as they are.
  */
 public final class HashJoinBuildStage implements Mutable, QuietCloseable {
     private static final UnorderedPageFrameReducer BUILD_PARTITION = HashJoinBuildStage::buildPartition;
@@ -180,6 +190,10 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
     private boolean isCountedInRounds;
     // The open cursor's presize decision; see isKeyCapacityPresizedPerExecution.
     private boolean isKeyCapacityPresized;
+    // True when the open cursor's execution reads the probe keys from the second key source, whose
+    // key layout the slots' swap sinks, translating records and record probes follow; see
+    // setKeySourceSwapped().
+    private boolean isKeySourceSwapped;
     private boolean isPayloadCopied;
     private MapHashJoinBuild mapBuild;
     // The open cursor's tracker, which init() takes for build(): the build runs after getCursor()
@@ -229,7 +243,7 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
             int workerCount
     ) {
         this(configuration, buildFactory, buildFilterContext, buildOnFilter, workerBuildOnFilters, keyLayout,
-                payloadBuildColumns, probeColumnCount, isKeyCapacityPresized, false, ORDER_ASC, workerCount, 0);
+                payloadBuildColumns, probeColumnCount, null, 0, isKeyCapacityPresized, false, ORDER_ASC, workerCount, 0);
     }
 
     /**
@@ -250,8 +264,35 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
             int buildOrder,
             int workerCount
     ) {
+        this(configuration, buildFactory, buildFilterContext, keyLayout, payloadBuildColumns, probeColumnCount,
+                null, 0, buildOrder, workerCount);
+    }
+
+    /**
+     * The later stage of a parallel hash join whose first join may swap its inputs, as
+     * {@link #HashJoinBuildStage(CairoConfiguration, RecordCursorFactory, AsyncFilterContext, HashJoinKeyLayout, IntList, int, int, int)}
+     * takes its arguments, with the key layout of the second key source; see
+     * {@link #setKeySourceSwapped(boolean)}.
+     *
+     * @param swapKeySourceLayout      the keys with the probe side read from the second key source:
+     *                                 the same build keys, of the same types; null for a stage with
+     *                                 one key source
+     * @param swapKeySourceColumnCount the columns of the second key source
+     */
+    HashJoinBuildStage(
+            CairoConfiguration configuration,
+            RecordCursorFactory buildFactory,
+            AsyncFilterContext buildFilterContext,
+            HashJoinKeyLayout keyLayout,
+            IntList payloadBuildColumns,
+            int probeColumnCount,
+            @Nullable HashJoinKeyLayout swapKeySourceLayout,
+            int swapKeySourceColumnCount,
+            int buildOrder,
+            int workerCount
+    ) {
         this(configuration, buildFactory, buildFilterContext, null, null, keyLayout, payloadBuildColumns,
-                probeColumnCount, false, true, buildOrder, workerCount, 1);
+                probeColumnCount, swapKeySourceLayout, swapKeySourceColumnCount, false, true, buildOrder, workerCount, 1);
     }
 
     private HashJoinBuildStage(
@@ -263,6 +304,8 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
             HashJoinKeyLayout keyLayout,
             IntList payloadBuildColumns,
             int probeColumnCount,
+            @Nullable HashJoinKeyLayout swapKeySourceLayout,
+            int swapKeySourceColumnCount,
             boolean isKeyCapacityPresized,
             boolean isKeyCapacityPresizedPerExecution,
             int buildOrder,
@@ -270,6 +313,10 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
             int outputSlotCount
     ) {
         assert buildOrder == ORDER_ASC || buildOrder == ORDER_DESC;
+        // The two layouts stage the same build keys, as the same types, so the build is one.
+        assert swapKeySourceLayout == null || swapKeySourceLayout.isKeyStaged() == keyLayout.isKeyStaged();
+        assert swapKeySourceLayout == null || swapKeySourceLayout.isSymbolKey() == keyLayout.isSymbolKey();
+        assert swapKeySourceLayout == null || swapKeySourceLayout.getSymbolKeyProbeColumns().size() == keyLayout.getSymbolKeyProbeColumns().size();
         this.buildFactory = buildFactory;
         this.buildFilterContext = buildFilterContext;
         this.buildOnFilter = buildOnFilter;
@@ -323,7 +370,9 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
         final boolean hasSymbolKey = symbolKeyProbeColumns.size() > 0;
         for (int i = -1; i < workerCount + outputSlotCount; i++) {
             // Sinks hold scratch state, so each slot probes and builds through ones of its own,
-            // and so does the translating record the staged key sink reads from.
+            // and so does the translating record the staged key sink reads from. The output slot
+            // looks no key up, so only the slots that probe take the second key source's.
+            final boolean isSwapSlot = swapKeySourceLayout != null && isKeyStaged && i < workerCount;
             slots.add(new Slot(
                     keyLayout.newProbeKeySink(),
                     keyLayout.newBuildKeySink(),
@@ -331,7 +380,11 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
                     hasSymbolKey && isKeyStaged
                             ? new SymbolKeyTranslatingRecord(probeColumnCount, symbolKeyProbeColumns)
                             : null,
-                    hasSymbolKey && !isKeyStaged ? new SymbolKeyTranslator.View() : null
+                    hasSymbolKey && !isKeyStaged ? new SymbolKeyTranslator.View() : null,
+                    isSwapSlot ? swapKeySourceLayout.newProbeKeySink() : null,
+                    isSwapSlot && hasSymbolKey
+                            ? new SymbolKeyTranslatingRecord(swapKeySourceColumnCount, swapKeySourceLayout.getSymbolKeyProbeColumns())
+                            : null
             ));
         }
     }
@@ -1211,7 +1264,25 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
             final Slot slot = slots.getQuick(i);
             // Casting here, once per slot per execution, keeps the reducers' hot call sites
             // on a single probe implementation; see the monomorphic-reducer rule.
-            if (isKeyStaged) {
+            if (isKeyStaged && isKeySourceSwapped && slot.swapProbeKeySink != null) {
+                // A record probe borrows its key sink for life, so the second key source's layout
+                // keeps record probes of its own.
+                if (isBuildPartitioned) {
+                    if (slot.swapPartitionedRecordProbe == null) {
+                        slot.swapPartitionedRecordProbe = ((FrozenHashJoinBuild.RecordKeyed) frozen).newProbe(slot.swapProbeKeySink);
+                    } else {
+                        slot.swapPartitionedRecordProbe.reopen();
+                    }
+                    slot.probe = slot.swapPartitionedRecordProbe;
+                } else {
+                    if (slot.swapRecordProbe == null) {
+                        slot.swapRecordProbe = ((FrozenHashJoinBuild.RecordKeyed) frozen).newProbe(slot.swapProbeKeySink);
+                    } else {
+                        slot.swapRecordProbe.reopen();
+                    }
+                    slot.probe = slot.swapRecordProbe;
+                }
+            } else if (isKeyStaged) {
                 if (isBuildPartitioned) {
                     if (slot.partitionedRecordProbe == null) {
                         slot.partitionedRecordProbe = ((FrozenHashJoinBuild.RecordKeyed) frozen).newProbe(slot.probeKeySink);
@@ -1271,9 +1342,21 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
                 final StaticSymbolTable buildTable = i == 0
                         ? ownerBuildTable
                         : (StaticSymbolTable) buildFrames.getSymbolTableSource().newSymbolTable(buildColumn);
-                slots.getQuick(i).getSymbolKeyView(key).of(cache, probeTable, buildTable);
+                slots.getQuick(i).getSymbolKeyView(key, isKeySourceSwapped).of(cache, probeTable, buildTable);
             }
         }
+    }
+
+    /**
+     * Picks the key source that the open cursor's execution reads probe keys from, for a later stage
+     * of a parallel hash join whose first join may swap its inputs: the probe scan's record, or, true,
+     * the first stage's payload reader, as the second key layout lays it out. The SYMBOL key
+     * translation and the record probes then follow that layout; see
+     * {@link Slot#ofSwapKeySource(Record)}. The owner calls it before the execution's build.
+     */
+    void setKeySourceSwapped(boolean isKeySourceSwapped) {
+        assert frozen == null;
+        this.isKeySourceSwapped = isKeySourceSwapped;
     }
 
     /**
@@ -1413,12 +1496,21 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
         // Null for the INT layout; the slot's record probe borrows it for its whole life.
         @Nullable
         final RecordSink probeKeySink;
+        // The staged probe key sink of the second key source's layout, which the slot's swap record
+        // probes borrow for life; null for the INT layout, for a stage with one key source and for
+        // the output slot, which looks no key up.
+        @Nullable
+        final RecordSink swapProbeKeySink;
         // The INT layout's lone SYMBOL key translates through this view; null otherwise.
         @Nullable
         final SymbolKeyTranslator.View symbolKeyView;
         // A staged key with SYMBOL columns translates through this record's views; null otherwise.
         @Nullable
         private final SymbolKeyTranslatingRecord probeKeyRecord;
+        // The same over the second key source, as its layout names the SYMBOL key columns; null when
+        // the slot has no swap sink or the key no SYMBOL column.
+        @Nullable
+        private final SymbolKeyTranslatingRecord swapProbeKeyRecord;
         // The INT layout's probe of a serial build, or of a parallel build of one partition; null for
         // a staged key, whose probe is the record probe.
         FrozenHashJoinBuild.IntProbe intProbe;
@@ -1429,7 +1521,14 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
         // A staged key's probe of a parallel build of more than one partition.
         FrozenHashJoinBuild.RecordProbe partitionedRecordProbe;
         FrozenHashJoinBuild.RecordProbe recordProbe;
-        // Whichever of the four probes bindProbes() bound for the open cursor's build; null otherwise.
+        // What the staged key sink of the second key source reads: that source, or the translating
+        // view of it; see ofSwapKeySource().
+        Record swapKeyRecord;
+        // The record probes of the second key source's layout, partitioned and not, which borrow the
+        // swap sink; null until an execution reads its keys from that source.
+        FrozenHashJoinBuild.RecordProbe swapPartitionedRecordProbe;
+        FrozenHashJoinBuild.RecordProbe swapRecordProbe;
+        // Whichever of the six probes bindProbes() bound for the open cursor's build; null otherwise.
         private FrozenHashJoinBuild.Probe probe;
 
         private Slot(
@@ -1437,13 +1536,17 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
                 @Nullable RecordSink buildKeySink,
                 @Nullable MapHashJoinBuild.KeyStager buildKeyStager,
                 @Nullable SymbolKeyTranslatingRecord probeKeyRecord,
-                @Nullable SymbolKeyTranslator.View symbolKeyView
+                @Nullable SymbolKeyTranslator.View symbolKeyView,
+                @Nullable RecordSink swapProbeKeySink,
+                @Nullable SymbolKeyTranslatingRecord swapProbeKeyRecord
         ) {
             this.probeKeySink = probeKeySink;
             this.buildKeySink = buildKeySink;
             this.buildKeyStager = buildKeyStager;
             this.probeKeyRecord = probeKeyRecord;
             this.symbolKeyView = symbolKeyView;
+            this.swapProbeKeySink = swapProbeKeySink;
+            this.swapProbeKeyRecord = swapProbeKeyRecord;
         }
 
         @Override
@@ -1454,6 +1557,9 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
             // about to release, so they drop both here. The objects stay for the next execution.
             if (probeKeyRecord != null) {
                 probeKeyRecord.close();
+            }
+            if (swapProbeKeyRecord != null) {
+                swapProbeKeyRecord.close();
             }
             if (symbolKeyView != null) {
                 symbolKeyView.close();
@@ -1473,6 +1579,12 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
             if (partitionedRecordProbe != null) {
                 partitionedRecordProbe.close();
             }
+            if (swapRecordProbe != null) {
+                swapRecordProbe.close();
+            }
+            if (swapPartitionedRecordProbe != null) {
+                swapPartitionedRecordProbe.close();
+            }
             // The stager holds the last key it staged, and its scratch, in memory this execution
             // charged; a parallel build closed it after its frame tasks already.
             if (buildKeyStager != null) {
@@ -1490,9 +1602,14 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
             recordProbe = null;
             failure = Misc.freeBestEffort(failure, partitionedRecordProbe);
             partitionedRecordProbe = null;
+            failure = Misc.freeBestEffort(failure, swapRecordProbe);
+            swapRecordProbe = null;
+            failure = Misc.freeBestEffort(failure, swapPartitionedRecordProbe);
+            swapPartitionedRecordProbe = null;
             probe = null;
             failure = Misc.freeBestEffort(failure, buildKeyStager);
             failure = Misc.freeBestEffort(failure, probeKeyRecord);
+            failure = Misc.freeBestEffort(failure, swapProbeKeyRecord);
             failure = Misc.freeBestEffort(failure, symbolKeyView);
             failure = Misc.freeBestEffort(failure, buildRecord);
             CairoException.rethrowCleanupFailure(failure);
@@ -1520,9 +1637,28 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
         }
 
         /**
-         * The translation path of one SYMBOL key column, wherever this slot keeps it.
+         * Binds the second key source, as {@link #ofKeySource(Record)} binds the first, which
+         * {@link #swapKeyRecord} then reads for the staged key sink of the second layout. The INT
+         * layout reads its key straight off the source, at the column that its stepper picks.
          */
-        private SymbolKeyTranslator.View getSymbolKeyView(int key) {
+        void ofSwapKeySource(Record keySource) {
+            if (swapProbeKeyRecord != null) {
+                swapProbeKeyRecord.of(keySource);
+                swapKeyRecord = swapProbeKeyRecord;
+            } else {
+                swapKeyRecord = keySource;
+            }
+        }
+
+        /**
+         * The translation path of one SYMBOL key column, wherever this slot keeps it for the key
+         * source that the execution reads: the translating record of the second source when the
+         * slot has one, the first's otherwise. The views of both translate alike, by key ordinal.
+         */
+        private SymbolKeyTranslator.View getSymbolKeyView(int key, boolean isKeySourceSwapped) {
+            if (isKeySourceSwapped && swapProbeKeyRecord != null) {
+                return swapProbeKeyRecord.getView(key);
+            }
             return probeKeyRecord != null ? probeKeyRecord.getView(key) : symbolKeyView;
         }
     }

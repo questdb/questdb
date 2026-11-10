@@ -52,6 +52,10 @@ import org.jetbrains.annotations.TestOnly;
  * A later join of the query whose keys read the left input's columns alone, a star join, joins the
  * rows of the joins before it, which no page frame holds: the planner absorbs it into the same
  * operator instead, as a stage of its own; see {@link #addStage(HashJoinStageSpec, RecordMetadata)}.
+ * A stack whose first join may swap its inputs takes later joins too: an execution that swaps them
+ * holds the left input's rows in the first stage's build, from which the later stages then read their
+ * keys, as each later stage's swap key source layout lays them out; see
+ * {@link HashJoinStageSpec#getSwapKeySourceLayout()}.
  * The spec goes on from one factory to the next as the planner absorbs the joins, with the stages
  * and their steppers, and with the answers recorded so far, so a parent's question asked of an
  * earlier factory still holds for the last one.
@@ -69,15 +73,16 @@ public final class AsyncHashJoinSpec implements QuietCloseable {
     // the left input, or a payload column of a stage.
     private final IntList columnIndexes = new IntList();
     // The same, once the first join swapped its inputs: a payload column of the first stage for a
-    // column of the left input, and a frame column of the right input for a column of the first
-    // stage; empty when the join never swaps.
+    // column of the left input, a frame column of the right input for a column of the first stage,
+    // and a later stage's payload column for each of its columns, as in the query's orientation;
+    // empty when the join never swaps.
     private final IntList columnIndexesB = new IntList();
     // For each column of the joined rows, the record that holds it: 0 for the left input's frames,
     // k + 1 for stage k's payload.
     private final IntList columnSources = new IntList();
     // The same, once the first join swapped its inputs: 1 for the left input, whose rows the first
-    // stage holds, and 0 for the first stage's columns, which the right input's frames hold; empty
-    // when the join never swaps.
+    // stage holds, 0 for the first stage's columns, which the right input's frames hold, and k + 1 for
+    // a later stage k's columns, as in the query's orientation; empty when the join never swaps.
     private final IntList columnSourcesB = new IntList();
     private final boolean isLeftOrderByAdviceFollowed;
     private final boolean isSwapCandidate;
@@ -146,25 +151,32 @@ public final class AsyncHashJoinSpec implements QuietCloseable {
      * star join whose keys read the left input's columns alone, and takes over the stage and the
      * metadata of the rows that join produces: the metadata so far, followed by the stage's build
      * columns. The metadata so far stays with the spec, for the earlier stages, which borrow it.
-     * Only a spec whose first join never swaps its inputs, and that holds fewer than
-     * {@link #MAX_STAGE_COUNT} stages, takes another.
+     * Only a spec that holds fewer than {@link #MAX_STAGE_COUNT} stages takes another. The stage of a
+     * spec whose first join may swap its inputs holds its keys as a swapped execution reads them, from
+     * the first stage's payload, and the stage of any other spec does not; see
+     * {@link HashJoinStageSpec#getSwapKeySourceLayout()}.
      *
      * @param stage    the later join
      * @param metadata the joined rows' metadata of the later join
      */
     public void addStage(HashJoinStageSpec stage, RecordMetadata metadata) {
-        assert !isSwapCandidate : "a join that may swap its inputs takes no later join";
         assert stages.size() < MAX_STAGE_COUNT;
         assert stage.getSwapKeyLayout() == null;
+        assert isSwapCandidate == (stage.getSwapKeySourceLayout() != null);
         assert metadata.getColumnCount() == columnSources.size() + stage.getPayloadColumns().size();
         previousMetadata.add(this.metadata);
         this.metadata = metadata;
         stages.add(stage);
-        // The stage's payload reader reads its payload columns by their payload index.
+        // The stage's payload reader reads its payload columns by their payload index, in either
+        // orientation.
         final int source = stages.size();
         for (int c = 0, n = stage.getPayloadColumns().size(); c < n; c++) {
             columnSources.add(source);
             columnIndexes.add(c);
+            if (isSwapCandidate) {
+                columnSourcesB.add(source);
+                columnIndexesB.add(c);
+            }
         }
     }
 
@@ -261,7 +273,8 @@ public final class AsyncHashJoinSpec implements QuietCloseable {
     /**
      * True when the first join may swap its inputs, as the serial hash join swaps them: an INNER join
      * whose left input offers random access, over two unfiltered table scans that report their
-     * sizes, possibly under projections, whose keys the planner compiled in both orientations.
+     * sizes, possibly under projections, whose keys the planner compiled in both orientations, and
+     * so did every later join's.
      */
     public boolean isSwapCandidate() {
         return isSwapCandidate;
@@ -293,7 +306,8 @@ public final class AsyncHashJoinSpec implements QuietCloseable {
      * A flat record over the joined rows, whose sources the caller binds: the probe scan's frame
      * record and each stage's payload reader; see {@link MultiHashJoinRecord}. A candidate's record
      * holds the column map of the swapped orientation too, in which the probe scan is the right input
-     * and the first stage's payload is the left input.
+     * and the first stage's payload is the left input, while the later stages' payloads hold their
+     * own columns, as in the query's orientation.
      */
     public MultiHashJoinRecord newJoinedRecord() {
         final ObjList<ColumnTypes> payloadTypes = new ObjList<>();
@@ -305,6 +319,9 @@ public final class AsyncHashJoinSpec implements QuietCloseable {
         }
         final ObjList<ColumnTypes> payloadTypesB = new ObjList<>();
         payloadTypesB.add(leftInput.getColumnTypes());
+        for (int i = 1, n = stages.size(); i < n; i++) {
+            payloadTypesB.add(payloadTypes.getQuick(i));
+        }
         return new MultiHashJoinRecord(columnSources, columnIndexes, payloadTypes, columnSourcesB, columnIndexesB, payloadTypesB);
     }
 

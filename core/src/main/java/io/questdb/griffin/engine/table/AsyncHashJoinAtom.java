@@ -77,12 +77,20 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
  * execution that swaps the inputs builds instead, while the right input's frames go to the probe
  * tasks. Each execution picks one orientation, and the stage, the probe scan, the steppers, the
  * joined records and the joined rows' symbol tables follow it until the next execution;
- * {@link #getStage(int)} returns the execution's stages.
+ * {@link #getStage(int)} returns the execution's stages. The later stages of such a stack read their
+ * keys off the left input's columns, which a swapped execution holds in the first stage's build: each
+ * slot then reads them from its own payload reader of the first stage, which the first stage's
+ * stepper positions on every one of its matches before it hands the match on, so that the workers
+ * walk the first stage's matches whenever later stages follow it. The later stages translate their
+ * SYMBOL keys from the left input's dictionaries and presize their key tables by the left input's
+ * table in either orientation: the probe scan holds them in the query's, the first stage's build scan
+ * in a swapped one.
  * <p>
  * A probe task joins one frame, see {@link #probeFrame}: it keeps the frame's rows that the probe
  * filter passes, if the probe input has one, and for each kept row, in the probe scan's order, the
  * first stage's stepper looks the row's key up and hands each match on to the next stage's stepper,
- * and so on, every later stage's key read off the probe row too, and the last stage appends the row
+ * and so on, every later stage's key read off the probe row too, or, in a swapped execution, off the
+ * first stage's current match, which holds the left input's row, and the last stage appends the row
  * and every stage's entry to the frame's ring entry, which the consumer reads in frame order. A stage
  * with an ON residual or a post-join filter runs them over each pair on the slot's flat joined
  * record, with the slot's copies of the filters, and the workers walk the matches of every stage up
@@ -182,6 +190,9 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
                 lastEnumeratedStage = k;
             }
         }
+        // A swapped execution's later stages read the left input's columns from the first stage's
+        // payload, which holds them in the order the left input as compiled lists them.
+        final int leftPayloadColumnCount = leftInput.getColumnMap().size();
         for (int k = 0; k < stageCount; k++) {
             final HashJoinStageSpec stageSpec = spec.getStage(k);
             final HashJoinInput buildInput = stageSpec.getBuildInput();
@@ -193,6 +204,8 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
                     keyLayout,
                     stageSpec.getPayloadColumns(),
                     probeColumnCount,
+                    stageSpec.getSwapKeySourceLayout(),
+                    leftPayloadColumnCount,
                     buildInput.getOrder(),
                     workerCount
             );
@@ -227,9 +240,16 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
             );
             final HashJoinStageStepper swapStepper = firstSpec.getSwapStepper();
             assert swapStepper != null && !firstSpec.isOuter();
-            // A join that may swap its inputs runs one stage; see AsyncHashJoinSpec.addStage().
-            assert stageCount == 1;
-            ofStepper(swapStepper, swapKeyLayout, false, firstSpec.hasPairFilter(), null);
+            // Swapped, the later stages read their keys from the first stage's payload reader, which
+            // only a walk of the first stage's matches positions on each of them, so the workers walk
+            // them when any later stage follows, whether or not a filter reads them.
+            ofStepper(
+                    swapStepper,
+                    swapKeyLayout,
+                    false,
+                    lastEnumeratedStage > -1 || stageCount > 1,
+                    stageCount > 1 ? spec.getStage(1).getStepper() : null
+            );
         } else {
             swapStage = null;
         }
@@ -364,14 +384,16 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
         pendingBuildCursor = null;
         // The stage owns the build scan from here on, whether its init returns or throws.
         getStage(0).init(symbolTableSource, executionContext, buildCursor);
-        // A later stage's keys read the left input's columns, which the probe scan holds, so it
-        // translates its SYMBOL keys from the probe scan's dictionaries and presizes its key table by
-        // the probe scan's table; it opens its own build scan, in its input's scan order.
+        // A later stage's keys read the left input's columns, which the probe scan holds, or, in a
+        // swapped execution, the first stage's build scan, which is then the left input's scan. The
+        // stage translates its SYMBOL keys from that scan's dictionaries and presizes its key table by
+        // its table, and it opens its own build scan, in its input's scan order.
+        final SymbolTableSource leftSymbols = isSwapped ? getStage(0).getBuildSymbols() : symbolTableSource;
         for (int k = 1, n = executionStages.size(); k < n; k++) {
             final HashJoinInput buildInput = specs.getQuick(k).getBuildInput();
             final PageFrameCursor laterBuildCursor = buildInput.getFactory().getPageFrameCursor(executionContext, buildInput.getOrder());
             // The stage owns the build scan from here on, whether its init returns or throws.
-            executionStages.getQuick(k).init(symbolTableSource, executionContext, laterBuildCursor);
+            executionStages.getQuick(k).init(leftSymbols, executionContext, laterBuildCursor);
         }
         for (int i = 0, n = slots.size(); i < n; i++) {
             final Slot slot = slots.getQuick(i);
@@ -439,8 +461,11 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
             stage.build(circuitBreaker, buildRounds);
             stage.bindSymbolKeyTranslation(circuitBreaker);
             stage.bindProbes();
+            // Swapped, a later stage's keys read the left input's columns off the first stage's
+            // payload reader, which the first stage bound to each slot before.
+            final boolean isKeySourceSwapped = isSwapped && k > 0;
             for (int i = -1; i < workerCount; i++) {
-                getSlot(i).bindStage(k, stage, stage.getSlot(i));
+                getSlot(i).bindStage(k, stage, stage.getSlot(i), isKeySourceSwapped);
             }
             hasRows &= specs.getQuick(k).isOuter() || stage.getFrozenBuild().getRowCount() > 0;
         }
@@ -690,8 +715,9 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
         return isCancelled ? HashJoinStageStepper.CANCELLED : tuples.size() / ring.getTupleStride();
     }
 
-    // Points the probe side at the orientation: the probe input's scan order and filter, and the first
-    // stage's stepper.
+    // Points the probe side at the orientation: the probe input's scan order and filter, the first
+    // stage's stepper, and the key source of every later stage: the probe record, or, swapped, the
+    // first stage's payload, whose columns sit elsewhere.
     private void ofOrientation0(boolean isSwapped) {
         this.isSwapped = isSwapped;
         executionStages.setQuick(0, isSwapped ? swapStage : stages.getQuick(0));
@@ -703,6 +729,15 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
         isProbeDescending = probeInput.getOrder() == ORDER_DESC;
         final HashJoinStageSpec firstSpec = specs.getQuick(0);
         stepper = isSwapped ? firstSpec.getSwapStepper() : firstSpec.getStepper();
+        if (swapStage != null) {
+            for (int k = 1, n = specs.size(); k < n; k++) {
+                final HashJoinStageSpec stageSpec = specs.getQuick(k);
+                final HashJoinKeyLayout keyLayout = isSwapped ? stageSpec.getSwapKeySourceLayout() : stageSpec.getKeyLayout();
+                assert keyLayout != null;
+                stageSpec.getStepper().ofKeyColumn(keyLayout.isKeyStaged() ? -1 : keyLayout.getProbeKeyColumn());
+                stages.getQuick(k).setKeySourceSwapped(isSwapped);
+            }
+        }
     }
 
     /**
@@ -776,8 +811,10 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
         }
 
         // Binds the slot to the k-th stage's build for the open cursor's execution, casting the
-        // stage slot's probe once, so that the stepper's call sites see one probe class.
-        void bindStage(int k, HashJoinBuildStage stage, HashJoinBuildStage.Slot stageSlot) {
+        // stage slot's probe once, so that the stepper's call sites see one probe class. A later
+        // stage of a swapped execution reads its keys off the slot's payload reader of the first
+        // stage, which the slot bound before.
+        void bindStage(int k, HashJoinBuildStage stage, HashJoinBuildStage.Slot stageSlot, boolean isKeySourceSwapped) {
             final StageProbe stageProbe = stageProbes.getQuick(k);
             final FrozenHashJoinBuild.Probe probe = stageSlot.getProbe();
             if (stage.isKeyStaged()) {
@@ -785,8 +822,16 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
             } else {
                 stageProbe.intProbe = (FrozenHashJoinBuild.IntProbe) probe;
             }
-            stageProbe.keyRecord = stageSlot.keyRecord;
-            stageProbe.keySource = probeRecord;
+            if (isKeySourceSwapped) {
+                final HashJoinPayloadSource.Reader keySource = stageProbes.getQuick(0).reader;
+                assert k > 0 && keySource != null;
+                stageSlot.ofSwapKeySource(keySource);
+                stageProbe.keyRecord = stageSlot.swapKeyRecord;
+                stageProbe.keySource = keySource;
+            } else {
+                stageProbe.keyRecord = stageSlot.keyRecord;
+                stageProbe.keySource = probeRecord;
+            }
             stageProbe.symbolKeyView = stageSlot.symbolKeyView;
             stageProbe.reader = (HashJoinPayloadSource.Reader) probe.getRecord();
             stageProbe.isBuildUnique = stage.isBuildUnique();

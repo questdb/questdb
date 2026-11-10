@@ -56,7 +56,11 @@ import org.jetbrains.annotations.TestOnly;
  * them in, and the consumer walks no chain. Since a filter may read the columns of every stage before
  * its own, every stage before the last enumerated one is enumerated too, with its payload reader on
  * the current match, and only the stages after it hand their chains to the consumer, which expands
- * them in the same nesting order. The stepper checks the circuit breaker every so many pairs, see
+ * them in the same nesting order. So is the first stage of an execution that swaps the first join's
+ * inputs whenever later stages follow it: the later stages' keys read the left input's columns,
+ * which such an execution holds in the first stage's payload, so the first stage's payload reader
+ * must sit on each of its matches in turn while the later stages look them up; see
+ * {@link #ofKeyColumn(int)}. The stepper checks the circuit breaker every so many pairs, see
  * {@link AsyncHashJoinAtom.Slot#isInterrupted()}, and unwinds once the execution is cancelled.
  * <p>
  * The loops over a frame's rows stop at a probe row's boundary once the tuples reach their cap, so
@@ -130,6 +134,20 @@ abstract class HashJoinStageStepper {
         this.isOuter = isOuter;
         this.isEnumerated = isEnumerated;
         this.next = next;
+    }
+
+    /**
+     * Points an INT or SYMBOL key at another column of its key source, for an execution whose key
+     * source lays the columns out differently: a later stage of a stack reads the left input's
+     * columns from the probe record, or, once an execution swaps the first join's inputs, from the
+     * first stage's payload. The owner calls it before it dispatches the execution's first task,
+     * which publishes it to the workers.
+     *
+     * @param keyColumn the key source's column that the key reads, -1 for a staged key
+     */
+    final void ofKeyColumn(int keyColumn) {
+        assert (keyColumn == -1) == (keyKind == KEY_STAGED);
+        this.keyColumn = keyColumn;
     }
 
     /**

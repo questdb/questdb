@@ -63,7 +63,10 @@ import java.util.concurrent.atomic.AtomicInteger;
  * The later joins of a star query, whose keys read the left input's columns alone, run as later
  * stages of the same operator, see {@link AsyncHashJoinSpec#addStage}: a probe task joins each of a
  * probe row's matches of one stage with the next stage, so the rows come in the order of the serial
- * joins' nested loops, and every stage builds, in stage order, before the first probe task runs.
+ * joins' nested loops, and every stage builds, in stage order, before the first probe task runs. A
+ * stack whose first join swaps its inputs in an execution, as described below, streams the first
+ * join's right input, and its later stages read their keys from each of the first stage's matches,
+ * the left input's rows, as the serial later joins read them from the swapped first join's rows.
  * <p>
  * The factory owns the join's spec, see {@link AsyncHashJoinSpec}: the inputs, their filter
  * contexts, the stages and the joined rows' metadata. It answers the order questions a parent asks a
