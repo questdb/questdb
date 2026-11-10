@@ -326,6 +326,36 @@ public class SetFilterPushdownTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStatefulFiltersStayAboveMixedPrecisionSets() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE lp_sp_rollup (ts TIMESTAMP_NS,a INT,v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE lp_sp_plain (ts TIMESTAMP,a INT,v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO lp_sp_rollup VALUES ('2024-01-01',1,3)");
+            execute("INSERT INTO lp_sp_plain VALUES ('2024-01-01',1,3)");
+            final String[] producers = {
+                    "SELECT ts,a,SUM(v) s FROM lp_sp_rollup GROUP BY ROLLUP(ts,a)",
+                    "SELECT ts,a,SUM(v) s FROM lp_sp_rollup GROUP BY GROUPING SETS ((ts,a),(ts),())",
+                    "SELECT ts,a,v FROM lp_sp_rollup"
+            };
+            final String[] stableCounts = {"4", "4", "2"};
+            for (int i = 0; i < producers.length; i++) {
+                final String set = " FROM (" + producers[i] + " UNION ALL SELECT ts,a,v FROM lp_sp_plain)";
+                // every row of the set reads hour 0, and only the sequence's first value is 0
+                assertQuery("SELECT count()" + set + " WHERE coalesce(hour(ts),0)=timestamp_sequence(0,1)::LONG")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("count\n1\n");
+                assertQuery("SELECT count()" + set + " WHERE coalesce(hour(ts),0)=0")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("count\n" + stableCounts[i] + "\n");
+            }
+        });
+    }
+
+    @Test
     public void testTextAndTimestampFiltersBindOverUnifiedType() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE lp_sp_ts (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");

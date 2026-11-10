@@ -452,9 +452,6 @@ public final class SqlBinder implements Mutable {
             final BoundExpression right = bindFilterConjunct(expression.rhs, input, alias, true, executionContext);
             return ctx.expressionRewriter.combineConjunction(left, right, expression.position);
         }
-        if (distributeSetFilter(expression, input, input.getOutput(), alias, executionContext)) {
-            return ctx.planNodes.constants.next().ofBoolean(true, expression.position);
-        }
         final IntHashSet nativeTimestampIds = ctx.scope().joinNativeTimestampIds;
         nativeTimestampIds.clear();
         if (hasSinglePredicateSource(expression, input, alias)) {
@@ -462,6 +459,9 @@ public final class SqlBinder implements Mutable {
         }
         final BoundExpression bound = ctx.functionBinder.bindPredicate(expression, input.getOutput(), alias,
                 nativeTimestampIds, isAndArgument ? ColumnType.BOOLEAN : ColumnType.UNDEFINED, executionContext);
+        if (LogicalPlans.isStableWithinExecution(bound) && distributeSetFilter(expression, input, input.getOutput(), alias, executionContext)) {
+            return ctx.planNodes.constants.next().ofBoolean(true, expression.position);
+        }
         if (!isAndArgument) {
             return bound;
         }
