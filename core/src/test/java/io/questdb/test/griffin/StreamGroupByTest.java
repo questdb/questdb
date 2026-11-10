@@ -1466,7 +1466,46 @@ public class StreamGroupByTest extends AbstractCairoTest {
                         x\tc\to
                         1\t1\t1
                         """);
+                final String counts = "(SELECT x, count() c FROM long_sequence(2) GROUP BY x UNION ALL SELECT x, count() c FROM long_sequence(2) GROUP BY x)";
+                final String records = "(SELECT x, pg_catalog.pg_database() r FROM long_sequence(2))";
+                assertRows(compiler, context, "SELECT c, (r).oid o FROM (SELECT b.c, a.r FROM " + records + " a LEFT JOIN " + counts + " b ON a.x = b.x LIMIT -1)", """
+                        c\to
+                        1\t1
+                        """);
+                context.getBindVariableService().setLong(0, 1);
+                assertRows(compiler, context, "SELECT c, (r).oid o FROM (SELECT b.c, a.r FROM " + records + " a LEFT JOIN " + counts + " b ON a.x = b.x LIMIT $1)", """
+                        c\to
+                        1\t1
+                        """);
+                context.getBindVariableService().clear();
+                // The hash join keeps its slave across a rewind, so only a recomputing master needs a copy.
+                for (String join : new String[]{"JOIN " + counts + " b ON a.x = b.x", "LEFT JOIN " + counts + " b ON a.x = b.x", "LEFT JOIN " + counts + " b ON a.x = b.x AND a.x + b.c > 1"}) {
+                    final String sql = "SELECT a.x, b.c FROM long_sequence(2) a " + join + " LIMIT -1";
+                    assertRows(compiler, context, sql, """
+                            x\tc
+                            2\t1
+                            """);
+                    if (isStream) {
+                        try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()) {
+                            final String plan = plan(factory, context);
+                            Assert.assertTrue(plan, plan.contains("Hash") && plan.contains("Stream Group By") && !plan.contains("Materialize"));
+                        }
+                    }
+                }
+                assertRows(compiler, context, "SELECT a.ts, b.c FROM t a ASOF JOIN (SELECT ts, count() c FROM t SAMPLE BY 1h) b LIMIT -1", """
+                        ts\tc
+                        2024-01-01T01:20:00.000000Z\t2
+                        """);
+                final String streamMaster = "SELECT a.c FROM (SELECT x, count() c FROM long_sequence(2) GROUP BY x) a JOIN long_sequence(2) b ON a.x = b.x LIMIT -1";
+                assertRows(compiler, context, streamMaster, """
+                        c
+                        1
+                        """);
                 if (isStream) {
+                    try (RecordCursorFactory factory = compiler.compile(streamMaster, context).getRecordCursorFactory()) {
+                        final String plan = plan(factory, context);
+                        Assert.assertTrue(plan, plan.contains("Hash Join") && plan.contains("Stream Group By") && plan.contains("Materialize"));
+                    }
                     try (RecordCursorFactory factory = compiler.compile("SELECT ts, c, (r).oid o FROM (" + buckets + " LATEST ON ts PARTITION BY c)", context).getRecordCursorFactory()) {
                         final String plan = plan(factory, context);
                         Assert.assertTrue(plan, plan.contains("Cross Join") && plan.contains("Materialize") && plan.contains("Stream Group By"));

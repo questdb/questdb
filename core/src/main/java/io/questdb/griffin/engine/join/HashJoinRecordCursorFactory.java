@@ -180,6 +180,11 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
         CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
+    @Override
+    protected boolean isSlaveHashed() {
+        return true;
+    }
+
     private class HashJoinRecordCursor extends AbstractJoinCursor {
         private final Map joinKeyMap;
         private final JoinRecord recordA;
