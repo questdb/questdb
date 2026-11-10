@@ -28,20 +28,29 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.test.TestFaultFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
+import io.questdb.griffin.engine.groupby.GroupingSetsRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupingSetsRecordCursorFactory;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.QueryModelWrapper;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
@@ -55,6 +64,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 public class GroupingSetsTest extends AbstractCairoTest {
 
@@ -66,19 +76,26 @@ public class GroupingSetsTest extends AbstractCairoTest {
         // assertMemoryLeak then checks that nothing stayed allocated.
         // The filtered query takes the filter over into the parallel factory, and trim() allocates a
         // native sink when it compiles, so a failure that lands in the factory must free it too.
+        // Every run, failed or finished, must give back what it charged to the query's memory
+        // tracker when its cursor closes, as the tracker goes back to its pool then: the cast to
+        // SYMBOL key interns into a dictionary charged to it. Each step reads the tracker while the
+        // factory, whose close frees the dictionary too, is still open.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (a INT, b INT, v LONG, s VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t SELECT (x % 50)::INT, (x % 7)::INT, x, ' k' || (x % 3), (x * 60_000_000)::TIMESTAMP FROM long_sequence(5_000)");
             final String cubeQuery = "SELECT a, b, grouping_id(a, b) g, sum(v) FROM t GROUP BY CUBE(a, b)";
             final String filteredQuery = "SELECT trim(s) k, a, sum(v) sv FROM t WHERE v > 10 GROUP BY k, ROLLUP(a)";
+            final String castKeyQuery = "SELECT cast(s AS SYMBOL) k, a, sum(v) sv FROM t WHERE v > 10 GROUP BY k, ROLLUP(a)";
             for (int i = 0; i < 2; i++) {
                 sqlExecutionContext.setParallelGroupByEnabled(i == 1);
-                for (String query : new String[]{cubeQuery, filteredQuery}) {
+                for (String query : new String[]{cubeQuery, filteredQuery, castKeyQuery}) {
                     int failures = 0;
                     int successes = 0;
                     for (int isArmedBeforeCompile = 0; isArmedBeforeCompile < 2; isArmedBeforeCompile++) {
                         for (long slack = 0; slack <= 512 * 1024; slack += 4 * 1024) {
                             final long savedLimit = Unsafe.getRssMemLimit();
+                            MemoryTracker tracker = null;
+                            long trackerUsedAfterClose = 0;
                             try {
                                 if (isArmedBeforeCompile == 1) {
                                     Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + slack);
@@ -88,8 +105,14 @@ public class GroupingSetsTest extends AbstractCairoTest {
                                         Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + slack);
                                     }
                                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                        tracker = sqlExecutionContext.getMemoryTracker();
                                         while (cursor.hasNext()) {
                                             // drain
+                                        }
+                                    } finally {
+                                        // the cursor has closed here, the factory has not
+                                        if (tracker != null) {
+                                            trackerUsedAfterClose = tracker.getUsed();
                                         }
                                     }
                                 }
@@ -100,6 +123,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
                             } finally {
                                 Unsafe.setRssMemLimit(savedLimit);
                             }
+                            Assert.assertEquals("the closed cursor left memory charged to its tracker: " + query, 0, trackerUsedAfterClose);
                         }
                     }
                     Assert.assertTrue("the sweep never failed an allocation: " + query, failures > 0);
@@ -115,6 +139,11 @@ public class GroupingSetsTest extends AbstractCairoTest {
                         "SELECT * FROM (SELECT trim(s) k, a, sum(v) sv FROM t WHERE v > 10 GROUP BY k, a " +
                                 "UNION ALL SELECT trim(s) k, NULL::INT a, sum(v) sv FROM t WHERE v > 10 GROUP BY k) ORDER BY k, a",
                         filteredQuery + " ORDER BY k, a"
+                );
+                assertSqlCursors(
+                        "SELECT * FROM (SELECT cast(s AS SYMBOL) k, a, sum(v) sv FROM t WHERE v > 10 GROUP BY k, a " +
+                                "UNION ALL SELECT cast(s AS SYMBOL) k, NULL::INT a, sum(v) sv FROM t WHERE v > 10 GROUP BY k) ORDER BY k, a",
+                        castKeyQuery + " ORDER BY k, a"
                 );
             }
         });
@@ -249,6 +278,420 @@ public class GroupingSetsTest extends AbstractCairoTest {
                             + "1\t20\t4.0\n"
                             + "2\tnull\t5.0\n"
                             + "2\t10\t5.0\n");
+        });
+    }
+
+    @Test
+    public void testCachedCastToSymbolKeyQueryAfterTableChanges() throws Exception {
+        // A cached statement runs one compiled factory while the table changes under it. Each run
+        // returns the rows the table holds then, and its cursor close frees the dictionary of the
+        // cast key: new keys after the INSERT, no rows after the TRUNCATE. A new column makes the
+        // factory stale; the open fails before it builds anything, and the recompiled factory runs.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v VARCHAR, s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t SELECT 'k' || (x % 300), 's' || (x % 3), (x * 1_000_000L)::TIMESTAMP FROM long_sequence(1_000)");
+            final String query = "SELECT cast(v AS SYMBOL) k, s, count() c FROM t GROUP BY k, ROLLUP(s) ORDER BY k, s";
+            final String reference = "SELECT * FROM (SELECT cast(v AS SYMBOL) k, s, count() c FROM t GROUP BY k, s"
+                    + " UNION ALL SELECT cast(v AS SYMBOL) k, NULL::SYMBOL s, count() c FROM t GROUP BY k) ORDER BY k, s";
+            try (RecordCursorFactory factory = select(query)) {
+                assertCursorReleasesCastDictionaries(factory, printReference(reference), true);
+                execute("INSERT INTO t SELECT 'n' || x, 's' || (x % 3), ((1_000 + x) * 1_000_000L)::TIMESTAMP FROM long_sequence(500)");
+                assertCursorReleasesCastDictionaries(factory, printReference(reference), true);
+                execute("ALTER TABLE t ADD COLUMN x INT");
+                final long rssBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS);
+                try {
+                    factory.getCursor(sqlExecutionContext).close();
+                    Assert.fail("the factory must be stale after ADD COLUMN");
+                } catch (TableReferenceOutOfDateException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "cached query plan cannot be used because table schema has changed [table=t");
+                }
+                Assert.assertEquals(rssBefore, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS));
+                assertNextStatementRuns();
+            }
+            try (RecordCursorFactory factory = select(query)) {
+                assertCursorReleasesCastDictionaries(factory, printReference(reference), true);
+                execute("TRUNCATE TABLE t");
+                assertCursorReleasesCastDictionaries(factory, "k\ts\tc\n", false);
+            }
+        });
+    }
+
+    @Test
+    public void testCastToSymbolKeyFailureReleasesDictionary() throws Exception {
+        // A run that stops early must free the dictionary of its cast key when its cursor closes, so
+        // the query's tracker goes back to the pool clean: an aggregate that throws mid-scan, a
+        // cancellation while the maps build, a consumer that reads one row and closes, and a later
+        // key whose init fails after the cast's init ran. Each time, the compiled factory then runs
+        // again and returns the rows of the reference.
+        assertMemoryLeak(() -> {
+            // test_fault() folds to TRUE outside dev mode.
+            setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT ('k' || (x % 300))::VARCHAR v, ('s' || (x % 3))::SYMBOL s, x l, (x * 1_000_000L)::TIMESTAMP ts
+                        FROM long_sequence(1_000)
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            final String expected = printReference(
+                    "SELECT * FROM (SELECT cast(v AS SYMBOL) k, s, sum(l) m FROM t GROUP BY k, s"
+                            + " UNION ALL SELECT cast(v AS SYMBOL) k, NULL::SYMBOL s, sum(l) m FROM t GROUP BY k) ORDER BY k, s"
+            );
+            final String query = "SELECT cast(v AS SYMBOL) k, s, sum(CASE WHEN test_fault() THEN l ELSE 0 END) m FROM t GROUP BY k, ROLLUP(s) ORDER BY k, s";
+            try (RecordCursorFactory factory = select(query)) {
+                // The aggregate runs once per row and grouping set, after the row's keys, so the
+                // fault hits mid-scan with about 250 keys interned. The failing hasNext() closes the
+                // query's cursors before it throws.
+                long rssBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS);
+                MemoryTracker tracker;
+                TestFaultFunctionFactory.armToFailAfter(500);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    tracker = sqlExecutionContext.getMemoryTracker();
+                    try {
+                        cursor.hasNext();
+                        Assert.fail("expected the injected fault");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "test_fault: injected failure");
+                    }
+                } finally {
+                    TestFaultFunctionFactory.disarm();
+                }
+                Assert.assertEquals(1, TestFaultFunctionFactory.faultsTriggered());
+                assertCastDictionariesReleased(rssBefore, tracker);
+                assertCursorReleasesCastDictionaries(factory, expected, true);
+
+                // The breaker cancels at its 500th per-row check of the map build.
+                final AtomicLong rssAtCancellation = new AtomicLong();
+                final SqlExecutionCircuitBreaker originalBreaker = sqlExecutionContext.getCircuitBreaker();
+                try (
+                        NetworkSqlExecutionCircuitBreaker breaker = new NetworkSqlExecutionCircuitBreaker(engine, new DefaultSqlExecutionCircuitBreakerConfiguration()) {
+                            private int checks;
+
+                            @Override
+                            public void statefulThrowExceptionIfTrippedOrYield() {
+                                if (++checks == 500) {
+                                    rssAtCancellation.set(Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS));
+                                    cancel();
+                                    statefulThrowExceptionIfTrippedNoThrottle();
+                                }
+                                super.statefulThrowExceptionIfTrippedOrYield();
+                            }
+                        }
+                ) {
+                    ((SqlExecutionContextImpl) sqlExecutionContext).with(breaker);
+                    rssBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS);
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        tracker = sqlExecutionContext.getMemoryTracker();
+                        try {
+                            cursor.hasNext();
+                            Assert.fail("expected cancellation while the maps build");
+                        } catch (CairoException e) {
+                            TestUtils.assertContains(e.getFlyweightMessage(), "cancelled by user");
+                            Assert.assertTrue(e.isCancellation());
+                        }
+                    }
+                } finally {
+                    ((SqlExecutionContextImpl) sqlExecutionContext).with(originalBreaker);
+                }
+                Assert.assertTrue("the cancellation came before the keys were interned", rssAtCancellation.get() > rssBefore);
+                assertCastDictionariesReleased(rssBefore, tracker);
+                assertCursorReleasesCastDictionaries(factory, expected, true);
+
+                rssBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    tracker = sqlExecutionContext.getMemoryTracker();
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertTrue("the first row came before the keys were interned", Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS) > rssBefore);
+                }
+                assertCastDictionariesReleased(rssBefore, tracker);
+                assertCursorReleasesCastDictionaries(factory, expected, true);
+            }
+
+            // test_fault() as a second key: its init fails after the cast's init bound the tracker.
+            final String expectedWithFaultKey = printReference(
+                    "SELECT * FROM (SELECT cast(v AS SYMBOL) k, true f, s, sum(l) m FROM t GROUP BY k, s"
+                            + " UNION ALL SELECT cast(v AS SYMBOL) k, true f, NULL::SYMBOL s, sum(l) m FROM t GROUP BY k) ORDER BY k, s"
+            );
+            try (RecordCursorFactory factory = select("SELECT cast(v AS SYMBOL) k, test_fault() f, s, sum(l) m FROM t GROUP BY k, f, ROLLUP(s) ORDER BY k, s")) {
+                final long rssBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS);
+                TestFaultFunctionFactory.armToFailAfterInits(0);
+                try {
+                    factory.getCursor(sqlExecutionContext).close();
+                    Assert.fail("expected the injected init fault");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "test_fault: injected init failure");
+                } finally {
+                    TestFaultFunctionFactory.disarm();
+                }
+                Assert.assertEquals(1, TestFaultFunctionFactory.faultsTriggered());
+                Assert.assertEquals(rssBefore, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS));
+                assertNextStatementRuns();
+                assertCursorReleasesCastDictionaries(factory, expectedWithFaultKey, true);
+            }
+        });
+    }
+
+    @Test
+    public void testCastToSymbolKeyQueryMemoryLimit() throws Exception {
+        // Raises the per-query memory limit step by step, so the limit stops the query at the
+        // allocations of its maps, its sort and its cast dictionary, until it lets the query finish.
+        // A stopped run fails with a clean out-of-memory error and, like a finished one, gives back
+        // everything it charged when its cursor closes, so the next statement gets a clean tracker.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT ('k' || (x % 300))::VARCHAR v, ('s' || (x % 3))::SYMBOL s, (x * 1_000_000L)::TIMESTAMP ts
+                        FROM long_sequence(1_000)
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            final String expected = printReference(
+                    "SELECT * FROM (SELECT cast(v AS SYMBOL) k, s, count() c FROM t GROUP BY k, s"
+                            + " UNION ALL SELECT cast(v AS SYMBOL) k, NULL::SYMBOL s, count() c FROM t GROUP BY k) ORDER BY k, s"
+            );
+            try (RecordCursorFactory factory = select("SELECT cast(v AS SYMBOL) k, s, count() c FROM t GROUP BY k, ROLLUP(s) ORDER BY k, s")) {
+                int failures = 0;
+                boolean isFinished = false;
+                for (long limit = 4 * 1024; !isFinished; limit += 4 * 1024) {
+                    Assert.assertTrue("the query did not finish under a limit of " + limit, limit <= 64 * 1024 * 1024);
+                    final long rssBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS);
+                    MemoryTracker tracker = null;
+                    setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, limit);
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        tracker = sqlExecutionContext.getMemoryTracker();
+                        sink.clear();
+                        TestUtils.assertCursor(expected, cursor, factory.getMetadata(), true, sink);
+                        isFinished = true;
+                    } catch (CairoException e) {
+                        Assert.assertTrue("expected out of memory, got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                        TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                        failures++;
+                    } finally {
+                        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
+                    }
+                    Assert.assertEquals("limit " + limit, rssBefore, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS));
+                    if (tracker != null) {
+                        Assert.assertEquals("limit " + limit, 0, tracker.getUsed());
+                    }
+                    assertNextStatementRuns();
+                }
+                Assert.assertTrue("the limit never stopped the query", failures > 0);
+            }
+        });
+    }
+
+    @Test
+    public void testCastToSymbolKeyReleasesDictionaryInContexts() throws Exception {
+        // A grouping sets query with a cast to SYMBOL key frees the key's dictionary when the
+        // cursor of the enclosing query closes, wherever the query sits. The reference spells the
+        // ROLLUP out as one plain GROUP BY per grouping set.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT ('k' || (x % 50))::VARCHAR v, ('s' || (x % 3))::SYMBOL s, x l, (x * 600_000_000L)::TIMESTAMP ts
+                        FROM long_sequence(600)
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            execute("CREATE TABLE u AS (SELECT ('k' || x)::SYMBOL k, x w FROM long_sequence(10))");
+            final String rollup = "SELECT cast(v AS SYMBOL) k, s, count() c FROM t GROUP BY k, ROLLUP(s)";
+            final String detail = "SELECT cast(v AS SYMBOL) k, s, count() c FROM t GROUP BY k, s";
+            final String subtotal = "SELECT cast(v AS SYMBOL) k, NULL::SYMBOL s, count() c FROM t GROUP BY k";
+            final String reference = "(" + detail + " UNION ALL " + subtotal + ")";
+            final String[][] queries = {
+                    {"WITH q AS (" + rollup + ") SELECT * FROM q ORDER BY k, s", "WITH q AS " + reference + " SELECT * FROM q ORDER BY k, s"},
+                    {"SELECT * FROM (" + rollup + ") WHERE c > 4 ORDER BY k, s", "SELECT * FROM " + reference + " WHERE c > 4 ORDER BY k, s"},
+                    {rollup + " ORDER BY k, s LIMIT 5", "SELECT * FROM " + reference + " ORDER BY k, s LIMIT 5"},
+                    {rollup + " ORDER BY k, s LIMIT -5", "SELECT * FROM " + reference + " ORDER BY k, s LIMIT -5"},
+                    {
+                            "SELECT * FROM (" + rollup + " UNION ALL " + rollup + ") ORDER BY k, s",
+                            "SELECT * FROM (" + detail + " UNION ALL " + subtotal + " UNION ALL " + detail + " UNION ALL " + subtotal + ") ORDER BY k, s"
+                    },
+                    // EXCEPT the detail rows leaves the subtotals, INTERSECT keeps the detail rows
+                    {"SELECT * FROM (" + rollup + " EXCEPT " + detail + ") ORDER BY k, s", "SELECT * FROM (" + subtotal + ") ORDER BY k, s"},
+                    {"SELECT * FROM (" + rollup + " INTERSECT " + detail + ") ORDER BY k, s", "SELECT * FROM (" + detail + ") ORDER BY k, s"},
+                    {
+                            "SELECT r.k, r.s, r.c, u.w FROM (" + rollup + ") r JOIN u ON r.k = u.k ORDER BY r.k, r.s",
+                            "SELECT r.k, r.s, r.c, u.w FROM " + reference + " r JOIN u ON r.k = u.k ORDER BY r.k, r.s"
+                    },
+                    {
+                            "SELECT k, s, c, row_number() OVER (PARTITION BY k ORDER BY c, s) rn FROM (" + rollup + ") ORDER BY k, s",
+                            "SELECT k, s, c, row_number() OVER (PARTITION BY k ORDER BY c, s) rn FROM " + reference + " ORDER BY k, s"
+                    },
+                    {
+                            "SELECT ts, cast(v AS SYMBOL) k, s, count() c FROM t SAMPLE BY 1h GROUPING SETS ((k, s), (k)) ORDER BY ts, k, s",
+                            "SELECT * FROM (SELECT ts, cast(v AS SYMBOL) k, s, count() c FROM t SAMPLE BY 1h"
+                                    + " UNION ALL SELECT ts, cast(v AS SYMBOL) k, NULL::SYMBOL s, count() c FROM t SAMPLE BY 1h) ORDER BY ts, k, s"
+                    },
+                    {
+                            "SELECT ts, cast(v AS SYMBOL) k, s, count() c FROM t SAMPLE BY 1h GROUPING SETS ((k, s), (k)) FILL(NULL) ORDER BY ts, k, s",
+                            "SELECT * FROM (SELECT ts, cast(v AS SYMBOL) k, s, count() c FROM t SAMPLE BY 1h FILL(NULL)"
+                                    + " UNION ALL SELECT ts, cast(v AS SYMBOL) k, NULL::SYMBOL s, count() c FROM t SAMPLE BY 1h FILL(NULL)) ORDER BY ts, k, s"
+                    }
+            };
+            for (String[] query : queries) {
+                assertCachedQueryReleasesCastDictionaries(query[0], printReference(query[1]), true);
+            }
+
+            // A prepared statement runs one compiled factory with new bind values.
+            bindVariableService.clear();
+            bindVariableService.setLong(0, 100);
+            final String filtered = "SELECT cast(v AS SYMBOL) k, s, count() c FROM t WHERE l > $1 GROUP BY k, ROLLUP(s) ORDER BY k, s";
+            final String filteredReference = "SELECT * FROM (SELECT cast(v AS SYMBOL) k, s, count() c FROM t WHERE l > $1 GROUP BY k, s"
+                    + " UNION ALL SELECT cast(v AS SYMBOL) k, NULL::SYMBOL s, count() c FROM t WHERE l > $1 GROUP BY k) ORDER BY k, s";
+            try (RecordCursorFactory factory = select(filtered)) {
+                for (long bound : new long[]{100, 580, 100}) {
+                    bindVariableService.setLong(0, bound);
+                    assertCursorReleasesCastDictionaries(factory, printReference(filteredReference), true);
+                }
+            }
+
+            // EXPLAIN shows the serial grouping sets factory and runs nothing.
+            final long rssBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS);
+            assertQuery(rollup).noLeakCheck().assertsPlan("""
+                    VirtualRecord
+                      functions: [k,s,c]
+                        GroupBy vectorized: false
+                          groupingSets: true
+                          keys: [k,s]
+                          values: [count(*)]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: t
+                    """);
+            Assert.assertEquals(rssBefore, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS));
+            assertNextStatementRuns();
+        });
+    }
+
+    @Test
+    public void testCastToSymbolPrefixKeyReleasesQueryMemory() throws Exception {
+        // A cast to SYMBOL of a VARCHAR, CHAR, numeric, DATE or TIMESTAMP key interns each distinct
+        // value into a native dictionary charged to the query's memory tracker. Grouping sets
+        // evaluate a prefix key themselves, so their cursor close must free that dictionary before
+        // the tracker goes back to the pool. Casts from STRING and BOOLEAN build no dictionary here.
+        // A cast is not parallel-safe, so the query stays serial with parallel GROUP BY enabled. The
+        // reference spells the ROLLUP out as one plain GROUP BY per grouping set.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT
+                            CASE WHEN x % 7 = 0 THEN NULL ELSE 'k' || (x % 300) END::VARCHAR v,
+                            CASE WHEN x % 7 = 0 THEN NULL ELSE 'k' || (x % 300) END::STRING str,
+                            cast(65 + x % 50 AS CHAR) ch,
+                            (x % 100)::BYTE b,
+                            (x % 300)::SHORT sh,
+                            CASE WHEN x % 7 = 0 THEN NULL ELSE x % 300 END::INT i,
+                            CASE WHEN x % 7 = 0 THEN NULL ELSE x % 300 END l,
+                            CASE WHEN x % 7 = 0 THEN NULL ELSE to_long256(x % 300, 0, 0, 0) END l256,
+                            CASE WHEN x % 7 = 0 THEN NULL ELSE (x % 300) / 4.0 END::FLOAT f,
+                            CASE WHEN x % 7 = 0 THEN NULL ELSE (x % 300) / 4.0 END d,
+                            CASE WHEN x % 7 = 0 THEN NULL ELSE ((x % 300) * 86_400_000L)::DATE END dt,
+                            CASE WHEN x % 7 = 0 THEN NULL ELSE ((x % 300) * 1_000_000L)::TIMESTAMP END tm,
+                            CASE WHEN x % 7 = 0 THEN NULL ELSE ((x % 300) * 1_000_000_000L)::TIMESTAMP_NS END tn,
+                            x % 2 = 0 bo,
+                            ('s' || (x % 3))::SYMBOL s,
+                            (x * 1_000_000L)::TIMESTAMP ts
+                        FROM long_sequence(1_000)
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            // 5_000 distinct keys rehash the dictionary and fill several text chunks; the
+            // 10_000-character key takes a chunk of its own.
+            execute("""
+                    CREATE TABLE big AS (
+                        SELECT CASE WHEN x = 1 THEN rpad('k', 10_000, 'x') ELSE 'k' || x END::VARCHAR v,
+                               ('s' || (x % 3))::SYMBOL s, x l, (x * 1_000_000L)::TIMESTAMP ts
+                        FROM long_sequence(5_000)
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            final String[] dictionaryColumns = {"v", "ch", "b", "sh", "i", "l", "l256", "f", "d", "dt", "tm", "tn"};
+            final int callerJitMode = sqlExecutionContext.getJitMode();
+            try {
+                for (int mode = 0; mode < 2; mode++) {
+                    sqlExecutionContext.setParallelGroupByEnabled(mode == 1);
+                    for (String column : dictionaryColumns) {
+                        assertCastKeyRollupReleasesMemory("t", column, "", true);
+                    }
+                    assertCastKeyRollupReleasesMemory("t", "str", "", false);
+                    assertCastKeyRollupReleasesMemory("t", "bo", "", false);
+                    assertCastKeyRollupReleasesMemory("big", "v", "", true);
+                }
+                // the filtered scan runs on the JIT and the Java filter
+                for (int jitMode : new int[]{SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_DISABLED}) {
+                    sqlExecutionContext.setJitMode(jitMode);
+                    final String filterNode = jitMode == SqlJitMode.JIT_MODE_ENABLED ? "Async JIT Filter" : "Async Filter";
+                    for (String column : dictionaryColumns) {
+                        assertQuery("SELECT cast(" + column + " AS SYMBOL) k, s, count() n FROM t WHERE l > 10 GROUP BY k, ROLLUP(s)")
+                                .noLeakCheck()
+                                .assertsPlanContaining(filterNode);
+                        assertCastKeyRollupReleasesMemory("t", column, " WHERE l > 10", true);
+                    }
+                }
+            } finally {
+                sqlExecutionContext.setJitMode(callerJitMode);
+            }
+        });
+    }
+
+    @Test
+    public void testCastToSymbolPrefixKeyValues() throws Exception {
+        // The rows are hand-computed. A NULL key is a group of its own and the empty string is a
+        // value; both print empty, so n tells them apart. Malformed UTF-8 reads as NULL, but its
+        // lookup allocates the dictionary's hash table first, so that table must be freed too.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v VARCHAR, s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            final String query = "SELECT k, k IS NULL n, s, c FROM (SELECT cast(v AS SYMBOL) k, s, count() c FROM t GROUP BY k, ROLLUP(s)) ORDER BY n, k, s";
+            assertCachedQueryReleasesCastDictionaries(query, "k\tn\ts\tc\n", false);
+
+            execute("INSERT INTO t VALUES ('only', 'x', '2024-01-01')");
+            assertCachedQueryReleasesCastDictionaries(query, """
+                    k\tn\ts\tc
+                    only\tfalse\t\t1
+                    only\tfalse\tx\t1
+                    """, true);
+
+            execute("TRUNCATE TABLE t");
+            execute("INSERT INTO t VALUES (NULL, 'x', '2024-01-01'), (NULL, 'y', '2024-01-01'), (NULL, 'x', '2024-01-01')");
+            assertCachedQueryReleasesCastDictionaries(query, """
+                    k\tn\ts\tc
+                    \ttrue\t\t3
+                    \ttrue\tx\t2
+                    \ttrue\ty\t1
+                    """, false);
+
+            execute("TRUNCATE TABLE t");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('a', 'x', '2024-01-01'), ('a', 'y', '2024-01-01'), ('a', 'x', '2024-01-01'),
+                        ('b', 'x', '2024-01-01'), ('ф', 'y', '2024-01-01'), ('😀', 'x', '2024-01-01'),
+                        ('', 'y', '2024-01-01'), (NULL, 'x', '2024-01-01'), (NULL, 'y', '2024-01-01')""");
+            assertCachedQueryReleasesCastDictionaries(query, """
+                    k\tn\ts\tc
+                    \tfalse\t\t1
+                    \tfalse\ty\t1
+                    a\tfalse\t\t3
+                    a\tfalse\tx\t2
+                    a\tfalse\ty\t1
+                    b\tfalse\t\t1
+                    b\tfalse\tx\t1
+                    ф\tfalse\t\t1
+                    ф\tfalse\ty\t1
+                    😀\tfalse\t\t1
+                    😀\tfalse\tx\t1
+                    \ttrue\t\t2
+                    \ttrue\tx\t1
+                    \ttrue\ty\t1
+                    """, true);
+
+            execute("TRUNCATE TABLE t");
+            try (TableWriter writer = getWriter("t")) {
+                final String[] symbols = {"x", "y", "x"};
+                for (int i = 0; i < symbols.length; i++) {
+                    final TableWriter.Row row = writer.newRow(i);
+                    row.putVarchar(0, new Utf8String(i == 0 ? new byte[]{(byte) 0xC3} : new byte[]{'1', (byte) 0xC3}, false));
+                    row.putSym(1, symbols[i]);
+                    row.append();
+                }
+                writer.commit();
+            }
+            assertCachedQueryReleasesCastDictionaries(query, """
+                    k\tn\ts\tc
+                    \ttrue\t\t3
+                    \ttrue\tx\t2
+                    \ttrue\ty\t1
+                    """, true);
         });
     }
 
@@ -878,6 +1321,32 @@ public class GroupingSetsTest extends AbstractCairoTest {
                     "a\tSUM\nnull\tnull\n",
                     "SELECT a, SUM(v) FROM t GROUP BY ROLLUP(a)"
             );
+        });
+    }
+
+    @Test
+    public void testFactoryCloseWithOpenCursorSkipsFreedKeyFunctions() throws Exception {
+        // Closing the factory frees its key functions and then closes the cursor still open on it.
+        // That close must not notify the freed key functions, and closing the cursor again does
+        // nothing. The cast's own close frees its dictionary with the factory.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT ('k' || (x % 300))::VARCHAR v, ('s' || (x % 3))::SYMBOL s FROM long_sequence(1_000))");
+            sqlExecutionContext.setParallelGroupByEnabled(false);
+            final long rssBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS);
+            final RecordCursorFactory factory = select("SELECT cast(v AS SYMBOL) k, s, count() c FROM t GROUP BY k, ROLLUP(s)");
+            final RecordCursor cursor;
+            try {
+                final RecordCursorFactory groupingSets = findGroupByFactory(factory);
+                Assert.assertTrue(groupingSets instanceof GroupingSetsRecordCursorFactory);
+                cursor = groupingSets.getCursor(sqlExecutionContext);
+                Assert.assertTrue(cursor.hasNext());
+                Assert.assertTrue("the open cursor holds no cast-to-symbol dictionary", Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS) > rssBefore);
+            } finally {
+                factory.close();
+            }
+            Assert.assertEquals(rssBefore, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS));
+            cursor.close();
+            Assert.assertEquals(rssBefore, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS));
         });
     }
 
@@ -5499,6 +5968,59 @@ public class GroupingSetsTest extends AbstractCairoTest {
         execute("INSERT INTO prices VALUES ('A', 10, '2024-01-01T00:00:04'), ('B', 20, '2024-01-01T00:00:05')");
     }
 
+    private static String printReference(CharSequence reference) throws SqlException {
+        final StringSink expected = new StringSink();
+        printSql(reference, expected);
+        return expected.toString();
+    }
+
+    // Runs the query twice on one compiled factory, the way a cached statement does.
+    private void assertCachedQueryReleasesCastDictionaries(CharSequence query, CharSequence expected, boolean isDictionaryBuilt) throws Exception {
+        try (RecordCursorFactory factory = select(query)) {
+            for (int run = 0; run < 2; run++) {
+                assertCursorReleasesCastDictionaries(factory, expected, isDictionaryBuilt);
+            }
+        }
+    }
+
+    // The cast-to-symbol dictionaries live in NATIVE_FUNC_RSS memory charged to the query's tracker.
+    // A closed cursor must have freed them before the tracker went back to the pool.
+    private void assertCastDictionariesReleased(long rssBefore, MemoryTracker tracker) throws Exception {
+        Assert.assertEquals("the closed cursor kept its cast-to-symbol dictionaries", rssBefore, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS));
+        Assert.assertEquals("the query's tracker went back to the pool with memory charged to it", 0, tracker.getUsed());
+        assertNextStatementRuns();
+    }
+
+    // ROLLUP(s) after the key k has the grouping sets (k, s) and (k); the reference runs one plain
+    // GROUP BY per set, with NULL in place of the rolled-up s.
+    private void assertCastKeyRollupReleasesMemory(String table, String column, String where, boolean isDictionaryBuilt) throws Exception {
+        final String key = "cast(" + column + " AS SYMBOL) k";
+        final String query = "SELECT " + key + ", s, count() n FROM " + table + where + " GROUP BY k, ROLLUP(s) ORDER BY k, s";
+        final String reference = "SELECT * FROM (SELECT " + key + ", s, count() n FROM " + table + where + " GROUP BY k, s"
+                + " UNION ALL SELECT " + key + ", NULL::SYMBOL s, count() n FROM " + table + where + " GROUP BY k) ORDER BY k, s";
+        assertQuery(query).noLeakCheck().assertsPlanContaining("GroupBy vectorized: false", "groupingSets: true");
+        assertQuery(query).noLeakCheck().assertsPlanNotContaining("Async Group By");
+        assertCachedQueryReleasesCastDictionaries(query, printReference(reference), isDictionaryBuilt);
+    }
+
+    private void assertCursorReleasesCastDictionaries(RecordCursorFactory factory, CharSequence expected, boolean isDictionaryBuilt) throws Exception {
+        final long rssBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS);
+        final MemoryTracker tracker;
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            tracker = sqlExecutionContext.getMemoryTracker();
+            Assert.assertNotNull(tracker);
+            sink.clear();
+            TestUtils.assertCursor(expected, cursor, factory.getMetadata(), true, sink);
+            if (isDictionaryBuilt) {
+                Assert.assertTrue(
+                        "the open cursor holds no cast-to-symbol dictionary",
+                        Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS) > rssBefore
+                );
+            }
+        }
+        assertCastDictionariesReleased(rssBefore, tracker);
+    }
+
     private void assertFactoryRows(RecordCursorFactory factory, String expected) throws Exception {
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             sink.clear();
@@ -5508,5 +6030,12 @@ public class GroupingSetsTest extends AbstractCairoTest {
 
     private void assertGroupingSetsQuery(String expected, String query) throws Exception {
         assertQuery(query).inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
+    }
+
+    // The next statement takes a query tracker from the pool the closed query's tracker went back
+    // to. A tracker that went back with memory charged to it fails that statement with "tracker
+    // recycled with used=N".
+    private void assertNextStatementRuns() throws Exception {
+        assertQuery("SELECT count() n FROM long_sequence(10)").noLeakCheck().noRandomAccess().expectSize().returns("n\n10\n");
     }
 }

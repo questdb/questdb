@@ -74,6 +74,21 @@ public class GroupingSetsShapeCoverageTest {
         assertCorpusMatches(corpus, "explicit GROUPING SETS", Pattern.compile("GROUP BY GROUPING SETS \\("));
         assertCorpusMatches(corpus, "an empty grouping set", Pattern.compile("GROUPING SETS \\([^\\n]*\\(\\)"));
         assertCorpusMatches(corpus, "a plain key before ROLLUP or CUBE", Pattern.compile("GROUP BY [a-z0-9_.]+, (?:ROLLUP|CUBE)\\("));
+        assertCorpusMatches(
+                corpus,
+                "a cast-to-SYMBOL key before ROLLUP or CUBE",
+                Pattern.compile("cast\\([a-z0-9_.]+ AS SYMBOL\\) AS e0, .* GROUP BY e0, (?:ROLLUP|CUBE)\\(")
+        );
+        assertCorpusMatches(
+                corpus,
+                "a cast-to-SYMBOL key in GROUPING SETS",
+                Pattern.compile("cast\\([a-z0-9_.]+ AS SYMBOL\\) AS e0, .* GROUP BY GROUPING SETS \\(\\(e0")
+        );
+        assertCorpusMatches(
+                corpus,
+                "a cast-to-SYMBOL key in SAMPLE BY with GROUPING SETS",
+                Pattern.compile("cast\\([a-z0-9_.]+ AS SYMBOL\\) AS e0, .* SAMPLE BY \\w+ GROUPING SETS \\(\\(e0")
+        );
         assertCorpusMatches(corpus, "SAMPLE BY with ROLLUP", Pattern.compile("SAMPLE BY \\w+ ROLLUP\\("));
         assertCorpusMatches(corpus, "SAMPLE BY with CUBE", Pattern.compile("SAMPLE BY \\w+ CUBE\\("));
         assertCorpusMatches(corpus, "SAMPLE BY with GROUPING SETS", Pattern.compile("SAMPLE BY \\w+ GROUPING SETS \\("));

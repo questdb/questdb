@@ -42,12 +42,16 @@ import io.questdb.test.griffin.fuzz.types.ColumnKind;
  * {@code SAMPLE BY <stride>} on a source with a designated timestamp.
  * <p>
  * Keys are plain column references: QuestDB rolls up columns only, so an expression key is
- * rejected and the query would only count as a skip. Every query carries a reference query, the
- * UNION ALL of one plain GROUP BY per grouping set, with a typed NULL in place of each rolled-up
- * key and the GROUPING_ID value as a constant. QueryRunner compares the two, so grouping sets are
- * checked against an independent rewrite on top of the usual differential axes. The reference
- * computes the empty set over a non-keyed aggregate, which returns one row even when no row
- * passes the filter, as the empty grouping set does.
+ * rejected and the query would only count as a skip. The exception is a key that every grouping
+ * set names, the plain key ahead of ROLLUP or CUBE or a key in every explicit set: when it is a
+ * VARCHAR or numeric column, the generator sometimes casts it to SYMBOL and groups by its alias,
+ * so the grouping sets cursors evaluate a cast that interns into a native dictionary.
+ * <p>
+ * Every query carries a reference query, the UNION ALL of one plain GROUP BY per grouping set,
+ * with a typed NULL in place of each rolled-up key and the GROUPING_ID value as a constant.
+ * QueryRunner compares the two, so grouping sets are checked against an independent rewrite on top
+ * of the usual differential axes. The reference computes the empty set over a non-keyed aggregate,
+ * which returns one row even when no row passes the filter, as the empty grouping set does.
  * <p>
  * The generator draws every random value before it builds the reference, and the reference draws
  * none, so the literal and bind forms of a query consume the same rnd sequence.
@@ -85,11 +89,15 @@ public final class GroupingSetsClause {
 
         final int form = rnd.nextInt(3);
         final boolean hasPlainKey = !isSampleBy && form != FORM_GROUPING_SETS && keyCount > 1 && rnd.nextBoolean();
+        final boolean isCastKey = (hasPlainKey || form == FORM_GROUPING_SETS)
+                && isDictionaryCastSource(keys.getQuick(0))
+                && rnd.nextBoolean();
         final IntList sets = new IntList();
         if (form == FORM_GROUPING_SETS) {
             int keysInSets = 0;
             for (int i = 0, n = 1 + rnd.nextInt(MAX_EXPLICIT_SETS); i < n; i++) {
-                final int set = rnd.nextInt(1 << keyCount);
+                // An expression key is accepted only in every set.
+                final int set = rnd.nextInt(1 << keyCount) | (isCastKey ? 1 : 0);
                 sets.add(set);
                 keysInSets |= set;
             }
@@ -144,7 +152,7 @@ public final class GroupingSetsClause {
             sql.put(", ");
         }
         for (int i = 0; i < keyCount; i++) {
-            appendColumn(sql, alias, keys.getQuick(i).getName());
+            appendKeyExpression(sql, alias, keys, i, isCastKey);
             sql.put(" AS e").put(i).put(", ");
         }
         if (groupingIdArgs.size() > 0) {
@@ -153,13 +161,13 @@ public final class GroupingSetsClause {
                 if (i > 0) {
                     sql.put(", ");
                 }
-                appendColumn(sql, alias, keys.getQuick(groupingIdArgs.getQuick(i)).getName());
+                appendKeyReference(sql, alias, keys, groupingIdArgs.getQuick(i), isCastKey);
             }
             sql.put(") AS g0, ");
         }
         sql.put(aggregate).put(" AS a0").put(from).put(where);
         sql.put(isSampleBy ? " SAMPLE BY " + stride + " " : " GROUP BY ");
-        appendGrouping(sql, form, hasPlainKey, sets, keys, alias);
+        appendGrouping(sql, form, hasPlainKey, sets, keys, alias, isCastKey);
 
         final StringSink reference = new StringSink();
         reference.put(source.getPrefixSql());
@@ -167,7 +175,7 @@ public final class GroupingSetsClause {
             if (s > 0) {
                 reference.put(" UNION ALL ");
             }
-            appendReferenceBranch(reference, sets.getQuick(s), keys, groupingIdArgs, aggregate, alias, from, where, tsColumn, stride);
+            appendReferenceBranch(reference, sets.getQuick(s), keys, isCastKey, groupingIdArgs, aggregate, alias, from, where, tsColumn, stride);
         }
         return new GeneratedQuery(sql.toString(), true).withReference(reference.toString());
     }
@@ -210,7 +218,15 @@ public final class GroupingSetsClause {
         sink.put(column);
     }
 
-    private static void appendGrouping(StringSink sink, int form, boolean hasPlainKey, IntList sets, ObjList<FuzzColumn> keys, String alias) {
+    private static void appendGrouping(
+            StringSink sink,
+            int form,
+            boolean hasPlainKey,
+            IntList sets,
+            ObjList<FuzzColumn> keys,
+            String alias,
+            boolean isCastKey
+    ) {
         if (form == FORM_GROUPING_SETS) {
             sink.put("GROUPING SETS (");
             for (int s = 0, sn = sets.size(); s < sn; s++) {
@@ -225,7 +241,7 @@ public final class GroupingSetsClause {
                             sink.put(", ");
                         }
                         isFirst = false;
-                        appendColumn(sink, alias, keys.getQuick(k).getName());
+                        appendKeyReference(sink, alias, keys, k, isCastKey);
                     }
                 }
                 sink.put(')');
@@ -235,7 +251,7 @@ public final class GroupingSetsClause {
         }
         int first = 0;
         if (hasPlainKey) {
-            appendColumn(sink, alias, keys.getQuick(0).getName());
+            appendKeyReference(sink, alias, keys, 0, isCastKey);
             sink.put(", ");
             first = 1;
         }
@@ -249,10 +265,31 @@ public final class GroupingSetsClause {
         sink.put(')');
     }
 
+    // The expression of key k in the projection: the cast key casts its column to SYMBOL.
+    private static void appendKeyExpression(StringSink sink, String alias, ObjList<FuzzColumn> keys, int k, boolean isCastKey) {
+        if (isCastKey && k == 0) {
+            sink.put("cast(");
+            appendColumn(sink, alias, keys.getQuick(0).getName());
+            sink.put(" AS SYMBOL)");
+        } else {
+            appendColumn(sink, alias, keys.getQuick(k).getName());
+        }
+    }
+
+    // How GROUP BY, GROUPING SETS and grouping_id() name key k: the cast key by its alias.
+    private static void appendKeyReference(StringSink sink, String alias, ObjList<FuzzColumn> keys, int k, boolean isCastKey) {
+        if (isCastKey && k == 0) {
+            sink.put("e0");
+        } else {
+            appendColumn(sink, alias, keys.getQuick(k).getName());
+        }
+    }
+
     private static void appendReferenceBranch(
             StringSink sink,
             int set,
             ObjList<FuzzColumn> keys,
+            boolean isCastKey,
             IntList groupingIdArgs,
             CharSequence aggregate,
             String alias,
@@ -273,8 +310,9 @@ public final class GroupingSetsClause {
             sink.put(") AS s0, ");
         }
         for (int k = 0, kn = keys.size(); k < kn; k++) {
+            // every set names the cast key, so it never takes the NULL of its column's type
             if ((set & (1 << k)) != 0) {
-                appendColumn(sink, alias, keys.getQuick(k).getName());
+                appendKeyExpression(sink, alias, keys, k, isCastKey);
             } else {
                 sink.put("NULL::").put(keys.getQuick(k).getType().getDdl());
             }
@@ -295,6 +333,11 @@ public final class GroupingSetsClause {
         } else {
             sink.put(aggregate).put(" AS a0").put(from).put(where);
         }
+    }
+
+    // A cast to SYMBOL of a VARCHAR or numeric column interns into a dictionary.
+    private static boolean isDictionaryCastSource(FuzzColumn column) {
+        return column.getType().getKind() == ColumnKind.NUMERIC || "VARCHAR".equals(column.getType().getDdl());
     }
 
     private static ObjList<FuzzColumn> keyCandidates(ObjList<FuzzColumn> columns, String excluded) {

@@ -118,6 +118,45 @@ public class PGMemoryLimitTest extends BasePGTest {
     }
 
     @Test
+    public void testGroupingSetsCastToSymbolKeyReleasesQueryMemory() throws Exception {
+        // ROLLUP evaluates its cast-to-SYMBOL key itself, and the key's dictionary is charged to the
+        // query's memory tracker. Each run of the prepared statement must give that memory back when
+        // its cursor closes: a tracker that goes back to the pool charged fails the next statement.
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement stat = connection.createStatement()) {
+                stat.execute("CREATE TABLE t AS (SELECT ('k' || (x % 3))::VARCHAR v, ('s' || (x % 2))::SYMBOL s FROM long_sequence(12))");
+            }
+            final String expected = """
+                    k[VARCHAR],s[VARCHAR],c[BIGINT]
+                    k0,null,4
+                    k0,s0,2
+                    k0,s1,2
+                    k1,null,4
+                    k1,s0,2
+                    k1,s1,2
+                    k2,null,4
+                    k2,s0,2
+                    k2,s1,2
+                    """;
+            try (PreparedStatement select = connection.prepareStatement("SELECT cast(v AS SYMBOL) k, s, count() c FROM t GROUP BY k, ROLLUP(s) ORDER BY k, s")) {
+                for (int run = 0; run < 2; run++) {
+                    try (ResultSet resultSet = select.executeQuery()) {
+                        sink.clear();
+                        assertResultSet(expected, sink, resultSet);
+                    }
+                }
+            }
+            try (Statement stat = connection.createStatement(); ResultSet resultSet = stat.executeQuery("SELECT count() FROM t")) {
+                sink.clear();
+                assertResultSet("""
+                        count[BIGINT]
+                        12
+                        """, sink, resultSet);
+            }
+        });
+    }
+
+    @Test
     public void testUpdateRecoversFromOomError() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement stat = connection.createStatement()) {

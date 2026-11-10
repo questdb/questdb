@@ -285,6 +285,28 @@ public class FunctionCursorClosedTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupingSetsKeyReleasesCastDictionary() throws Exception {
+        // ROLLUP, CUBE and GROUPING SETS evaluate a prefix key themselves. A cast to symbol is not
+        // parallel-safe, so they run serially even with parallel GROUP BY enabled.
+        assertMemoryLeak(() -> {
+            createVarcharTable();
+            sqlExecutionContext.setParallelGroupByEnabled(true);
+            assertOwnerReleasesCastDictionaries("select cast(v as symbol) k, s, count() c from t group by k, rollup(s)", "groupingSets: true");
+            assertOwnerReleasesCastDictionaries("select cast(v as symbol) k, s, count() c from t group by k, cube(s)", "groupingSets: true");
+            assertOwnerReleasesCastDictionaries("select cast(v as symbol) k, s, count() c from t group by grouping sets ((k, s), (k))", "groupingSets: true");
+            assertOwnerReleasesCastDictionaries(
+                    "select ts, cast(v as symbol) k, s, count() c from t sample by 1h grouping sets ((k, s), (k)) fill(null)",
+                    "groupingSets: true"
+            );
+            // the next statement takes a query tracker from the pool the queries' trackers went back to
+            assertQuery("select count() from t").noRandomAccess().expectSize().returns("""
+                    count
+                    1000
+                    """);
+        });
+    }
+
+    @Test
     public void testHashOuterJoinFilterReleasesCastDictionary() throws Exception {
         assertMemoryLeak(() -> {
             createVarcharTable();
