@@ -1395,6 +1395,38 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTagNamedLikeDesignatedTimestampIsIgnored() throws Exception {
+        // a tag named like the designated timestamp is ignored as a field is: the line's own timestamp sets the
+        // row's time, and the line that creates a table adds no second column of that name
+        AbstractCairoTest.create(new TableModel(configuration, "y", PartitionBy.NONE)
+                .col("s", ColumnType.SYMBOL)
+                .col("n", ColumnType.INT)
+                .timestamp("ts"));
+        assertThat(
+                """
+                        s\tn\tts
+                        \t1\t1970-01-01T00:00:01.000000Z
+                        a\t2\t1970-01-01T00:00:02.000000Z
+                        b\t3\t1970-01-01T00:00:03.000000Z
+                        """,
+                """
+                        y,ts=abc n=1i 1000000000
+                        y,s=a n=2i 2000000000
+                        y,TS=abc,s=b n=3i 3000000000
+                        """,
+                "y"
+        );
+        assertThat(
+                """
+                        s\tv\ttimestamp
+                        a\t1.5\t1970-01-01T00:00:01.000000Z
+                        """,
+                "nt,timestamp=abc,s=a,Timestamp=def v=1.5 1000000000\n",
+                "nt"
+        );
+    }
+
+    @Test
     public void testTypeMismatch1() throws Exception {
         final String expected1 = """
                 sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1
