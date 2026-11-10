@@ -257,16 +257,16 @@ qdbr toolchain; the script prints the command when it is missing.
   so for any deterministic query it leaves real bugs untested. Default to
   `.returns(...)`; reach for `.returnsOnce(...)` only with a stated reason that
   the output cannot be stable across two reads.
-- **Never assert peer behaviour with a hand-built frame or a fake socket.** Server
-  tests must drive the real `java-questdb-client` for anything that asserts how a
-  client reacts to server output — close codes, NACK classification, ack watermark
-  advance, reconnect eligibility. The client is already on the test classpath
-  and most QWP tests import it. A hand-forged frame encodes the contract you
-  *assume* the client implements, so it passes even when the pinned client
-  disagrees. If a test names a client class in a comment to justify an
-  assertion, it must import that class instead. Any change to a wire constant
-  or wire format needs such a test: a green OSS build does not otherwise prove
-  the pinned client agrees.
+- **Never assert peer behaviour with a hand-built frame or a fake socket.**
+  Server tests must drive the real `java-questdb-client` for anything that
+  asserts how a client reacts to server output — close codes, how it treats a
+  rejected batch, how far it moves its acknowledged position, and whether it
+  reconnects. The client is already on the test classpath and most QWP tests
+  import it. A hand-forged frame encodes the contract you *assume* the client
+  implements, so it passes even when the pinned client disagrees. If a test
+  names a client class in a comment to justify an assertion, it must import that
+  class instead. Any change to a wire constant or wire format needs such a test:
+  a green OSS build does not otherwise prove the pinned client agrees.
 - Fake sockets (`MockRawSocket`, `TestableContext`) remain valid for *transport fault
   injection only* — partial sends, `PeerIsSlowToWriteException` resume paths, and
   malformed frames a correct client would never emit. They must never encode what a
@@ -282,21 +282,21 @@ qdbr toolchain; the script prints the command when it is missing.
 ## Git & PR Conventions
 
 - **PRs are squash-merged. Commit history on a PR branch is throwaway** — only
-  the squashed commit message that lands on `master` is preserved. Do not
-  spend effort tidying the branch's history: no soft resets to "commit all at
-  once", no rewording prior commits, no force pushes to clean up. Adding a
-  fix-up commit on top is always fine. The squash flow folds the lot at merge
-  time anyway.
+  the squashed commit message that lands on `master` is preserved. Do not spend
+  effort tidying the branch's history: no soft resets to "commit all at once",
+  no rewording prior commits, no force pushes to clean up. Adding a fix-up
+  commit on top is always fine. The squash merge turns the whole branch into
+  one commit anyway.
 - **Bundle related fixes into one PR; do NOT propose splitting by logic.** With
   many PRs a day, CI is the bottleneck, not review: a full run is long and can
   go red on an unrelated flake. Splitting one branch into N "logically clean"
   PRs multiplies that cost — N× CI time, N× flake exposure, PRs failing on each
   other's flakes, and N× the babysitting to shepherd them all to merge. Default
-  to adding the change to the PR/branch already in flight, especially when the
-  fixes share a CI lineage (one change is what makes the other's CI go green).
-  When a branch carries more than one fix, give each its own bullet in the PR
-  body instead of opening another PR. Only split if the user explicitly asks, or
-  if the changes must merge/revert independently.
+  to adding the change to the PR/branch already in flight, especially when one
+  fix is what makes the other's CI go green. When a branch carries more than one
+  fix, give each its own bullet in the PR body instead of opening another PR.
+  Only split if the user explicitly asks, or if the changes must merge/revert
+  independently.
 - **When asked to "send a change to PR #N" / update PR metadata:** push the
   commit(s) to that PR's branch (rebase onto the remote head first if it moved),
   then bring the PR title and body up to date with the branch's net effects.
