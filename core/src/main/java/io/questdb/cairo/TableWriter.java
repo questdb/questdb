@@ -258,6 +258,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private static final Runnable NOOP = () -> {
     };
     private static final Row NOOP_ROW = new NoOpRow();
+    // Zero symbol counts, for a _txn record published before the symbol map writers open, see repairTruncate().
+    // Never modified.
+    private static final ObjList<SymbolCountProvider> NO_SYMBOL_COUNTS = new ObjList<>();
     private static final int O3_ERRNO_FATAL = Integer.MAX_VALUE - 1;
     private static final int POSTING_SEAL_PURGE_CLOSE_QUEUE_RETRY_COUNT = 32;
     private static final String POSTING_SEAL_PURGE_PENDING_FILE_NAME = "_posting_seal_purge_pending.d";
@@ -816,11 +819,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
 
-            // we have to do truncate repair at this stage of constructor
-            // because this operation requires metadata
+            // The truncate repair needs the metadata and _cv. It runs before the symbol map writers open, which then
+            // open with the symbol counts it publishes.
             switch (todo) {
                 case TODO_TRUNCATE:
-                    repairTruncate();
+                    repairTruncate(false);
+                    break;
+                case TODO_TRUNCATE_KEEP_SYMBOL_MAPS:
+                    repairTruncate(true);
                     break;
                 case TODO_RESTORE_META:
                 case -1:
@@ -19017,10 +19023,32 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         clearTodoLog();
     }
 
-    private void repairTruncate() {
-        LOG.info().$("repairing abnormally terminated truncate on ").$substr(pathRootSize, path).$();
+    /**
+     * Completes a TRUNCATE that stopped after it armed its {@code _todo_} entry and before it published the empty
+     * {@code _txn}, as {@link #truncate0(boolean)} would have: no partitions, no rows, no column tops. The
+     * constructor calls it before it opens the columns and the symbol map writers.
+     */
+    private void repairTruncate(boolean isKeepSymbolMaps) {
+        LOG.info().$("repairing abnormally terminated truncate on ").$substr(pathRootSize, path)
+                .$(" [keepSymbolMaps=").$(isKeepSymbolMaps).I$();
         scheduleRemoveAllPartitions();
-        txWriter.truncate(columnVersionWriter.getVersion(), denseSymbolMapWriters);
+        columnVersionWriter.truncate();
+        if (isKeepSymbolMaps) {
+            // TRUNCATE ... KEEP SYMBOL MAPS leaves the symbol maps as _txn counts them, and a reader of the old rows
+            // may still resolve their keys: the record keeps those counts, so new symbols do not overwrite them.
+            final ObjList<SymbolCountProvider> symbolCounts = new ObjList<>();
+            for (int i = 0, n = txWriter.getSymbolColumnCount(); i < n; i++) {
+                final int symbolCount = txWriter.getSymbolValueCount(i);
+                symbolCounts.add(() -> symbolCount);
+            }
+            txWriter.truncate(columnVersionWriter.getVersion(), symbolCounts);
+        } else {
+            // A TRUNCATE without KEEP SYMBOL MAPS empties the symbol maps before it arms _todo_, so their files may
+            // hold fewer symbols than _txn counts. Zero counts are valid for the files in either state.
+            txWriter.truncate(columnVersionWriter.getVersion(), NO_SYMBOL_COUNTS);
+        }
+        // The symbol map writers open with the counts txWriter loaded, so it loads the record it just published
+        txWriter.unsafeLoadAll();
         resetCompositePartitionTracking();
         clearTodoLog();
         processPartitionRemoveCandidates();
@@ -21948,15 +21976,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return;
         }
 
-        // this is a crude block to test things for now
-        todoMem.putLong(0, ++todoTxn); // write txn, reader will first read txn at offset 24 and then at offset 0
+        // The writer open acts on a _todo_ entry only when its txn is the live _txn txn (see openTodoMem()). Stamped
+        // with the txn this truncate starts from, the entry makes the next open complete a truncate that stopped
+        // before it published the empty _txn, and the open ignores it once that _txn, or a later one, is published.
+        todoMem.putLong(0, txWriter.txn); // write txn, reader will first read txn at offset 24 and then at offset 0
         Unsafe.storeFence(); // make sure we do not write hash before writing txn (view from another thread)
         todoMem.putLong(8, configuration.getDatabaseIdLo()); // write out our instance hashes
         todoMem.putLong(16, configuration.getDatabaseIdHi());
         Unsafe.storeFence();
-        todoMem.putLong(24, todoTxn);
+        todoMem.putLong(24, txWriter.txn);
         todoMem.putLong(32, 1);
-        todoMem.putLong(40, TODO_TRUNCATE);
+        // The repair keeps the symbol maps only when this truncate keeps them: otherwise it has emptied them above
+        todoMem.putLong(40, keepSymbolTables ? TODO_TRUNCATE_KEEP_SYMBOL_MAPS : TODO_TRUNCATE);
         // ensure file is closed with correct length
         todoMem.jumpTo(48);
 
