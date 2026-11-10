@@ -37,8 +37,10 @@ public final class FuzzConfig {
     public static final String DIFF_FUSED_PROP = "questdb.fuzz.diff.fused";
     public static final String DIFF_JIT_PROP = "questdb.fuzz.diff.jit";
     public static final String DIFF_MAP_PAGE_PROP = "questdb.fuzz.diff.mappage";
+    public static final String DIFF_PARALLEL_JOIN_PROP = "questdb.fuzz.diff.parallel.join";
     public static final String DIFF_SHADOW_PROP = "questdb.fuzz.diff.shadow";
     public static final String DUMP_PROP = "questdb.fuzz.dump";
+    public static final String EQUI_JOIN_PROP = "questdb.fuzz.equijoin";
     public static final String FAULTS_PROP = "questdb.fuzz.faults";
     public static final String FAULT_PARALLEL_PROP = "questdb.fuzz.fault.parallel";
     public static final String FAULT_PCT_PROP = "questdb.fuzz.fault.pct";
@@ -48,6 +50,7 @@ public final class FuzzConfig {
     public static final String HASH_JOIN_PROP = "questdb.fuzz.hashjoin";
     public static final String HORIZON_JOIN_PROP = "questdb.fuzz.horizonjoin";
     public static final String LATEST_ON_PROP = "questdb.fuzz.lateston";
+    public static final String PARALLEL_JOIN_CAP_PROP = "questdb.fuzz.parallel.join.cap";
     public static final String QUERIES_PROP = "questdb.fuzz.queries";
     public static final String VERIFY_CURSOR_PROP = "questdb.fuzz.verify.cursor";
     public static final String WINDOW_JOIN_PROP = "questdb.fuzz.windowjoin";
@@ -78,7 +81,9 @@ public final class FuzzConfig {
     private final boolean isDiffFusedEnabled;
     private final boolean isDiffJitEnabled;
     private final boolean isDiffMapPageEnabled;
+    private final boolean isDiffParallelJoinEnabled;
     private final boolean isDiffShadowEnabled;
+    private final boolean isEquiJoinEnabled;
     private final boolean isFaultInjectionEnabled;
     private final boolean isGroupingSetsEnabled;
     private final boolean isHashJoinEnabled;
@@ -97,6 +102,8 @@ public final class FuzzConfig {
     private final int minColumnsPerTable;
     private final int numQueries;
     private final int numTables;
+    // The parallel hash join's cap of tuples per probe task, or 0 to leave it at its default.
+    private final long parallelJoinTaskOutputMaxRows;
     private final int rowsPerTable;
     private final long stepMicros;
     private final String tsStart;
@@ -129,6 +136,10 @@ public final class FuzzConfig {
         // compares the results (see QueryRunner). Pass -Dquestdb.fuzz.diff.mappage=false
         // to drop the comparison.
         this.isDiffMapPageEnabled = Boolean.parseBoolean(System.getProperty(DIFF_MAP_PAGE_PROP, "true"));
+        // Runs every row-producing equi-join query with the parallel hash join on and off and
+        // compares the results in order (see QueryRunner). Pass
+        // -Dquestdb.fuzz.diff.parallel.join=false to drop the comparison and keep the shape.
+        this.isDiffParallelJoinEnabled = Boolean.parseBoolean(System.getProperty(DIFF_PARALLEL_JOIN_PROP, "true"));
         this.isVerifyCursorEnabled = Boolean.parseBoolean(System.getProperty(VERIFY_CURSOR_PROP, "true"));
         this.isFaultInjectionEnabled = Boolean.parseBoolean(System.getProperty(FAULTS_PROP, "true"));
         this.faultProbabilityPct = Integer.getInteger(FAULT_PCT_PROP, 15);
@@ -158,6 +169,10 @@ public final class FuzzConfig {
         // -Dquestdb.fuzz.hashjoin=false to drop them, for example while investigating a failure,
         // and give the band back to GROUP BY.
         this.isHashJoinEnabled = Boolean.parseBoolean(System.getProperty(HASH_JOIN_PROP, "true"));
+        // Row-producing INNER and LEFT equi-joins, the ones the parallel hash join runs, carve a
+        // band out of the SIMPLE range (see QueryGenerator). On by default; pass
+        // -Dquestdb.fuzz.equijoin=false to drop them and give the band back to SIMPLE.
+        this.isEquiJoinEnabled = Boolean.parseBoolean(System.getProperty(EQUI_JOIN_PROP, "true"));
         // ROLLUP, CUBE and GROUPING SETS shapes also carve a band out of the GROUP BY range (see
         // QueryGenerator), and QueryRunner checks each against its UNION ALL rewrite. On by
         // default; pass -Dquestdb.fuzz.groupingsets=false to drop them.
@@ -176,6 +191,16 @@ public final class FuzzConfig {
         this.hashJoinBuildMode = buildMode != null
                 ? HashJoinBuildMode.valueOf(buildMode.toUpperCase())
                 : ((rnd.getSeed0() ^ rnd.getSeed1()) & 1) == 0 ? HashJoinBuildMode.SERIAL : HashJoinBuildMode.PARALLEL;
+        // The fuzz tables' frames hold far fewer rows than the parallel hash join's default cap of
+        // tuples per probe task, so a frame's task never stops at the cap and leaves the rest of the
+        // frame to a continuation. A run therefore lowers the cap to one tuple, which leaves every
+        // frame whose pairs outnumber its rows to continuations, or keeps the default:
+        // -Dquestdb.fuzz.parallel.join.cap=N sets it, or, without the property, the seed picks one of
+        // the two without drawing from it, as it picks the build mode.
+        final String cap = System.getProperty(PARALLEL_JOIN_CAP_PROP);
+        this.parallelJoinTaskOutputMaxRows = cap != null
+                ? Long.parseLong(cap)
+                : (((rnd.getSeed0() ^ rnd.getSeed1()) >>> 1) & 1) == 0 ? 0 : 1;
         // LATEST ON shapes (latest row per PARTITION BY key) carve a band out of
         // the SIMPLE range (see QueryGenerator). On by default, like window. Pass
         // -Dquestdb.fuzz.lateston=false to drop them and give the band back to
@@ -215,6 +240,13 @@ public final class FuzzConfig {
         return numTables;
     }
 
+    /**
+     * The parallel hash join's cap of tuples per probe task for the run, or 0 to leave the default.
+     */
+    public long getParallelJoinTaskOutputMaxRows() {
+        return parallelJoinTaskOutputMaxRows;
+    }
+
     public int getRowsPerTable() {
         return rowsPerTable;
     }
@@ -239,8 +271,16 @@ public final class FuzzConfig {
         return isDiffMapPageEnabled;
     }
 
+    public boolean isDiffParallelJoinEnabled() {
+        return isDiffParallelJoinEnabled;
+    }
+
     public boolean isDiffShadowEnabled() {
         return isDiffShadowEnabled;
+    }
+
+    public boolean isEquiJoinEnabled() {
+        return isEquiJoinEnabled;
     }
 
     public boolean isFaultInjectionEnabled() {

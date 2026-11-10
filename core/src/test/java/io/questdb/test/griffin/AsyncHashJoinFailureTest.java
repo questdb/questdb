@@ -1,0 +1,521 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.test.griffin;
+
+import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
+import io.questdb.griffin.engine.table.AsyncHashJoinAtom;
+import io.questdb.griffin.engine.table.AsyncHashJoinRecordCursorFactory;
+import io.questdb.griffin.engine.table.HashJoinBuildStage;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Utf8s;
+import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.TestUtils;
+import org.junit.After;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import static io.questdb.test.griffin.ParallelHashJoinTestUtils.*;
+
+/**
+ * The parallel hash join's failure paths, each followed by a check that the failure released
+ * everything it held and that the same factory, and the tables, still work: cancellation inside
+ * each round of a parallel build, inside a probe task and inside a continuation chunk; per-query
+ * memory limit breaches in the build, the symbol key translator, the payload copy, a probe task
+ * and a continuation; and failing file operations on the build input's native and Parquet frames.
+ */
+public class AsyncHashJoinFailureTest extends AbstractCairoTest {
+    private static final String STAGE = HashJoinBuildStage.class.getName();
+    private static final String ATOM = AsyncHashJoinAtom.class.getName();
+    private static final StackWalker STACK_WALKER = StackWalker.getInstance();
+
+    @Override
+    @Before
+    public void setUp() {
+        super.setUp();
+        sqlExecutionContext.setParallelHashJoinEnabled(true);
+    }
+
+    @After
+    public void tearDownFailures() {
+        TestLatchedCounterFunctionFactory.reset(null);
+        sqlExecutionContext.restoreToDefaultPageFrameSizes();
+    }
+
+    @Test
+    public void testCancellationInsideEachBuildRound() throws Exception {
+        // Every build runs in rounds, of many partitions, and copies its payload in a round too.
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 0);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_ROWS_PER_PARTITION, 16);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_PARALLEL_MIN_PROBE_RATIO, "0");
+        assertMemoryLeak(() -> {
+            createTables();
+            sqlExecutionContext.changePageFrameSizes(32, 32);
+            // An INT key, and a LONG key that the build stages into its map.
+            for (String key : new String[]{"k", "lk"}) {
+                // The first round sorts each build frame's rows into partitions: the build's filter
+                // trips the breaker from inside a task of that round, and the round's tasks after it
+                // find the query cancelled before they run.
+                final String filtered = "SELECT t.v, d.w FROM t LEFT JOIN (SELECT * FROM d WHERE test_latched_counter()) d ON t." + key + " = d." + key;
+                final String expectedFiltered = ordinary(filtered, sqlExecutionContext);
+                // The function takes the callback when it compiles; the callback trips the breaker
+                // only once armed.
+                final AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(engine);
+                final AtomicBoolean isArmed = new AtomicBoolean();
+                final AtomicBoolean isInsideRound = new AtomicBoolean();
+                final TestLatchedCounterFunctionFactory.Callback callback = new TestLatchedCounterFunctionFactory.Callback() {
+                    @Override
+                    public boolean onGet(Record rec, int count) {
+                        if (isArmed.get() && count == 40) {
+                            isInsideRound.set(isOnStack(STAGE, "partitionFrame"));
+                            breaker.cancel();
+                        }
+                        return true;
+                    }
+                };
+                TestLatchedCounterFunctionFactory.reset(callback);
+                try (RecordCursorFactory factory = select(filtered)) {
+                    final AsyncHashJoinRecordCursorFactory join = find(factory);
+                    Assert.assertNotNull(join);
+                    TestUtils.assertContains(plan(factory, sqlExecutionContext), "buildFilter: test_latched_counter()");
+                    // Restarts the count.
+                    TestLatchedCounterFunctionFactory.reset(callback);
+                    isArmed.set(true);
+                    assertCancelled(factory, breaker, filtered);
+                    isArmed.set(false);
+                    Assert.assertTrue(isInsideRound.get());
+                    // The build's 300 rows went through the filter only up to the cancelled task.
+                    Assert.assertTrue(String.valueOf(TestLatchedCounterFunctionFactory.getCount()), TestLatchedCounterFunctionFactory.getCount() < 300);
+                    assertReused(factory, join, filtered, expectedFiltered);
+                }
+                // The second round fills each partition's region of the heap and its key table, and
+                // the third copies the payload of each build frame's rows.
+                final String sql = "SELECT t.v, t.ts, d.w, d.s FROM t LEFT JOIN d ON t." + key + " = d." + key;
+                final String expected = ordinary(sql, sqlExecutionContext);
+                for (String round : new String[]{"buildPartition", "copyFramePayload"}) {
+                    try (RecordCursorFactory factory = select(sql)) {
+                        final AsyncHashJoinRecordCursorFactory join = find(factory);
+                        Assert.assertNotNull(join);
+                        final MethodCheckCircuitBreaker roundBreaker = new MethodCheckCircuitBreaker(engine, STAGE, round, 1);
+                        assertCancelled(factory, roundBreaker, sql + ", " + round);
+                        Assert.assertTrue(round, roundBreaker.getChecks() > 0);
+                        assertReused(factory, join, sql, expected);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCancellationInsideProbeTaskAndContinuation() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // Frames of eight rows, whose tasks check the breaker every eight pairs, and a cap of one
+            // tuple, which leaves the rest of a frame with more pairs than rows to a continuation.
+            sqlExecutionContext.changePageFrameSizes(8, 8);
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 1);
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 1);
+            // The residual reads both inputs, so the operator runs it for each pair on the workers,
+            // and its first operand counts the pairs.
+            final String[] queries = {
+                    "SELECT t.v, d.w FROM t LEFT JOIN d ON t.k = d.k AND (test_latched_counter() OR d.w = t.v)",
+                    "SELECT t.v, d.w FROM t JOIN d ON t.k = d.k WHERE t.ts IN '2024-01-01' AND (test_latched_counter() OR d.w = t.v)",
+            };
+            for (String sql : queries) {
+                final String expected = ordinary(sql, sqlExecutionContext);
+                for (String method : new String[]{"probeFrame", "continueFrame"}) {
+                    // The function takes the callback when it compiles; the callback trips the
+                    // breaker only once armed.
+                    final AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(engine);
+                    final AtomicBoolean isArmed = new AtomicBoolean();
+                    final AtomicInteger cancelledAt = new AtomicInteger(-1);
+                    final TestLatchedCounterFunctionFactory.Callback callback = new TestLatchedCounterFunctionFactory.Callback() {
+                        @Override
+                        public boolean onGet(Record rec, int count) {
+                            // The first pair that the task, or a continuation chunk, runs the
+                            // residual over trips the breaker.
+                            if (isArmed.get() && cancelledAt.get() < 0 && isOnStack(ATOM, method)
+                                    && (method.equals("continueFrame") || !isOnStack(ATOM, "continueFrame"))) {
+                                cancelledAt.set(count);
+                                breaker.cancel();
+                            }
+                            return true;
+                        }
+                    };
+                    TestLatchedCounterFunctionFactory.reset(callback);
+                    try (RecordCursorFactory factory = select(sql)) {
+                        final AsyncHashJoinRecordCursorFactory join = find(factory);
+                        Assert.assertNotNull(join);
+                        TestUtils.assertContains(plan(factory, sqlExecutionContext), "test_latched_counter()");
+                        TestLatchedCounterFunctionFactory.reset(callback);
+                        isArmed.set(true);
+                        assertCancelled(factory, breaker, sql + ", " + method);
+                        isArmed.set(false);
+                        Assert.assertTrue(method, cancelledAt.get() > 0);
+                        // The stepper observes the cancellation within the eight pairs that follow.
+                        Assert.assertTrue(method + ": " + TestLatchedCounterFunctionFactory.getCount(), TestLatchedCounterFunctionFactory.getCount() < cancelledAt.get() + 8);
+                        Assert.assertEquals(method, method.equals("continueFrame") ? 1 : 0, join.getAtom().getContinuationCount());
+                        assertReused(factory, join, sql, expected);
+                        Assert.assertTrue(join.getAtom().getContinuationCount() > 0);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testFileFailuresOnNativeBuildFrames() throws Exception {
+        final AtomicBoolean isArmed = new AtomicBoolean();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (isArmed.get() && Utf8s.containsAscii(name, "build_tab") && Utf8s.endsWithAscii(name, "w.d")) {
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            createFileTables();
+            // The LEFT join hashes build_tab; the INNER join, whose left input is the smaller one,
+            // hashes build_tab as its left input; the build's column file fails to open in both.
+            for (String sql : new String[]{
+                    "SELECT t.v, b.w FROM probe_tab t LEFT JOIN build_tab b ON t.k = b.k",
+                    "SELECT b.w, t.v FROM build_tab b JOIN probe_tab t ON b.k = t.k",
+            }) {
+                assertFileFailure(sql, isArmed, "could not open");
+            }
+        });
+    }
+
+    @Test
+    public void testFileFailuresOnParquetBuildFrames() throws Exception {
+        final AtomicBoolean isArmed = new AtomicBoolean();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (isArmed.get() && Utf8s.containsAscii(name, "build_tab") && Utf8s.endsWithAscii(name, ".parquet")) {
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            createFileTables();
+            execute("ALTER TABLE build_tab CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            for (String sql : new String[]{
+                    "SELECT t.v, b.w FROM probe_tab t LEFT JOIN build_tab b ON t.k = b.k",
+                    "SELECT b.w, t.v FROM build_tab b JOIN probe_tab t ON b.k = t.k",
+            }) {
+                assertFileFailure(sql, isArmed, "could not open");
+            }
+        });
+    }
+
+    @Test
+    public void testMemoryLimitInEachPhaseInRounds() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 0);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_ROWS_PER_PARTITION, 256);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_PARALLEL_MIN_PROBE_RATIO, "0");
+        assertMemoryLimitInEachPhase(true);
+    }
+
+    @Test
+    public void testMemoryLimitInEachPhaseOnOwner() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, Long.MAX_VALUE);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MIN_PROBE_RATIO, "0");
+        assertMemoryLimitInEachPhase(false);
+    }
+
+    private static void assertCancelled(RecordCursorFactory factory, SqlExecutionCircuitBreaker breaker, String label) throws SqlException {
+        final SqlExecutionCircuitBreaker previous = sqlExecutionContext.getCircuitBreaker();
+        ((SqlExecutionContextImpl) sqlExecutionContext).with(breaker);
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            //noinspection StatementWithEmptyBody
+            while (cursor.hasNext()) {
+            }
+            Assert.fail("expected cancellation: " + label);
+        } catch (CairoException e) {
+            Assert.assertTrue(label + ": " + e.getMessage(), e.isCancellation());
+            TestUtils.assertContains(e.getFlyweightMessage(), "cancelled by user");
+        } finally {
+            ((SqlExecutionContextImpl) sqlExecutionContext).with(previous);
+        }
+        Assert.assertEquals(label, 0, engine.getBusyReaderCount());
+    }
+
+    private void assertFileFailure(String sql, AtomicBoolean isArmed, String error) throws Exception {
+        final String expected = ordinary(sql, sqlExecutionContext);
+        try (RecordCursorFactory factory = select(sql)) {
+            final AsyncHashJoinRecordCursorFactory join = find(factory);
+            Assert.assertNotNull(sql, join);
+            for (int run = 0; run < 2; run++) {
+                // The readers open the build's partitions anew, through the failing facade.
+                engine.releaseAllReaders();
+                isArmed.set(true);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    //noinspection StatementWithEmptyBody
+                    while (cursor.hasNext()) {
+                    }
+                    Assert.fail("expected the build's frames to fail: " + sql);
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), error);
+                    TestUtils.assertContains(e.getFlyweightMessage(), "build_tab");
+                } finally {
+                    isArmed.set(false);
+                }
+                Assert.assertNull(join.getAtom().getStage(0).getFrozenBuild());
+                Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                Assert.assertEquals(0, engine.getBusyReaderCount());
+                Assert.assertEquals(sql, expected, result(factory, sqlExecutionContext));
+            }
+        }
+        // The tables still work on their own.
+        assertQuery("SELECT count() FROM build_tab").noLeakCheck().noRandomAccess().expectSize().returns("count\n200\n");
+    }
+
+    // The failure released every slot, reader and build, and the same factory reads the ordinary
+    // plan's rows again.
+    private static void assertReused(RecordCursorFactory factory, AsyncHashJoinRecordCursorFactory join, String sql, String expected) throws SqlException {
+        Assert.assertEquals(0, join.getBuildRoundAtom().getPerWorkerLocks().getAcquiredSlotCount());
+        Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+        Assert.assertNull(join.getAtom().getStage(0).getFrozenBuild());
+        Assert.assertEquals(sql, expected, result(factory, sqlExecutionContext));
+    }
+
+    // The probe's SYMBOL dictionary holds 5_001 texts, which the translator's cache is sized for.
+    // The build holds 600 rows of the text 'hot' and 100 of 'warm', and t holds one row of each in
+    // every frame of 64 rows, at positions 40 and 10. A task that reaches the cap of 64 tuples on
+    // the frame's warm row leaves the frame to a continuation, whose first chunk ends on its hot row
+    // and so needs more tuples than the task did.
+    private static void createLimitTables() throws Exception {
+        execute("""
+                CREATE TABLE t AS (
+                    SELECT x v,
+                        (CASE WHEN x % 64 = 41 THEN 'hot' WHEN x % 64 = 11 THEN 'warm' ELSE 'k' || (x % 5_000) END)::SYMBOL s,
+                        timestamp_sequence('2024-01-01', 1_000_000) ts
+                    FROM long_sequence(3_200)
+                ) TIMESTAMP(ts) PARTITION BY DAY
+                """);
+        execute("""
+                CREATE TABLE d AS (
+                    SELECT x w, (CASE WHEN x <= 600 THEN 'hot' WHEN x <= 700 THEN 'warm' ELSE 'k' || (x % 50) END)::SYMBOL s, x::INT k
+                    FROM long_sequence(2_000)
+                )
+                """);
+    }
+
+    private static void createFileTables() throws Exception {
+        execute("CREATE TABLE probe_tab AS (SELECT (x % 9)::INT k, x v, timestamp_sequence('2024-01-01', 600_000_000) ts FROM long_sequence(400)) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE build_tab AS (SELECT (x % 7)::INT k, x w, timestamp_sequence('2024-01-01', 1_800_000_000) ts FROM long_sequence(200)) TIMESTAMP(ts) PARTITION BY DAY");
+    }
+
+    private static void createTables() throws Exception {
+        execute("""
+                CREATE TABLE t AS (
+                    SELECT (x % 50)::INT k, (x % 50)::LONG lk, x v, timestamp_sequence('2024-01-01', 60_000_000) ts
+                    FROM long_sequence(400)
+                ) TIMESTAMP(ts) PARTITION BY HOUR
+                """);
+        execute("""
+                CREATE TABLE d AS (
+                    SELECT (x % 40)::INT k, (x % 40)::LONG lk, x w, ('s' || (x % 7))::SYMBOL s
+                    FROM long_sequence(300)
+                )
+                """);
+    }
+
+    private static boolean isOnStack(String className, String methodName) {
+        return STACK_WALKER.walk(frames -> frames.anyMatch(frame -> frame.getClassName().equals(className) && frame.getMethodName().equals(methodName)));
+    }
+
+    // The phase of a parallel hash join's execution that threw the exception, by its stack.
+    private static String phase(Throwable e) {
+        String phase = "other";
+        for (StackTraceElement frame : e.getStackTrace()) {
+            final String method = frame.getMethodName();
+            if (frame.getClassName().equals(ATOM) && method.equals("continueFrame")) {
+                return "continuation";
+            }
+            if (frame.getClassName().equals(STAGE)) {
+                switch (method) {
+                    case "bindSymbolKeyTranslation" -> phase = "translator";
+                    case "maybeCopyPayload" -> phase = "copy";
+                    case "build" -> phase = phase.equals("other") ? "build" : phase;
+                    default -> {
+                    }
+                }
+            }
+            if (frame.getClassName().endsWith("AsyncHashJoinRecordCursor") && method.equals("fetchNextFrame")) {
+                return "probe";
+            }
+        }
+        return phase;
+    }
+
+    private void assertMemoryLimitInEachPhase(boolean isInRounds) throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 1);
+        assertMemoryLeak(() -> {
+            createLimitTables();
+            sqlExecutionContext.changePageFrameSizes(64, 64);
+            // A translated SYMBOL key, a residual that makes the operator walk every pair on the
+            // workers, and a payload of fixed-size columns, which the build copies.
+            final String sql = "SELECT t.v, t.s, d.w, d.k FROM t LEFT JOIN d ON t.s = d.s AND d.w > t.v - 1_000_000";
+            final String expected = ordinary(sql, sqlExecutionContext);
+            try (RecordCursorFactory factory = select(sql)) {
+                final AsyncHashJoinRecordCursorFactory join = find(factory);
+                Assert.assertNotNull(join);
+                TestUtils.assertContains(plan(factory, sqlExecutionContext), "symbolKeyJoin: true");
+                final HashJoinBuildStage stage = join.getAtom().getStage(0);
+                // The first power of two that fits sizes the sweep's steps.
+                long fitting = 1024;
+                while (!isFitting(factory, join, fitting, expected)) {
+                    fitting *= 2;
+                }
+                final long step = Math.max(64, fitting / 2_000);
+                int build = 0;
+                int translator = 0;
+                int copy = 0;
+                int probe = 0;
+                int continuation = 0;
+                for (long limit = step; ; limit += step) {
+                    setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, limit);
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        //noinspection StatementWithEmptyBody
+                        while (cursor.hasNext()) {
+                        }
+                        Assert.assertTrue(stage.isPayloadCopied());
+                        Assert.assertEquals(isInRounds, stage.isBuiltInRounds());
+                        Assert.assertTrue(join.getAtom().getContinuationCount() > 0);
+                        break;
+                    } catch (CairoException e) {
+                        Assert.assertTrue(e.getMessage(), e.isOutOfMemory());
+                        TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                        switch (phase(e)) {
+                            case "build" -> build++;
+                            case "translator" -> translator++;
+                            case "copy" -> copy++;
+                            case "probe" -> probe++;
+                            case "continuation" -> continuation++;
+                            default -> throw new AssertionError("a breach outside the join's phases", e);
+                        }
+                    }
+                    // Each failure released everything the execution held.
+                    Assert.assertNull(stage.getFrozenBuild());
+                    Assert.assertEquals(0, join.getAtom().getRing().getAllocatedBytes());
+                    Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                    Assert.assertEquals(0, join.getBuildRoundAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                    Assert.assertEquals(0, engine.getBusyReaderCount());
+                }
+                final String counts = "build " + build + ", translator " + translator + ", copy " + copy + ", probe " + probe + ", continuation " + continuation;
+                Assert.assertTrue(counts, build > 0);
+                Assert.assertTrue(counts, translator > 0);
+                Assert.assertTrue(counts, copy > 0);
+                Assert.assertTrue(counts, probe > 0);
+                Assert.assertTrue(counts, continuation > 0);
+                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
+                Assert.assertEquals(expected, result(factory, sqlExecutionContext));
+            }
+            assertQuery("SELECT count() FROM d").noLeakCheck().noRandomAccess().expectSize().returns("count\n2000\n");
+        });
+    }
+
+    private boolean isFitting(RecordCursorFactory factory, AsyncHashJoinRecordCursorFactory join, long limit, String expected) throws SqlException {
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, limit);
+        try {
+            Assert.assertEquals(expected, result(factory, sqlExecutionContext));
+            return true;
+        } catch (CairoException e) {
+            Assert.assertTrue(e.getMessage(), e.isOutOfMemory());
+            Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+            return false;
+        } finally {
+            setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
+        }
+    }
+
+    /**
+     * Counts the breaker checks that threads make inside one method, on any thread, and cancels
+     * the query at the given one. A breaker of a class of its own is thread safe, so the workers
+     * consult it directly rather than through a copy.
+     */
+    private static class MethodCheckCircuitBreaker extends AtomicBooleanCircuitBreaker {
+        private final AtomicInteger checks = new AtomicInteger();
+        private final String className;
+        private final String methodName;
+        private final int reachedCheck;
+
+        private MethodCheckCircuitBreaker(CairoEngine engine, String className, String methodName, int reachedCheck) {
+            super(engine);
+            this.className = className;
+            this.methodName = methodName;
+            this.reachedCheck = reachedCheck;
+        }
+
+        @Override
+        public boolean checkIfTripped() {
+            onCheck();
+            return super.checkIfTripped();
+        }
+
+        public int getChecks() {
+            return checks.get();
+        }
+
+        @Override
+        public int getState() {
+            onCheck();
+            return super.getState();
+        }
+
+        @Override
+        public void statefulThrowExceptionIfTrippedNoThrottle() {
+            onCheck();
+            super.statefulThrowExceptionIfTrippedNoThrottle();
+        }
+
+        private void onCheck() {
+            if (isOnStack(className, methodName) && checks.incrementAndGet() == reachedCheck) {
+                cancel();
+            }
+        }
+    }
+}

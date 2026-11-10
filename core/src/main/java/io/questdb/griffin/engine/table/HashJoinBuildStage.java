@@ -160,6 +160,8 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
     // Each worker's copy of the build ON filter, or null when the owner's is thread safe or absent.
     @Nullable
     private final ObjList<Function> workerBuildOnFilters;
+    // The builds the stage ran, over all its executions; see getBuildCount().
+    private long buildCount;
     // Read by the tasks of a parallel build's key row count: the consecutive partitions each counts.
     private int countTaskPartitionCount;
     // The frozen build of the open cursor, whichever of the two builds produced it.
@@ -196,6 +198,8 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
     private long parquetFrameRows;
     // The open cursor's probe scan, whose dictionaries the SYMBOL key translation is sized by.
     private SymbolTableSource probeSymbols;
+    // The rounds of tasks the stage dispatched, over all its executions; see getRoundCount().
+    private long roundCount;
 
     /**
      * Takes every key sink and stager the stage will ever need, so construct it while the inputs,
@@ -500,6 +504,15 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
     }
 
     /**
+     * The builds the stage ran since it was constructed, one per execution that asked for a result:
+     * a test reads it before and after executions, to count the builds of each.
+     */
+    @TestOnly
+    public long getBuildCount() {
+        return buildCount;
+    }
+
+    /**
      * The build scan's filters and memory pools, which the stage borrows: the owner's WHERE filter,
      * if any, and each worker's copy of it, or the owner's filter itself for a filter without
      * worker copies.
@@ -579,6 +592,16 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
      */
     public int getProbeKeyColumn() {
         return probeKeyColumn;
+    }
+
+    /**
+     * The rounds of tasks that the stage dispatched through its round dispatcher since it was
+     * constructed: two for a parallel build, one for a payload copy in rounds and one for a key row
+     * count in rounds. A test reads it before and after executions, to count the rounds of each.
+     */
+    @TestOnly
+    public long getRoundCount() {
+        return roundCount;
     }
 
     /**
@@ -891,6 +914,7 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
                 intBuild.beginUnfilteredPartitioning(roundTaskRowCounts, rowsPerPartition);
             }
         }
+        roundCount++;
         dispatcher.dispatchRoundAndAwait(PARTITION_FRAME, roundTaskRowCounts);
         final int partitionCount;
         if (isKeyStaged) {
@@ -908,6 +932,7 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
         for (int partition = 0; partition < partitionCount; partition++) {
             roundTaskRowCounts.add(getPartitionRowCount(partition));
         }
+        roundCount++;
         dispatcher.dispatchRoundAndAwait(BUILD_PARTITION, roundTaskRowCounts);
         frozen = isKeyStaged ? mapBuild.freezePartitioned(buildFrames) : intBuild.freezePartitioned(buildFrames);
         isBuiltInRounds = true;
@@ -1046,6 +1071,7 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
             roundTaskRowCounts.add(rowCount);
         }
         try {
+            roundCount++;
             dispatcher.dispatchRoundAndAwait(COUNT_PARTITIONS, roundTaskRowCounts);
             if (isKeyStaged) {
                 mapBuild.endPartitionedKeyRowCount();
@@ -1270,6 +1296,7 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
     void build(SqlExecutionCircuitBreaker circuitBreaker, PageFrameRoundDispatcher dispatcher) {
         assert frozen == null && buildFrames.getSymbolTableSource() != null && parquetBuildRows == 0 && parquetFrameCount == 0
                 && parquetFrameRows == 0;
+        buildCount++;
         buildFrames.loadFrames();
         final SymbolTableSource buildSymbols = buildFrames.getSymbolTableSource();
         buildFilterContext.initMemoryPools(buildFrames.getAddressCache(), memoryTracker);
@@ -1358,6 +1385,7 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
                     }
                     roundTaskRowCounts.add(rows);
                 }
+                roundCount++;
                 dispatcher.dispatchRoundAndAwait(COPY_FRAME_PAYLOAD, roundTaskRowCounts);
                 buildFrames.publishCopy();
             } else {

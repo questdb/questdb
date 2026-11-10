@@ -106,6 +106,12 @@ import java.util.regex.Pattern;
  *       answer, or a fused operator that answers it wrong: either returns the
  *       same wrong rows on every other axis, because every other axis runs
  *       the fused plan on both sides.</li>
+ *   <li>{@code diffParallelJoin} runs a {@link QueryShape#EQUI_JOIN} query on the
+ *       primary at JIT-off a second time with the parallel hash join disabled and
+ *       compares it with the pivot, which may use the operator, row for row and in
+ *       order: the operator returns the ordinary plan's rows in the ordinary plan's
+ *       order, so any difference, even in the order alone, is a defect. Every other
+ *       axis runs the operator on both of its sides and compares multisets.</li>
  *   <li>the map page axis, on when the runner gets the engine's
  *       {@link Overrides}, runs every query on the primary at JIT-off once
  *       more, and an equi-join GROUP BY query several more times, with
@@ -204,6 +210,7 @@ public final class QueryRunner {
     private static final int MAP_PAGE_MAX_DOUBLINGS = 10;
     private final boolean diffFused;
     private final boolean diffJit;
+    private final boolean diffParallelJoin;
     private final boolean diffShadow;
     private final CairoEngine engine;
     private final SqlExecutionContext executionContext;
@@ -235,6 +242,12 @@ public final class QueryRunner {
     private int fusedAxisCompletedRuns;
     private int fusedAxisRuns;
     private int fusedAxisSelected;
+    // Queries on which the parallel join axis compared two runs, those among them whose pivot
+    // compiled and ran, and those whose pivot used the parallel hash join. Only the last compare
+    // two different plans, so they are what keeps the axis from going vacuous.
+    private int parallelJoinAxisCompletedRuns;
+    private int parallelJoinAxisRuns;
+    private int parallelJoinAxisSelected;
     private final TextPlanSink planSink = new TextPlanSink();
     private final boolean primaryHasAnyParquet;
     private final Pattern[] primaryPatterns;
@@ -250,6 +263,7 @@ public final class QueryRunner {
     private final StringSink rowsE = new StringSink();
     private final StringSink rowsF = new StringSink();
     private final StringSink rowsG = new StringSink();
+    private final StringSink rowsH = new StringSink();
     // Scratch sink for the toTop() re-iteration pass; compared against the
     // first pass to confirm the cursor reproduces its result set on rewind.
     private final StringSink rowsToTop = new StringSink();
@@ -263,6 +277,7 @@ public final class QueryRunner {
             boolean diffJit,
             boolean diffShadow,
             boolean diffFused,
+            boolean diffParallelJoin,
             Overrides mapPageOverrides,
             boolean verifyCursor,
             ObjList<FuzzTable> tables,
@@ -271,6 +286,7 @@ public final class QueryRunner {
         this.engine = engine;
         this.executionContext = executionContext;
         this.diffFused = diffFused;
+        this.diffParallelJoin = diffParallelJoin;
         this.mapPageOverrides = mapPageOverrides;
         this.diffJit = diffJit;
         this.diffShadow = diffShadow;
@@ -365,6 +381,32 @@ public final class QueryRunner {
      */
     public int getMapPageAxisRuns() {
         return mapPageAxisRuns;
+    }
+
+    /**
+     * Queries on which the parallel join axis ran and the pivot, the run with the parallel hash
+     * join enabled, returned rows rather than an error. A generated query that fails to compile
+     * fails in both plans alike, so it says nothing about whether the planner still selects the
+     * operator.
+     */
+    public int getParallelJoinAxisCompletedRuns() {
+        return parallelJoinAxisCompletedRuns;
+    }
+
+    /**
+     * Queries on which the parallel join axis ran: a {@link QueryShape#EQUI_JOIN} query, with the
+     * axis enabled and the parallel hash join available to the pivot.
+     */
+    public int getParallelJoinAxisRuns() {
+        return parallelJoinAxisRuns;
+    }
+
+    /**
+     * Queries on which the parallel join axis compared the operator against the ordinary plan: the
+     * pivot compiled to the parallel hash join and the second run to the ordinary plan.
+     */
+    public int getParallelJoinAxisSelected() {
+        return parallelJoinAxisSelected;
     }
 
     /**
@@ -966,6 +1008,16 @@ public final class QueryRunner {
         return Chars.indexOf(plan, 0, plan.length(), "Hash Join Group By") >= 0;
     }
 
+    /**
+     * Detects whether a rendered plan uses the parallel hash join. The substring matches both type
+     * names the operator prints, {@code Async Hash Join} and, for a compiled probe filter,
+     * {@code Async JIT Hash Join}, each followed by its worker count, which the fused hash join
+     * GROUP BY's {@code Async Hash Join Group By} is not.
+     */
+    static boolean isParallelHashJoinPlan(CharSequence plan) {
+        return Chars.indexOf(plan, 0, plan.length(), "Hash Join workers:") >= 0;
+    }
+
     // The SplitMix64 finalizer over the SQL text's hash and the salt, so that neighbouring salts
     // land on unrelated page sizes.
     private static long mapPageSize(String sql, int salt) {
@@ -1556,16 +1608,96 @@ public final class QueryRunner {
 
     /**
      * Runs the query on the primary at JIT-off with the fused hash join GROUP BY disabled into
-     * {@code rowsE}: the second run of the fused axis.
+     * {@code rowsE}: the second run of the fused axis. The run disables the parallel hash join as
+     * well, so that the GROUP BY runs over the ordinary hash join: the fused plan shares its build
+     * with the parallel hash join, which would otherwise answer for the ordinary plan here, and a
+     * pivot that the fused planner refuses runs the GROUP BY over the parallel hash join, which the
+     * axis then compares with the ordinary plan.
      */
     private Outcome runFusedOff(GeneratedQuery query) {
         executionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
         executionContext.setParallelHashJoinGroupByEnabled(false);
+        final boolean isParallelHashJoinEnabled = executionContext.isParallelHashJoinEnabled();
+        executionContext.setParallelHashJoinEnabled(false);
         try {
             return runOnce(query.sql(), rowsE, primaryHasAnyParquet, query.deterministic());
         } finally {
             executionContext.setParallelHashJoinGroupByEnabled(true);
+            executionContext.setParallelHashJoinEnabled(isParallelHashJoinEnabled);
         }
+    }
+
+    /**
+     * The parallel join axis applies to the row-producing equi-join shape only, and only when the
+     * parallel hash join is available to the pivot. The serial control arm disables it, so both
+     * runs would compile to the same ordinary plan there, and the axis skips it.
+     */
+    private boolean isParallelJoinAxisApplicable(GeneratedQuery query) {
+        return diffParallelJoin
+                && query.shape() == QueryShape.EQUI_JOIN
+                && executionContext.isParallelHashJoinEnabled();
+    }
+
+    /**
+     * Runs the query on the primary at JIT-off with the parallel hash join disabled into
+     * {@code rowsH}: the second run of the parallel join axis.
+     */
+    private Outcome runParallelJoinOff(GeneratedQuery query) {
+        executionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+        executionContext.setParallelHashJoinEnabled(false);
+        try {
+            return runOnce(query.sql(), rowsH, primaryHasAnyParquet, query.deterministic());
+        } finally {
+            executionContext.setParallelHashJoinEnabled(true);
+        }
+    }
+
+    /**
+     * Reconciles {@code bP}, the run with the parallel hash join disabled (see
+     * {@link #runParallelJoinOff}), against the pivot {@code bJ}, which ran with it enabled. Two
+     * runs that return rows must return the same rows in the same order, whether or not the query
+     * is deterministic for the multiset axes: the operator reproduces the ordinary plan's order,
+     * and so the rows that a LIMIT keeps. Two runs that fail reconcile as on the other axes. The
+     * run with the operator disabled must not render it, or the axis compares a plan with itself
+     * and proves nothing; that is a harness failure, reported as such.
+     */
+    private Result runParallelJoinVariant(GeneratedQuery query, Outcome bJ, Outcome bP) {
+        parallelJoinAxisRuns++;
+        if (bP.hasParallelHashJoin) {
+            return Result.failed(query.sql(), new AssertionError(
+                    "the parallel hash join is disabled but the plan still uses it: " + query.sql()));
+        }
+        if (bJ.failure == null) {
+            parallelJoinAxisCompletedRuns++;
+            if (bJ.hasParallelHashJoin) {
+                parallelJoinAxisSelected++;
+            }
+        }
+        if (bJ.failure == null && bP.failure == null) {
+            if (Chars.equals(rowsB, rowsH)) {
+                return Result.ok();
+            }
+            return Result.failed(query.sql(), divergence(
+                    "parallel hash join divergence (in order)",
+                    bJ,
+                    bP,
+                    rowsB,
+                    rowsH,
+                    "parallel on ",
+                    "parallel off"
+            ));
+        }
+        return reconcilePair(
+                query.sql(),
+                bJ,
+                bP,
+                rowsB,
+                rowsH,
+                query.deterministic(),
+                "parallel hash join divergence",
+                "parallel on ",
+                "parallel off"
+        );
     }
 
     /**
@@ -1580,8 +1712,11 @@ public final class QueryRunner {
         final String sql = query.sql();
         long pageSize = mapPageSize(sql, salt);
         executionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+        final boolean isParallelHashJoinEnabled = executionContext.isParallelHashJoinEnabled();
         if (isFusedOff) {
+            // The fused axis's ordinary run, see runFusedOff().
             executionContext.setParallelHashJoinGroupByEnabled(false);
+            executionContext.setParallelHashJoinEnabled(false);
         }
         Outcome small;
         try {
@@ -1597,6 +1732,7 @@ public final class QueryRunner {
             mapPageOverrides.setProperty(PropertyKey.CAIRO_SQL_SMALL_MAP_PAGE_SIZE, (String) null);
             if (isFusedOff) {
                 executionContext.setParallelHashJoinGroupByEnabled(true);
+                executionContext.setParallelHashJoinEnabled(isParallelHashJoinEnabled);
             }
         }
         mapPageAxisRuns++;
@@ -1719,7 +1855,7 @@ public final class QueryRunner {
             if (Chars.indexOf(plan, 0, plan.length(), "Hash Join Group By Build Choice") >= 0) {
                 buildChoiceRuns++;
             }
-            return Outcome.ok(rowsRead, planUsesIndex(plan), usesParquet, isFusedHashJoinPlan(plan), fpColumnMask);
+            return Outcome.ok(rowsRead, planUsesIndex(plan), usesParquet, isFusedHashJoinPlan(plan), isParallelHashJoinPlan(plan), fpColumnMask);
         } catch (CursorCheckException e) {
             throw e;
         } catch (SqlException e) {
@@ -1741,8 +1877,8 @@ public final class QueryRunner {
 
     private Result runQuery(GeneratedQuery query) {
         String sql = query.sql();
-        if (!diffJit && !diffShadow && !isFusedAxisApplicable(query) && mapPageOverrides == null && !query.hasBind()
-                && query.referenceSql() == null) {
+        if (!diffJit && !diffShadow && !isFusedAxisApplicable(query) && !isParallelJoinAxisApplicable(query)
+                && mapPageOverrides == null && !query.hasBind() && query.referenceSql() == null) {
             Outcome outcome = runOnce(sql, rowsA, primaryHasAnyParquet, query.deterministic());
             return toResult(sql, outcome);
         }
@@ -1793,6 +1929,14 @@ public final class QueryRunner {
                 Result fusedResult = runFusedVariant(query, bJ, bF);
                 if (fusedResult.isFailed()) {
                     return fusedResult;
+                }
+            }
+
+            if (isParallelJoinAxisApplicable(query)) {
+                final Outcome bP = runParallelJoinOff(query);
+                final Result parallelJoinResult = runParallelJoinVariant(query, bJ, bP);
+                if (parallelJoinResult.isFailed()) {
+                    return parallelJoinResult;
                 }
             }
 
@@ -1974,6 +2118,7 @@ public final class QueryRunner {
             boolean hasBlockingAggregation,
             boolean usesParquet,
             boolean hasFusedHashJoin,
+            boolean hasParallelHashJoin,
             boolean[] fpColumnMask,
             Throwable failure,
             String exceptionClass,
@@ -1981,15 +2126,15 @@ public final class QueryRunner {
     ) {
 
         static Outcome error(Throwable t, String message, boolean usesParquet) {
-            return new Outcome(0, false, false, false, false, usesParquet, false, EMPTY_FP_MASK, t, t.getClass().getSimpleName(), message);
+            return new Outcome(0, false, false, false, false, usesParquet, false, false, EMPTY_FP_MASK, t, t.getClass().getSimpleName(), message);
         }
 
         static Outcome ok(int rowsRead, boolean hasIndex, boolean hasPushedLimit, boolean hasEarlyExitGroupBy, boolean hasBlockingAggregation, boolean usesParquet) {
-            return new Outcome(rowsRead, hasIndex, hasPushedLimit, hasEarlyExitGroupBy, hasBlockingAggregation, usesParquet, false, EMPTY_FP_MASK, null, null, null);
+            return new Outcome(rowsRead, hasIndex, hasPushedLimit, hasEarlyExitGroupBy, hasBlockingAggregation, usesParquet, false, false, EMPTY_FP_MASK, null, null, null);
         }
 
-        static Outcome ok(int rowsRead, boolean hasIndex, boolean usesParquet, boolean hasFusedHashJoin, boolean[] fpColumnMask) {
-            return new Outcome(rowsRead, hasIndex, false, false, false, usesParquet, hasFusedHashJoin, fpColumnMask, null, null, null);
+        static Outcome ok(int rowsRead, boolean hasIndex, boolean usesParquet, boolean hasFusedHashJoin, boolean hasParallelHashJoin, boolean[] fpColumnMask) {
+            return new Outcome(rowsRead, hasIndex, false, false, false, usesParquet, hasFusedHashJoin, hasParallelHashJoin, fpColumnMask, null, null, null);
         }
     }
 

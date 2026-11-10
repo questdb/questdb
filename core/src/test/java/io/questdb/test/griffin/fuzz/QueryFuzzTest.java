@@ -57,7 +57,7 @@ import java.nio.file.Paths;
  * scalar types plus DECIMAL and DOUBLE arrays, inserts rows that span
  * multiple DAY partitions, then runs a budget of randomly generated
  * SELECT / GROUP BY / SAMPLE BY / LATEST ON / ASOF-LT-SPLICE / HORIZON /
- * WINDOW JOIN / equi-join GROUP BY
+ * WINDOW JOIN / equi-join GROUP BY / row-producing equi-join
  * queries and
  * materializes every result row, additionally re-iterating each cursor
  * after {@code toTop()} and cross-checking {@code size()} /
@@ -151,6 +151,25 @@ import java.nio.file.Paths;
  *         rows. The run asserts that the fused plan ran on enough of the
  *         comparisons whose query compiled to rule out a planner that has
  *         stopped selecting it.</li>
+ *     <li>{@code -Dquestdb.fuzz.equijoin=true|false} &mdash; generate
+ *         row-producing equi-join shapes (an INNER or LEFT join on one or two of
+ *         the shared key columns, with ON residuals, post-join filters, intervals,
+ *         ORDER BY and LIMIT), the shape the parallel hash join runs (default
+ *         true). Their band is carved from the SIMPLE range, so the other shapes'
+ *         frequencies are unchanged; pass {@code false} to give the band back to
+ *         SIMPLE.</li>
+ *     <li>{@code -Dquestdb.fuzz.diff.parallel.join=true|false} &mdash; run every
+ *         equi-join query a second time with the parallel hash join disabled and
+ *         compare the two materializations in order (default true). The run turns
+ *         the operator on for every query, and the other axes run it on both of
+ *         their sides, so only this axis sees an operator that returns wrong rows
+ *         or the right rows in another order. The run asserts that the operator ran
+ *         on enough of the comparisons whose query compiled to rule out a planner
+ *         that has stopped selecting it.</li>
+ *     <li>{@code -Dquestdb.fuzz.parallel.join.cap=N} &mdash; the parallel hash
+ *         join's cap of tuples per probe task (default: the seed picks one tuple,
+ *         which leaves the rest of a frame with fan-out to continuations, or the
+ *         operator's own default).</li>
  *     <li>{@code -Dquestdb.fuzz.diff.mappage=true|false} &mdash; run every
  *         query once more, and an equi-join GROUP BY query several more times,
  *         with {@code cairo.sql.small.map.page.size} cut to between 8 and 512
@@ -171,7 +190,7 @@ import java.nio.file.Paths;
  * <p>
  * Each query also has a small chance of running with parallel SQL
  * execution disabled (parallel filter, GROUP BY, fused hash join GROUP BY,
- * top-K, parquet read), so
+ * parallel hash join, top-K, parquet read), so
  * the serial code paths get exercised alongside the parallel ones. The
  * coin flip pulls from the seeded rnd, so replaying with the same seeds
  * reproduces the same on/off pattern.
@@ -210,6 +229,15 @@ public class QueryFuzzTest extends AbstractCairoTest {
     // (0.6^25 = 2.8e-6 at the smallest guarded sample), and on a 5_000-query soak of about 170
     // comparisons fails a share of 24% or less.
     private static final double FUSED_SHARE_FALSE_ALARM = 1e-5;
+    // Share of the parallel join axis's completed comparisons that a working planner runs on the
+    // parallel hash join, as runFuzz's guard models it. The share is below 100% because the
+    // generator sends a minority of its queries through inputs the operator refuses, LIMIT barriers
+    // and sorted right inputs, and the optimiser keeps the ordinary plan for some filters. A default
+    // run of 1_000 queries measured 19 of 27, and a 20_000-query run 414 of 589, both 70%. The
+    // baseline sits well below that, and the guard fails a run with the fused axis's false-alarm
+    // rate, FUSED_SHARE_FALSE_ALARM, while it still fails every guarded run of a planner that stops
+    // running the operator (0.5^25 = 3e-8 at the smallest guarded sample).
+    private static final double PARALLEL_JOIN_SHARE_BASELINE = 0.5;
     // Lowest share, in percent, of a shape's differential queries that must actually run rather
     // than be skipped on an expected error. Skips are normal - a fuzzed expression can overflow, a
     // cast can be inconvertible - and how often they happen swings with the randomly generated
@@ -295,7 +323,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                     "('2024-01-01T00:00:00', 'a', " + nearMax + "), " +
                     "('2024-01-01T00:01:00', 'a', " + nearMax + ")");
 
-            QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, false, false, null, true, new ObjList<>(), null);
+            QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, false, false, false, null, true, new ObjList<>(), null);
 
             QueryRunner.Result avgResult = runner.run(
                     new GeneratedQuery("SELECT avg(d) OVER (PARTITION BY g ORDER BY ts) c FROM t", true));
@@ -335,6 +363,21 @@ public class QueryFuzzTest extends AbstractCairoTest {
         // A soak's larger sample holds the share to more: 41 of 170 (24%) fails and 42 passes.
         Assert.assertTrue(isFusedShareImplausible(41, 170));
         Assert.assertFalse(isFusedShareImplausible(42, 170));
+    }
+
+    @Test
+    public void testParallelJoinShareGuard() {
+        // A working planner runs the operator on about 70% of the completed comparisons; a share at
+        // or above the baseline passes, and so does a sample at the measured share's low end.
+        Assert.assertFalse(isParallelJoinShareImplausible(13, 25));
+        Assert.assertFalse(isParallelJoinShareImplausible(19, 27));
+        Assert.assertFalse(isParallelJoinShareImplausible(5, 25));
+        // A planner that stops running the operator fails at the smallest guarded sample.
+        Assert.assertTrue(isParallelJoinShareImplausible(0, MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR));
+        Assert.assertTrue(isParallelJoinShareImplausible(2, MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR));
+        // A soak's larger sample holds the share to more.
+        Assert.assertTrue(isParallelJoinShareImplausible(200, 589));
+        Assert.assertFalse(isParallelJoinShareImplausible(260, 589));
     }
 
     @Test
@@ -570,7 +613,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 // surfaces a failed axis, so the regression assertion is that the
                 // run is not failed; without isPlannerSensitivityAsymmetry the
                 // storage axis would report a divergence and the run would fail.
-                final QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, true, false, null, false, tables, null);
+                final QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, true, false, false, null, false, tables, null);
                 final QueryRunner.Result result = runner.run(new GeneratedQuery(String.format(horizonJoin, "p", "p"), true));
                 Assert.assertFalse(
                         "storage divergence must be tolerated, not failed: "
@@ -599,7 +642,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
             final String nines = "9".repeat(76);
             execute("INSERT INTO cmp VALUES (" + nines + "m, 1.0m), (-" + nines + "m, 1.0m)");
 
-            QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, false, false, null, true, new ObjList<>(), null);
+            QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, false, false, false, null, true, new ObjList<>(), null);
             QueryRunner.Result result = runner.run(
                     new GeneratedQuery("SELECT count() c FROM cmp WHERE a > b", true));
             Assert.assertFalse("comparison must not be skipped: " + result.getSkipReason(), result.isSkipped());
@@ -713,6 +756,10 @@ public class QueryFuzzTest extends AbstractCairoTest {
                             .with(securityContext, bindVariableService, null, -1, circuitBreaker)
             ) {
                 parallelCtx.initNow();
+                // The parallel hash join is off by default; the run turns it on for every query, so
+                // that every axis and the fault injection run it, and the parallel join axis
+                // compares it with the ordinary plan.
+                parallelCtx.setParallelHashJoinEnabled(true);
                 runFuzz(parallelCtx, writerPool, QUERY_POOL_NAME + '_');
             } finally {
                 // Suppress halt-time failures so they don't mask the original
@@ -769,6 +816,15 @@ public class QueryFuzzTest extends AbstractCairoTest {
         return binomialLowerTail(selected, completed, FUSED_SHARE_BASELINE) < FUSED_SHARE_FALSE_ALARM;
     }
 
+    /**
+     * Says whether a working planner, one that runs PARALLEL_JOIN_SHARE_BASELINE of the completed
+     * comparisons on the parallel hash join, would run {@code selected} or fewer of
+     * {@code completed} on it with a chance below FUSED_SHARE_FALSE_ALARM.
+     */
+    private static boolean isParallelJoinShareImplausible(int selected, int completed) {
+        return binomialLowerTail(selected, completed, PARALLEL_JOIN_SHARE_BASELINE) < FUSED_SHARE_FALSE_ALARM;
+    }
+
     private static String planOf(String sql) throws SqlException {
         try (RecordCursorFactory factory = engine.select(sql, sqlExecutionContext)) {
             TextPlanSink sink = new TextPlanSink();
@@ -796,6 +852,9 @@ public class QueryFuzzTest extends AbstractCairoTest {
      */
     private static String describeUngeneratableShape(QueryShape shape, FuzzConfig config, ObjList<FuzzTable> tables) {
         return switch (shape) {
+            case EQUI_JOIN -> config.isEquiJoinEnabled()
+                    ? describeMissingJoinTables(tables)
+                    : "-D" + FuzzConfig.EQUI_JOIN_PROP + "=false";
             case GROUP_BY, SAMPLE_BY, SIMPLE -> null;
             case GROUPING_SETS -> config.isGroupingSetsEnabled()
                     ? null
@@ -923,15 +982,21 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 .$(", horizonJoin=").$(config.isHorizonJoinEnabled())
                 .$(", windowJoin=").$(config.isWindowJoinEnabled())
                 .$(", hashJoin=").$(config.isHashJoinEnabled())
+                .$(", equiJoin=").$(config.isEquiJoinEnabled())
                 .$(", diffFused=").$(config.isDiffFusedEnabled())
+                .$(", diffParallelJoin=").$(config.isDiffParallelJoinEnabled())
                 .$(", diffMapPage=").$(config.isDiffMapPageEnabled())
                 .$(", hashJoinPayload=").$(config.getHashJoinPayloadLayout() != null ? config.getHashJoinPayloadLayout().name() : "rule")
                 .$(", hashJoinBuild=").$(config.getHashJoinBuildMode().name())
+                .$(", parallelJoinCap=").$(config.getParallelJoinTaskOutputMaxRows())
                 .$();
         if (config.getHashJoinPayloadLayout() != null) {
             config.getHashJoinPayloadLayout().apply(node1.getConfigurationOverrides());
         }
         config.getHashJoinBuildMode().applyProperties(node1.getConfigurationOverrides());
+        if (config.getParallelJoinTaskOutputMaxRows() > 0) {
+            node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, config.getParallelJoinTaskOutputMaxRows());
+        }
 
         FuzzTableFactory factory = new FuzzTableFactory(config);
         ObjList<FuzzTable> tables = new ObjList<>();
@@ -962,6 +1027,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 config.isDiffJitEnabled(),
                 config.isDiffShadowEnabled(),
                 config.isDiffFusedEnabled(),
+                config.isDiffParallelJoinEnabled(),
                 config.isDiffMapPageEnabled() ? node1.getConfigurationOverrides() : null,
                 config.isVerifyCursorEnabled(),
                 tables,
@@ -978,6 +1044,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
         // reads the context's own flag.
         final boolean savedParallelFilter = sqlExecutionContext.isParallelFilterEnabled();
         final boolean savedParallelGroupBy = sqlExecutionContext.isParallelGroupByEnabled();
+        final boolean savedParallelHashJoin = sqlExecutionContext.isParallelHashJoinEnabled();
         final boolean savedParallelHashJoinGroupBy = sqlExecutionContext.isParallelHashJoinGroupByEnabled();
         final boolean savedParallelHorizonJoin = sqlExecutionContext.isParallelHorizonJoinEnabled();
         final boolean savedParallelReadParquet = sqlExecutionContext.isParallelReadParquetEnabled();
@@ -1005,7 +1072,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 boolean injectFaultFn = faultType == FaultType.FUNCTION;
                 long preGenS0 = rnd.getSeed0();
                 long preGenS1 = rnd.getSeed1();
-                GeneratedQuery query = QueryGenerator.generate(rnd, tables, null, injectFaultFn, config.isWindowEnabled(), config.isLatestOnEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled(), config.isHashJoinEnabled(), config.isGroupingSetsEnabled());
+                GeneratedQuery query = QueryGenerator.generate(rnd, tables, null, injectFaultFn, config.isWindowEnabled(), config.isLatestOnEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled(), config.isHashJoinEnabled(), config.isGroupingSetsEnabled(), config.isEquiJoinEnabled());
                 QueryRunner.Result result;
                 if (faultType != null) {
                     // Fault queries use a crash-and-recover oracle, not the
@@ -1027,6 +1094,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                     if (!runFaultParallel) {
                         sqlExecutionContext.setParallelFilterEnabled(false);
                         sqlExecutionContext.setParallelGroupByEnabled(false);
+                        sqlExecutionContext.setParallelHashJoinEnabled(false);
                         sqlExecutionContext.setParallelHashJoinGroupByEnabled(false);
                         sqlExecutionContext.setParallelHorizonJoinEnabled(false);
                         sqlExecutionContext.setParallelReadParquetEnabled(false);
@@ -1039,6 +1107,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                         if (!runFaultParallel) {
                             sqlExecutionContext.setParallelFilterEnabled(savedParallelFilter);
                             sqlExecutionContext.setParallelGroupByEnabled(savedParallelGroupBy);
+                            sqlExecutionContext.setParallelHashJoinEnabled(savedParallelHashJoin);
                             sqlExecutionContext.setParallelHashJoinGroupByEnabled(savedParallelHashJoinGroupBy);
                             sqlExecutionContext.setParallelHorizonJoinEnabled(savedParallelHorizonJoin);
                             sqlExecutionContext.setParallelReadParquetEnabled(savedParallelReadParquet);
@@ -1068,7 +1137,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                         long bindS1 = rnd.nextLong();
                         rnd.reset(preGenS0, preGenS1);
                         BindContext ctx = new BindContext(new Rnd(bindS0, bindS1), CONSTANT_BIND_PROBABILITY_PCT);
-                        GeneratedQuery bindForm = QueryGenerator.generate(rnd, tables, ctx, injectFaultFn, config.isWindowEnabled(), config.isLatestOnEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled(), config.isHashJoinEnabled(), config.isGroupingSetsEnabled());
+                        GeneratedQuery bindForm = QueryGenerator.generate(rnd, tables, ctx, injectFaultFn, config.isWindowEnabled(), config.isLatestOnEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled(), config.isHashJoinEnabled(), config.isGroupingSetsEnabled(), config.isEquiJoinEnabled());
                         if (ctx.getBindValues().size() > 0) {
                             query = query.withBind(bindForm.sql(), ctx.getBindNames(), ctx.getBindValues());
                             bindGen++;
@@ -1084,6 +1153,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                         serial++;
                         sqlExecutionContext.setParallelFilterEnabled(false);
                         sqlExecutionContext.setParallelGroupByEnabled(false);
+                        sqlExecutionContext.setParallelHashJoinEnabled(false);
                         sqlExecutionContext.setParallelHashJoinGroupByEnabled(false);
                         sqlExecutionContext.setParallelHorizonJoinEnabled(false);
                         sqlExecutionContext.setParallelReadParquetEnabled(false);
@@ -1097,6 +1167,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                         if (disableParallel) {
                             sqlExecutionContext.setParallelFilterEnabled(savedParallelFilter);
                             sqlExecutionContext.setParallelGroupByEnabled(savedParallelGroupBy);
+                            sqlExecutionContext.setParallelHashJoinEnabled(savedParallelHashJoin);
                             sqlExecutionContext.setParallelHashJoinGroupByEnabled(savedParallelHashJoinGroupBy);
                             sqlExecutionContext.setParallelHorizonJoinEnabled(savedParallelHorizonJoin);
                             sqlExecutionContext.setParallelReadParquetEnabled(savedParallelReadParquet);
@@ -1145,6 +1216,11 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 .$(runner.getFusedAxisRuns()).$(" comparisons across ")
                 .$(generatedByShape[QueryShape.HASH_JOIN_GROUP_BY.ordinal()]).$(" equi-join GROUP BY queries; ")
                 .$(runner.getBuildChoiceRuns()).$(" runs picked the build per execution")
+                .$();
+        LOG.info().$("fuzz parallel join axis: ").$(runner.getParallelJoinAxisSelected()).$(" of ")
+                .$(runner.getParallelJoinAxisCompletedRuns()).$(" completed comparisons used the parallel hash join; ")
+                .$(runner.getParallelJoinAxisRuns()).$(" comparisons across ")
+                .$(generatedByShape[QueryShape.EQUI_JOIN.ordinal()]).$(" equi-join queries")
                 .$();
         LOG.info().$("fuzz map page axis: ").$(runner.getMapPageAxisRuns()).$(" comparisons").$();
         LOG.info().$("fuzz reference axis: ").$(runner.getReferenceAxisRuns()).$(" comparisons across ")
@@ -1229,6 +1305,27 @@ public class QueryFuzzTest extends AbstractCairoTest {
                                 + binomialLowerTail(fusedSelected, fusedCompleted, FUSED_SHARE_BASELINE)
                                 + "; the fused on/off axis looks vacuous",
                         isFusedShareImplausible(fusedSelected, fusedCompleted)
+                );
+            }
+        }
+        // Guard the parallel join axis against going vacuous, as the fused axis is guarded above: it
+        // compares two different plans only when the pivot selected the parallel hash join.
+        final int parallelJoinCompleted = runner.getParallelJoinAxisCompletedRuns();
+        if (config.isDiffParallelJoinEnabled() && generatedByShape[QueryShape.EQUI_JOIN.ordinal()] > 0) {
+            if (parallelJoinCompleted < MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR) {
+                LOG.info().$("fuzz parallel join axis below the sample size, NOT guarded this run: ")
+                        .$(parallelJoinCompleted).$('/').$(MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR)
+                        .$(" completed comparisons; raise -D").$(FuzzConfig.QUERIES_PROP).$(" to guard it")
+                        .$();
+            } else {
+                final int parallelJoinSelected = runner.getParallelJoinAxisSelected();
+                Assert.assertFalse(
+                        "the parallel hash join ran on only " + parallelJoinSelected + " of " + parallelJoinCompleted
+                                + " completed comparisons, which a planner that runs it on " + Math.round(100 * PARALLEL_JOIN_SHARE_BASELINE)
+                                + "% of them does with probability "
+                                + binomialLowerTail(parallelJoinSelected, parallelJoinCompleted, PARALLEL_JOIN_SHARE_BASELINE)
+                                + "; the parallel join axis looks vacuous",
+                        isParallelJoinShareImplausible(parallelJoinSelected, parallelJoinCompleted)
                 );
             }
         }
