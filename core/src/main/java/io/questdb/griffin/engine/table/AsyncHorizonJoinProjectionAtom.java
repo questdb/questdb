@@ -89,6 +89,7 @@ public class AsyncHorizonJoinProjectionAtom implements StatefulAtom, PerWorkerLo
     private final ObjList<HorizonJoinSlaveState> slaveStates;
     private final long slotsPerRow;
     private final int workerCount;
+    private boolean areFiltersInitialized;
     // Slaves whose filters initTimeFrameCursors() has initialized, and clear() has yet to close
     private int initializedSlaveFilterCount;
     private MemoryTracker memoryTracker;
@@ -163,12 +164,23 @@ public class AsyncHorizonJoinProjectionAtom implements StatefulAtom, PerWorkerLo
         for (int s = 0; s < count; s++) {
             failure = slaveStates.getQuick(s).cursorClosed(failure);
         }
+        // The frame sequence clears the atom after awaiting its workers, so no filter clone is in use.
+        if (areFiltersInitialized) {
+            areFiltersInitialized = false;
+            failure = HorizonJoinSlaveState.cursorClosed(failure, ownerFilter);
+            if (perWorkerFilters != null) {
+                for (int i = 0, n = perWorkerFilters.size(); i < n; i++) {
+                    failure = HorizonJoinSlaveState.cursorClosed(failure, perWorkerFilters.getQuick(i));
+                }
+            }
+        }
         memoryTracker = null;
         CairoException.rethrowCleanupFailure(failure);
     }
 
     @Override
     public void close() {
+        areFiltersInitialized = false;
         Throwable failure = Misc.freeBestEffort(null, compiledFilter);
         failure = Misc.freeBestEffort(failure, bindVarMemory);
         failure = Misc.freeObjListBestEffort(failure, bindVarFunctions);
@@ -249,6 +261,8 @@ public class AsyncHorizonJoinProjectionAtom implements StatefulAtom, PerWorkerLo
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         memoryTracker = executionContext.getMemoryTracker();
+        // Set before the filters initialize, so that clear() also closes a filter whose init() throws.
+        areFiltersInitialized = true;
         if (ownerFilter != null) {
             ownerFilter.init(symbolTableSource, executionContext);
         }

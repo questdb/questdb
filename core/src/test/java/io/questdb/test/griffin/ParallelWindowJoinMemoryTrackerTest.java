@@ -149,6 +149,56 @@ public class ParallelWindowJoinMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKeyedWindowJoinChargesOwnTrackerWhileAnotherCursorIsOpen() throws Exception {
+        // Two cursors open on one context, as a PostgreSQL connection keeps them for two portals.
+        // The context reports the tracker of the query opened last, so a join that read it on its
+        // first hasNext() charged its symbol maps to the other query, whose tracker then went back
+        // to its pool with memory charged to it.
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        createTrades(engine, sqlExecutionContext, 5_000, 8);
+                        createPrices(engine, sqlExecutionContext, 50_000, 8);
+                        final String query = "SELECT t.ts, sum(p.price) " +
+                                "FROM trades t WINDOW JOIN prices p ON t.sym = p.sym " +
+                                "RANGE BETWEEN 2 seconds PRECEDING AND 2 seconds FOLLOWING";
+                        try (
+                                RecordCursorFactory factoryA = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory();
+                                RecordCursorFactory factoryB = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()
+                        ) {
+                            TestUtils.assertFactoryInTree(factoryA, AsyncWindowJoinFastRecordCursorFactory.class);
+                            final MemoryTracker trackerA;
+                            final MemoryTracker trackerB;
+                            try (RecordCursor cursorA = factoryA.getCursor(sqlExecutionContext)) {
+                                trackerA = sqlExecutionContext.getMemoryTracker();
+                                Assert.assertNotNull(trackerA);
+                                long rows = 0;
+                                try (RecordCursor ignore = factoryB.getCursor(sqlExecutionContext)) {
+                                    trackerB = sqlExecutionContext.getMemoryTracker();
+                                    Assert.assertNotNull(trackerB);
+                                    Assert.assertNotSame(trackerA, trackerB);
+                                    final long usedB = trackerB.getUsed();
+                                    while (cursorA.hasNext()) {
+                                        rows++;
+                                    }
+                                    Assert.assertEquals(5_000, rows);
+                                    Assert.assertEquals("the first query charged the second query's tracker", usedB, trackerB.getUsed());
+                                    Assert.assertTrue("the first query charged its own tracker nothing", trackerA.getUsed() > 0);
+                                }
+                                Assert.assertEquals("the second query's tracker went back to its pool charged", 0, trackerB.getUsed());
+                            }
+                            Assert.assertEquals("the first query's tracker went back to its pool charged", 0, trackerA.getUsed());
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
     public void testKeyedWindowJoinHighCardinalitySymbolMapsBreachLimit() throws Exception {
         // The keyed atom carries native maps next to its allocators: one slave symbol lookup map
         // (an entry per master symbol), an owner and a per-worker-slot slaveData map (an entry per

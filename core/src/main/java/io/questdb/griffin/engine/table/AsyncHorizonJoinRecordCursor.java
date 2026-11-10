@@ -233,7 +233,7 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
                     executionContext.getPageFrameMinRows(),
                     executionContext.getPageFrameMaxRows(),
                     executionContext.getSharedQueryWorkerCount(),
-                    executionContext.getMemoryTracker()
+                    frameSequence.getMemoryTracker()
             );
             try {
                 frameSequence.getAtom().initTimeFrameCursors(

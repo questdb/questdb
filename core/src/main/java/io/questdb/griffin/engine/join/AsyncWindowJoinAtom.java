@@ -79,6 +79,10 @@ public class AsyncWindowJoinAtom implements StatefulAtom, PerWorkerLockOwner, Re
     public static boolean GROUP_BY_VALUE_USE_COMPACT_DIRECT_MAP = true;
     protected final ObjList<Function> ownerGroupByFunctionArgs;
     protected final WindowJoinTimeFrameHelper ownerSlaveTimeFrameHelper;
+    // Per-query native memory tracker captured from SqlExecutionContext on init.
+    // Null when no per-query limit applies. Workers and operator code feed it to
+    // tracker-aware Unsafe overloads to charge allocations to the active workload.
+    protected MemoryTracker memoryTracker;
     private final ObjList<Function> bindVarFunctions;
     private final MemoryCARW bindVarMemory;
     private final CompiledFilter compiledMasterFilter;
@@ -137,10 +141,6 @@ public class AsyncWindowJoinAtom implements StatefulAtom, PerWorkerLockOwner, Re
     private final long windowHi;
     private final long windowLo;
     private boolean areFiltersInitialized;
-    // Per-query native memory tracker captured from SqlExecutionContext on init.
-    // Null when no per-query limit applies. Workers and operator code feed it to
-    // tracker-aware Unsafe overloads to charge allocations to the active workload.
-    private MemoryTracker memoryTracker;
     private boolean skipAggregation = false;
 
     public AsyncWindowJoinAtom(

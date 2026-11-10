@@ -342,6 +342,19 @@ public class FunctionCursorClosedTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinWithoutAggregatesFilterReleasesCastDictionary() throws Exception {
+        assertMemoryLeak(() -> {
+            createVarcharTable();
+            final String keyed = "select h.offset o, a.ts, b.l from t a horizon join t b on (s) list (0s, 1s) as h" +
+                    " where a.v::symbol = 'k1' order by a.ts, o";
+            assertOwnerReleasesCastDictionaries(keyed, "Async Horizon Join Projection");
+            final String notKeyed = "select h.offset o, a.ts, b.l from t a horizon join t b list (0s, 1s) as h" +
+                    " where a.v::symbol = 'k1' order by a.ts, o";
+            assertOwnerReleasesCastDictionaries(notKeyed, "Async Horizon Join Projection");
+        });
+    }
+
+    @Test
     public void testInSymbolCursorReleasesValueSet() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t as (select ('s' || (x % 100))::symbol s, ('s' || x)::varchar v from long_sequence(1000))");
@@ -465,7 +478,8 @@ public class FunctionCursorClosedTest extends AbstractCairoTest {
                                 "select v from t where cast(v as symbol) <> 'k7'",
                                 "select s, count() c from t where cast(v as symbol) <> 'k7' order by s",
                                 "select max(l) m from t where cast(v as symbol) <> 'k7'",
-                                "select l from t where cast(v as symbol) <> 'k7' order by l desc limit 5"
+                                "select l from t where cast(v as symbol) <> 'k7' order by l desc limit 5",
+                                "select h.offset o, a.l from t a horizon join t b on (s) list (0s, 1s) as h where cast(a.v as symbol) <> 'k7'"
                         };
                         for (String sql : queries) {
                             try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()) {

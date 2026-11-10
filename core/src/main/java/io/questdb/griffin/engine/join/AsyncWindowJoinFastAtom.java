@@ -43,7 +43,6 @@ import io.questdb.std.DirectIntIntHashMap;
 import io.questdb.std.DirectIntMultiLongHashMap;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.MemoryTag;
-import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -234,8 +233,9 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
         // allocators the parent binds in reopen(). Binding runs while each map is closed - clear()
         // releases them and drops their tracker - so every block is freed under the tracker that
         // charged it. A worker slot's map is charged to the query that acquired the slot, which is
-        // the query this atom belongs to.
-        final MemoryTracker memoryTracker = executionContext.getMemoryTracker();
+        // the query this atom belongs to. The tracker comes from init(), not from the execution
+        // context: this runs on the first read, and by then the context may have moved on to
+        // another query that shares it, such as a second open cursor of the same connection.
         slaveSymbolLookupMap.setMemoryTracker(memoryTracker);
         slaveSymbolLookupMap.reopen();
         ownerSlaveData.setMemoryTracker(memoryTracker);
