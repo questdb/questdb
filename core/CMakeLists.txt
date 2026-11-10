@@ -27,8 +27,7 @@ endif ()
 if (APPLE)
     set(OS_DARWIN 1)
     # Apple clang outlines repeated instructions out of hot loops, which made keyed aggregates up to 2.2x slower.
-    # NASM rejects the option, so only the C and C++ compilers get it. The macOS job of rebuild_native_libs.yml
-    # fails when the library contains outlined code.
+    # NASM rejects the option, so only the C and C++ compilers get it.
     add_compile_options("$<$<COMPILE_LANGUAGE:C,CXX>:-mno-outline>")
 elseif (UNIX)
     if (CMAKE_SYSTEM_NAME MATCHES "FreeBSD")
