@@ -44,6 +44,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.TextPlanSink;
+import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.StreamGroupByMap;
 import io.questdb.griffin.engine.groupby.StreamGroupByRecordCursorFactory;
@@ -63,6 +64,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.QueryAssertion;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.CountingSqlExecutionCircuitBreaker;
+import io.questdb.test.tools.LimitedMemoryTracker;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -506,6 +508,64 @@ public class StreamGroupByTest extends AbstractCairoTest {
                             Assert.assertTrue(e.getFlyweightMessage().toString(), e.isInterruption());
                         }
                         Assert.assertEquals(expected, read(factory, context));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testHighCardinalityBucketMergeErrorReachesOwner() throws Exception {
+        Assume.assumeTrue(parallel && workers == 0);
+        setProperty(PropertyKey.CAIRO_SQL_SMALL_MAP_KEY_CAPACITY, 4);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 100);
+        run((engine, compiler, context) -> {
+            createHighCardinalityTables(engine, context);
+            final String sql = "SELECT timestamp_floor('10s', ts) bucket, s, count(*), sum(v) FROM $table ORDER BY bucket, s";
+            final String expected;
+            try (RecordCursorFactory factory = compiler.compile(sql.replace("$table", "hash_input"), context).getRecordCursorFactory()) {
+                expected = read(factory, context);
+            }
+            try (
+                    LimitedMemoryTracker tracker = new LimitedMemoryTracker(0);
+                    NetworkSqlExecutionCircuitBreaker network = new NetworkSqlExecutionCircuitBreaker(engine, new DefaultSqlExecutionCircuitBreakerConfiguration())
+            ) {
+                final AtomicBoolean isArmed = new AtomicBoolean();
+                final CountingSqlExecutionCircuitBreaker breaker = new CountingSqlExecutionCircuitBreaker(network) {
+                    @Override
+                    public boolean checkIfTripped() {
+                        if (isArmed.compareAndSet(false, true)) {
+                            tracker.setLimit(tracker.getUsed() + 1);
+                        }
+                        return super.checkIfTripped();
+                    }
+                };
+                try (
+                        SqlExecutionContextImpl bounded = new SqlExecutionContextImpl(engine, 1).with(context.getSecurityContext(), null, null, -1, breaker);
+                        RecordCursorFactory factory = compiler.compile(sql.replace("$table", "trades"), bounded).getRecordCursorFactory()
+                ) {
+                    assertStream(getGroupBy(factory), true);
+                    // The query registry gives a query its own tracker, so this opens the plan below it.
+                    Assert.assertTrue(factory instanceof QueryProgress);
+                    final RecordCursorFactory plan = factory.getBaseFactory();
+                    bounded.setMemoryTracker(tracker);
+                    try {
+                        try {
+                            read(plan, bounded);
+                            Assert.fail("expected a shard merge to run out of memory");
+                        } catch (CairoException e) {
+                            Assert.assertTrue(isArmed.get());
+                            Assert.assertTrue(e.getFlyweightMessage().toString(), e.isOutOfMemory());
+                            TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                        } finally {
+                            tracker.setLimit(0);
+                        }
+                        Assert.assertEquals(0, tracker.getUsed());
+                        Assert.assertEquals(0, ((AsyncStreamGroupByRecordCursorFactory) getGroupBy(factory)).getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                        Assert.assertEquals(expected, read(plan, bounded));
+                        Assert.assertEquals(0, tracker.getUsed());
+                    } finally {
+                        bounded.setMemoryTracker(null);
                     }
                 }
             }
