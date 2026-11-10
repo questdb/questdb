@@ -253,6 +253,7 @@ import io.questdb.griffin.engine.join.AsOfJoinDenseRecordCursorFactoryBase;
 import io.questdb.griffin.engine.join.AsOfJoinDenseSingleSymbolRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinIndexedDualSymbolRecordCursorFactory;
+import io.questdb.griffin.engine.join.AsOfJoinIndexedMergeRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinIndexedRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinLightNoKeyRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinLightRecordCursorFactory;
@@ -8437,7 +8438,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
                             boolean hasIndexHint = SqlHints.hasAsOfIndexHint(model, masterAlias, slaveAlias);
                             if (hasIndexHint && slaveMetadata.isColumnIndexed(slaveSymbolColumnIndex)) {
-                                return new AsOfJoinIndexedRecordCursorFactory(
+                                // per key, a forward cursor over its index rows: the join reads the rows of
+                                // the master's keys alone, never the right-hand timeline
+                                return new AsOfJoinIndexedMergeRecordCursorFactory(
                                         configuration,
                                         joinMetadata,
                                         master,
@@ -8446,8 +8449,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         slaveSymbolColumnIndex,
                                         symbolJoinKeyMapping,
                                         slaveContext,
-                                        toleranceInterval,
-                                        null
+                                        toleranceInterval
                                 );
                             }
                             boolean hasMemoizedHint = SqlHints.hasAsOfMemoizedHint(model, masterAlias, slaveAlias);
