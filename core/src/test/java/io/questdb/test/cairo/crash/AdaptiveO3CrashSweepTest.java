@@ -44,7 +44,6 @@ import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -91,7 +90,7 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
     };
     private static final String DEDUP_SKIP_TABLE = "sweep_dedup_skip";
     /**
-     * The writes of the DEDUP SKIP sweep's phase, as {@code printSql()} prints their rows. The first only resends
+     * The writes of the DEDUP SKIP sweep's phase, as {@code CursorPrinter} prints their rows. The first only resends
      * stored keys, with other values: SKIP drops every row and writes no partition. The second resends a stored key
      * on every day and adds new rows: on the Parquet day that the merge rewrites, after a row group whose merge
      * writes nothing; on the Parquet day that the merge updates in place, after two such row groups; on the native
@@ -740,15 +739,23 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
             return rows;
         }
 
-        private void assertRows(String at, TreeMap<String, String> rows) throws SqlException {
+        // Checks the rows, and the recovered table's cursor reset, size and random access, through the assertQuery()
+        // battery. The failure names the crash point.
+        private void assertRows(String at, TreeMap<String, String> rows) throws Exception {
             final StringSink expected = new StringSink();
             expected.put("ts\tv\tvc\tw\n");
             for (String row : rows.values()) {
                 expected.put(row).put('\n');
             }
-            final StringSink actual = new StringSink();
-            printSql("select ts, v, vc, w from " + DEDUP_SKIP_TABLE, actual);
-            TestUtils.assertEquals(at, expected, actual);
+            try {
+                assertQuery("select ts, v, vc, w from " + DEDUP_SKIP_TABLE)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns(expected);
+            } catch (AssertionError e) {
+                throw new AssertionError(at + ": " + e.getMessage(), e);
+            }
         }
 
         // Applies the WAL. True when an armed crash suspended the table, which ends the phase; the count pass has
