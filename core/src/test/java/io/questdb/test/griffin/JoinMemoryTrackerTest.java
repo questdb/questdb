@@ -975,7 +975,7 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
     public void testNestedLoopFullJoinFailsOnLargeInput() throws Exception {
         // A one-row master keeps the nested loop cheap while the non-equi FULL
         // OUTER condition matches nearly every slave row, growing the matched-row
-        // bitmap past the limit.
+        // map past the limit.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE m AS (SELECT 1L AS k FROM long_sequence(1))");
             execute("CREATE TABLE s AS (SELECT x AS k FROM long_sequence(5_000_000))");
@@ -988,7 +988,7 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
 
     @Test
     public void testNestedLoopFullJoinOpenFailureReleasesAllocations() throws Exception {
-        // The nested-loop full join's of() reopens its tracker-bound matched-row bitmap with isOpen
+        // The nested-loop full join's of() reopens its tracker-bound matched-row map with isOpen
         // already set; a tiny limit breaches that reopen. Reusing one factory across opens catches
         // the isOpen desync.
         assertMemoryLeak(() -> {
@@ -1001,6 +1001,21 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
                     "SELECT * FROM m FULL OUTER JOIN s ON m.k <> s.k",
                     NestedLoopFullJoinRecordCursorFactory.class
             );
+        });
+    }
+
+    @Test
+    public void testNestedLoopFullJoinSparseMatchesStayUnderLimit() throws Exception {
+        // One match at the last of five million slave rows: the matched-row map holds that one row, where a bitmap
+        // over slave positions would need 625 KB, past the 512 KiB limit. The count is the matched pair plus the
+        // 4_999_999 unmatched slave rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m AS (SELECT 4_999_999L AS k FROM long_sequence(1))");
+            execute("CREATE TABLE s AS (SELECT x AS k FROM long_sequence(5_000_000))");
+            drainWalQueue();
+            final String sql = "SELECT count(*) FROM m FULL OUTER JOIN s ON m.k < s.k";
+            assertUsesFactory(sql, NestedLoopFullJoinRecordCursorFactory.class);
+            assertQuery(sql).noLeakCheck().noRandomAccess().expectSize().returns("count\n5000000\n");
         });
     }
 

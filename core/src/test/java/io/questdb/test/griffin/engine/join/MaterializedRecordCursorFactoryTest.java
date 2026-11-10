@@ -213,7 +213,7 @@ public class MaterializedRecordCursorFactoryTest extends AbstractCairoTest {
                 try (RecordCursorFactory factory = i == 0
                         ? new NestedLoopLeftJoinRecordCursorFactory(metadata, master, slave, 1, filter,
                         NullRecordFactory.getInstance(slave.getMetadata()))
-                        : new NestedLoopFullJoinRecordCursorFactory(metadata, master, slave, 1, filter,
+                        : new NestedLoopFullJoinRecordCursorFactory(configuration, metadata, master, slave, 1, filter,
                         NullRecordFactory.getInstance(master.getMetadata()), NullRecordFactory.getInstance(slave.getMetadata()))) {
                     assertFactory(factory).withContext(sqlExecutionContext).noRandomAccess().returns("""
                             m\ts
@@ -494,7 +494,7 @@ public class MaterializedRecordCursorFactoryTest extends AbstractCairoTest {
             final CountingFactory master = new CountingFactory(select("SELECT x FROM long_sequence(0)"));
             final RecordCursorFactory slave = materialize(new CountingFactory(select("SELECT x FROM long_sequence(5)")), 16, 1);
             try (RecordCursorFactory factory = new NestedLoopFullJoinRecordCursorFactory(
-                    metadata, master, slave, 1, BooleanConstant.TRUE,
+                    configuration, metadata, master, slave, 1, BooleanConstant.TRUE,
                     NullRecordFactory.getInstance(master.getMetadata()), NullRecordFactory.getInstance(slave.getMetadata())
             )) {
                 assertFactory(factory).withContext(sqlExecutionContext).noRandomAccess().returns("""

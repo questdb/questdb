@@ -1044,7 +1044,7 @@ final class JoinFactoryGenerator {
                     final Record masterNull = NullRecordFactory.getInstance(master.getMetadata());
                     final Record slaveNull = NullRecordFactory.getInstance(slave.getMetadata());
                     isTransferred = true;
-                    return new NestedLoopFullJoinRecordCursorFactory(metadata, master, slave, columnSplit, filter, masterNull, slaveNull);
+                    return new NestedLoopFullJoinRecordCursorFactory(configuration, metadata, master, slave, columnSplit, filter, masterNull, slaveNull);
                 }
                 case OUTER_CROSS -> {
                     if (filter != null || slaveRows == null) {
