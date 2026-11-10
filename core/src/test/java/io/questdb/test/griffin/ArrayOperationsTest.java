@@ -58,11 +58,11 @@ public class ArrayOperationsTest extends AbstractCairoTest {
                     """
                             id	array_position	insertion_point	column	column1	column2	column3	column4
                             1	1	2	true	false	false	false	false
-                            2	null	null	true	false	false	false	false
+                            2	null	null	true	false	false	true	false
                             3	null	1	true	false	false	false	false
                             4	null	1	true	false	false	false	false
                             5	null	null	true	false	false	false	false
-                            6	null	null	true	false	false	false	false
+                            6	null	null	true	false	false	true	false
                             """
             );
             assertRowsOnly(
