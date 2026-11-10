@@ -1361,6 +1361,42 @@ public class StreamGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testColumnTopKeyIntegralAggregates() throws Exception {
+        run((engine, compiler, context) -> {
+            engine.execute("CREATE TABLE s (ts TIMESTAMP, i INT, l LONG, h SHORT, w LONG256) TIMESTAMP(ts) PARTITION BY DAY", context);
+            engine.execute("""
+                    INSERT INTO s VALUES
+                        ('2024-01-01T00', 1, 1, 1, to_long256(1, 0, 0, 0)),
+                        ('2024-01-01T01', 2, 2, 2, to_long256(2, 0, 0, 0)),
+                        ('2024-01-01T02', 3, 3, 3, to_long256(3, 0, 0, 0)),
+                        ('2024-01-02T00', 0, 0, 0, to_long256(0, 0, 0, 0))""", context);
+            engine.execute("ALTER TABLE s ADD COLUMN k INT", context);
+            engine.execute("INSERT INTO s VALUES ('2024-01-03T00', 4, 4, 4, to_long256(4, 0, 0, 0), null), ('2024-01-03T01', 5, 5, 5, to_long256(5, 0, 0, 0), 1)", context);
+            final String aggregates = "SELECT k, sum(i) si, sum(l) sl, sum(h) sh, sum(w) sw, avg(i) ai, avg(l) al, avg(h) ah FROM s";
+            if (parallel) {
+                try (RecordCursorFactory factory = compiler.compile(aggregates, context).getRecordCursorFactory()) {
+                    final String plan = plan(factory, context);
+                    Assert.assertTrue(plan, plan.contains("GroupBy vectorized: true"));
+                }
+            }
+            assertRows(compiler, context, aggregates + " WHERE ts IN '2024-01-01' ORDER BY k", """
+                    k\tsi\tsl\tsh\tsw\tai\tal\tah
+                    null\t6\t6\t6\t0x06\t2.0\t2.0\t2.0
+                    """);
+            // SHORT holds no NULL, so a column top of zeros sums to zero.
+            assertRows(compiler, context, "SELECT k, sum(h) sh FROM s WHERE ts IN '2024-01-02' ORDER BY k", """
+                    k\tsh
+                    null\t0
+                    """);
+            assertRows(compiler, context, aggregates + " ORDER BY k", """
+                    k\tsi\tsl\tsh\tsw\tai\tal\tah
+                    null\t10\t10\t10\t0x0a\t2.0\t2.0\t2.0
+                    1\t5\t5\t5\t0x05\t5.0\t5.0\t5.0
+                    """);
+        });
+    }
+
+    @Test
     public void testCompensatedSumAcrossFrames() throws Exception {
         run((engine, compiler, context) -> {
             for (String[] table : new String[][]{{"a", "1e16", "1", "-1e16"}, {"b", "1e8", "1e-8", "-1e8"}}) {

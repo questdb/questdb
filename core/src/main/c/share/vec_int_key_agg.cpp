@@ -574,22 +574,6 @@ kIntSumLong256WrapUp(jlong pRosti, jint valueOffset, jlong n0, jlong n1, jlong n
     auto map = reinterpret_cast<rosti_t *>(pRosti);
     const auto value_offset = map->value_offsets_[valueOffset];
     const auto count_offset = map->value_offsets_[valueOffset + 1];
-    const auto capacity = map->capacity_;
-    const auto ctrl = map->ctrl_;
-    const auto shift = map->slot_size_shift_;
-    const auto slots = map->slots_;
-
-    for (size_t i = 0; i < capacity; i++) {
-        ctrl_t c = ctrl[i];
-        if (c > -1) {
-            const auto src = slots + (i << shift);
-            auto count = *reinterpret_cast<jlong *>(src + count_offset);
-            long256_t &srcv = *reinterpret_cast<long256_t *>(src + value_offset);
-            if (PREDICT_FALSE(count == 0)) {
-                srcv = long256_t(L_MIN, L_MIN, L_MIN, L_MIN);
-            }
-        }
-    }
 
     // populate null value
     if (valueAtNullCount > 0) {
@@ -610,6 +594,22 @@ kIntSumLong256WrapUp(jlong pRosti, jint valueOffset, jlong n0, jlong n1, jlong n
             long256_t valueAtNull(n0, n1, n2, n3);
             dst += valueAtNull;
             *reinterpret_cast<jlong *>(dest + count_offset) += valueAtNullCount;
+        }
+    }
+
+    const auto capacity = map->capacity_;
+    const auto ctrl = map->ctrl_;
+    const auto shift = map->slot_size_shift_;
+    const auto slots = map->slots_;
+    for (size_t i = 0; i < capacity; i++) {
+        ctrl_t c = ctrl[i];
+        if (c > -1) {
+            const auto src = slots + (i << shift);
+            auto count = *reinterpret_cast<jlong *>(src + count_offset);
+            long256_t &srcv = *reinterpret_cast<long256_t *>(src + value_offset);
+            if (PREDICT_FALSE(count == 0)) {
+                srcv = long256_t(L_MIN, L_MIN, L_MIN, L_MIN);
+            }
         }
     }
     return JNI_TRUE;
@@ -891,21 +891,6 @@ static jboolean kIntSumLongWrapUp(jlong pRosti, jint valueOffset, jlong valueAtN
     auto map = reinterpret_cast<rosti_t *>(pRosti);
     const auto value_offset = map->value_offsets_[valueOffset];
     const auto count_offset = map->value_offsets_[valueOffset + count_idx];
-    const auto capacity = map->capacity_;
-    const auto ctrl = map->ctrl_;
-    const auto shift = map->slot_size_shift_;
-    const auto slots = map->slots_;
-
-    for (size_t i = 0; i < capacity; i++) {
-        ctrl_t c = ctrl[i];
-        if (c > -1) {
-            const auto src = slots + (i << shift);
-            auto count = *reinterpret_cast<jlong *>(src + count_offset);
-            if (PREDICT_FALSE(count == 0)) {
-                *reinterpret_cast<jlong *>(src + value_offset) = L_MIN;
-            }
-        }
-    }
 
     // populate null value
     if (valueAtNullCount > 0) {
@@ -925,6 +910,21 @@ static jboolean kIntSumLongWrapUp(jlong pRosti, jint valueOffset, jlong valueAtN
             *reinterpret_cast<jlong *>(dest + count_offset) += valueAtNullCount;
         }
     }
+
+    const auto capacity = map->capacity_;
+    const auto ctrl = map->ctrl_;
+    const auto shift = map->slot_size_shift_;
+    const auto slots = map->slots_;
+    for (size_t i = 0; i < capacity; i++) {
+        ctrl_t c = ctrl[i];
+        if (c > -1) {
+            const auto src = slots + (i << shift);
+            auto count = *reinterpret_cast<jlong *>(src + count_offset);
+            if (PREDICT_FALSE(count == 0)) {
+                *reinterpret_cast<jlong *>(src + value_offset) = L_MIN;
+            }
+        }
+    }
     return JNI_TRUE;
 }
 
@@ -934,12 +934,9 @@ static jboolean kIntAvgLongWrapUp(jlong pRosti, jint valueOffset, jdouble valueA
     auto map = reinterpret_cast<rosti_t *>(pRosti);
     const auto value_offset = map->value_offsets_[valueOffset];
     const auto count_offset = map->value_offsets_[valueOffset + count_idx];
-    const auto capacity = map->capacity_;
-    const auto ctrl = map->ctrl_;
-    const auto shift = map->slot_size_shift_;
-    const auto slots = map->slots_;
 
-    // populate null value
+    // populate null value; the slot holds a sum of type T, so the double joins it in the division
+    unsigned char *nullSlot = nullptr;
     if (valueAtNullCount > 0) {
         auto nullKey = reinterpret_cast<int32_t *>(map->slot_initial_values_)[0];
         auto res = find(map, nullKey);
@@ -950,23 +947,29 @@ static jboolean kIntAvgLongWrapUp(jlong pRosti, jint valueOffset, jdouble valueA
                 return JNI_FALSE;
             }
             *reinterpret_cast<int32_t *>(dest) = nullKey;
-            *reinterpret_cast<jdouble *>(dest + value_offset) = valueAtNull;
+            *reinterpret_cast<T *>(dest + value_offset) = 0;
             *reinterpret_cast<jlong *>(dest + count_offset) = valueAtNullCount;
         } else {
-            *reinterpret_cast<jdouble *>(dest + value_offset) += valueAtNull;
             *reinterpret_cast<jlong *>(dest + count_offset) += valueAtNullCount;
         }
+        nullSlot = dest;
     }
 
+    const auto capacity = map->capacity_;
+    const auto ctrl = map->ctrl_;
+    const auto shift = map->slot_size_shift_;
+    const auto slots = map->slots_;
     for (size_t i = 0; i < capacity; i++) {
         ctrl_t c = ctrl[i];
         if (c > -1) {
             const auto src = slots + (i << shift);
             auto count = *reinterpret_cast<jlong *>(src + count_offset);
             auto pValue = src + value_offset;
-            auto sum = *reinterpret_cast<T *>(pValue);
-            auto res = static_cast<jdouble>(sum) / count;
-            *reinterpret_cast<jdouble *>(pValue) = res;
+            auto sum = static_cast<jdouble>(*reinterpret_cast<T *>(pValue));
+            if (PREDICT_FALSE(src == nullSlot)) {
+                sum += valueAtNull;
+            }
+            *reinterpret_cast<jdouble *>(pValue) = sum / count;
         }
     }
     return JNI_TRUE;
