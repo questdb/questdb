@@ -30,6 +30,7 @@ public final class TelemetryEvent {
     public static final short HTTP_STATIC_CONTENT = 115;
     public static final short HTTP_TEXT_IMPORT = 112;
     public static final short ILP_RESERVE_WRITER = 102;
+    public static final short MAT_VIEW_ALTER = 206;
     public static final short MAT_VIEW_CREATE = 200;
     public static final short MAT_VIEW_DROP = 201;
     public static final short MAT_VIEW_INVALIDATE = 202;

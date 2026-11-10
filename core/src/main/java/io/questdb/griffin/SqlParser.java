@@ -163,6 +163,8 @@ public class SqlParser {
     private static volatile boolean isMatViewExplicitNamesCheckSkipped;
     private final IntList accumulatedColumnPositions = new IntList();
     private final ObjList<QueryColumn> accumulatedColumns = new ObjList<>();
+    // The result of parseAlterMatViewQuery().
+    private final AlterMatViewQuery alterMatViewQuery = new AlterMatViewQuery();
     private final LowerCaseCharSequenceHashSet aliasMap = new LowerCaseCharSequenceHashSet();
     private final LowerCaseCharSequenceIntHashMap aliasSequenceMap = new LowerCaseCharSequenceIntHashMap();
     private final CairoEngine cairoEngine;
@@ -271,6 +273,11 @@ public class SqlParser {
     private final ObjList<WithClauseModel> withModels = new ObjList<>();
     // Number of audited views whose bodies are being expanded at the current parse position.
     private int auditedViewDepth;
+    // Where the SQL text of a materialized view starts and ends in the statement, and whether parentheses enclose
+    // it, see parseMatViewQuery().
+    private boolean isMatViewQueryEnclosed;
+    private int matViewQueryHi;
+    private int matViewQueryLo;
     private boolean copyMode = false;
     private boolean createTableMode = false;
     private boolean createViewMode = false;
@@ -4505,6 +4512,67 @@ public class SqlParser {
                 && (token.charAt(11) | 32) == 'p';
     }
 
+    // Parses the AS block that CREATE MATERIALIZED VIEW and ALTER MATERIALIZED VIEW ... AS share, the lexer standing
+    // after AS: the SELECT, in parentheses or not, which may read no view with a row-expiry policy. Leaves where the
+    // SQL text starts and ends in matViewQueryLo and matViewQueryHi, and whether parentheses enclose it in
+    // isMatViewQueryEnclosed; the caller reads the closing parenthesis.
+    private IQueryModel parseMatViewQuery(
+            GenericLexer lexer,
+            SqlExecutionContext executionContext,
+            SqlParserCallback sqlParserCallback,
+            CharSequence matViewName
+    ) throws SqlException {
+        int startOfQuery = lexer.getPosition();
+        CharSequence tok = tok(lexer, "'(' or 'with' or 'select'");
+        final boolean enclosedInParentheses = Chars.equals(tok, '(');
+        if (enclosedInParentheses) {
+            startOfQuery = lexer.getPosition();
+            tok = tok(lexer, "'with' or 'select'");
+        }
+
+        final ExpiryReadPolicy previousExpiryReadPolicy = executionContext.getExpiryReadPolicy();
+        final CharSequence previousMaterializingViewName = executionContext.getExpiryMaterializingViewName();
+        final IQueryModel queryModel;
+        executionContext.setExpiryReadPolicy(ExpiryReadPolicy.REJECT, matViewName);
+        try {
+            if (isWithKeyword(tok)) {
+                parseWithClauses(lexer, topLevelWithModel, sqlParserCallback, null);
+                // CTEs require SELECT to be specified
+                expectTok(lexer, "select");
+            }
+            lexer.unparseLast();
+            queryModel = parseDml(lexer, lexer.getPosition(), sqlParserCallback);
+        } finally {
+            executionContext.setExpiryReadPolicy(previousExpiryReadPolicy, previousMaterializingViewName);
+        }
+        matViewQueryLo = startOfQuery;
+        matViewQueryHi = enclosedInParentheses ? lexer.getPosition() - 1 : lexer.getPosition();
+        isMatViewQueryEnclosed = enclosedInParentheses;
+        return queryModel;
+    }
+
+    // The SAMPLE BY time zone, or offset, of a materialized view's SQL, as CREATE MATERIALIZED VIEW stores it, or null.
+    private static @Nullable String getMatViewSampleBy(IQueryModel queryModel, boolean isTimeZone) {
+        final ExpressionNode node = getMatViewSampleByNode(queryModel, isTimeZone);
+        return node != null ? unquote(node.token).toString() : null;
+    }
+
+    // A bare table name, a query with no select list of its own, parses to a model without a nested model.
+    private static @Nullable ExpressionNode getMatViewSampleByNode(IQueryModel queryModel, boolean isTimeZone) {
+        final IQueryModel nestedModel = queryModel.getNestedModel();
+        if (nestedModel == null) {
+            return null;
+        }
+        return isTimeZone ? nestedModel.getSampleByTimezoneName() : nestedModel.getSampleByOffset();
+    }
+
+    // The position of the SAMPLE BY time zone, or offset, of a materialized view's SQL, or the given default when the
+    // SQL has none.
+    private static int getMatViewSampleByPosition(IQueryModel queryModel, boolean isTimeZone, int defaultPosition) {
+        final ExpressionNode node = getMatViewSampleByNode(queryModel, isTimeZone);
+        return node != null ? node.position : defaultPosition;
+    }
+
     private ExecutionModel parseCreateMatView(
             GenericLexer lexer,
             SqlExecutionContext executionContext,
@@ -4685,32 +4753,12 @@ public class SqlParser {
 
         boolean enclosedInParentheses;
         if (isAsKeyword(tok)) {
-            int startOfQuery = lexer.getPosition();
-            tok = tok(lexer, "'(' or 'with' or 'select'");
-            enclosedInParentheses = Chars.equals(tok, '(');
-            if (enclosedInParentheses) {
-                startOfQuery = lexer.getPosition();
-                tok = tok(lexer, "'with' or 'select'");
-            }
-
             // Parse SELECT for the sake of basic SQL validation.
             // It'll be compiled and optimized later, at the execution phase.
-            final ExpiryReadPolicy previousExpiryReadPolicy = executionContext.getExpiryReadPolicy();
-            final CharSequence previousMaterializingViewName = executionContext.getExpiryMaterializingViewName();
-            final IQueryModel queryModel;
-            executionContext.setExpiryReadPolicy(ExpiryReadPolicy.REJECT, matViewName);
-            try {
-                if (isWithKeyword(tok)) {
-                    parseWithClauses(lexer, topLevelWithModel, sqlParserCallback, null);
-                    // CTEs require SELECT to be specified
-                    expectTok(lexer, "select");
-                }
-                lexer.unparseLast();
-                queryModel = parseDml(lexer, lexer.getPosition(), sqlParserCallback);
-            } finally {
-                executionContext.setExpiryReadPolicy(previousExpiryReadPolicy, previousMaterializingViewName);
-            }
-            final int endOfQuery = enclosedInParentheses ? lexer.getPosition() - 1 : lexer.getPosition();
+            final IQueryModel queryModel = parseMatViewQuery(lexer, executionContext, sqlParserCallback, matViewName);
+            final int startOfQuery = matViewQueryLo;
+            final int endOfQuery = matViewQueryHi;
+            enclosedInParentheses = isMatViewQueryEnclosed;
 
             tableNames.clear();
             tableNamePositions.clear();
@@ -4744,15 +4792,8 @@ public class SqlParser {
             }
             validateMatViewQuery(queryModel, baseTableNameStr, !isMatViewExplicitNamesCheckSkipped);
 
-            final IQueryModel nestedModel = queryModel.getNestedModel();
-            if (nestedModel != null) {
-                if (nestedModel.getSampleByTimezoneName() != null) {
-                    mvOpBuilder.setTimeZone(unquote(nestedModel.getSampleByTimezoneName().token).toString());
-                }
-                if (nestedModel.getSampleByOffset() != null) {
-                    mvOpBuilder.setTimeZoneOffset(unquote(nestedModel.getSampleByOffset().token).toString());
-                }
-            }
+            mvOpBuilder.setTimeZone(getMatViewSampleBy(queryModel, true));
+            mvOpBuilder.setTimeZoneOffset(getMatViewSampleBy(queryModel, false));
 
             final String matViewSql = Chars.toString(lexer.getContent(), startOfQuery, endOfQuery);
             tableOpBuilder.setSelectText(matViewSql, startOfQuery);
@@ -10149,6 +10190,96 @@ public class SqlParser {
      */
     void validateMatViewSql(IQueryModel model, String baseTableName) throws SqlException {
         validateMatViewQuery(model, baseTableName, true);
+    }
+
+    /**
+     * Parses the rest of {@code ALTER MATERIALIZED VIEW v [WITH BASE b] AS (<select>)}, the lexer standing after AS,
+     * and checks the new SQL under the rules of CREATE MATERIALIZED VIEW that the parse can tell, the explicit column
+     * names among them, with the AS block helper that CREATE uses. The SQL must read the given base table: the view's
+     * current one, or the one WITH BASE names. Unlike CREATE, the statement never infers a base table from the SQL,
+     * so that a mistyped table name fails instead of moving the view.
+     *
+     * @param baseTableName         the base table of the new definition
+     * @param baseTableNamePosition the position of the name after WITH BASE, or -1 without WITH BASE
+     * @return the SQL text and what the statement checks against the view's definition, valid until the next call
+     */
+    AlterMatViewQuery parseAlterMatViewQuery(
+            GenericLexer lexer,
+            SqlExecutionContext executionContext,
+            SqlParserCallback sqlParserCallback,
+            CharSequence matViewName,
+            String baseTableName,
+            int baseTableNamePosition
+    ) throws SqlException {
+        final IQueryModel queryModel = parseMatViewQuery(lexer, executionContext, sqlParserCallback, matViewName);
+        final AlterMatViewQuery result = alterMatViewQuery;
+        result.clear();
+        result.sql = Chars.toString(lexer.getContent(), matViewQueryLo, matViewQueryHi);
+        result.sqlPosition = matViewQueryLo;
+
+        tableNames.clear();
+        tableNamePositions.clear();
+        SqlUtil.collectAllTableNames(queryModel, tableNames, tableNamePositions);
+        if (!tableNames.contains(baseTableName)) {
+            if (baseTableNamePosition > -1) {
+                throw SqlException.position(baseTableNamePosition)
+                        .put("base table is not referenced in materialized view query: ").put(baseTableName);
+            }
+            throw SqlException.position(matViewQueryLo)
+                    .put("materialized view query does not read its base table, name the new base table with WITH BASE [baseTable=")
+                    .put(baseTableName).put(']');
+        }
+        validateMatViewQuery(queryModel, baseTableName, true);
+
+        result.timeZone = getMatViewSampleBy(queryModel, true);
+        result.timeZoneOffset = getMatViewSampleBy(queryModel, false);
+        result.timeZonePosition = getMatViewSampleByPosition(queryModel, true, matViewQueryLo);
+        result.timeZoneOffsetPosition = getMatViewSampleByPosition(queryModel, false, matViewQueryLo);
+        // Where each named column of the outermost SELECT starts, for the errors the compile's checks report.
+        final ObjList<QueryColumn> columns = queryModel.getColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final QueryColumn column = columns.getQuick(i);
+            if (!column.getAst().isWildcard()) {
+                result.columnPositions.put(Chars.toString(SqlUtil.toColumnName(column.getAlias())), column.getAst().position);
+            }
+        }
+
+        if (isMatViewQueryEnclosed) {
+            expectTok(lexer, ')');
+        }
+        return result;
+    }
+
+    /**
+     * The new SQL of {@code ALTER MATERIALIZED VIEW ... AS}, as {@link #parseAlterMatViewQuery} parsed it: its text and
+     * position in the statement, its SAMPLE BY time zone and offset, which the view's must equal, with their positions,
+     * the SQL's when it has none, and where each named column of its outermost SELECT starts, keyed by the column's
+     * name.
+     */
+    public static final class AlterMatViewQuery {
+        public final LowerCaseCharSequenceIntHashMap columnPositions = new LowerCaseCharSequenceIntHashMap();
+        public String sql;
+        public int sqlPosition;
+        public @Nullable String timeZone;
+        public @Nullable String timeZoneOffset;
+        public int timeZoneOffsetPosition;
+        public int timeZonePosition;
+
+        // The position of the named column in the statement, or the position of the SQL when the SELECT does not name it.
+        public int getColumnPosition(CharSequence columnName) {
+            final int index = columnPositions.keyIndex(columnName);
+            return index < 0 ? columnPositions.valueAt(index) : sqlPosition;
+        }
+
+        private void clear() {
+            columnPositions.clear();
+            sql = null;
+            sqlPosition = 0;
+            timeZone = null;
+            timeZoneOffset = null;
+            timeZoneOffsetPosition = 0;
+            timeZonePosition = 0;
+        }
     }
 
     /**

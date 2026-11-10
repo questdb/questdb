@@ -586,6 +586,9 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
             LOG.info().$("materialized view state not found, timers not registered [view=").$(matViewToken).I$();
             return;
         }
+        // ALTER MATERIALIZED VIEW ... WITH BASE moves the view to another base table, whose commits have to reach the
+        // refresh job: an IMMEDIATE view on a base without other views would never refresh otherwise.
+        lastNotifiedTxnByTableName.computeIfAbsent(newDefinition.getBaseTableName(), createLastNotifiedTxn);
         state.setViewDefinition(newDefinition);
         // Make sure to recreate all timers associated with the mat view.
         final MatViewTimerTask timerTask = tlTimerTask.get();

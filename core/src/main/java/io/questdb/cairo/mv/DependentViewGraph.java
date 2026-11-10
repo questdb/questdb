@@ -27,7 +27,6 @@ package io.questdb.cairo.mv;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.view.ViewDependencyList;
-import io.questdb.std.CarrierLocal;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.FiberLocal;
@@ -40,7 +39,6 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
 import java.util.ArrayDeque;
-import java.util.function.BiFunction;
 import java.util.function.Function;
 
 /**
@@ -56,18 +54,15 @@ import java.util.function.Function;
  * a read-only replica.
  */
 public class DependentViewGraph implements Mutable {
-    private static final CarrierLocal<MatViewDefinition> tlDefinitionTask = new CarrierLocal<>();
     private static final FiberLocal<LowerCaseCharSequenceHashSet> tlSeen = new FiberLocal<>(LowerCaseCharSequenceHashSet::new);
     private static final FiberLocal<ArrayDeque<CharSequence>> tlStack = new FiberLocal<>(ArrayDeque::new);
     private final Function<CharSequence, ViewDependencyList> createDependencyList;
     private final ConcurrentHashMap<MatViewDefinition> definitionsByTableDirName = new ConcurrentHashMap<>();
     // Note: this map is grow-only, i.e. keys are never removed.
     private final ConcurrentHashMap<ViewDependencyList> dependentViewsByTableName = new ConcurrentHashMap<>(false);
-    private final BiFunction<CharSequence, MatViewDefinition, MatViewDefinition> updateDefinitionRef;
 
     public DependentViewGraph() {
         this.createDependencyList = name -> new ViewDependencyList();
-        this.updateDefinitionRef = this::updateDefinition;
     }
 
     /**
@@ -110,7 +105,26 @@ public class DependentViewGraph implements Mutable {
         return true;
     }
 
+    /**
+     * Registers a new materialized view, refusing one that would close a dependency loop, as CREATE MATERIALIZED VIEW
+     * does. A refused view keeps its definition in the graph without an edge; the caller drops the view.
+     *
+     * @return false when the graph already holds the view
+     */
     public boolean addView(MatViewDefinition viewDefinition) {
+        return addView(viewDefinition, false);
+    }
+
+    /**
+     * Registers a materialized view. With {@code isLoopTolerant} set, a view on a dependency loop keeps its edge, for
+     * the caller to mark the view invalid, see {@link #isOnDependencyLoop(MatViewDefinition)}: the views that the
+     * startup load, a rebase and a replica register exist already, and two concurrent base changes of
+     * {@code ALTER MATERIALIZED VIEW ... WITH BASE} can leave them on a loop. Without it, a loop is refused, as CREATE
+     * refuses it.
+     *
+     * @return false when the graph already holds the view
+     */
+    public boolean addView(MatViewDefinition viewDefinition, boolean isLoopTolerant) {
         final TableToken viewToken = viewDefinition.getMatViewToken();
         final MatViewDefinition prevDefinition = definitionsByTableDirName.putIfAbsent(viewToken.getDirName(), viewDefinition);
         // WAL table directories are unique, so we don't expect previous value
@@ -119,7 +133,7 @@ public class DependentViewGraph implements Mutable {
         }
 
         synchronized (this) {
-            if (hasDependencyLoop(viewDefinition.getBaseTableName(), viewToken)) {
+            if (!isLoopTolerant && hasDependencyLoop(viewDefinition.getBaseTableName(), viewToken)) {
                 throw CairoException.critical(0)
                         .put("circular dependency detected for materialized view [view=").put(viewToken.getTableName())
                         .put(", baseTable=").put(viewDefinition.getBaseTableName())
@@ -157,6 +171,24 @@ public class DependentViewGraph implements Mutable {
         return definitionsByTableDirName.get(matViewToken.getDirName());
     }
 
+    /**
+     * Returns true when the view's base table, followed through the bases of materialized views, leads back to the
+     * view, or when the graph would hold such a loop once the view's edge from that base table were added. RESUME and
+     * REFRESH ... FULL refuse such a view, and ALTER MATERIALIZED VIEW ... WITH BASE a base that closes a loop.
+     */
+    public boolean isOnDependencyLoop(@NotNull CharSequence baseTableName, @NotNull TableToken viewToken) {
+        synchronized (this) {
+            return hasDependencyLoop(baseTableName, viewToken);
+        }
+    }
+
+    /**
+     * Returns true when the view lies on a dependency loop, see {@link #isOnDependencyLoop(CharSequence, TableToken)}.
+     */
+    public boolean isOnDependencyLoop(@NotNull MatViewDefinition viewDefinition) {
+        return isOnDependencyLoop(viewDefinition.getBaseTableName(), viewDefinition.getMatViewToken());
+    }
+
     public void getViews(ObjList<TableToken> sink) {
         for (MatViewDefinition viewDefinition : definitionsByTableDirName.values()) {
             sink.add(viewDefinition.getMatViewToken());
@@ -177,11 +209,12 @@ public class DependentViewGraph implements Mutable {
     public void orderByDependentViews(ObjHashSet<TableToken> tables, ObjList<TableToken> orderedSink) {
         orderedSink.clear();
         ObjHashSet<TableToken> seen = new ObjHashSet<>();
+        ObjHashSet<TableToken> visiting = new ObjHashSet<>();
         ArrayDeque<TableToken> stack = new ArrayDeque<>();
         for (int i = 0, n = tables.size(); i < n; i++) {
             TableToken token = tables.get(i);
             if (!seen.contains(token)) {
-                orderByDependentViews(token, seen, stack, orderedSink);
+                orderByDependentViews(token, seen, visiting, stack, orderedSink);
             }
         }
     }
@@ -277,10 +310,34 @@ public class DependentViewGraph implements Mutable {
         }
     }
 
+    /**
+     * Replaces the view's definition. When the new definition names another base table, as after
+     * {@code ALTER MATERIALIZED VIEW ... WITH BASE}, the view's edge moves from the old base table to the new one, also
+     * when it closes a dependency loop: the statement checked the loop, and refusing it here, on apply, would leave the
+     * nodes that apply other tables' WALs in another order with different definitions.
+     */
     public void updateViewDefinition(@NotNull TableToken viewToken, @NotNull MatViewDefinition newDefinition) {
-        tlDefinitionTask.set(newDefinition);
-        if (definitionsByTableDirName.computeIfPresent(viewToken.getDirName(), updateDefinitionRef) == null) {
-            throw CairoException.nonCritical().put("previous view definition was not found: ").put(viewToken.getTableName());
+        synchronized (this) {
+            final MatViewDefinition oldDefinition = definitionsByTableDirName.replace(viewToken.getDirName(), newDefinition);
+            if (oldDefinition == null) {
+                throw CairoException.nonCritical().put("previous view definition was not found: ").put(viewToken.getTableName());
+            }
+            if (!Chars.equalsIgnoreCase(oldDefinition.getBaseTableName(), newDefinition.getBaseTableName())) {
+                final ViewDependencyList oldDependents = getOrCreateDependentViews(oldDefinition.getBaseTableName());
+                final ObjList<TableToken> oldMatViews = oldDependents.lockForWrite();
+                try {
+                    oldMatViews.remove(oldDefinition.getMatViewToken());
+                } finally {
+                    oldDependents.unlockAfterWrite();
+                }
+                final ViewDependencyList newDependents = getOrCreateDependentViews(newDefinition.getBaseTableName());
+                final ObjList<TableToken> matViews = newDependents.lockForWrite();
+                try {
+                    matViews.add(newDefinition.getMatViewToken());
+                } finally {
+                    newDependents.unlockAfterWrite();
+                }
+            }
         }
     }
 
@@ -327,9 +384,13 @@ public class DependentViewGraph implements Mutable {
         return false;
     }
 
+    // A depth-first walk that emits each table after its dependents. The tables it is still walking the dependents of
+    // count as done when the walk meets them again: on a dependency loop, which two concurrent base changes of ALTER
+    // MATERIALIZED VIEW ... WITH BASE can close, the walk would otherwise push the loop's tables forever.
     private void orderByDependentViews(
             TableToken current,
             ObjHashSet<TableToken> seen,
+            ObjHashSet<TableToken> visiting,
             ArrayDeque<TableToken> stack,
             ObjList<TableToken> sink
     ) {
@@ -343,12 +404,13 @@ public class DependentViewGraph implements Mutable {
                     seen.add(top);
                     stack.pop();
                 } else {
+                    visiting.add(top);
                     boolean allDependentSeen = true;
                     ReadOnlyObjList<TableToken> views = list.lockForRead();
                     try {
                         for (int i = 0, n = views.size(); i < n; i++) {
                             TableToken view = views.get(i);
-                            if (!seen.contains(view)) {
+                            if (!seen.contains(view) && !visiting.contains(view)) {
                                 stack.push(view);
                                 allDependentSeen = false;
                             }
@@ -359,6 +421,7 @@ public class DependentViewGraph implements Mutable {
                     if (allDependentSeen) {
                         sink.add(top);
                         seen.add(top);
+                        visiting.remove(top);
                         stack.pop();
                     }
                 }
@@ -366,16 +429,5 @@ public class DependentViewGraph implements Mutable {
                 stack.pop();
             }
         }
-    }
-
-    private MatViewDefinition updateDefinition(CharSequence tableDirName, MatViewDefinition existingDefinition) {
-        if (existingDefinition == null) {
-            return null;
-        }
-        MatViewDefinition newDefinition = tlDefinitionTask.get();
-        assert newDefinition != null;
-        // no, this won't produce a mem leak since we don't spawn short-lived threads in runtime
-        tlDefinitionTask.set(null);
-        return newDefinition;
     }
 }

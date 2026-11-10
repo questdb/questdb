@@ -529,7 +529,8 @@ public class MatViewColumnChangeTest extends AbstractCairoTest {
     @Test
     public void testGuardLeavesUnparsableSqlToNextRefresh() throws Exception {
         // When the view's SQL does not parse, the guard cannot tell whether it uses the name bare and leaves the
-        // view to its next refresh, whose compile fails on the same error.
+        // view to its next refresh, whose compile fails on the same error. The refresh caches its compiled factory
+        // with the SQL text it was compiled from, so the refresh that follows the DROP compiles the replaced text.
         assertMemoryLeak(() -> {
             createBase();
             createView("versions", BARE_VERSION_VIEW_SQL);
@@ -550,7 +551,8 @@ public class MatViewColumnChangeTest extends AbstractCairoTest {
             }
             Assert.assertFalse(getViewState("versions").hasPendingInvalidationReason());
             drainWalAndMatViewQueues();
-            assertViewValid("versions");
+            assertViewInvalid("versions", "[" + brokenSql.length() + "]: table name or sub-query expected");
+            assertViewRows("versions", "ts, sym, version", BARE_VERSION_VIEW_ROWS);
 
             execute("INSERT INTO base (sym, price, amount, ts) VALUES ('b', 5.5, 50.0, '2024-01-01T02:10:00.000000Z')");
             drainWalAndMatViewQueues();

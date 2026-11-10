@@ -69,6 +69,7 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.TimeUnit;
@@ -81,6 +82,8 @@ import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietCloseable {
 
     private final static Log LOG = LogFactory.getLog(DatabaseCheckpointAgent.class);
+    private static volatile Runnable onBeforeMatViewIntervalMergeForTesting;
+    private static volatile Runnable onMatViewDefinitionCheckpointedForTesting;
     private final CharSequenceLongHashMap checkpointSeqTxns = new CharSequenceLongHashMap(); // protected with #lock
     private final CairoConfiguration configuration;
     private final CairoEngine engine;
@@ -111,6 +114,38 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
         this.metadata = WalWriterMetadata.newSequencerMetadataSink(ff);
         this.tableNameRegistryStore = new GrowOnlyTableNameRegistryStore(ff);
         this.txReader = new TxReader(configuration.getFilesFacade());
+    }
+
+    /**
+     * Test seam: runs once, in an incremental CHECKPOINT CREATE, after it copied every table and before it merges the
+     * base tables' gap intervals into the checkpointed materialized view states.
+     */
+    @TestOnly
+    public static void setOnBeforeMatViewIntervalMergeForTesting(@Nullable Runnable seam) {
+        onBeforeMatViewIntervalMergeForTesting = seam;
+    }
+
+    /**
+     * Test seam: runs once, in CHECKPOINT CREATE, after it wrote a materialized view's definition and state and before
+     * it pins the view's reader to copy its table.
+     */
+    @TestOnly
+    public static void setOnMatViewDefinitionCheckpointedForTesting(@Nullable Runnable seam) {
+        onMatViewDefinitionCheckpointedForTesting = seam;
+    }
+
+    private static void runSeamForTesting(boolean isIntervalMerge) {
+        final Runnable seam;
+        if (isIntervalMerge) {
+            seam = onBeforeMatViewIntervalMergeForTesting;
+            onBeforeMatViewIntervalMergeForTesting = null;
+        } else {
+            seam = onMatViewDefinitionCheckpointedForTesting;
+            onMatViewDefinitionCheckpointedForTesting = null;
+        }
+        if (seam != null) {
+            seam.run();
+        }
     }
 
     @TestOnly
@@ -334,8 +369,10 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                         // Map to track base table seqTxns for mat view interval updates
                         // Key: base table name, Value: seqTxn included in checkpoint
                         final CharSequenceObjHashMap<Long> baseTableSeqTxns = new CharSequenceObjHashMap<>();
-                        // List of mat views that need their refresh intervals updated
+                        // List of mat views that need their refresh intervals updated, and the base table name of the
+                        // definition each one's checkpoint holds
                         final ObjList<TableToken> matViewsToUpdate = new ObjList<>();
+                        final ObjList<String> matViewBaseTableNames = new ObjList<>();
 
                         // Phase 1: Copy metadata files for all tables and record base table seqTxns
                         for (int t = 0, n = ordered.size(); t < n; t++) {
@@ -377,9 +414,12 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                     // This way, the state copy will never hold a txn number that is newer than what's
                                     // in the table copy (otherwise, such a situation may lead to lost view refresh data).
                                     long mvBaseTableTxn = -1;
+                                    // The definition the checkpoint holds, and whether it holds the view's state too.
+                                    MatViewDefinition matViewDefinition = null;
+                                    boolean isMatViewStateCheckpointed = false;
                                     if (tableToken.isMatView()) {
                                         final DependentViewGraph dependentViewGraph = engine.getDependentViewGraph();
-                                        final MatViewDefinition matViewDefinition = dependentViewGraph.getViewDefinition(tableToken);
+                                        matViewDefinition = dependentViewGraph.getViewDefinition(tableToken);
                                         if (matViewDefinition != null) {
                                             matViewFileWriter.of(path.trimTo(rootLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
                                             MatViewDefinition.append(matViewDefinition, matViewFileWriter);
@@ -408,9 +448,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
 
                                                     matViewFileWriter.of(path.concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
                                                     MatViewState.append(matViewStateReader, matViewFileWriter);
-
-                                                    // Mark this mat view for potential interval update in phase 2
-                                                    matViewsToUpdate.add(tableToken);
+                                                    isMatViewStateCheckpointed = true;
 
                                                     LOG.info().$("materialized view state included in the checkpoint [view=").$(tableToken).I$();
                                                 }
@@ -421,6 +459,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                             LOG.info().$("skipping, materialized view is concurrently dropped [view=").$(tableToken).I$();
                                             break;
                                         }
+                                        runSeamForTesting(false);
                                     }
 
                                     if (tableToken.isView()) {
@@ -627,6 +666,15 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                             continue;
                                         }
 
+                                        if (matViewDefinition != null && engine.getDependentViewGraph().getViewDefinition(tableToken) != matViewDefinition) {
+                                            // A definition event of ALTER MATERIALIZED VIEW ... AS, or SET REFRESH, applied after the
+                                            // checkpoint wrote the view's definition, and the reader may hold the transaction past it:
+                                            // a restore would never apply it again. Write the view again, in the same order.
+                                            LOG.info().$("retrying, materialized view definition changed [view=").$(tableToken).I$();
+                                            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                                            continue;
+                                        }
+
                                         // restore the path
                                         path.of(checkpointRoot).concat(configuration.getDbDirectory()).concat(tableToken);
 
@@ -761,6 +809,11 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                             logRecord.$(", mvBaseTableTxn=").$(mvBaseTableTxn);
                                         }
                                         logRecord.I$();
+                                        if (isMatViewStateCheckpointed) {
+                                            // Mark this mat view for potential interval update in phase 2
+                                            matViewsToUpdate.add(tableToken);
+                                            matViewBaseTableNames.add(matViewDefinition.getBaseTableName());
+                                        }
                                         break;
                                     } finally {
                                         Misc.free(reader);
@@ -777,9 +830,11 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                         // This is only needed for incremental backups when WAL base table _event files are
                         // not copied to with the checkpoint.
                         if (isIncrementalBackup) {
+                            runSeamForTesting(true);
                             updateMatViewRefreshIntervals(
                                     checkpointRoot,
                                     matViewsToUpdate,
+                                    matViewBaseTableNames,
                                     baseTableSeqTxns,
                                     matViewFileReader,
                                     matViewFileWriter,
@@ -890,6 +945,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
     private void updateMatViewRefreshIntervals(
             CharSequence checkpointRoot,
             ObjList<TableToken> matViewsToUpdate,
+            ObjList<String> matViewBaseTableNames,
             CharSequenceObjHashMap<Long> baseTableSeqTxns,
             BlockFileReader matViewFileReader,
             BlockFileWriter matViewFileWriter,
@@ -901,12 +957,14 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
         for (int m = 0, n = matViewsToUpdate.size(); m < n; m++) {
             TableToken matViewToken = matViewsToUpdate.get(m);
             final DependentViewGraph dependentViewGraph = engine.getDependentViewGraph();
-            final MatViewDefinition matViewDefinition = dependentViewGraph.getViewDefinition(matViewToken);
-            if (matViewDefinition == null) {
+            if (dependentViewGraph.getViewDefinition(matViewToken) == null) {
                 continue;
             }
 
-            final String baseTableName = matViewDefinition.getBaseTableName();
+            // The base table of the definition the checkpoint holds: the checkpointed state is positioned on it. A base
+            // change of ALTER MATERIALIZED VIEW ... WITH BASE that applied since would otherwise merge another table's
+            // intervals and transaction number into that state.
+            final String baseTableName = matViewBaseTableNames.getQuick(m);
             final Long checkpointBaseSeqTxn = baseTableSeqTxns.get(baseTableName);
             if (checkpointBaseSeqTxn == null) {
                 // Base table not in checkpoint (might be non-WAL or dropped)

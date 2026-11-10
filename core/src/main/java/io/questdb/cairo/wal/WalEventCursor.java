@@ -61,6 +61,7 @@ public class WalEventCursor {
     private final MemoryCMR eventMem;
     private final LiveViewDataInfo lvDataInfo = new LiveViewDataInfo();
     private final MatViewDataInfo mvDataInfo = new MatViewDataInfo();
+    private final MatViewDefinitionInfo mvDefinitionInfo = new MatViewDefinitionInfo();
     private final MatViewInvalidationInfo mvInvalidationInfo = new MatViewInvalidationInfo();
     private final SqlInfo sqlInfo = new SqlInfo();
     private final UnknownInfo unknownInfo = new UnknownInfo();
@@ -124,6 +125,13 @@ public class WalEventCursor {
             throw CairoException.critical(CairoException.ILLEGAL_OPERATION).put("WAL event type is not MAT_VIEW_DATA, type=").put(type);
         }
         return mvDataInfo;
+    }
+
+    public MatViewDefinitionInfo getMatViewDefinitionInfo() {
+        if (type != MAT_VIEW_DEFINITION) {
+            throw CairoException.critical(CairoException.ILLEGAL_OPERATION).put("WAL event type is not MAT_VIEW_DEFINITION, type=").put(type);
+        }
+        return mvDefinitionInfo;
     }
 
     public MatViewInvalidationInfo getMatViewInvalidationInfo() {
@@ -382,6 +390,9 @@ public class WalEventCursor {
             case MAT_VIEW_INVALIDATE:
                 mvInvalidationInfo.read();
                 break;
+            case MAT_VIEW_DEFINITION:
+                mvDefinitionInfo.read();
+                break;
             case VIEW_DEFINITION:
                 viewDefinitionInfo.read();
                 break;
@@ -599,6 +610,36 @@ public class WalEventCursor {
             // symbol map will start after this
             lastRefreshBaseTableTxn = readLong();
             lastRefreshTimestampUs = readLong();
+        }
+    }
+
+    /**
+     * The event of {@code ALTER MATERIALIZED VIEW ... AS}: the view's base table name, which the statement validated
+     * against, its SQL text, and whether the statement changed the base table.
+     */
+    public class MatViewDefinitionInfo {
+        private final StringSink baseTableName = new StringSink();
+        private final StringSink matViewSql = new StringSink();
+        private boolean isBaseTableChange;
+
+        public CharSequence getBaseTableName() {
+            return baseTableName;
+        }
+
+        public CharSequence getMatViewSql() {
+            return matViewSql;
+        }
+
+        public boolean isBaseTableChange() {
+            return isBaseTableChange;
+        }
+
+        private void read() {
+            baseTableName.clear();
+            baseTableName.put(readStr());
+            matViewSql.clear();
+            matViewSql.put(readStr());
+            isBaseTableChange = readBool();
         }
     }
 

@@ -35,8 +35,9 @@ import java.util.concurrent.locks.Lock;
 
 /**
  * The role-switch commit fence of a materialized view's own WAL. Every write that externalizes a replicated seqTxn
- * on a view's WAL goes through it: the refresh job's data commits and view state events, and the view state event
- * that {@code REFRESH MATERIALIZED VIEW ... RESUME} writes.
+ * on a view's WAL goes through it: the refresh job's data commits and view state events, the view state event
+ * that {@code REFRESH MATERIALIZED VIEW ... RESUME} writes, and the invalidation and definition events of
+ * {@code ALTER MATERIALIZED VIEW ... AS}.
  * <p>
  * A primary-to-replica demote flips the node read-only in place, without halting the refresh workers or the
  * statements that already hold a view's {@link WalWriter}. A mint that lands after the flip would leave a
@@ -71,6 +72,27 @@ public final class MatViewCommitFence {
         } catch (Throwable th) {
             lock.unlock();
             throw th;
+        }
+    }
+
+    /**
+     * Writes the definition event of {@code ALTER MATERIALIZED VIEW ... AS} through
+     * {@link WalWriter#appendMatViewDefinition} under the fence.
+     *
+     * @return the sequencer txn of the event
+     */
+    public static long appendMatViewDefinition(
+            @NotNull CairoEngine engine,
+            @NotNull WalWriter walWriter,
+            @NotNull CharSequence baseTableName,
+            @NotNull CharSequence matViewSql,
+            boolean isBaseTableChange
+    ) {
+        final Lock lock = acquire(engine);
+        try {
+            return walWriter.appendMatViewDefinition(baseTableName, matViewSql, isBaseTableChange);
+        } finally {
+            lock.unlock();
         }
     }
 

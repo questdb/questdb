@@ -475,6 +475,40 @@ public class MatViewDefinition implements Mutable {
         return newDefinition;
     }
 
+    /**
+     * Returns the definition that {@code ALTER MATERIALIZED VIEW ... AS} leaves: this one with the base table name and
+     * the SQL text replaced. The SAMPLE BY grid, time zone and offset stay, since the statement accepts only a SQL that
+     * keeps them, and so do the refresh settings and the passthrough flag. The base table's designated timestamp type
+     * is the view's, which the statement requires of a new base, so the caller passes the view's own and never opens
+     * the base table, which may be gone by then.
+     */
+    public MatViewDefinition updateSql(@NotNull String baseTableName, @NotNull String matViewSql, int baseTableTimestampType) {
+        final MatViewDefinition newDefinition = new MatViewDefinition();
+        newDefinition.init(
+                refreshType,
+                deferred,
+                baseTableTimestampType,
+                matViewToken,
+                matViewSql,
+                baseTableName,
+                samplingInterval,
+                samplingIntervalUnit,
+                timeZone,
+                timeZoneOffset,
+                refreshLimitHoursOrMonths,
+                timerInterval,
+                timerUnit,
+                timerStartUs,
+                timerTimeZone,
+                periodLength,
+                periodLengthUnit,
+                periodDelay,
+                periodDelayUnit,
+                passthrough
+        );
+        return newDefinition;
+    }
+
     public MatViewDefinition updateTimer(int timerInterval, char timerUnit, long timerStartUs) {
         final MatViewDefinition newDefinition = new MatViewDefinition();
         newDefinition.init(

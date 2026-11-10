@@ -4894,7 +4894,9 @@ public class CairoEngine implements Closeable, WriterSource {
                         pathLen,
                         tableToken
                 );
-                if (dependentViewGraph.addView(viewDefinition)) {
+                // A view on a dependency loop, which two concurrent base changes of ALTER MATERIALIZED VIEW ...
+                // WITH BASE can leave, still loads with its edge and state, and goes invalid below.
+                if (dependentViewGraph.addView(viewDefinition, true)) {
                     target.createViewState(viewDefinition);
                 }
             } else if (forceCreateState && target.getViewState(tableToken) == null) {
@@ -4952,6 +4954,15 @@ public class CairoEngine implements Closeable, WriterSource {
                 }
 
                 state.initFromReader(matViewStateReader);
+                if (dependentViewGraph.isOnDependencyLoop(viewDefinition)) {
+                    // No refresh can follow a loop; RESUME and REFRESH ... FULL refuse the view until ALTER
+                    // MATERIALIZED VIEW ... WITH BASE moves it off the loop.
+                    LOG.info().$("materialized view is on a dependency loop [view=").$(tableToken)
+                            .$(", baseTable=").$safe(viewDefinition.getBaseTableName())
+                            .I$();
+                    target.enqueueInvalidate(tableToken, "circular dependency");
+                    return;
+                }
                 if (state.isInvalid()) {
                     return;
                 }
@@ -5297,7 +5308,8 @@ public class CairoEngine implements Closeable, WriterSource {
                     final int mvRootLen = p.of(root).size();
                     final MatViewDefinition def = new MatViewDefinition();
                     MatViewDefinition.readFrom(this, def, blockReader, p, mvRootLen, newToken);
-                    if (dependentViewGraph.addView(def)) {
+                    // the rebased view keeps its edge also on a dependency loop
+                    if (dependentViewGraph.addView(def, true)) {
                         matViewStateStore.createViewState(def);
                     }
                 } catch (Throwable mvEx) {

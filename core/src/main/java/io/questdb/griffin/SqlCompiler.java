@@ -86,6 +86,27 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
     void compileBatch(CharSequence batchText, SqlExecutionContext sqlExecutionContext, BatchCallback batchCallback) throws Exception;
 
     /**
+     * Compiles the SQL of a materialized view as CREATE MATERIALIZED VIEW compiles it, under the caller's context, for
+     * ALTER MATERIALIZED VIEW ... AS: every bare name is a column, the SQL may call no non-deterministic function and
+     * read no view with a row-expiry policy, and the cursor's open checks SELECT on every table the SQL reads, with no
+     * row read. The validator checks the optimised query and the columns it produces. Positions of errors point into
+     * the statement that holds the SQL.
+     *
+     * @param executionContext the context to compile the SQL with, which the method leaves as it found it
+     * @param matViewName      the name of the view, for the row-expiry policy check
+     * @param sql              the SQL text
+     * @param sqlPosition      the position of the SQL text in the statement
+     * @param validator        checks the query
+     */
+    void compileMatViewSql(
+            SqlExecutionContext executionContext,
+            CharSequence matViewName,
+            String sql,
+            int sqlPosition,
+            MatViewQueryValidator validator
+    ) throws SqlException;
+
+    /**
      * SPI for operation execution. Typical execution will rely on the compiler infrastructure, such paths, engine, configuration etc.
      * We use compiler to avoid cluttering the operation (which is immutable copy of user's request).
      *

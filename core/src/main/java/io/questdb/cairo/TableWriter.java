@@ -4598,6 +4598,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         updateMatViewDefinition(newDefinition);
     }
 
+    /**
+     * Applies {@code ALTER MATERIALIZED VIEW ... AS}: derives the view's new definition from the current one, which the
+     * caller looked up to check the event against, with the base table name and the SQL text replaced, and writes it.
+     * The view's own designated timestamp type stands for the base table's, which the statement requires to match, so
+     * the base table is never opened.
+     */
+    public void setMatViewSql(@NotNull MatViewDefinition oldDefinition, @NotNull String baseTableName, @NotNull String matViewSql) {
+        assert tableToken.isMatView();
+        final MatViewDefinition newDefinition = oldDefinition.updateSql(baseTableName, matViewSql, metadata.getTimestampType());
+        updateMatViewDefinition(newDefinition);
+    }
+
     @Override
     public void setMatViewRefreshLimit(int limitHoursOrMonths) {
         assert tableToken.isMatView();

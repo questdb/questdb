@@ -492,7 +492,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         // rows 1:1; samplingInterval becomes the granularity of refresh ranges (set later in
         // validateAndUpdateMetadataFromSelect), not an aggregation bucket.
         if (intervalExpr == null) {
-            if (isPassthrough(functionFactoryCache, queryModel)) {
+            if (isPassthrough(functionFactoryCache, queryModel, tmpColumnIndexes, tmpLiterals, sqlNodeStack)) {
                 passthrough = true;
             } else if (timestamp != null) {
                 // The designated timestamp column was already confirmed present in the select
@@ -547,7 +547,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             }
             for (int i = 0, n = columns.size(); i < n; i++) {
                 final QueryColumn column = columns.getQuick(i);
-                if (hasNoAggregates(functionFactoryCache, queryModel, i)) {
+                if (hasNoAggregates(functionFactoryCache, queryModel, i, tmpColumnIndexes, tmpLiterals, sqlNodeStack)) {
                     final String columnName = SqlUtil.toColumnName(column.getName());
                     final CreateTableColumnModel columnModel = createColumnModelMap.get(columnName);
                     if (columnModel == null) {
@@ -645,6 +645,25 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         }
         updateMatViewTablePartitionBy(createTableOperation.getTimestampType(), baseTableMetadata.getPartitionBy());
         this.baseTableTimestampType = baseTableMetadata.getTimestampType();
+    }
+
+    /**
+     * Returns the node of the sampling interval of a materialized view's optimised query: the interval of its SAMPLE
+     * BY, or that of its GROUP BY timestamp_floor(), or null when it has neither, as a non-aggregating passthrough
+     * view. ALTER MATERIALIZED VIEW ... AS requires the interval of the view's.
+     */
+    public static @Nullable ExpressionNode findSamplingIntervalNode(@NotNull IQueryModel queryModel) {
+        // the optimiser rewrites a materialized view's SAMPLE BY to GROUP BY timestamp_floor()
+        final QueryColumn queryColumn = findTimestampFloorColumn(queryModel);
+        return queryColumn != null ? SqlUtil.getTimestampFloorInterval(queryColumn.getAst()) : findSampleByNode(queryModel);
+    }
+
+    /**
+     * Returns true when a materialized view's optimised query, which has no sampling interval, is a non-aggregating
+     * passthrough query over one table, as CREATE MATERIALIZED VIEW tells it.
+     */
+    public static boolean isPassthroughQuery(@NotNull FunctionFactoryCache functionFactoryCache, @NotNull IQueryModel queryModel) {
+        return isPassthrough(functionFactoryCache, queryModel, new IntList(), new LowerCaseCharSequenceHashSet(), new ArrayDeque<>());
     }
 
     private static void copyBaseTableSymbolColumnCapacity(
@@ -820,7 +839,14 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         return -1;
     }
 
-    private boolean isPassthrough(FunctionFactoryCache functionFactoryCache, IQueryModel queryModel) {
+    // The scratch collections are hasNoAggregates()'s.
+    private static boolean isPassthrough(
+            FunctionFactoryCache functionFactoryCache,
+            IQueryModel queryModel,
+            IntList tmpColumnIndexes,
+            LowerCaseCharSequenceHashSet tmpLiterals,
+            ArrayDeque<ExpressionNode> sqlNodeStack
+    ) {
         // A non-aggregating projection over a single table (e.g. SELECT * FROM base [WHERE ...]).
         // The caller has already established there is no SAMPLE BY / timestamp_floor(). Reject anything
         // whose rows are not 1:1 with the base: a top-level table name / GROUP BY / top-level JOIN / LATEST
@@ -855,7 +881,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         }
         final ObjList<QueryColumn> cols = queryModel.getBottomUpColumns();
         for (int i = 0, n = cols.size(); i < n; i++) {
-            if (!hasNoAggregates(functionFactoryCache, queryModel, i)) {
+            if (!hasNoAggregates(functionFactoryCache, queryModel, i, tmpColumnIndexes, tmpLiterals, sqlNodeStack)) {
                 return false;
             }
         }
@@ -884,7 +910,14 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         return null;
     }
 
-    private boolean hasNoAggregates(FunctionFactoryCache functionFactoryCache, IQueryModel queryModel, int columnIndex) {
+    private static boolean hasNoAggregates(
+            FunctionFactoryCache functionFactoryCache,
+            IQueryModel queryModel,
+            int columnIndex,
+            IntList tmpColumnIndexes,
+            LowerCaseCharSequenceHashSet tmpLiterals,
+            ArrayDeque<ExpressionNode> sqlNodeStack
+    ) {
         tmpColumnIndexes.clear();
         tmpColumnIndexes.add(columnIndex);
 

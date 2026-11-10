@@ -33,6 +33,7 @@ import io.questdb.griffin.BatchCallback;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.ExpiryValidationResult;
 import io.questdb.griffin.ExpressionParserListener;
+import io.questdb.griffin.MatViewQueryValidator;
 import io.questdb.griffin.MatViewSqlValidator;
 import io.questdb.griffin.QueryBuilder;
 import io.questdb.griffin.SqlCompiler;
@@ -321,6 +322,17 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         @Override
         public void updateTableToken(TableToken tableToken) {
             this.tableToken = tableToken;
+        }
+
+        @Override
+        public void compileMatViewSql(
+                SqlExecutionContext executionContext,
+                CharSequence matViewName,
+                String sql,
+                int sqlPosition,
+                MatViewQueryValidator validator
+        ) throws SqlException {
+            delegate.compileMatViewSql(executionContext, matViewName, sql, sqlPosition, validator);
         }
 
         @Override

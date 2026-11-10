@@ -58,6 +58,7 @@ import io.questdb.std.str.Utf8s;
 
 import static io.questdb.cairo.wal.WalTxnType.LIVE_VIEW_DATA;
 import static io.questdb.cairo.wal.WalTxnType.MAT_VIEW_DATA;
+import static io.questdb.cairo.wal.WalTxnType.MAT_VIEW_DEFINITION;
 import static io.questdb.cairo.wal.WalTxnType.MAT_VIEW_INVALIDATE;
 
 public class WalUtils {
@@ -746,6 +747,7 @@ public class WalUtils {
             // As a result, fd and memory usage is not optimized.
             boolean refreshStateLoaded = false;
             int eventBaseTableId = Integer.MIN_VALUE;
+            boolean isUnappliedDefinition = false;
             try (WalEventReader eventReader = walEventReader) {
                 WalEventCursor walEventCursor = eventReader.of(tablePath, segmentTxn);
                 if (walEventCursor.getType() == MAT_VIEW_DATA) {
@@ -755,11 +757,19 @@ public class WalUtils {
                     matViewStateReader.of(walEventCursor.getMatViewInvalidationInfo());
                     eventBaseTableId = matViewStateReader.getBaseTableId();
                     refreshStateLoaded = true;
+                } else if (walEventCursor.getType() == MAT_VIEW_DEFINITION) {
+                    isUnappliedDefinition = isUnapplied;
                 }
                 // else: the last txn is a plain user backfill (DATA) or another type that carries
                 // no mat-view state; fall back to the _mv.s state file below.
             } catch (Throwable th) {
                 // walEventReader may not be able to find/open the WAL-e files; fall back to file.
+            }
+            if (isUnappliedDefinition) {
+                // The definition event of ALTER MATERIALIZED VIEW ... AS carries no view state. A base change writes
+                // its invalidation right before it, which the state file does not hold until the view's WAL applies
+                // it, so the state comes from an older event.
+                return false;
             }
             // Consult the _mv.s state file. It is the authoritative source for the frozen-zone
             // runtime fields (backfill frontier / boundary floor), which no WAL event carries, and

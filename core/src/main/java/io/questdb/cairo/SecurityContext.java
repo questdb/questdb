@@ -53,6 +53,13 @@ public interface SecurityContext extends Mutable {
         return AllowAllSecurityContext.INSTANCE;
     }
 
+    /**
+     * Checks the ALTER MATERIALIZED VIEW permission on the view, which ALTER MATERIALIZED VIEW ... AS requires to
+     * replace the view's SQL and, with WITH BASE, its base table. The statement also compiles the new SQL under this
+     * context, which checks SELECT on every table the SQL reads.
+     */
+    void authorizeAlterMatView(TableToken tableToken);
+
     void authorizeAlterMatViewSetRefreshLimit(TableToken tableToken);
 
     void authorizeAlterMatViewSetRefreshType(TableToken tableToken);

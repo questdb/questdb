@@ -320,7 +320,7 @@ public class MatViewColumnDdlTest extends AbstractCairoTest {
     @Test
     public void testAlterMatViewForms() throws Exception {
         // The forms ALTER MATERIALIZED VIEW has besides the column DDL keep their grammar. A statement of no known
-        // form lists them all, AS and WITH BASE included.
+        // form lists them all, AS and WITH BASE included, which AlterMatViewAsTest covers.
         assertMemoryLeak(() -> {
             createBase();
             createView();
@@ -334,7 +334,7 @@ public class MatViewColumnDdlTest extends AbstractCairoTest {
                 final int semicolon = sql.indexOf(';');
                 assertExceptionNoLeakCheck(sql, semicolon > -1 ? semicolon : sql.length(), expected);
             }
-            for (String form : new String[]{"foobar", "AS (SELECT ts, sym, last(price) AS price FROM base SAMPLE BY 1h)", "WITH BASE base AS (SELECT 1)"}) {
+            for (String form : new String[]{"foobar"}) {
                 final String sql = "ALTER MATERIALIZED VIEW price_1h " + form;
                 assertExceptionNoLeakCheck(sql, sql.indexOf(form), expected);
             }

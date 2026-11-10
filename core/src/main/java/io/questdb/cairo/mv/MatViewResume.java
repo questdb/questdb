@@ -183,8 +183,9 @@ public final class MatViewResume {
 
     // Takes the view latch, waiting while another holder has it. Every other holder of an invalid view's latch is
     // short, so RESUME polls the latch within the statement timeout instead of refusing a busy latch at once, and
-    // refuses with "retry later" only when the timeout expires first. A cancelled statement stops.
-    private static void lockView(
+    // refuses with "retry later" only when the timeout expires first. A cancelled statement stops. The base change of
+    // ALTER MATERIALIZED VIEW ... WITH BASE takes the latch the same way, see MatViewAlter.
+    static void lockView(
             MatViewState viewState,
             SqlExecutionCircuitBreaker circuitBreaker,
             TableToken viewToken,
@@ -255,6 +256,11 @@ public final class MatViewResume {
                 return false;
             }
             final MatViewDefinition viewDefinition = viewState.getViewDefinition();
+            // Two concurrent base changes of ALTER MATERIALIZED VIEW ... WITH BASE can leave the view on a dependency
+            // loop, which no refresh can follow.
+            if (engine.getDependentViewGraph().isOnDependencyLoop(viewDefinition)) {
+                throw SqlException.$(viewNamePosition, MatViewRefreshJob.getDependencyLoopRefusal(viewToken, viewDefinition.getBaseTableName()));
+            }
             try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
                 final TableRecordMetadata viewMetadata = walWriter.getMetadata();
                 validateSql(engine, executionContext, viewToken, viewState, viewDefinition, viewMetadata, viewNamePosition, validator);

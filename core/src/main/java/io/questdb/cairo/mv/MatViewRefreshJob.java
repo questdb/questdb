@@ -256,6 +256,17 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Returns why a view on a dependency loop cannot be refreshed, see
+     * {@link DependentViewGraph#isOnDependencyLoop(MatViewDefinition)}. REFRESH ... FULL and RESUME refuse such a view
+     * at the statement, and the FULL refresh job checks again before it truncates.
+     */
+    public static String getDependencyLoopRefusal(@NotNull TableToken viewToken, @NotNull CharSequence baseTableName) {
+        return "materialized view is on a dependency loop [view=" + viewToken.getTableName()
+                + ", baseTable=" + baseTableName
+                + "]; move the view to another base table with ALTER MATERIALIZED VIEW ... WITH BASE";
+    }
+
+    /**
      * Returns why a view cannot be refreshed from the given base table, judging by the designated timestamp types
      * alone, or null when it can: the base table's must equal the view's. REFRESH ... FULL and RESUME refuse such a
      * base at the statement, after {@link #getBaseTableKindRefusal(TableToken, TableToken)}, and the FULL refresh job
@@ -1740,6 +1751,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 refreshFailState(viewDefinition, viewState, walWriter, baseTableKindRefusal);
                 return false;
             }
+            // Two concurrent base changes of ALTER MATERIALIZED VIEW ... WITH BASE can leave the view on a dependency
+            // loop after the statement checked it, and no refresh can follow a loop.
+            if (engine.getDependentViewGraph().isOnDependencyLoop(viewDefinition)) {
+                refreshFailState(viewDefinition, viewState, walWriter, getDependencyLoopRefusal(viewToken, viewDefinition.getBaseTableName()));
+                return false;
+            }
 
             // Steps:
             // - truncate view (only when no REFRESH LIMIT is set)
@@ -1989,7 +2006,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         boolean returned = false;
         try {
             final long cachedPolicyVersion = viewState.getRecordFactoryExpiryPolicyVersion();
-            factory = viewState.acquireRecordFactory();
+            factory = viewState.acquireRecordFactory(viewDefinition.getMatViewSql());
             if (forceFreshFactory || (factory != null && cachedPolicyVersion != initialExpiryPolicyVersion)) {
                 factory = Misc.free(factory);
             }
@@ -2361,7 +2378,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         boolean hasIntervals = true;
         try {
             expiryPolicyVersion = viewState.getRecordFactoryExpiryPolicyVersion();
-            factory = viewState.acquireRecordFactory();
+            factory = viewState.acquireRecordFactory(viewDefinition.getMatViewSql());
             copier = viewState.getRecordToRowCopier();
             boolean isPositional = viewState.isRecordCopyPositional();
             if (walWriter.getMetadata().getMetadataVersion() != viewState.getRecordRowCopierMetadataVersion()) {
@@ -4436,7 +4453,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
      *
      * @throws CairoException if the query no longer matches the view schema
      */
-    static void validateViewSchema(
+    public static void validateViewSchema(
             TableToken viewToken,
             RecordMetadata queryMetadata,
             RecordMetadata viewMetadata,

@@ -257,6 +257,64 @@ public class MatViewResumeDemoteTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDemoteDuringBaseChangeRefusesItsEvents() throws Exception {
+        // The demote lands while ALTER MATERIALIZED VIEW ... WITH BASE holds the view latch: the commit fence refuses
+        // its invalidation, so nothing reaches the view's WAL, and the statement runs again on the primary.
+        assertMemoryLeak(() -> {
+            createInvalidView();
+            execute("CREATE TABLE base2 (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final String alterSql = "ALTER MATERIALIZED VIEW price_1h WITH BASE base2 AS (SELECT ts, sym, last(price) AS price FROM base2 SAMPLE BY 1h)";
+            final TableToken viewToken = engine.verifyTableName("price_1h");
+            final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
+            final long viewSeqTxn = engine.getTableSequencerAPI().getTxnTracker(viewToken).getSeqTxn();
+            demoteOnNextRoleSwitchReadLock.set(true);
+            try {
+                execute(alterSql);
+                Assert.fail();
+            } catch (CairoException e) {
+                Assert.assertTrue(e.isAuthorizationError());
+                TestUtils.assertContains(e.getFlyweightMessage(), "read-only");
+            } finally {
+                readOnly.set(false);
+            }
+            Assert.assertFalse(demoteOnNextRoleSwitchReadLock.get());
+            Assert.assertFalse(state.isLocked());
+            Assert.assertNull(state.getBacklogLostReason());
+            Assert.assertEquals(viewSeqTxn, engine.getTableSequencerAPI().getTxnTracker(viewToken).getSeqTxn());
+            Assert.assertEquals(-1, state.getPendingDefinitionSeqTxn());
+
+            execute(alterSql);
+            drainWalAndMatViewQueues();
+            Assert.assertEquals("base2", engine.getDependentViewGraph().getViewDefinition(viewToken).getBaseTableName());
+        });
+    }
+
+    @Test
+    public void testReadOnlyNodeRefusesAlterMatViewAs() throws Exception {
+        // A read-only node refuses ALTER MATERIALIZED VIEW ... AS before it writes anything.
+        assertMemoryLeak(() -> {
+            createInvalidView();
+            final TableToken viewToken = engine.verifyTableName("price_1h");
+            final long viewSeqTxn = engine.getTableSequencerAPI().getTxnTracker(viewToken).getSeqTxn();
+            readOnly.set(true);
+            try {
+                execute("ALTER MATERIALIZED VIEW price_1h AS (SELECT ts, sym, max(price) AS price FROM base SAMPLE BY 1h)");
+                Assert.fail();
+            } catch (CairoException e) {
+                Assert.assertTrue(e.isAuthorizationError());
+                TestUtils.assertContains(e.getFlyweightMessage(), "read-only");
+            } finally {
+                readOnly.set(false);
+            }
+            Assert.assertEquals(viewSeqTxn, engine.getTableSequencerAPI().getTxnTracker(viewToken).getSeqTxn());
+            Assert.assertEquals(
+                    "SELECT ts, sym, last(price) AS price FROM base SAMPLE BY 1h",
+                    engine.getDependentViewGraph().getViewDefinition(viewToken).getMatViewSql()
+            );
+        });
+    }
+
+    @Test
     public void testReadOnlyNodeRefusesResume() throws Exception {
         assertMemoryLeak(() -> {
             createInvalidView();

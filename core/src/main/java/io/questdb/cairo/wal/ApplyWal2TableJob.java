@@ -63,6 +63,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.Job;
+import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
@@ -1145,6 +1146,13 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 writer.markSeqTxnCommitted(seqTxn);
                 lastCommittedRows = 0;
                 return 1;
+            case MAT_VIEW_DEFINITION:
+                applyMatViewDefinition(writer, walId, segmentId, segmentTxn, seqTxn);
+                // WAL-E files can be deleted by the purge job after a commit.
+                // Update the view definition before committing the transaction.
+                writer.markSeqTxnCommitted(seqTxn);
+                lastCommittedRows = 0;
+                return 1;
             case VIEW_DEFINITION:
                 final TableToken viewToken = writer.getTableToken();
                 try (WalEventReader eventReader = walEventReader) {
@@ -1184,6 +1192,47 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     lastCommittedRows = 0;
                     return Math.max(rows, 1);
                 }
+        }
+    }
+
+    // Applies ALTER MATERIALIZED VIEW ... AS: the event's base table name and SQL text replace the view's, as stored,
+    // with no parse or compile, so every node ends with the same definition. An event without a base change that names
+    // a base other than the current definition's is stale: its statement validated against the definition before a
+    // base change, and a RESUME on the new base, got into the view's WAL ahead of it. Applying it would move the view
+    // back to the old base and keep the new base's refresh position, so every node skips it, judging by the view's own
+    // WAL alone. A failure to write the definition suspends the view's WAL, so no node goes on without it.
+    private void applyMatViewDefinition(TableWriter writer, int walId, int segmentId, long segmentTxn, long seqTxn) {
+        final TableToken viewToken = writer.getTableToken();
+        try (WalEventReader eventReader = walEventReader) {
+            final Path path = Path.PATH2.get();
+            path.of(engine.getConfiguration().getDbRoot()).concat(viewToken);
+            path.slash().putAscii(WAL_NAME_BASE).put(walId).slash().put(segmentId);
+            final WalEventCursor walEventCursor = eventReader.of(path, segmentTxn);
+            final WalEventCursor.MatViewDefinitionInfo info = walEventCursor.getMatViewDefinitionInfo();
+            final MatViewDefinition currentDefinition = engine.getDependentViewGraph().getViewDefinition(viewToken);
+            if (currentDefinition == null) {
+                throw CairoException.nonCritical().put("could not find definition [view=").put(viewToken.getTableName()).put(']');
+            }
+            if (!info.isBaseTableChange() && !Chars.equalsIgnoreCase(info.getBaseTableName(), currentDefinition.getBaseTableName())) {
+                LOG.info().$("skipping stale materialized view definition, its base table is no longer the view's [view=").$(viewToken)
+                        .$(", seqTxn=").$(seqTxn)
+                        .$(", eventBaseTable=").$safe(info.getBaseTableName())
+                        .$(", baseTable=").$safe(currentDefinition.getBaseTableName())
+                        .I$();
+            } else {
+                writer.setMatViewSql(currentDefinition, Chars.toString(info.getBaseTableName()), Chars.toString(info.getMatViewSql()));
+                LOG.info().$("applied materialized view definition [view=").$(viewToken)
+                        .$(", seqTxn=").$(seqTxn)
+                        .$(", baseTable=").$safe(info.getBaseTableName())
+                        .$(", baseTableChange=").$(info.isBaseTableChange())
+                        .I$();
+            }
+        } catch (CairoException e) {
+            LOG.error().$("could not update materialized view definition [view=").$(viewToken)
+                    .$(", msg=").$safe(e.getFlyweightMessage())
+                    .$(", errno=").$(e.getErrno())
+                    .I$();
+            throw e;
         }
     }
 

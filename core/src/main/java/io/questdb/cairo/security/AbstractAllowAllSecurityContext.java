@@ -42,6 +42,10 @@ public abstract class AbstractAllowAllSecurityContext extends AbstractPrincipalA
     }
 
     @Override
+    public void authorizeAlterMatView(TableToken tableToken) {
+    }
+
+    @Override
     public void authorizeAlterMatViewSetRefreshLimit(TableToken tableToken) {
     }
 

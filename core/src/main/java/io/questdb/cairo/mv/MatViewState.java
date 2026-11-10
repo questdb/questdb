@@ -192,6 +192,10 @@ public class MatViewState implements QuietCloseable {
     // Protected by this.latch.
     private RecordCursorFactory cursorFactory;
     private long cursorFactoryExpiryPolicyVersion = -1;
+    // Protected by this.latch.
+    // The SQL text the cached factory was compiled from. ALTER MATERIALIZED VIEW ... AS replaces the view's SQL, and
+    // a refresh that finds a factory of another SQL discards it, see acquireRecordFactory(String).
+    private String cursorFactorySql;
     private volatile boolean dropped;
     private volatile boolean invalid;
     private volatile String invalidationReason;
@@ -235,6 +239,10 @@ public class MatViewState implements QuietCloseable {
     private volatile int lastRefreshFrozenBoundaryLimitHoursOrMonths;
     private volatile long lastRefreshStartTimestampUs = Numbers.LONG_NULL;
     @TestOnly
+    private volatile Runnable onAlterValidatedForTesting;
+    @TestOnly
+    private volatile Runnable onDefinitionWaitForTesting;
+    @TestOnly
     private volatile Runnable onBeforeUnlockForTesting;
     @TestOnly
     private volatile Runnable onClearPendingFullRefreshForTesting;
@@ -271,6 +279,10 @@ public class MatViewState implements QuietCloseable {
     // claims these bits and retries only the failed facets, avoiding duplicate queue amplification when
     // one facet succeeded before another allocation failed.
     private volatile int pendingTaskRetryFlags;
+    // The sequencer txn of the MAT_VIEW_DEFINITION event of the last ALTER MATERIALIZED VIEW ... AS that this node ran,
+    // or -1. REFRESH ... FULL, INCREMENTAL and RANGE wait until the view's WAL is applied up to it, so that they run
+    // the new SQL. Kept in memory only: a restart loses it.
+    private final AtomicLong pendingDefinitionSeqTxn = new AtomicLong(-1);
     // Highest backfillFrontier value already written to the _mv.s state file. Lets the
     // backfill apply path skip a redundant state-file rewrite when no new backfill has
     // advanced the frontier since the last persist. Mutated only from the (single-threaded
@@ -561,6 +573,23 @@ public class MatViewState implements QuietCloseable {
         assert latch.get();
         RecordCursorFactory factory = cursorFactory;
         cursorFactory = null;
+        return factory;
+    }
+
+    /**
+     * Takes the cached factory when it was compiled from the given SQL text, and discards it otherwise: ALTER
+     * MATERIALIZED VIEW ... AS replaced the view's SQL since. The refresh that takes the factory compiles from that
+     * SQL text, so the factory it caches next, the one it took or one it compiled, comes from it. The caller holds the
+     * latch.
+     */
+    public RecordCursorFactory acquireRecordFactory(@NotNull String viewSql) {
+        assert latch.get();
+        RecordCursorFactory factory = cursorFactory;
+        cursorFactory = null;
+        if (factory != null && !Chars.equals(viewSql, cursorFactorySql)) {
+            factory = Misc.free(factory);
+        }
+        cursorFactorySql = viewSql;
         return factory;
     }
 
@@ -1109,6 +1138,21 @@ public class MatViewState implements QuietCloseable {
         telemetryFacade.store(MAT_VIEW_RESUME, viewDefinition.getMatViewToken(), lastRefreshBaseTxn, mode, 0);
     }
 
+    /**
+     * Records the telemetry event of ALTER MATERIALIZED VIEW ... AS, once its definition event is in the view's WAL.
+     */
+    void alterSuccess(boolean isBaseTableChange) {
+        telemetryFacade.store(MAT_VIEW_ALTER, viewDefinition.getMatViewToken(), lastRefreshBaseTxn, isBaseTableChange ? "base change" : null, 0);
+    }
+
+    /**
+     * Returns the sequencer txn of the definition event of the last ALTER MATERIALIZED VIEW ... AS that this node ran,
+     * or -1 when it ran none since it started.
+     */
+    public long getPendingDefinitionSeqTxn() {
+        return pendingDefinitionSeqTxn.get();
+    }
+
     public void markAsDropped() {
         dropped = true;
         telemetryFacade.store(MAT_VIEW_DROP, viewDefinition.getMatViewToken(), Numbers.LONG_NULL, null, 0);
@@ -1505,6 +1549,14 @@ public class MatViewState implements QuietCloseable {
         }
     }
 
+    /**
+     * Records the sequencer txn of the definition event that ALTER MATERIALIZED VIEW ... AS wrote, see
+     * {@link #getPendingDefinitionSeqTxn()}. The record only grows.
+     */
+    void recordPendingDefinitionSeqTxn(long seqTxn) {
+        pendingDefinitionSeqTxn.accumulateAndGet(seqTxn, Math::max);
+    }
+
     // Keeps the summary of a column mapping that a compile of the view's SQL built, or null after one that failed, see
     // getColumnMappingSummary().
     public void setColumnMappingSummary(@Nullable MatViewColumnMapping.Summary columnMappingSummary) {
@@ -1573,6 +1625,24 @@ public class MatViewState implements QuietCloseable {
 
     public void setLastRefreshTimestampUs(long timestampUs) {
         this.lastRefreshFinishTimestampUs = timestampUs;
+    }
+
+    /**
+     * Test seam: runs once, in ALTER MATERIALIZED VIEW ... AS, between the validation of the new SQL and the write of
+     * its definition event.
+     */
+    @TestOnly
+    public void setOnAlterValidatedForTesting(Runnable onAlterValidatedForTesting) {
+        this.onAlterValidatedForTesting = onAlterValidatedForTesting;
+    }
+
+    /**
+     * Test seam: runs once, while a REFRESH waits for the definition event of an ALTER MATERIALIZED VIEW ... AS to
+     * apply, see {@link MatViewAlter#awaitPendingDefinition}.
+     */
+    @TestOnly
+    public void setOnDefinitionWaitForTesting(Runnable onDefinitionWaitForTesting) {
+        this.onDefinitionWaitForTesting = onDefinitionWaitForTesting;
     }
 
     /**
@@ -1746,6 +1816,22 @@ public class MatViewState implements QuietCloseable {
 
     public boolean tryLock() {
         return latch.compareAndSet(false, true);
+    }
+
+    void runAlterValidatedSeamForTesting() {
+        final Runnable seam = onAlterValidatedForTesting;
+        if (seam != null) {
+            onAlterValidatedForTesting = null;
+            seam.run();
+        }
+    }
+
+    void runDefinitionWaitSeamForTesting() {
+        final Runnable seam = onDefinitionWaitForTesting;
+        if (seam != null) {
+            onDefinitionWaitForTesting = null;
+            seam.run();
+        }
     }
 
     void runResumeHoldingLockSeamForTesting() {

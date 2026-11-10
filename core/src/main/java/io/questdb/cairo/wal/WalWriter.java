@@ -647,6 +647,39 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         return txn;
     }
 
+    /**
+     * Writes the event of {@code ALTER MATERIALIZED VIEW ... AS}, which replaces the view's base table name and SQL
+     * text when it applies, see {@link WalTxnType#MAT_VIEW_DEFINITION}. The caller takes the role-switch commit fence,
+     * see {@code MatViewCommitFence}.
+     *
+     * @return the sequencer txn of the event
+     */
+    public long appendMatViewDefinition(
+            @NotNull CharSequence baseTableName,
+            @NotNull CharSequence matViewSql,
+            boolean isBaseTableChange
+    ) {
+        try {
+            lastSegmentTxn = events.appendMatViewDefinition(baseTableName, matViewSql, isBaseTableChange);
+            final int syncedMode = syncAdaptiveEventsBeforeSequencing();
+            final long seqTxn = getSequencerTxn();
+            // W>0: the private events are already durable. Record the deferred sequencer flush as pending, so
+            // the next commit or the background flusher runs it within W even if commits stop.
+            if (syncedMode == CommitMode.ADAPTIVE && isDeviceFlushDeferred()) {
+                recordPendingDurable(seqTxn);
+            }
+            return seqTxn;
+        } catch (Throwable th) {
+            if (sequencer.isDataSyncFailureFatal(th)) {
+                distressed = true;
+                dropPendingDurable();
+                sequencer.handleDataSyncFailure(th);
+            }
+            rollback0();
+            throw th;
+        }
+    }
+
     // Marks the materialized view as invalid or resets its invalidation status,
     // depending on the input values. baseTableId is the id of the base table that the refresh position
     // and the cached intervals belong to, MatViewState.BASE_TABLE_ID_UNKNOWN when unknown. The event
