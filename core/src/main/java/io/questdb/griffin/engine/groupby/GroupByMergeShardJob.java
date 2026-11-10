@@ -40,6 +40,9 @@ import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Sequence;
+import io.questdb.mp.continuation.CancellationBinding;
+import io.questdb.mp.continuation.FiberCancellationSignal;
+import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.Misc;
 import io.questdb.tasks.GroupByMergeShardTask;
 import org.jetbrains.annotations.NotNull;
@@ -153,7 +156,7 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
                         postAggregationCircuitBreaker.cancel();
                     }
 
-                    if ((isOwnerHelping || !ownerLoop.isOwnerParkable()) && strategy.shouldSteal(mergedCount)) {
+                    if (((isOwnerHelping && !isOwnerTripped) || !ownerLoop.isOwnerParkable()) && strategy.shouldSteal(mergedCount)) {
                         long cursor = subSeq.next();
                         if (cursor > -1) {
                             GroupByMergeShardTask task = queue.get(cursor);
@@ -225,10 +228,21 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
         } catch (Throwable th) {
             failure = th;
         }
+        // As on a worker fiber, only the task's own breaker may stop its wait for a slot.
+        final SuspensionScope.CarrierScope scope = SuspensionScope.scope();
+        final FiberCancellationSignal ownerSignal = SuspensionScope.getCancellationSignal(scope);
+        final long ownerSignalGeneration = SuspensionScope.getCancellationSignalGeneration(scope);
+        final FiberCancellationSignal ownerSupplementalSignal = SuspensionScope.getSupplementalCancellationSignal(scope);
+        final long ownerSupplementalSignalGeneration = SuspensionScope.getSupplementalCancellationSignalGeneration(scope);
+        SuspensionScope.enterCancellationSignal(null, CancellationBinding.NO_GENERATION);
+        SuspensionScope.enterSupplementalCancellationSignal(null, CancellationBinding.NO_GENERATION);
         try {
             runDetached(carrierId, circuitBreaker, startedCounter, doneLatch, merger, shardIndex, isOwner);
         } catch (Throwable th) {
             failure = Misc.foldCleanupFailure(failure, th);
+        } finally {
+            SuspensionScope.restoreCancellationSignal(ownerSignal, ownerSignalGeneration);
+            SuspensionScope.enterSupplementalCancellationSignal(ownerSupplementalSignal, ownerSupplementalSignalGeneration);
         }
         try {
             dispatcher.signalOwnerProgress(ownerProgress);
