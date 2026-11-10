@@ -30,6 +30,7 @@ import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryCMR;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
@@ -45,6 +46,7 @@ import org.junit.Test;
 import java.io.File;
 import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.idx.PostingIndexUtils.*;
 
@@ -91,19 +93,6 @@ public class PostingIndexResetTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testKeyFileRemovalReportedAsFailedOfRemovedFile() throws Exception {
-        // A removal that reports a failure but leaves no file behind removed the file.
-        final FilesFacade ff = new TestFilesFacadeImpl() {
-            @Override
-            public boolean removeQuiet(LPSZ name) {
-                final boolean isRemoved = super.removeQuiet(name);
-                return !Utf8s.endsWithAscii(name, ".pk") && isRemoved;
-            }
-        };
-        assertMemoryLeak(ff, () -> assertReset(ff, createIndex()));
-    }
-
-    @Test
     public void testNoKeyFile() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (s SYMBOL, v LONG)");
@@ -115,6 +104,25 @@ public class PostingIndexResetTest extends AbstractCairoTest {
                 Assert.assertEquals(plen, path.size());
             }
             assertFiles("[]");
+        });
+    }
+
+    @Test
+    public void testRemovalsReportedAsFailedOfRemovedFiles() throws Exception {
+        // A removal that reports a failure but leaves no file behind removed the file: the key file, the cover info
+        // file and the sealed value and cover files alike.
+        final AtomicBoolean isReportingFailures = new AtomicBoolean();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean removeQuiet(LPSZ name) {
+                final boolean isRemoved = super.removeQuiet(name);
+                return isRemoved && !(isReportingFailures.get() && Utf8s.containsAscii(name, Files.SEPARATOR + "s.p"));
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            final long lastSealTxn = createIndex();
+            isReportingFailures.set(true);
+            assertReset(ff, lastSealTxn);
         });
     }
 
@@ -133,6 +141,28 @@ public class PostingIndexResetTest extends AbstractCairoTest {
             assertReset(configuration.getFilesFacade(), lastSealTxn);
             final long otherSealTxn = lastSealTxn + 10;
             assertFiles("[s.pc0.7." + otherSealTxn + ", s.pci.7, s.pk, s.pv.7." + otherSealTxn + "]");
+        });
+    }
+
+    @Test
+    public void testResetListsPartitionOnce() throws Exception {
+        // The pass that removes the instance's sealed files also finds the highest sealTxn they carry.
+        final AtomicInteger listingCount = new AtomicInteger();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long findFirst(LPSZ path) {
+                listingCount.incrementAndGet();
+                return super.findFirst(path);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            final long lastSealTxn = createIndex();
+            try (Path path = partitionPath(); MemoryCMARW keyMem = Vm.getCMARWInstance()) {
+                listingCount.set(0);
+                Assert.assertTrue(PostingIndexUtils.resetIndex(ff, path, path.size(), "s", -1, keyMem));
+                Assert.assertEquals(1, listingCount.get());
+            }
+            assertReset(ff, lastSealTxn);
         });
     }
 
