@@ -74,8 +74,9 @@ public class EqStrCharFunctionFactory implements FunctionFactory {
         if (strFunc.isConstant() && !charFunc.isConstant()) {
             CharSequence str = strFunc.getStrA(null);
             if (str == null) {
-                // A NULL string constant. Keep parity with Chars.equalsNc, which
-                // treats a null string as equal to CHAR(0).
+                // CHAR(0) routed here through the supportImplicitCastCharToStr
+                // exact-match overload arrives as a null string. Keep parity with
+                // Chars.equalsNc, which treats a null string as equal to CHAR(0).
                 return new ConstStrFunc(charFunc, (char) 0);
             }
             if (str.length() != 1) {

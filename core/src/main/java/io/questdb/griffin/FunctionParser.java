@@ -729,6 +729,20 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         return ex;
     }
 
+    // STRING ordering reads NULL <= NULL as true, CHAR ordering never holds for NULL. A NULL CHAR
+    // constant ordered against NULL or CHAR keeps the CHAR semantics that a CHAR column gets.
+    private static boolean isNullCharOrderedAgainstNullOrChar(ExpressionNode node, ObjList<Function> args, int argIdx) {
+        final CharSequence token = node.token;
+        if (!Chars.equals(token, "<") && !Chars.equals(token, "<=") && !Chars.equals(token, ">") && !Chars.equals(token, ">=")) {
+            return false;
+        }
+        if (args.getQuick(argIdx).getChar(null) != Numbers.CHAR_NULL) {
+            return false;
+        }
+        final int otherType = args.getQuick(1 - argIdx).getType();
+        return otherType == ColumnType.NULL || otherType == ColumnType.CHAR;
+    }
+
     private static boolean isUntypedEmptyArrayLiteral(Function arg) {
         // ArrayConstant.emptyUntyped() is the only producer of an ArrayConstant without an element type
         return arg instanceof ArrayConstant && ColumnType.decodeArrayElementType(arg.getType()) == ColumnType.UNDEFINED;
@@ -1300,7 +1314,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                                     factory.supportImplicitCastCharToStr() &&
                                     arg.isConstant() && // bind variable parameter might be a string and throw error during execution.
                                     arg != CharTypeConstant.INSTANCE &&    // Ignore type constant to keep cast(X as char) working
-                                    arg.getChar(null) != Numbers.CHAR_NULL) || // NULL char is never a quoted literal, keep CHAR NULL semantics
+                                    !isNullCharOrderedAgainstNullOrChar(node, args, argIdx)) ||
                             (sigArgTypeTag == ColumnType.GEOHASH && ColumnType.isGeoHash(argType)) ||
                             (sigArgTypeTag == ColumnType.DECIMAL && ColumnType.isDecimal(argType))) {
                         match = mergeWithExactMatch(match);

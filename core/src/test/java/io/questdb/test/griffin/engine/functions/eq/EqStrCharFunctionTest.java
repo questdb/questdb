@@ -33,7 +33,15 @@ public class EqStrCharFunctionTest extends AbstractCairoTest {
     public void testCharNulConstantMatchesCharNulRow() throws Exception {
         // Regression: query fuzzer caught literal vs bind divergence on
         //   (0.645116::FLOAT)::CHAR != ((0.713754::FLOAT)::INT)::CHAR
-        // Both sides evaluate to CHAR(0), so the literal and the bind forms must agree.
+        // Both sides evaluate to CHAR(0). The literal form folds the whole
+        // comparison to FALSE; the bind form folded to TRUE. The dispatcher
+        // ranked the swapped =(SA) overload as an exact match (the constant
+        // CHAR side matches STRING via supportImplicitCastCharToStr) and
+        // EqStrCharFunctionFactory's constant-CHAR-as-STRING branch read
+        // CHAR(0) as a NULL string and short-circuited to a "false" constant,
+        // ignoring that the runtime path treats NULL string as equal to
+        // CHAR(0). Mirror the runtime semantics by probing the non-constant
+        // CHAR side against (char) 0 instead.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (k INT)");
             execute("INSERT INTO t VALUES (1), (2)");

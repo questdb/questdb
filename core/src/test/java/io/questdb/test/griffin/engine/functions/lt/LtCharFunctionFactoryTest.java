@@ -57,6 +57,21 @@ public class LtCharFunctionFactoryTest extends AbstractFunctionFactoryTest {
                 .returns(expected);
     }
 
+    @Test
+    public void testNullCharConstantVersusSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQuery("SELECT ''::SYMBOL < null::CHAR a, null::CHAR > ''::SYMBOL b")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("a\tb\nfalse\tfalse\n");
+            execute("CREATE TABLE x (s SYMBOL)");
+            execute("INSERT INTO x VALUES (''), ('a'), (null)");
+            assertQuery("x WHERE s < null::CHAR OR null::CHAR > s")
+                    .noLeakCheck()
+                    .returns("s\n");
+        });
+    }
+
     @Override
     protected FunctionFactory getFunctionFactory() {
         return new LtCharFunctionFactory();
