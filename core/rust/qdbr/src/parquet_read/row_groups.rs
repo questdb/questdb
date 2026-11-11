@@ -1755,10 +1755,10 @@ pub(super) fn plan_decode_conversion(
 /// Whether a type has no NULL sentinel: a column top of BOOLEAN, BYTE, SHORT or CHAR reads 0 or
 /// false, a value of the type, and only a conversion to a type with a NULL tells it apart.
 pub(super) fn has_no_null_sentinel(tag: ColumnTypeTag) -> bool {
-    matches!(
-        tag,
-        ColumnTypeTag::Boolean | ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Char
-    )
+    match tag.null_policy() {
+        ColumnNullPolicy::None => true,
+        ColumnNullPolicy::Sentinel => false,
+    }
 }
 
 /// Whether a `_pm` decode of a column chunk records its column-top rows

@@ -33,7 +33,7 @@
 use crate::error::{ParquetMetaErrorKind, ParquetMetaResult};
 use crate::parquet_meta_err;
 use parquet2::metadata::FileMetaData;
-use qdb_core::col_type::{ColumnType, ColumnTypeTag};
+use qdb_core::col_type::{ColumnNullPolicy, ColumnType, ColumnTypeTag};
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
@@ -269,11 +269,9 @@ pub fn column_top_evidence(
         return ColumnTopEvidence::Verified;
     }
     let tag = column_type.tag();
-    if !matches!(
-        tag,
-        ColumnTypeTag::Boolean | ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Char
-    ) {
-        return ColumnTopEvidence::Unverifiable;
+    match tag.null_policy() {
+        ColumnNullPolicy::None => {}
+        ColumnNullPolicy::Sentinel => return ColumnTopEvidence::Unverifiable,
     }
     let is_required = file_metadata
         .schema_descr

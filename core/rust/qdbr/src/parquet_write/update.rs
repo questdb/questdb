@@ -2522,10 +2522,10 @@ fn generate_null_column_chunk_bytes(
 /// Whether the type has no NULL sentinel: BOOLEAN, BYTE, SHORT and CHAR read a NULL
 /// only through the definition levels of their chunks.
 fn is_no_null_sentinel_type(column_type: ColumnType) -> bool {
-    matches!(
-        column_type.tag(),
-        ColumnTypeTag::Boolean | ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Char
-    )
+    match column_type.tag().null_policy() {
+        ColumnNullPolicy::None => true,
+        ColumnNullPolicy::Sentinel => false,
+    }
 }
 
 /// Generates the raw bytes and thrift `ColumnChunk` of an Optional BOOLEAN, BYTE,
