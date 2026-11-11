@@ -301,6 +301,14 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     // committed. Enforced in setHighestProcessedSequence as a last resort; the
     // upgrade processor's ack path must not attempt the advance to begin with.
     private boolean uncommittedDeferredRows;
+    // Commits this connection has reported, of any kind. The deferred-frame path
+    // diffs it across the force-commit traversal to notice that the cap split the
+    // client's open group.
+    private long committedTxnCount;
+    // True once the force commit that split the open deferred-commit group was
+    // logged, so a group the cap splits many times logs once. Reset when the
+    // group ends: committed, rolled back, or cleared.
+    private boolean isDeferredGroupSplitLogged;
     // Commit batch: consecutive plain single-block frames for one WAL table, from one
     // receive pass, whose rows are appended to commitBatchTud's writer and committed
     // together, as one WAL txn. A commit is a sequencer txn, a txn-log record, an
@@ -418,7 +426,24 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         // the deferred group is gone, its frames were never acked, and the
         // client replays them from its acked watermark.
         uncommittedDeferredRows = false;
+        isDeferredGroupSplitLogged = false;
         resetCommitBatch();
+    }
+
+    /**
+     * Discards every row this connection holds uncommitted, for the client's
+     * rollback control frame: its open FLAG_DEFER_COMMIT group, rowless frames
+     * included. Resets the per-message state the way {@link #clear()} does, and
+     * leaves the connection's symbol dictionary alone, because the client keeps
+     * referencing the ids those frames registered. The caller commits a pending
+     * commit batch first: its frames are not part of the group.
+     */
+    public void rollbackUncommitted() {
+        assert !isCommitBatchPending();
+        clear();
+        // The group the withheld rowless frames belonged to is gone, so they no
+        // longer stop the ack that covers the rollback frame.
+        firstRowlessDeferredSequence = -1;
     }
 
     /**
@@ -703,6 +728,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             uncommittedDeferredRows = false;
             // commitAll covered every frame of the group, rowless ones included.
             firstRowlessDeferredSequence = -1;
+            isDeferredGroupSplitLogged = false;
         } catch (Throwable th) {
             tudCache.setDistressed();
             LOG.error().$('[').$(fd).$("] commit error: ").$(th).$();
@@ -712,7 +738,19 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
 
     public void commitIfMaxUncommittedRowsReached() {
         try {
+            final long committedBefore = committedTxnCount;
             uncommittedDeferredRows = tudCache.commitIfMaxUncommittedRowsReached(committedTxnConsumer);
+            // On the deferred path any commit is a force commit at the cap: the
+            // client's transaction now lands in more than one WAL transaction per
+            // table. Say so once per group; the client cannot see it.
+            if (committedTxnCount != committedBefore && !isDeferredGroupSplitLogged) {
+                isDeferredGroupSplitLogged = true;
+                LOG.advisory().$('[').$(fd)
+                        .$("] deferred-commit group committed in parts: a table reached qwp.max.uncommitted.rows")
+                        .$(" before the client committed, so its transaction is not atomic [maxUncommittedRows=")
+                        .$(tudCache.getMaxUncommittedRows())
+                        .$(']').$();
+            }
         } catch (Throwable th) {
             tudCache.setDistressed();
             LOG.error().$('[').$(fd).$("] deferred commit error: ").$(th).$();
@@ -2055,6 +2093,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         if (seqTxn < 0) {
             return;
         }
+        committedTxnCount++;
         if (!durableAckEnabled) {
             pendingAckSeqTxns.put(tableName, seqTxn);
             return;

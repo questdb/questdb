@@ -104,6 +104,15 @@ public final class QwpConstants {
      */
     public static final byte FLAG_GORILLA = 0x04;
     /**
+     * Flag bit: roll back every row the connection holds uncommitted -- the
+     * client's open {@link #FLAG_DEFER_COMMIT} group. Valid only on the rollback
+     * control frame, matched exactly by
+     * {@code QwpMessageHeader.isRollback}: zero tables, zero payload, and flags
+     * {@link #ROLLBACK_FRAME_FLAGS}. A client sends it only after the 101 upgrade
+     * confirmed {@code X-QWP-Rollback: enabled}.
+     */
+    public static final byte FLAG_ROLLBACK = 0x20;
+    /**
      * Flag bit: the region starting at {@code delta_symbol_dict} (or the first
      * table block if no delta dict is present) is zstd-compressed. The prelude
      * remains uncompressed so the I/O thread can dispatch on msg_kind / batch_seq
@@ -155,6 +164,13 @@ public final class QwpConstants {
      * Maximum table name length in bytes.
      */
     public static final int MAX_TABLE_NAME_LENGTH = 127;
+    /**
+     * Flags byte of the rollback control frame: {@link #FLAG_ROLLBACK} plus
+     * {@link #FLAG_DEFER_COMMIT}. The defer bit makes a server that predates
+     * {@link #FLAG_ROLLBACK} treat a misdirected rollback frame as an empty
+     * deferred frame instead of a commit.
+     */
+    public static final byte ROLLBACK_FRAME_FLAGS = FLAG_ROLLBACK | FLAG_DEFER_COMMIT;
     /**
      * {@link #STATUS_SERVER_INFO} capability bit: this connection negotiated
      * durable acknowledgements.
