@@ -158,6 +158,15 @@ public class InSymbolFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void cursorClosed() {
+            UnaryFunction.super.cursorClosed();
+            // init() initialized the deferred values too; the sets hold copies of their text
+            if (deferredValues != null) {
+                Function.cursorClosed(deferredValues);
+            }
+        }
+
+        @Override
         public Function getArg() {
             return arg;
         }

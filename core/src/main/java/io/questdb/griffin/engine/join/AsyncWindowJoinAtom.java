@@ -395,6 +395,23 @@ public class AsyncWindowJoinAtom implements StatefulAtom, PerWorkerLockOwner, Re
             cleanupFailure = cursorClosedBestEffort(cleanupFailure, perWorkerMasterFilters);
             cleanupFailure = cursorClosedBestEffort(cleanupFailure, ownerJoinFilter);
             cleanupFailure = cursorClosedBestEffort(cleanupFailure, perWorkerJoinFilters);
+            // the same execution initialized the bind variables, the dynamic window bounds and
+            // the group-by functions
+            cleanupFailure = cursorClosedBestEffort(cleanupFailure, bindVarFunctions);
+            cleanupFailure = cursorClosedBestEffort(cleanupFailure, ownerWindowLoFunc);
+            cleanupFailure = cursorClosedBestEffort(cleanupFailure, ownerWindowHiFunc);
+            cleanupFailure = cursorClosedBestEffort(cleanupFailure, perWorkerWindowLoFuncs);
+            cleanupFailure = cursorClosedBestEffort(cleanupFailure, perWorkerWindowHiFuncs);
+            cleanupFailure = cursorClosedBestEffort(cleanupFailure, ownerGroupByFunctions);
+            if (perWorkerGroupByFunctions != null) {
+                for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
+                    try {
+                        PerWorkerFunctionList.cursorClosed(perWorkerGroupByFunctions.getQuick(i));
+                    } catch (Throwable th) {
+                        cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
+                    }
+                }
+            }
         }
 
         // Let the subclass release its keyed state.
@@ -948,7 +965,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, PerWorkerLockOwner, Re
         return cleanupFailure;
     }
 
-    private static Throwable cursorClosedBestEffort(Throwable cleanupFailure, @Nullable ObjList<Function> functions) {
+    private static Throwable cursorClosedBestEffort(Throwable cleanupFailure, @Nullable ObjList<? extends Function> functions) {
         if (functions != null) {
             for (int i = 0, n = functions.size(); i < n; i++) {
                 cleanupFailure = cursorClosedBestEffort(cleanupFailure, functions.getQuick(i));

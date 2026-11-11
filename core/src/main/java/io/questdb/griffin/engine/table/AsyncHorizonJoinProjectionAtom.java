@@ -173,6 +173,12 @@ public class AsyncHorizonJoinProjectionAtom implements StatefulAtom, PerWorkerLo
                     failure = HorizonJoinSlaveState.cursorClosed(failure, perWorkerFilters.getQuick(i));
                 }
             }
+            // init() initialized the bind variables too
+            if (bindVarFunctions != null) {
+                for (int i = 0, n = bindVarFunctions.size(); i < n; i++) {
+                    failure = HorizonJoinSlaveState.cursorClosed(failure, bindVarFunctions.getQuick(i));
+                }
+            }
         }
         memoryTracker = null;
         CairoException.rethrowCleanupFailure(failure);

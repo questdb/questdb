@@ -85,6 +85,17 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void close() {
+            Misc.free(longIncrement);
+        }
+
+        @Override
+        public void cursorClosed() {
+            // init() initialized the increment
+            longIncrement.cursorClosed();
+        }
+
+        @Override
         public long getTimestamp(Record rec) {
             final long result = next;
             next += longIncrement.getLong(rec);
@@ -141,6 +152,13 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
         public void close() {
             Misc.free(start);
             Misc.free(longIncrement);
+        }
+
+        @Override
+        public void cursorClosed() {
+            // init() initialized both arguments
+            start.cursorClosed();
+            longIncrement.cursorClosed();
         }
 
         @Override

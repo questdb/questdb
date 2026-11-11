@@ -389,10 +389,15 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 Misc.free(allocator);
                 Misc.clearObjList(groupByFunctions);
                 super.close();
+                // The temporal parameter functions (timezone, offset, FROM, TO) are borrowed from
+                // the owning factory, which closes them exactly once at teardown; per-execution
+                // cursor close must leave them usable for the next execution of the cached factory.
+                // It only frees what their init() built for this execution.
+                timezoneNameFunc.cursorClosed();
+                offsetFunc.cursorClosed();
+                sampleFromFunc.cursorClosed();
+                sampleToFunc.cursorClosed();
             }
-            // The temporal parameter functions (timezone, offset, FROM, TO) are borrowed from
-            // the owning factory, which closes them exactly once at teardown; per-execution
-            // cursor close must leave them usable for the next execution of the cached factory.
         }
 
         @Override

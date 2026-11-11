@@ -110,6 +110,13 @@ public class MultiApproxPercentileDoubleGroupByFunction extends ArrayFunction im
     }
 
     @Override
+    public void cursorClosed() {
+        UnaryFunction.super.cursorClosed();
+        // init() initialized the percentile too
+        percentileFunc.cursorClosed();
+    }
+
+    @Override
     public Function getArg() {
         return exprFunc;
     }

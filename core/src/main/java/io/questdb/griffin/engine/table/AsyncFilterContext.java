@@ -191,6 +191,10 @@ public class AsyncFilterContext implements Closeable {
                         }
                     }
                 }
+                // initFilters() initialized the bind variables too
+                if (bindVarFunctions != null) {
+                    Function.cursorClosed(bindVarFunctions);
+                }
             }
         }
     }

@@ -198,8 +198,13 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         int baseOrder = base.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
         final int order;
         if (limitLoFunction != null) {
-            limitLoFunction.init(frameSequence.getSymbolTableSource(), executionContext);
-            rowsRemaining = limitLoFunction.getLong(null);
+            try {
+                limitLoFunction.init(frameSequence.getSymbolTableSource(), executionContext);
+                rowsRemaining = limitLoFunction.getLong(null);
+            } finally {
+                // rowsRemaining holds the value; free what the function built for this execution
+                limitLoFunction.cursorClosed();
+            }
             // A NULL limit means "no limit", matching the unfiltered path (an unset LIMIT :lim
             // bind variable reaches here as NULL). Numbers.LONG_NULL is Long.MIN_VALUE, so it has
             // to be recognised before the sign flip below: negating it overflows back to a
@@ -317,6 +322,8 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
                 rowsRemaining = limitLoFunction.getLong(null);
             } catch (Exception e) {
                 rowsRemaining = Long.MAX_VALUE;
+            } finally {
+                limitLoFunction.cursorClosed();
             }
             // A NULL limit means "no limit", exactly as getCursor() treats it. Recognise it before the
             // sign flip: negating Numbers.LONG_NULL (Long.MIN_VALUE) overflows back to itself, which

@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.engine.functions;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.RecordCursor;
@@ -311,6 +312,17 @@ public class FunctionCursorClosedTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDynamicIntervalReleasesCastDictionary() throws Exception {
+        // the interval model evaluates the bound once per execution and keeps only its value
+        assertMemoryLeak(() -> {
+            createVarcharTable();
+            bindCastValues();
+            assertExecutionReleasesCastDictionaries("select * from t where ts > ($2::symbol)::timestamp", "Interval forward scan");
+            assertExecutionReleasesCastDictionaries("select * from t where ts in ($2::symbol)", "Interval forward scan");
+        });
+    }
+
+    @Test
     public void testFilterOnExcludedValuesInitFailureLeavesFreedFilterUntouched() throws Exception {
         assertMemoryLeak(() -> {
             createTwoSymbolTable();
@@ -494,11 +506,40 @@ public class FunctionCursorClosedTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInSymbolDeferredValuesReleaseCastDictionary() throws Exception {
+        // IN keeps a bind-variable value apart from its constant values and initializes it itself
+        assertMemoryLeak(() -> {
+            createVarcharTable();
+            createIndexedTable();
+            bindCastValues();
+            for (int parallel = 0; parallel < 2; parallel++) {
+                sqlExecutionContext.setParallelFilterEnabled(parallel == 1);
+                assertExecutionReleasesCastDictionaries("select * from t where s in ($1::symbol, 's2')", "s in [s2] or s in [$0::long::symbol]");
+                assertExecutionReleasesCastDictionaries("select * from t where s not in ($1::symbol)", "not (s in [$0::long::symbol])");
+                assertExecutionReleasesCastDictionaries(
+                        "select * from ti where s in ($1::symbol, 's2') latest on ts partition by s",
+                        "LatestByDeferredListValuesFiltered"
+                );
+            }
+        });
+    }
+
+    @Test
     public void testIndexedFilterReleasesCastDictionary() throws Exception {
         assertMemoryLeak(() -> {
             createIndexedTable();
             sqlExecutionContext.setParallelFilterEnabled(false);
             assertOwnerReleasesCastDictionaries("select * from ti where s = 's1' and cast(v as symbol) <> 'k7'", "Index forward scan on: s");
+        });
+    }
+
+    @Test
+    public void testJsonExtractReleasesCastDictionary() throws Exception {
+        assertMemoryLeak(() -> {
+            createVarcharTable();
+            bindCastValues();
+            assertOwnerReleasesCastDictionaries("select json_extract(((l % 3)::symbol)::varchar, '$') j from t", "json_extract");
+            assertOwnerReleasesCastDictionaries("select json_extract('{\"a\":1}', ($1::symbol)::varchar) j from t", "json_extract");
         });
     }
 
@@ -510,6 +551,32 @@ public class FunctionCursorClosedTest extends AbstractCairoTest {
                     "select * from ti where s = 's1' and cast(v as symbol) <> 'k7' latest on ts partition by s",
                     "Index backward scan on: s"
             );
+        });
+    }
+
+    @Test
+    public void testLimitReleasesCastDictionary() throws Exception {
+        // every LIMIT reads its bounds once per execution and keeps only their values
+        assertMemoryLeak(() -> {
+            createVarcharTable();
+            bindCastValues();
+            assertExecutionReleasesCastDictionaries("select * from t limit ($1::symbol)::int", "Limit value");
+            assertExecutionReleasesCastDictionaries("select * from t limit ($1::symbol)::int, ($1::symbol)::int + 3", "Limit left");
+            assertExecutionReleasesCastDictionaries("select s, count() c from t group by s order by s limit ($1::symbol)::int", "Encode sort light lo");
+            sqlExecutionContext.setParallelTopKEnabled(false);
+            assertExecutionReleasesCastDictionaries("select * from t order by v desc limit ($1::symbol)::int", "Encode sort light lo");
+            assertExecutionReleasesCastDictionaries("select * from t order by v desc limit ($1::symbol)::int, ($1::symbol)::int + 3", "Encode sort light lo");
+            setProperty(PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, "false");
+            assertExecutionReleasesCastDictionaries("select * from t order by v desc limit ($1::symbol)::int", "Sort light lo");
+            assertExecutionReleasesCastDictionaries("select * from t order by v desc limit ($1::symbol)::int, ($1::symbol)::int + 3", "Sort light lo");
+            sqlExecutionContext.setParallelFilterEnabled(true);
+            for (int jit = 0; jit < 2; jit++) {
+                sqlExecutionContext.setJitMode(jit == 0 ? SqlJitMode.JIT_MODE_DISABLED : SqlJitMode.JIT_MODE_ENABLED);
+                assertExecutionReleasesCastDictionaries(
+                        "select * from t where l > 3 limit ($1::symbol)::int",
+                        jit == 0 ? "Async Filter" : "Async JIT Filter"
+                );
+            }
         });
     }
 
@@ -552,6 +619,221 @@ public class FunctionCursorClosedTest extends AbstractCairoTest {
             for (String column : new String[]{"l", "i", "s", "b", "d", "f", "c", "dt", "ts"}) {
                 assertSelectReleasesCastDictionaries("select cast(" + column + " as symbol) " + column + " from t");
             }
+        });
+    }
+
+    @Test
+    public void testOwnersKeepResultsAcrossExecutions() throws Exception {
+        // These owners now notify the functions they initialized when the cursor closes, or right
+        // after they read a value once. The functions here hold no cast dictionary, since a cast to
+        // symbol does not reach these plans, so the queries check that each execution of the cached
+        // factory still returns the same rows after that notification.
+        assertMemoryLeak(() -> {
+            createVarcharTable();
+            execute("""
+                    create table tl as (
+                        select ('k' || (x % 300))::varchar v, ('s' || (x % 3))::symbol s, x l, (x * 1000000)::timestamp ts
+                        from long_sequence(1000)
+                    ), index(s) timestamp(ts) partition by hour""");
+            execute("create table tc (v varchar, s symbol index type posting include (v), l long, ts timestamp) timestamp(ts) partition by hour");
+            execute("insert into tc select ('k' || (x % 300))::varchar, ('s' || (x % 3))::symbol, x, (x * 1000000)::timestamp from long_sequence(1000)");
+            bindCastValues();
+            // tl holds x = 1..1000 with s = 's' || (x % 3)
+            assertQuery("select l from tl where s = 's2' and l < 10").noLeakCheck().withPlanContaining("deferred: true").returns("""
+                    l
+                    2
+                    5
+                    8
+                    """);
+            assertQuery("select l from tl where s = $4 and l < 6").noLeakCheck().withPlanContaining("deferred: true").returns("""
+                    l
+                    1
+                    4
+                    """);
+            assertQuery("select l from tl where s in ('s1', 's2') and l < 6").noLeakCheck().withPlanContaining("FilterOnValues").returns("""
+                    l
+                    1
+                    2
+                    4
+                    5
+                    """);
+            assertQuery("select l from tl where s in ('s1', 's2') and l < 6 order by ts desc").noLeakCheck()
+                    .withPlanContaining("Cursor-order scan").returns("""
+                            l
+                            5
+                            4
+                            2
+                            1
+                            """);
+            assertQuery("select l from tl where s != 's0' and l < 6").noLeakCheck().withPlanContaining("FilterOnExcludedValues").returns("""
+                    l
+                    1
+                    2
+                    4
+                    5
+                    """);
+            assertQuery("select l from tl where s = 's2' latest on ts partition by s").noLeakCheck().withPlanContaining("deferred: true").returns("""
+                    l
+                    998
+                    """);
+            assertQuery("select l from tl where s = 'zz' latest on ts partition by s").noLeakCheck().withPlanContaining("deferred: true").returns("""
+                    l
+                    """);
+            assertQuery("select v from tc where s in ('s1', 's2') and l < 6").noLeakCheck().returns("""
+                    v
+                    k1
+                    k2
+                    k4
+                    k5
+                    """);
+            assertQuery("select l from tl where s in ($4, 's2') latest on ts partition by s order by l").noLeakCheck().expectSize().returns("""
+                    l
+                    998
+                    1000
+                    """);
+            assertQuery("select l from t where s in ($4, 's2') latest on ts partition by s order by l").noLeakCheck().expectSize().returns("""
+                    l
+                    998
+                    1000
+                    """);
+            assertQuery("select l from t where s = 'zz' latest on ts partition by s").noLeakCheck().returns("""
+                    l
+                    """);
+            assertQuery("select l from t where s = $4 latest on ts partition by s").noLeakCheck().returns("""
+                    l
+                    1000
+                    """);
+            assertQuery("select v from tc where s in ($4, 's2') and l < 6").noLeakCheck().returns("""
+                    v
+                    k1
+                    k2
+                    k4
+                    k5
+                    """);
+            assertQuery("select l from tl where s = $4 limit 2").noLeakCheck().returns("""
+                    l
+                    1
+                    4
+                    """);
+            // ts + 1m >= 10m keeps the rows from 9m on: x = 540..1000
+            assertQuery("select count() from t where dateadd('m', 1, ts) >= (select (($1::symbol)::long * 600_000_000)::timestamp)").noLeakCheck().expectSize().noRandomAccess().returns("""
+                    count
+                    461
+                    """);
+            // the gate hands page frames to the parallel GROUP BY
+            sqlExecutionContext.setParallelGroupByEnabled(true);
+            assertQuery("select s, count() c from t where $1::symbol = '1' order by s").noLeakCheck().expectSize().returns("""
+                    s\tc
+                    s0\t333
+                    s1\t334
+                    s2\t333
+                    """);
+            assertQuery("select l from tl where l > 1 latest on ts partition by s order by l").noLeakCheck().expectSize().returns("""
+                    l
+                    998
+                    999
+                    1000
+                    """);
+            assertQuery("select ts, first(l) f, last(l) la from tl where s = 's1' sample by 5m align to first observation").noLeakCheck().noRandomAccess().timestamp("ts").returns("""
+                    ts\tf\tla
+                    1970-01-01T00:00:01.000000Z\t1\t298
+                    1970-01-01T00:05:01.000000Z\t301\t598
+                    1970-01-01T00:10:01.000000Z\t601\t898
+                    1970-01-01T00:15:01.000000Z\t901\t1000
+                    """);
+            assertQuery("select v from t except select v from t where l > 3").noLeakCheck().returns("""
+                    v
+                    """);
+            assertQuery("select ts, v from ((select ts, v from t order by ts) union all (select ts, s from t order by ts) order by ts) limit 4").noLeakCheck().expectSize().noRandomAccess().timestamp("ts").returns("""
+                    ts\tv
+                    1970-01-01T00:00:01.000000Z\tk1
+                    1970-01-01T00:00:01.000000Z\ts1
+                    1970-01-01T00:00:02.000000Z\tk2
+                    1970-01-01T00:00:02.000000Z\ts2
+                    """);
+            // ts + 1m between 10m and 11m40s keeps x = 540..640
+            assertQuery("select count() from t where dateadd('m', 1, ts) between (select (($1::symbol)::long * 600_000_000)::timestamp) and (select (($1::symbol)::long * 700_000_000)::timestamp)")
+                    .noLeakCheck().expectSize().noRandomAccess().returns("""
+                            count
+                            101
+                            """);
+            assertQuery("select count() from t where $1::symbol = '2'").noLeakCheck().expectSize().noRandomAccess().returns("""
+                    count
+                    0
+                    """);
+            assertQuery("select s, count() c from t where $1::symbol = '2' order by s").noLeakCheck().returns("""
+                    s\tc
+                    """);
+            // v = 'k1' sorts first; x = 1, 301, 601 and 901 carry it, and all of them have s = 's1'
+            assertQuery("select s, v from tc where s in ($4, 's2') order by v limit 3").noLeakCheck().returns("""
+                    s\tv
+                    s1\tk1
+                    s1\tk1
+                    s1\tk1
+                    """);
+            assertQuery("select count() from ((select ts, v from t order by ts) union all (select ts, v from t order by ts) order by ts)").noLeakCheck().expectSize().noRandomAccess().returns("""
+                    count
+                    2000
+                    """);
+            assertExecutionReleasesCastDictionaries("select sparkline(l::double, 0.0, 1000.0, 10) sp from t", "sparkline");
+            assertExecutionReleasesCastDictionaries(
+                    "select ts, count() c from t sample by 1m from '1970-01-01T00:01:00' fill(null) align to calendar time zone 'Europe/Berlin'",
+                    "Sample By Fill"
+            );
+            // JIT filters that read a bind variable
+            assertQuery("select l from tl where l > $1 latest on ts partition by s order by l").noLeakCheck().expectSize().withPlanContaining("jit: true").returns("""
+                    l
+                    998
+                    999
+                    1000
+                    """);
+            assertQuery("select count() from t where s = $4 and l > 0").noLeakCheck().expectSize().noRandomAccess().withPlanContaining("Async JIT Filter").returns("""
+                    count
+                    334
+                    """);
+            assertQuery("select count() from t where l > $1").noLeakCheck().expectSize().noRandomAccess().withPlanContaining("Async JIT Filter").returns("""
+                    count
+                    999
+                    """);
+            assertQuery("select s, count() c from t where l > $1 order by s").noLeakCheck().expectSize().withPlanContaining("Async JIT Group By").returns("""
+                    s\tc
+                    s0\t333
+                    s1\t333
+                    s2\t333
+                    """);
+            // each of the 999 rows of a that pass the filter joins once per offset
+            assertQuery("select count() from (select h.offset o, a.ts, b.l from t a horizon join t b on (s) list (0s, 1s) as h where a.l > $1)")
+                    .noLeakCheck().expectSize().noRandomAccess().withPlanContaining("Horizon Join Projection").returns("""
+                            count
+                            1998
+                            """);
+            sqlExecutionContext.setParallelWindowJoinEnabled(true);
+            assertQuery("select count() from (select a.l, sum(b.l) m from t a window join t b on (s) range between ($1::symbol)::int seconds preceding and 1 second following where a.l > $1)")
+                    .noLeakCheck().expectSize().noRandomAccess().withPlanContaining("Async Window Join").returns("""
+                            count
+                            999
+                            """);
+            // a CASE over a symbol column with a static symbol table, and a scalar sub-query bound
+            assertQuery("select sum(case s when 's1' then 1 else 0 end) c from t").noLeakCheck().expectSize().noRandomAccess().withPlanContaining("switch(s,'s1',1,0)").returns("""
+                    c
+                    334
+                    """);
+            assertQuery("select count() from t where ts > (select min(ts) from t)").noLeakCheck().expectSize().noRandomAccess().returns("""
+                    count
+                    999
+                    """);
+            // set operations and an ordered UNION ALL, with and without cast functions
+            assertQuery("select s from t union select s from t order by s").noLeakCheck().returns("""
+                    s
+                    s0
+                    s1
+                    s2
+                    """);
+            assertQuery("select count() c, count_distinct(v) d from ((select ts, v from t order by ts) union all (select ts, s from t order by ts) order by ts)")
+                    .noLeakCheck().expectSize().noRandomAccess().returns("""
+                            c\td
+                            2000\t303
+                            """);
         });
     }
 
@@ -612,6 +894,92 @@ public class FunctionCursorClosedTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPercentileReleasesCastDictionary() throws Exception {
+        // the percentile argument sits apart from the aggregated one
+        assertMemoryLeak(() -> {
+            createVarcharTable();
+            bindCastValues();
+            for (int parallel = 0; parallel < 2; parallel++) {
+                sqlExecutionContext.setParallelGroupByEnabled(parallel == 1);
+                assertOwnerReleasesCastDictionaries("select s, percentile_disc(l, ($1::symbol)::double) p from t order by s", "percentile_disc");
+                assertOwnerReleasesCastDictionaries("select percentile_disc(l::double, ($1::symbol)::double) p from t", "percentile_disc");
+                assertOwnerReleasesCastDictionaries(
+                        "select percentile_disc(l::double, array[($1::symbol)::double]) p from t",
+                        "percentile_disc"
+                );
+                assertOwnerReleasesCastDictionaries(
+                        "select approx_percentile(l, array[($1::symbol)::double]) p from t",
+                        "approx_percentile"
+                );
+                assertOwnerReleasesCastDictionaries(
+                        "select approx_percentile(l, array[($1::symbol)::double], 3) p from t",
+                        "approx_percentile"
+                );
+                assertOwnerReleasesCastDictionaries(
+                        "select approx_percentile(l::double, array[($1::symbol)::double]) p from t",
+                        "approx_percentile"
+                );
+                assertOwnerReleasesCastDictionaries(
+                        "select approx_percentile(l::double, array[($1::symbol)::double], 3) p from t",
+                        "approx_percentile"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testRegexReleasesCastDictionary() throws Exception {
+        // a pattern that is known only at execution time sits apart from the matched argument
+        assertMemoryLeak(() -> {
+            createVarcharTable();
+            bindCastValues();
+            assertOwnerReleasesCastDictionaries("select * from t where v::string ~ ($1::symbol)::string", "~");
+            assertOwnerReleasesCastDictionaries("select * from t where s ~ ($1::symbol)::string", "~");
+            assertOwnerReleasesCastDictionaries(
+                    "select regexp_replace(v::string, ($1::symbol)::string, ($1::symbol)::string) r from t",
+                    "regexp_replace"
+            );
+        });
+    }
+
+    @Test
+    public void testRuntimeConstFilterReleasesCastDictionary() throws Exception {
+        // a filter that does not read the row is evaluated once per execution
+        assertMemoryLeak(() -> {
+            createVarcharTable();
+            bindCastValues();
+            assertExecutionReleasesCastDictionaries("select * from t where $1::symbol = '1'", "Filter filter: $0::long::symbol='1'");
+        });
+    }
+
+    @Test
+    public void testSampleByBoundsReleaseCastDictionary() throws Exception {
+        // the FROM and TO bounds are read once per execution
+        assertMemoryLeak(() -> {
+            createVarcharTable();
+            bindCastValues();
+            assertExecutionReleasesCastDictionaries("select ts, count() c from t sample by 1m from ($2::symbol)::timestamp", "Sample By");
+            assertExecutionReleasesCastDictionaries("select ts, count() c from t sample by 1m to ($3::symbol)::timestamp", "Interval forward scan");
+            assertExecutionReleasesCastDictionaries(
+                    "select ts, count() c from t sample by 1m from ($2::symbol)::timestamp fill(null)",
+                    "fill: null"
+            );
+            assertExecutionReleasesCastDictionaries(
+                    "select ts, count() c from t sample by 1m from ($2::symbol)::timestamp fill(prev)",
+                    "fill: prev"
+            );
+            assertExecutionReleasesCastDictionaries(
+                    "select ts, count() c from t sample by 1m from ($2::symbol)::timestamp to ($3::symbol)::timestamp fill(linear)",
+                    "fill: linear"
+            );
+            assertExecutionReleasesCastDictionaries(
+                    "select ts, s, sum(l) m from t sample by 1m from ($2::symbol)::timestamp fill(linear)",
+                    "fill: linear"
+            );
+        });
+    }
+
+    @Test
     public void testSampleByReleasesCastDictionary() throws Exception {
         assertMemoryLeak(() -> {
             createVarcharTable();
@@ -627,6 +995,18 @@ public class FunctionCursorClosedTest extends AbstractCairoTest {
             // aligned to calendar, SAMPLE BY runs as GROUP BY with the cast as a key
             sqlExecutionContext.setParallelGroupByEnabled(false);
             assertOwnerReleasesCastDictionaries("select ts, cast(v as symbol) k, count() c from t sample by 1m", "GroupBy");
+        });
+    }
+
+    @Test
+    public void testTimestampSequenceReleasesCastDictionary() throws Exception {
+        assertMemoryLeak(() -> {
+            bindCastValues();
+            assertOwnerReleasesCastDictionaries("select timestamp_sequence(0, ($1::symbol)::long) x from long_sequence(3)", "timestamp_sequence");
+            assertOwnerReleasesCastDictionaries(
+                    "select timestamp_sequence(($1::symbol)::long, ($1::symbol)::long) x from long_sequence(3)",
+                    "timestamp_sequence"
+            );
         });
     }
 
@@ -650,6 +1030,27 @@ public class FunctionCursorClosedTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table t as (select ('k' || (x % 300))::varchar v from long_sequence(1000))");
             assertSelectReleasesCastDictionaries("select cast(v as symbol) s from t");
+        });
+    }
+
+    @Test
+    public void testWindowJoinBoundsReleaseCastDictionary() throws Exception {
+        // a window bound that is known only at execution time
+        assertMemoryLeak(() -> {
+            createVarcharTable();
+            bindCastValues();
+            for (int parallel = 0; parallel < 2; parallel++) {
+                sqlExecutionContext.setParallelWindowJoinEnabled(parallel == 1);
+                final String plan = parallel == 1 ? "Async Window Join" : "Window Join";
+                assertOwnerReleasesCastDictionaries(
+                        "select a.l, sum(b.l) m from t a window join t b on (s) range between ($1::symbol)::int seconds preceding and 1 second following",
+                        plan
+                );
+                assertOwnerReleasesCastDictionaries(
+                        "select a.l, sum(b.l) m from t a window join t b range between 1 second preceding and ($1::symbol)::int seconds following",
+                        plan
+                );
+            }
         });
     }
 
@@ -678,6 +1079,31 @@ public class FunctionCursorClosedTest extends AbstractCairoTest {
                     "Window"
             );
         });
+    }
+
+    // A read-once owner, such as a LIMIT, a FROM-TO bound or a dynamic interval, frees the dictionary
+    // as soon as it has the value, so the open cursor may hold none; its close must leave none behind.
+    private void assertExecutionReleasesCastDictionaries(String sql, String expectedPlanFragment) throws Exception {
+        assertQuery(sql).noLeakCheck().assertsPlanContaining(expectedPlanFragment);
+        try (RecordCursorFactory factory = select(sql)) {
+            String firstRun = null;
+            for (int run = 0; run < 2; run++) {
+                final long nativeBaseline = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS);
+                final MemoryTracker tracker;
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    tracker = sqlExecutionContext.getMemoryTracker();
+                    Assert.assertNotNull(tracker);
+                    println(factory, cursor);
+                }
+                assertCastDictionariesReleased(nativeBaseline, tracker);
+                // the cached factory re-executes after the release and returns the same rows
+                if (firstRun == null) {
+                    firstRun = sink.toString();
+                } else {
+                    Assert.assertEquals(firstRun, sink.toString());
+                }
+            }
+        }
     }
 
     // An owner opens its cursor and then initializes the filter, so a filter whose init fails leaves
@@ -742,6 +1168,16 @@ public class FunctionCursorClosedTest extends AbstractCairoTest {
                 }
             }
         }
+    }
+
+    // $1 is a number whose cast to symbol builds a dictionary on every read, $2 and $3 are timestamps
+    // a minute and ten minutes into the tables' data, and $4 is the text of a symbol value
+    private static void bindCastValues() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setLong(0, 1);
+        bindVariableService.setTimestamp(1, 60_000_000L);
+        bindVariableService.setTimestamp(2, 600_000_000L);
+        bindVariableService.setStr(3, "s1");
     }
 
     private static void createIndexedTable() throws Exception {

@@ -107,6 +107,14 @@ public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void cursorClosed() {
+            UnaryFunction.super.cursorClosed();
+            // init() initialized these too; the matcher and replacementStr hold their own copies
+            pattern.cursorClosed();
+            replacement.cursorClosed();
+        }
+
+        @Override
         public Function getArg() {
             return value;
         }

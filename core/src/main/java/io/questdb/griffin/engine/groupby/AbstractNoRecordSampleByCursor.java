@@ -167,6 +167,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
             Function.cursorClosed(recordFunctions);
         }
         circuitBreaker = null;
+        super.close();
     }
 
     @Override

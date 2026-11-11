@@ -115,8 +115,7 @@ public class RuntimeConstGateRecordCursorFactory extends AbstractRecordCursorFac
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         // Re-evaluate the runtime constant for THIS execution; the sub-query is self-contained,
         // so it inits against a null symbol-table source (matching the join const-filter path).
-        filter.init(null, executionContext);
-        if (filter.getBool(null)) {
+        if (isGateOpen(executionContext)) {
             return base.getCursor(executionContext);
         }
         // The empty result never iterates and never consults the circuit breaker on its own.
@@ -134,8 +133,7 @@ public class RuntimeConstGateRecordCursorFactory extends AbstractRecordCursorFac
     public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
         // Re-evaluate the runtime constant for THIS execution, same contract as getCursor. A
         // consumer calls exactly one of getCursor()/getPageFrameCursor() per execution.
-        filter.init(null, executionContext);
-        if (filter.getBool(null)) {
+        if (isGateOpen(executionContext)) {
             // TRUE: delegate straight to the base page-frame cursor so the base's full parallel /
             // vectorized scan is preserved with zero wrapper overhead.
             return base.getPageFrameCursor(executionContext, order);
@@ -277,6 +275,16 @@ public class RuntimeConstGateRecordCursorFactory extends AbstractRecordCursorFac
         failure = Misc.freeBestEffort(failure, base);
         failure = Misc.freeBestEffort(failure, filter);
         CairoException.rethrowCleanupFailure(failure);
+    }
+
+    private boolean isGateOpen(SqlExecutionContext executionContext) throws SqlException {
+        try {
+            filter.init(null, executionContext);
+            return filter.getBool(null);
+        } finally {
+            // the gate reads the filter once per execution; free what the filter built for it
+            filter.cursorClosed();
+        }
     }
 
     /**

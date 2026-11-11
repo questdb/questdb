@@ -110,6 +110,9 @@ public class JsonExtractFunction implements Function {
         if (this.stateB != null) {
             this.stateB.deflate();
         }
+        // init() initialized both arguments, and the pointer holds its own copy of the path
+        json.cursorClosed();
+        path.cursorClosed();
     }
 
     @Override

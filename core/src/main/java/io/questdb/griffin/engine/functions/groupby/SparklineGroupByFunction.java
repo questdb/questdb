@@ -243,6 +243,21 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
     }
 
     @Override
+    public void cursorClosed() {
+        UnaryFunction.super.cursorClosed();
+        // init() initialized the optional bounds and width too
+        if (minFunc != null) {
+            minFunc.cursorClosed();
+        }
+        if (maxFunc != null) {
+            maxFunc.cursorClosed();
+        }
+        if (widthFunc != null) {
+            widthFunc.cursorClosed();
+        }
+    }
+
+    @Override
     public Function getArg() {
         return arg;
     }

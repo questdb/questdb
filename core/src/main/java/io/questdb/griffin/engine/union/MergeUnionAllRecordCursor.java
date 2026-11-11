@@ -45,6 +45,7 @@ class MergeUnionAllRecordCursor extends AbstractSetRecordCursor implements NoRan
     private final ObjList<RecordCursor> sourceCursors;
     private final LongList timestamps;
     private final int timestampIndex;
+    private boolean areCastFunctionsInitialized;
     private int heapSize;
     private boolean isStarted;
     private int lastSource = -1;
@@ -89,6 +90,17 @@ class MergeUnionAllRecordCursor extends AbstractSetRecordCursor implements NoRan
         Misc.freeObjList(sourceCursors);
         circuitBreaker = null;
         clearState();
+        // the factory initialized the cast functions of each source it opened; it frees them
+        // only after it closed this cursor
+        if (areCastFunctionsInitialized) {
+            areCastFunctionsInitialized = false;
+            for (int i = 0, n = castRecords.size(); i < n; i++) {
+                final UnionCastRecord castRecord = castRecords.getQuick(i);
+                if (castRecord != null) {
+                    Function.cursorClosed(castRecord.getCastFunctionsA());
+                }
+            }
+        }
     }
 
     @Override
@@ -175,6 +187,8 @@ class MergeUnionAllRecordCursor extends AbstractSetRecordCursor implements NoRan
     }
 
     void openSource(int index, RecordCursor cursor) {
+        // the factory initializes the source's cast functions right after this
+        areCastFunctionsInitialized = true;
         sourceCursors.setQuick(index, cursor);
         final UnionCastRecord castRecord = castRecords.getQuick(index);
         if (castRecord != null) {

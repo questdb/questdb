@@ -118,6 +118,8 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             if (filter != null) {
                 filter.cursorClosed();
             }
+            // of() initialized the row cursor factory's functions
+            rowCursorFactory.cursorClosed();
         }
     }
 

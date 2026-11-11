@@ -153,6 +153,18 @@ public class EncodedSortLimitedLightRecordCursorFactory extends AbstractRecordCu
      * limits re-bind on cached plans.
      */
     private void initialize(SqlExecutionContext executionContext, RecordCursor baseCursor) throws SqlException {
+        try {
+            readLimits(executionContext, baseCursor);
+        } finally {
+            // readLimits() copies the values out; free what the functions built for this execution
+            loFunction.cursorClosed();
+            if (hiFunction != null) {
+                hiFunction.cursorClosed();
+            }
+        }
+    }
+
+    private void readLimits(SqlExecutionContext executionContext, RecordCursor baseCursor) throws SqlException {
         loFunction.init(baseCursor, executionContext);
         if (hiFunction != null) {
             hiFunction.init(baseCursor, executionContext);
@@ -220,6 +232,9 @@ public class EncodedSortLimitedLightRecordCursorFactory extends AbstractRecordCu
         this.cursor = null;
         Throwable failure = Misc.freeBestEffort(null, base);
         failure = Misc.freeBestEffort(failure, cursor);
+        // the factory adopted the limit functions from the code generator
+        failure = Misc.freeBestEffort(failure, loFunction);
+        failure = Misc.freeBestEffort(failure, hiFunction);
         CairoException.rethrowCleanupFailure(failure);
     }
 }

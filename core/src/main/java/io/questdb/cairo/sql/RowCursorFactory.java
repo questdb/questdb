@@ -32,6 +32,12 @@ import io.questdb.std.QuietCloseable;
 
 public interface RowCursorFactory extends Plannable, QuietCloseable {
 
+    static void cursorClosed(ObjList<? extends RowCursorFactory> factories) {
+        for (int i = 0, n = factories.size(); i < n; i++) {
+            factories.getQuick(i).cursorClosed();
+        }
+    }
+
     static void init(
             ObjList<? extends RowCursorFactory> factories,
             PageFrameCursor pageFrameCursor,
@@ -50,6 +56,15 @@ public interface RowCursorFactory extends Plannable, QuietCloseable {
 
     @Override
     default void close() {
+    }
+
+    /**
+     * The counterpart of {@link #init(PageFrameCursor, SqlExecutionContext)}: the record cursor
+     * calls it when it closes, so the functions init() initialized free what they built for the
+     * execution, such as a cast to symbol's dictionary charged to the query's MemoryTracker.
+     */
+    default void cursorClosed() {
+        // no-op
     }
 
     RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory);

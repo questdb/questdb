@@ -280,8 +280,13 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
             throw TableReferenceOutOfDateException.of(partitionFrameCursorFactory.getTableToken());
         }
 
-        Function.init(keyExcludedValueFunctions, pageFrameCursor, executionContext, null);
-        recalculateIncludedValues(pageFrameCursor);
+        try {
+            Function.init(keyExcludedValueFunctions, pageFrameCursor, executionContext, null);
+            recalculateIncludedValues(pageFrameCursor);
+        } finally {
+            // recalculateIncludedValues() resolved the values to keys; free what the functions built
+            Function.cursorClosed(keyExcludedValueFunctions);
+        }
         cursor.of(pageFrameCursor, executionContext);
         if (filter != null) {
             filter.init(cursor, executionContext);

@@ -421,9 +421,15 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                 masterCursor = Misc.free(masterCursor);
                 slaveCursor = Misc.free(slaveCursor);
                 Function.cursorClosed(groupByFunctions);
-                // _close() nulls the filter before it frees this cursor
+                // _close() nulls the filter and the window bounds before it frees this cursor
                 if (joinFilter != null) {
                     joinFilter.cursorClosed();
+                }
+                if (windowLoFunc != null) {
+                    windowLoFunc.cursorClosed();
+                }
+                if (windowHiFunc != null) {
+                    windowHiFunc.cursorClosed();
                 }
             }
         }

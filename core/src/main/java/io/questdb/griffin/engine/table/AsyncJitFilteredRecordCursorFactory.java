@@ -234,8 +234,13 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         int baseOrder = base.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
         final int order;
         if (limitLoFunction != null) {
-            limitLoFunction.init(frameSequence.getSymbolTableSource(), executionContext);
-            rowsRemaining = limitLoFunction.getLong(null);
+            try {
+                limitLoFunction.init(frameSequence.getSymbolTableSource(), executionContext);
+                rowsRemaining = limitLoFunction.getLong(null);
+            } finally {
+                // rowsRemaining holds the value; free what the function built for this execution
+                limitLoFunction.cursorClosed();
+            }
             // A NULL limit means "no limit", matching the unfiltered path (an unset LIMIT :lim
             // bind variable reaches here as NULL). Numbers.LONG_NULL is Long.MIN_VALUE, so it has
             // to be recognised before the sign flip below: negating it overflows back to a
@@ -348,6 +353,8 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                 rowsRemaining = limitLoFunction.getLong(null);
             } catch (Exception e) {
                 rowsRemaining = Long.MAX_VALUE;
+            } finally {
+                limitLoFunction.cursorClosed();
             }
             // A NULL limit means "no limit", exactly as getCursor() treats it. Recognise it before the
             // sign flip: negating Numbers.LONG_NULL (Long.MIN_VALUE) overflows back to itself, which
@@ -549,6 +556,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         final MemoryCARW bindVarMemory;
         final CompiledCountOnlyFilter compiledCountOnlyFilter;
         final CompiledFilter compiledFilter;
+        private boolean areBindVarFunctionsInitialized;
 
         public AsyncJitFilterAtom(
                 CairoConfiguration configuration,
@@ -570,8 +578,29 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         }
 
         @Override
+        public void clear() {
+            try {
+                super.clear();
+            } finally {
+                // The frame sequence clears the atom after awaiting its workers. The factory
+                // frees the bind variables only after it closed the atom, which resets the flag.
+                if (areBindVarFunctionsInitialized) {
+                    areBindVarFunctionsInitialized = false;
+                    Function.cursorClosed(bindVarFunctions);
+                }
+            }
+        }
+
+        @Override
+        public void close() {
+            areBindVarFunctionsInitialized = false;
+            super.close();
+        }
+
+        @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
+            areBindVarFunctionsInitialized = true;
             Function.init(bindVarFunctions, symbolTableSource, executionContext, null);
             AsyncFilterUtils.prepareBindVarMemory(executionContext, symbolTableSource, bindVarFunctions, bindVarMemory);
         }

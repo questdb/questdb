@@ -72,6 +72,11 @@ public class DeferredSymbolIndexRowCursorFactory implements FunctionBasedRowCurs
     }
 
     @Override
+    public void cursorClosed() {
+        symbol.cursorClosed();
+    }
+
+    @Override
     public Function getFunction() {
         return symbol;
     }

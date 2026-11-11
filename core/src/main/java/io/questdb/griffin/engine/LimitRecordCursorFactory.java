@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
@@ -175,7 +176,11 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     protected void _close() {
-        base.close();
+        // the cursor adopted the limit functions from the code generator
+        Throwable failure = Misc.freeBestEffort(null, base);
+        failure = Misc.freeBestEffort(failure, cursor.leftFunction);
+        failure = Misc.freeBestEffort(failure, cursor.rightFunction);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     private static class LimitRecordCursor implements RecordCursor {
@@ -183,6 +188,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         private final RecordCursor.Counter counter = new Counter();
         private final Function leftFunction;
         private final Function rightFunction;
+        private boolean areFunctionsInitialized;
         private RecordCursor base;
         private long baseRowsToSkip;
         private long baseRowsToTake;
@@ -218,6 +224,14 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         @Override
         public void close() {
             base = Misc.free(base);
+            // the factory frees the functions only after it closed this cursor
+            if (areFunctionsInitialized) {
+                areFunctionsInitialized = false;
+                leftFunction.cursorClosed();
+                if (rightFunction != null) {
+                    rightFunction.cursorClosed();
+                }
+            }
         }
 
         @Override
@@ -407,6 +421,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             this.base = base;
             this.circuitBreaker = executionContext.getCircuitBreaker();
 
+            areFunctionsInitialized = true;
             leftFunction.init(base, executionContext);
             if (rightFunction != null) {
                 rightFunction.init(base, executionContext);

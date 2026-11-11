@@ -58,6 +58,7 @@ public abstract class AbstractSampleByCursor implements NoRandomAccessRecordCurs
     protected long prevDst;
     protected TimeZoneRules rules;
     protected long tzOffset;
+    private boolean areParamFunctionsInitialized;
 
     public AbstractSampleByCursor(
             TimestampSampler timestampSampler,
@@ -89,10 +90,21 @@ public abstract class AbstractSampleByCursor implements NoRandomAccessRecordCurs
     public void close() {
         // The temporal parameter functions (timezone, offset, FROM, TO) are borrowed from the
         // owning factory, which closes them exactly once at teardown; per-execution cursor close
-        // must leave them usable for the next execution of the cached factory.
+        // must leave them usable for the next execution of the cached factory. It only frees what
+        // their init() built for this execution. The factory closes the cursor again after it
+        // frees the functions, so the flag keeps that second close off them.
+        if (areParamFunctionsInitialized) {
+            areParamFunctionsInitialized = false;
+            timezoneNameFunc.cursorClosed();
+            offsetFunc.cursorClosed();
+            sampleFromFunc.cursorClosed();
+            sampleToFunc.cursorClosed();
+        }
     }
 
     protected void parseParams(RecordCursor base, SqlExecutionContext executionContext) throws SqlException {
+        // a subclass that samples FROM-TO initializes those bounds right after this, so close() covers all four
+        areParamFunctionsInitialized = true;
         // factory guarantees that base cursor is not empty
         timezoneNameFunc.init(base, executionContext);
         offsetFunc.init(base, executionContext);

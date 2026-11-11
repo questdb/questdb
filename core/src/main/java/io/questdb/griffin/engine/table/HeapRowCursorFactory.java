@@ -83,6 +83,11 @@ public class HeapRowCursorFactory implements RowCursorFactory {
     }
 
     @Override
+    public void cursorClosed() {
+        RowCursorFactory.cursorClosed(cursorFactories);
+    }
+
+    @Override
     public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory) {
         Misc.freeObjListAndClear(cursors);
         // Bound by the live key count rather than by cursorFactories.size(): owners grow that list

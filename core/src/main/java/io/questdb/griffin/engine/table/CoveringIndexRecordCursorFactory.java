@@ -395,21 +395,31 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     }
 
     private int resolveKey(PartitionFrameCursor frameCursor, SqlExecutionContext executionContext) throws SqlException {
-        symbolFunction.init(frameCursor, executionContext);
-        symbolKeyCache = frameCursor.getTableReader().getSymbolMapReader(indexColumnIndex).keyOf(symbolFunction.getStrA(null), symbolKeyCache);
-        return symbolKeyCache;
+        try {
+            symbolFunction.init(frameCursor, executionContext);
+            symbolKeyCache = frameCursor.getTableReader().getSymbolMapReader(indexColumnIndex).keyOf(symbolFunction.getStrA(null), symbolKeyCache);
+            return symbolKeyCache;
+        } finally {
+            // the key is resolved; free what the function built for this execution
+            symbolFunction.cursorClosed();
+        }
     }
 
     private void resolveKeys(PartitionFrameCursor frameCursor, SqlExecutionContext executionContext, IntList keys) throws SqlException {
-        Function.init(keyValueFuncs, frameCursor, executionContext, null);
-        final SymbolMapReader smr = frameCursor.getTableReader().getSymbolMapReader(indexColumnIndex);
-        keys.clear();
-        for (int i = 0, n = keyValueFuncs.size(); i < n; i++) {
-            final int key = smr.keyOf(keyValueFuncs.getQuick(i).getStrA(null), keyValueKeyCache.getQuick(i));
-            keyValueKeyCache.setQuick(i, key);
-            if (key != SymbolTable.VALUE_NOT_FOUND && !keys.contains(key)) {
-                keys.add(key);
+        try {
+            Function.init(keyValueFuncs, frameCursor, executionContext, null);
+            final SymbolMapReader smr = frameCursor.getTableReader().getSymbolMapReader(indexColumnIndex);
+            keys.clear();
+            for (int i = 0, n = keyValueFuncs.size(); i < n; i++) {
+                final int key = smr.keyOf(keyValueFuncs.getQuick(i).getStrA(null), keyValueKeyCache.getQuick(i));
+                keyValueKeyCache.setQuick(i, key);
+                if (key != SymbolTable.VALUE_NOT_FOUND && !keys.contains(key)) {
+                    keys.add(key);
+                }
             }
+        } finally {
+            // the keys are resolved; free what the functions built for this execution
+            Function.cursorClosed(keyValueFuncs);
         }
     }
 
