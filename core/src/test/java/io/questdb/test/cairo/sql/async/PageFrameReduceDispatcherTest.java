@@ -1799,6 +1799,13 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrderedFrameStolenByLimitedOwnerDoesNotSuspend() throws Exception {
+        assertOrderedStolenFrameMode(true, true, false);
+        assertOrderedStolenFrameMode(true, false, true);
+        assertOrderedStolenFrameMode(false, true, true);
+    }
+
+    @Test
     public void testOrderedLaunchFailureTransfersFiberAndTaskOwnership() throws Exception {
         assertMemoryLeak(() -> {
             final FiberRuntime dispatcherRuntime = new FiberRuntime(1);
@@ -2236,13 +2243,6 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                 Misc.free(frameSequence);
             }
         });
-    }
-
-    @Test
-    public void testOrderedFrameStolenByLimitedOwnerDoesNotSuspend() throws Exception {
-        assertOrderedStolenFrameMode(true, true, false);
-        assertOrderedStolenFrameMode(true, false, true);
-        assertOrderedStolenFrameMode(false, true, true);
     }
 
     @Test
@@ -4269,6 +4269,13 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnorderedFrameStolenByLimitedOwnerDoesNotSuspend() throws Exception {
+        assertUnorderedStolenFrameMode(true, true, false);
+        assertUnorderedStolenFrameMode(true, false, true);
+        assertUnorderedStolenFrameMode(false, true, true);
+    }
+
+    @Test
     public void testUnorderedLaunchFailureTransfersFiberAndTaskOwnership() throws Exception {
         assertMemoryLeak(() -> {
             final FiberRuntime dispatcherRuntime = new FiberRuntime(1);
@@ -4640,13 +4647,6 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                 Misc.free(frameSequence);
             }
         });
-    }
-
-    @Test
-    public void testUnorderedFrameStolenByLimitedOwnerDoesNotSuspend() throws Exception {
-        assertUnorderedStolenFrameMode(true, true, false);
-        assertUnorderedStolenFrameMode(true, false, true);
-        assertUnorderedStolenFrameMode(false, true, true);
     }
 
     @Test
@@ -5546,6 +5546,59 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
         });
     }
 
+    private void assertOrderedStolenFrameMode(boolean isLimited, boolean isForeign, boolean isFiberModeExpected) throws Exception {
+        assertMemoryLeak(() -> {
+            final RecordingFiberDispatchController controller = new RecordingFiberDispatchController();
+            final FiberRuntime runtime = controller.createRuntime(1);
+            final RingQueue<PageFrameReduceTask> queue = new RingQueue<>(
+                    () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD),
+                    1
+            );
+            final MPSequence pubSeq = new MPSequence(queue.getCycle());
+            final MCSequence subSeq = new MCSequence(queue.getCycle());
+            pubSeq.then(subSeq).then(pubSeq);
+            final AtomicReference<Boolean> fiberMode = new AtomicReference<>();
+            final PageFrameSequence<StatefulAtom> ownerSequence = newOrderedStealSequence(fiberMode);
+            final PageFrameSequence<StatefulAtom> foreignSequence = newOrderedStealSequence(fiberMode);
+            final PageFrameMemoryRecord record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
+            final SqlExecutionCircuitBreakerWrapper circuitBreaker = new SqlExecutionCircuitBreakerWrapper(
+                    engine,
+                    configuration.getCircuitBreakerConfiguration()
+            );
+            final AtomicReference<Throwable> failure = new AtomicReference<>();
+            final FiberTask ownerTask = new FiberTask() {
+                @Override
+                protected void onError(Throwable th) {
+                    failure.set(th);
+                }
+
+                @Override
+                protected boolean runStep() {
+                    Assert.assertFalse(PageFrameReduceJob.consumeQueue(queue, subSeq, record, circuitBreaker, ownerSequence));
+                    return true;
+                }
+            };
+            try {
+                final long cursor = pubSeq.next();
+                Assert.assertTrue(cursor > -1);
+                queue.get(cursor).of(isForeign ? foreignSequence : ownerSequence, 0, false);
+                pubSeq.done(cursor);
+                Assert.assertSame(LaunchResult.LAUNCHED, runtime.launch(ownerTask, limitedContext(isLimited)));
+                Assert.assertEquals(1, runtime.drain(1));
+                Assert.assertTrue(ownerTask.isDone());
+                Assert.assertNull(failure.get());
+                Assert.assertEquals(isFiberModeExpected, fiberMode.get());
+            } finally {
+                close(runtime);
+                Misc.free(circuitBreaker);
+                Misc.free(record);
+                Misc.free(foreignSequence);
+                Misc.free(ownerSequence);
+                Misc.free(queue);
+            }
+        });
+    }
+
     private void assertOwnerWakesBehindForeignFrame(
             CairoConfiguration waitingConfiguration,
             BlockedOwnerSetup setup
@@ -5775,21 +5828,6 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
         });
     }
 
-    private void assertQueryCancelledByQuiesce(String sql) throws SqlException {
-        try (
-                RecordCursorFactory factory = select(sql);
-                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
-        ) {
-            //noinspection StatementWithEmptyBody
-            while (cursor.hasNext()) {
-            }
-            Assert.fail("query over a quiescing dispatcher must cancel");
-        } catch (CairoException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "cancelled by user");
-            Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_CANCELLED, e.getInterruptionReason());
-        }
-    }
-
     // The policy that made the owner refuse publication is gone by the time anyone could ask again.
     private void assertPublicationRefusalSurvivesPolicyChange(
             FiberRuntime ownerRuntime,
@@ -5844,57 +5882,19 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
         }
     }
 
-    private void assertOrderedStolenFrameMode(boolean isLimited, boolean isForeign, boolean isFiberModeExpected) throws Exception {
-        assertMemoryLeak(() -> {
-            final RecordingFiberDispatchController controller = new RecordingFiberDispatchController();
-            final FiberRuntime runtime = controller.createRuntime(1);
-            final RingQueue<PageFrameReduceTask> queue = new RingQueue<>(
-                    () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD),
-                    1
-            );
-            final MPSequence pubSeq = new MPSequence(queue.getCycle());
-            final MCSequence subSeq = new MCSequence(queue.getCycle());
-            pubSeq.then(subSeq).then(pubSeq);
-            final AtomicReference<Boolean> fiberMode = new AtomicReference<>();
-            final PageFrameSequence<StatefulAtom> ownerSequence = newOrderedStealSequence(fiberMode);
-            final PageFrameSequence<StatefulAtom> foreignSequence = newOrderedStealSequence(fiberMode);
-            final PageFrameMemoryRecord record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
-            final SqlExecutionCircuitBreakerWrapper circuitBreaker = new SqlExecutionCircuitBreakerWrapper(
-                    engine,
-                    configuration.getCircuitBreakerConfiguration()
-            );
-            final AtomicReference<Throwable> failure = new AtomicReference<>();
-            final FiberTask ownerTask = new FiberTask() {
-                @Override
-                protected void onError(Throwable th) {
-                    failure.set(th);
-                }
-
-                @Override
-                protected boolean runStep() {
-                    Assert.assertFalse(PageFrameReduceJob.consumeQueue(queue, subSeq, record, circuitBreaker, ownerSequence));
-                    return true;
-                }
-            };
-            try {
-                final long cursor = pubSeq.next();
-                Assert.assertTrue(cursor > -1);
-                queue.get(cursor).of(isForeign ? foreignSequence : ownerSequence, 0, false);
-                pubSeq.done(cursor);
-                Assert.assertSame(LaunchResult.LAUNCHED, runtime.launch(ownerTask, limitedContext(isLimited)));
-                Assert.assertEquals(1, runtime.drain(1));
-                Assert.assertTrue(ownerTask.isDone());
-                Assert.assertNull(failure.get());
-                Assert.assertEquals(isFiberModeExpected, fiberMode.get());
-            } finally {
-                close(runtime);
-                Misc.free(circuitBreaker);
-                Misc.free(record);
-                Misc.free(foreignSequence);
-                Misc.free(ownerSequence);
-                Misc.free(queue);
+    private void assertQueryCancelledByQuiesce(String sql) throws SqlException {
+        try (
+                RecordCursorFactory factory = select(sql);
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            //noinspection StatementWithEmptyBody
+            while (cursor.hasNext()) {
             }
-        });
+            Assert.fail("query over a quiescing dispatcher must cancel");
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "cancelled by user");
+            Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_CANCELLED, e.getInterruptionReason());
+        }
     }
 
     private void assertSameRuntimeQueryReducesLocally(
