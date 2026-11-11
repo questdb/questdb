@@ -46,7 +46,8 @@ import io.questdb.std.datetime.TimeZoneRules;
  *   ir[0]:                         header (counts + flags, see HDR_* constants)
  *   ir[1]:                         numericTzOffset (Long.MIN_VALUE if not numeric)
  *   ir[2 .. 2+D):                  duration parts (encoded unit+value)
- *   ir[2+D .. 2+D+3T):             time override triples (offset, width, zoneMatch)
+ *   ir[2+D .. 2+D+3T):             time override triples (offset, width, zoneMatch); width is
+ *                                  INEXACT_TIME_WIDTH for a time finer than the column
  *   ir[2+D+3T .. end):             elements
  * </pre>
  * Element encodings (tag in bits 63-62, expr in bits 59-0):
@@ -57,6 +58,9 @@ import io.questdb.std.datetime.TimeZoneRules;
  * </ul>
  */
 public class CompiledTickExpression extends UntypedFunction {
+    // The width of a time override finer than the column: a time between two column values, which the offset
+    // holds cut down to the value before it
+    static final long INEXACT_TIME_WIDTH = -1;
     // ---- Element tag (bits 63-62) ----
     static final long RANGE_BD_BIT = 1L << 61;
     static final long TAG_RANGE = 0x8000_0000_0000_0000L;
@@ -317,16 +321,20 @@ public class CompiledTickExpression extends UntypedFunction {
                 long offset = ir.getQuick(toOff + j * 3);
                 long width = ir.getQuick(toOff + j * 3 + 1);
                 long zoneMatch = ir.getQuick(toOff + j * 3 + 2);
+                final boolean isExactTime = width != INEXACT_TIME_WIDTH;
+                final boolean hasDuration = durationPartCount > 0 && !hasDurationWithExchange;
                 long anchor = dayStart + offset;
                 long lo = anchor;
                 long hi;
-                if (durationPartCount > 0 && !hasDurationWithExchange) {
+                if (hasDuration) {
                     long endExclusive = applyDuration(anchor);
                     lo = IntervalUtils.resolveDurationLo(anchor, endExclusive);
                     hi = IntervalUtils.resolveDurationHi(anchor, endExclusive);
                 } else {
-                    hi = anchor + width;
+                    hi = isExactTime ? anchor + width : anchor;
                 }
+                lo = IntervalUtils.textPeriodLo(lo, isExactTime);
+                hi = IntervalUtils.textPeriodHi(hi, isExactTime, hasDuration);
                 if (zoneMatch != Long.MIN_VALUE) {
                     // Per-element tz: convert to UTC first
                     if (zoneMatch != Long.MAX_VALUE && dateLocale != null) {
@@ -342,11 +350,12 @@ public class CompiledTickExpression extends UntypedFunction {
                     lo = utcToGlobalLocal(lo);
                     hi = utcToGlobalLocal(hi);
                 }
-                out.add(lo, hi);
+                IntervalUtils.addPeriod(out, lo, hi);
             }
         } else if (durationPartCount > 0 && !hasDurationWithExchange) {
             long endExclusive = applyDuration(dayStart);
-            out.add(
+            IntervalUtils.addPeriod(
+                    out,
                     IntervalUtils.resolveDurationLo(dayStart, endExclusive),
                     IntervalUtils.resolveDurationHi(dayStart, endExclusive)
             );
@@ -365,7 +374,7 @@ public class CompiledTickExpression extends UntypedFunction {
         boolean hasBothTimeComponents = (start != startDay) && (end != endDay);
 
         if (hasBothTimeComponents) {
-            out.add(start, end);
+            IntervalUtils.addPeriod(out, start, end);
         } else {
             long currentDay = startDay;
             while (currentDay <= endDay) {
@@ -390,8 +399,11 @@ public class CompiledTickExpression extends UntypedFunction {
             emitDayInterval(timestamp, out);
         } else if (durationPartCount > 0 && !hasDurationWithExchange) {
             long endExclusive = applyDuration(timestamp);
-            out.add(IntervalUtils.resolveDurationLo(timestamp, endExclusive),
-                    IntervalUtils.resolveDurationHi(timestamp, endExclusive));
+            IntervalUtils.addPeriod(
+                    out,
+                    IntervalUtils.resolveDurationLo(timestamp, endExclusive),
+                    IntervalUtils.resolveDurationHi(timestamp, endExclusive)
+            );
         } else {
             out.add(timestamp, timestamp);
         }

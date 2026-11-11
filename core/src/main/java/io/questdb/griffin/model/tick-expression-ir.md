@@ -74,6 +74,13 @@ ir[offset + 2] = zoneMatch        result of dateLocale.matchZone(), or Long.MIN_
 For example, `T09:30` produces `timeOffset = micros(9h30m)` from epoch midnight
 and `precisionWidth = micros(1 minute) - 1` (minute precision).
 
+A time with digits finer than the column, such as `T09:30:00.0000005` against a
+microsecond column, lies between two column values. It stores the value before
+it as `timeOffset` and `INEXACT_TIME_WIDTH` (-1) as `precisionWidth`. At runtime
+its period starts at the next value, and with a duration ends one value later
+(`IntervalUtils.textPeriodLo()` and `textPeriodHi()`), as the parser computes the
+same text; without a duration the period is empty and adds no interval.
+
 Numeric timezone offsets (e.g. `@+05:00`) are pre-applied to `timeOffset` at
 compile time (adjusting both `timeOffset` and `precisionWidth`), so
 `zoneMatch = Long.MIN_VALUE`.

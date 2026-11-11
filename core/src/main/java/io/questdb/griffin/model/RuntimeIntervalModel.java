@@ -273,8 +273,8 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                         // copy 4 longs to output and apply the operation
                         outIntervals.add(intervals, i, i + STATIC_LONGS_PER_DYNAMIC_INTERVAL);
                         IntervalUtils.applyLastEncodedInterval(timestampDriver, outIntervals);
-                        // Apply day filter if specified
-                        if (dayFilterMask != 0) {
+                        // Apply day filter if specified; an empty period adds no interval to filter
+                        if (dayFilterMask != 0 && outIntervals.size() > divider) {
                             // Check if the interval's lo timestamp matches the day filter
                             long lo = outIntervals.getQuick(divider);
                             int dayOfWeek = timestampDriver.getDayOfWeek(lo);

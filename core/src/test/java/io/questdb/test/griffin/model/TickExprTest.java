@@ -856,8 +856,71 @@ public class TickExprTest {
     }
 
     @Test
+    public void testCompiledTickExprFinerTimeOverride() throws SqlException {
+        // A time with digits finer than the column lies between two of its values. Its period starts at the next
+        // value; with a duration it ends before the time plus the duration, one value after the truncated end.
+        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
+        final String now = "2016-03-21T12:00:00.000000Z";
+        assertTickExprWithNow("[]", "$todayT10:30:40.12345678", now);
+        assertTickExprWithNow(
+                "[{lo=2016-03-21T10:30:40.123457Z, hi=2016-03-21T10:30:41.123456Z}]",
+                "$todayT10:30:40.12345678;1s",
+                now
+        );
+        assertTickExprWithNow(
+                "[{lo=2016-03-21T10:30:39.123457Z, hi=2016-03-21T10:30:40.123456Z}]",
+                "$todayT10:30:40.12345678;-1s",
+                now
+        );
+        assertTickExprWithNow("[]", "$todayT10:30:40.12345678;0s", now);
+        assertTickExprWithNow(
+                "[{lo=2016-03-21T10:30:40.123457Z, hi=2016-03-21T10:30:41.123456Z},{lo=2016-03-21T10:30:50.000000Z, hi=2016-03-21T10:30:50.999999Z}]",
+                "[$today]T[10:30:40.12345678, 10:30:50];1s",
+                now
+        );
+        assertTickExprWithNow(
+                "[{lo=2016-03-21T09:30:40.123457Z, hi=2016-03-21T09:30:41.123456Z}]",
+                "$todayT10:30:40.12345678@+01:00;1s",
+                now
+        );
+        assertTickExprWithNow(
+                "[{lo=2016-03-21T09:30:40.123457Z, hi=2016-03-21T09:30:41.123456Z}]",
+                "[$today]T[10:30:40.12345678@+01:00];1s",
+                now
+        );
+        // trailing zeros past the micros keep the time exact
+        assertTickExprWithNow(
+                "[{lo=2016-03-21T10:30:40.123456Z, hi=2016-03-21T10:30:41.123455Z}]",
+                "$todayT10:30:40.12345600;1s",
+                now
+        );
+        assertTickExprWithNow(
+                "[{lo=2016-03-21T10:30:40.123456Z, hi=2016-03-21T10:30:40.123456Z}]",
+                "$todayT10:30:40.123456",
+                now
+        );
+    }
+
+    @Test
     public void testCompiledTickExprZeroDuration() throws SqlException {
         assertCompiledTickExpr("$today;0d");
+        // a zero duration names an empty period, which drops out on both paths
+        final String now = "2025-01-15T10:20:30.000000Z";
+        assertTickExprWithNow("[]", "$today;0d", now);
+        assertTickExprWithNow("[]", "[$today, $yesterday];0d", now);
+        assertTickExprWithNow("[]", "$now;0s", now);
+        assertTickExprWithNow("[]", "$todayT10:00;0h", now);
+        // A range that ends before it starts names an empty period. The parser rejects a static one; a dynamic
+        // one only shows at evaluation, where it drops out like a day range of the same kind.
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        for (String expression : new String[]{"[$now - 1h..$now - 2h]", "[$tomorrow..$today]"}) {
+            try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
+                    timestampDriver, configuration, expression, 0, expression.length(), 0)) {
+                final LongList intervals = new LongList();
+                compiled.evaluate(intervals, timestampDriver.parseFloorLiteral(now));
+                TestUtils.assertEquals(expression, "[]", intervalToString(timestampDriver, intervals));
+            }
+        }
     }
 
     @Test
@@ -5005,11 +5068,56 @@ public class TickExprTest {
     }
 
     @Test
-    public void testParseZeroDuration() throws Exception {
-        // 0d produces an inverted interval (hi < lo) — effectively empty
+    public void testParseFinerTextWithDuration() throws Exception {
+        // Text with digits finer than the column lies between two of its values. The period of the text plus a
+        // duration starts at the first value at or after the text and ends at the last value before the text plus
+        // the duration, so both ends lie one value after those of the truncated text.
+        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
         assertShortInterval(
-                "[{lo=2025-01-15T10:00:00.000000Z, hi=2025-01-15T09:59:59.999999Z}]",
-                "2025-01-15T10:00:00;0d"
+                "[{lo=2016-03-21T10:30:40.123457Z, hi=2016-03-21T10:30:41.123456Z}]",
+                "2016-03-21T10:30:40.12345678;1s"
+        );
+        assertShortInterval(
+                "[{lo=2016-03-21T10:30:39.123457Z, hi=2016-03-21T10:30:40.123456Z}]",
+                "2016-03-21T10:30:40.12345678;-1s"
+        );
+        assertShortInterval("[]", "2016-03-21T10:30:40.12345678;0s");
+        assertShortInterval(
+                "[{lo=2016-03-21T10:30:40.123457Z, hi=2016-03-21T10:30:41.123456Z},{lo=2016-03-22T10:30:40.123457Z, hi=2016-03-22T10:30:41.123456Z}]",
+                "2016-03-21T10:30:40.12345678;1s;1d;2"
+        );
+        assertShortInterval(
+                "[{lo=2016-03-21T09:30:40.123457Z, hi=2016-03-21T09:30:41.123456Z}]",
+                "2016-03-21T10:30:40.12345678@+01:00;1s"
+        );
+        assertShortInterval(
+                "[{lo=2016-03-21T10:30:40.123457Z, hi=2016-03-21T10:30:41.123456Z},{lo=2016-03-21T10:30:50.000000Z, hi=2016-03-21T10:30:50.999999Z}]",
+                "[2016-03-21T10:30:40.12345678, 2016-03-21T10:30:50];1s"
+        );
+        // a whole month after text near the end of a day: the duration counts from the text
+        assertShortInterval(
+                "[{lo=2016-01-31T00:00:00.000000Z, hi=2016-02-29T23:59:59.999999Z}]",
+                "2016-01-30T23:59:59.9999995;1M"
+        );
+        // trailing zeros past the micros keep the text exact
+        assertShortInterval(
+                "[{lo=2016-03-21T10:30:40.123456Z, hi=2016-03-21T10:30:41.123455Z}]",
+                "2016-03-21T10:30:40.12345600;1s"
+        );
+        assertShortInterval(
+                "[{lo=2016-03-21T10:30:40.123456Z, hi=2016-03-21T10:30:41.123455Z}]",
+                "2016-03-21T10:30:40.123456;1s"
+        );
+    }
+
+    @Test
+    public void testParseZeroDuration() throws Exception {
+        // a zero duration names an empty period, which drops out of the interval list
+        assertShortInterval("[]", "2025-01-15T10:00:00;0d");
+        assertShortInterval("[]", "2025-01-15T10:00:00;0d;1d;3");
+        assertShortInterval(
+                "[{lo=2025-01-16T00:00:00.000000Z, hi=2025-01-16T23:59:59.999999Z}]",
+                "[2025-01-15T10:00:00;0d, 2025-01-16]"
         );
     }
 
@@ -5092,8 +5200,9 @@ public class TickExprTest {
 
     @Test
     public void testParseShortInterval9() throws Exception {
+        // the text lies between two micros, so no value of the column falls in its period
         Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
-        assertShortInterval("[{lo=2016-03-21T10:30:40.123456Z, hi=2016-03-21T10:30:40.123456Z}]", "2016-03-21T10:30:40.12345678");
+        assertShortInterval("[]", "2016-03-21T10:30:40.12345678");
     }
 
     @Test
@@ -5960,6 +6069,25 @@ public class TickExprTest {
                     intervalToString(timestampDriver, dynamicResult)
             );
         }
+    }
+
+    // both the compiled expression and the parser give the expected intervals at the given "now"
+    private void assertTickExprWithNow(String expected, String expression, String nowStr) throws SqlException {
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final long now = timestampDriver.parseFloorLiteral(nowStr);
+        final String expectedForType = ColumnType.isTimestampNano(timestampType.getTimestampType())
+                ? expected.replace("00Z", "00000Z").replace("99Z", "99999Z")
+                : expected;
+        try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
+                timestampDriver, configuration, expression, 0, expression.length(), 0)) {
+            final LongList dynamicResult = new LongList();
+            compiled.evaluate(dynamicResult, now);
+            TestUtils.assertEquals(expression, expectedForType, intervalToString(timestampDriver, dynamicResult));
+        }
+        final LongList staticResult = new LongList();
+        parseTickExprWithNow(timestampDriver, expression, 0, expression.length(), 0,
+                staticResult, IntervalOperation.INTERSECT, now);
+        TestUtils.assertEquals(expression, expectedForType, intervalToString(timestampDriver, staticResult));
     }
 
     private void assertDateFloor(String expected, String value) throws NumericException {

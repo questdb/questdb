@@ -1810,76 +1810,121 @@ public class CompiledFilterTest extends AbstractCairoTest {
         // the DATE column d. Every mode, on native and on Parquet partitions, gives the rows of the exact value. The
         // JIT compiles <, <=, > and >= of a column with such a literal, and a one-item list of a day.
         // n0 comes last in the Parquet partition, alone in its row group, which pruning must not skip.
+        // H plus a duration names the period from H to H plus the duration: it starts at the first value at or
+        // after H and ends at the last value before its end, on every path that turns text into a period.
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (k SYMBOL, m TIMESTAMP, d DATE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO x VALUES
-                    ('p0', '1969-12-31T23:59:59.999999Z', '1969-12-31T23:59:59.999Z', '2020-01-01T00:00:00.000000Z'),
-                    ('z0', '1970-01-01T00:00:00.000000Z', '1970-01-01T00:00:00.000Z', '2020-01-01T01:00:00.000000Z'),
-                    ('n1', '2020-01-01T00:00:00.000001Z', '2020-01-01T00:00:00.001Z', '2020-01-01T02:00:00.000000Z'),
-                    ('noon', '2020-01-01T12:00:00.000000Z', '2020-01-01T12:00:00.000Z', '2020-01-01T03:00:00.000000Z'),
-                    ('n0', '2020-01-01T00:00:00.000000Z', '2020-01-01T00:00:00.000Z', '2020-01-01T04:00:00.000000Z'),
-                    ('nul', NULL, NULL, '2020-01-02T00:00:00.000000Z')
-                    """);
-            final String h = "'2020-01-01T00:00:00.000000500Z'";
-            final String p = "'1969-12-31T23:59:59.9999995Z'";
-            final String all = "p0\nz0\nn1\nnoon\nn0\nnul\n";
-            final String hText = "2020-01-01T00:00:00.000000500Z";
-            final long hNanos = 1_577_836_800_000_000_500L;
-            final long pNanos = -500L;
-            // filter, expected keys, whether the JIT compiles it, the bind variable $1: text, or a TIMESTAMP_NS value
-            final Object[][] cases = {
-                    {"m < " + h, "p0\nz0\nn0\n", true, null},
-                    {"m <= " + h, "p0\nz0\nn0\n", true, null},
-                    {"m > " + h, "n1\nnoon\n", true, null},
-                    {"m >= " + h, "n1\nnoon\n", true, null},
-                    {h + " <= m", "n1\nnoon\n", true, null},
-                    {"m >= " + p, "z0\nn1\nnoon\nn0\n", true, null},
-                    {"m = " + h, "", false, null},
-                    {"m != " + h, all, false, null},
-                    {"d < " + h, "p0\nz0\nn0\n", true, null},
-                    {"d >= " + h, "n1\nnoon\n", true, null},
-                    {"d >= " + p, "z0\nn1\nnoon\nn0\n", true, null},
-                    {"d = " + h, "", false, null},
-                    {"d >= $1", "n1\nnoon\n", false, hText},
-                    {"d IN (" + h + ", '2020-01-01T12:00:00.000Z')", "noon\n", false, null},
-                    // a one-item list names a period; the period of H holds no value of the column
-                    {"m IN (" + h + ")", "", false, null},
-                    {"m IN ('2020-01-01')", "n1\nnoon\nn0\n", true, null},
-                    {"d IN ('2020-01-01')", "n1\nnoon\nn0\n", true, null},
-                    {"ts IN " + h, "", false, null},
-                    {"m < " + h + "::TIMESTAMP_NS", "p0\nz0\nn0\n", false, null},
-                    {"m < $1", "p0\nz0\nn0\n", false, hNanos},
-                    {"d = $1", "", false, hText},
-                    {"d >= $1", "z0\nn1\nnoon\nn0\n", false, pNanos},
-                    {"d < " + h + "::TIMESTAMP_NS", "p0\nz0\nn0\n", false, null},
-            };
-            for (int run = 0; run < 2; run++) {
-                if (run == 1) {
-                    execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
-                }
-                for (int mode = 0; mode < 4; mode++) {
-                    final boolean isParallel = (mode & 1) != 0;
-                    final boolean isJit = (mode & 2) != 0;
-                    sqlExecutionContext.setParallelFilterEnabled(isParallel);
-                    sqlExecutionContext.setJitMode(isJit ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
-                    for (Object[] c : cases) {
-                        final String filter = (String) c[0];
-                        bindVariableService.clear();
-                        if (c[3] instanceof String text) {
-                            bindVariableService.setStr(0, text);
-                        } else if (c[3] instanceof Long nanos) {
-                            bindVariableService.setTimestampNano(0, nanos);
+        // $today is 2020-01-01
+        setCurrentMicros(MicrosTimestampDriver.INSTANCE.parseFloorLiteral("2020-01-01T12:00:00.000000Z"));
+        try {
+            assertMemoryLeak(() -> {
+                execute("CREATE TABLE x (k SYMBOL, m TIMESTAMP, d DATE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+                execute("""
+                        INSERT INTO x VALUES
+                        ('p0', '1969-12-31T23:59:59.999999Z', '1969-12-31T23:59:59.999Z', '2020-01-01T00:00:00.000000Z'),
+                        ('z0', '1970-01-01T00:00:00.000000Z', '1970-01-01T00:00:00.000Z', '2020-01-01T01:00:00.000000Z'),
+                        ('n1', '2020-01-01T00:00:00.000001Z', '2020-01-01T00:00:00.001Z', '2020-01-01T02:00:00.000000Z'),
+                        ('noon', '2020-01-01T12:00:00.000000Z', '2020-01-01T12:00:00.000Z', '2020-01-01T03:00:00.000000Z'),
+                        ('n0', '2020-01-01T00:00:00.000000Z', '2020-01-01T00:00:00.000Z', '2020-01-01T04:00:00.000000Z'),
+                        ('nul', NULL, NULL, '2020-01-02T00:00:00.000000Z')
+                        """);
+                final String h = "'2020-01-01T00:00:00.000000500Z'";
+                final String p = "'1969-12-31T23:59:59.9999995Z'";
+                final String all = "p0\nz0\nn1\nnoon\nn0\nnul\n";
+                final String hText = "2020-01-01T00:00:00.000000500Z";
+                // H without the zone suffix, which a duration may follow
+                final String hLocal = "2020-01-01T00:00:00.000000500";
+                final long hNanos = 1_577_836_800_000_000_500L;
+                final long pNanos = -500L;
+                // filter, expected keys, whether the JIT compiles it, the bind variable $1: text, or a TIMESTAMP_NS value
+                final Object[][] cases = {
+                        {"m < " + h, "p0\nz0\nn0\n", true, null},
+                        {"m <= " + h, "p0\nz0\nn0\n", true, null},
+                        {"m > " + h, "n1\nnoon\n", true, null},
+                        {"m >= " + h, "n1\nnoon\n", true, null},
+                        {h + " <= m", "n1\nnoon\n", true, null},
+                        {"m >= " + p, "z0\nn1\nnoon\nn0\n", true, null},
+                        {"m = " + h, "", false, null},
+                        {"m != " + h, all, false, null},
+                        {"d < " + h, "p0\nz0\nn0\n", true, null},
+                        {"d >= " + h, "n1\nnoon\n", true, null},
+                        {"d >= " + p, "z0\nn1\nnoon\nn0\n", true, null},
+                        {"d = " + h, "", false, null},
+                        {"d >= $1", "n1\nnoon\n", false, hText},
+                        {"d IN (" + h + ", '2020-01-01T12:00:00.000Z')", "noon\n", false, null},
+                        // a one-item list names a period; the period of H holds no value of the column
+                        {"m IN (" + h + ")", "", false, null},
+                        {"m IN ('2020-01-01')", "n1\nnoon\nn0\n", true, null},
+                        {"d IN ('2020-01-01')", "n1\nnoon\nn0\n", true, null},
+                        {"ts IN " + h, "", false, null},
+                        {"m < " + h + "::TIMESTAMP_NS", "p0\nz0\nn0\n", false, null},
+                        {"m < $1", "p0\nz0\nn0\n", false, hNanos},
+                        {"d = $1", "", false, hText},
+                        {"d >= $1", "z0\nn1\nnoon\nn0\n", false, pNanos},
+                        {"d < " + h + "::TIMESTAMP_NS", "p0\nz0\nn0\n", false, null},
+                        // H plus a duration: the period starts after n0 and ends after the last value it holds
+                        {"m IN ('" + hLocal + ";1s')", "n1\n", true, null},
+                        {"m IN ('" + hLocal + ";-1s')", "n0\n", true, null},
+                        {"m IN ('" + hLocal + ";0s')", "", false, null},
+                        {"m NOT IN ('" + hLocal + ";1s')", "p0\nz0\nnoon\nn0\nnul\n", true, null},
+                        // the JIT parses DATE text with the millisecond parser, which takes no digits past the
+                        // millis before a duration, so the Java filter answers
+                        {"d IN ('" + hLocal + ";1s')", "n1\n", false, null},
+                        {"ts IN '" + hLocal + ";1h'", "z0\n", false, null},
+                        {"ts IN '" + hLocal + ";-1h'", "p0\n", false, null},
+                        {"ts IN '" + hLocal + ";1h;2h;2'", "z0\nnoon\n", false, null},
+                        {"ts IN '2020-01-01T00:00:00.000000500@+01:00;1h'", "p0\n", false, null},
+                        {"ts IN '[2020-01-01T00:00:00.000000500, 2020-01-01T03:00];1h'", "z0\nnoon\n", false, null},
+                        {"ts NOT IN '" + hLocal + ";1h'", "p0\nn1\nnoon\nn0\nnul\n", false, null},
+                        {"ts IN '$todayT00:00:00.000000500'", "", false, null},
+                        {"ts IN '$todayT00:00:00.000000500;1h'", "z0\n", false, null},
+                        {"ts IN '[$today]T[00:00:00.000000500, 03:00];1h'", "z0\nnoon\n", false, null},
+                        // a zero duration names an empty period on every path
+                        {"ts IN '2020-01-01T01:00;0h'", "", false, null},
+                        {"ts IN '2020-01-01T01:00;0h;1h;3'", "", false, null},
+                        {"ts IN '$todayT01:00;0h'", "", false, null},
+                        {"ts NOT IN '$todayT01:00;0h'", all, false, null},
+                        // NOT IN an empty period excludes nothing
+                        {"ts NOT IN " + h, all, false, null},
+                        {"ts NOT IN '2020-01-01T01:00;0h'", all, false, null},
+                        {"ts NOT IN '2020-01-01#Thu'", all, false, null},
+                        {"ts IN '$today' AND ts NOT IN '2020-01-01T01:00;0h'", "p0\nz0\nn1\nnoon\nn0\n", false, null},
+                        {"ts IN '$today' AND ts NOT IN '$todayT01:00;0h'", "p0\nz0\nn1\nnoon\nn0\n", false, null},
+                        // with a runtime interval, a static period with a day filter is evaluated per query; an
+                        // empty one holds no day to filter
+                        {"ts IN '2020-01-01T01:00#Wed;1h' AND ts IN '$today'", "z0\n", false, null},
+                        {"ts IN '2020-01-01T01:00#Wed;0h' AND ts IN '$today'", "", false, null},
+                        {"ts IN '2020-01-01T01:00#Thu;0h' AND ts IN '$today'", "", false, null},
+                        {"ts IN '2020-01-01T01:00;1h' AND ts IN '$today'", "z0\n", false, null},
+                        {"ts IN '2020-01-01T01:00;0h' AND ts IN '$today'", "", false, null},
+                };
+                for (int run = 0; run < 2; run++) {
+                    if (run == 1) {
+                        execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+                    }
+                    for (int mode = 0; mode < 4; mode++) {
+                        final boolean isParallel = (mode & 1) != 0;
+                        final boolean isJit = (mode & 2) != 0;
+                        sqlExecutionContext.setParallelFilterEnabled(isParallel);
+                        sqlExecutionContext.setJitMode(isJit ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+                        for (Object[] c : cases) {
+                            final String filter = (String) c[0];
+                            bindVariableService.clear();
+                            if (c[3] instanceof String text) {
+                                bindVariableService.setStr(0, text);
+                            } else if (c[3] instanceof Long nanos) {
+                                bindVariableService.setTimestampNano(0, nanos);
+                            }
+                            try (RecordCursorFactory factory = select("SELECT k FROM x WHERE " + filter)) {
+                                Assert.assertEquals(filter, isParallel && isJit && (boolean) c[2], factory.usesCompiledFilter());
+                            }
+                            assertBound(filter, (String) c[1]);
                         }
-                        try (RecordCursorFactory factory = select("SELECT k FROM x WHERE " + filter)) {
-                            Assert.assertEquals(filter, isParallel && isJit && (boolean) c[2], factory.usesCompiledFilter());
-                        }
-                        assertBound(filter, (String) c[1]);
                     }
                 }
-            }
-        });
+            });
+        } finally {
+            setCurrentMicros(-1);
+        }
     }
 
     @Test
