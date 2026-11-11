@@ -42,6 +42,7 @@ import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.mp.continuation.FiberTask;
 import io.questdb.mp.continuation.LaunchResult;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
@@ -312,6 +313,9 @@ public class QueryFuzzTest extends AbstractCairoTest {
             }
             config.getHashJoinBuildMode().applyProperties(node1.getConfigurationOverrides());
             setProperty(PropertyKey.CAIRO_SQL_LATEST_BY_JIT_ENABLED, Boolean.toString(rnd.nextBoolean()));
+            // A keyed SAMPLE BY FILL over these larger tables returns millions of rows, and an
+            // ORDER BY over them overruns the 64m sort budget Overrides sets for tests.
+            setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES, 512 * Numbers.SIZE_1MB);
 
             final WorkerPool queryPool = new TestWorkerPool(QUERY_POOL_NAME, queryWorkerCount, Metrics.DISABLED, WorkerPoolMode.FIBER_HOST);
             WorkerPoolUtils.setupQueryJobs(queryPool, engine, true);
@@ -970,7 +974,8 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 config.isHorizonJoinEnabled(),
                 config.isWindowJoinEnabled(),
                 config.isHashJoinEnabled(),
-                config.isGroupingSetsEnabled()
+                config.isGroupingSetsEnabled(),
+                config
         );
     }
 
@@ -1224,7 +1229,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 boolean injectFaultFn = faultType == FaultType.FUNCTION;
                 long preGenS0 = rnd.getSeed0();
                 long preGenS1 = rnd.getSeed1();
-                GeneratedQuery query = QueryGenerator.generate(rnd, tables, null, injectFaultFn, config.isWindowEnabled(), config.isLatestOnEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled(), config.isHashJoinEnabled(), config.isGroupingSetsEnabled());
+                GeneratedQuery query = QueryGenerator.generate(rnd, tables, null, injectFaultFn, config.isWindowEnabled(), config.isLatestOnEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled(), config.isHashJoinEnabled(), config.isGroupingSetsEnabled(), config);
                 QueryRunner.Result result;
                 if (faultType != null) {
                     // Fault queries use a crash-and-recover oracle, not the
@@ -1287,7 +1292,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                         long bindS1 = rnd.nextLong();
                         rnd.reset(preGenS0, preGenS1);
                         BindContext ctx = new BindContext(new Rnd(bindS0, bindS1), CONSTANT_BIND_PROBABILITY_PCT);
-                        GeneratedQuery bindForm = QueryGenerator.generate(rnd, tables, ctx, injectFaultFn, config.isWindowEnabled(), config.isLatestOnEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled(), config.isHashJoinEnabled(), config.isGroupingSetsEnabled());
+                        GeneratedQuery bindForm = QueryGenerator.generate(rnd, tables, ctx, injectFaultFn, config.isWindowEnabled(), config.isLatestOnEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled(), config.isHashJoinEnabled(), config.isGroupingSetsEnabled(), config);
                         if (ctx.getBindValues().size() > 0) {
                             query = query.withBind(bindForm.sql(), ctx.getBindNames(), ctx.getBindValues());
                             bindGen++;

@@ -75,6 +75,10 @@ public final class FuzzConfig {
     // QueryFuzzTest checks that precondition before it asserts a shape generated anything, so those
     // runs stay green instead of failing a working generator.
     private static final int DEFAULT_NUM_QUERIES = 1_000;
+    // A SAMPLE BY FILL over a join, keyed on a column from each side, emits one row per pair
+    // of joined rows and bucket. On forConcurrency's tables that reaches tens of millions of
+    // rows, more than the sort budget and QueryRunner's text copies of the result can take.
+    private static final long MAX_JOIN_FILL_ROWS = 3_000_000;
 
     private final boolean isDiffFusedEnabled;
     private final boolean isDiffJitEnabled;
@@ -266,6 +270,18 @@ public final class FuzzConfig {
 
     public boolean isHorizonJoinEnabled() {
         return isHorizonJoinEnabled;
+    }
+
+    /**
+     * Whether a SAMPLE BY FILL at this interval over a join of two of this config's tables,
+     * keyed on a column from each side, can emit more than {@link #MAX_JOIN_FILL_ROWS} rows.
+     * The smallest join key domain has 8 values, so at most an eighth of all row pairs join.
+     */
+    public boolean isJoinFillTooLarge(long intervalMicros) {
+        final long joinedRows = (long) rowsPerTable * rowsPerTable / 8;
+        // +2 for the partial buckets at both ends
+        final long buckets = (long) rowsPerTable * stepMicros / intervalMicros + 2;
+        return joinedRows * buckets > MAX_JOIN_FILL_ROWS;
     }
 
     public boolean isLatestOnEnabled() {
