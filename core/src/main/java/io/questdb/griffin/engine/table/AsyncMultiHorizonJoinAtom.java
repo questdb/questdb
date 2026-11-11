@@ -290,4 +290,15 @@ public class AsyncMultiHorizonJoinAtom extends BaseAsyncMultiHorizonJoinAtom {
         }
         CairoException.rethrowCleanupFailure(cleanupFailure);
     }
+
+    @Override
+    protected Throwable cursorClosedKeyFunctions(Throwable cleanupFailure) {
+        cleanupFailure = HorizonJoinSlaveState.cursorClosed(cleanupFailure, ownerKeyFunctions);
+        if (perWorkerKeyFunctions != null) {
+            for (int i = 0, n = perWorkerKeyFunctions.size(); i < n; i++) {
+                cleanupFailure = HorizonJoinSlaveState.cursorClosed(cleanupFailure, perWorkerKeyFunctions.getQuick(i));
+            }
+        }
+        return cleanupFailure;
+    }
 }

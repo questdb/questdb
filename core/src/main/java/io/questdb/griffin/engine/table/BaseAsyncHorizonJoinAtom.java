@@ -113,6 +113,7 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, PerWorke
     // Null when there are no symbol columns in the ASOF join key.
     protected final ObjList<SymbolTranslatingRecord> perWorkerSymbolTranslatingRecords;
     private final HorizonJoinSymbolTableSource horizonJoinSymbolTableSource;
+    private boolean areFunctionsInitialized;
     private boolean isSlaveFilterInitialized;
     private @Nullable Function ownerSlaveFilter;
     private @Nullable ObjList<Function> perWorkerSlaveFilters;
@@ -345,12 +346,25 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, PerWorke
                 }
             }
         }
+        // The frame sequence clears the atom after awaiting its workers, so no clone is in use.
+        if (areFunctionsInitialized) {
+            areFunctionsInitialized = false;
+            cleanupFailure = HorizonJoinSlaveState.cursorClosed(cleanupFailure, ownerGroupByFunctions);
+            if (perWorkerGroupByFunctions != null) {
+                for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
+                    cleanupFailure = HorizonJoinSlaveState.cursorClosed(cleanupFailure, perWorkerGroupByFunctions.getQuick(i));
+                }
+            }
+            cleanupFailure = cursorClosedKeyFunctions(cleanupFailure);
+        }
         memoryTracker = null;
         CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     @Override
     public void close() {
+        // the owning factory may have freed the owner functions already
+        areFunctionsInitialized = false;
         // clear() already freed the data chunks and ASOF maps under the bound tracker (the index
         // is on the global counter), so close() has nothing tracked to free. Nulling is defensive:
         // any stray free hits the global counter and cannot underflow an already-recycled block.
@@ -526,6 +540,9 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, PerWorke
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         memoryTracker = executionContext.getMemoryTracker();
+        // The cursor initializes the group by and key functions after this, and clear() notifies
+        // them when the cursor closes.
+        areFunctionsInitialized = true;
         filterCtx.initFilters(symbolTableSource, executionContext);
         // Note: group by functions are initialized in initOwnerGroupByFunctions() where we have
         // access to both master and slave symbol table sources
@@ -702,6 +719,13 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, PerWorke
      * Close aggregation-specific resources. Called by {@link #close()}.
      */
     protected abstract void closeAggregationState();
+
+    /**
+     * Notifies the key functions, if any, that the cursor has closed. Called by {@link #clear()}.
+     */
+    protected Throwable cursorClosedKeyFunctions(Throwable cleanupFailure) {
+        return cleanupFailure;
+    }
 
     // package-private to make linter happy
     HorizonJoinSymbolTableSource getSymbolTableSource() {

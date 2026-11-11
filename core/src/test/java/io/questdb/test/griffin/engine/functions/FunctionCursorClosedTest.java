@@ -162,6 +162,50 @@ public class FunctionCursorClosedTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsyncHorizonJoinKeysAndAggregatesReleaseCastDictionary() throws Exception {
+        // A bare cast to symbol keeps a horizon join off the parallel path, but a wrapper that
+        // reports parallel support lets it into the keys and aggregates of the parallel atoms.
+        assertMemoryLeak(() -> {
+            createVarcharTable();
+            bindCastValues();
+            final String[] joins = {
+                    "t a horizon join t b on (s) list (0s, 1s) as h",
+                    "t a horizon join t b on (s) horizon join t d on (s) list (0s, 1s) as h"
+            };
+            final String[] plans = {"Async Horizon Join", "Async Multi Horizon Join"};
+            for (int i = 0; i < joins.length; i++) {
+                final String join = joins[i];
+                final String plan = plans[i];
+                final String castKey = "select json_extract(((a.l % 3)::symbol)::varchar, '$') j, count() c from " + join + " order by j";
+                assertOwnerReleasesCastDictionaries(castKey, plan);
+                // each of the 1000 rows of a joins once per offset
+                assertQuery(castKey).noLeakCheck().expectSize().returns("""
+                        j\tc
+                        0\t666
+                        1\t668
+                        2\t666
+                        """);
+                final String castAggregate = "select a.s, sum(case when a.s in ($1::symbol) then 1 else 0 end) c from " + join + " order by a.s";
+                assertOwnerReleasesCastDictionaries(castAggregate, plan);
+                // $1 casts to the symbol '1', which matches no s value
+                assertQuery(castAggregate).noLeakCheck().expectSize().returns("""
+                        s\tc
+                        s0\t0
+                        s1\t0
+                        s2\t0
+                        """);
+                final String castNotKeyed = "select percentile_disc(b.l::double, ($1::symbol)::double) p from " + join;
+                assertOwnerReleasesCastDictionaries(castNotKeyed, plan);
+                // $1 casts to the 1.0 percentile, which is the largest matched b.l: the last row, l = 1000
+                assertQuery(castNotKeyed).noLeakCheck().noRandomAccess().expectSize().returns("""
+                        p
+                        1000.0
+                        """);
+            }
+        });
+    }
+
+    @Test
     public void testAsyncMultiHorizonJoinProjectionReleasesCastDictionary() throws Exception {
         assertMemoryLeak(() -> {
             createVarcharTable();
@@ -863,7 +907,11 @@ public class FunctionCursorClosedTest extends AbstractCairoTest {
                                 "select s, count() c from t where cast(v as symbol) <> 'k7' order by s",
                                 "select max(l) m from t where cast(v as symbol) <> 'k7'",
                                 "select l from t where cast(v as symbol) <> 'k7' order by l desc limit 5",
-                                "select h.offset o, a.l from t a horizon join t b on (s) list (0s, 1s) as h where cast(a.v as symbol) <> 'k7'"
+                                "select h.offset o, a.l from t a horizon join t b on (s) list (0s, 1s) as h where cast(a.v as symbol) <> 'k7'",
+                                "select json_extract(((a.l % 3)::symbol)::varchar, '$') j, count() c from t a horizon join t b on (s) list (0s, 1s) as h",
+                                "select max(length(json_extract(((b.l % 3)::symbol)::varchar, '$'))) m from t a horizon join t b on (s) list (0s, 1s) as h",
+                                "select json_extract(((a.l % 3)::symbol)::varchar, '$') j, count() c from t a horizon join t b on (s) horizon join t d on (s) list (0s, 1s) as h",
+                                "select max(length(json_extract(((b.l % 3)::symbol)::varchar, '$'))) m from t a horizon join t b on (s) horizon join t d on (s) list (0s, 1s) as h"
                         };
                         for (String sql : queries) {
                             try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()) {
