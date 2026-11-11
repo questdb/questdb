@@ -155,6 +155,15 @@ inline int32_t nano_to_hour(jlong ptr, int i) {
     return timestamp_to_hour<HOUR_NANOS>(ptr, i);
 }
 
+// A zero address is a column top, which reads as 0 for SHORT.
+inline jshort short_at(const jshort *ps, int i) {
+    if (ps == nullptr) {
+        return 0;
+    }
+    MM_PREFETCH_T0(ps + i + 8);
+    return ps[i];
+}
+
 inline int32_t to_int(jlong ptr, int i) {
     const auto p = reinterpret_cast<int32_t *>(ptr);
     MM_PREFETCH_T0(p + i + 64);
@@ -304,9 +313,8 @@ static jboolean kIntMinShort(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong 
     const auto *pi = reinterpret_cast<jshort *>(pLong);
     const auto value_offset = map->value_offsets_[valueOffset];
     for (int i = 0; i < count; i++) {
-        MM_PREFETCH_T0(pi + i + 8);
         const int32_t key = to_int(pKeys, i);
-        const jshort val = pi[i];
+        const jshort val = short_at(pi, i);
         auto res = find(map, key);
         auto pKey = map->slots_ + res.first;
         auto pVal = pKey + value_offset;
@@ -333,9 +341,8 @@ static jboolean kIntMaxShort(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong 
     const auto *pi = reinterpret_cast<jshort *>(pLong);
     const auto value_offset = map->value_offsets_[valueOffset];
     for (int i = 0; i < count; i++) {
-        MM_PREFETCH_T0(pi + i + 8);
         const int32_t key = to_int(pKeys, i);
-        const jshort val = pi[i];
+        const jshort val = short_at(pi, i);
         auto res = find(map, key);
         auto pKey = map->slots_ + res.first;
         auto pVal = pKey + value_offset;
@@ -347,7 +354,7 @@ static jboolean kIntMaxShort(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong 
             *reinterpret_cast<jlong *>(pVal) = val;
         } else {
             const jlong old = *reinterpret_cast<jlong *>(pVal);
-            *reinterpret_cast<jlong *>(pVal) = MAX(val, (jshort) old);
+            *reinterpret_cast<jlong *>(pVal) = MAX((jlong) val, old);
         }
     }
     return JNI_TRUE;
@@ -470,9 +477,8 @@ static jboolean kIntSumShort(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong 
     const auto value_offset = map->value_offsets_[valueOffset];
     const auto count_offset = map->value_offsets_[valueOffset + count_idx];
     for (int i = 0; i < count; i++) {
-        MM_PREFETCH_T0(ps + i + 8);
         const int32_t key = to_int(pKeys, i);
-        const jshort val = ps[i];
+        const jshort val = short_at(ps, i);
         auto res = find(map, key);
         auto dest = map->slots_ + res.first;
         if (PREDICT_FALSE(res.second)) {
@@ -2155,7 +2161,7 @@ Java_io_questdb_std_Rosti_keyedIntMinShortWrapUp(JNIEnv *env, jclass cl, jlong p
             *reinterpret_cast<jlong *>(dest + value_offset) = accumulatedValue;
         } else {
             const jlong old = *reinterpret_cast<jlong *>(dest + value_offset);
-            if (accumulatedValue > old) {
+            if (old == L_MIN || accumulatedValue < old) {
                 *reinterpret_cast<jlong *>(dest + value_offset) = accumulatedValue;
             }
         }
@@ -2211,8 +2217,8 @@ Java_io_questdb_std_Rosti_keyedIntMaxShortWrapUp(
             *reinterpret_cast<jlong *>(dest + value_offset) = accumulatedValue;
         } else {
             *reinterpret_cast<jlong *>(dest + value_offset) = MAX(
-                    (jshort) accumulatedValue,
-                    *reinterpret_cast<jshort *>(dest + value_offset)
+                    (jlong) accumulatedValue,
+                    *reinterpret_cast<jlong *>(dest + value_offset)
             );
         }
     }

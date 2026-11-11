@@ -3083,6 +3083,31 @@ public class GroupByFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testVectorShortAggregatesOverWalColumnTops() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, a SHORT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t VALUES ('2024-01-01T00', -7), ('2024-01-01T01', -2)");
+            execute("ALTER TABLE t ADD COLUMN k INT");
+            execute("INSERT INTO t VALUES ('2024-01-02T00', -3, null), ('2024-01-02T01', 5, 1)");
+            execute("ALTER TABLE t ADD COLUMN s SHORT");
+            execute("INSERT INTO t VALUES ('2024-01-03T00', -9, 1, -4)");
+            drainWalQueue();
+            // SHORT has no NULL: a column top reads as 0.
+            assertQuery("""
+                    SELECT k, max(a) amax, min(a) amin, sum(a) asum, avg(a) aavg, max(s) smax, min(s) smin, sum(s) ssum, avg(s) savg
+                    FROM t ORDER BY k""")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("GroupBy vectorized: true")
+                    .returns("""
+                            k\tamax\tamin\tasum\taavg\tsmax\tsmin\tssum\tsavg
+                            null\t-2\t-7\t-12\t-4.0\t0\t0\t0\t0.0
+                            1\t5\t-9\t-4\t-2.0\t0\t-4\t-4\t-2.0
+                            """);
+        });
+    }
+
+    @Test
     public void testVectorSumDoubleAndIntWithNullsDanglingEdge() throws Exception {
         assertQuery("select sum(a),sum(b) from x")
                 .ddl("create table x as (select rnd_int(0,100,2) a, rnd_double(2) b from long_sequence(42))")

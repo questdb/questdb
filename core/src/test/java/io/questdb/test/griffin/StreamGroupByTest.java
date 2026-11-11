@@ -1456,6 +1456,53 @@ public class StreamGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testColumnTopShortAggregates() throws Exception {
+        run((engine, compiler, context) -> {
+            engine.execute("CREATE TABLE kt (ts TIMESTAMP, s SHORT) TIMESTAMP(ts) PARTITION BY DAY", context);
+            engine.execute("INSERT INTO kt VALUES ('2024-01-01T00', -7), ('2024-01-01T01', -2)", context);
+            engine.execute("ALTER TABLE kt ADD COLUMN k INT, y SYMBOL, z SHORT, w SHORT", context);
+            engine.execute("""
+                    INSERT INTO kt VALUES
+                        ('2024-01-02T00', -3, null, null, -4, 4),
+                        ('2024-01-02T01', -9, null, null, -6, 6),
+                        ('2024-01-02T02', 5, 1, 'a', 7, 7)""", context);
+            engine.execute("CREATE TABLE vt (ts TIMESTAMP, k INT, y SYMBOL) TIMESTAMP(ts) PARTITION BY DAY", context);
+            engine.execute("INSERT INTO vt VALUES ('2024-01-01T00', 1, 'a'), ('2024-01-01T01', 2, 'b'), ('2024-01-01T02', 3, 'c')", context);
+            engine.execute("ALTER TABLE vt ADD COLUMN s SHORT", context);
+            engine.execute("""
+                    INSERT INTO vt VALUES
+                        ('2024-01-02T00', 1, 'a', -5), ('2024-01-02T00:30', 1, 'a', -9),
+                        ('2024-01-02T01', 2, 'b', 5), ('2024-01-02T01:30', 2, 'b', 9)""", context);
+
+            // SHORT has no NULL: a column top reads as 0.
+            final String aggregates = ", max(%1$s) %1$sx, min(%1$s) %1$sn, sum(%1$s) %1$ss, avg(%1$s) %1$sa";
+            final String columns = "\t%1$sx\t%1$sn\t%1$ss\t%1$sa";
+            final String shorts = ", count() c" + aggregates.formatted("s");
+            final String header = "g\tc" + columns.formatted("s");
+            for (String[] key : new String[][]{{"k", "null", "1"}, {"y", "", "a"}}) {
+                final String select = "SELECT " + key[0] + " g" + shorts + aggregates.formatted("z") + aggregates.formatted("w") + " FROM kt";
+                final String kHeader = header + columns.formatted("z") + columns.formatted("w") + "\n";
+                assertVectorizedRows(compiler, context, select + " WHERE ts IN '2024-01-01' ORDER BY g", kHeader
+                        + key[1] + "\t2\t-2\t-7\t-9\t-4.5\t0\t0\t0\t0.0\t0\t0\t0\t0.0\n");
+                assertVectorizedRows(compiler, context, select + " ORDER BY g", kHeader
+                        + key[1] + "\t4\t-2\t-9\t-21\t-5.25\t0\t-6\t-10\t-2.5\t6\t0\t10\t2.5\n"
+                        + key[2] + "\t1\t5\t5\t5\t5.0\t7\t7\t7\t7.0\t7\t7\t7\t7.0\n");
+            }
+            for (String[] key : new String[][]{{"k", "1", "2", "3"}, {"y", "a", "b", "c"}, {"hour(ts)", "0", "1", "2"}}) {
+                final String select = "SELECT " + key[0] + " g" + shorts + " FROM vt";
+                assertVectorizedRows(compiler, context, select + " WHERE ts IN '2024-01-01' ORDER BY g", header + "\n"
+                        + key[1] + "\t1\t0\t0\t0\t0.0\n"
+                        + key[2] + "\t1\t0\t0\t0\t0.0\n"
+                        + key[3] + "\t1\t0\t0\t0\t0.0\n");
+                assertVectorizedRows(compiler, context, select + " ORDER BY g", header + "\n"
+                        + key[1] + "\t3\t0\t-9\t-14\t-4.666666666666667\n"
+                        + key[2] + "\t3\t9\t0\t14\t4.666666666666667\n"
+                        + key[3] + "\t1\t0\t0\t0\t0.0\n");
+            }
+        });
+    }
+
+    @Test
     public void testCompensatedSumAcrossFrames() throws Exception {
         run((engine, compiler, context) -> {
             for (String[] table : new String[][]{{"a", "1e16", "1", "-1e16"}, {"b", "1e8", "1e-8", "-1e8"}}) {
@@ -3129,6 +3176,17 @@ public class StreamGroupByTest extends AbstractCairoTest {
             Assert.assertTrue(sql + ": size " + results.size(), results.size() > 2 * 4_096);
             Assert.assertTrue(sql + ": capacity " + results.getCapacity() + " for " + results.size() + " longs",
                     results.getCapacity() <= results.size() * 5 / 4);
+        }
+    }
+
+    private void assertVectorizedRows(SqlCompiler compiler, SqlExecutionContext context, String sql, String expected) throws Exception {
+        try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()) {
+            if (parallel) {
+                final String plan = plan(factory, context);
+                Assert.assertTrue(plan, plan.contains("GroupBy vectorized: true"));
+            }
+            TestUtils.assertEquals(sql, expected, read(factory, context));
+            TestUtils.assertEquals(sql, expected, read(factory, context));
         }
     }
 
