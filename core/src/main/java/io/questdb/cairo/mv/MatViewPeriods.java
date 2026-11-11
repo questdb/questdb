@@ -36,8 +36,10 @@ import org.jetbrains.annotations.Nullable;
  * start at the change;</li>
  * <li>where the clock moves back, it passes the grid points in between twice, and a period starts at each pass.</li>
  * </ul>
- * The sampler and all times are in microseconds, and the sampler's start is a grid point in local time. Without time
- * zone rules, local time is UTC.
+ * The sampler and all times are in microseconds, and the sampler's start is a grid point in local time. The grid goes
+ * on below that start: the local clock can fall behind it, such as when a view starts the grid in the first pass of the
+ * hour that a daylight saving time end repeats, and the clock then passes that hour again. Without time zone rules,
+ * local time is UTC.
  */
 public final class MatViewPeriods {
 
@@ -49,10 +51,10 @@ public final class MatViewPeriods {
      */
     public static long nextPeriodStart(TimestampSampler sampler, @Nullable TimeZoneRules rules, long utc) {
         if (rules == null) {
-            return sampler.nextTimestamp(sampler.round(utc));
+            return sampler.nextTimestamp(floor(sampler, utc));
         }
         final long offset = rules.getOffset(utc);
-        final long localStart = sampler.nextTimestamp(sampler.round(utc + offset));
+        final long localStart = sampler.nextTimestamp(floor(sampler, utc + offset));
         final long start = localStart - offset;
         if (rules.getOffset(start) == offset) {
             return start;
@@ -67,24 +69,23 @@ public final class MatViewPeriods {
         // The clock moves back, from change + offset to change + changeOffset, and passes the grid points from there
         // once more.
         final long localRestart = change + changeOffset;
-        final long gridPoint = sampler.round(localRestart);
+        final long gridPoint = floor(sampler, localRestart);
         return (gridPoint < localRestart ? sampler.nextTimestamp(gridPoint) : gridPoint) - changeOffset;
     }
 
     /**
      * Returns the latest UTC time at or before the given one at which a period starts. The last period that is
-     * complete at the given time ends there. Before the sampler's start, the sampler rounds the time up, and this
-     * method returns a later time.
+     * complete at the given time ends there.
      */
     public static long periodStart(TimestampSampler sampler, @Nullable TimeZoneRules rules, long utc) {
         if (rules == null) {
-            return sampler.round(utc);
+            return floor(sampler, utc);
         }
         final long offset = rules.getOffset(utc);
-        final long localStart = sampler.round(utc + offset);
+        final long localStart = floor(sampler, utc + offset);
         final long start = localStart - offset;
         final long startOffset = rules.getOffset(start);
-        if (startOffset == offset || start > utc) {
+        if (startOffset == offset) {
             return start;
         }
         // The clock changed after the period start, and at or before utc.
@@ -95,6 +96,13 @@ public final class MatViewPeriods {
         }
         // The clock moved back, from change + startOffset to change + offset, and has not reached a grid point since.
         // Before the change, it last reached the last grid point before change + startOffset.
-        return sampler.round(change + startOffset - 1) - startOffset;
+        return floor(sampler, change + startOffset - 1) - startOffset;
+    }
+
+    // Returns the latest grid point at or before the given local time. Below its start, the sampler rounds a time from
+    // 1970 on up to the grid point after it, so this steps back from there.
+    private static long floor(TimestampSampler sampler, long local) {
+        final long gridPoint = sampler.round(local);
+        return gridPoint > local ? sampler.previousTimestamp(gridPoint) : gridPoint;
     }
 }
