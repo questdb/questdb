@@ -35,6 +35,8 @@ import io.questdb.std.Rnd;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocaleFactory;
+import io.questdb.std.str.DirectUtf8Sink;
+import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.TestTimestampType;
@@ -416,19 +418,6 @@ public class PartitionByTest {
     }
 
     @Test
-    public void testMinutesSplit() throws NumericException {
-        assertFormatAndParse("2013-03-31T175500", "2013-03-31T17:55:00.000000Z", PartitionBy.MINUTE_15);
-        assertFormatAndParse("2013-03-31T175501", "2013-03-31T17:55:01.000000Z", PartitionBy.MINUTE_5);
-        assertFormatAndParse(ColumnType.isTimestampNano(timestampType.getTimestampType()) ? "2013-03-31T175501-123000101" : "2013-03-31T175501-123000", "2013-03-31T17:55:01.123000101Z", PartitionBy.MINUTE_10);
-        assertFormatAndParse(ColumnType.isTimestampNano(timestampType.getTimestampType()) ? "2013-03-31T174500-000000001" : "2013-03-31T174500-000001", ColumnType.isTimestampNano(timestampType.getTimestampType()) ? "2013-03-31T17:45:00.000000001Z" : "2013-03-31T17:45:00.000001Z", PartitionBy.MINUTE_15);
-        assertFormatAndParse("2013-03-31T1745", "2013-03-31T17:45:00.000000Z", PartitionBy.MINUTE_15);
-        assertFormatAndParse("2013-03-31T174600", "2013-03-31T17:46:00.000000Z", PartitionBy.MINUTE_15);
-        assertFormatAndParse("2013-03-31T172000", "2013-03-31T17:20:00.000000Z", PartitionBy.MINUTE_30);
-        assertFormatAndParse("2013-03-31T1720", "2013-03-31T17:20:00.000000Z", PartitionBy.MINUTE_20);
-        assertFormatAndParse("2013-03-31T0000", "2013-03-31T00:00:00.000000Z", PartitionBy.MINUTE_15);
-    }
-
-    @Test
     public void testMinutesPartitionNameOfUser() throws NumericException {
         // hi = -1 parses a partition name from SQL: any time within the partition picks it
         final TimestampDriver timestampDriver = timestampType.getDriver();
@@ -448,6 +437,19 @@ public class PartitionByTest {
         } catch (CairoException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), "'yyyy-MM-ddTHHmm' expected");
         }
+    }
+
+    @Test
+    public void testMinutesSplit() throws NumericException {
+        assertFormatAndParse("2013-03-31T175500", "2013-03-31T17:55:00.000000Z", PartitionBy.MINUTE_15);
+        assertFormatAndParse("2013-03-31T175501", "2013-03-31T17:55:01.000000Z", PartitionBy.MINUTE_5);
+        assertFormatAndParse(ColumnType.isTimestampNano(timestampType.getTimestampType()) ? "2013-03-31T175501-123000101" : "2013-03-31T175501-123000", "2013-03-31T17:55:01.123000101Z", PartitionBy.MINUTE_10);
+        assertFormatAndParse(ColumnType.isTimestampNano(timestampType.getTimestampType()) ? "2013-03-31T174500-000000001" : "2013-03-31T174500-000001", ColumnType.isTimestampNano(timestampType.getTimestampType()) ? "2013-03-31T17:45:00.000000001Z" : "2013-03-31T17:45:00.000001Z", PartitionBy.MINUTE_15);
+        assertFormatAndParse("2013-03-31T1745", "2013-03-31T17:45:00.000000Z", PartitionBy.MINUTE_15);
+        assertFormatAndParse("2013-03-31T174600", "2013-03-31T17:46:00.000000Z", PartitionBy.MINUTE_15);
+        assertFormatAndParse("2013-03-31T172000", "2013-03-31T17:20:00.000000Z", PartitionBy.MINUTE_30);
+        assertFormatAndParse("2013-03-31T1720", "2013-03-31T17:20:00.000000Z", PartitionBy.MINUTE_20);
+        assertFormatAndParse("2013-03-31T0000", "2013-03-31T00:00:00.000000Z", PartitionBy.MINUTE_15);
     }
 
     @Test
@@ -597,6 +599,28 @@ public class PartitionByTest {
         Assert.assertEquals(0, PartitionBy.getMinutes(PartitionBy.HOUR));
         Assert.assertEquals(-1, PartitionBy.fromMinutes(60));
         Assert.assertEquals(-1, PartitionBy.fromMinutes(Long.MAX_VALUE));
+    }
+
+    @Test
+    public void testPartitionByNameMinutesNotFlaggedAscii() throws Exception {
+        // HTTP URL params are DirectUtf8String instances that never set the ASCII flag
+        TestUtils.assertMemoryLeak(() -> {
+            try (DirectUtf8Sink sink = new DirectUtf8Sink(16)) {
+                final DirectUtf8String name = new DirectUtf8String();
+                sink.put("15 MINUTES");
+                Assert.assertEquals(PartitionBy.MINUTE_15, PartitionBy.fromUtf8String(name.of(sink.ptr(), sink.ptr() + sink.size())));
+                Assert.assertFalse(name.isAscii());
+                sink.clear();
+                sink.put("5minute");
+                Assert.assertEquals(PartitionBy.MINUTE_5, PartitionBy.fromUtf8String(name.of(sink.ptr(), sink.ptr() + sink.size())));
+                sink.clear();
+                sink.put("15 minut\u00e9s");
+                Assert.assertEquals(-1, PartitionBy.fromUtf8String(name.of(sink.ptr(), sink.ptr() + sink.size())));
+                sink.clear();
+                sink.put("15\u00a0minutes");
+                Assert.assertEquals(-1, PartitionBy.fromUtf8String(name.of(sink.ptr(), sink.ptr() + sink.size())));
+            }
+        });
     }
 
     @Test

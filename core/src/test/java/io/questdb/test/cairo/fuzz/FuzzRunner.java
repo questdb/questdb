@@ -128,12 +128,12 @@ public class FuzzRunner {
     private static final int MAX_COVERED_KEYS_CHECKED = 32;
     // Share of fuzz runs that use TIMESTAMP_NS designated timestamp instead of TIMESTAMP
     private static final int NANOS_TIMESTAMP_PERCENT = 40;
-    private static final int[] PARTITION_BY_MINUTES = {
-            PartitionBy.MINUTE_5, PartitionBy.MINUTE_10, PartitionBy.MINUTE_15, PartitionBy.MINUTE_20, PartitionBy.MINUTE_30
-    };
     // the table that convertNoSentinelValues() converts every value of a type without a NULL sentinel in
     private static final String NO_SENTINEL_VALUES_TABLE = "fuzz_no_sentinel_values";
     private static final long OPEN_RETRY_TIMEOUT_MILLIS = 10_000;
+    private static final int[] PARTITION_BY_MINUTES = {
+            PartitionBy.MINUTE_5, PartitionBy.MINUTE_10, PartitionBy.MINUTE_15, PartitionBy.MINUTE_20, PartitionBy.MINUTE_30
+    };
     // Columns a covering index on sym2 / sym_top may INCLUDE; sym_top's add the column-top columns.
     private static final String[] SYM2_INCLUDE_CANDIDATES = {"c1", "c2", "c3", "rnd_str", "bool1"};
     private static final String[] SYM_TOP_INCLUDE_CANDIDATES = {"c1", "c3", "bool1", "long_top", "str_top"};
@@ -739,16 +739,16 @@ public class FuzzRunner {
         return timestampType;
     }
 
+    public int getTransactionCount() {
+        return transactionCount;
+    }
+
     /**
      * Returns where the generated transactions start by default: 17:00 of the first day of the initial
      * rows for DAY partitions, and as many partitions into the initial rows for shorter partitions.
      */
     public long getTransactionStartMicros() throws NumericException {
         return MicrosTimestampDriver.floor("2022-02-24") + Micros.HOUR_MICROS * 17 / getPartitionsPerDay();
-    }
-
-    public int getTransactionCount() {
-        return transactionCount;
     }
 
     public void purgeAndReloadReaders(Rnd reloadRnd, TableReader rdr1, TableReader rdr2, O3PartitionPurgeJob purgeJob, double realoadThreashold) {
@@ -1161,20 +1161,6 @@ public class FuzzRunner {
     }
 
     /**
-     * Picks the partitioning of the fuzz tables: DAY half the time, HOUR 15 in 100, else a sub-hour size.
-     */
-    private static int randomPartitionBy(Rnd rnd) {
-        final int pick = rnd.nextInt(100);
-        if (pick < 50) {
-            return PartitionBy.DAY;
-        }
-        if (pick < 65) {
-            return PartitionBy.HOUR;
-        }
-        return PARTITION_BY_MINUTES[rnd.nextInt(PARTITION_BY_MINUTES.length)];
-    }
-
-    /**
      * Half the time a POSTING index covers 1-3 of {@code candidates}: returns the INCLUDE clause, else null.
      */
     private static String randomIncludeClause(Rnd rnd, String indexTypeClause, String[] candidates) {
@@ -1211,6 +1197,20 @@ public class FuzzRunner {
             return "TYPE POSTING DELTA";
         }
         return "TYPE POSTING EF";
+    }
+
+    /**
+     * Picks the partitioning of the fuzz tables: DAY half the time, HOUR 15 in 100, else a sub-hour size.
+     */
+    private static int randomPartitionBy(Rnd rnd) {
+        final int pick = rnd.nextInt(100);
+        if (pick < 50) {
+            return PartitionBy.DAY;
+        }
+        if (pick < 65) {
+            return PartitionBy.HOUR;
+        }
+        return PARTITION_BY_MINUTES[rnd.nextInt(PARTITION_BY_MINUTES.length)];
     }
 
     private static String timestampToString(TimestampDriver driver, long timestamp) {

@@ -29,10 +29,16 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * SQL-level coverage of sub-hour partitioning: {@code PARTITION BY 5|10|15|20|30 MINUTES}.
@@ -442,9 +448,43 @@ public class MinutePartitionTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testWriterOpenOverWideTimestampRange() throws Exception {
+        // Opening a writer must not probe every 5-minute slot between the first and the last
+        // partition: 2000..2099 is ~10M slots, which used to take minutes of file checks.
+        final AtomicBoolean counting = new AtomicBoolean();
+        final AtomicLong existsCalls = new AtomicLong();
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean exists(LPSZ path) {
+                if (counting.get()) {
+                    existsCalls.incrementAndGet();
+                }
+                return super.exists(path);
+            }
+        };
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY 5 MINUTES");
+            execute("INSERT INTO t VALUES ('2000-01-01T00:00:00', 1), ('2000-01-01T00:07:00', 2), ('2099-12-31T00:00:00', 3)");
+            engine.releaseAllWriters();
+
+            counting.set(true);
+            try (TableWriter ignore = getWriter("t")) {
+                counting.set(false);
+            }
+            Assert.assertTrue("too many exists() calls on writer open: " + existsCalls.get(), existsCalls.get() < 100);
+            assertPartitions("""
+                    name\tnumRows
+                    2000-01-01T0000\t1
+                    2000-01-01T0005\t1
+                    2099-12-31T0000\t1
+                    """);
+        });
+    }
+
     private void assertPartitions(String expected) throws Exception {
         assertQuery("SELECT name, numRows FROM table_partitions('t')").noLeakCheck()
-                    .noRandomAccess().expectSize().returns(expected);
+                .noRandomAccess().expectSize().returns(expected);
     }
 
     private void renameDetachedToAttachable(String tableName, String partitionName) {

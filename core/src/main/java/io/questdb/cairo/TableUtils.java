@@ -2191,10 +2191,6 @@ public final class TableUtils {
         return path.$();
     }
 
-    public static void oldPartitionName(Path path, long txn) {
-        path.put("-x-").put(txn);
-    }
-
     public static long openAppend(FilesFacade ff, LPSZ path, Log log) {
         final long fd = ff.openAppend(path);
         if (fd > -1) {

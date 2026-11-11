@@ -101,9 +101,11 @@ public final class PartitionBy {
 
     public static int fromUtf8String(Utf8Sequence name) {
         final int partitionBy = nameToIndexMapUtf8.get(name);
-        if (partitionBy != -1 || name == null || !name.isAscii()) {
+        if (partitionBy != -1 || name == null) {
             return partitionBy;
         }
+        // No isAscii() guard: HTTP URL params are DirectUtf8String instances that never set the ASCII
+        // flag. A non-ASCII byte is neither a digit nor a letter of the unit, so parseMinutes() rejects it.
         return parseMinutes(name.asAsciiCharSequence());
     }
 
@@ -183,6 +185,40 @@ public final class PartitionBy {
         return ttlUnitToIndexMap.valueAt(ttlUnitToIndexMap.keyIndex(name, start, limit));
     }
 
+    public static void validateTtlGranularity(int partitionBy, int ttlHoursOrMonths, int ttlValuePos) throws SqlException {
+        switch (partitionBy) {
+            case NONE:
+            case NOT_APPLICABLE:
+                throw SqlException.position(ttlValuePos).put("cannot set TTL on a non-partitioned table");
+            case DAY:
+                if (ttlHoursOrMonths < 0 || ttlHoursOrMonths % 24 == 0) {
+                    return;
+                }
+                break;
+            case WEEK:
+                if (ttlHoursOrMonths < 0 || ttlHoursOrMonths % (24 * 7) == 0) {
+                    return;
+                }
+                break;
+            case MONTH:
+                // ttl == 0 means "unset" (no TTL), negative values are months-based TTL
+                if (ttlHoursOrMonths < 1) {
+                    return;
+                }
+                break;
+            case YEAR:
+                // ttl == 0 means "unset" (no TTL), negative values are months-based TTL
+                if (ttlHoursOrMonths < 1 && ttlHoursOrMonths % 12 == 0) {
+                    return;
+                }
+                break;
+            default:
+                return;
+        }
+        throw SqlException.position(ttlValuePos)
+                .put("TTL value must be an integer multiple of the partition size (its time interval)");
+    }
+
     /**
      * Parses "{@code <n> MINUTE}" / "{@code <n> MINUTES}", with any whitespace, including none,
      * between the number and the unit. Returns -1 when the text does not match or n is not a
@@ -217,40 +253,6 @@ public final class PartitionBy {
             return -1;
         }
         return fromMinutes(n);
-    }
-
-    public static void validateTtlGranularity(int partitionBy, int ttlHoursOrMonths, int ttlValuePos) throws SqlException {
-        switch (partitionBy) {
-            case NONE:
-            case NOT_APPLICABLE:
-                throw SqlException.position(ttlValuePos).put("cannot set TTL on a non-partitioned table");
-            case DAY:
-                if (ttlHoursOrMonths < 0 || ttlHoursOrMonths % 24 == 0) {
-                    return;
-                }
-                break;
-            case WEEK:
-                if (ttlHoursOrMonths < 0 || ttlHoursOrMonths % (24 * 7) == 0) {
-                    return;
-                }
-                break;
-            case MONTH:
-                // ttl == 0 means "unset" (no TTL), negative values are months-based TTL
-                if (ttlHoursOrMonths < 1) {
-                    return;
-                }
-                break;
-            case YEAR:
-                // ttl == 0 means "unset" (no TTL), negative values are months-based TTL
-                if (ttlHoursOrMonths < 1 && ttlHoursOrMonths % 12 == 0) {
-                    return;
-                }
-                break;
-            default:
-                return;
-        }
-        throw SqlException.position(ttlValuePos)
-                .put("TTL value must be an integer multiple of the partition size (its time interval)");
     }
 
 

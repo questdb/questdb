@@ -2370,22 +2370,6 @@ public class SqlParser {
         return literal;
     }
 
-    /**
-     * Parses the partitioning unit after PARTITION BY: a single word, such as DAY, or a
-     * sub-hour size written as {@code <n> MINUTE[S]}, such as {@code 15 MINUTES}. The returned
-     * literal's token is a name {@link PartitionBy#fromString(CharSequence)} accepts.
-     */
-    private ExpressionNode expectPartitionByLiteral(GenericLexer lexer) throws SqlException {
-        final CharSequence tok = tok(lexer, "partition unit");
-        final int pos = lexer.lastTokenPosition();
-        final int partitionBy = parsePartitionByMinutes(lexer, tok, pos);
-        if (partitionBy != -1) {
-            return nextLiteral(PartitionBy.toString(partitionBy), pos);
-        }
-        lexer.unparseLast();
-        return expectLiteral(lexer);
-    }
-
     private long expectLong(GenericLexer lexer) throws SqlException {
         CharSequence tok = tok(lexer, "long integer");
         boolean negative;
@@ -2415,6 +2399,22 @@ public class SqlParser {
             return;
         }
         throw SqlException.$((lexer.lastTokenPosition()), "'offset' expected");
+    }
+
+    /**
+     * Parses the partitioning unit after PARTITION BY: a single word, such as DAY, or a
+     * sub-hour size written as {@code <n> MINUTE[S]}, such as {@code 15 MINUTES}. The returned
+     * literal's token is a name {@link PartitionBy#fromString(CharSequence)} accepts.
+     */
+    private ExpressionNode expectPartitionByLiteral(GenericLexer lexer) throws SqlException {
+        final CharSequence tok = tok(lexer, "partition unit");
+        final int pos = lexer.lastTokenPosition();
+        final int partitionBy = parsePartitionByMinutes(lexer, tok, pos);
+        if (partitionBy != -1) {
+            return nextLiteral(PartitionBy.toString(partitionBy), pos);
+        }
+        lexer.unparseLast();
+        return expectLiteral(lexer);
     }
 
     private void expectSample(GenericLexer lexer, IQueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {

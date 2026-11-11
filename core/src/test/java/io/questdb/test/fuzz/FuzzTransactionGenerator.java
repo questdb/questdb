@@ -300,8 +300,8 @@ public class FuzzTransactionGenerator {
         );
         // the length of one partition; the tables have fixed-length partitions: DAY, HOUR or a sub-hour size
         final long partitionDuration = partitionDuration(timestampDriver, tableMetadata);
-        // Replace range is widened on both sides to cover up to 2 partitions more
-        final long replaceRangePadding = timestampDriver.fromMicros((long) Math.exp(24));
+        // Replace range is widened on both sides by about a third of a partition, to cover up to 2 partitions more
+        final long replaceRangePadding = timestampDriver.fromMicros((long) (Math.exp(24) * partitionDuration / timestampDriver.fromDays(1)));
 
         long lastTimestamp = minTimestamp;
 
@@ -412,7 +412,7 @@ public class FuzzTransactionGenerator {
                 continue;
             }
             if (i == setTtlIteration) {
-                generateSetTtl(transactionList, metaVersion, waitBarrierVersion++, rnd);
+                generateSetTtl(transactionList, metaVersion, waitBarrierVersion++, rnd, timestampDriver, partitionDuration);
                 continue;
             }
 
@@ -1098,14 +1098,26 @@ public class FuzzTransactionGenerator {
         transactionList.add(transaction);
     }
 
-    private static void generateSetTtl(ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion, Rnd rnd) {
-        int ttlDays = rnd.nextInt(2) + 1;
+    /**
+     * Sets a TTL of 1 or 2 partitions. TTLs have no unit below an hour, so sub-hour partitions round up to whole hours.
+     */
+    private static void generateSetTtl(
+            ObjList<FuzzTransaction> transactionList,
+            int metadataVersion,
+            int waitBarrierVersion,
+            Rnd rnd,
+            TimestampDriver timestampDriver,
+            long partitionDuration
+    ) {
+        final long ttl = (rnd.nextInt(2) + 1) * partitionDuration;
+        final long oneHour = timestampDriver.fromHours(1);
+        final int ttlHours = (int) ((ttl + oneHour - 1) / oneHour);
         FuzzTransaction transaction = new FuzzTransaction();
         transaction.waitBarrierVersion = waitBarrierVersion;
         transaction.structureVersion = metadataVersion;
         transaction.waitAllDone = true;
         transaction.reopenTable = true;
-        transaction.operationList.add(new FuzzSetTtlOperation(ttlDays));
+        transaction.operationList.add(new FuzzSetTtlOperation(ttlHours));
         transactionList.add(transaction);
     }
 
