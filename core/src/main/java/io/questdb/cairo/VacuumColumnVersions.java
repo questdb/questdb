@@ -131,6 +131,9 @@ public class VacuumColumnVersions implements Closeable {
     }
 
     private void purgeColumnVersions(DirectLongList tableFiles, TableReader reader, CairoEngine engine) {
+        // Live columns have indexes from 0 up and rogue columns from -1 down, so no file carries this index. The first
+        // file always starts a column, and purgeTask.of() names the table and column before the task collects any
+        // version.
         int columnIndex = Integer.MIN_VALUE;
         int writerIndex = -1;
         boolean isPostingColumn = false;
