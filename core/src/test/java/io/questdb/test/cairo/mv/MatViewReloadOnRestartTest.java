@@ -1060,6 +1060,11 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
             // The period that ends at 12:00 is complete, and the one that ends at 19:00 is not.
             testClock.micros.set(parseFloorPartialTimestamp("2022-01-02T12:30:00.000000Z"));
             try (final TestServerMain main2 = startMainPortsDisabled(testClock)) {
+                final CairoEngine engine2 = main2.getEngine();
+                // base_table_txn reads the base table's txn tracker, which stays at -1 until CheckWalTransactionsJob
+                // first scans the table. The server runs that job on a worker thread that may not have run yet, so
+                // drainWalQueue() runs the scan on this thread. No WAL transaction is left to apply.
+                drainWalQueue(engine2);
                 assertSql(
                         main2,
                         """
@@ -1072,7 +1077,6 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                         min_v\tmax_v\tts
                         1\t1\t2022-01-02T11:00:00.000000Z
                         """);
-                final CairoEngine engine2 = main2.getEngine();
                 try (var refreshJob = createMatViewRefreshJob(engine2)) {
                     // The server start enqueued an incremental refresh of the view, and the period timer fires for 12:00.
                     final MatViewTimerJob timerJob = new MatViewTimerJob(engine2);
