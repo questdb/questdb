@@ -220,6 +220,14 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
         return true;
     }
 
+    /**
+     * Lets the ASOF lookup of the single SYMBOL join key read the slave's symbol index, see
+     * {@link HorizonJoinTimeFrameHelper#enableIndexedKeyLookup}.
+     */
+    public void enableIndexedKeyLookup(int masterKeyColumnIndex, int slaveKeyColumnIndex, long scanRowBudget) {
+        cursor.slaveTimeFrameHelper.enableIndexedKeyLookup(masterKeyColumnIndex, slaveKeyColumnIndex, scanRowBudget);
+    }
+
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Horizon Join");
@@ -228,6 +236,9 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
         sink.setMetadata(horizonJoinMetadata);
         sink.optAttr("values", cursor.groupByFunctions);
         sink.setMetadata(null);
+        if (cursor.slaveTimeFrameHelper.isIndexedKeyLookup()) {
+            sink.attr("lookup").val("index");
+        }
         sink.child(masterFactory);
         if (slaveFilter != null) {
             sink.attr("slave filter").val(slaveFilter, slaveFactory);
@@ -589,6 +600,26 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
             if (symbolTranslatingRecord != null) {
                 symbolTranslatingRecord.setMemoryTracker(executionContext.getMemoryTracker());
                 symbolTranslatingRecord.initSources(masterCursor, slaveCursor);
+            }
+
+            // The walk looks up the join keys of the master rows alone, so the forward scans may
+            // cache the slave rows of those keys alone, see HorizonJoinTimeFrameHelper#beginKeyTracking.
+            if (symbolTranslatingRecord != null && slaveTimeFrameHelper.isIndexedKeyLookup()) {
+                slaveTimeFrameHelper.beginKeyTracking();
+                final Record masterRecord = masterCursor.getRecord();
+                masterCursor.toTop();
+                long masterRowCount = 0;
+                while (masterCursor.hasNext()) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                    symbolTranslatingRecord.of(masterRecord);
+                    slaveTimeFrameHelper.trackKeyOf(symbolTranslatingRecord);
+                    masterRowCount++;
+                }
+                symbolTranslatingRecord.resetNonExistentKeyFlag();
+                slaveTimeFrameHelper.decideIndexOnlyWalk(masterRowCount * offsets.length, slaveTimeFrameHelper.countSlaveRows());
+                // the iterator discovered a master row already: start it over
+                masterCursor.toTop();
+                horizonIterator.of(masterCursor, recordBMaster, masterTimestampColumnIndex);
             }
 
             // Initialize functions

@@ -48,7 +48,7 @@ import io.questdb.griffin.engine.join.AsOfJoinDenseDualSymbolRecordCursorFactory
 import io.questdb.griffin.engine.join.AsOfJoinDenseRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinDenseSingleSymbolRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinFastRecordCursorFactory;
-import io.questdb.griffin.engine.join.AsOfJoinIndexedRecordCursorFactory;
+import io.questdb.griffin.engine.join.AsOfJoinIndexedMergeRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinMemoizedRecordCursorFactory;
 import io.questdb.griffin.engine.join.FilteredAsOfJoinFastRecordCursorFactory;
@@ -406,7 +406,7 @@ public class SymbolTranslationCacheMemoryTrackerTest extends AbstractCairoTest {
                 assertOpenFailuresFreeChildCursorsOnce(
                         compiler,
                         "SELECT /*+ asof_index(om os) */ om.k1, os.price FROM om ASOF JOIN os ON (k1)",
-                        AsOfJoinIndexedRecordCursorFactory.class,
+                        AsOfJoinIndexedMergeRecordCursorFactory.class,
                         false
                 );
             }

@@ -34,7 +34,7 @@ import io.questdb.griffin.engine.join.AsOfJoinDenseDualSymbolRecordCursorFactory
 import io.questdb.griffin.engine.join.AsOfJoinDenseRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinDenseSingleSymbolRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinFastRecordCursorFactory;
-import io.questdb.griffin.engine.join.AsOfJoinIndexedRecordCursorFactory;
+import io.questdb.griffin.engine.join.AsOfJoinIndexedMergeRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinMemoizedRecordCursorFactory;
 import io.questdb.griffin.engine.join.HashJoinLightRecordCursorFactory;
@@ -376,7 +376,7 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
 
     @Test
     public void testAsOfJoinIndexedOpenFailureReleasesAllocations() throws Exception {
-        // asof_index + single SYMBOL routes to AsOfJoinIndexedRecordCursorFactory, whose of() reopens the
+        // asof_index + single SYMBOL routes to AsOfJoinIndexedMergeRecordCursorFactory, whose of() reopens the
         // tracker-bound symbol key cache; a tiny limit breaches that reopen. The reuse loop checks that every
         // open of the same factory breaches the limit again. It cannot tell whether a failed open closes the
         // child cursors twice, since they tolerate a second close();
@@ -390,7 +390,7 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
             setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 4L);
             assertOpenFailureReleasesAllocations(
                     "SELECT /*+ asof_index(m s) */ m.k FROM m ASOF JOIN s ON k",
-                    AsOfJoinIndexedRecordCursorFactory.class
+                    AsOfJoinIndexedMergeRecordCursorFactory.class
             );
         });
     }
@@ -404,7 +404,7 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
             execute("CREATE TABLE s AS (SELECT x::SYMBOL k, (x * 1_000_000L)::timestamp ts FROM long_sequence(50)), INDEX(k) TIMESTAMP(ts) PARTITION BY DAY");
             drainWalQueue();
             final String sql = "SELECT /*+ asof_index(m s) */ m.k FROM m ASOF JOIN s ON k";
-            assertUsesFactory(sql, AsOfJoinIndexedRecordCursorFactory.class);
+            assertUsesFactory(sql, AsOfJoinIndexedMergeRecordCursorFactory.class);
             try (SqlCompiler compiler = engine.getSqlCompiler();
                  RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
                 for (int i = 0; i < 20; i++) {

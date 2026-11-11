@@ -24,6 +24,8 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.CairoEngine;
+
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ReaderScanProfile;
 import io.questdb.cairo.TableReader;
@@ -358,6 +360,23 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         ) {
             this.delegate = delegate;
             this.selectedTimestampIndex = selectedTimestampIndex;
+        }
+
+        // The delegate reads the projection's page frames, whose column mapping includes the
+        // projection: a column of this cursor is the delegate's column of the same index.
+        @Override
+        public void enableIndexReaders(CairoEngine engine) {
+            delegate.enableIndexReaders(engine);
+        }
+
+        @Override
+        public IndexReader getIndexReaderForCurrentFrame(int columnIndex, int direction) {
+            return delegate.getIndexReaderForCurrentFrame(columnIndex, direction);
+        }
+
+        @Override
+        public long getIndexRowLoForCurrentFrame() {
+            return delegate.getIndexRowLoForCurrentFrame();
         }
 
         @Override

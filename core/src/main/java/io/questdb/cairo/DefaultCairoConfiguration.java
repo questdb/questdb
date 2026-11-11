@@ -1351,6 +1351,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getSqlHorizonJoinIndexScanRows() {
+        return 1_024;
+    }
+
+    @Override
     public long getSqlHorizonJoinBwdScanSwitchFactor() {
         return 8;
     }

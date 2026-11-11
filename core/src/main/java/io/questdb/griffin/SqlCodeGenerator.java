@@ -252,6 +252,8 @@ import io.questdb.griffin.engine.join.AsOfJoinDenseRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinDenseRecordCursorFactoryBase;
 import io.questdb.griffin.engine.join.AsOfJoinDenseSingleSymbolRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinFastRecordCursorFactory;
+import io.questdb.griffin.engine.join.AsOfJoinIndexedDualSymbolRecordCursorFactory;
+import io.questdb.griffin.engine.join.AsOfJoinIndexedMergeRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinIndexedRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinLightNoKeyRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinLightRecordCursorFactory;
@@ -7382,6 +7384,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 );
             }
 
+            final int indexedSlaveKeyColumnIndex = horizonIndexedSlaveKeyColumn(
+                    parentModel,
+                    asOfJoinKeyTypes,
+                    masterSymbolKeyColumnIndices,
+                    slaveSymbolKeyColumnIndices,
+                    slaveFilter,
+                    slaveMetadata
+            );
             if (!supportsParallelism) {
                 // Single-threaded path: verify master factory supports random access (needed to revisit rows in sorted order)
                 if (!masterFactory.recordCursorSupportsRandomAccess()) {
@@ -7416,7 +7426,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // Choose single-threaded factory based on whether there are GROUP BY keys
                 if (keyTypesCopy.getColumnCount() == 0) {
                     isFactoriesTransferred = true;
-                    return new HorizonJoinNotKeyedRecordCursorFactory(
+                    final HorizonJoinNotKeyedRecordCursorFactory notKeyedFactory = new HorizonJoinNotKeyedRecordCursorFactory(
                             configuration,
                             asm,
                             outerProjectionMetadata,
@@ -7437,10 +7447,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             columnSources,
                             columnIndices
                     );
+                    if (indexedSlaveKeyColumnIndex != -1) {
+                        notKeyedFactory.enableIndexedKeyLookup(masterSymbolKeyColumnIndices[0], indexedSlaveKeyColumnIndex, configuration.getSqlHorizonJoinIndexScanRows());
+                    }
+                    return notKeyedFactory;
                 }
 
                 isFactoriesTransferred = true;
-                return new HorizonJoinRecordCursorFactory(
+                final HorizonJoinRecordCursorFactory keyedFactory = new HorizonJoinRecordCursorFactory(
                         configuration,
                         asm,
                         outerProjectionMetadata,
@@ -7465,6 +7479,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         columnSources,
                         columnIndices
                 );
+                if (indexedSlaveKeyColumnIndex != -1) {
+                    keyedFactory.enableIndexedKeyLookup(masterSymbolKeyColumnIndices[0], indexedSlaveKeyColumnIndex, configuration.getSqlHorizonJoinIndexScanRows());
+                }
+                return keyedFactory;
             }
 
             perWorkerFilters = compileWorkerFiltersConditionally(
@@ -7517,7 +7535,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (keyTypesCopy.getColumnCount() == 0) {
                 // Non-keyed GROUP BY: produces a single output row
                 isFactoriesTransferred = true;
-                return new AsyncHorizonJoinNotKeyedRecordCursorFactory(
+                final AsyncHorizonJoinNotKeyedRecordCursorFactory asyncNotKeyedFactory = new AsyncHorizonJoinNotKeyedRecordCursorFactory(
                         configuration,
                         asm,
                         executionContext.getCairoEngine(),
@@ -7541,12 +7559,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         resources,
                         workerCount
                 );
+                if (indexedSlaveKeyColumnIndex != -1) {
+                    asyncNotKeyedFactory.enableIndexedKeyLookup(executionContext.getCairoEngine(), masterSymbolKeyColumnIndices[0], indexedSlaveKeyColumnIndex, configuration.getSqlHorizonJoinIndexScanRows());
+                }
+                return asyncNotKeyedFactory;
             }
 
             // Keyed GROUP BY: create keyCopier for GROUP BY key population
             // Pass keyFunctions to handle expression keys (virtual columns)
             isFactoriesTransferred = true;
-            return new AsyncHorizonJoinRecordCursorFactory(
+            final AsyncHorizonJoinRecordCursorFactory asyncFactory = new AsyncHorizonJoinRecordCursorFactory(
                     configuration,
                     asm,
                     executionContext.getCairoEngine(),
@@ -7574,6 +7596,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     resources,
                     workerCount
             );
+            if (indexedSlaveKeyColumnIndex != -1) {
+                asyncFactory.enableIndexedKeyLookup(executionContext.getCairoEngine(), masterSymbolKeyColumnIndices[0], indexedSlaveKeyColumnIndex, configuration.getSqlHorizonJoinIndexScanRows());
+            }
+            return asyncFactory;
         } catch (Throwable th) {
             Misc.free(innerMetadata, th);
             Misc.freeObjList(groupByFunctions, th);
@@ -7612,6 +7638,74 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
             throw th;
         }
+    }
+
+    // The position of column otherColumn among the columns that the index of keyColumn covers, both
+    // columns of the factory's metadata, read from the table's reader; -1 when the index does not
+    // cover it, or when the factory is not the table's, under projections only.
+    private static int coveringIncludeIndex(
+            SqlExecutionContext executionContext,
+            RecordCursorFactory factory,
+            RecordMetadata metadata,
+            int keyColumn,
+            int otherColumn
+    ) {
+        // through projections to the table's own factory, following the columns by position
+        while (factory.getTableToken() == null) {
+            if (!(factory instanceof SelectedRecordCursorFactory selected)) {
+                return -1;
+            }
+            keyColumn = selected.getColumnCrossIndex().getQuick(keyColumn);
+            otherColumn = selected.getColumnCrossIndex().getQuick(otherColumn);
+            factory = selected.getBaseFactory();
+            metadata = factory.getMetadata();
+        }
+        final TableToken tableToken = factory.getTableToken();
+        try (TableReader reader = executionContext.getReader(tableToken)) {
+            final TableReaderMetadata readerMetadata = reader.getMetadata();
+            final int readerKeyColumn = readerMetadata.getColumnIndexQuiet(metadata.getColumnName(keyColumn));
+            final int readerOtherColumn = readerMetadata.getColumnIndexQuiet(metadata.getColumnName(otherColumn));
+            if (readerKeyColumn < 0 || readerOtherColumn < 0) {
+                return -1;
+            }
+            final IntList coveringColumns = readerMetadata.getColumnMetadata(readerKeyColumn).getCoveringColumnIndices();
+            if (coveringColumns == null) {
+                return -1;
+            }
+            final int otherWriterIndex = readerMetadata.getWriterIndex(readerOtherColumn);
+            for (int c = 0, n = coveringColumns.size(); c < n; c++) {
+                if (coveringColumns.getQuick(c) == otherWriterIndex) {
+                    return c;
+                }
+            }
+            return -1;
+        } catch (CairoException e) {
+            return -1;
+        }
+    }
+
+    // The slave column of the single SYMBOL join key of a HORIZON JOIN whose ASOF lookup can read the
+    // slave's symbol index (HorizonJoinTimeFrameHelper#enableIndexedKeyLookup), or -1. The no_index
+    // hint keeps the scan.
+    private int horizonIndexedSlaveKeyColumn(
+            IQueryModel model,
+            @Nullable ColumnTypes asOfJoinKeyTypes,
+            int @Nullable [] masterSymbolKeyColumnIndices,
+            int @Nullable [] slaveSymbolKeyColumnIndices,
+            @Nullable Function slaveFilter,
+            RecordMetadata slaveMetadata
+    ) {
+        if (asOfJoinKeyTypes == null
+                || asOfJoinKeyTypes.getColumnCount() != 1
+                || masterSymbolKeyColumnIndices == null
+                || masterSymbolKeyColumnIndices.length != 1
+                || slaveFilter != null
+                || configuration.getSqlHorizonJoinIndexScanRows() < 0
+                || SqlHints.hasNoIndexHint(model)) {
+            return -1;
+        }
+        final int slaveColumnIndex = slaveSymbolKeyColumnIndices[0];
+        return slaveMetadata.isColumnIndexed(slaveColumnIndex) ? slaveColumnIndex : -1;
     }
 
     private RecordCursorFactory generateHorizonJoinProjection(
@@ -7766,7 +7860,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             SqlExecutionContext executionContext
     ) throws SqlException {
         final boolean hasParallelHint = SqlHints.hasAsOfParallelHint(model, masterAlias, slaveAlias);
-        if (!hasParallelHint && (SqlHints.hasAsOfDenseHint(model, masterAlias, slaveAlias)
+        // asof_index on one symbol key: the parallel way in its index mode when the slave key is
+        // indexed, which is known once a slave filter is stolen, see below
+        final boolean isIndexHint = SqlHints.hasAsOfIndexHint(model, masterAlias, slaveAlias)
+                && isSingleSymbolJoin(symbolShortCircuit, listColumnFilterA);
+        if (!hasParallelHint && !isIndexHint && (SqlHints.hasAsOfDenseHint(model, masterAlias, slaveAlias)
                 || SqlHints.hasAsOfFastHint(model, masterAlias, slaveAlias)
                 || SqlHints.hasAsOfIndexHint(model, masterAlias, slaveAlias)
                 || SqlHints.hasAsOfMemoizedHint(model, masterAlias, slaveAlias)
@@ -7838,10 +7936,24 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
         final boolean isSlaveSteal = slaveFilterFactory != null;
+        // the key column of the rows the join reads: the stolen filter's base, else the slave's
+        final boolean isIndexMode = isIndexHint && (isSlaveSteal
+                ? slaveFilterFactory.getBaseFactory().getMetadata().isColumnIndexed(slaveFilterKeyIndex)
+                : slaveMetadata.isColumnIndexed(slaveKeyIndex));
+        if (isIndexHint && !isIndexMode) {
+            // asof_index over a key without an index: the serial plan, as before
+            return null;
+        }
 
         final String selectReason;
         if (hasParallelHint) {
             selectReason = "hint";
+        } else if (isIndexMode) {
+            if (executionContext.getSharedQueryWorkerCount() < 2) {
+                // one worker: the serial index merge reads the same rows on the query's thread
+                return null;
+            }
+            selectReason = "index hint";
         } else {
             if (executionContext.getSharedQueryWorkerCount() < 2) {
                 // one worker: the per-frame span setup and prevailing lookups are not repaid
@@ -7924,6 +8036,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     workerCount,
                     isVirtualKey ? selectReason + ", virtual key" : selectReason
             );
+            if (isIndexMode) {
+                factory.enableIndexMode(executionContext.getCairoEngine());
+            }
         } catch (Throwable th) {
             // the caller frees symbolShortCircuit, as on any other throw
             Misc.freeObjList(perWorkerMasterFilters, th);
@@ -8388,7 +8503,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
                             boolean hasIndexHint = SqlHints.hasAsOfIndexHint(model, masterAlias, slaveAlias);
                             if (hasIndexHint && slaveMetadata.isColumnIndexed(slaveSymbolColumnIndex)) {
-                                return new AsOfJoinIndexedRecordCursorFactory(
+                                // per key, a forward cursor over its index rows: the join reads the rows of
+                                // the master's keys alone, never the right-hand timeline
+                                return new AsOfJoinIndexedMergeRecordCursorFactory(
                                         configuration,
                                         joinMetadata,
                                         master,
@@ -8397,8 +8514,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         slaveSymbolColumnIndex,
                                         symbolJoinKeyMapping,
                                         slaveContext,
-                                        toleranceInterval,
-                                        null
+                                        toleranceInterval
                                 );
                             }
                             boolean hasMemoizedHint = SqlHints.hasAsOfMemoizedHint(model, masterAlias, slaveAlias);
@@ -8483,6 +8599,31 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     joinColumnSplit,
                                     slaveSymbolColumnIndex,
                                     (SymbolJoinKeyMapping) symbolShortCircuit,
+                                    slaveContext,
+                                    toleranceInterval
+                            );
+                        } else if (isDualSymbolJoin(symbolShortCircuit, listColumnFilterA)
+                                && SqlHints.hasAsOfIndexHint(model, masterAlias, slaveAlias)
+                                && (slaveMetadata.isColumnIndexed(listColumnFilterA.getColumnIndexFactored(0))
+                                || slaveMetadata.isColumnIndexed(listColumnFilterA.getColumnIndexFactored(1)))) {
+                            // Two symbol keys, one of them indexed: walk its index rows back to the other key.
+                            final SymbolJoinKeyMapping[] mappings = ((ChainedSymbolShortCircuit) symbolShortCircuit).mappings();
+                            final int indexed = slaveMetadata.isColumnIndexed(listColumnFilterA.getColumnIndexFactored(0)) ? 0 : 1;
+                            final int slaveIndexedColumn = listColumnFilterA.getColumnIndexFactored(indexed);
+                            final int slaveOtherColumn = listColumnFilterA.getColumnIndexFactored(1 - indexed);
+                            // the other key's position among the columns the index covers, if it does
+                            final int otherIncludeIndex = coveringIncludeIndex(executionContext, slave, slaveMetadata, slaveIndexedColumn, slaveOtherColumn);
+                            return new AsOfJoinIndexedDualSymbolRecordCursorFactory(
+                                    configuration,
+                                    joinMetadata,
+                                    master,
+                                    slave,
+                                    joinColumnSplit,
+                                    slaveIndexedColumn,
+                                    slaveOtherColumn,
+                                    mappings[indexed],
+                                    mappings[1 - indexed],
+                                    otherIncludeIndex,
                                     slaveContext,
                                     toleranceInterval
                             );
