@@ -24,8 +24,10 @@
 
 package io.questdb.test.tools;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.griffin.SqlException;
@@ -35,12 +37,15 @@ import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
 import io.questdb.griffin.engine.table.PushdownFilterExtractor;
 import io.questdb.griffin.engine.table.parquet.ParquetEncoding;
 import io.questdb.griffin.engine.table.parquet.ParquetFileDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetMetadataWriter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import org.junit.Assert;
 
@@ -76,6 +81,53 @@ public final class ParquetTestUtils {
                 }
             }
         }));
+    }
+
+    /**
+     * Asserts the maximum definition level of a column of the file: 0 for a REQUIRED column, which holds no NULL, and 1
+     * for an OPTIONAL one. {@link ParquetMetadataWriter#generate} parses the footer of the file, independent of the
+     * writer that wrote it, into a {@code _pm} file next to it, which the assertion reads and removes.
+     */
+    public static void assertColumnMaxDefLevel(String parquetFilePath, FilesFacade ff, int columnIndex, int expectedMaxDefLevel) {
+        final ParquetMetaFileReader reader = new ParquetMetaFileReader();
+        try (Path parquetPath = new Path(); Path metaPath = new Path()) {
+            parquetPath.of(parquetFilePath).$();
+            metaPath.of(parquetFilePath).put("_pm").$();
+            final long parquetFileSize;
+            final long parquetFd = TableUtils.openRO(ff, parquetPath.$(), LOG);
+            try {
+                parquetFileSize = ff.length(parquetFd);
+                final long metaFd = ff.openRW(metaPath.$(), CairoConfiguration.O_NONE);
+                Assert.assertTrue("could not create " + metaPath, metaFd > -1);
+                try {
+                    ParquetMetadataWriter.generate(
+                            Unsafe.getNativeAllocator(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER),
+                            Files.toOsFd(parquetFd),
+                            parquetFileSize,
+                            Files.toOsFd(metaFd)
+                    );
+                } finally {
+                    ff.close(metaFd);
+                }
+            } finally {
+                ff.close(parquetFd);
+            }
+            final long address = ParquetMetaFileReader.openAndMapRO(ff, metaPath.$(), reader);
+            Assert.assertNotEquals("could not map " + metaPath, 0, address);
+            final long mapSize = reader.getFileSize();
+            try {
+                Assert.assertTrue("the footer must resolve", reader.resolveFooter(parquetFileSize));
+                Assert.assertEquals(
+                        "max definition level of column " + columnIndex,
+                        expectedMaxDefLevel,
+                        reader.getColumnMaxDefLevel(columnIndex)
+                );
+            } finally {
+                reader.clear();
+                ff.munmap(address, mapSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+                ff.removeQuiet(metaPath.$());
+            }
+        }
     }
 
     /**
@@ -116,17 +168,30 @@ public final class ParquetTestUtils {
      * cannot show their settings.
      */
     public static void assertColumnsUseParquetSettingPerType(String parquetFilePath, FilesFacade ff) {
+        assertColumnsUseParquetSettingPerType(parquetFilePath, ff, true);
+    }
+
+    /**
+     * Same as {@link #assertColumnsUseParquetSettingPerType(String, FilesFacade)}, for a file that holds the columns
+     * without bin when {@code hasBinColumn} is false, so that each column after bin sits one position lower.
+     */
+    public static void assertColumnsUseParquetSettingPerType(String parquetFilePath, FilesFacade ff, boolean hasBinColumn) {
+        final int shift = hasBinColumn ? 0 : 1;
         // b, sh, ch, l, dt, t, ip, g1, g2, g4 and g8 default to PLAIN
         assertColumnsUseEncoding(parquetFilePath, ff, ParquetEncoding.ENCODING_DELTA_BINARY_PACKED, 0, 1, 2, 4, 5, 6, 12, 13, 14, 15, 16);
         // i, tn, f, d, u, l256, the six decimals and bfe default to PLAIN, s and vc to DELTA_LENGTH_BYTE_ARRAY
-        assertColumnsUseEncoding(parquetFilePath, ff, ParquetEncoding.ENCODING_RLE_DICTIONARY, 3, 7, 8, 9, 10, 11, 17, 18, 19, 20, 21, 22, 23, 24, 30);
-        // bin and the designated timestamp ts default to DELTA_LENGTH_BYTE_ARRAY and DELTA_BINARY_PACKED
-        assertColumnsUseEncoding(parquetFilePath, ff, ParquetEncoding.ENCODING_PLAIN, 25, 31);
-        assertColumnsDoNotUseEncoding(parquetFilePath, ff, ParquetEncoding.ENCODING_DELTA_LENGTH_BYTE_ARRAY, 25);
-        assertColumnsDoNotUseEncoding(parquetFilePath, ff, ParquetEncoding.ENCODING_DELTA_BINARY_PACKED, 31);
+        assertColumnsUseEncoding(parquetFilePath, ff, ParquetEncoding.ENCODING_RLE_DICTIONARY, 3, 7, 8, 9, 10, 11, 17, 18, 19, 20, 21, 22, 23, 24, 30 - shift);
+        // the designated timestamp ts defaults to DELTA_BINARY_PACKED
+        assertColumnsUseEncoding(parquetFilePath, ff, ParquetEncoding.ENCODING_PLAIN, 31 - shift);
+        assertColumnsDoNotUseEncoding(parquetFilePath, ff, ParquetEncoding.ENCODING_DELTA_BINARY_PACKED, 31 - shift);
+        if (hasBinColumn) {
+            // bin defaults to DELTA_LENGTH_BYTE_ARRAY
+            assertColumnsUseEncoding(parquetFilePath, ff, ParquetEncoding.ENCODING_PLAIN, 25);
+            assertColumnsDoNotUseEncoding(parquetFilePath, ff, ParquetEncoding.ENCODING_DELTA_LENGTH_BYTE_ARRAY, 25);
+        }
         // bf names no encoding, so it keeps the INT default, PLAIN
-        assertColumnsDoNotUseEncoding(parquetFilePath, ff, ParquetEncoding.ENCODING_RLE_DICTIONARY, 29);
-        assertColumnsDoNotUseEncoding(parquetFilePath, ff, ParquetEncoding.ENCODING_DELTA_BINARY_PACKED, 29);
+        assertColumnsDoNotUseEncoding(parquetFilePath, ff, ParquetEncoding.ENCODING_RLE_DICTIONARY, 29 - shift);
+        assertColumnsDoNotUseEncoding(parquetFilePath, ff, ParquetEncoding.ENCODING_DELTA_BINARY_PACKED, 29 - shift);
     }
 
     /**

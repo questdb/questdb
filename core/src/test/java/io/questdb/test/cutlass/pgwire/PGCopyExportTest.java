@@ -64,6 +64,32 @@ public class PGCopyExportTest extends BasePGTest {
             2\t8\t2024-01-03T08:00:00.000000Z
             0\t9\t2024-01-03T16:00:00.000000Z
             """;
+    // the copy_export_log rows of an export that streams its rows
+    private static final String STREAMING_EXPORT_LOG = """
+            phase\tstatus
+            wait_to_run\tstarted
+            wait_to_run\tfinished
+            stream_sending_data\tstarted
+            stream_sending_data\tfinished
+            move_files\tstarted
+            move_files\tfinished
+            success\tfinished
+            """;
+    // the copy_export_log rows of an export that materializes its rows through a temp table
+    private static final String TEMP_TABLE_EXPORT_LOG = """
+            phase\tstatus
+            wait_to_run\tstarted
+            wait_to_run\tfinished
+            populating_data_to_temp_table\tstarted
+            populating_data_to_temp_table\tfinished
+            converting_partitions\tstarted
+            converting_partitions\tfinished
+            move_files\tstarted
+            move_files\tfinished
+            dropping_temp_table\tstarted
+            dropping_temp_table\tfinished
+            success\tfinished
+            """;
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
@@ -88,6 +114,25 @@ public class PGCopyExportTest extends BasePGTest {
                 ff.rmdir(path);
             }
         }
+    }
+
+    @Test
+    public void testPreparedCopyOfDescendingRetypedScanMarksNoAscendingTimestamp() throws Exception {
+        // Each execution of the prepared COPY streams the descending scan of a retyped column of a Parquet partition
+        // through the cursor exporter, which marks the rows descending, so read_parquet() designates no timestamp.
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            createParquetSettingsTable();
+            final String parquetPath = exportRoot + File.separator + "pgd.parquet";
+            try (PreparedStatement statement = connection.prepareStatement("COPY (SELECT * FROM pe ORDER BY ts DESC) TO 'pgd' WITH FORMAT PARQUET")) {
+                final String firstId = executeCopy(statement);
+                assertExportPhases(firstId, STREAMING_EXPORT_LOG);
+                assertDescendingRowsExported(parquetPath);
+                final String secondId = executeCopy(statement);
+                Assert.assertNotEquals(firstId, secondId);
+                assertExportPhases(secondId, STREAMING_EXPORT_LOG);
+                assertDescendingRowsExported(parquetPath);
+            }
+        });
     }
 
     @Test
@@ -165,12 +210,13 @@ public class PGCopyExportTest extends BasePGTest {
 
     @Test
     public void testPreparedCopySelectFollowsParquetSettingOnEveryExecution() throws Exception {
-        // The view reads a retyped column of a Parquet partition, so its export goes through a temp table, which
-        // takes the PARQUET(...) setting of metric that holds at each execution.
+        // The view reads a retyped column of a Parquet partition, and its export streams the rows of the select that
+        // each execution compiles, with the PARQUET(...) setting of metric that holds then.
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> assertPreparedCopyFollowsParquetSetting(
                 connection,
                 "COPY (SELECT * FROM pe_v) TO 'pg' WITH FORMAT PARQUET",
-                "pg"
+                "pg",
+                STREAMING_EXPORT_LOG
         ));
     }
 
@@ -212,7 +258,8 @@ public class PGCopyExportTest extends BasePGTest {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> assertPreparedCopyFollowsParquetSetting(
                 connection,
                 "COPY pe TO 'pgm' WITH FORMAT PARQUET PARTITION_BY MONTH",
-                "pgm"
+                "pgm",
+                TEMP_TABLE_EXPORT_LOG
         ));
     }
 
@@ -256,6 +303,32 @@ public class PGCopyExportTest extends BasePGTest {
         return new File(path).length();
     }
 
+    // the rows of pe in descending order of ts, without a designated timestamp
+    private void assertDescendingRowsExported(String parquetPath) throws Exception {
+        assertQuery("SELECT * FROM read_parquet('" + parquetPath + "')")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        metric\tc\tts
+                        0\t9\t2024-01-03T16:00:00.000000Z
+                        2\t8\t2024-01-03T08:00:00.000000Z
+                        1\t7\t2024-01-03T00:00:00.000000Z
+                        0\t6\t2024-01-02T16:00:00.000000Z
+                        2\t5\t2024-01-02T08:00:00.000000Z
+                        1\t4\t2024-01-02T00:00:00.000000Z
+                        0\t3\t2024-01-01T16:00:00.000000Z
+                        2\t2\t2024-01-01T08:00:00.000000Z
+                        1\t1\t2024-01-01T00:00:00.000000Z
+                        """);
+    }
+
+    // Asserts the phases and statuses that the export logged, in their order.
+    private void assertExportPhases(String exportId, String expectedPhases) throws Exception {
+        assertQuery("SELECT phase, status FROM \"" + configuration.getSystemTableNamePrefix() + "copy_export_log\" WHERE id = '" + exportId + "'")
+                .noLeakCheck()
+                .returns(expectedPhases);
+    }
+
     // the GROUP BY of ps exports its 100_000 symbols, one row each
     private void assertGroupByRowsExported(String parquetPath) throws Exception {
         assertQuery("SELECT count() n, count_distinct(sym) symbols, sum(c) total, min(sym) mn FROM read_parquet('" + parquetPath + "')")
@@ -273,18 +346,20 @@ public class PGCopyExportTest extends BasePGTest {
                 .returns(expectedRows);
     }
 
-    private void assertPreparedCopyFollowsParquetSetting(Connection connection, String copySql, String fileName) throws Exception {
+    private void assertPreparedCopyFollowsParquetSetting(Connection connection, String copySql, String fileName, String expectedPhases) throws Exception {
         createParquetSettingsTable();
         final String parquetPath = exportRoot + File.separator + fileName + ".parquet";
         final FilesFacade ff = configuration.getFilesFacade();
         try (PreparedStatement statement = connection.prepareStatement(copySql)) {
             final String firstId = executeCopy(statement);
+            assertExportPhases(firstId, expectedPhases);
             assertParquetRows(parquetPath, PE_ROWS);
             ParquetTestUtils.assertColumnsUseDictionaryEncoding(parquetPath, ff, 0);
 
             alterMetricParquetSetting("DELTA_BINARY_PACKED");
             final String secondId = executeCopy(statement);
             Assert.assertNotEquals(firstId, secondId);
+            assertExportPhases(secondId, expectedPhases);
             assertParquetRows(parquetPath, PE_ROWS);
             ParquetTestUtils.assertColumnsUseEncoding(parquetPath, ff, ParquetEncoding.ENCODING_DELTA_BINARY_PACKED, 0);
             ParquetTestUtils.assertColumnsDoNotUseDictionaryEncoding(parquetPath, ff, 0);
@@ -292,6 +367,7 @@ public class PGCopyExportTest extends BasePGTest {
             alterMetricParquetSetting("default");
             final String thirdId = executeCopy(statement);
             Assert.assertNotEquals(secondId, thirdId);
+            assertExportPhases(thirdId, expectedPhases);
             assertParquetRows(parquetPath, PE_ROWS);
             // metric has no setting now, so it takes the INT default, PLAIN
             ParquetTestUtils.assertColumnsUseEncoding(parquetPath, ff, ParquetEncoding.ENCODING_PLAIN, 0);

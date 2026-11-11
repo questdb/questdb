@@ -392,6 +392,16 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
         return filter != null;
     }
 
+    @Override
+    public boolean hasTableScanTimestamp() {
+        // The single-row factory serves LATEST ON and reports a forward scan whichever direction it reads in. The
+        // frames arrive in the order getScanDirection() reports, and the rows follow it when the row cursor walks each
+        // frame the same way.
+        return !singleRowFactory
+                && isTimestampTableDesignated()
+                && rowCursorFactory.isForwardScan() == (partitionFrameCursorFactory.getOrder() == ORDER_ASC);
+    }
+
     /**
      * Reports, without opening anything, whether
      * {@link #getCursorInTimestampRangeBackward(SqlExecutionContext, long, long)} would

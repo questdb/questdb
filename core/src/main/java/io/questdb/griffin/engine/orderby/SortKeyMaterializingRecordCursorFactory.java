@@ -81,6 +81,15 @@ public class SortKeyMaterializingRecordCursorFactory extends AbstractRecordCurso
         return base.getScanDirection();
     }
 
+    // The metadata is the one of the sort above, which may mark another column as the timestamp than the base does.
+    @Override
+    public boolean hasTableScanTimestamp() {
+        final int timestampIndex = getMetadata().getTimestampIndex();
+        return timestampIndex > -1
+                && timestampIndex == base.getMetadata().getTimestampIndex()
+                && base.hasTableScanTimestamp();
+    }
+
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;

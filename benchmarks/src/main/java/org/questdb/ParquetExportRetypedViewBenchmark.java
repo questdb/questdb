@@ -82,7 +82,10 @@ import java.util.stream.Stream;
  * Parquet export of a view over a table that has Parquet partitions and a column whose type
  * changed by ALTER COLUMN TYPE.
  * <p>
- * {@code source=RETYPED} exports the view over such a table. Its export goes through a temp
+ * {@code source=RETYPED} exports the view over such a table. A plan that reads the table's
+ * designated timestamp through a scan, a filter or a projection streams the rows its cursor
+ * returns to the encoder (CURSOR_BASED), which reads every value through the row accessors that
+ * convert the retyped column. Any other plan, here LATEST_ON and WINDOW, goes through a temp
  * table: the export copies every exported row into a native temp table, then encodes that.
  * {@code source=TWIN} exports the same view over a table that holds the same rows and partition
  * formats but was created with the final column type. Its export takes the path the export of
@@ -104,7 +107,9 @@ import java.util.stream.Stream;
  *   <li>INDEXED_SYMBOL_FILTER - the query filters the view on an indexed SYMBOL, whose scan
  *   supports no page frames;</li>
  *   <li>SINGLE_ROW - the query reads the first row of the first native partition;</li>
- *   <li>EMPTY_RESULT - the query reads a native partition and returns no row.</li>
+ *   <li>EMPTY_RESULT - the query reads a native partition and returns no row;</li>
+ *   <li>WINDOW - the query numbers every row of the view with a window function, whose plan
+ *   supports no page frames.</li>
  * </ul>
  * Endpoints: {@code COPY (...) TO ... WITH FORMAT PARQUET}, run by the benchmark thread, and
  * HTTP {@code /exp?fmt=parquet} against a server on the same data.
@@ -129,7 +134,7 @@ public class ParquetExportRetypedViewBenchmark {
     private static final String TABLE = "trades";
     @Param({"COPY", "HTTP"})
     public String endpoint;
-    // The temp table adds a fixed cost per export besides its per-row cost, so small exports slow down the most.
+    // Small exports show the fixed cost of a temp table, large ones the per-row cost of each path.
     @Param({"10000", "1000000"})
     public long rowsPerDay;
     @Param({
@@ -139,7 +144,8 @@ public class ParquetExportRetypedViewBenchmark {
             "LATEST_ON",
             "INDEXED_SYMBOL_FILTER",
             "SINGLE_ROW",
-            "EMPTY_RESULT"
+            "EMPTY_RESULT",
+            "WINDOW"
     })
     public String shape;
     @Param({"RETYPED", "TWIN"})
@@ -288,10 +294,13 @@ public class ParquetExportRetypedViewBenchmark {
 
     private ParquetExportMode expectedExportMode() {
         if ("RETYPED".equals(source)) {
-            return ParquetExportMode.TEMP_TABLE;
+            return switch (shape) {
+                case "LATEST_ON", "WINDOW" -> ParquetExportMode.TEMP_TABLE;
+                default -> ParquetExportMode.CURSOR_BASED;
+            };
         }
         return switch (shape) {
-            case "LATEST_ON", "INDEXED_SYMBOL_FILTER" -> ParquetExportMode.CURSOR_BASED;
+            case "LATEST_ON", "INDEXED_SYMBOL_FILTER", "WINDOW" -> ParquetExportMode.CURSOR_BASED;
             default -> ParquetExportMode.DIRECT_PAGE_FRAME;
         };
     }
@@ -305,6 +314,7 @@ public class ParquetExportRetypedViewBenchmark {
             case "INDEXED_SYMBOL_FILTER" -> "SELECT * FROM v WHERE sym = 'AAPL'";
             case "SINGLE_ROW" -> "SELECT * FROM v WHERE ts IN '2024-01-03T00:00:00.000000Z'";
             case "EMPTY_RESULT" -> "SELECT * FROM v WHERE ts IN '2024-01-03T00:00:00.000001Z'";
+            case "WINDOW" -> "SELECT *, row_number() OVER () rn FROM v";
             default -> throw new IllegalArgumentException("unknown shape: " + shape);
         };
     }

@@ -98,21 +98,36 @@ public class StaleViewCheckFactoryTest extends AbstractCairoTest {
             drainWalQueue();
             execute("CREATE VIEW v_converted AS (SELECT * FROM pt)");
             execute("CREATE VIEW v_plain AS (SELECT * FROM pn)");
+            execute("CREATE VIEW v_latest AS (SELECT * FROM pt LATEST ON ts PARTITION BY c)");
             drainWalAndViewQueues();
 
+            // The scan of a retyped column streams its rows, never its raw page frames.
             try (RecordCursorFactory factory = select("SELECT * FROM v_converted")) {
                 assertWrapsViewPlan(factory);
                 Assert.assertTrue(factory.hasParquetConvertedColumns(sqlExecutionContext));
+                Assert.assertTrue(factory.hasTableScanTimestamp());
                 Assert.assertEquals(
-                        ParquetExportMode.TEMP_TABLE,
+                        ParquetExportMode.CURSOR_BASED,
                         ParquetExportMode.determineExportMode(factory, false, sqlExecutionContext)
                 );
             }
             try (RecordCursorFactory factory = select("SELECT * FROM v_plain")) {
                 assertWrapsViewPlan(factory);
                 Assert.assertFalse(factory.hasParquetConvertedColumns(sqlExecutionContext));
+                Assert.assertTrue(factory.hasTableScanTimestamp());
                 Assert.assertEquals(
                         ParquetExportMode.DIRECT_PAGE_FRAME,
+                        ParquetExportMode.determineExportMode(factory, false, sqlExecutionContext)
+                );
+            }
+            // LATEST ON does not keep its rows in the order of a table scan, so its export of a retyped column goes
+            // through a temp table.
+            try (RecordCursorFactory factory = select("SELECT * FROM v_latest")) {
+                assertWrapsViewPlan(factory);
+                Assert.assertTrue(factory.hasParquetConvertedColumns(sqlExecutionContext));
+                Assert.assertFalse(factory.hasTableScanTimestamp());
+                Assert.assertEquals(
+                        ParquetExportMode.TEMP_TABLE,
                         ParquetExportMode.determineExportMode(factory, false, sqlExecutionContext)
                 );
             }

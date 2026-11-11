@@ -135,6 +135,12 @@ public class StaleViewCheckFactory implements RecordCursorFactory {
     }
 
     @Override
+    public boolean hasTableScanTimestamp() {
+        // Must delegate to the immediate base, see hasParquetConvertedColumns().
+        return base.hasTableScanTimestamp();
+    }
+
+    @Override
     public boolean implementsLimit() {
         return base.implementsLimit();
     }

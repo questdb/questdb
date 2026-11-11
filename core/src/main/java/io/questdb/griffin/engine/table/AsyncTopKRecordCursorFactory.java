@@ -172,6 +172,12 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
         return base.getTableToken();
     }
 
+    // The metadata and the sort keys refer to the columns of the page frame base it reads, as the base's own do.
+    @Override
+    public boolean hasTableScanTimestamp() {
+        return SortedRecordCursorFactory.hasTableScanTimestamp(getMetadata(), orderByFilter, base);
+    }
+
     @Override
     public boolean implementsLimit() {
         return true;

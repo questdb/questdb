@@ -565,6 +565,9 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
             } else {
                 streamBuffers.setUp(factory.getMetadata(), cursor);
             }
+            // The writer marks the designated timestamp in the order of the plan it streams, which a recompile can
+            // change since COPY queued the export.
+            task.setDescending(factory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD);
             exporter.setUp(streamBuffers.getAdjustedMetadata());
         }
 
@@ -740,9 +743,9 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
      * Compiles the task's select text again on this worker's context, which holds the security context, the bind
      * values and the clock of the COPY that queued the export, and hands the new factory to the task. This method
      * takes the stale factory, whose cursors the caller closed, off the task before it frees that factory, so that the
-     * task never frees it twice. It decides the mode of the new plan as
-     * {@link io.questdb.griffin.engine.ops.CopyExportFactory} decides it when it queues the export, and frees a plan
-     * that needs a temp table at once, since the temp table's CREATE TABLE AS SELECT compiles the select once more.
+     * task never frees it twice. It decides the mode of the new plan by its own scan direction, see
+     * {@link ParquetExportMode#determineRecompiledExportMode}, and frees a plan that needs a temp table at once, since
+     * the temp table's CREATE TABLE AS SELECT compiles the select once more.
      */
     private ParquetExportMode recompileSelect() throws SqlException {
         final RecordCursorFactory staleFactory = task.getSelectFactory();
@@ -754,7 +757,7 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
             assert compiledQuery.getType() == CompiledQuery.SELECT;
             task.setSelectFactory(compiledQuery.getRecordCursorFactory());
         }
-        final ParquetExportMode mode = ParquetExportMode.determineExportMode(task.getSelectFactory(), false, sqlExecutionContext);
+        final ParquetExportMode mode = ParquetExportMode.determineRecompiledExportMode(task.getSelectFactory(), sqlExecutionContext);
         if (mode == ParquetExportMode.TEMP_TABLE) {
             final RecordCursorFactory factory = task.getSelectFactory();
             task.setSelectFactory(null);

@@ -140,6 +140,13 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
         return SCAN_DIRECTION_OTHER;
     }
 
+    // The per-key index cursors walk forward, so the heap cursor merges the rows of an ascending frame in row id
+    // order, the one case getScanDirection() reports a forward scan for.
+    @Override
+    public boolean hasTableScanTimestamp() {
+        return isTimestampTableDesignated();
+    }
+
     public void recalculateIncludedValues(PageFrameCursor pageFrameCursor) {
         cursorFactoriesIdx[0] = 0;
         excludedKeys.clear();

@@ -96,6 +96,24 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
         return SortedRecordCursorFactory.toOrder(sortColumnFilter.get(0));
     }
 
+    /**
+     * Answers {@link RecordCursorFactory#hasTableScanTimestamp()} for a sort: the sort orders its rows by its first key
+     * itself, in the direction it reports, so its timestamp holds a table's designated timestamp when the first key is
+     * that timestamp, the base's timestamp, and the base answers true.
+     *
+     * @param metadata         the sort's metadata
+     * @param sortColumnFilter the sort keys, the first one first
+     * @param base             the factory whose rows the sort orders
+     * @return true when the sort's timestamp is a table's designated timestamp, in the order the sort reports
+     */
+    public static boolean hasTableScanTimestamp(RecordMetadata metadata, ListColumnFilter sortColumnFilter, RecordCursorFactory base) {
+        final int timestampIndex = metadata.getTimestampIndex();
+        return timestampIndex > -1
+                && sortColumnFilter.getColumnIndexFactored(0) == timestampIndex
+                && timestampIndex == base.getMetadata().getTimestampIndex()
+                && base.hasTableScanTimestamp();
+    }
+
     @Override
     public RecordCursorFactory getBaseFactory() {
         return base;
@@ -127,6 +145,11 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public int getScanDirection() {
         return getScanDirection(sortColumnFilter);
+    }
+
+    @Override
+    public boolean hasTableScanTimestamp() {
+        return hasTableScanTimestamp(getMetadata(), sortColumnFilter, base);
     }
 
     @Override

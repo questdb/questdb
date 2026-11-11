@@ -39,6 +39,7 @@ import io.questdb.cairo.TableWriterMetrics;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.parquet.CopyExportRequestJob;
 import io.questdb.cutlass.parquet.ParquetExportMode;
 import io.questdb.cutlass.text.CopyExportContext;
@@ -53,6 +54,7 @@ import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
+import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongHashSet;
@@ -113,6 +115,36 @@ public class CopyExportTest extends AbstractCairoTest {
             (20, 7, 2000, '2024-01-03T00:00:00.000000Z'),
             (40, 8, 4000, '2024-01-03T08:00:00.000000Z'),
             (NULL, 9, NULL, '2024-01-03T16:00:00.000000Z')
+            """;
+    // the copy_export_log rows of a streaming export whose select, compiled again on the worker, needs a temp table
+    private static final String REROUTED_EXPORT_LOG = """
+            phase\tstatus
+            wait_to_run\tstarted
+            wait_to_run\tfinished
+            stream_sending_data\tstarted
+            populating_data_to_temp_table\tstarted
+            populating_data_to_temp_table\tfinished
+            converting_partitions\tstarted
+            converting_partitions\tfinished
+            move_files\tstarted
+            move_files\tfinished
+            dropping_temp_table\tstarted
+            dropping_temp_table\tfinished
+            success\tfinished
+            """;
+    // the rows of r and nr, which createRetypedTables() creates: two symbols alternate inside each of three days, and
+    // other_ts holds NULL in two rows
+    private static final String RETYPED_TABLE_ROWS = """
+            ('a', 'p', 1, '2023-06-05T00:00:00.000000Z', '2024-01-01T00:00:00.000000Z'),
+            ('b', 'q', 2, NULL, '2024-01-01T01:00:00.000000Z'),
+            ('a', 'q', 3, '2023-06-03T00:00:00.000000Z', '2024-01-01T02:00:00.000000Z'),
+            ('b', 'p', 4, '2023-06-02T00:00:00.000000Z', '2024-01-01T03:00:00.000000Z'),
+            ('a', 'p', 5, '2023-06-09T00:00:00.000000Z', '2024-01-02T00:00:00.000000Z'),
+            ('b', 'q', 6, NULL, '2024-01-02T01:00:00.000000Z'),
+            ('a', 'q', 7, '2023-06-07T00:00:00.000000Z', '2024-01-02T02:00:00.000000Z'),
+            ('b', 'p', 8, '2023-06-06T00:00:00.000000Z', '2024-01-02T03:00:00.000000Z'),
+            ('a', 'p', 9, '2023-06-10T00:00:00.000000Z', '2024-01-03T00:00:00.000000Z'),
+            ('b', 'q', 10, '2023-06-11T00:00:00.000000Z', '2024-01-03T01:00:00.000000Z')
             """;
     // the streaming exports of the table that createStaleExportTable() creates
     private static final StaleExportShape[] STALE_EXPORT_SHAPES = {
@@ -217,6 +249,21 @@ public class CopyExportTest extends AbstractCairoTest {
             stream_sending_data\tfinished
             move_files\tstarted
             move_files\tfinished
+            success\tfinished
+            """;
+    // the copy_export_log rows of an export that COPY routes through a temp table when it queues it
+    private static final String TEMP_TABLE_EXPORT_LOG = """
+            phase\tstatus
+            wait_to_run\tstarted
+            wait_to_run\tfinished
+            populating_data_to_temp_table\tstarted
+            populating_data_to_temp_table\tfinished
+            converting_partitions\tstarted
+            converting_partitions\tfinished
+            move_files\tstarted
+            move_files\tfinished
+            dropping_temp_table\tstarted
+            dropping_temp_table\tfinished
             success\tfinished
             """;
     static HashSet<Class<?>> exceptionTypesToCatch = new HashSet<>();
@@ -358,6 +405,242 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyConvertedColumnExportAcrossExecutionModes() throws Exception {
+        // The planner picks other factories for the same query under other settings, and the streamed export of each
+        // writes the rows of the same query over nr.
+        assertMemoryLeak(() -> {
+            createRetypedTables("WAL");
+            final FilesFacade ff = configuration.getFilesFacade();
+            final String filterQuery = "SELECT * FROM %s WHERE x > 1";
+            final String topKQuery = "SELECT * FROM %s WHERE x > 1 ORDER BY ts DESC, x LIMIT 3";
+            final int jitMode = sqlExecutionContext.getJitMode();
+            try {
+                assertStreamedExportOfMode(filterQuery, "ts", "jit_filter", "Async JIT Filter");
+                assertStreamedExportOfMode(topKQuery, null, "jit_top_k", "Async JIT Top K");
+                sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+                assertStreamedExportOfMode(filterQuery, "ts", "filter", "Async Filter");
+                assertStreamedExportOfMode(topKQuery, null, "top_k", "Async Top K");
+                sqlExecutionContext.setParallelFilterEnabled(false);
+                sqlExecutionContext.setParallelTopKEnabled(false);
+                assertStreamedExportOfMode(filterQuery, "ts", "serial_filter", "Filter filter: 1<x");
+                assertStreamedExportOfMode(topKQuery, null, "sort_limited", "Encode sort light lo: 3");
+                node1.setProperty(PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, false);
+                assertStreamedExportOfMode(topKQuery, null, "sort_limited_light", "Sort light lo: 3");
+            } finally {
+                sqlExecutionContext.setJitMode(jitMode);
+                sqlExecutionContext.setParallelFilterEnabled(true);
+                sqlExecutionContext.setParallelTopKEnabled(true);
+                node1.setProperty(PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, true);
+            }
+
+            // a filter on an indexed and on a plain SYMBOL column
+            assertStreamedExportOfMode("SELECT * FROM %s WHERE s = 'b'", "ts", "indexed_symbol", "Index forward scan on: s");
+            assertStreamedExportOfMode("SELECT * FROM %s WHERE s2 = 'q'", "ts", "plain_symbol", "filter: s2='q'");
+
+            // rc covers x in its posting index, so the covering scan reads no retyped column, and the scan without it
+            // reads y in its old type from the Parquet partition
+            for (String tableName : new String[]{"rc", "nrc"}) {
+                execute("CREATE TABLE " + tableName + " (s SYMBOL INDEX TYPE POSTING INCLUDE (x), x INT, y INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("INSERT INTO " + tableName + " SELECT s, x::INT, x::INT, ts FROM nr");
+            }
+            drainWalQueue();
+            execute("ALTER TABLE rc CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            execute("ALTER TABLE rc ALTER COLUMN y TYPE LONG");
+            execute("ALTER TABLE nrc ALTER COLUMN y TYPE LONG");
+            drainWalQueue();
+            assertStreamedExportOfMode("SELECT s, x, ts FROM %s WHERE s = 'a'", "ts", "covering", "CoveringIndex on: s", "rc", "nrc");
+            assertStreamedExportOfMode("SELECT /*+ no_covering */ s, x, y, ts FROM %s WHERE s = 'a'", "ts", "no_covering", "Index forward scan on: s", "rc", "nrc");
+
+            // rows that land inside the Parquet partition after the retype, and a column added after the rows
+            execute("INSERT INTO r VALUES ('a', 'q', 11, NULL, '2024-01-01T00:30:00.000000Z')");
+            execute("INSERT INTO nr VALUES ('a', 'q', 11, NULL, '2024-01-01T00:30:00.000000Z')");
+            drainWalQueue();
+            assertStreamedExportOfMode("SELECT * FROM %s", "ts", "out_of_order", "Frame forward scan on: r");
+            execute("ALTER TABLE r ADD COLUMN z INT");
+            execute("ALTER TABLE nr ADD COLUMN z INT");
+            execute("INSERT INTO r VALUES ('b', 'p', 12, NULL, '2024-01-03T02:00:00.000000Z', 7)");
+            execute("INSERT INTO nr VALUES ('b', 'p', 12, NULL, '2024-01-03T02:00:00.000000Z', 7)");
+            drainWalQueue();
+            assertStreamedExportOfMode("SELECT * FROM %s", "ts", "added_column", "Frame forward scan on: r");
+            assertQuery("SELECT count() FROM read_parquet('" + parquetPath("added_column") + "') WHERE z IS NULL")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n11\n");
+
+            // a backward scan of page frames of two rows each descends across the frame boundaries
+            setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 2);
+            setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 1);
+            assertStreamedExportOfMode("SELECT * FROM %s ORDER BY ts DESC", null, "small_frames", "Frame backward scan on: r");
+            ParquetTestUtils.assertColumnMaxDefLevel(parquetPath("small_frames"), ff, 4, 0);
+        });
+    }
+
+    @Test
+    public void testCopyConvertedColumnExportCancelled() throws Exception {
+        // The user cancels a streamed export of a retyped table while the export compiles its stale select again: the
+        // export stops as cancelled, leaves neither a file nor a temp directory behind, and the next export runs.
+        assertMemoryLeak(() -> {
+            createRetypedTables("WAL");
+            final String exportId = queueCopy("COPY (SELECT * FROM r) TO 'cancelled' WITH FORMAT PARQUET");
+            execute("ALTER TABLE r ADD COLUMN extra INT");
+            execute("ALTER TABLE nr ADD COLUMN extra INT");
+            drainWalQueue();
+            final CopyExportContext copyContext = engine.getCopyExportContext();
+            Assert.assertEquals(1, runExportJobCountingCompiles(
+                    _ -> Assert.assertTrue(copyContext.cancel(copyContext.getActiveExportId(), null))
+            ));
+            assertExportLog(exportId, """
+                    phase\tstatus
+                    wait_to_run\tstarted
+                    wait_to_run\tfinished
+                    stream_sending_data\tstarted
+                    stream_sending_data\tcancelled
+                    """);
+            assertExportFailure(exportId, "cancelled", "cancelled by user");
+            Assert.assertFalse(exportFileExists("cancelled"));
+            Assert.assertNull(engine.getTableTokenIfExists("copy." + exportId));
+            assertNoTempDirOf(exportId);
+
+            assertCopyStreamsRows("SELECT * FROM r", "after_cancel");
+            assertParquetMatchesControl("SELECT * FROM nr", "after_cancel", "ts");
+        });
+    }
+
+    @Test
+    public void testCopyConvertedColumnExportFailedWriteCleansUp() throws Exception {
+        // The second write of a streamed export of a retyped table fails: the export fails, leaves neither a file nor a
+        // temp directory behind, and runs again.
+        final AtomicInteger exportFileWriteCount = new AtomicInteger();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            private volatile long exportFd = -1;
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                final long fd = super.openRW(name, opts);
+                if (Utf8s.containsAscii(name, "tmp_") && Utf8s.endsWithAscii(name, "export.parquet")) {
+                    exportFd = fd;
+                }
+                return fd;
+            }
+
+            @Override
+            public long write(long fd, long address, long len, long offset) {
+                if (fd == exportFd && exportFileWriteCount.incrementAndGet() == 2) {
+                    return -1;
+                }
+                return super.write(fd, address, len, offset);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            createRetypedTables("WAL");
+            final String copySql = "COPY (SELECT * FROM r) TO 'failed_write' WITH FORMAT PARQUET ROW_GROUP_SIZE 2";
+            final String exportId = queueCopy(copySql);
+            runExportJob();
+            assertExportLog(exportId, FAILED_STREAMING_EXPORT_LOG);
+            assertExportFailure(exportId, "failed", "failed to write parquet data to temp file");
+            Assert.assertEquals(2, exportFileWriteCount.get());
+            assertNoTempDirOf(exportId);
+            Assert.assertFalse(exportFileExists("failed_write"));
+
+            copyToParquet(copySql);
+            assertParquetMatchesControl("SELECT * FROM nr", "failed_write", "ts");
+            ParquetTestUtils.assertRowGroupCount(parquetPath("failed_write"), configuration.getFilesFacade(), 5);
+        });
+    }
+
+    @Test
+    public void testCopyConvertedColumnExportHitsQueryMemoryLimit() throws Exception {
+        // A streamed export of a retyped table counts its buffers against the query memory limit: over the limit it
+        // fails and leaves no temp directory behind, and without a limit it writes every row.
+        assertMemoryLeak(() -> {
+            for (String tableName : new String[]{"big", "nbig"}) {
+                execute("CREATE TABLE " + tableName + " (v VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                // 100_000 rows on 2024-01-01 and one on 2024-01-02
+                execute("INSERT INTO " + tableName + " SELECT x::VARCHAR, timestamp_sequence('2024-01-01', 864_000) FROM long_sequence(100_001)");
+            }
+            drainWalQueue();
+            execute("ALTER TABLE big CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            execute("ALTER TABLE big ALTER COLUMN v TYPE LONG");
+            execute("ALTER TABLE nbig ALTER COLUMN v TYPE LONG");
+            drainWalQueue();
+
+            final String query = "SELECT * FROM big";
+            assertExportMode(query, ParquetExportMode.CURSOR_BASED);
+            final String exportId = queueCopy("COPY (" + query + ") TO 'over_limit' WITH FORMAT PARQUET");
+            // the export's worker takes a tracker of this limit for the export
+            setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 65_536);
+            try {
+                runExportJob();
+            } finally {
+                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
+            }
+            assertExportLog(exportId, FAILED_STREAMING_EXPORT_LOG);
+            printSql("SELECT message FROM \"" + configuration.getSystemTableNamePrefix() + "copy_export_log\" WHERE id = '" + exportId + "' AND status = 'failed'");
+            Assert.assertTrue(sink.toString(), Chars.contains(sink, "query memory limit exceeded"));
+            Assert.assertFalse(exportFileExists("over_limit"));
+            assertNoTempDirOf(exportId);
+
+            assertCopyStreamsRows(query, "no_limit");
+            assertQueriesPrintAlike(
+                    "SELECT count(), sum(v), min(v), max(v), min(ts), max(ts) FROM nbig",
+                    "SELECT count(), sum(v), min(v), max(v), min(ts), max(ts) FROM read_parquet('" + parquetPath("no_limit") + "')"
+            );
+        });
+    }
+
+    @Test
+    public void testCopyConvertedColumnExportOverManyRowGroups() throws Exception {
+        // More rows than one page frame and one row group, two days of them in Parquet partitions of several row groups:
+        // the streamed export writes all of them, ascending or descending, in row groups of ROW_GROUP_SIZE rows, or, with
+        // the default, in a row group of 100_000 rows.
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1_000);
+        assertMemoryLeak(() -> {
+            final FilesFacade ff = configuration.getFilesFacade();
+            for (String tableName : new String[]{"mg", "nmg"}) {
+                execute("CREATE TABLE " + tableName + " (c INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                // 10_000 rows a day for 3 days; c holds 1 to 30_000
+                execute("INSERT INTO " + tableName + " SELECT x::INT, timestamp_sequence('2024-01-01', 8_640_000) FROM long_sequence(30_000)");
+            }
+            drainWalQueue();
+            execute("ALTER TABLE mg CONVERT PARTITION TO PARQUET LIST '2024-01-01', '2024-01-02'");
+            drainWalQueue();
+            execute("ALTER TABLE mg ALTER COLUMN c TYPE LONG");
+            execute("ALTER TABLE nmg ALTER COLUMN c TYPE LONG");
+            drainWalQueue();
+
+            // the sum of 1 to 30_000 is 30_000 * 30_001 / 2; the last row lands 29_999 steps of 8.64 s after midnight
+            final String aggregates = """
+                    count\tsum\tmin\tmax\tmin1\tmax1
+                    30000\t450015000\t1\t30000\t2024-01-01T00:00:00.000000Z\t2024-01-03T23:59:51.360000Z
+                    """;
+            assertCopyStreamsRows("SELECT * FROM mg", "row_groups", " ROW_GROUP_SIZE 1000");
+            ParquetTestUtils.assertRowGroupCount(parquetPath("row_groups"), ff, 30);
+            assertParquetMatchesControl("SELECT * FROM nmg", "row_groups", "ts");
+            assertQuery("SELECT count(), sum(c), min(c), max(c), min(ts), max(ts) FROM read_parquet('" + parquetPath("row_groups") + "')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(aggregates);
+
+            assertCopyStreamsRows("SELECT * FROM mg", "default_row_group", " ROW_GROUP_SIZE 0");
+            ParquetTestUtils.assertRowGroupCount(parquetPath("default_row_group"), ff, 1);
+            assertParquetMatchesControl("SELECT * FROM nmg", "default_row_group", "ts");
+
+            assertCopyStreamsRows("SELECT * FROM mg ORDER BY ts DESC", "descending_row_groups", " ROW_GROUP_SIZE 1000");
+            ParquetTestUtils.assertRowGroupCount(parquetPath("descending_row_groups"), ff, 30);
+            assertParquetMatchesControl("SELECT * FROM nmg ORDER BY ts DESC", "descending_row_groups", null);
+            assertQuery("SELECT count(), sum(c), min(c), max(c), min(ts), max(ts) FROM read_parquet('" + parquetPath("descending_row_groups") + "')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(aggregates);
+        });
+    }
+
+    @Test
     public void testCopyCursorExportKeepsMemoizedSymbolAlias() throws Exception {
         // With function memoization, as in production, the outer projection reads the alias through a memoizer over the
         // inner projection's column, which passes the table's keys through.
@@ -409,6 +692,75 @@ public class CopyExportTest extends AbstractCairoTest {
                 execute("DROP TABLE sym_src");
                 execute("DROP TABLE sym_dim");
             }
+        });
+    }
+
+    @Test
+    public void testCopyCursorExportOfDescendingPlanMarksNoAscendingTimestamp() throws Exception {
+        // COPY gives the cursor writer the direction of the plan it streams, as /exp does: rows that descend by the
+        // timestamp are not marked as ascending, so read_parquet() designates no timestamp and sorts by it on ORDER BY.
+        // A plan whose rows ascend keeps its designated timestamp, and so does a plan that promises no order.
+        assertMemoryLeak(() -> {
+            for (String walMode : new String[]{"WAL", "BYPASS WAL"}) {
+                createRetypedTables(walMode);
+                final String[] descendingTemplates = {
+                        "SELECT * FROM %s WHERE s = 'a' ORDER BY ts DESC",
+                        "SELECT * FROM %s WHERE x > 1 ORDER BY ts DESC LIMIT 3",
+                        "SELECT * FROM %s WHERE s IN ('a', 'b') ORDER BY ts DESC",
+                        "SELECT * FROM %s ORDER BY ts DESC LIMIT -2",
+                        "SELECT a.* FROM (SELECT * FROM %s ORDER BY ts DESC) a CROSS JOIN long_sequence(1)",
+                };
+                final String[] ascendingTemplates = {
+                        "SELECT * FROM %s WHERE s = 'a'",
+                        "SELECT * FROM %s WHERE x > 1 LIMIT 3",
+                        "SELECT * FROM %s WHERE s IN ('a', 'b')",
+                };
+                for (String tableName : new String[]{"nr", "r"}) {
+                    for (int i = 0; i < descendingTemplates.length; i++) {
+                        final String query = descendingTemplates[i].replace("%s", tableName);
+                        final String controlQuery = descendingTemplates[i].replace("%s", "nr");
+                        final String fileName = "descending_" + tableName + '_' + i;
+                        try {
+                            assertCopyStreamsRows(query, fileName);
+                            assertParquetMatchesControl(controlQuery, fileName, null);
+                            assertQueriesPrintAlike(
+                                    "SELECT ts FROM (" + controlQuery + ") ORDER BY ts",
+                                    "SELECT ts FROM read_parquet('" + parquetPath(fileName) + "') ORDER BY ts"
+                            );
+                        } catch (AssertionError e) {
+                            throw new AssertionError(walMode + ": " + query, e);
+                        }
+                    }
+                    for (int i = 0; i < ascendingTemplates.length; i++) {
+                        final String query = ascendingTemplates[i].replace("%s", tableName);
+                        final String fileName = "ascending_" + tableName + '_' + i;
+                        try {
+                            assertCopyStreamsRows(query, fileName);
+                            assertParquetMatchesControl(ascendingTemplates[i].replace("%s", "nr"), fileName, "ts");
+                        } catch (AssertionError e) {
+                            throw new AssertionError(walMode + ": " + query, e);
+                        }
+                    }
+                }
+                dropRetypedTables();
+            }
+
+            // The step of generate_series() comes from a bind variable, so the plan promises no order; the rows
+            // ascend, and the file designates the timestamp, as before.
+            bindVariableService.clear();
+            bindVariableService.setLong(0, 86_400_000_000L);
+            final String seriesQuery = "SELECT * FROM generate_series('2024-01-01'::timestamp, '2024-01-03'::timestamp, $1)";
+            try (RecordCursorFactory factory = select(seriesQuery)) {
+                Assert.assertEquals(RecordCursorFactory.SCAN_DIRECTION_OTHER, factory.getScanDirection());
+            }
+            assertCopyStreamsRows(seriesQuery, "series");
+            assertParquetRows("series", "generate_series", """
+                    generate_series
+                    2024-01-01T00:00:00.000000Z
+                    2024-01-02T00:00:00.000000Z
+                    2024-01-03T00:00:00.000000Z
+                    """);
+            bindVariableService.clear();
         });
     }
 
@@ -567,10 +919,10 @@ public class CopyExportTest extends AbstractCairoTest {
                 final long fileSize = parquetFileSize("few_rows_" + i);
                 Assert.assertTrue(queries[i] + ", file size: " + fileSize, fileSize < 10_000);
             }
+            // ORDER BY ts DESC scans backward, so the file designates no timestamp
             assertQuery("SELECT * FROM read_parquet('" + parquetPath("few_rows_0") + "')")
                     .noLeakCheck()
                     .expectSize()
-                    .timestamp("ts")
                     .returns("""
                             s\tv\tts
                             s1000000\t1000000\t1970-01-01T00:16:40.000000Z
@@ -1120,6 +1472,30 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyCursorExportsOnOneJobFollowEachPlanDirection() throws Exception {
+        // One export job streams a descending, an ascending and a descending plan: the direction of one export never
+        // reaches the next one.
+        assertMemoryLeak(() -> {
+            createRetypedTables("BYPASS WAL");
+            final String descendingQuery = "SELECT * FROM nr WHERE s = 'a' ORDER BY ts DESC";
+            final String ascendingQuery = "SELECT * FROM nr WHERE s = 'a'";
+            try (CopyExportRequestJob job = new CopyExportRequestJob(engine)) {
+                final String[] queries = {descendingQuery, ascendingQuery, descendingQuery};
+                for (int i = 0; i < queries.length; i++) {
+                    assertExportMode(queries[i], ParquetExportMode.CURSOR_BASED);
+                    final String exportId = queueCopy("COPY (" + queries[i] + ") TO 'one_job_" + i + "' WITH FORMAT PARQUET");
+                    Assert.assertTrue(job.run());
+                    assertExportLog(exportId, STREAMING_EXPORT_LOG);
+                }
+            }
+            assertParquetMatchesControl(descendingQuery, "one_job_0", null);
+            assertParquetMatchesControl(ascendingQuery, "one_job_1", "ts");
+            assertParquetMatchesControl(descendingQuery, "one_job_2", null);
+            assertNoTempDirLeft();
+        });
+    }
+
+    @Test
     public void testCopyExportCancel() throws Exception {
         assertMemoryLeak(() -> {
             CopyExportRunnable stmt = () -> {
@@ -1515,6 +1891,60 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyOfConvertedColumnFollowsTableChangesOnEachExecution() throws Exception {
+        // The same COPY runs after each change of the table and routes the select it compiles then: a retyped column of
+        // a Parquet partition streams through the cursor exporter, a table without Parquet partitions streams its page
+        // frames, and a truncated table exports its columns and no rows. A second run overwrites the file.
+        assertMemoryLeak(() -> {
+            for (String tableName : new String[]{"cc", "ncc"}) {
+                execute("CREATE TABLE " + tableName + " (s SYMBOL, c INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("""
+                        INSERT INTO %s VALUES
+                            ('a', 1, '2024-01-01T00:00:00.000000Z'),
+                            ('b', -1, '2024-01-01T12:00:00.000000Z'),
+                            ('a', 2_147_483_647, '2024-01-02T00:00:00.000000Z'),
+                            (NULL, NULL, '2024-01-03T00:00:00.000000Z')
+                        """.formatted(tableName));
+            }
+            drainWalQueue();
+            final String query = "SELECT * FROM cc";
+            final String copySql = "COPY (" + query + ") TO 'changes' WITH FORMAT PARQUET";
+
+            execute("ALTER TABLE cc CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            execute("ALTER TABLE cc ALTER COLUMN c TYPE LONG");
+            execute("ALTER TABLE ncc ALTER COLUMN c TYPE LONG");
+            drainWalQueue();
+            assertExportMode(query, ParquetExportMode.CURSOR_BASED);
+            copyToParquet(copySql);
+            assertParquetMatchesControl("SELECT * FROM ncc", "changes", "ts");
+            copyToParquet(copySql);
+            assertParquetMatchesControl("SELECT * FROM ncc", "changes", "ts");
+
+            execute("ALTER TABLE cc CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+            drainWalQueue();
+            assertExportMode(query, ParquetExportMode.DIRECT_PAGE_FRAME);
+            copyToParquet(copySql);
+            assertParquetMatchesControl("SELECT * FROM ncc", "changes", "ts");
+
+            execute("ALTER TABLE cc CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            execute("ALTER TABLE cc ALTER COLUMN c TYPE DOUBLE");
+            execute("ALTER TABLE ncc ALTER COLUMN c TYPE DOUBLE");
+            drainWalQueue();
+            assertExportMode(query, ParquetExportMode.CURSOR_BASED);
+            copyToParquet(copySql);
+            assertParquetMatchesControl("SELECT * FROM ncc", "changes", "ts");
+            ParquetTestUtils.assertColumnTypes(parquetPath("changes"), configuration.getFilesFacade(), ColumnType.DOUBLE, 1);
+
+            execute("TRUNCATE TABLE cc");
+            drainWalQueue();
+            copyToParquet(copySql);
+            assertParquetRows("changes", "ts", "s\tc\tts\n");
+        });
+    }
+
+    @Test
     public void testCopyOptionError() throws Exception {
         assertQuery("copy test_table to 'test_table'  with format parquet1;")
                 .fails(45, "unsupported format, only 'parquet' is supported");
@@ -1883,9 +2313,97 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyParquetExportOfConvertedColumnAcceptsAliasTheTempTableRejects() throws Exception {
+        // A temp table rejects a column name such as "x-1", so the export of a retyped column under that alias failed
+        // when it went through one. It streams now, and the file holds the column under its alias.
+        assertMemoryLeak(() -> {
+            createRetypedTables("WAL");
+            final String query = "SELECT x AS \"x-1\", ts FROM r";
+            assertCopyStreamsRows(query, "alias");
+            assertParquetMatchesControl("SELECT x AS \"x-1\", ts FROM nr", "alias", "ts");
+            ParquetTestUtils.assertColumnTypes(parquetPath("alias"), configuration.getFilesFacade(), ColumnType.LONG, 0);
+        });
+    }
+
+    @Test
+    public void testCopyParquetExportOfConvertedColumnEveryConversionClass() throws Exception {
+        // A streamed export of a retyped column writes the values that the lazy conversion of the Parquet partition
+        // gives, in the column's new type, for every class of conversion that converts lazily: the rows of nt, which
+        // converts the column eagerly while every partition is native. The row before the column was added holds NULL.
+        assertMemoryLeak(() -> {
+            final String[] ints = {"NULL", "-2_147_483_647", "-1", "0", "1", "2_147_483_647"};
+            final String[] longs = {"NULL", "-9_223_372_036_854_775_807", "-1", "0", "1", "9_223_372_036_854_775_807", "2_147_483_648"};
+            final String[] doubles = {"NULL", "'-0.0'::DOUBLE", "'Infinity'::DOUBLE", "'-Infinity'::DOUBLE", "4.9E-324", "1.7976931348623157E308", "-1.5", "2.5"};
+            final String[] floats = {"NULL", "'-0.0'::FLOAT", "'Infinity'::FLOAT", "'-Infinity'::FLOAT", "1.401298464324817E-45::FLOAT", "-1.5::FLOAT", "2.5::FLOAT"};
+            final String[] timestamps = {"NULL", "'1969-12-31T23:59:59.999999Z'", "'1970-01-01T00:00:00.000000Z'", "'2024-02-29T12:00:00.000000Z'", "'9999-12-31T23:59:59.999999Z'"};
+            final String[] dates = {"NULL", "'1969-12-31T23:59:59.999Z'", "'1970-01-01T00:00:00.000Z'", "'2024-02-29T12:00:00.000Z'", "'9999-12-31T23:59:59.999Z'"};
+            final String[] texts = {"NULL", "''", "'a'", "'€'", "'😀'", "'" + "z".repeat(300) + "'", "'2147483648'", "'abc'", "'42'", "'-1'"};
+            final String[] numericTexts = {"NULL", "''", "'42'", "'0'", "'-1'", "'1.5'", "'abc'", "'2147483648'"};
+            final ConvertedColumnConversion[] conversions = {
+                    // fixed to wider and narrower fixed types
+                    new ConvertedColumnConversion("INT", "LONG", ints),
+                    new ConvertedColumnConversion("LONG", "INT", longs),
+                    new ConvertedColumnConversion("FLOAT", "DOUBLE", floats),
+                    new ConvertedColumnConversion("DOUBLE", "FLOAT", doubles),
+                    new ConvertedColumnConversion("DATE", "TIMESTAMP", dates),
+                    new ConvertedColumnConversion("TIMESTAMP", "TIMESTAMP_NS", timestamps),
+                    new ConvertedColumnConversion("INT", "DECIMAL(18, 0)", ints),
+                    new ConvertedColumnConversion("LONG", "DECIMAL(38, 0)", longs),
+                    // fixed to text
+                    new ConvertedColumnConversion("INT", "VARCHAR", ints),
+                    new ConvertedColumnConversion("INT", "STRING", ints),
+                    new ConvertedColumnConversion("DOUBLE", "VARCHAR", doubles),
+                    new ConvertedColumnConversion("UUID", "VARCHAR", "NULL", "'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'", "'11111111-1111-1111-1111-111111111111'"),
+                    new ConvertedColumnConversion("IPv4", "VARCHAR", "NULL", "'0.0.0.1'", "'192.168.1.1'", "'255.255.255.255'"),
+                    new ConvertedColumnConversion("BOOLEAN", "VARCHAR", "true", "false"),
+                    new ConvertedColumnConversion("BOOLEAN", "STRING", "true", "false"),
+                    new ConvertedColumnConversion("BYTE", "VARCHAR", "0", "-128", "127"),
+                    new ConvertedColumnConversion("SHORT", "STRING", "0", "-32_768", "32_767"),
+                    new ConvertedColumnConversion("CHAR", "VARCHAR", "NULL", "'a'", "'ж'"),
+                    new ConvertedColumnConversion("CHAR", "STRING", "NULL", "'a'", "'ж'"),
+                    new ConvertedColumnConversion("DATE", "VARCHAR", dates),
+                    new ConvertedColumnConversion("DATE", "STRING", dates),
+                    // text to fixed
+                    new ConvertedColumnConversion("STRING", "LONG", numericTexts),
+                    new ConvertedColumnConversion("VARCHAR", "INT", numericTexts),
+                    new ConvertedColumnConversion("VARCHAR", "DOUBLE", numericTexts),
+                    new ConvertedColumnConversion("VARCHAR", "BOOLEAN", "NULL", "''", "'true'", "'TRUE'", "'false'", "'1'"),
+                    new ConvertedColumnConversion("STRING", "BOOLEAN", "NULL", "''", "'true'", "'TrUe'", "'false'", "'0'"),
+                    new ConvertedColumnConversion("VARCHAR", "BYTE", numericTexts),
+                    new ConvertedColumnConversion("STRING", "SHORT", numericTexts),
+                    new ConvertedColumnConversion("VARCHAR", "CHAR", "NULL", "'a'", "'z'"),
+                    new ConvertedColumnConversion("STRING", "DATE", "NULL", "'2020-06-15T12:00:00.000Z'", "'1970-01-01T00:00:00.000Z'", "'abc'"),
+                    new ConvertedColumnConversion("VARCHAR", "TIMESTAMP_NS", "NULL", "'2020-06-15T12:30:00.123456789Z'", "'1970-01-01T00:00:00.000000001Z'", "'abc'"),
+                    new ConvertedColumnConversion("VARCHAR", "IPv4", "NULL", "'192.168.1.1'", "'255.255.255.255'", "'abc'"),
+                    new ConvertedColumnConversion("STRING", "UUID", "NULL", "'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'", "'not-a-uuid'", "''", "'zzzzzzzz-zzzz-zzzz-zzzz-zzzzzzzzzzzz'"),
+                    new ConvertedColumnConversion("VARCHAR", "DECIMAL(2, 1)", "NULL", "'1.2'", "'0'", "'-1.5'", "'1.25'", "'999'"),
+                    new ConvertedColumnConversion("STRING", "DECIMAL(4, 2)", "NULL", "'12.34'", "'-9.99'", "'1.005'", "'99999'"),
+                    new ConvertedColumnConversion("VARCHAR", "DECIMAL(9, 3)", "NULL", "'123456.789'", "'-999.999'", "'9999999999'"),
+                    new ConvertedColumnConversion(
+                            "STRING",
+                            "DECIMAL(76, 4)",
+                            "NULL",
+                            "'123456789012345678901234567890123456789012345678901234567890123456789012.5678'",
+                            "'-99.9999'",
+                            "'99999999999999999999999999999999999999999999999999999999999999999999999999999'"
+                    ),
+                    // text to text, and the symbol of a table to fixed and text
+                    new ConvertedColumnConversion("STRING", "VARCHAR", texts),
+                    new ConvertedColumnConversion("VARCHAR", "STRING", texts),
+                    new ConvertedColumnConversion("VARCHAR", "STRING", "rpad('', 1_000_000, 'y')"),
+                    new ConvertedColumnConversion("SYMBOL", "LONG", "NULL", "'42'", "'-1'", "'abc'"),
+                    new ConvertedColumnConversion("SYMBOL", "VARCHAR", texts),
+                    new ConvertedColumnConversion("SYMBOL", "STRING", texts),
+            };
+            assertStreamedExportOfConversions(conversions);
+        });
+    }
+
+    @Test
     public void testCopyParquetExportOfConvertedColumnKeepsParquetEncodings() throws Exception {
-        // A column retyped since its partition went Parquet routes COPY through a temp table, whether the select
-        // reaches the table directly or through a view, and whether it reads the Parquet partition or not.
+        // A column retyped since its partition went Parquet streams its rows through the cursor exporter, whether the
+        // select reaches the table directly or through a view, and whether it reads the Parquet partition or not, and
+        // each column keeps its PARQUET(...) setting.
         assertMemoryLeak(() -> {
             final String[] filters = {"", " WHERE ts >= '2024-01-02'"};
             final String[] expectedRows = {
@@ -1918,10 +2436,8 @@ public class CopyExportTest extends AbstractCairoTest {
                     final String from = source == ConvertedColumnExportSource.TABLE ? tableName : tableName + "_v";
                     for (int i = 0; i < filters.length; i++) {
                         final String query = "SELECT * FROM " + from + filters[i];
-                        assertExportMode(query, ParquetExportMode.TEMP_TABLE);
-
                         final String fileName = tableName + "_" + i;
-                        copyToParquet("COPY (" + query + ") TO '" + fileName + "' WITH FORMAT PARQUET");
+                        assertCopyStreamsRows(query, fileName);
                         assertQuery("SELECT * FROM read_parquet('" + parquetPath(fileName) + "')")
                                 .noLeakCheck()
                                 .expectSize()
@@ -1931,6 +2447,85 @@ public class CopyExportTest extends AbstractCairoTest {
                     }
                 }
             }
+        });
+    }
+
+    @Test
+    public void testCopyParquetExportOfConvertedColumnWithBinaryUsesTempTable() throws Exception {
+        // The cursor exporter cannot write BINARY, so the export of a retyped table goes through a temp table when the
+        // result holds a BINARY column anywhere, from the table or computed, and streams without one.
+        assertMemoryLeak(() -> {
+            for (String walMode : new String[]{"WAL", "BYPASS WAL"}) {
+                execute("CREATE TABLE rb (x INT, b BINARY, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY " + walMode);
+                execute("""
+                        INSERT INTO rb VALUES
+                            (1, rnd_bin(2, 4, 0), '2024-01-01T00:00:00.000000Z'),
+                            (2, NULL, '2024-01-01T12:00:00.000000Z'),
+                            (3, rnd_bin(2, 4, 0), '2024-01-02T00:00:00.000000Z'),
+                            (4, rnd_bin(2, 4, 0), '2024-01-03T00:00:00.000000Z')
+                        """);
+                drainWalQueue();
+                execute("ALTER TABLE rb CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                drainWalQueue();
+                execute("ALTER TABLE rb ALTER COLUMN x TYPE LONG");
+                drainWalQueue();
+                final String[] binaryQueries = {
+                        "SELECT * FROM rb",
+                        "SELECT b, x, ts FROM rb",
+                        "SELECT x, ts, b FROM rb",
+                        "SELECT x, ts, 'x'::BINARY c FROM rb",
+                };
+                for (int i = 0; i < binaryQueries.length; i++) {
+                    final String fileName = "binary_" + i;
+                    try {
+                        assertCopyMaterializesRows(binaryQueries[i], fileName);
+                        assertParquetMatchesQuery(binaryQueries[i], parquetPath(fileName));
+                        ParquetTestUtils.assertColumnTypes(parquetPath(fileName), configuration.getFilesFacade(), ColumnType.LONG, i == 1 ? 1 : 0);
+                    } catch (AssertionError e) {
+                        throw new AssertionError(walMode + ": " + binaryQueries[i], e);
+                    }
+                }
+                assertCopyStreamsRows("SELECT x, ts FROM rb", "no_binary");
+                assertParquetRows("no_binary", "ts", """
+                        x\tts
+                        1\t2024-01-01T00:00:00.000000Z
+                        2\t2024-01-01T12:00:00.000000Z
+                        3\t2024-01-02T00:00:00.000000Z
+                        4\t2024-01-03T00:00:00.000000Z
+                        """);
+                ParquetTestUtils.assertColumnTypes(parquetPath("no_binary"), configuration.getFilesFacade(), ColumnType.LONG, 0);
+                execute("DROP TABLE rb");
+                drainWalQueue();
+            }
+        });
+    }
+
+    @Test
+    public void testCopyParquetExportOfRetypedTableKeepsEveryTypeAndSetting() throws Exception {
+        // A streamed export of a retyped table writes a column of every type the Parquet encoder writes, each with its
+        // PARQUET(...) setting, and keeps the SYMBOL column as SYMBOL. With the BINARY column it goes through a temp
+        // table, which keeps the settings too.
+        assertMemoryLeak(() -> {
+            ParquetTestUtils.createTableWithParquetSettingPerType(engine, sqlExecutionContext, "ty");
+            execute("INSERT INTO ty (i, ts) VALUES (5, '2024-01-02T00:00:00.000000Z')");
+            execute("ALTER TABLE ty CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            // ALTER COLUMN TYPE drops the PARQUET(...) setting of the column, so the retyped column is bf, whose setting
+            // names no encoding
+            execute("ALTER TABLE ty ALTER COLUMN bf TYPE LONG");
+            final FilesFacade ff = configuration.getFilesFacade();
+
+            final String query = "SELECT b, sh, ch, i, l, dt, t, tn, f, d, u, l256, ip, g1, g2, g4, g8, d8, d16, d32, d64, d128, d256, s, vc,"
+                    + " sym, bo, arr, bf, bfe, ts FROM ty";
+            assertCopyStreamsRows(query, "every_type");
+            assertParquetMatchesQuery(query, parquetPath("every_type"));
+            ParquetTestUtils.assertColumnTypes(parquetPath("every_type"), ff, ColumnType.LONG, 28);
+            ParquetTestUtils.assertColumnsUseParquetSettingPerType(parquetPath("every_type"), ff, false);
+            assertSymbolColumnsKept(parquetPath("every_type"), 25);
+
+            assertCopyMaterializesRows("SELECT * FROM ty", "every_type_binary");
+            assertParquetMatchesQuery("SELECT * FROM ty", parquetPath("every_type_binary"));
+            ParquetTestUtils.assertColumnTypes(parquetPath("every_type_binary"), ff, ColumnType.LONG, 29);
+            ParquetTestUtils.assertColumnsUseParquetSettingPerType(parquetPath("every_type_binary"), ff);
         });
     }
 
@@ -2016,29 +2611,42 @@ public class CopyExportTest extends AbstractCairoTest {
             createTableWithParquetSettings("streamed");
             final FilesFacade ff = configuration.getFilesFacade();
 
-            // An empty result still writes a file, one without row groups.
+            // An empty result still writes a file, one without row groups, whether it streams or goes through a temp
+            // table, which its BINARY column needs.
             final String emptyQuery = "SELECT * FROM converted_v WHERE ts < '2000-01-01'";
-            assertExportMode(emptyQuery, ParquetExportMode.TEMP_TABLE);
-            copyToParquet("COPY (" + emptyQuery + ") TO 'empty' WITH FORMAT PARQUET");
+            assertCopyStreamsRows(emptyQuery, "empty");
             assertQuery("SELECT * FROM read_parquet('" + parquetPath("empty") + "')")
                     .noLeakCheck()
                     .expectSize()
                     .timestamp("ts")
                     .returns("metric\tc\ttotal\tts\n");
-
-            // How the encoder writes a lone row or a column of NULLs is not specified, so the export of the same
-            // query that streams is the oracle.
-            assertCopyThroughTempTableEncodesLikeStreaming("SELECT * FROM %s WHERE ts = '2024-01-02T08:00:00.000000Z'", "", "single_row");
-            assertCopyThroughTempTableEncodesLikeStreaming("SELECT * FROM %s WHERE metric IS NULL", "", "null_metric");
-            assertQuery("SELECT metric, total FROM read_parquet('" + parquetPath("null_metric") + "')")
+            final String emptyBinaryQuery = "SELECT *, 'x'::BINARY bin FROM converted_v WHERE ts < '2000-01-01'";
+            assertCopyMaterializesRows(emptyBinaryQuery, "empty_binary");
+            assertQuery("SELECT * FROM read_parquet('" + parquetPath("empty_binary") + "')")
                     .noLeakCheck()
                     .expectSize()
-                    .returns("""
-                            metric\ttotal
-                            null\tnull
-                            null\tnull
-                            null\tnull
-                            """);
+                    .timestamp("ts")
+                    .returns("metric\tc\ttotal\tts\tbin\n");
+
+            // How the encoder writes a lone row or a column of NULLs is not specified, so the export of the same
+            // query over a table without a retype is the oracle, for the export that streams and for the one that
+            // PARTITION_BY routes through a temp table.
+            for (String template : new String[]{"SELECT * FROM %s WHERE ts = '2024-01-02T08:00:00.000000Z'", "SELECT * FROM %s WHERE metric IS NULL"}) {
+                final String fileName = template.contains("IS NULL") ? "null_metric" : "single_row";
+                assertCopyStreamsLikeStreamedTable(template, fileName);
+                assertCopyThroughTempTableEncodesLikeStreaming(template, " PARTITION_BY YEAR", fileName + "_temp_table");
+            }
+            for (String fileName : new String[]{"null_metric", "null_metric_temp_table"}) {
+                assertQuery("SELECT metric, total FROM read_parquet('" + parquetPath(fileName) + "')")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                metric\ttotal
+                                null\tnull
+                                null\tnull
+                                null\tnull
+                                """);
+            }
 
             // Every row group keeps the setting.
             execute("CREATE TABLE row_groups (metric INT PARQUET(RLE_DICTIONARY), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -2054,68 +2662,74 @@ public class CopyExportTest extends AbstractCairoTest {
             execute("INSERT INTO converted VALUES (50, 10, 5000, '2024-01-04T00:00:00.000000Z', 7), (50, 11, 5000, '2024-01-04T08:00:00.000000Z', 7)");
             drainWalAndViewQueues();
             final String addedColumnQuery = "SELECT * FROM converted";
-            assertExportMode(addedColumnQuery, ParquetExportMode.TEMP_TABLE);
-            copyToParquet("COPY (" + addedColumnQuery + ") TO 'added_column' WITH FORMAT PARQUET");
-            assertQuery("SELECT * FROM read_parquet('" + parquetPath("added_column") + "')")
-                    .noLeakCheck()
-                    .expectSize()
-                    .timestamp("ts")
-                    .returns("""
-                            metric\tc\ttotal\tts\textra
-                            10\t1\t1000\t2024-01-01T00:00:00.000000Z\tnull
-                            20\t2\t2000\t2024-01-01T08:00:00.000000Z\tnull
-                            null\t3\tnull\t2024-01-01T16:00:00.000000Z\tnull
-                            10\t4\t1000\t2024-01-02T00:00:00.000000Z\tnull
-                            30\t5\t3000\t2024-01-02T08:00:00.000000Z\tnull
-                            null\t6\tnull\t2024-01-02T16:00:00.000000Z\tnull
-                            20\t7\t2000\t2024-01-03T00:00:00.000000Z\tnull
-                            40\t8\t4000\t2024-01-03T08:00:00.000000Z\tnull
-                            null\t9\tnull\t2024-01-03T16:00:00.000000Z\tnull
-                            50\t10\t5000\t2024-01-04T00:00:00.000000Z\t7
-                            50\t11\t5000\t2024-01-04T08:00:00.000000Z\t7
-                            """);
-            assertParquetSettingsKept(parquetPath("added_column"));
-            // extra has no setting, so it keeps the INT default, PLAIN
-            ParquetTestUtils.assertColumnsDoNotUseDictionaryEncoding(parquetPath("added_column"), ff, 4);
-            ParquetTestUtils.assertColumnsDoNotUseEncoding(parquetPath("added_column"), ff, ParquetEncoding.ENCODING_DELTA_BINARY_PACKED, 4);
+            assertCopyStreamsRows(addedColumnQuery, "added_column");
+            copyThroughTempTable("COPY (" + addedColumnQuery + ") TO 'added_column_temp_table' WITH FORMAT PARQUET PARTITION_BY YEAR");
+            for (String fileName : new String[]{"added_column", "added_column_temp_table"}) {
+                assertQuery("SELECT * FROM read_parquet('" + parquetPath(fileName) + "')")
+                        .noLeakCheck()
+                        .expectSize()
+                        .timestamp("ts")
+                        .returns("""
+                                metric\tc\ttotal\tts\textra
+                                10\t1\t1000\t2024-01-01T00:00:00.000000Z\tnull
+                                20\t2\t2000\t2024-01-01T08:00:00.000000Z\tnull
+                                null\t3\tnull\t2024-01-01T16:00:00.000000Z\tnull
+                                10\t4\t1000\t2024-01-02T00:00:00.000000Z\tnull
+                                30\t5\t3000\t2024-01-02T08:00:00.000000Z\tnull
+                                null\t6\tnull\t2024-01-02T16:00:00.000000Z\tnull
+                                20\t7\t2000\t2024-01-03T00:00:00.000000Z\tnull
+                                40\t8\t4000\t2024-01-03T08:00:00.000000Z\tnull
+                                null\t9\tnull\t2024-01-03T16:00:00.000000Z\tnull
+                                50\t10\t5000\t2024-01-04T00:00:00.000000Z\t7
+                                50\t11\t5000\t2024-01-04T08:00:00.000000Z\t7
+                                """);
+                assertParquetSettingsKept(parquetPath(fileName));
+                // extra has no setting, so it keeps the INT default, PLAIN
+                ParquetTestUtils.assertColumnsDoNotUseDictionaryEncoding(parquetPath(fileName), ff, 4);
+                ParquetTestUtils.assertColumnsDoNotUseEncoding(parquetPath(fileName), ff, ParquetEncoding.ENCODING_DELTA_BINARY_PACKED, 4);
+            }
         });
     }
 
     @Test
     public void testCopyParquetExportTempTableEncodingFollowsAlterSetParquet() throws Exception {
-        // The export worker compiles the select of a queued COPY again and builds the temp table from the PARQUET(...)
-        // settings the select carries then, so a setting that changes after COPY is queued, or between two exports,
-        // applies to the next file.
+        // A setting that changes after COPY is queued makes the queued plan stale, so the export worker compiles the
+        // select again, once, and encodes metric by the setting the select carries then: the export that streams the
+        // rows of the retyped column, and the one that PARTITION_BY routes through a temp table, whose CREATE TABLE AS
+        // SELECT compiles the select on the worker. A setting that changes between two exports applies to the next file.
         assertMemoryLeak(() -> {
             createTableWithParquetSettingsAndConvertedColumn("converted", true, ConvertedColumnExportSource.VIEW_CREATED_AFTER_TYPE_CHANGE);
             final String query = "SELECT * FROM converted_v";
-            assertExportMode(query, ParquetExportMode.TEMP_TABLE);
+            assertExportMode(query, ParquetExportMode.CURSOR_BASED);
             final FilesFacade ff = configuration.getFilesFacade();
+            final String[] copyOptions = {"", " PARTITION_BY YEAR"};
+            final String[] expectedLogs = {STREAMING_EXPORT_LOG, TEMP_TABLE_EXPORT_LOG};
+            for (int i = 0; i < copyOptions.length; i++) {
+                final String queuedFileName = "queued_" + i;
+                final String resetFileName = "reset_" + i;
+                // No export job runs yet, so the setting changes after COPY is queued and before the worker runs it.
+                final String exportId = queueCopy("COPY (" + query + ") TO '" + queuedFileName + "' WITH FORMAT PARQUET" + copyOptions[i]);
+                execute("ALTER TABLE converted ALTER COLUMN metric SET PARQUET(DELTA_BINARY_PACKED)");
+                drainWalAndViewQueues();
+                // A pooled reader keeps the PARQUET(...) setting it loaded before the ALTER, so the test releases the
+                // readers for the export to compile its select over the new setting.
+                engine.releaseAllReaders();
+                Assert.assertEquals(1, runExportJobCountingCompiles());
+                assertExportLog(exportId, expectedLogs[i]);
+                assertParquetMatchesQuery(query, parquetPath(queuedFileName));
+                ParquetTestUtils.assertColumnsUseEncoding(parquetPath(queuedFileName), ff, ParquetEncoding.ENCODING_DELTA_BINARY_PACKED, 0);
+                ParquetTestUtils.assertColumnsDoNotUseDictionaryEncoding(parquetPath(queuedFileName), ff, 0);
 
-            // No export job runs yet, so the setting changes after COPY is queued and before the worker runs it.
-            runAndFetchCopyExportID("COPY (" + query + ") TO 'queued' WITH FORMAT PARQUET", sqlExecutionContext);
-            execute("ALTER TABLE converted ALTER COLUMN metric SET PARQUET(DELTA_BINARY_PACKED)");
-            drainWalAndViewQueues();
-            // A pooled reader keeps the PARQUET(...) setting it loaded before the ALTER, so the test releases the
-            // readers for the export to compile its select over the new setting.
-            engine.releaseAllReaders();
-            try (CopyExportRequestJob job = new CopyExportRequestJob(engine)) {
-                Assert.assertTrue("the queued export must be picked up", job.run());
+                execute("ALTER TABLE converted ALTER COLUMN metric SET PARQUET(default)");
+                drainWalAndViewQueues();
+                engine.releaseAllReaders();
+                copyToParquet("COPY (" + query + ") TO '" + resetFileName + "' WITH FORMAT PARQUET" + copyOptions[i]);
+                assertParquetMatchesQuery(query, parquetPath(resetFileName));
+                // metric has no setting now, so it takes the INT default, PLAIN
+                ParquetTestUtils.assertColumnsUseEncoding(parquetPath(resetFileName), ff, ParquetEncoding.ENCODING_PLAIN, 0);
+                ParquetTestUtils.assertColumnsDoNotUseDictionaryEncoding(parquetPath(resetFileName), ff, 0);
+                ParquetTestUtils.assertColumnsDoNotUseEncoding(parquetPath(resetFileName), ff, ParquetEncoding.ENCODING_DELTA_BINARY_PACKED, 0);
             }
-            assertExportFinished();
-            assertParquetMatchesQuery(query, parquetPath("queued"));
-            ParquetTestUtils.assertColumnsUseEncoding(parquetPath("queued"), ff, ParquetEncoding.ENCODING_DELTA_BINARY_PACKED, 0);
-            ParquetTestUtils.assertColumnsDoNotUseDictionaryEncoding(parquetPath("queued"), ff, 0);
-
-            execute("ALTER TABLE converted ALTER COLUMN metric SET PARQUET(default)");
-            drainWalAndViewQueues();
-            engine.releaseAllReaders();
-            copyToParquet("COPY (" + query + ") TO 'reset' WITH FORMAT PARQUET");
-            assertParquetMatchesQuery(query, parquetPath("reset"));
-            // metric has no setting now, so it takes the INT default, PLAIN
-            ParquetTestUtils.assertColumnsUseEncoding(parquetPath("reset"), ff, ParquetEncoding.ENCODING_PLAIN, 0);
-            ParquetTestUtils.assertColumnsDoNotUseDictionaryEncoding(parquetPath("reset"), ff, 0);
-            ParquetTestUtils.assertColumnsDoNotUseEncoding(parquetPath("reset"), ff, ParquetEncoding.ENCODING_DELTA_BINARY_PACKED, 0);
         });
     }
 
@@ -2178,33 +2792,38 @@ public class CopyExportTest extends AbstractCairoTest {
             bindVariableService.setTimestamp(0, 1_704_153_600_000_000L); // 2024-01-02T00:00:00Z
 
             // A column the select passes through keeps its setting under any name, and a computed one takes its
-            // type's default. A query over the retyped column reaches the temp table without PARTITION_BY, but a
-            // join does not see the retyped column, so PARTITION_BY routes it there.
-            assertCopyThroughTempTableEncodesFirstColumn("SELECT metric AS m, ts FROM converted_v", "", "alias", true);
-            assertCopyThroughTempTableEncodesFirstColumn("SELECT metric + 1 AS mp, ts FROM converted_v", "", "computed", false);
-            assertCopyThroughTempTableEncodesFirstColumn("SELECT * FROM (SELECT * FROM converted_v)", "", "subquery", true);
-            assertCopyThroughTempTableEncodesFirstColumn("WITH w AS (SELECT * FROM converted_v) SELECT * FROM w", "", "cte", true);
+            // type's default. A scan of the retyped column streams its rows (testRetypedExportStreamsTableScanShapes),
+            // and a join does not see the retyped column, so PARTITION_BY, or a BINARY column for a query without an
+            // ascending designated timestamp, routes these to the temp table.
+            assertCopyThroughTempTableEncodesFirstColumn("SELECT metric AS m, ts FROM converted_v", " PARTITION_BY YEAR", "alias", true);
+            assertCopyThroughTempTableEncodesFirstColumn("SELECT metric + 1 AS mp, ts FROM converted_v", " PARTITION_BY YEAR", "computed", false);
+            assertCopyThroughTempTableEncodesFirstColumn("SELECT * FROM (SELECT * FROM converted_v)", " PARTITION_BY YEAR", "subquery", true);
+            assertCopyThroughTempTableEncodesFirstColumn("WITH w AS (SELECT * FROM converted_v) SELECT * FROM w", " PARTITION_BY YEAR", "cte", true);
             assertCopyThroughTempTableEncodesFirstColumn("SELECT converted_v.* FROM converted_v CROSS JOIN long_sequence(1)", " PARTITION_BY YEAR", "cross_join", true);
-            assertCopyThroughTempTableEncodesFirstColumn("SELECT * FROM converted_v ORDER BY ts DESC LIMIT 5", "", "order_by_desc_limit", true);
-            assertCopyThroughTempTableEncodesFirstColumn("SELECT * FROM converted_v LIMIT -3", "", "negative_limit", true);
-            assertCopyThroughTempTableEncodesFirstColumn("SELECT * FROM converted_v WHERE ts >= $1", "", "bind_variable", true);
+            assertCopyThroughTempTableEncodesFirstColumn("SELECT *, 'x'::BINARY bin FROM converted_v ORDER BY ts DESC LIMIT 5", "", "order_by_desc_limit", true);
+            assertCopyThroughTempTableEncodesFirstColumn("SELECT * FROM converted_v LIMIT -3", " PARTITION_BY YEAR", "negative_limit", true);
+            assertCopyThroughTempTableEncodesFirstColumn("SELECT * FROM converted_v WHERE ts >= $1", " PARTITION_BY YEAR", "bind_variable", true);
+            // A GROUP BY or SAMPLE BY key keeps the setting of its column, and an aggregate takes its type's default.
+            assertCopyThroughTempTableEncodesFirstColumn("SELECT metric, count() c, 'x'::BINARY bin FROM converted_v ORDER BY metric", "", "group_by", true);
+            // count() has no setting, so it takes the LONG default, PLAIN
+            ParquetTestUtils.assertColumnsDoNotUseDictionaryEncoding(parquetPath("group_by"), configuration.getFilesFacade(), 1);
+            ParquetTestUtils.assertColumnsDoNotUseEncoding(parquetPath("group_by"), configuration.getFilesFacade(), ParquetEncoding.ENCODING_DELTA_BINARY_PACKED, 1);
 
             // The select metadata decides which columns of these shapes carry a setting, and the streaming paths
-            // read the same metadata, so the export of the same query that streams is the oracle. The set
-            // operations do not see the retyped column, so PARTITION_BY routes them to the temp table.
+            // read the same metadata, so the export of the same query that streams is the oracle. A plan whose
+            // timestamp a table scan does not order keeps the temp table, and the set operations do not see the
+            // retyped column, so PARTITION_BY routes them to the temp table.
             createTableWithParquetSettings("streamed");
             final FilesFacade ff = configuration.getFilesFacade();
-            // A GROUP BY or SAMPLE BY key keeps the setting of its column, and an aggregate takes its type's default.
-            assertCopyThroughTempTableEncodesLikeStreaming("SELECT metric, count() FROM %s ORDER BY metric", "", "group_by");
-            ParquetTestUtils.assertColumnsUseDictionaryEncoding(parquetPath("group_by"), ff, 0);
-            ParquetTestUtils.assertColumnsUseDictionaryEncoding(parquetPath("group_by_streamed"), ff, 0);
             assertCopyThroughTempTableEncodesLikeStreaming("SELECT ts, last(metric) lm, sum(total) st FROM %s SAMPLE BY 1d", "", "sample_by");
             ParquetTestUtils.assertColumnsDoNotUseDictionaryEncoding(parquetPath("sample_by"), ff, 1);
             ParquetTestUtils.assertColumnsDoNotUseDictionaryEncoding(parquetPath("sample_by_streamed"), ff, 1);
             assertCopyThroughTempTableEncodesLikeStreaming("SELECT ts, metric, count() c FROM %s SAMPLE BY 1d", "", "sample_by_key");
             ParquetTestUtils.assertColumnsUseDictionaryEncoding(parquetPath("sample_by_key"), ff, 1);
             ParquetTestUtils.assertColumnsUseDictionaryEncoding(parquetPath("sample_by_key_streamed"), ff, 1);
-            assertCopyThroughTempTableEncodesLikeStreaming("SELECT * FROM %s LATEST ON ts PARTITION BY metric", "", "latest_on");
+            // LATEST ON over the view keeps no designated timestamp, so it streams, and a BINARY column routes it here
+            assertCopyThroughTempTableEncodesFirstColumn("SELECT *, 'x'::BINARY bin FROM converted_v LATEST ON ts PARTITION BY metric", "", "latest_on", true);
+            assertParquetSettingsKept(parquetPath("latest_on"));
             assertCopyThroughTempTableEncodesLikeStreaming("SELECT metric, total, ts, row_number() OVER (PARTITION BY metric ORDER BY ts) rn FROM %s", "", "window");
             assertCopyThroughTempTableEncodesLikeStreaming(
                     "SELECT * FROM (SELECT * FROM %s WHERE ts < '2024-01-02' UNION ALL SELECT * FROM %s WHERE ts >= '2024-01-02') TIMESTAMP(ts)",
@@ -2219,7 +2838,7 @@ public class CopyExportTest extends AbstractCairoTest {
     @Test
     public void testCopyParquetExportVarToFixedConvertedColumnSurvivesEmptyMetadataCacheWindow() throws Exception {
         // var->fixed lazy conversion (STRING->LONG) over a parquet partition, exported via the
-        // TEMP_TABLE path. The empty cache forces determineExportMode() to hydrate the table
+        // CURSOR_BASED path. The empty cache forces determineExportMode() to hydrate the table
         // metadata before it can detect the pending conversion.
         assertMemoryLeak(() -> assertParquetExportOfConvertedColumn("STRING", "(x * 3)::STRING", "LONG", """
                 s\tts
@@ -4509,7 +5128,8 @@ public class CopyExportTest extends AbstractCairoTest {
     @Test
     public void testCopyQueuedExportOfColumnRetypedAfterQueueOverParquetPartition() throws Exception {
         // s turns from INT to LONG after COPY queues the export, while the first day of pt is a Parquet partition, which
-        // keeps s as INT. The export compiles its select again and writes s as LONG, with the same values.
+        // keeps s as INT. The export compiles its select again and streams the rows of the new plan through the cursor
+        // exporter, which reads s through the converting accessors, so it writes s as LONG, with the same values.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE pt (s INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO pt SELECT x::INT, timestamp_sequence('2024-01-01', 3_600_000_000) FROM long_sequence(30)");
@@ -4521,8 +5141,10 @@ public class CopyExportTest extends AbstractCairoTest {
             final String exportId = queueCopy("COPY (" + query + ") TO 'retyped_after_queue' WITH FORMAT PARQUET");
             execute("ALTER TABLE pt ALTER COLUMN s TYPE LONG");
             drainWalQueue();
-            runExportJob();
-            assertExportSucceeded(exportId);
+            assertExportMode(query, ParquetExportMode.CURSOR_BASED);
+            Assert.assertEquals(1, runExportJobCountingCompiles());
+            assertExportLog(exportId, STREAMING_EXPORT_LOG);
+            assertNoTempDirOf(exportId);
             final String parquetPath = parquetPath("retyped_after_queue");
             ParquetTestUtils.assertColumnTypes(parquetPath, configuration.getFilesFacade(), ColumnType.LONG, 0);
             // s holds 1 to 30, one per hour from 2024-01-01T00:00
@@ -4535,8 +5157,6 @@ public class CopyExportTest extends AbstractCairoTest {
                             30\t1\t30\t465\t2024-01-01T00:00:00.000000Z\t2024-01-02T05:00:00.000000Z
                             """);
             assertParquetMatchesQuery(query, parquetPath);
-            // No check for a temp directory left behind: an export through a temp table that writes one file keeps its
-            // empty tmp_<id> directory (a known bug of SQLSerialParquetExporter.process()).
         });
     }
 
@@ -4554,6 +5174,51 @@ public class CopyExportTest extends AbstractCairoTest {
             assertExportedFileCount(exportId, 1);
             assertParquetRows("empty_table", "ts", "x\tts\textra\n");
             assertNoTempDirLeft();
+        });
+    }
+
+    @Test
+    public void testCopyQueuedExportOfTableConvertedToParquetAfterQueue() throws Exception {
+        // c turned from INT to LONG while every partition was native. The first day goes to Parquet after COPY queues
+        // the export of a filter, which makes the queued plan, whose Parquet row group filter knows no Parquet partition,
+        // stale: the export compiles its select again and streams the new plan, which reads a retyped column of a
+        // Parquet partition, through the cursor exporter rather than a temp table.
+        assertMemoryLeak(() -> {
+            for (String walMode : new String[]{"WAL", "BYPASS WAL"}) {
+                createRetypedTables(walMode);
+                execute("CREATE TABLE q (c INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY " + walMode);
+                execute("INSERT INTO q SELECT x::INT, timestamp_sequence('2024-01-01', 21_600_000_000) FROM long_sequence(12)");
+                drainWalQueue();
+                execute("ALTER TABLE q ALTER COLUMN c TYPE LONG");
+                drainWalQueue();
+                final String query = "SELECT * FROM q WHERE c > 0";
+                try (RecordCursorFactory factory = select(query)) {
+                    Assert.assertFalse(factory.hasParquetConvertedColumns(sqlExecutionContext));
+                }
+                final String exportId = queueCopy("COPY (" + query + ") TO 'converted_after_queue' WITH FORMAT PARQUET");
+                execute("ALTER TABLE q CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                drainWalQueue();
+                try (RecordCursorFactory factory = select(query)) {
+                    Assert.assertTrue(factory.hasParquetConvertedColumns(sqlExecutionContext));
+                }
+                assertExportMode(query, ParquetExportMode.CURSOR_BASED);
+                Assert.assertEquals(walMode, 1, runExportJobCountingCompiles());
+                assertExportLog(exportId, STREAMING_EXPORT_LOG);
+                Assert.assertNull(engine.getTableTokenIfExists("copy." + exportId));
+                assertNoTempDirOf(exportId);
+                // c holds 1 to 12, one every 6 hours from 2024-01-01T00:00
+                assertQuery("SELECT count(), sum(c), min(ts), max(ts) FROM read_parquet('" + parquetPath("converted_after_queue") + "')")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                count\tsum\tmin\tmax
+                                12\t78\t2024-01-01T00:00:00.000000Z\t2024-01-03T18:00:00.000000Z
+                                """);
+                ParquetTestUtils.assertColumnTypes(parquetPath("converted_after_queue"), configuration.getFilesFacade(), ColumnType.LONG, 0);
+                execute("DROP TABLE q");
+                dropRetypedTables();
+            }
         });
     }
 
@@ -4680,6 +5345,87 @@ public class CopyExportTest extends AbstractCairoTest {
                     1\ta\t2024-01-03T00:00:00.000000Z\tnull
                     """);
             assertNoTempDirLeft();
+        });
+    }
+
+    @Test
+    public void testCopyQueuedExportRecompiledIntoBackwardScanStreams() throws Exception {
+        // A view redefined, or a column added, after COPY queues an export makes the queued plan stale, so the export
+        // compiles its select again. The worker reads the page frames of a new plan ascending, so a new plan that scans
+        // backward streams its rows through the cursor exporter, or through a temp table when it holds a BINARY column,
+        // which the cursor exporter cannot write. A new plan that scans forward keeps its page frames. A select over a
+        // view never exports a projection over page frames, as the view's wrapper hides the projection, so those
+        // selects read the tables.
+        assertMemoryLeak(() -> {
+            createRetypedTables("WAL");
+            execute("CREATE TABLE tb (x INT, b BINARY, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO tb VALUES
+                        (1, rnd_bin(2, 4, 0), '2024-01-01T00:00:00.000000Z'),
+                        (2, NULL, '2024-01-01T12:00:00.000000Z'),
+                        (3, rnd_bin(2, 4, 0), '2024-01-02T00:00:00.000000Z'),
+                        (4, rnd_bin(2, 4, 0), '2024-01-03T00:00:00.000000Z')
+                    """);
+            drainWalQueue();
+            final RecompiledExport[] exports = {
+                    // a filter turns into a backward scan of page frames
+                    new RecompiledExport(
+                            "SELECT * FROM v", "CREATE OR REPLACE VIEW v AS (SELECT * FROM nr WHERE x > 0)", ParquetExportMode.CURSOR_BASED,
+                            "CREATE OR REPLACE VIEW v AS (SELECT * FROM nr ORDER BY ts DESC)",
+                            ParquetExportMode.DIRECT_PAGE_FRAME, ParquetExportMode.CURSOR_BASED, STREAMING_EXPORT_LOG, 1, null
+                    ),
+                    // a projection over a backward scan of page frames
+                    new RecompiledExport(
+                            "SELECT x + 1 AS y, ts FROM nr ORDER BY ts DESC", null, ParquetExportMode.PAGE_FRAME_BACKED,
+                            "ALTER TABLE nr ADD COLUMN extra INT",
+                            ParquetExportMode.PAGE_FRAME_BACKED, ParquetExportMode.CURSOR_BASED, STREAMING_EXPORT_LOG, 1, null
+                    ),
+                    // the same two with a BINARY column
+                    new RecompiledExport(
+                            "SELECT * FROM v", "CREATE OR REPLACE VIEW v AS (SELECT * FROM tb)", ParquetExportMode.DIRECT_PAGE_FRAME,
+                            "CREATE OR REPLACE VIEW v AS (SELECT * FROM tb ORDER BY ts DESC)",
+                            ParquetExportMode.DIRECT_PAGE_FRAME, ParquetExportMode.TEMP_TABLE, REROUTED_EXPORT_LOG, 2, null
+                    ),
+                    new RecompiledExport(
+                            "SELECT b, x + 1 AS y, ts FROM tb ORDER BY ts DESC", null, ParquetExportMode.PAGE_FRAME_BACKED,
+                            "ALTER TABLE tb ADD COLUMN extra INT",
+                            ParquetExportMode.PAGE_FRAME_BACKED, ParquetExportMode.TEMP_TABLE, REROUTED_EXPORT_LOG, 2, null
+                    ),
+                    // a scan that stays forward keeps its page frames
+                    new RecompiledExport(
+                            "SELECT * FROM v", "CREATE OR REPLACE VIEW v AS (SELECT * FROM nr WHERE x > 0)", ParquetExportMode.CURSOR_BASED,
+                            "CREATE OR REPLACE VIEW v AS (SELECT * FROM nr)",
+                            ParquetExportMode.DIRECT_PAGE_FRAME, ParquetExportMode.DIRECT_PAGE_FRAME, STREAMING_EXPORT_LOG, 1, "ts"
+                    ),
+            };
+            for (int i = 0; i < exports.length; i++) {
+                final RecompiledExport export = exports[i];
+                final String fileName = "recompiled_" + i;
+                try {
+                    if (export.setup() != null) {
+                        execute(export.setup());
+                        drainWalAndViewQueues();
+                    }
+                    assertExportMode(export.query(), export.mode());
+                    final String exportId = queueCopy("COPY (" + export.query() + ") TO '" + fileName + "' WITH FORMAT PARQUET");
+                    execute(export.change());
+                    drainWalAndViewQueues();
+                    // a fresh plan of the select exports its page frames, a recompiled one goes by its direction
+                    try (RecordCursorFactory factory = select(export.query())) {
+                        Assert.assertEquals(export.newMode(), ParquetExportMode.determineExportMode(factory, false, sqlExecutionContext));
+                        Assert.assertEquals(export.recompiledMode(), ParquetExportMode.determineRecompiledExportMode(factory, sqlExecutionContext));
+                    }
+                    Assert.assertEquals(export.compileCount(), runExportJobCountingCompiles());
+                    assertExportLog(exportId, export.log());
+                    if (export.log().equals(STREAMING_EXPORT_LOG)) {
+                        assertNoTempDirOf(exportId);
+                    }
+                    // the select, after the change, is the oracle
+                    assertParquetMatchesControl(export.query(), fileName, export.timestampColumn());
+                } catch (AssertionError e) {
+                    throw new AssertionError(export.query() + " after " + export.change(), e);
+                }
+            }
         });
     }
 
@@ -5058,6 +5804,75 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyQueuedRetypedDescExportSurvivesConvertToNative() throws Exception {
+        // The descending export of a retyped table streams its rows. The Parquet partition goes native before the export
+        // runs. The scan holds no Parquet row group filter that the conversion makes stale, so the export streams the
+        // queued plan, whose cursor reads the native partition through the same accessors, still descending, as the
+        // temp table did.
+        assertMemoryLeak(() -> {
+            for (String walMode : new String[]{"WAL", "BYPASS WAL"}) {
+                createRetypedTables(walMode);
+                final String query = "SELECT * FROM r ORDER BY ts DESC";
+                assertExportMode(query, ParquetExportMode.CURSOR_BASED);
+                final String exportId = queueCopy("COPY (" + query + ") TO 'converted_to_native' WITH FORMAT PARQUET");
+                execute("ALTER TABLE r CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+                drainWalQueue();
+                Assert.assertEquals(walMode, 0, runExportJobCountingCompiles());
+                assertExportLog(exportId, STREAMING_EXPORT_LOG);
+                assertNoTempDirOf(exportId);
+                assertParquetMatchesControl("SELECT * FROM nr ORDER BY ts DESC", "converted_to_native", null);
+                dropRetypedTables();
+            }
+        });
+    }
+
+    @Test
+    public void testCopyQueuedRetypedExportFollowsReplacedView() throws Exception {
+        // The export of a view over a retyped table streams its rows. The view is replaced before the export runs, so the
+        // export compiles its select again and routes the new plan by its own direction: a descending scan streams its
+        // rows descending, a plan that a table scan does not order goes through a temp table, and a backward scan of
+        // page frames streams its rows through the cursor exporter rather than reading its frames ascending.
+        assertMemoryLeak(() -> {
+            createRetypedTables("WAL");
+            final FilesFacade ff = configuration.getFilesFacade();
+            final String query = "SELECT * FROM vq";
+            final String[][] replacements = {
+                    // the view's new definition, its control over nr, the designated timestamp of the file
+                    {"SELECT * FROM r WHERE x > 0 ORDER BY ts DESC", "SELECT * FROM nr WHERE x > 0 ORDER BY ts DESC", null},
+                    {"SELECT * FROM r ORDER BY other_ts DESC", "SELECT * FROM nr ORDER BY other_ts DESC", null},
+                    {"SELECT * FROM nr ORDER BY ts DESC", "SELECT * FROM nr ORDER BY ts DESC", null},
+                    {"SELECT * FROM r WHERE s = 'a' LATEST ON ts PARTITION BY s", "SELECT * FROM nr WHERE s = 'a' LATEST ON ts PARTITION BY s", "ts"},
+            };
+            final String[] expectedLogs = {STREAMING_EXPORT_LOG, REROUTED_EXPORT_LOG, STREAMING_EXPORT_LOG, REROUTED_EXPORT_LOG};
+            // the compile of the select, and for a temp table the CREATE TABLE AS SELECT
+            final int[] expectedCompileCounts = {1, 2, 1, 2};
+            for (int i = 0; i < replacements.length; i++) {
+                execute("CREATE OR REPLACE VIEW vq AS (SELECT * FROM r)");
+                drainWalAndViewQueues();
+                assertExportMode(query, ParquetExportMode.CURSOR_BASED);
+                final String fileName = "replaced_view_" + i;
+                final String exportId = queueCopy("COPY (" + query + ") TO '" + fileName + "' WITH FORMAT PARQUET");
+                execute("CREATE OR REPLACE VIEW vq AS (" + replacements[i][0] + ")");
+                drainWalAndViewQueues();
+                try {
+                    Assert.assertEquals(expectedCompileCounts[i], runExportJobCountingCompiles());
+                    assertExportLog(exportId, expectedLogs[i]);
+                    assertParquetMatchesControl(replacements[i][1], fileName, replacements[i][2]);
+                    Assert.assertNull(engine.getTableTokenIfExists("copy." + exportId));
+                } catch (AssertionError e) {
+                    throw new AssertionError(replacements[i][0], e);
+                }
+            }
+            ParquetTestUtils.assertColumnMaxDefLevel(parquetPath("replaced_view_0"), ff, 4, 0);
+            assertQuery("SELECT count() FROM read_parquet('" + parquetPath("replaced_view_1") + "') WHERE other_ts IS NULL")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n2\n");
+        });
+    }
+
+    @Test
     public void testCopySampleByFillConstantOnSymbolAggregateExportsText() throws Exception {
         // The fill rows of a text constant on a SYMBOL aggregate hold keys that its symbol table does not resolve to the
         // constant, so the export writes the aggregate as text, which holds the constant, as the query returns it.
@@ -5088,6 +5903,96 @@ public class CopyExportTest extends AbstractCairoTest {
                                 2024-01-02T00:00:00.000000Z\tb\t7
                                 """.replace("%c", constant));
             }
+        });
+    }
+
+    @Test
+    public void testCopyStreamedRetypedExportKeepsDesignatedTimestamp() throws Exception {
+        // The designated timestamp of a table holds no NULL, so the file of a retyped table's scan keeps it REQUIRED, at
+        // the edges of its range and in both directions: designated when the rows ascend, and none when they descend.
+        // A table rejects a designated timestamp before 1970, so the epoch and the step after it are the smallest ones.
+        assertMemoryLeak(() -> {
+            final FilesFacade ff = configuration.getFilesFacade();
+            final String[][] timestampTypes = {
+                    {"TIMESTAMP", "'1970-01-01T00:00:00.000001Z'", "'9999-12-31T23:59:59.999999Z'"},
+                    {"TIMESTAMP_NS", "'1970-01-01T00:00:00.000000001Z'", "'2261-12-31T23:59:59.999999999Z'"},
+            };
+            for (String walMode : new String[]{"WAL", "BYPASS WAL"}) {
+                for (String[] timestampType : timestampTypes) {
+                    for (String tableName : new String[]{"edge", "nedge"}) {
+                        execute("CREATE TABLE " + tableName + " (s SYMBOL, x INT, ts " + timestampType[0] + ") TIMESTAMP(ts) PARTITION BY DAY " + walMode);
+                        execute("INSERT INTO " + tableName + " VALUES " +
+                                "('a', 1, '1970-01-01T00:00:00.000000Z'), " +
+                                "('b', 2, " + timestampType[1] + "), " +
+                                "('a', 3, '2024-02-29T12:00:00.000000Z'), " +
+                                "('b', 4, " + timestampType[2] + ")");
+                    }
+                    drainWalQueue();
+                    execute("ALTER TABLE edge CONVERT PARTITION TO PARQUET LIST '1970-01-01', '2024-02-29'");
+                    drainWalQueue();
+                    execute("ALTER TABLE edge ALTER COLUMN x TYPE LONG");
+                    execute("ALTER TABLE nedge ALTER COLUMN x TYPE LONG");
+                    drainWalQueue();
+                    bindVariableService.clear();
+                    bindVariableService.setStr(0, "a");
+                    // the rows after the epoch
+                    bindVariableService.setTimestamp(1, 1);
+                    final String[][] queries = {
+                            {"SELECT * FROM %s", "ts"},
+                            {"SELECT * FROM %s ORDER BY ts DESC", null},
+                            {"SELECT * FROM %s WHERE s = $1", "ts"},
+                            {"SELECT * FROM %s WHERE ts >= $2", "ts"},
+                    };
+                    for (int i = 0; i < queries.length; i++) {
+                        final String query = queries[i][0].replace("%s", "edge");
+                        final String controlQuery = queries[i][0].replace("%s", "nedge");
+                        final String fileName = "edge_" + i;
+                        try {
+                            assertCopyStreamsRows(query, fileName);
+                            assertParquetMatchesControl(controlQuery, fileName, queries[i][1]);
+                            ParquetTestUtils.assertColumnTypes(parquetPath(fileName), ff, ColumnType.typeOf(timestampType[0]), 2);
+                            ParquetTestUtils.assertColumnMaxDefLevel(parquetPath(fileName), ff, 2, 0);
+                            assertQueriesPrintAlike(
+                                    "SELECT ts FROM (" + controlQuery + ") ORDER BY ts",
+                                    "SELECT ts FROM read_parquet('" + parquetPath(fileName) + "') ORDER BY ts"
+                            );
+                        } catch (AssertionError e) {
+                            throw new AssertionError(walMode + ", " + timestampType[0] + ": " + query, e);
+                        }
+                    }
+                    bindVariableService.clear();
+                    execute("DROP TABLE edge");
+                    execute("DROP TABLE nedge");
+                    drainWalQueue();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCopyStreamedRetypedExportWritesComputedSymbolAsString() throws Exception {
+        // A streamed export of a retyped table keeps a table's SYMBOL column as SYMBOL and writes a SYMBOL that a function
+        // computes as STRING, as every streamed export does. SAMPLE BY keeps the temp table, which keeps its first() a
+        // SYMBOL.
+        assertMemoryLeak(() -> {
+            createRetypedTables("WAL");
+            final FilesFacade ff = configuration.getFilesFacade();
+
+            final String castQuery = "SELECT (s || 'x')::SYMBOL cs, x, ts FROM r";
+            assertCopyStreamsRows(castQuery, "computed_symbol");
+            assertParquetMatchesControl(castQuery.replace("FROM r", "FROM nr"), "computed_symbol", "ts");
+            assertSymbolColumnsWrittenAsString(parquetPath("computed_symbol"), 0);
+
+            final String groupByQuery = "SELECT s, first(s2) f FROM r";
+            assertCopyStreamsRows(groupByQuery, "group_by_symbol");
+            assertParquetMatchesQueryInAnyOrder(groupByQuery.replace("FROM r", "FROM nr"), parquetPath("group_by_symbol"));
+            assertSymbolColumnsKept(parquetPath("group_by_symbol"), 0);
+            assertSymbolColumnsWrittenAsString(parquetPath("group_by_symbol"), 1);
+
+            final String sampleByQuery = "SELECT ts, first(s2) f FROM r SAMPLE BY 1d";
+            assertCopyMaterializesRows(sampleByQuery, "sample_by_symbol");
+            assertParquetMatchesControl(sampleByQuery.replace("FROM r", "FROM nr"), "sample_by_symbol", "ts");
+            ParquetTestUtils.assertColumnTypes(parquetPath("sample_by_symbol"), ff, ColumnType.SYMBOL, 1);
         });
     }
 
@@ -6575,6 +7480,191 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRetypedExportKeepsTempTableForOtherPlans() throws Exception {
+        // A plan whose timestamp no table scan guarantees - an aggregation, LATEST ON, a window function, a join, a
+        // sort on another timestamp, a TIMESTAMP(col) claim - could hand the cursor exporter a NULL or an unordered
+        // timestamp for the file's designated timestamp, so its export of a retyped column keeps the temp table.
+        assertMemoryLeak(() -> {
+            for (String walMode : new String[]{"WAL", "BYPASS WAL"}) {
+                createRetypedTables(walMode);
+                execute("CREATE TABLE d (s SYMBOL, y INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY " + walMode);
+                execute("INSERT INTO d VALUES ('a', 100, '2024-01-01T00:30:00.000000Z'), ('b', 200, '2024-01-02T01:30:00.000000Z')");
+                drainWalQueue();
+                final RetypedExportShape[] shapes = {
+                        new RetypedExportShape("SELECT ts, sum(x) sx FROM %s SAMPLE BY 1d", "ts"),
+                        new RetypedExportShape("SELECT * FROM %s WHERE s = 'a' LATEST ON ts PARTITION BY s", "ts"),
+                        new RetypedExportShape("SELECT x, ts, row_number() OVER () rn FROM %s", "ts"),
+                        // NULLs of other_ts sort last
+                        new RetypedExportShape("SELECT * FROM %s ORDER BY other_ts DESC", null),
+                        new RetypedExportShape("SELECT * FROM (SELECT x, other_ts, ts FROM %s WHERE other_ts IS NOT NULL ORDER BY other_ts) timestamp(other_ts)", "other_ts"),
+                        new RetypedExportShape("SELECT * FROM %s WHERE s IN (SELECT s FROM k) ORDER BY ts DESC", null),
+                        new RetypedExportShape("SELECT a.ts, a.s, first(b.y) fy FROM %s a WINDOW JOIN d b RANGE BETWEEN 1 hour PRECEDING AND 1 hour FOLLOWING", "ts"),
+                        // the multi-key ORDER BY with a negative LIMIT reads the frames backward and each frame's index
+                        // forward, so the scan promises no order of its own
+                        new RetypedExportShape("SELECT * FROM %s WHERE s = 'a' ORDER BY ts, x LIMIT -3", "ts"),
+                        new RetypedExportShape("SELECT * FROM vrl", "SELECT * FROM nr LATEST ON ts PARTITION BY s", "ts", true),
+                        // the rows of these come in no order the query fixes
+                        new RetypedExportShape("SELECT ts, s, sum(x) sx FROM r SAMPLE BY 1d", "SELECT ts, s, sum(x) sx FROM nr SAMPLE BY 1d", null, false),
+                        new RetypedExportShape("SELECT * FROM r LATEST ON ts PARTITION BY s", "SELECT * FROM nr LATEST ON ts PARTITION BY s", null, false),
+                        new RetypedExportShape(
+                                "SELECT s, x, other_ts, avg(x) OVER (PARTITION BY s) a FROM r timestamp(other_ts) WHERE s IN ('a', 'b')",
+                                "SELECT s, x, other_ts, avg(x) OVER (PARTITION BY s) a FROM nr timestamp(other_ts) WHERE s IN ('a', 'b')",
+                                null,
+                                false
+                        ),
+                };
+                for (int i = 0; i < shapes.length; i++) {
+                    final RetypedExportShape shape = shapes[i];
+                    final String fileName = "temp_table_shape_" + i;
+                    try {
+                        assertCopyMaterializesRows(shape.query(), fileName);
+                        if (shape.isOrdered()) {
+                            assertParquetMatchesControl(shape.controlQuery(), fileName, shape.timestampColumn());
+                        } else {
+                            assertParquetMatchesQueryInAnyOrder(shape.controlQuery(), parquetPath(fileName));
+                        }
+                    } catch (AssertionError e) {
+                        throw new AssertionError(walMode + ": " + shape.query(), e);
+                    }
+                }
+                // the last three rows of s = 'a' by ts and x
+                assertParquetRows("temp_table_shape_7", "ts", """
+                        s\ts2\tx\tother_ts\tts
+                        a\tp\t5\t2023-06-09T00:00:00.000000Z\t2024-01-02T00:00:00.000000Z
+                        a\tq\t7\t2023-06-07T00:00:00.000000Z\t2024-01-02T02:00:00.000000Z
+                        a\tp\t9\t2023-06-10T00:00:00.000000Z\t2024-01-03T00:00:00.000000Z
+                        """);
+                // the temp table keeps the NULLs of other_ts as NULLs
+                for (String fileName : new String[]{"temp_table_shape_3", "temp_table_shape_11"}) {
+                    assertQuery("SELECT count() FROM read_parquet('" + parquetPath(fileName) + "') WHERE other_ts IS NULL")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("count\n2\n");
+                }
+                // A TIMESTAMP(col) claim of another column on the scan itself: the temp table rejects its NULLs, as it
+                // did before.
+                assertExportMode("SELECT * FROM r timestamp(other_ts)", ParquetExportMode.TEMP_TABLE);
+                execute("DROP TABLE d");
+                dropRetypedTables();
+            }
+        });
+    }
+
+    @Test
+    public void testRetypedExportStreamsTableScanShapes() throws Exception {
+        // A column retyped after its partition went to Parquet is converted only in the row accessors, which the cursor
+        // exporter reads every value through. An export whose plan has no timestamp, or reads the table's designated
+        // timestamp through a scan, filter, projection, LIMIT or a sort on it, streams its rows. The file designates
+        // the timestamp when the rows ascend and none when they descend, and holds what the same query returns over nr,
+        // which turned x to LONG while every partition was native.
+        assertMemoryLeak(() -> {
+            for (String walMode : new String[]{"WAL", "BYPASS WAL"}) {
+                createRetypedTables(walMode);
+                execute("CREATE TABLE d (s SYMBOL, y INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY " + walMode);
+                execute("INSERT INTO d VALUES ('a', 100, '2024-01-01T00:30:00.000000Z'), ('b', 200, '2024-01-02T01:30:00.000000Z')");
+                drainWalQueue();
+                execute("CREATE VIEW vrlx AS (SELECT s, x FROM r LATEST ON ts PARTITION BY s)");
+                execute("CREATE VIEW vrw AS (SELECT x, row_number() OVER () rn FROM r)");
+                drainWalAndViewQueues();
+                bindVariableService.clear();
+                bindVariableService.setTimestamp(0, 1_704_153_600_000_000L); // 2024-01-02T00:00:00Z
+                bindVariableService.setStr(1, "b");
+                // query over r, the same query over nr, the designated timestamp of the file, and whether the query
+                // fixes the order of its rows
+                final RetypedExportShape[] shapes = {
+                        new RetypedExportShape("SELECT * FROM %s", "ts"),
+                        new RetypedExportShape("SELECT x AS a, ts AS b FROM %s", "b"),
+                        new RetypedExportShape("SELECT x + 1 AS y, ts FROM %s", "ts"),
+                        new RetypedExportShape("SELECT * FROM (SELECT * FROM %s WHERE x > 1)", "ts"),
+                        new RetypedExportShape("WITH q AS (SELECT * FROM %s WHERE x > 1) SELECT * FROM q", "ts"),
+                        new RetypedExportShape("SELECT * FROM %s ORDER BY ts DESC LIMIT 5", null),
+                        new RetypedExportShape("SELECT * FROM %s LIMIT -3", "ts"),
+                        new RetypedExportShape("SELECT * FROM %s WHERE ts >= $1", "ts"),
+                        new RetypedExportShape("SELECT * FROM %s WHERE s = $2", "ts"),
+                        new RetypedExportShape("SELECT * FROM %s WHERE s IN ('a', 'b')", "ts"),
+                        new RetypedExportShape("SELECT * FROM %s WHERE s != 'a'", "ts"),
+                        new RetypedExportShape("SELECT * FROM %s WHERE s IN (SELECT s FROM k)", "ts"),
+                        new RetypedExportShape("SELECT * FROM %s WHERE s LIKE 'a%'", "ts"),
+                        new RetypedExportShape("SELECT * FROM %s WHERE s = 'a' AND x > 1 ORDER BY ts DESC", null),
+                        new RetypedExportShape("SELECT * FROM %s WHERE s IN ('a', 'b') ORDER BY ts DESC", null),
+                        new RetypedExportShape("SELECT * FROM %s ORDER BY ts, x", "ts"),
+                        new RetypedExportShape("SELECT * FROM %s WHERE x > 1 ORDER BY ts DESC, x LIMIT 3", null),
+                        new RetypedExportShape("SELECT s, sum(x) sx FROM %s ORDER BY s", null),
+                        new RetypedExportShape("SELECT x, row_number() OVER () rn FROM %s", null),
+                        new RetypedExportShape("SELECT * FROM vr", "SELECT * FROM nr", "ts", true),
+                        new RetypedExportShape("SELECT * FROM vrv", "SELECT * FROM nr", "ts", true),
+                        new RetypedExportShape("SELECT * FROM vrf", "SELECT * FROM nr WHERE x > 1", "ts", true),
+                        new RetypedExportShape("SELECT * FROM vrw", "SELECT x, row_number() OVER () rn FROM nr", null, true),
+                        // the rows of these come in no order the query fixes
+                        new RetypedExportShape("SELECT DISTINCT s, x FROM r", "SELECT DISTINCT s, x FROM nr", null, false),
+                        new RetypedExportShape("SELECT s, x FROM r LATEST ON ts PARTITION BY s", "SELECT s, x FROM nr LATEST ON ts PARTITION BY s", null, false),
+                        new RetypedExportShape("SELECT * FROM vrlx", "SELECT s, x FROM nr LATEST ON ts PARTITION BY s", null, false),
+                        new RetypedExportShape(
+                                "SELECT h.offset, count() c FROM r a HORIZON JOIN d b LIST (0s, 1s) AS h",
+                                "SELECT h.offset, count() c FROM nr a HORIZON JOIN d b LIST (0s, 1s) AS h",
+                                null,
+                                false
+                        ),
+                        // a set operation reports no retyped column, so it streamed before too
+                        new RetypedExportShape("SELECT * FROM %s UNION ALL SELECT * FROM %s", null),
+                };
+                for (int i = 0; i < shapes.length; i++) {
+                    final RetypedExportShape shape = shapes[i];
+                    final String fileName = "streamed_shape_" + i;
+                    try {
+                        assertCopyStreamsRows(shape.query(), fileName);
+                        if (shape.isOrdered()) {
+                            assertParquetMatchesControl(shape.controlQuery(), fileName, shape.timestampColumn());
+                        } else {
+                            assertParquetMatchesQueryInAnyOrder(shape.controlQuery(), parquetPath(fileName));
+                        }
+                    } catch (AssertionError e) {
+                        throw new AssertionError(walMode + ": " + shape.query(), e);
+                    }
+                }
+                bindVariableService.clear();
+                execute("DROP VIEW vrlx");
+                execute("DROP VIEW vrw");
+                execute("DROP TABLE d");
+                dropRetypedTables();
+            }
+
+            // A column of the view that the query passes through keeps its PARQUET(...) setting, and a computed one
+            // takes its type's default: the export over streamed_v, whose table has the same settings and rows but no
+            // Parquet partition, is the oracle for the encodings, and the same query over nc_v for the rows.
+            createTableWithParquetSettingsAndConvertedColumn("converted", true, ConvertedColumnExportSource.VIEW_CREATED_AFTER_TYPE_CHANGE);
+            createConvertedColumnControl("nc");
+            createTableWithParquetSettings("streamed");
+            bindVariableService.clear();
+            bindVariableService.setTimestamp(0, 1_704_153_600_000_000L); // 2024-01-02T00:00:00Z
+            final String[] templates = {
+                    "SELECT metric AS m, ts FROM %s",
+                    "SELECT metric + 1 AS mp, ts FROM %s",
+                    "SELECT * FROM (SELECT * FROM %s)",
+                    "WITH w AS (SELECT * FROM %s) SELECT * FROM w",
+                    "SELECT * FROM %s ORDER BY ts DESC LIMIT 5",
+                    "SELECT * FROM %s LIMIT -3",
+                    "SELECT * FROM %s WHERE ts >= $1",
+                    "SELECT metric, count() c FROM %s ORDER BY metric",
+                    "SELECT DISTINCT metric FROM %s ORDER BY metric",
+                    // LATEST ON over the view keeps no designated timestamp
+                    "SELECT * FROM %s LATEST ON ts PARTITION BY metric",
+            };
+            for (int i = 0; i < templates.length; i++) {
+                final String fileName = "streamed_settings_" + i;
+                try {
+                    assertCopyStreamsLikeStreamedTable(templates[i], fileName);
+                    TestUtils.assertSqlCursors(engine, sqlExecutionContext, templates[i].replace("%s", "nc_v"), "SELECT * FROM read_parquet('" + parquetPath(fileName) + "')", LOG, true);
+                } catch (AssertionError e) {
+                    throw new AssertionError(templates[i], e);
+                }
+            }
+            bindVariableService.clear();
+        });
+    }
+
+    @Test
     public void testReverseTimestampOrdering() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test_table (x TIMESTAMP);");
@@ -6974,6 +8064,11 @@ public class CopyExportTest extends AbstractCairoTest {
         Assert.assertTrue("temp directory must be removed", tmpDirs == null || tmpDirs.length == 0);
     }
 
+    // The export removes the temp directory named after it when it streams its file or fails.
+    private static void assertNoTempDirOf(String exportId) {
+        Assert.assertFalse("temp directory of the export must be removed", new File(exportRoot, "tmp_" + exportId).exists());
+    }
+
     private static void awaitExportsDrained() {
         while (engine.getCopyExportContext().getActiveExportId() != -1) {
             Os.pause();
@@ -7200,6 +8295,16 @@ public class CopyExportTest extends AbstractCairoTest {
         execute("DROP TABLE t");
     }
 
+    // Runs the COPY of the query on this thread and asserts that its export materializes the rows through a temp table
+    // that COPY picked when it queued the export.
+    private void assertCopyMaterializesRows(String query, String fileName) throws Exception {
+        assertExportMode(query, ParquetExportMode.TEMP_TABLE);
+        final String exportId = queueCopy("COPY (" + query + ") TO '" + fileName + "' WITH FORMAT PARQUET");
+        runExportJob();
+        assertExportLog(exportId, TEMP_TABLE_EXPORT_LOG);
+        Assert.assertNull("the temp table must be dropped", engine.getTableTokenIfExists("copy." + exportId));
+    }
+
     private void assertCopyOfFusedJoinGroupByAfterBuildTableGrowth(
             String keyType,
             String keyExpr,
@@ -7268,17 +8373,43 @@ public class CopyExportTest extends AbstractCairoTest {
                 .returns(expected);
     }
 
-    // The first column of the query passes metric of the converted_v view through, or computes from it.
+    /**
+     * Exports the query with %s naming the converted_v view, which streams its rows through the cursor exporter, and
+     * the query with %s naming the streamed_v view, whose table has the same settings and rows but neither a Parquet
+     * partition nor a retype. Both files must hold the rows of the query and encode their columns alike.
+     */
+    private void assertCopyStreamsLikeStreamedTable(String queryTemplate, String fileName) throws Exception {
+        final String query = queryTemplate.replace("%s", "converted_v");
+        assertCopyStreamsRows(query, fileName);
+        copyToParquet("COPY (" + queryTemplate.replace("%s", "streamed_v") + ") TO '" + fileName + "_streamed' WITH FORMAT PARQUET");
+        assertParquetMatchesQuery(query, parquetPath(fileName));
+        ParquetTestUtils.assertColumnEncodingsMatch(parquetPath(fileName + "_streamed"), parquetPath(fileName), configuration.getFilesFacade());
+    }
+
+    // Runs the COPY of the query on this thread and asserts that its export streams the rows through the cursor
+    // exporter: it logs the phases of a streaming export, creates no temp table and leaves no temp directory behind.
+    private void assertCopyStreamsRows(String query, String fileName) throws Exception {
+        assertCopyStreamsRows(query, fileName, "");
+    }
+
+    private void assertCopyStreamsRows(String query, String fileName, String copyOptions) throws Exception {
+        assertExportMode(query, ParquetExportMode.CURSOR_BASED);
+        final String exportId = queueCopy("COPY (" + query + ") TO '" + fileName + "' WITH FORMAT PARQUET" + copyOptions);
+        runExportJob();
+        assertExportLog(exportId, STREAMING_EXPORT_LOG);
+        Assert.assertNull("an export that streams creates no temp table", engine.getTableTokenIfExists("copy." + exportId));
+        assertNoTempDirOf(exportId);
+    }
+
+    // The first column of the query passes metric of the converted_v view through, or computes from it. The export goes
+    // through a temp table.
     private void assertCopyThroughTempTableEncodesFirstColumn(
             String query,
             String copyOptions,
             String fileName,
             boolean isDictionaryEncodingExpected
     ) throws Exception {
-        if (copyOptions.isEmpty()) {
-            assertExportMode(query, ParquetExportMode.TEMP_TABLE);
-        }
-        copyToParquet("COPY (" + query + ") TO '" + fileName + "' WITH FORMAT PARQUET" + copyOptions);
+        copyThroughTempTable("COPY (" + query + ") TO '" + fileName + "' WITH FORMAT PARQUET" + copyOptions);
         final String parquetPath = parquetPath(fileName);
         assertParquetMatchesQuery(query, parquetPath);
         if (isDictionaryEncodingExpected) {
@@ -7296,9 +8427,6 @@ public class CopyExportTest extends AbstractCairoTest {
     private void assertCopyThroughTempTableEncodesLikeStreaming(String queryTemplate, String copyOptions, String fileName) throws Exception {
         final String query = queryTemplate.replace("%s", "converted_v");
         final String streamedQuery = queryTemplate.replace("%s", "streamed_v");
-        if (copyOptions.isEmpty()) {
-            assertExportMode(query, ParquetExportMode.TEMP_TABLE);
-        }
         try (RecordCursorFactory factory = select(streamedQuery)) {
             Assert.assertNotEquals(
                     streamedQuery,
@@ -7306,7 +8434,7 @@ public class CopyExportTest extends AbstractCairoTest {
                     ParquetExportMode.determineExportMode(factory, false, sqlExecutionContext)
             );
         }
-        copyToParquet("COPY (" + query + ") TO '" + fileName + "' WITH FORMAT PARQUET" + copyOptions);
+        copyThroughTempTable("COPY (" + query + ") TO '" + fileName + "' WITH FORMAT PARQUET" + copyOptions);
         copyToParquet("COPY (" + streamedQuery + ") TO '" + fileName + "_streamed' WITH FORMAT PARQUET");
         assertParquetMatchesQuery(query, parquetPath(fileName));
         ParquetTestUtils.assertColumnEncodingsMatch(parquetPath(fileName + "_streamed"), parquetPath(fileName), configuration.getFilesFacade());
@@ -7472,7 +8600,7 @@ public class CopyExportTest extends AbstractCairoTest {
     ) throws Exception {
         // Seed a WAL table, convert its single partition to parquet, then ALTER the column
         // type so the parquet partition carries a lazily-converted column. COPY (SELECT *)
-        // detects the pending conversion and materializes it before export. Read the exported
+        // detects the pending conversion and streams the rows that the conversion gives. Read the exported
         // file back via read_parquet (which reads the file as-is, with no lazy conversion) and
         // check that s holds the post-ALTER type and the converted values. Most values print
         // the same in either type (3 as INT or STRING), so the type check is what catches a
@@ -7525,6 +8653,21 @@ public class CopyExportTest extends AbstractCairoTest {
         testCopyExport(stmt, test);
     }
 
+    // Asserts that the file holds the rows of the control query in their order, reading SYMBOL, VARCHAR and STRING
+    // alike, and that read_parquet() designates the given column of the file as its timestamp, or none for null.
+    private void assertParquetMatchesControl(String controlQuery, String fileName, @Nullable String timestampColumn) throws Exception {
+        final String parquetQuery = "SELECT * FROM read_parquet('" + parquetPath(fileName) + "')";
+        try {
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, controlQuery, parquetQuery, LOG, true);
+            try (RecordCursorFactory factory = select(parquetQuery)) {
+                final int expectedTimestampIndex = timestampColumn == null ? -1 : factory.getMetadata().getColumnIndex(timestampColumn);
+                Assert.assertEquals("designated timestamp", expectedTimestampIndex, factory.getMetadata().getTimestampIndex());
+            }
+        } catch (AssertionError e) {
+            throw new AssertionError(fileName + " vs " + controlQuery, e);
+        }
+    }
+
     // metric, c and total are the first three columns of an export of a table that createTableWithParquetSettings*()
     // creates.
     private void assertParquetSettingsKept(String parquetPath) {
@@ -7536,6 +8679,99 @@ public class CopyExportTest extends AbstractCairoTest {
         ParquetTestUtils.assertColumnsDoNotUseEncoding(parquetPath, ff, ParquetEncoding.ENCODING_DELTA_BINARY_PACKED, 1);
     }
 
+    /**
+     * Gives pt and nt a column per conversion, in its source type, after a first row, so that the column has a column
+     * top, and retypes each column to its target type: pt after its single day went to Parquet, so that a read converts
+     * the values lazily, in the row accessors, and nt while its partition is native, so that the ALTER rewrites the
+     * column eagerly. Asserts that the export of pt streams its rows and writes the rows of nt, each column in the type
+     * that the ALTER gave nt's.
+     */
+    private void assertStreamedExportOfConversions(ConvertedColumnConversion[] conversions) throws Exception {
+        int rowCount = 0;
+        for (ConvertedColumnConversion conversion : conversions) {
+            rowCount = Math.max(rowCount, conversion.values().length);
+        }
+        final StringSink columnNames = new StringSink();
+        final StringSink rows = new StringSink();
+        for (int i = 0; i < conversions.length; i++) {
+            columnNames.put('c').put(i).put(", ");
+        }
+        columnNames.put("ts");
+        for (int row = 0; row < rowCount; row++) {
+            rows.put(row > 0 ? ", (" : "(");
+            for (ConvertedColumnConversion conversion : conversions) {
+                rows.put(row < conversion.values().length ? conversion.values()[row] : "NULL").put(", ");
+            }
+            rows.put('\'').put("2024-01-01T00:00:01.000000Z").put("'::TIMESTAMP + ").put(row).put(" * 1_000_000)");
+        }
+        for (String tableName : new String[]{"nt", "pt"}) {
+            execute("CREATE TABLE " + tableName + " (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO " + tableName + " (ts) VALUES ('2024-01-01T00:00:00.000000Z')");
+            for (int i = 0; i < conversions.length; i++) {
+                execute("ALTER TABLE " + tableName + " ADD COLUMN c" + i + " " + conversions[i].sourceType());
+            }
+            execute("INSERT INTO " + tableName + " (" + columnNames + ") VALUES " + rows);
+        }
+        drainWalQueue();
+        execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+        drainWalQueue();
+        for (String tableName : new String[]{"nt", "pt"}) {
+            for (int i = 0; i < conversions.length; i++) {
+                execute("ALTER TABLE " + tableName + " ALTER COLUMN c" + i + " TYPE " + conversions[i].targetType());
+            }
+        }
+        drainWalQueue();
+
+        assertCopyStreamsRows("SELECT * FROM pt", "conversions");
+        assertParquetMatchesControl("SELECT * FROM nt", "conversions", "ts");
+        try (RecordCursorFactory factory = select("SELECT * FROM nt")) {
+            final RecordMetadata metadata = factory.getMetadata();
+            for (int i = 0; i < conversions.length; i++) {
+                final int columnIndex = metadata.getColumnIndex("c" + i);
+                try {
+                    ParquetTestUtils.assertColumnTypes(parquetPath("conversions"), configuration.getFilesFacade(), metadata.getColumnType(columnIndex), columnIndex);
+                } catch (AssertionError e) {
+                    throw new AssertionError(conversions[i].sourceType() + " to " + conversions[i].targetType(), e);
+                }
+            }
+        }
+    }
+
+    // Asserts that the plan of the query over r names the factory, that the export of the query streams its rows, and
+    // that the file holds the rows of the same query over nr, with its timestamp column REQUIRED.
+    private void assertStreamedExportOfMode(String template, @Nullable String timestampColumn, String fileName, String planFragment) throws Exception {
+        assertStreamedExportOfMode(template, timestampColumn, fileName, planFragment, "r", "nr");
+    }
+
+    private void assertStreamedExportOfMode(
+            String template,
+            @Nullable String timestampColumn,
+            String fileName,
+            String planFragment,
+            String tableName,
+            String controlTableName
+    ) throws Exception {
+        final String query = template.replace("%s", tableName);
+        try {
+            assertQuery(query).noLeakCheck().assertsPlanContaining(planFragment);
+            assertCopyStreamsRows(query, fileName);
+            assertParquetMatchesControl(template.replace("%s", controlTableName), fileName, timestampColumn);
+            try (RecordCursorFactory factory = select("SELECT * FROM read_parquet('" + parquetPath(fileName) + "')")) {
+                final int timestampIndex = factory.getMetadata().getColumnIndex("ts");
+                ParquetTestUtils.assertColumnMaxDefLevel(parquetPath(fileName), configuration.getFilesFacade(), timestampIndex, 0);
+            }
+        } catch (AssertionError e) {
+            throw new AssertionError(query, e);
+        }
+    }
+
+    // Runs the COPY on this thread to its end and asserts that its export went through a temp table.
+    private void copyThroughTempTable(String copySql) throws Exception {
+        final String exportId = queueCopy(copySql);
+        runExportJob();
+        assertExportLog(exportId, TEMP_TABLE_EXPORT_LOG);
+    }
+
     // Runs the COPY on this thread to its end.
     private void copyToParquet(String copySql) throws Exception {
         runAndFetchCopyExportID(copySql, sqlExecutionContext);
@@ -7543,6 +8779,23 @@ public class CopyExportTest extends AbstractCairoTest {
             Assert.assertTrue("the queued export must be picked up", job.run());
         }
         assertExportFinished();
+    }
+
+    /**
+     * Creates the table {@code tableName}, and the view {@code <tableName>_v} over it, with the columns, PARQUET(...)
+     * settings and rows of {@link #createTableWithParquetSettingsAndConvertedColumn}, which retypes c from INT to LONG
+     * while every partition is native, so that the table converts c eagerly: the control of an export of the converted
+     * column.
+     */
+    private void createConvertedColumnControl(String tableName) throws Exception {
+        execute("CREATE TABLE " + tableName + " (metric INT PARQUET(RLE_DICTIONARY), c INT, total LONG PARQUET(DELTA_BINARY_PACKED, ZSTD(3)), ts TIMESTAMP)" +
+                " TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("INSERT INTO " + tableName + " VALUES " + PARQUET_SETTINGS_TABLE_ROWS);
+        drainWalQueue();
+        execute("ALTER TABLE " + tableName + " ALTER COLUMN c TYPE LONG");
+        drainWalQueue();
+        execute("CREATE VIEW " + tableName + "_v AS (SELECT * FROM " + tableName + ")");
+        drainWalAndViewQueues();
     }
 
     /**
@@ -7560,6 +8813,33 @@ public class CopyExportTest extends AbstractCairoTest {
         createDecoyTable();
         createTableNeedingQuotes();
         makeFirstPartitionComposite();
+    }
+
+    /**
+     * Creates r, whose first day goes to Parquet before x turns from INT to LONG, so that the Parquet partition holds x
+     * in its old type and a read converts it lazily; nr, which holds the same rows and turns x to LONG while every
+     * partition is native, so that the table converts x eagerly and reads it as any LONG column; the views vr, vrf,
+     * vrv and vrl over r; and k, which holds the symbols of s.
+     */
+    private void createRetypedTables(String walMode) throws Exception {
+        for (String tableName : new String[]{"r", "nr"}) {
+            execute("CREATE TABLE " + tableName + " (s SYMBOL INDEX, s2 SYMBOL, x INT, other_ts TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY " + walMode);
+            execute("INSERT INTO " + tableName + " VALUES " + RETYPED_TABLE_ROWS);
+        }
+        drainWalQueue();
+        execute("ALTER TABLE r CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+        drainWalQueue();
+        execute("ALTER TABLE r ALTER COLUMN x TYPE LONG");
+        execute("ALTER TABLE nr ALTER COLUMN x TYPE LONG");
+        drainWalQueue();
+        execute("CREATE TABLE k (s SYMBOL)");
+        execute("INSERT INTO k VALUES ('a'), ('b')");
+        execute("CREATE VIEW vr AS (SELECT * FROM r)");
+        execute("CREATE VIEW vrf AS (SELECT * FROM r WHERE x > 1)");
+        execute("CREATE VIEW vrl AS (SELECT * FROM r LATEST ON ts PARTITION BY s)");
+        drainWalAndViewQueues();
+        execute("CREATE VIEW vrv AS (SELECT * FROM vr)");
+        drainWalAndViewQueues();
     }
 
     private void createTableNeedingQuotes() throws Exception {
@@ -7599,8 +8879,8 @@ public class CopyExportTest extends AbstractCairoTest {
     /**
      * Creates the table {@code tableName} with PARQUET(...) settings on metric and total, converts its first day to
      * Parquet and retypes c from INT to LONG after that. The Parquet partition then holds a lazily converted column,
-     * so that an export of the table, or of the view {@code <tableName>_v} that {@code source} asks for,
-     * materializes through a temp table.
+     * so that an export of the table, or of the view {@code <tableName>_v} that {@code source} asks for, reads every
+     * value through the converting row accessors, never the raw page frames.
      */
     private void createTableWithParquetSettingsAndConvertedColumn(
             String tableName,
@@ -7623,6 +8903,17 @@ public class CopyExportTest extends AbstractCairoTest {
             execute("CREATE VIEW " + tableName + "_v AS (SELECT * FROM " + tableName + ")");
             drainWalAndViewQueues();
         }
+    }
+
+    private void dropRetypedTables() throws Exception {
+        execute("DROP VIEW vrv");
+        execute("DROP VIEW vr");
+        execute("DROP VIEW vrf");
+        execute("DROP VIEW vrl");
+        execute("DROP TABLE k");
+        execute("DROP TABLE r");
+        execute("DROP TABLE nr");
+        drainWalAndViewQueues();
     }
 
     private void makeFirstPartitionComposite() throws Exception {
@@ -7813,6 +9104,36 @@ public class CopyExportTest extends AbstractCairoTest {
         TABLE,
         VIEW_CREATED_AFTER_TYPE_CHANGE,
         VIEW_CREATED_BEFORE_TYPE_CHANGE
+    }
+
+    // A column retyped over a Parquet partition, from the source type to the target type, holding the values that the
+    // SQL expressions give in the source type.
+    private record ConvertedColumnConversion(String sourceType, String targetType, String... values) {
+    }
+
+    // A COPY of a select, after the set-up, which COPY queues in the given mode. The change after COPY queued the export
+    // makes the queued plan stale, and a fresh plan of the select after the change exports in the new mode, a recompiled
+    // one in the recompiled mode. Also the copy_export_log rows of the export, the number of compiles its worker runs,
+    // and the designated timestamp of its file.
+    private record RecompiledExport(
+            String query,
+            @Nullable String setup,
+            ParquetExportMode mode,
+            String change,
+            ParquetExportMode newMode,
+            ParquetExportMode recompiledMode,
+            String log,
+            int compileCount,
+            @Nullable String timestampColumn
+    ) {
+    }
+
+    // A query over the retyped table r, the same query over nr, the designated timestamp of the file of its export, and
+    // whether the query fixes the order of its rows. The template form replaces %s with r and nr.
+    private record RetypedExportShape(String query, String controlQuery, @Nullable String timestampColumn, boolean isOrdered) {
+        RetypedExportShape(String template, @Nullable String timestampColumn) {
+            this(template.replace("%s", "r"), template.replace("%s", "nr"), timestampColumn, true);
+        }
     }
 
     // A streaming export of the table that createStaleExportTable() creates: its query, its mode, the designated timestamp

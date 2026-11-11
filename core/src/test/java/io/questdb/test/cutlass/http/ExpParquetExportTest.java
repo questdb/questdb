@@ -1814,6 +1814,241 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testParquetExportOfConvertedColumnClientDisconnectsMidStream() throws Exception {
+        // The client drops the connection while /exp streams the rows of a retyped column: the export stops, frees what
+        // it holds, the table can be dropped, and the next export of the retyped column runs.
+        assertMemoryLeak(() -> getExportTester()
+                .runNoLeakCheck(null, (engine, sqlExecutionContext) -> {
+                    for (String tableName : new String[]{"big", "nbig"}) {
+                        engine.execute("CREATE TABLE " + tableName + " (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", sqlExecutionContext);
+                        // 1_000_000 rows on 2024-01-01, one on 2024-01-02
+                        engine.execute("INSERT INTO " + tableName + " SELECT x::INT, timestamp_sequence('2024-01-01', 86_400) FROM long_sequence(1_000_001)", sqlExecutionContext);
+                    }
+                    engine.execute("ALTER TABLE big CONVERT PARTITION TO PARQUET LIST '2024-01-01'", sqlExecutionContext);
+                    engine.execute("ALTER TABLE big ALTER COLUMN x TYPE LONG", sqlExecutionContext);
+                    engine.execute("ALTER TABLE nbig ALTER COLUMN x TYPE LONG", sqlExecutionContext);
+                    assertExportMode(engine, sqlExecutionContext, "SELECT * FROM big", ParquetExportMode.CURSOR_BASED);
+
+                    final HttpClient client = testHttpClient.getHttpClient();
+                    final HttpClient.Request req = client.newRequest("localhost", 9001);
+                    req.GET().url("/exp").query("query", "SELECT * FROM big");
+                    req.query("fmt", "parquet");
+                    req.query("row_group_size", "100");
+                    try (var ignore = req.send()) {
+                        for (int i = 0; i < 50; i++) {
+                            if (engine.getCopyExportContext().getActiveExportId() != -1) {
+                                break;
+                            }
+                            Os.sleep(100);
+                        }
+                    }
+                    client.disconnect();
+                    for (int i = 0; i < 100; i++) {
+                        if (engine.getCopyExportContext().getActiveExportId() == -1) {
+                            break;
+                        }
+                        if (i == 99) {
+                            Assert.fail("Failed to cancel export");
+                        }
+                        Os.sleep(100);
+                    }
+
+                    try (
+                            TestHttpClient httpClient = new TestHttpClient();
+                            DirectUtf8Sink sink = new DirectUtf8Sink(16_384)
+                    ) {
+                        final String query = "SELECT * FROM big WHERE ts >= '2024-01-01T23:59:00'";
+                        exportParquet(httpClient, sink, query);
+                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query.replace("big", "nbig"), "after_disconnect.parquet");
+                    }
+                    // the export released its reader of the table
+                    engine.execute("DROP TABLE big", sqlExecutionContext);
+                }));
+    }
+
+    @Test
+    public void testParquetExportOfRecompiledPlanFollowsItsDirection() throws Exception {
+        // A view redefined between two exports of the same query on one connection makes the cached plan stale, so /exp
+        // compiles the query again and routes the new plan by its own direction: a plan that scans backward streams its
+        // rows through the cursor exporter, marked descending, rather than reading its page frames ascending, and a
+        // plan that scans forward reads its page frames ascending, whatever direction the plan before it took.
+        getExportTesterPageFrame()
+                .run((engine, sqlExecutionContext) -> {
+                    createRetypedTables(engine, sqlExecutionContext);
+                    final String query = "SELECT * FROM v";
+                    final String[][] definitions = {
+                            // the view's definition, the designated timestamp of the file of its export
+                            {"SELECT * FROM r", "ts"},
+                            {"SELECT * FROM nr ORDER BY ts DESC", null},
+                            {"SELECT * FROM nr", "ts"},
+                            {"SELECT * FROM r WHERE x > 0 ORDER BY ts DESC", null},
+                            {"SELECT x + 1 AS y, ts FROM nr", "ts"},
+                            {"SELECT x + 1 AS y, ts FROM nr ORDER BY ts DESC", null},
+                    };
+                    // A select over a view never exports a projection over page frames, as the view's wrapper hides the
+                    // projection, so a column added to the table makes the cached plan of the projection stale.
+                    final String projectionQuery = "SELECT x + 1 AS y, ts FROM nr ORDER BY ts DESC";
+                    try (
+                            TestHttpClient httpClient = new TestHttpClient();
+                            DirectUtf8Sink sink = new DirectUtf8Sink(16_384)
+                    ) {
+                        httpClient.setKeepConnection(true);
+                        for (int i = 0; i < definitions.length; i++) {
+                            engine.execute("CREATE OR REPLACE VIEW v AS (" + definitions[i][0] + ")", sqlExecutionContext);
+                            final String fileName = "recompiled_" + i + ".parquet";
+                            try {
+                                // Each export after the first one takes the cached plan, which the redefinition made
+                                // stale, and writes the rows of the new definition only once it compiled the query
+                                // again.
+                                exportParquet(httpClient, sink, query);
+                                assertParquetMatchesQuery(engine, sqlExecutionContext, sink, definitions[i][0], fileName);
+                                assertReadParquetTimestamp(engine, sqlExecutionContext, fileName, definitions[i][1]);
+                            } catch (AssertionError e) {
+                                throw new AssertionError(definitions[i][0], e);
+                            }
+                        }
+
+                        exportParquet(httpClient, sink, projectionQuery);
+                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, projectionQuery, "projection_before.parquet");
+                        engine.execute("ALTER TABLE nr ADD COLUMN extra INT", sqlExecutionContext);
+                        try (RecordCursorFactory factory = engine.select(projectionQuery, sqlExecutionContext)) {
+                            Assert.assertEquals(ParquetExportMode.PAGE_FRAME_BACKED, ParquetExportMode.determineExportMode(factory, false, sqlExecutionContext));
+                            Assert.assertEquals(ParquetExportMode.CURSOR_BASED, ParquetExportMode.determineRecompiledExportMode(factory, sqlExecutionContext));
+                        }
+                        exportParquet(httpClient, sink, projectionQuery);
+                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, projectionQuery, "projection_after.parquet");
+                        assertReadParquetTimestamp(engine, sqlExecutionContext, "projection_after.parquet", null);
+                    }
+                });
+    }
+
+    @Test
+    public void testParquetExportOfRecompiledPlanNeedingTempTable() throws Exception {
+        // A view redefined between two exports of the same query on one connection into a plan that needs a temp table:
+        // a LATEST ON over a retyped column, and a backward scan with a BINARY column, which the cursor exporter cannot
+        // write. /exp compiles the query again and exports the new plan through a temp table, in the plan's row order.
+        // Each pair of exports reads a view of its own, so that no export takes the cached plan of another pair.
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    createRetypedTables(engine, sqlExecutionContext);
+                    final String[][] definitions = {
+                            // the definition that the first export reads, the definition that the second export reads,
+                            // the designated timestamp of the second file
+                            {"SELECT * FROM r WHERE x > 0", "SELECT * FROM r WHERE s = 'a' LATEST ON ts PARTITION BY s", "ts"},
+                            {"SELECT * FROM r WHERE x > 0", "SELECT * FROM tb ORDER BY ts DESC", null},
+                    };
+                    for (int i = 0; i < definitions.length; i++) {
+                        final String viewName = "v" + i;
+                        final String query = "SELECT * FROM " + viewName;
+                        try (
+                                TestHttpClient httpClient = new TestHttpClient();
+                                DirectUtf8Sink sink = new DirectUtf8Sink(16_384)
+                        ) {
+                            httpClient.setKeepConnection(true);
+                            engine.execute("CREATE VIEW " + viewName + " AS (" + definitions[i][0] + ")", sqlExecutionContext);
+                            assertExportMode(engine, sqlExecutionContext, query, ParquetExportMode.CURSOR_BASED);
+                            exportParquet(httpClient, sink, query);
+                            assertParquetMatchesQuery(engine, sqlExecutionContext, sink, definitions[i][0], "temp_table_before_" + i + ".parquet");
+
+                            engine.execute("CREATE OR REPLACE VIEW " + viewName + " AS (" + definitions[i][1] + ")", sqlExecutionContext);
+                            // the mode /exp gives the plan it compiles again
+                            try (RecordCursorFactory factory = engine.select(query, sqlExecutionContext)) {
+                                Assert.assertEquals(
+                                        ParquetExportMode.TEMP_TABLE,
+                                        ParquetExportMode.determineRecompiledExportMode(factory, sqlExecutionContext)
+                                );
+                            }
+                            final String fileName = "temp_table_after_" + i + ".parquet";
+                            exportParquet(httpClient, sink, query);
+                            assertParquetMatchesQuery(engine, sqlExecutionContext, sink, definitions[i][1], fileName);
+                            assertReadParquetTimestamp(engine, sqlExecutionContext, fileName, definitions[i][2]);
+                        } catch (AssertionError e) {
+                            throw new AssertionError(definitions[i][0] + " -> " + definitions[i][1], e);
+                        }
+                    }
+                });
+    }
+
+    @Test
+    public void testParquetExportOfRetypedTableKeepsTempTableForOtherPlans() throws Exception {
+        // A plan whose timestamp no table scan guarantees keeps the temp table for a retyped column, and so does a plan
+        // with a BINARY column, which the cursor exporter cannot write. The multi-key ORDER BY with a negative LIMIT
+        // reads the frames backward and each frame's index forward, so its scan promises no order.
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    createRetypedTables(engine, sqlExecutionContext);
+                    final String[][] shapes = {
+                            // query over r, the same query over nr, the designated timestamp of the file
+                            {"SELECT ts, sum(x) sx FROM r SAMPLE BY 1d", "SELECT ts, sum(x) sx FROM nr SAMPLE BY 1d", "ts"},
+                            {"SELECT * FROM r WHERE s = 'a' LATEST ON ts PARTITION BY s", "SELECT * FROM nr WHERE s = 'a' LATEST ON ts PARTITION BY s", "ts"},
+                            {"SELECT x, ts, row_number() OVER () rn FROM r", "SELECT x, ts, row_number() OVER () rn FROM nr", "ts"},
+                            {"SELECT * FROM r ORDER BY other_ts DESC", "SELECT * FROM nr ORDER BY other_ts DESC", null},
+                            {"SELECT * FROM r WHERE s = 'a' ORDER BY ts, x LIMIT -3", "SELECT * FROM nr WHERE s = 'a' ORDER BY ts, x LIMIT -3", "ts"},
+                            {"SELECT * FROM rb", "SELECT * FROM rb", "ts"},
+                    };
+                    try (
+                            TestHttpClient httpClient = new TestHttpClient();
+                            DirectUtf8Sink sink = new DirectUtf8Sink(16_384)
+                    ) {
+                        for (int i = 0; i < shapes.length; i++) {
+                            final String fileName = "retyped_temp_table_shape_" + i + ".parquet";
+                            try {
+                                assertExportMode(engine, sqlExecutionContext, shapes[i][0], ParquetExportMode.TEMP_TABLE);
+                                exportParquet(httpClient, sink, shapes[i][0]);
+                                assertParquetMatchesQuery(engine, sqlExecutionContext, sink, shapes[i][1], fileName);
+                                assertReadParquetTimestamp(engine, sqlExecutionContext, fileName, shapes[i][2]);
+                            } catch (AssertionError e) {
+                                throw new AssertionError(shapes[i][0], e);
+                            }
+                        }
+                    }
+                });
+    }
+
+    @Test
+    public void testParquetExportOfRetypedTableStreamsTableScanShapes() throws Exception {
+        // /exp streams the rows of a plan over a retyped column of a Parquet partition through the cursor exporter when
+        // the plan has no timestamp or reads the table's designated timestamp through a scan, filter, projection, LIMIT
+        // or a sort on it: no temp table. The file holds what the same query returns over nr, which retyped x while
+        // every partition was native, designates the timestamp when the rows ascend, and none when they descend.
+        getExportTesterPageFrame()
+                .run((engine, sqlExecutionContext) -> {
+                    createRetypedTables(engine, sqlExecutionContext);
+                    final String[][] shapes = {
+                            // query over r, the same query over nr, the designated timestamp of the file
+                            {"SELECT * FROM r", "SELECT * FROM nr", "ts"},
+                            {"SELECT * FROM r ORDER BY ts DESC", "SELECT * FROM nr ORDER BY ts DESC", null},
+                            {"SELECT * FROM r WHERE x > 1", "SELECT * FROM nr WHERE x > 1", "ts"},
+                            {"SELECT * FROM r WHERE s = 'a' ORDER BY ts DESC", "SELECT * FROM nr WHERE s = 'a' ORDER BY ts DESC", null},
+                            {"SELECT * FROM r WHERE s IN ('a', 'b') ORDER BY ts DESC", "SELECT * FROM nr WHERE s IN ('a', 'b') ORDER BY ts DESC", null},
+                            {"SELECT x + 1 AS y, ts FROM r", "SELECT x + 1 AS y, ts FROM nr", "ts"},
+                            {"SELECT x + 1 AS y, ts FROM r ORDER BY ts DESC", "SELECT x + 1 AS y, ts FROM nr ORDER BY ts DESC", null},
+                            {"SELECT * FROM r LIMIT -3", "SELECT * FROM nr LIMIT -3", "ts"},
+                            {"SELECT * FROM vr", "SELECT * FROM nr", "ts"},
+                            {"SELECT * FROM vr WHERE x > 1 ORDER BY ts DESC", "SELECT * FROM nr WHERE x > 1 ORDER BY ts DESC", null},
+                            {"SELECT s, sum(x) sx FROM r ORDER BY s", "SELECT s, sum(x) sx FROM nr ORDER BY s", null},
+                            {"SELECT x, row_number() OVER () rn FROM r", "SELECT x, row_number() OVER () rn FROM nr", null},
+                    };
+                    try (
+                            TestHttpClient httpClient = new TestHttpClient();
+                            DirectUtf8Sink sink = new DirectUtf8Sink(16_384)
+                    ) {
+                        for (int i = 0; i < shapes.length; i++) {
+                            final String fileName = "retyped_shape_" + i + ".parquet";
+                            try {
+                                assertExportMode(engine, sqlExecutionContext, shapes[i][0], ParquetExportMode.CURSOR_BASED);
+                                exportParquet(httpClient, sink, shapes[i][0]);
+                                assertParquetMatchesQuery(engine, sqlExecutionContext, sink, shapes[i][1], fileName);
+                                assertReadParquetTimestamp(engine, sqlExecutionContext, fileName, shapes[i][2]);
+                            } catch (AssertionError e) {
+                                throw new AssertionError(shapes[i][0], e);
+                            }
+                        }
+                    }
+                });
+    }
+
+    @Test
     public void testParquetExportOnlyAcceptsSelectQueries() throws Exception {
         getExportTester()
                 .run((engine, sqlExecutionContext) -> {
@@ -2783,9 +3018,10 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
 
     @Test
     public void testParquetExportViewOverConvertedColumnKeepsParquetEncodings() throws Exception {
-        // An export through a view over a Parquet partition with a retyped column materializes through a temp table:
-        // ascending with a designated timestamp, descending without one.
-        getExportTester()
+        // An export through a view over a Parquet partition with a retyped column streams its rows through the cursor
+        // exporter, with no temp table: ascending with a designated timestamp, descending without one. Each column
+        // keeps its PARQUET(...) setting.
+        getExportTesterPageFrame()
                 .run((engine, sqlExecutionContext) -> {
                     engine.execute("""
                             CREATE TABLE converted_t (
@@ -2811,10 +3047,11 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     engine.execute("CREATE VIEW converted_v AS (SELECT * FROM converted_t)", sqlExecutionContext);
 
                     final String[] queries = {"SELECT * FROM converted_v", "SELECT * FROM converted_v ORDER BY ts DESC"};
+                    final String[] timestampColumns = {"ts", null};
                     final FilesFacade ff = engine.getConfiguration().getFilesFacade();
                     for (int i = 0; i < queries.length; i++) {
                         final String query = queries[i];
-                        assertExportMode(engine, sqlExecutionContext, query, ParquetExportMode.TEMP_TABLE);
+                        assertExportMode(engine, sqlExecutionContext, query, ParquetExportMode.CURSOR_BASED);
                         final String fileName = "converted_settings_" + i + ".parquet";
                         try (
                                 TestHttpClient httpClient = new TestHttpClient();
@@ -2823,12 +3060,14 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                             exportParquet(httpClient, sink, query);
                             assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, fileName);
                         }
+                        assertReadParquetTimestamp(engine, sqlExecutionContext, fileName, timestampColumns[i]);
                         final String parquetPath = root + "/export/" + fileName;
                         ParquetTestUtils.assertColumnsUseDictionaryEncoding(parquetPath, ff, 0);
                         ParquetTestUtils.assertColumnsUseEncoding(parquetPath, ff, ParquetEncoding.ENCODING_DELTA_BINARY_PACKED, 2);
                         // c has no setting, so it keeps the LONG default, PLAIN
                         ParquetTestUtils.assertColumnsDoNotUseDictionaryEncoding(parquetPath, ff, 1);
                         ParquetTestUtils.assertColumnsDoNotUseEncoding(parquetPath, ff, ParquetEncoding.ENCODING_DELTA_BINARY_PACKED, 1);
+                        ParquetTestUtils.assertColumnMaxDefLevel(parquetPath, ff, 3, 0);
                     }
                 });
     }
@@ -2952,6 +3191,60 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
             final boolean isDescending = factory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD;
             Assert.assertEquals(query, expectedMode, ParquetExportMode.determineExportMode(factory, isDescending, sqlExecutionContext));
         }
+    }
+
+    // Asserts that read_parquet() designates the given column of the file as its timestamp, or none for null.
+    private static void assertReadParquetTimestamp(
+            CairoEngine engine,
+            SqlExecutionContext sqlExecutionContext,
+            String fileName,
+            @Nullable String timestampColumn
+    ) throws SqlException {
+        try (RecordCursorFactory factory = engine.select("SELECT * FROM read_parquet('" + fileName + "')", sqlExecutionContext)) {
+            final int expectedTimestampIndex = timestampColumn == null ? -1 : factory.getMetadata().getColumnIndex(timestampColumn);
+            Assert.assertEquals(fileName + ": designated timestamp", expectedTimestampIndex, factory.getMetadata().getTimestampIndex());
+        }
+    }
+
+    /**
+     * Creates r, whose first day goes to Parquet before x turns from INT to LONG, so that the Parquet partition holds x
+     * in its old type; nr, which holds the same rows and turns x to LONG while every partition is native; the view vr
+     * over r; tb, whose b is BINARY; and rb, whose x turns from INT to LONG over a Parquet partition, next to a BINARY
+     * column.
+     */
+    private static void createRetypedTables(CairoEngine engine, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        for (String tableName : new String[]{"r", "nr"}) {
+            engine.execute("CREATE TABLE " + tableName + " (s SYMBOL INDEX, s2 SYMBOL, x INT, other_ts TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", sqlExecutionContext);
+            engine.execute("""
+                    INSERT INTO %s VALUES
+                        ('a', 'p', 1, '2023-06-05T00:00:00.000000Z', '2024-01-01T00:00:00.000000Z'),
+                        ('b', 'q', 2, NULL, '2024-01-01T01:00:00.000000Z'),
+                        ('a', 'q', 3, '2023-06-03T00:00:00.000000Z', '2024-01-01T02:00:00.000000Z'),
+                        ('b', 'p', 4, '2023-06-02T00:00:00.000000Z', '2024-01-01T03:00:00.000000Z'),
+                        ('a', 'p', 5, '2023-06-09T00:00:00.000000Z', '2024-01-02T00:00:00.000000Z'),
+                        ('b', 'q', 6, NULL, '2024-01-02T01:00:00.000000Z'),
+                        ('a', 'q', 7, '2023-06-07T00:00:00.000000Z', '2024-01-02T02:00:00.000000Z'),
+                        ('b', 'p', 8, '2023-06-06T00:00:00.000000Z', '2024-01-02T03:00:00.000000Z'),
+                        ('a', 'p', 9, '2023-06-10T00:00:00.000000Z', '2024-01-03T00:00:00.000000Z'),
+                        ('b', 'q', 10, '2023-06-11T00:00:00.000000Z', '2024-01-03T01:00:00.000000Z')
+                    """.formatted(tableName), sqlExecutionContext);
+        }
+        engine.execute("ALTER TABLE r CONVERT PARTITION TO PARQUET LIST '2024-01-01'", sqlExecutionContext);
+        engine.execute("ALTER TABLE r ALTER COLUMN x TYPE LONG", sqlExecutionContext);
+        engine.execute("ALTER TABLE nr ALTER COLUMN x TYPE LONG", sqlExecutionContext);
+        engine.execute("CREATE VIEW vr AS (SELECT * FROM r)", sqlExecutionContext);
+        for (String tableName : new String[]{"tb", "rb"}) {
+            engine.execute("CREATE TABLE " + tableName + " (x INT, b BINARY, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", sqlExecutionContext);
+            engine.execute("""
+                    INSERT INTO %s VALUES
+                        (1, rnd_bin(2, 4, 0), '2024-01-01T00:00:00.000000Z'),
+                        (2, NULL, '2024-01-01T12:00:00.000000Z'),
+                        (3, rnd_bin(2, 4, 0), '2024-01-02T00:00:00.000000Z'),
+                        (4, rnd_bin(2, 4, 0), '2024-01-03T00:00:00.000000Z')
+                    """.formatted(tableName), sqlExecutionContext);
+        }
+        engine.execute("ALTER TABLE rb CONVERT PARTITION TO PARQUET LIST '2024-01-01'", sqlExecutionContext);
+        engine.execute("ALTER TABLE rb ALTER COLUMN x TYPE LONG", sqlExecutionContext);
     }
 
     // hsym's sym holds 36 symbols and NULL in every 5th row; hdim's symbol map holds two of them and one other.

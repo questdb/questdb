@@ -97,6 +97,13 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractPageFrameRecord
         return recordCursorFactory;
     }
 
+    // The heap cursor merges the rows of the per-key index cursors, which walk forward, in row id order, so the rows
+    // ascend only over frames that ascend, while the factory reports a forward scan whatever frames it reads.
+    @Override
+    public boolean hasTableScanTimestamp() {
+        return partitionFrameCursorFactory.getOrder() == PartitionFrameCursorFactory.ORDER_ASC && isTimestampTableDesignated();
+    }
+
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;

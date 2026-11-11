@@ -38,6 +38,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cutlass.parquet.HybridColumnMaterializer;
+import io.questdb.cutlass.parquet.ParquetExportMode;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -55,6 +56,7 @@ import io.questdb.std.Files;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.NumericException;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
@@ -901,6 +903,41 @@ public final class QueryRunner {
     }
 
     /**
+     * Returns the first row of the cursor whose timestamp breaks the contract that a CURSOR_BASED Parquet export of a
+     * lazily type-converted column relies on for a plan whose timestamp {@link #streamedTimestampDirection} streams:
+     * the export writes that timestamp as the file's designated timestamp, which holds no NULL and ascends for a
+     * forward plan and descends for a backward one. Returns -1 when every row keeps it. Reads the cursor from the top
+     * and leaves it exhausted.
+     */
+    static long findStreamedTimestampViolation(RecordCursor cursor, int timestampIndex, int direction) {
+        cursor.toTop();
+        final Record record = cursor.getRecord();
+        long previous = Numbers.LONG_NULL;
+        for (long row = 0; cursor.hasNext(); row++) {
+            final long timestamp = record.getTimestamp(timestampIndex);
+            if (timestamp == Numbers.LONG_NULL) {
+                return row;
+            }
+            if (row > 0 && (direction == RecordCursorFactory.SCAN_DIRECTION_FORWARD ? timestamp < previous : timestamp > previous)) {
+                return row;
+            }
+            previous = timestamp;
+        }
+        return -1;
+    }
+
+    /**
+     * Returns the direction, forward or backward, in which a CURSOR_BASED Parquet export of a lazily type-converted
+     * column writes the plan's timestamp as the file's designated timestamp, or {@code SCAN_DIRECTION_OTHER} when the
+     * plan has no timestamp or the export does not stream it.
+     */
+    static int streamedTimestampDirection(RecordCursorFactory factory) {
+        return factory.getMetadata().getTimestampIndex() > -1 && ParquetExportMode.hasStreamableTimestamp(factory)
+                ? factory.getScanDirection()
+                : RecordCursorFactory.SCAN_DIRECTION_OTHER;
+    }
+
+    /**
      * Appends one materialized cell with its own tabs, newlines, carriage returns and backslashes
      * escaped. The comparisons split rows on newlines and cells on tabs, so a CHAR of code 9 or 10,
      * or a string holding one, would otherwise shift every cell after it, and the floating-point
@@ -1286,6 +1323,38 @@ public final class QueryRunner {
                         + " absent on the first pass (parallel-filter LIMIT non-determinism)", e, true);
             }
             throw new CursorCheckException("exported symbol key re-pass threw after a clean first pass:\n  sql: " + sql, e);
+        }
+    }
+
+    /**
+     * Verifies, for a plan whose timestamp {@link #streamedTimestampDirection} streams, the contract of
+     * {@link #findStreamedTimestampViolation}. A violation is a real bug, in a
+     * {@link RecordCursorFactory#hasTableScanTimestamp()} answer or in the plan's rows, and throws
+     * {@link CursorCheckException}. Leaves the cursor exhausted.
+     */
+    private void checkStreamedTimestamp(String sql, RecordCursorFactory factory, RecordCursor cursor, int direction) {
+        if (direction == RecordCursorFactory.SCAN_DIRECTION_OTHER) {
+            return;
+        }
+        final long row;
+        try {
+            row = findStreamedTimestampViolation(cursor, factory.getMetadata().getTimestampIndex(), direction);
+        } catch (Exception e) {
+            // A per-row cast error past a parallel filter's LIMIT cutoff can surface on one pass and
+            // not another, as checkToTop() describes. Any other throw is a defect.
+            if (isPerRowRuntimeError(e)) {
+                throw new CursorCheckException("streamed timestamp re-pass surfaced " + e.getClass().getSimpleName()
+                        + " absent on the first pass (parallel-filter LIMIT non-determinism)", e, true);
+            }
+            throw new CursorCheckException("streamed timestamp re-pass threw after a clean first pass:\n  sql: " + sql, e);
+        }
+        if (row > -1) {
+            planSink.of(factory, executionContext);
+            throw new CursorCheckException(
+                    "the timestamp that a Parquet export streams as the designated timestamp is NULL or out of the plan's order"
+                            + " [direction=" + direction + ", row=" + row + "]\n  sql: " + sql + "\n  plan:\n" + planSink.getSink(),
+                    null
+            );
         }
     }
 
@@ -1744,6 +1813,11 @@ public final class QueryRunner {
         ) {
             int rowsRead;
             boolean[] fpColumnMask;
+            // A Parquet export asks a plan for its direction before it opens the cursor, and only once the plan answered
+            // that a table scan orders its timestamp, so a hash join keeps the sides its open picks here as well.
+            final int streamedTimestampDirection = verifyCursor
+                    ? streamedTimestampDirection(factory)
+                    : RecordCursorFactory.SCAN_DIRECTION_OTHER;
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 RecordMetadata metadata = factory.getMetadata();
                 int columnCount = metadata.getColumnCount();
@@ -1770,6 +1844,7 @@ public final class QueryRunner {
                     checkToTop(sql, cursor, metadata, columnCount, rows, rowsRead, deterministic);
                     checkCalculateSize(sql, cursor, rows, rowsRead);
                     checkExportedSymbolKeys(sql, cursor, metadata);
+                    checkStreamedTimestamp(sql, factory, cursor, streamedTimestampDirection);
                 }
             }
             planSink.of(factory, executionContext);

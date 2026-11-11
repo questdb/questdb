@@ -379,6 +379,14 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         this.createOp = createOp;
     }
 
+    /**
+     * Sets whether the rows that the export streams descend by the timestamp, so that the writer marks the file's
+     * designated timestamp descending rather than ascending. Takes effect at the next set-up of the stream exporter.
+     */
+    public void setDescending(boolean descending) {
+        this.descending = descending;
+    }
+
     public void setMemoryTracker(@Nullable MemoryTracker memoryTracker) {
         this.memoryTracker = memoryTracker;
         streamPartitionParquetExporter.setMemoryTracker(memoryTracker);
