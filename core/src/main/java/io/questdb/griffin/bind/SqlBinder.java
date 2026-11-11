@@ -459,7 +459,7 @@ public final class SqlBinder implements Mutable {
         }
         final BoundExpression bound = ctx.functionBinder.bindPredicate(expression, input.getOutput(), alias,
                 nativeTimestampIds, isAndArgument ? ColumnType.BOOLEAN : ColumnType.UNDEFINED, executionContext);
-        if (LogicalPlans.isStableWithinExecution(bound) && distributeSetFilter(expression, input, input.getOutput(), alias, executionContext)) {
+        if (distributeSetFilter(expression, bound, input, input.getOutput(), alias, executionContext)) {
             return ctx.planNodes.constants.next().ofBoolean(true, expression.position);
         }
         if (!isAndArgument) {
@@ -1708,12 +1708,17 @@ public final class SqlBinder implements Mutable {
     /**
      * Binds a conjunct that references only a mixed-precision set
      * timestamp in every set branch, so each branch applies its own precision,
-     * when that precision does not change what it means, see {@link #isPrecisionExact}.
+     * when that precision does not change what it means, see {@link #isPrecisionExact}, and {@code predicate}, the
+     * conjunct bound over the scope, is stable within an execution: each branch then holds an instance of its own.
      * Returns whether the conjunct left nothing to evaluate above the input.
      */
     boolean distributeSetFilter(
-            ExpressionNode expression, LogicalPlan input, OutputSchema scope, CharSequence alias, SqlExecutionContext executionContext
+            ExpressionNode expression, BoundExpression predicate, LogicalPlan input, OutputSchema scope, CharSequence alias,
+            SqlExecutionContext executionContext
     ) throws SqlException {
+        if (!LogicalPlans.isStableWithinExecution(predicate)) {
+            return false;
+        }
         final ExpressionNode column = firstColumnReference(expression);
         if (column == null) {
             return false;

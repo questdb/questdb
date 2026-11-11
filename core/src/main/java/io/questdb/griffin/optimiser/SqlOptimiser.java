@@ -159,7 +159,7 @@ public final class SqlOptimiser implements Mutable {
         passes.add(new TimestampEndpointLimit(constants, limits, sorts));
         passes.add(new NegativeLimitReversal(constants, sorts, tmpIndexes, tmpPlans));
         passes.add(new OrderPlanning(configuration, functionFactoryCache, columnIds));
-        operatorPlanning = new OperatorPlanning(configuration, context, planNodes, tmpValues, tmpSteps);
+        operatorPlanning = new OperatorPlanning(configuration, context, planNodes, tmpValues, columnIds, tmpSteps);
         accessPathPlanning = new AccessPathPlanning(configuration, context, operatorPlanning, tmpConjuncts, tmpExpressions, tmpKeys, tmpValues,
                 temporaries.sink, temporaries.longs);
         verifier = ParanoiaState.PLAN_PARANOIA_MODE

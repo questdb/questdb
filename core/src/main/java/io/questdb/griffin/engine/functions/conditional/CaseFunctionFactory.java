@@ -40,7 +40,7 @@ public class CaseFunctionFactory implements FunctionFactory {
 
     @Override
     public int getResultType(IntList argTypes) {
-        final long fold = checkValueTypes(foldValueTypes(argTypes), argTypes);
+        final long fold = CaseCommon.checkBranchValueTypes(foldValueTypes(argTypes), argTypes, 1);
         return CaseCommon.getFoldFailureIndex(fold) < 0 ? CaseCommon.getCaseFunctionType(CaseCommon.getFoldCommonType(fold)) : ColumnType.UNDEFINED;
     }
 
@@ -62,7 +62,7 @@ public class CaseFunctionFactory implements FunctionFactory {
         final ObjList<Function> argsToPoke = new ObjList<>(n);
         final IntList argTypes = ResultTypes.argTypes(args);
         final long fold = foldValueTypes(argTypes);
-        final long checkedFold = checkValueTypes(fold, argTypes);
+        final long checkedFold = CaseCommon.checkBranchValueTypes(fold, argTypes, 1);
         final int failureIndex = CaseCommon.getFoldFailureIndex(fold);
 
         Function elseBranch;
@@ -139,20 +139,6 @@ public class CaseFunctionFactory implements FunctionFactory {
     @Override
     public int resolvePreferredVariadicType(int sqlPos, int argPos, ObjList<Function> args) throws SqlException {
         throw SqlException.$(sqlPos, "CASE values cannot be bind variables");
-    }
-
-    /**
-     * Checks the THEN values and then the ELSE value, see {@link CaseCommon#checkValueType}.
-     */
-    private static long checkValueTypes(long fold, IntList argTypes) {
-        final int n = argTypes.size();
-        for (int i = 1; i < n; i += 2) {
-            fold = CaseCommon.checkValueType(fold, argTypes.getQuick(i), i);
-        }
-        if (n % 2 == 1) {
-            fold = CaseCommon.checkValueType(fold, argTypes.getQuick(n - 1), n - 1);
-        }
-        return fold;
     }
 
     /**

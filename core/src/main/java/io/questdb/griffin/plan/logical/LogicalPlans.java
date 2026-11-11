@@ -40,6 +40,9 @@ import io.questdb.std.ObjList;
  * Stateless plan-node predicates, walkers and plan-property utilities shared by the binder, the optimiser and the plan generator.
  */
 public final class LogicalPlans {
+    public static final int READS_OTHER_COLUMN = 2;
+    public static final int READS_OUTPUT_COLUMN = 1;
+    public static final int READS_SUB_QUERY = 4;
     public static final int SELF_COMPARISON_FALSE = 0;
     public static final int SELF_COMPARISON_NONE = -1;
     public static final int SELF_COMPARISON_TRUE = 1;
@@ -175,6 +178,25 @@ public final class LogicalPlans {
         for (int i = 0, n = sort.getColumnIds().size(); i < n; i++) {
             sink.add(projectedUncastColumnIndex(project, sort.getColumnIds().getQuick(i)));
         }
+    }
+
+    /**
+     * What the expression reads relative to the output: the union of {@link #READS_OUTPUT_COLUMN} for a column of the
+     * output, {@link #READS_OTHER_COLUMN} for any other column and {@link #READS_SUB_QUERY} for a sub-query, 0 when it
+     * reads none of them.
+     */
+    public static int columnReads(BoundExpression expression, OutputSchema output) {
+        if (expression instanceof ColumnExpression column) {
+            return output.getColumnIndexById(column.getColumnId()) >= 0 ? READS_OUTPUT_COLUMN : READS_OTHER_COLUMN;
+        }
+        if (expression instanceof FunctionExpression call) {
+            int reads = 0;
+            for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
+                reads |= columnReads(call.argumentAt(i), output);
+            }
+            return reads;
+        }
+        return expression instanceof CursorExpression ? READS_SUB_QUERY : 0;
     }
 
     /**
@@ -1096,34 +1118,10 @@ public final class LogicalPlans {
     }
 
     /**
-     * True when the expression reads no column of the output and no sub-query.
+     * True when every column the expression reads is a column of the output and the expression reads no sub-query.
      */
-    public static boolean readsNone(BoundExpression expression, OutputSchema output) {
-        if (expression instanceof ColumnExpression column) {
-            return output.getColumnIndexById(column.getColumnId()) < 0;
-        }
-        if (expression instanceof FunctionExpression call) {
-            for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
-                if (!readsNone(call.argumentAt(i), output)) {
-                    return false;
-                }
-            }
-        }
-        return !(expression instanceof CursorExpression);
-    }
-
     public static boolean readsOnly(BoundExpression expression, OutputSchema output) {
-        if (expression instanceof ColumnExpression column) {
-            return output.getColumnIndexById(column.getColumnId()) >= 0;
-        }
-        if (expression instanceof FunctionExpression call) {
-            for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
-                if (!readsOnly(call.argumentAt(i), output)) {
-                    return false;
-                }
-            }
-        }
-        return !(expression instanceof CursorExpression);
+        return (columnReads(expression, output) & ~READS_OUTPUT_COLUMN) == 0;
     }
 
     /**

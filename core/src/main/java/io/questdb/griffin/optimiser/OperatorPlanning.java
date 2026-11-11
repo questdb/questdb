@@ -73,6 +73,7 @@ import io.questdb.griffin.plan.logical.WindowJoinPlan;
 import io.questdb.griffin.plan.logical.WindowJoinStep;
 import io.questdb.griffin.plan.logical.WindowPlan;
 import io.questdb.griffin.plan.logical.WindowSpec;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
@@ -111,6 +112,7 @@ final class OperatorPlanning implements Mutable {
         }
         return TreeWalk.CONTINUE;
     };
+    private final IntHashSet columnIds;
     private final CairoConfiguration configuration;
     private final OptimiserContext context;
     private final ObjList<JoinInput> generatedInputs = new ObjList<>();
@@ -123,7 +125,8 @@ final class OperatorPlanning implements Mutable {
     private boolean isFullFatJoins;
 
     OperatorPlanning(CairoConfiguration configuration, OptimiserContext context, PlanNodePools planNodes, IntList readIds,
-                     ObjList<JoinInput> undecidedSteps) {
+                     IntHashSet columnIds, ObjList<JoinInput> undecidedSteps) {
+        this.columnIds = columnIds;
         this.configuration = configuration;
         this.context = context;
         this.hashJoinPlanning = new HashJoinAggregationPlanning(context, planNodes);
@@ -542,17 +545,18 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
-     * The predicate over {@code output}, the output the master columns of the keys come from or, unless
-     * {@code isMaster}, their slave columns, that those columns all hold the values a NULL record reads for them, see
-     * {@link JoinInput#getNullKeyCheck} and {@link JoinInput#getSlaveNullKeyCheck}.
+     * The predicate over {@code output}, the output of the master or of the slave, that the columns of the keys it holds
+     * all hold the values a NULL record reads for them, one check per column, see {@link JoinInput#getNullKeyCheck} and
+     * {@link JoinInput#getSlaveNullKeyCheck}.
      */
-    private BoundExpression nullKeyCheck(JoinInput step, OutputSchema output, boolean isMaster) throws SqlException {
+    private BoundExpression nullKeyCheck(JoinInput step, OutputSchema output) throws SqlException {
         final ObjList<JoinKey> keys = step.getKeys();
+        columnIds.clear();
         BoundExpression nullKeyCheck = null;
         for (int k = 0, n = keys.size(); k < n; k++) {
             final JoinKey key = keys.getQuick(k);
-            final int columnId = isMaster ? key.getMasterColumnId() : key.getSlaveColumnId();
-            if (isMaster ? step.indexOfMasterKey(columnId) == k : step.indexOfSlaveKey(columnId) == k) {
+            final int columnId = output.getColumnIndexById(key.getMasterColumnId()) >= 0 ? key.getMasterColumnId() : key.getSlaveColumnId();
+            if (columnIds.add(columnId)) {
                 nullKeyCheck = context.getRewriter().combineConjunction(nullKeyCheck,
                         context.bindNullValueCheck(columnId, output, key.getPosition()), key.getPosition());
             }
@@ -898,7 +902,7 @@ final class OperatorPlanning implements Mutable {
     private void planRelationalStep(JoinPlan join, int inputIndex, JoinInput step) throws SqlException {
         final LogicalPlan slave = step.getInput();
         final OutputSchema master = join.getOrderedInputs().getQuick(inputIndex - 1).getOutput();
-        step.setNullKeyCheck(PlanToFactoryRules.isMasterNullKeyChecked(step) ? nullKeyCheck(step, master, true) : null);
+        step.setNullKeyCheck(PlanToFactoryRules.isMasterNullKeyChecked(step) ? nullKeyCheck(step, master) : null);
         final int markoutIndex = master.getColumnIndexById(step.getMarkoutTimestampColumnId());
         if (markoutIndex >= 0 && markoutIndex == PhysicalProperties.masterTimestampIndex(join, inputIndex)
                 && PhysicalProperties.masterSupportsRandomAccess(join, inputIndex) == PhysicalProperties.Capability.YES
@@ -914,7 +918,7 @@ final class OperatorPlanning implements Mutable {
                 planLightBuildSide(join, inputIndex, step);
             }
         }
-        step.setSlaveNullKeyCheck(PlanToFactoryRules.isSlaveNullKeyChecked(step) ? nullKeyCheck(step, slave.getOutput(), false) : null);
+        step.setSlaveNullKeyCheck(PlanToFactoryRules.isSlaveNullKeyChecked(step) ? nullKeyCheck(step, slave.getOutput()) : null);
     }
 
     private void planSampleBy(SampleByPlan sample) throws SqlException {

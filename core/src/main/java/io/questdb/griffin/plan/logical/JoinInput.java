@@ -295,18 +295,6 @@ public final class JoinInput implements PlanFactSource {
     }
 
     /**
-     * The index of the first key on the slave column, or -1 when none is.
-     */
-    public int indexOfSlaveKey(int slaveColumnId) {
-        for (int i = 0, n = keys.size(); i < n; i++) {
-            if (keys.getQuick(i).getSlaveColumnId() == slaveColumnId) {
-                return i;
-            }
-        }
-        return -1;
-    }
-
-    /**
      * True when operator planning decided the algorithm of the step and the input that drives it.
      */
     public boolean isAlgorithmDecided() {

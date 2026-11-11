@@ -133,6 +133,21 @@ public class CaseCommon {
     }
 
     /**
+     * Checks the THEN values of a CASE or SWITCH, every second argument from {@code firstThenIndex} on, and then its
+     * ELSE value, the last argument when the THEN values do not end there, see {@link #checkValueType}.
+     */
+    static long checkBranchValueTypes(long fold, IntList argTypes, int firstThenIndex) {
+        final int n = argTypes.size();
+        for (int i = firstThenIndex; i < n; i += 2) {
+            fold = checkValueType(fold, argTypes.getQuick(i), i);
+        }
+        if ((n - firstThenIndex) % 2 == 0) {
+            fold = checkValueType(fold, argTypes.getQuick(n - 1), n - 1);
+        }
+        return fold;
+    }
+
+    /**
      * Checks one CASE-like value against the common type of the fold of all the values, see {@link #foldValueType}.
      * That type can be one the value does not convert to: CHAR and SYMBOL fold into STRING and STRING into IPv4, but
      * neither CHAR nor SYMBOL converts to IPv4. Returns the fold, or the fold that fails at the value when it does not

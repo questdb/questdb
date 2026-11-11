@@ -565,10 +565,11 @@ public final class PlanToFactoryRules {
         if (!LogicalPlans.isOrderIndependent(onResidual)) {
             return NullKeyMatch.PER_PAIR;
         }
-        if (LogicalPlans.readsOnly(onResidual, step.getSourceOutput())) {
+        final int reads = LogicalPlans.columnReads(onResidual, step.getSourceOutput());
+        if ((reads & ~LogicalPlans.READS_OUTPUT_COLUMN) == 0) {
             return NullKeyMatch.PER_SLAVE_ROW;
         }
-        return LogicalPlans.readsNone(onResidual, step.getSourceOutput()) ? NullKeyMatch.PER_MASTER_ROW : NullKeyMatch.PER_PAIR;
+        return reads == LogicalPlans.READS_OTHER_COLUMN ? NullKeyMatch.PER_MASTER_ROW : NullKeyMatch.PER_PAIR;
     }
 
     /**

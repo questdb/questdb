@@ -352,6 +352,22 @@ public class SetFilterPushdownTest extends AbstractCairoTest {
                         .expectSize()
                         .returns("count\n" + stableCounts[i] + "\n");
             }
+            // both rows of the set join the single plain row; a WHERE or an ON conjunct over the set alone reaches
+            // the join binder, which must keep a sequence to one instance as well
+            final String join = " FROM (SELECT ts,a,v FROM lp_sp_rollup UNION ALL SELECT ts,a,v FROM lp_sp_plain) s"
+                    + " JOIN lp_sp_plain p ON s.a = p.a";
+            for (String conjunct : new String[]{" WHERE ", " AND "}) {
+                assertQuery("SELECT count()" + join + conjunct + "coalesce(hour(s.ts),0)=timestamp_sequence(0,1)::LONG")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("count\n1\n");
+                assertQuery("SELECT count()" + join + conjunct + "coalesce(hour(s.ts),0)=0")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("count\n2\n");
+            }
         });
     }
 
