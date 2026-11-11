@@ -5439,7 +5439,7 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 props: random_access=true size=known timestamp=ts:asc
                 ts\tv
                 1970-01-01T00:00:00.000000Z\t-1.7976931348623157E308
-                1970-01-01T00:00:01.000000Z\tnull
+                1970-01-01T00:00:01.000000Z\t0.0
                 1970-01-01T00:00:02.000000Z\t1.7976931348623157E308
                 1970-01-01T00:00:03.000000Z\tnull
                 1970-01-01T00:00:04.000000Z\tnull
@@ -8567,7 +8567,7 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 max\terror: [31] there is no matching operator `>=` with the argument types: LONG >= DOUBLE[]
                 empty\terror: [31] there is no matching operator `>=` with the argument types: LONG >= DOUBLE[]
                 specials\tbind error: inconvertible value: `[null,null,null,-0.0]` [STRING -> DOUBLE[]]
-                null\tbind error: [-1] array type mismatch [expected=DOUBLE[], actual=NULL]
+                null\terror: [31] there is no matching operator `>=` with the argument types: LONG >= DOUBLE[]
                 ## where_key
                 min\terror: [81] v (DOUBLE[]): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
                 max\terror: [80] v (DOUBLE[]): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
@@ -8578,6 +8578,7 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 status\tmessage
                 finished\t
                 k
+                null
                 ## between_timestamp
                 error: [27] there is no matching operator `between` with the argument type: DOUBLE[]
                 ## bind_value
@@ -11791,7 +11792,7 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 max\terror: [31] there is no matching operator `>=` with the argument types: LONG >= DOUBLE[][]
                 empty\terror: [31] there is no matching operator `>=` with the argument types: LONG >= DOUBLE[][]
                 specials\tbind error: inconvertible value: `[[null,null,null,-0.0]]` [STRING -> DOUBLE[][]]
-                null\tbind error: [-1] array type mismatch [expected=DOUBLE[][], actual=NULL]
+                null\terror: [31] there is no matching operator `>=` with the argument types: LONG >= DOUBLE[][]
                 ## where_key
                 min\terror: [83] v (DOUBLE[][]): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
                 max\terror: [82] v (DOUBLE[][]): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON
@@ -11802,6 +11803,7 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 status\tmessage
                 finished\t
                 k
+                null
                 ## between_timestamp
                 error: [27] there is no matching operator `between` with the argument type: DOUBLE[][]
                 ## bind_value
