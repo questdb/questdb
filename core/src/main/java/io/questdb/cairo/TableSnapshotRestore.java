@@ -90,6 +90,9 @@ import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
  * Used by both DatabaseCheckpointAgent and BackupRestoreAgent.
  */
 public class TableSnapshotRestore implements QuietCloseable {
+    private static final int POSTING_INDEX_OPEN_WRITER = 1;
+    private static final int POSTING_INDEX_REBUILD = 2;
+    private static final int POSTING_INDEX_UNCHANGED = 0;
     // Tests swap this logger via reflection through LogFactory.enableGuaranteedLogging().
     @SuppressWarnings("FieldMayBeFinal")
     private static Log LOG = LogFactory.getLog(TableSnapshotRestore.class);
@@ -858,7 +861,8 @@ public class TableSnapshotRestore implements QuietCloseable {
      * walk armed at the restored {@code _txn}. The walk drops entries tagged above that txn and unlinks
      * their value files. A fast-lag commit can tag a post-checkpoint seal with the checkpoint txn itself,
      * so the walk alone does not guarantee a checkpointed head. Rebuild the index from restored column
-     * data when the retained head names a missing or short value file.
+     * data when the retained head names a missing or short value file, when the .pk is shorter than its
+     * chain region, and when the .pk of a column with rows in the partition is missing.
      */
     private void dropUncommittedPostingIndexEntries(
             String tablePathStr,
@@ -898,8 +902,9 @@ public class TableSnapshotRestore implements QuietCloseable {
                         continue;
                     }
                     final int writerIndex = tableMetadata.getWriterIndex(colIdx);
+                    final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, writerIndex);
                     // -1 means the column is absent in this partition, see ColumnVersionReader.getColumnTop()
-                    if (columnVersionReader.getColumnTop(partitionTimestamp, writerIndex) < 0) {
+                    if (columnTop < 0) {
                         continue;
                     }
                     final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, writerIndex);
@@ -915,12 +920,35 @@ public class TableSnapshotRestore implements QuietCloseable {
                                 isPartitioned, i, colIdx, partitionTimestamp, partitionNameTxn, columnNameTxn);
                         continue;
                     }
-                    // A copy that lost the partition's index files leaves nothing to walk
+                    final int action;
                     if (!ff.exists(PostingIndexUtils.keyFileName(path.trimTo(partitionPathLen), columnName, columnNameTxn))) {
+                        // A column with no rows in the partition may have no .pk, as TableWriter allows.
+                        // One with rows must have it: the copy lost it.
+                        final long partitionRowCount = isPartitioned ? txWriter.getPartitionSize(i) : txWriter.getTransientRowCount();
+                        if (columnTop >= partitionRowCount) {
+                            continue;
+                        }
+                        LOG.info().$("rebuilding restored posting index with missing key file [path=").$(path.trimTo(partitionPathLen))
+                                .$(", column=").$safe(columnName)
+                                .$(", txn=").$(tableTxn)
+                                .I$();
+                        action = POSTING_INDEX_REBUILD;
+                    } else {
+                        // Opening the writer costs far more than reading the head, and most indexes need nothing
+                        action = checkPostingIndex(path, partitionPathLen, columnName, columnNameTxn, tableTxn, keyMem, chain, head);
+                        if (action == POSTING_INDEX_REBUILD) {
+                            LOG.info().$("rebuilding restored posting index with short key file [path=").$(path.trimTo(partitionPathLen))
+                                    .$(", column=").$safe(columnName)
+                                    .$(", txn=").$(tableTxn)
+                                    .I$();
+                        }
+                    }
+                    if (action == POSTING_INDEX_UNCHANGED) {
                         continue;
                     }
-                    // Opening the writer costs far more than reading the head, and most indexes need nothing
-                    if (!isPostingIndexWriterNeeded(path, partitionPathLen, columnName, columnNameTxn, tableTxn, keyMem, chain, head)) {
+                    if (action == POSTING_INDEX_REBUILD) {
+                        rebuildPostingIndexForPartition(path.trimTo(partitionPathLen), tablePathStr, partitionBy, timestampType,
+                                isPartitioned, i, colIdx, partitionTimestamp, partitionNameTxn, columnNameTxn);
                         continue;
                     }
                     try {
@@ -1043,12 +1071,14 @@ public class TableSnapshotRestore implements QuietCloseable {
     }
 
     /**
-     * Reads the head of a POSTING index chain without opening a writer. Returns false when the writer would
-     * change nothing: neither the head entry nor its last generation is newer than {@code tableTxn}, and the
-     * value file holds the head. Returns true otherwise, and when the chain cannot be read, so the writer
-     * reports the problem.
+     * Reads the head of a POSTING index chain without opening a writer. Returns
+     * {@link #POSTING_INDEX_UNCHANGED} when the writer would change nothing: neither the head entry nor its
+     * last generation is newer than {@code tableTxn}, and the value file holds the head. Returns
+     * {@link #POSTING_INDEX_REBUILD} when the .pk is shorter than its chain region. Returns
+     * {@link #POSTING_INDEX_OPEN_WRITER} otherwise, and when the chain cannot be read, so the writer reports
+     * the problem.
      */
-    private boolean isPostingIndexWriterNeeded(
+    private int checkPostingIndex(
             Path path,
             int partitionPathLen,
             CharSequence columnName,
@@ -1062,36 +1092,44 @@ public class TableSnapshotRestore implements QuietCloseable {
             final LPSZ keyFile = PostingIndexUtils.keyFileName(path.trimTo(partitionPathLen), columnName, columnNameTxn);
             final long keyFileSize = ff.length(keyFile);
             if (keyFileSize < PostingIndexUtils.KEY_FILE_RESERVED) {
-                return true;
+                return POSTING_INDEX_OPEN_WRITER;
             }
             keyMem.of(ff, keyFile, ff.getPageSize(), keyFileSize, MemoryTag.MMAP_INDEX_READER);
             // Validates the region and that the head lies inside it
             final long regionLimit = chain.peekRegionLimit(keyMem);
+            // Check before openExisting() reads the head, which can lie past the mapping. Nothing writes the
+            // index during restore and a writer never leaves the file shorter than its region, so the copy
+            // lost the end of the chain.
+            if (regionLimit > keyFileSize) {
+                return POSTING_INDEX_REBUILD;
+            }
             chain.resetState();
             chain.openExisting(keyMem);
             if (!chain.hasHead()) {
-                return false;
+                return POSTING_INDEX_UNCHANGED;
             }
             final long headOffset = chain.getHeadEntryOffset();
-            if (regionLimit > keyFileSize || headOffset + PostingIndexUtils.V2_ENTRY_HEADER_SIZE > regionLimit) {
-                return true;
+            if (headOffset + PostingIndexUtils.V2_ENTRY_HEADER_SIZE > regionLimit) {
+                return POSTING_INDEX_OPEN_WRITER;
             }
             // Read the head as the writer's recovery walk does
             final int coverCount = PostingIndexChainEntry.resolveEntryCoverCount(keyMem, headOffset, regionLimit);
             PostingIndexChainEntry.read(keyMem, headOffset, coverCount, head);
             if (head.txnAtSeal > tableTxn || head.genCount < 1) {
-                return true;
+                return POSTING_INDEX_OPEN_WRITER;
             }
             // A commit after the checkpoint can append a generation to the head without a new entry
             final long lastGenTxnOffset = PostingIndexChainEntry.resolveGenDirOffset(headOffset, head.genCount - 1, head.coveringFormat, head.coverCount)
                     + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL;
             if (lastGenTxnOffset + Long.BYTES > regionLimit || keyMem.getLong(lastGenTxnOffset) > tableTxn) {
-                return true;
+                return POSTING_INDEX_OPEN_WRITER;
             }
             return head.valueMemSize > 0
-                    && head.valueMemSize > ff.length(PostingIndexUtils.valueFileName(path.trimTo(partitionPathLen), columnName, columnNameTxn, head.sealTxn));
+                    && head.valueMemSize > ff.length(PostingIndexUtils.valueFileName(path.trimTo(partitionPathLen), columnName, columnNameTxn, head.sealTxn))
+                    ? POSTING_INDEX_OPEN_WRITER
+                    : POSTING_INDEX_UNCHANGED;
         } catch (CairoException e) {
-            return true;
+            return POSTING_INDEX_OPEN_WRITER;
         } finally {
             keyMem.close();
             chain.resetState();

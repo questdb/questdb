@@ -2977,28 +2977,62 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckpointRestoreRebuildsPostingIndexMissingNonPartitionedKeyFile() throws Exception {
+        testCheckpointRestoreRebuildsPostingIndexNonPartitioned(true);
+    }
+
+    @Test
     public void testCheckpointRestoreRebuildsPostingIndexMissingNonPartitionedValueFile() throws Exception {
+        testCheckpointRestoreRebuildsPostingIndexNonPartitioned(false);
+    }
+
+    @Test
+    public void testCheckpointRestoreRebuildsPostingIndexShortKeyFile() throws Exception {
+        // A .pk that ends before its chain region lost the head entry. Restore must not read past the end of the
+        // file, and must rebuild the index from the column data.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (v INT)");
-            execute("INSERT INTO t VALUES (1), (2)");
-            execute("ALTER TABLE t ADD COLUMN s SYMBOL INDEX TYPE POSTING");
-            execute("INSERT INTO t VALUES (3, 'a'), (4, null)");
+            execute("CREATE TABLE t (s SYMBOL INDEX TYPE POSTING, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            final int rowCount = 400;
+            long sumA = 0;
+            for (int i = 1; i <= rowCount; i++) {
+                final boolean isA = i % 2 == 1;
+                execute("INSERT INTO t VALUES ('" + (isA ? "a" : "b") + "', " + i + ", '2024-01-01'::TIMESTAMP + " + i + ")");
+                if (isA) {
+                    sumA += i;
+                }
+            }
+            execute("INSERT INTO t VALUES ('b', 0, '2024-01-02')");
             final TableToken token = engine.verifyTableName("t");
             engine.clear();
-            removePostingValueFiles(new File(new File(configuration.getDbRoot(), token.getDirName()), "default"));
+            final File keyFile = new File(new File(new File(configuration.getDbRoot(), token.getDirName()), "2024-01-01"), "s.pk");
+            final long headEntryOffset;
+            try (
+                    Path path = new Path().of(keyFile.getAbsolutePath());
+                    MemoryCMR keyMem = Vm.getCMRInstance(configuration.getFilesFacade(), path.$(), keyFile.length(), MemoryTag.MMAP_DEFAULT)
+            ) {
+                final PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                chain.openExisting(keyMem);
+                headEntryOffset = chain.getHeadEntryOffset();
+            }
+            final long truncatedLength = PostingIndexUtils.KEY_FILE_RESERVED * 2L;
+            Assert.assertTrue("the head entry must lie past the truncated length", headEntryOffset >= truncatedLength);
+            try (java.io.RandomAccessFile file = new java.io.RandomAccessFile(keyFile, "rw")) {
+                file.setLength(truncatedLength);
+            }
             try (
                     Path tablePath = new Path().of(configuration.getDbRoot()).concat(token).slash();
                     TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)
             ) {
                 restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), false);
             }
-            assertQuery("SELECT count(), sum(v) FROM t WHERE s IS NULL")
-                    .noRandomAccess().expectSize().returns("count\tsum\n3\t7\n");
             assertQuery("SELECT count(), sum(v) FROM t WHERE s = 'a'")
-                    .noRandomAccess().expectSize().returns("count\tsum\n1\t3\n");
-            execute("INSERT INTO t VALUES (5, 'a')");
+                    .noRandomAccess().expectSize().withPlanContaining("Index forward scan on: s")
+                    .returns("count\tsum\n" + rowCount / 2 + "\t" + sumA + "\n");
+            assertQuery("SELECT count(), sum(v) FROM t WHERE s = 'b'")
+                    .noRandomAccess().expectSize().returns("count\tsum\n" + (rowCount / 2 + 1) + "\t" + (rowCount * (rowCount + 1L) / 2 - sumA) + "\n");
+            execute("INSERT INTO t VALUES ('a', 1000, '2024-01-01T01:00:00')");
             assertQuery("SELECT count(), sum(v) FROM t WHERE s = 'a'")
-                    .noRandomAccess().expectSize().returns("count\tsum\n2\t8\n");
+                    .noRandomAccess().expectSize().returns("count\tsum\n" + (rowCount / 2 + 1) + "\t" + (sumA + 1000) + "\n");
         });
     }
 
@@ -3010,6 +3044,16 @@ public class CheckpointTest extends AbstractCairoTest {
     @Test
     public void testCheckpointRestoreRebuildsPostingIndexShortCommittedValueFile() throws Exception {
         testCheckpointRestoreRebuildsPostingIndexValueFile(false, true);
+    }
+
+    @Test
+    public void testCheckpointRestoreRebuildsPostingIndexMissingCommittedKeyFile() throws Exception {
+        testCheckpointRestoreRebuildsPostingIndexValueFile(false, false, true);
+    }
+
+    @Test
+    public void testCheckpointRestoreRebuildsPostingIndexMissingParquetKeyFile() throws Exception {
+        testCheckpointRestoreRebuildsPostingIndexValueFile(true, false, true);
     }
 
     @Test
@@ -3100,8 +3144,8 @@ public class CheckpointTest extends AbstractCairoTest {
     public void testCheckpointRestoreDropsPostingIndexEntriesSkipsTablesWithoutIndexFiles() throws Exception {
         // The restore walks every posting index the checkpoint holds and passes over what has none:
         // a table without partitions, a non-partitioned table, a BITMAP index, a dropped indexed
-        // column, a column added after a partition was written, a parquet partition and a partition
-        // whose index files were lost
+        // column, a column added after a partition was written, a parquet partition and a column
+        // with no rows in a partition that has no index files for it
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t_empty (s SYMBOL, ts TIMESTAMP), INDEX(s TYPE POSTING) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE t_none (s SYMBOL, d SYMBOL, b SYMBOL, v INT), INDEX(s TYPE POSTING), INDEX(d TYPE POSTING), INDEX(b)");
@@ -3122,13 +3166,13 @@ public class CheckpointTest extends AbstractCairoTest {
                     ('b', 2, '2024-01-02T00:00:00.000000Z')
                     """);
             execute("ALTER TABLE t_pq CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
-            // A copy that lost a partition's posting index: the restore has nothing to walk there
-            execute("CREATE TABLE t_nopk (s SYMBOL, ts TIMESTAMP), INDEX(s TYPE POSTING) TIMESTAMP(ts) PARTITION BY DAY");
+            // A column with no rows in a partition need not have a .pk there, so restore must not build one
+            execute("CREATE TABLE t_nopk (s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t_nopk VALUES ('a', '2024-01-01T00:00:00.000000Z'), ('b', '2024-01-02T00:00:00.000000Z')");
-            final File noPkDir = new File(new File(configuration.getDbRoot(), engine.verifyTableName("t_nopk").getDirName()), "2024-01-01");
+            execute("ALTER TABLE t_nopk ADD COLUMN q SYMBOL INDEX TYPE POSTING");
+            final File noPkDir = new File(new File(configuration.getDbRoot(), engine.verifyTableName("t_nopk").getDirName()), "2024-01-02");
             engine.clear();
-            Assert.assertTrue(new File(noPkDir, "s.pk").delete());
-            Assert.assertTrue(new File(noPkDir, "s.pv.0").delete());
+            removeFiles(noPkDir, "q.p");
 
             for (String table : new String[]{"t_empty", "t_none", "t_add", "t_pq", "t_nopk"}) {
                 final TableToken token = engine.verifyTableName(table);
@@ -3139,11 +3183,18 @@ public class CheckpointTest extends AbstractCairoTest {
                     restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), false);
                 }
             }
-            Assert.assertFalse(new File(noPkDir, "s.pk").exists());
+            Assert.assertEquals(0, removeFiles(noPkDir, "q.p"));
 
             execute("INSERT INTO t_empty VALUES ('a', '2024-01-01T00:00:00.000000Z')");
             execute("INSERT INTO t_none VALUES ('a', 'n', 4)");
             execute("INSERT INTO t_add VALUES ('a', 3, '2024-01-02T01:00:00.000000Z', 'k')");
+            execute("INSERT INTO t_nopk VALUES ('c', '2024-01-02T01:00:00.000000Z', 'k')");
+            assertQuery("SELECT s, ts FROM t_nopk WHERE q = 'k'")
+                    .timestamp("ts")
+                    .returns("""
+                            s\tts
+                            c\t2024-01-02T01:00:00.000000Z
+                            """);
             assertQuery("SELECT count() FROM t_empty WHERE s = 'a'")
                     .expectSize()
                     .noRandomAccess()
@@ -6442,16 +6493,21 @@ public class CheckpointTest extends AbstractCairoTest {
         drainWalQueue();
     }
 
-    private static void removePostingValueFiles(File partitionDir) throws IOException {
+    // Removes the files of partitionDir whose names start with prefix and returns how many it removed
+    private static int removeFiles(File partitionDir, String prefix) throws IOException {
         try (var files = java.nio.file.Files.list(partitionDir.toPath())) {
             final AtomicInteger removed = new AtomicInteger();
-            files.filter(file -> file.getFileName().toString().startsWith("s.pv."))
+            files.filter(file -> file.getFileName().toString().startsWith(prefix))
                     .forEach(file -> {
                         Assert.assertTrue(file.toFile().delete());
                         removed.incrementAndGet();
                     });
-            Assert.assertTrue("partition must have a posting value file", removed.get() > 0);
+            return removed.get();
         }
+    }
+
+    private static void removePostingValueFiles(File partitionDir) throws IOException {
+        Assert.assertTrue("partition must have a posting value file", removeFiles(partitionDir, "s.pv.") > 0);
     }
 
     // Returns the head entry txn, its generation count and the txn of its last generation
@@ -6670,7 +6726,40 @@ public class CheckpointTest extends AbstractCairoTest {
         });
     }
 
+    private void testCheckpointRestoreRebuildsPostingIndexNonPartitioned(boolean isKeyFileMissing) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v INT)");
+            execute("INSERT INTO t VALUES (1), (2)");
+            execute("ALTER TABLE t ADD COLUMN s SYMBOL INDEX TYPE POSTING");
+            execute("INSERT INTO t VALUES (3, 'a'), (4, null)");
+            final TableToken token = engine.verifyTableName("t");
+            engine.clear();
+            final File partDir = new File(new File(configuration.getDbRoot(), token.getDirName()), "default");
+            removePostingValueFiles(partDir);
+            if (isKeyFileMissing) {
+                Assert.assertEquals(1, removeFiles(partDir, "s.pk"));
+            }
+            try (
+                    Path tablePath = new Path().of(configuration.getDbRoot()).concat(token).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)
+            ) {
+                restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), false);
+            }
+            assertQuery("SELECT count(), sum(v) FROM t WHERE s IS NULL")
+                    .noRandomAccess().expectSize().returns("count\tsum\n3\t7\n");
+            assertQuery("SELECT count(), sum(v) FROM t WHERE s = 'a'")
+                    .noRandomAccess().expectSize().returns("count\tsum\n1\t3\n");
+            execute("INSERT INTO t VALUES (5, 'a')");
+            assertQuery("SELECT count(), sum(v) FROM t WHERE s = 'a'")
+                    .noRandomAccess().expectSize().returns("count\tsum\n2\t8\n");
+        });
+    }
+
     private void testCheckpointRestoreRebuildsPostingIndexValueFile(boolean isParquet, boolean isValueFileShort) throws Exception {
+        testCheckpointRestoreRebuildsPostingIndexValueFile(isParquet, isValueFileShort, false);
+    }
+
+    private void testCheckpointRestoreRebuildsPostingIndexValueFile(boolean isParquet, boolean isValueFileShort, boolean isKeyFileMissing) throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (s SYMBOL INDEX TYPE POSTING INCLUDE(v), v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES ('a', 1, '2024-01-01'), (null, 2, '2024-01-01T01:00:00'), ('b', 3, '2024-01-02')");
@@ -6694,14 +6783,19 @@ public class CheckpointTest extends AbstractCairoTest {
             } else {
                 Assert.assertTrue(valueFile.delete());
             }
+            final File keyFile = new File(partDir, "s.pk");
+            if (isKeyFileMissing) {
+                Assert.assertTrue(keyFile.delete());
+            }
             try (
                     Path tablePath = new Path().of(configuration.getDbRoot()).concat(token).slash();
                     TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)
             ) {
                 restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), false);
             }
+            Assert.assertTrue(keyFile.exists());
             assertQuery("SELECT count(), sum(v) FROM t WHERE s = 'a'")
-                    .noRandomAccess().expectSize().returns("count\tsum\n1\t1\n");
+                    .noRandomAccess().expectSize().withPlanContaining("CoveringIndex on: s").returns("count\tsum\n1\t1\n");
             assertQuery("SELECT count(), sum(v) FROM t WHERE s IS NULL")
                     .noRandomAccess().expectSize().returns("count\tsum\n1\t2\n");
             execute("INSERT INTO t VALUES ('a', 4, '2024-01-02T01:00:00')");
