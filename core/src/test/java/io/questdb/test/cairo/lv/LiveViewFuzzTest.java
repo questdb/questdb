@@ -397,6 +397,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // Set while testFuzzResumeChainPrice runs: runDedupFuzz then draws its knobs for the chain
     // price, checks the oracle after every restart, and runs a new-key episode in one run of two.
     private boolean isChainPriceArm;
+    // Runs of the chain price arm that could commit a new-key episode: every other one, from the
+    // first, does. See commitNewKeyEpisode.
+    private int newKeyEpisodeCandidates;
     // New-key episodes the batch ran, and the ones the price refused after a boundary froze.
     private int newKeyEpisodes;
     private int newKeyEpisodeLateDeclines;
@@ -2356,15 +2359,17 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
 
     /**
      * A correction the chain price admits at its first boundary and refuses at its second. Four
-     * batches of four rows on keys the run uses, from the day above every row the base and the
-     * view hold, each committed and refreshed on its own, so each seals a root at its newest row.
-     * Then one late commit: a row on a key the run uses just above the first batch's root, which
-     * the resume anchors on, and {@link #NEW_KEY_EPISODE_KEYS} rows on keys the run never used
-     * just above the second batch's root. The replay reaches the second batch's root with the
-     * frontier's keys, at most 16, and 3 x 16 stays within the estimate, which counts the new
-     * keys' rows, so that root freezes; it reaches the third with the new keys too, and
-     * K_1 + 2 x (K_front + 50) passes the estimate, at most 17 + 50 rows: the price refuses it and
-     * discards the frozen root. Draws from {@code episodeRnd} alone.
+     * batches of four rows on keys the run uses, a second apart from the floor of the day above
+     * every row the base and the view hold, each committed and refreshed on its own, so each seals
+     * a root at its newest row. Then one late commit: a row on a key the run uses just above the
+     * first batch's root, which the resume anchors on, and {@link #NEW_KEY_EPISODE_KEYS} rows on
+     * keys the run never used just above the second batch's root. The estimate interpolates the
+     * day's rows from its floor to its newest row, so with the first root 3 ms above the floor and
+     * the newest row 3 s above it, it counts nearly every row above the anchor: at least the 50
+     * new keys' rows, at most 17 + 50. The replay reaches the second batch's root with the
+     * frontier's keys, at most 16, and 3 x 16 stays within the estimate, so that root freezes; it
+     * reaches the third with the new keys too, and K_1 + 2 x (K_front + 50) passes the estimate:
+     * the price refuses it and discards the frozen root. Draws from {@code episodeRnd} alone.
      *
      * @return false when the view is not active, so nothing was committed
      */
@@ -2377,14 +2382,13 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 Math.max(queryTimestamp("SELECT max(ts) FROM base"), instance.getLatestSeenTs()),
                 instance.getDefinition().getViewLowerBoundTimestamp()
         );
-        long fromTs = floorTs - floorTs % Micros.DAY_MICROS + Micros.DAY_MICROS + 1 + episodeRnd.nextLong(Micros.SECOND_MICROS);
+        final long dayTs = floorTs - floorTs % Micros.DAY_MICROS + Micros.DAY_MICROS;
         final long[][] batchTs = new long[4][4];
         for (int b = 0; b < batchTs.length; b++) {
-            commitEpisodeBatch(episodeRnd, fromTs, null, symCount, batchTs[b], null);
+            commitEpisodeBatch(episodeRnd, dayTs + 1 + b * Micros.SECOND_MICROS, null, symCount, batchTs[b], null);
             drainWalQueue();
             driveRefreshToQuiescence(job);
             Assert.assertEquals("each batch seals its root", batchTs[b][3], instance.getHeadCheckpointMaxTs());
-            fromTs = batchTs[b][3] + 2 + episodeRnd.nextInt(1_000_000);
         }
         final StringSink values = new StringSink();
         appendEpisodeRow(values, batchTs[0][3] + 1, episodeRnd.nextInt(symCount), 1 + episodeRnd.nextInt(1000), episodeRnd.nextDouble() * 1000.0);
@@ -5138,7 +5142,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             // view from the base, which erases a ghost row or restores a missing row the main loop
             // left, so the check after that restart does not stand in for this one.
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, oracleOrderedSql, viewOrderedSql, LOG, true);
-            if (priceRnd != null && priceRnd.nextBoolean() && commitNewKeyEpisode(priceRnd, job, symCount)) {
+            // One run in two, counted rather than drawn, so every batch runs its share.
+            if (priceRnd != null && newKeyEpisodeCandidates++ % 2 == 0 && commitNewKeyEpisode(priceRnd, job, symCount)) {
                 TestUtils.assertSqlCursors(engine, sqlExecutionContext, oracleOrderedSql, viewOrderedSql, LOG, true);
             }
             if (sparseDepartureShape >= 0) {
