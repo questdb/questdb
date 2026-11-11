@@ -40,6 +40,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FindVisitor;
@@ -65,6 +66,7 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.io.File;
+import java.text.Normalizer;
 import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
@@ -89,6 +91,83 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
     public void setUp() {
         super.setUp();
         triggerFilePath.of(engine.getConfiguration().getDbRoot()).parent().concat(TableUtils.RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME);
+    }
+
+    @Test
+    public void testCheckpointCopyKeepsCommittedPostingIndexListedDecomposed() throws Exception {
+        // The file system lists the column files of "prix_é" and "größe" decomposed, as HFS+ does, and as APFS does
+        // with a copy taken through HFS+. The restore must still keep the committed indexes of prix_é and s, and reset
+        // the chain that an ADD INDEX of größe run after the checkpoint left, and the key file u.pk of no column.
+        Assume.assumeFalse(Os.isWindows());
+        assertMemoryLeak(new DecomposingFilesFacade(), () -> {
+            execute("""
+                    CREATE TABLE x (
+                        s SYMBOL INDEX TYPE POSTING,
+                        "prix_é" SYMBOL INDEX TYPE POSTING INCLUDE (v),
+                        "größe" SYMBOL,
+                        v LONG,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO x VALUES
+                    ('p', 'a', 'k', 1, '2024-01-01T00:00'), ('q', 'b', 'm', 2, '2024-01-01T12:00'),
+                    ('p', 'a', 'k', 3, '2024-01-02T00:00'), ('q', 'b', 'm', 4, '2024-01-02T12:00')
+                    """);
+            final TableToken tableToken = engine.verifyTableName("x");
+            final long committedSealTxn = readPostingSealTxn(tableToken, "2024-01-01", "prix_é");
+            final long committedAsciiSealTxn = readPostingSealTxn(tableToken, "2024-01-01", "s");
+            checkpointCreate(false, true);
+            final String[] committedFiles = checkpointCopyFiles(tableToken, "2024-01-01", "prix_é.p");
+            // Model a copy taken after ADD INDEX built the index of größe, which the checkpoint does not hold.
+            execute("ALTER TABLE x ALTER COLUMN \"größe\" ADD INDEX TYPE POSTING");
+            engine.releaseAllWriters();
+            linkToCheckpointCopy(tableToken, "2024-01-01", "größe.p");
+            try (Path path = new Path()) {
+                writeFile(path.of(configuration.getDbRoot()).put(TableUtils.CHECKPOINT_META_FILE_NAME)
+                        .concat(tableToken).concat("2024-01-01").concat("u.pk"));
+            }
+            checkpointRecover();
+
+            assertPartitionFiles(tableToken, "2024-01-01", "prix_é.p", Arrays.toString(committedFiles));
+            Assert.assertEquals(committedSealTxn, readPostingSealTxn(tableToken, "2024-01-01", "prix_é"));
+            Assert.assertEquals(committedAsciiSealTxn, readPostingSealTxn(tableToken, "2024-01-01", "s"));
+            assertPartitionFiles(tableToken, "2024-01-01", "größe.p", "[größe.pk]");
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(tableToken).concat("2024-01-01").concat("u.pk");
+                Assert.assertEquals(-1, emptyPostingChainGenerationCounter(path));
+            }
+            assertQuery("SELECT v, ts FROM x WHERE \"prix_é\" = 'a'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanContaining("CoveringIndex on: prix_é")
+                    .returns("""
+                            v\tts
+                            1\t2024-01-01T00:00:00.000000Z
+                            3\t2024-01-02T00:00:00.000000Z
+                            """);
+            assertQuery("SELECT v, ts FROM x WHERE s = 'q'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlanContaining("Index forward scan on: s")
+                    .returns("""
+                            v\tts
+                            2\t2024-01-01T12:00:00.000000Z
+                            4\t2024-01-02T12:00:00.000000Z
+                            """);
+            execute("ALTER TABLE x ALTER COLUMN \"größe\" ADD INDEX TYPE POSTING");
+            assertQuery("SELECT v, ts FROM x WHERE \"größe\" = 'm'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlanContaining("Index forward scan on: größe")
+                    .returns("""
+                            v\tts
+                            2\t2024-01-01T12:00:00.000000Z
+                            4\t2024-01-02T12:00:00.000000Z
+                            """);
+        });
     }
 
     @Test
@@ -1449,10 +1528,14 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
     }
 
     private long readPostingSealTxn(TableToken tableToken, String partitionName) {
+        return readPostingSealTxn(tableToken, partitionName, "s");
+    }
+
+    private long readPostingSealTxn(TableToken tableToken, String partitionName, String columnName) {
         try (Path path = new Path()) {
             path.of(configuration.getDbRoot()).concat(tableToken).concat(partitionName);
             final long sealTxn = PostingIndexUtils.readSealTxnFromKeyFile(configuration.getFilesFacade(),
-                    PostingIndexUtils.keyFileName(path, "s", -1));
+                    PostingIndexUtils.keyFileName(path, columnName, -1));
             Assert.assertTrue(sealTxn >= 0);
             return sealTxn;
         }
@@ -1595,5 +1678,79 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
                 Misc.freeObjListAndClear(transactions);
             }
         });
+    }
+
+    // Lists a name decomposed, an accented letter as the base letter and a combining mark, and finds a file under
+    // either form of its name, as HFS+ does.
+    private static class DecomposingFilesFacade extends TestFilesFacadeImpl {
+        @Override
+        public boolean exists(LPSZ path) {
+            if (Utf8s.isAscii(path)) {
+                return super.exists(path);
+            }
+            try (Path composed = compose(path)) {
+                return super.exists(composed.$());
+            }
+        }
+
+        @Override
+        public void iterateDir(LPSZ path, FindVisitor func) {
+            final StringSink name = new StringSink();
+            try (Path decomposed = new Path()) {
+                super.iterateDir(path, (pUtf8NameZ, type) -> {
+                    name.clear();
+                    Utf8s.utf8ToUtf16Z(pUtf8NameZ, name);
+                    if (Chars.isAscii(name)) {
+                        func.onFind(pUtf8NameZ, type);
+                    } else {
+                        func.onFind(decomposed.of(Normalizer.normalize(name, Normalizer.Form.NFD)).$().ptr(), type);
+                    }
+                });
+            }
+        }
+
+        @Override
+        public long length(LPSZ name) {
+            if (Utf8s.isAscii(name)) {
+                return super.length(name);
+            }
+            try (Path composed = compose(name)) {
+                return super.length(composed.$());
+            }
+        }
+
+        @Override
+        public long openRO(LPSZ name) {
+            if (Utf8s.isAscii(name)) {
+                return super.openRO(name);
+            }
+            try (Path composed = compose(name)) {
+                return super.openRO(composed.$());
+            }
+        }
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            if (Utf8s.isAscii(name)) {
+                return super.openRW(name, opts);
+            }
+            try (Path composed = compose(name)) {
+                return super.openRW(composed.$(), opts);
+            }
+        }
+
+        @Override
+        public boolean removeQuiet(LPSZ name) {
+            if (Utf8s.isAscii(name)) {
+                return super.removeQuiet(name);
+            }
+            try (Path composed = compose(name)) {
+                return super.removeQuiet(composed.$());
+            }
+        }
+
+        private static Path compose(LPSZ path) {
+            return new Path().of(Normalizer.normalize(Utf8s.stringFromUtf8Bytes(path), Normalizer.Form.NFC));
+        }
     }
 }
