@@ -1460,10 +1460,11 @@ public class FuzzRunner {
 
     // Compares, key by key, the rows an equality filter on the indexed column reads through the index with those it
     // reads from a scan that uses no index. Each comparison is a single-key equality, which both plans emit in the
-    // same order.
+    // same order. The keys come from a scan too: a DISTINCT over a posting index reads them from that index, and so
+    // would never name a key the index lost.
     private void checkIndexAgainstScan(SqlCompiler compiler, String tableName, String symbolColumnName) throws SqlException {
         sink.clear();
-        TestUtils.printSql(compiler, sqlExecutionContext, "select distinct \"" + symbolColumnName + "\" a from " + tableName + " order by 1", sink);
+        TestUtils.printSql(compiler, sqlExecutionContext, "select /*+ no_index */ distinct \"" + symbolColumnName + "\" a from " + tableName + " order by 1", sink);
         final String keys = sink.toString();
         final StringSink plan = new StringSink();
         int checked = 0;

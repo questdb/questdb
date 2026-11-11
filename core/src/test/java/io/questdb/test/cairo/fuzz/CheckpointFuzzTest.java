@@ -37,6 +37,7 @@ import io.questdb.cairo.TxReader;
 import io.questdb.cairo.idx.PostingIndexChainHeader;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Files;
@@ -667,6 +668,30 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
         fullFuzz(rnd);
         setFuzzProperties(rnd.nextLong(50), getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd), 10 * Numbers.SIZE_1MB, 3, getRndWalApplyBlockMaxRows(rnd));
         runFuzzWithCheckpoint(rnd);
+    }
+
+    @Test
+    public void testIndexesMatchScansDetectsLostPostingKeys() throws Exception {
+        // The check the fuzz runs after a restore must see the keys a posting index lost, so it cannot take them from
+        // that index.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s SYMBOL INDEX TYPE POSTING, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO x VALUES ('a', 1, '2024-01-01'), ('b', 2, '2024-01-01T12:00'), ('a', 3, '2024-01-02')");
+            engine.releaseAllWriters();
+            fuzzer.assertIndexesMatchScans("x");
+            // Readers map the index files, and Windows cannot remove a mapped file
+            engine.releaseAllReaders();
+
+            final TableToken tableToken = engine.verifyTableName("x");
+            try (Path path = new Path(); MemoryCMARW keyMem = Vm.getCMARWInstance()) {
+                for (String partitionName : new String[]{"2024-01-01", "2024-01-02"}) {
+                    path.of(configuration.getDbRoot()).concat(tableToken).concat(partitionName);
+                    Assert.assertTrue(PostingIndexUtils.resetIndex(configuration.getFilesFacade(), path, path.size(), "s", -1, keyMem));
+                }
+            }
+            final AssertionError e = Assert.assertThrows(AssertionError.class, () -> fuzzer.assertIndexesMatchScans("x"));
+            TestUtils.assertContains(e.getMessage(), "Actual cursor does not have record at 0");
+        });
     }
 
     private static void assertNotSuspended(TableToken tableToken) {
