@@ -264,6 +264,30 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // one; over a unique-ts total order they collapse to a per-bucket sequence,
     // which the (sym, bucket)-partitioned oracle recomputes exactly.
     private static final int ANCHORED_VARIANT_COUNT = 7;
+    // Anchored shapes past ANCHORED_VARIANT_COUNT, which only testFuzzResumeChainPrice drives, so
+    // every other anchored arm draws what it drew before. Each one's seals image every key whole,
+    // as rank's and dense_rank's do: lag keeps no dirty set, covar_pop no baseline, and an
+    // EXCLUDE CURRENT ROW avg is a ring.
+    private static final int ANCHORED_LAG_VARIANT = 7;
+    private static final int ANCHORED_COVAR_POP_VARIANT = 8;
+    private static final int ANCHORED_EXCLUDE_CURRENT_ROW_AVG_VARIANT = 9;
+    // testFuzzResumeChainPrice's shapes, every one a function a chained seal images whole: the
+    // unanchored ROWS and RANGE sums and avgs and lag, and the anchored rank, dense_rank, lag,
+    // covar_pop and EXCLUDE CURRENT ROW avg.
+    private static final int[] CHAIN_PRICE_UNANCHORED_VARIANTS = {
+            0, 4, RANGE_SUM_VARIANT, RANGE_AVG_VARIANT, LAG_VARIANT
+    };
+    private static final int[] CHAIN_PRICE_ANCHORED_VARIANTS = {
+            5, 6, ANCHORED_LAG_VARIANT, ANCHORED_COVAR_POP_VARIANT, ANCHORED_EXCLUDE_CURRENT_ROW_AVG_VARIANT
+    };
+    // Salt the chain price arm's draws apart from the run's sequence, so its runs draw their data
+    // as every other arm's do.
+    private static final long CHAIN_PRICE_SALT0 = 0xC2B2AE3D27D4EB4FL;
+    private static final long CHAIN_PRICE_SALT1 = 0x165667B19E3779F9L;
+    // The keys a new-key episode's correction brings: more than three times the 16 a run draws,
+    // and more than the 17 other rows the episode's partition holds above its anchor. See
+    // commitNewKeyEpisode.
+    private static final int NEW_KEY_EPISODE_KEYS = 50;
     // runLeadOrderingFuzz's cycle group: flush, in-order, in-order, late-arrival.
     private static final int CYCLES_PER_GROUP = 4;
     private static final int LATE_COMMIT_PHASE = 3;
@@ -367,6 +391,15 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     private int rowlessAnchorEpisodes;
     private int rowlessAnchorWatermarks;
     private int rowlessAnchorFrontierSeals;
+    // Of rowlessAnchorEpisodes, the ones whose chained correction the chain price refused, which
+    // leaves no rowless anchor to depart above: see departNewestRowsAboveARowlessAnchor.
+    private int rowlessAnchorEpisodesPricedOut;
+    // Set while testFuzzResumeChainPrice runs: runDedupFuzz then draws its knobs for the chain
+    // price, checks the oracle after every restart, and runs a new-key episode in one run of two.
+    private boolean isChainPriceArm;
+    // New-key episodes the batch ran, and the ones the price refused after a boundary froze.
+    private int newKeyEpisodes;
+    private int newKeyEpisodeLateDeclines;
     // Departure episodes of a batch whose departed rows no root sealed, so the resume repairing
     // their departure anchored on the head's own root and emitted nothing: see departNewestRows.
     private int unsealedDepartures;
@@ -947,6 +980,43 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testFuzzResumeChainPrice() throws Exception {
+        // The resume's chain price under a key budget tight enough to refuse boundaries: a
+        // whole-range resume keeps its chain only while the keys its boundaries image whole fit
+        // max(the estimated replay rows, scan.max.keys), checked at each boundary as the replay
+        // reaches it. Every shape here images its keys whole at each chained root, over a DEDUP
+        // base. scan.max.keys is 1 or 2-5 and max.chained.boundaries 256, so the price, not the
+        // count guard, decides. One run in two commits a new-key episode first, a correction the
+        // price admits at its first boundary and refuses at its second (see commitNewKeyEpisode).
+        // Each run ends on a departure and a restart. The view equals the recompute at every
+        // oracle point and after every restart; a departure checks what stands on a kept chain only
+        // where the price kept it.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        isChainPriceArm = true;
+        try {
+            assertMemoryLeak(frontierTruncateCrash, () -> {
+                for (int variant : CHAIN_PRICE_UNANCHORED_VARIANTS) {
+                    runDedupFuzz(rnd, variant, 120 + rnd.nextInt(160), true, true, rnd.nextBoolean(), true, null, -1);
+                }
+                for (int variant : CHAIN_PRICE_ANCHORED_VARIANTS) {
+                    runDedupFuzz(rnd, variant, 120 + rnd.nextInt(160), true, true, rnd.nextBoolean(), true,
+                            LiveViewFuzzAnchor.draw(rnd, rnd.nextInt(LiveViewFuzzAnchor.DAILY_EPOCH)), -1);
+                }
+            });
+        } finally {
+            isChainPriceArm = false;
+        }
+        coverage.log(LOG, "chain price");
+        LOG.info().$("LV fuzz chain price [newKeyEpisodes=").$(newKeyEpisodes)
+                .$(", newKeyEpisodeLateDeclines=").$(newKeyEpisodeLateDeclines)
+                .$(", rowlessAnchorEpisodes=").$(rowlessAnchorEpisodes)
+                .$(", rowlessAnchorEpisodesPricedOut=").$(rowlessAnchorEpisodesPricedOut).I$();
+        coverage.assertReachedStat(LiveViewRefreshStats.RESUME_CHAIN_KEY_BUDGET_DECLINE_COUNT);
+        coverage.assertReachedStat(LiveViewRefreshStats.RESUME_CHAIN_DISCARDED_ROOT_COUNT);
+        coverage.assertReachedStat(LiveViewRefreshStats.TRUNCATE_ZERO_ROW_KEEP_COUNT);
+    }
+
+    @Test
     public void testFuzzReplaceRange() throws Exception {
         // Differential fuzz with REPLACE_RANGE data commits on the base,
         // interleaved with plain O3 inserts. Each replace atomically deletes a
@@ -1177,6 +1247,10 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             case 4 -> "ts, sym, row_number() OVER (" + part + ") AS v";
             case 5 -> "ts, sym, rank() OVER (" + part + ") AS v";
             case 6 -> "ts, sym, dense_rank() OVER (" + part + ") AS v";
+            case ANCHORED_LAG_VARIANT -> "ts, sym, i, lag(i) OVER (" + part + ") AS v";
+            case ANCHORED_COVAR_POP_VARIANT -> "ts, sym, i, x, covar_pop(x, i) OVER (" + part + ") AS v";
+            case ANCHORED_EXCLUDE_CURRENT_ROW_AVG_VARIANT ->
+                    "ts, sym, x, avg(x) OVER (" + part + " " + anchoredWindowFrame(variant) + ") AS v";
             default -> throw new IllegalArgumentException("anchored variant=" + variant);
         };
     }
@@ -1194,8 +1268,19 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             case 4 -> "ts, sym, row_number() OVER w AS v";
             case 5 -> "ts, sym, rank() OVER w AS v";
             case 6 -> "ts, sym, dense_rank() OVER w AS v";
+            case ANCHORED_LAG_VARIANT -> "ts, sym, i, lag(i) OVER w AS v";
+            case ANCHORED_COVAR_POP_VARIANT -> "ts, sym, i, x, covar_pop(x, i) OVER w AS v";
+            case ANCHORED_EXCLUDE_CURRENT_ROW_AVG_VARIANT -> "ts, sym, x, avg(x) OVER w AS v";
             default -> throw new IllegalArgumentException("anchored variant=" + variant);
         };
+    }
+
+    // The frame an anchored fuzz variant's named window carries ahead of its ANCHOR clause, with
+    // a trailing space, or nothing for the default frame.
+    private static String anchoredWindowFrame(int variant) {
+        return variant == ANCHORED_EXCLUDE_CURRENT_ROW_AVG_VARIANT
+                ? "RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW "
+                : "";
     }
 
     // Appends one (ts, sym, i, x) row to an INSERT's VALUES list.
@@ -1520,6 +1605,12 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // advancing it.
     private static Rnd sparseDeparturePauseRnd(Rnd rnd) {
         return new Rnd(rnd.getSeed0() ^ SPARSE_DEPARTURE_PAUSE_SALT0, rnd.getSeed1() ^ SPARSE_DEPARTURE_PAUSE_SALT1);
+    }
+
+    // The sequence the chain price arm draws a run's knobs and its new-key episode from, drawn
+    // from the run's without advancing it.
+    private static Rnd chainPriceRnd(Rnd rnd) {
+        return new Rnd(rnd.getSeed0() ^ CHAIN_PRICE_SALT0, rnd.getSeed1() ^ CHAIN_PRICE_SALT1);
     }
 
     // The sequence a departure above a rowless anchor draws its rows from, drawn from the run's
@@ -2184,6 +2275,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         Assert.assertEquals("the newest batch seals its root", newestTs[3], instance.getHeadCheckpointMaxTs());
 
         // The chain stays on: the splice keeps the middle batch's root above the rows it keeps.
+        final long declinesBefore = job.getStatsForTest().get(LiveViewRefreshStats.RESUME_CHAIN_KEY_BUDGET_DECLINE_COUNT);
         final long frontierTs;
         if (isRootKeptAtTheFrontier) {
             frontierTs = keptTs[3];
@@ -2205,6 +2297,12 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                     0.0,
                     false
             );
+        }
+        if (job.getStatsForTest().get(LiveViewRefreshStats.RESUME_CHAIN_KEY_BUDGET_DECLINE_COUNT) != declinesBefore) {
+            // A tight key budget priced the chain out: the truncate dropped the middle batch's
+            // root with the newest batch's, so no rowless anchor is left to depart above.
+            rowlessAnchorEpisodesPricedOut++;
+            return;
         }
         final LongList ladder = snapshotCheckpointLadder(instance);
         final int top = ladder.size();
@@ -2254,6 +2352,63 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             Assert.assertEquals("the seal mints one checkpoint id", nextCheckpointIdBefore + 1, publishedNextCheckpointId(instance));
             rowlessAnchorFrontierSeals++;
         }
+    }
+
+    /**
+     * A correction the chain price admits at its first boundary and refuses at its second. Four
+     * batches of four rows on keys the run uses, from the day above every row the base and the
+     * view hold, each committed and refreshed on its own, so each seals a root at its newest row.
+     * Then one late commit: a row on a key the run uses just above the first batch's root, which
+     * the resume anchors on, and {@link #NEW_KEY_EPISODE_KEYS} rows on keys the run never used
+     * just above the second batch's root. The replay reaches the second batch's root with the
+     * frontier's keys, at most 16, and 3 x 16 stays within the estimate, which counts the new
+     * keys' rows, so that root freezes; it reaches the third with the new keys too, and
+     * K_1 + 2 x (K_front + 50) passes the estimate, at most 17 + 50 rows: the price refuses it and
+     * discards the frozen root. Draws from {@code episodeRnd} alone.
+     *
+     * @return false when the view is not active, so nothing was committed
+     */
+    private boolean commitNewKeyEpisode(Rnd episodeRnd, LiveViewRefreshJob job, int symCount) throws Exception {
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        if (instance == null || instance.getStateReader().getSeedState() != LiveViewState.SEED_STATE_ACTIVE) {
+            return false;
+        }
+        final long floorTs = Math.max(
+                Math.max(queryTimestamp("SELECT max(ts) FROM base"), instance.getLatestSeenTs()),
+                instance.getDefinition().getViewLowerBoundTimestamp()
+        );
+        long fromTs = floorTs - floorTs % Micros.DAY_MICROS + Micros.DAY_MICROS + 1 + episodeRnd.nextLong(Micros.SECOND_MICROS);
+        final long[][] batchTs = new long[4][4];
+        for (int b = 0; b < batchTs.length; b++) {
+            commitEpisodeBatch(episodeRnd, fromTs, null, symCount, batchTs[b], null);
+            drainWalQueue();
+            driveRefreshToQuiescence(job);
+            Assert.assertEquals("each batch seals its root", batchTs[b][3], instance.getHeadCheckpointMaxTs());
+            fromTs = batchTs[b][3] + 2 + episodeRnd.nextInt(1_000_000);
+        }
+        final StringSink values = new StringSink();
+        appendEpisodeRow(values, batchTs[0][3] + 1, episodeRnd.nextInt(symCount), 1 + episodeRnd.nextInt(1000), episodeRnd.nextDouble() * 1000.0);
+        for (int k = 0; k < NEW_KEY_EPISODE_KEYS; k++) {
+            values.put(", (").put(batchTs[1][3] + 1).put("::timestamp, 'NK").put(k).put("', ")
+                    .put(1 + episodeRnd.nextInt(1000)).put(", ").put(episodeRnd.nextDouble() * 1000.0).put(')');
+        }
+        final long declinesBefore = job.getStatsForTest().get(LiveViewRefreshStats.RESUME_CHAIN_KEY_BUDGET_DECLINE_COUNT);
+        final long discardedBefore = job.getStatsForTest().get(LiveViewRefreshStats.RESUME_CHAIN_DISCARDED_ROOT_COUNT);
+        execute("INSERT INTO base (ts, sym, i, x) VALUES " + values);
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+        final long declines = job.getStatsForTest().get(LiveViewRefreshStats.RESUME_CHAIN_KEY_BUDGET_DECLINE_COUNT) - declinesBefore;
+        final long discarded = job.getStatsForTest().get(LiveViewRefreshStats.RESUME_CHAIN_DISCARDED_ROOT_COUNT) - discardedBefore;
+        LOG.info().$("LV fuzz new-key episode [anchorTs=").$ts(batchTs[0][3])
+                .$(", newKeysTs=").$ts(batchTs[1][3] + 1)
+                .$(", declines=").$(declines)
+                .$(", discarded=").$(discarded).I$();
+        newKeyEpisodes++;
+        if (discarded > 0) {
+            Assert.assertEquals("a late decline discards the root it froze below the new keys", 1, discarded);
+            newKeyEpisodeLateDeclines++;
+        }
+        return true;
     }
 
     // The departure departNewestRows commits: the departed batch upserted out of the filter or
@@ -4812,10 +4967,25 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // over a key indexed in most runs, under the repair knobs drawn for it.
         final StringSink knobLog = new StringSink();
         final boolean isIndexed = anchor != null && rnd.nextInt(4) != 0;
+        // The chain price arm draws a seal per pass or few and a key budget tight enough to
+        // refuse a chain, under the count guard's default, from a sequence of its own.
+        final Rnd priceRnd = isChainPriceArm ? chainPriceRnd(rnd) : null;
+        final long priceCheckpointRows = priceRnd != null ? 1 + priceRnd.nextInt(4) : LiveViewFuzzKnobs.DEFAULT;
+        final long priceScanMaxKeys = priceRnd != null ? (priceRnd.nextBoolean() ? 1 : 2 + priceRnd.nextInt(4)) : LiveViewFuzzKnobs.DEFAULT;
         if (anchor != null) {
             final LiveViewFuzzKnobs knobs = LiveViewFuzzKnobs.randomize(rnd);
+            if (priceRnd != null) {
+                knobs.checkpointRows = priceCheckpointRows;
+                knobs.scanMaxKeys = priceScanMaxKeys;
+                knobs.maxChainedBoundaries = 256;
+            }
             knobs.apply(AbstractLiveViewTest::setProperty);
             knobs.toSink(knobLog);
+        } else if (priceRnd != null) {
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, priceCheckpointRows);
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_KEYS, priceScanMaxKeys);
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 256);
+            knobLog.put("ckptRows=").put(priceCheckpointRows).put(", chained=256, scanMaxKeys=").put(priceScanMaxKeys);
         }
 
         final int n = 1 + rnd.nextInt(MAX_FRAME);
@@ -4828,7 +4998,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
 
         final String projection = anchor != null ? anchoredViewProjection(variant) : projection(variant, n);
         final String oracleProjection = anchor != null ? anchoredOracleProjection(variant, anchor.bucket) : projection;
-        final String window = anchor != null ? " WINDOW w AS (PARTITION BY sym ORDER BY ts " + anchor.clause + ")" : "";
+        final String window = anchor != null
+                ? " WINDOW w AS (PARTITION BY sym ORDER BY ts " + anchoredWindowFrame(variant) + anchor.clause + ")"
+                : "";
 
         execute("DROP LIVE VIEW IF EXISTS lv");
         execute("DROP TABLE IF EXISTS base");
@@ -4952,6 +5124,10 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                             engine.getLiveViewRegistry().clear();
                             engine.buildViewGraphs();
                             job = new LiveViewRefreshJob(0, engine, 1);
+                            if (isChainPriceArm) {
+                                driveRefreshToQuiescence(job);
+                                TestUtils.assertSqlCursors(engine, sqlExecutionContext, oracleOrderedSql, viewOrderedSql, LOG, true);
+                            }
                         }
                     }
                 }
@@ -4962,6 +5138,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             // view from the base, which erases a ghost row or restores a missing row the main loop
             // left, so the check after that restart does not stand in for this one.
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, oracleOrderedSql, viewOrderedSql, LOG, true);
+            if (priceRnd != null && priceRnd.nextBoolean() && commitNewKeyEpisode(priceRnd, job, symCount)) {
+                TestUtils.assertSqlCursors(engine, sqlExecutionContext, oracleOrderedSql, viewOrderedSql, LOG, true);
+            }
             if (sparseDepartureShape >= 0) {
                 final long rowsCadence = beginSparseCheckpointCadence();
                 try {
