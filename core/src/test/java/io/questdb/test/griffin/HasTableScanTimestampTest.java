@@ -81,6 +81,61 @@ public class HasTableScanTimestampTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTableScanTimestampOfKeyFiltersUnderTimestampClaim() throws Exception {
+        // FilterOnValues and FilterOnExcludedValues merge the rows of forward frames in table order, but a TIMESTAMP(col)
+        // claim makes their timestamp other_ts, which holds NULL in two rows and does not ascend. Neither may answer
+        // true, or an export of the retyped r would write other_ts as the file's designated timestamp.
+        assertMemoryLeak(() -> {
+            createTables();
+            for (String tableName : new String[]{"t", "r"}) {
+                final String inQuery = "SELECT * FROM " + tableName + " timestamp(other_ts) WHERE s IN ('a', 'b')";
+                assertFalse(inQuery, FORWARD, "FilterOnValues", "Table-order scan", "Frame forward scan on: " + tableName);
+                final String notEqualsQuery = "SELECT * FROM " + tableName + " timestamp(other_ts) WHERE s != 'a'";
+                assertFalse(notEqualsQuery, FORWARD, "FilterOnExcludedValues", "Table-order scan", "Frame forward scan on: " + tableName);
+            }
+            assertExportMode("SELECT * FROM r timestamp(other_ts) WHERE s IN ('a', 'b')", ParquetExportMode.TEMP_TABLE);
+            assertExportMode("SELECT * FROM r timestamp(other_ts) WHERE s != 'a'", ParquetExportMode.TEMP_TABLE);
+
+            Assert.assertEquals("", failures.toString());
+        });
+    }
+
+    @Test
+    public void testTableScanTimestampOfLimitedSortsOnAnotherTimestamp() throws Exception {
+        // A top K or a limited sort whose first key is other_ts marks other_ts as its timestamp, and NULL sorts first.
+        // Its base scans the table and answers true for ts, so each sort must check that its timestamp is the base's,
+        // or an export of the retyped r would write the NULLs as the file's designated timestamp. Each sort factory
+        // runs under the settings that make the planner pick it.
+        assertMemoryLeak(() -> {
+            createTables();
+            final String query = "SELECT * FROM t ORDER BY other_ts LIMIT 3";
+            final String retypedQuery = "SELECT * FROM r ORDER BY other_ts LIMIT 3";
+            assertFalse(query, FORWARD, "Async Top K lo: 3", "keys: [other_ts]", "Frame forward scan on: t");
+            assertFalse(retypedQuery, FORWARD, "Async Top K lo: 3", "keys: [other_ts]", "Frame forward scan on: r");
+            assertExportMode(retypedQuery, ParquetExportMode.TEMP_TABLE);
+            final boolean isParallelTopKEnabled = sqlExecutionContext.isParallelTopKEnabled();
+            sqlExecutionContext.setParallelTopKEnabled(false);
+            try {
+                assertFalse(query, FORWARD, "Encode sort light lo: 3", "keys: [other_ts]", "Frame forward scan on: t");
+                assertFalse(retypedQuery, FORWARD, "Encode sort light lo: 3", "keys: [other_ts]", "Frame forward scan on: r");
+                assertExportMode(retypedQuery, ParquetExportMode.TEMP_TABLE);
+                node1.setProperty(PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, false);
+                try {
+                    assertFalse(query, FORWARD, "Sort light lo: 3", "keys: [other_ts]", "Frame forward scan on: t");
+                    assertFalse(retypedQuery, FORWARD, "Sort light lo: 3", "keys: [other_ts]", "Frame forward scan on: r");
+                    assertExportMode(retypedQuery, ParquetExportMode.TEMP_TABLE);
+                } finally {
+                    node1.setProperty(PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, true);
+                }
+            } finally {
+                sqlExecutionContext.setParallelTopKEnabled(isParallelTopKEnabled);
+            }
+
+            Assert.assertEquals("", failures.toString());
+        });
+    }
+
+    @Test
     public void testTableScanTimestampOfPlanShapes() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
@@ -329,6 +384,16 @@ public class HasTableScanTimestampTest extends AbstractCairoTest {
             path.of(root).concat("ht.parquet");
             PartitionEncoder.populateFromTableReader(reader, descriptor, 0);
             PartitionEncoder.encode(descriptor, path);
+        }
+    }
+
+    // The export mode of a plan that reads the retyped column x of r.
+    private void assertExportMode(String query, ParquetExportMode expectedMode) {
+        try (RecordCursorFactory factory = select(query)) {
+            Assert.assertTrue(query + ": the plan reads a retyped column", factory.hasParquetConvertedColumns(sqlExecutionContext));
+            Assert.assertEquals(query + ": export mode", expectedMode, ParquetExportMode.determineExportMode(factory, false, sqlExecutionContext));
+        } catch (Throwable th) {
+            recordFailure(query, th);
         }
     }
 

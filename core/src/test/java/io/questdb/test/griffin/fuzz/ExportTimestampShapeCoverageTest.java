@@ -62,6 +62,9 @@ import io.questdb.test.griffin.fuzz.types.VarcharKeyType;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
 /**
  * Pins the plans that QueryFuzzTest's generated queries hand to the streamed timestamp check of {@link QueryRunner}:
  * plans whose timestamp a CURSOR_BASED Parquet export of a lazily type-converted column writes as the file's
@@ -71,12 +74,72 @@ import org.junit.Test;
  * CURSOR_BASED export streams or a temp table materializes. A generator that stopped reaching one of them would leave
  * that answer unchecked while the fuzz run stays green. An index scan of several keys reports no order only under a
  * sort, or under a parent that drops the timestamp, so no generated plan answers true while it reports no order;
- * HasTableScanTimestampTest pins such scans.
+ * HasTableScanTimestampTest pins such scans. {@link #testFactoryRetypesColumnsOfParquetPartitions} pins that
+ * {@link FuzzTableFactory} gives QueryFuzzTest's queries such tables as well.
  * <p>
  * The generator is random, so the assertions run over a corpus; the seed is fixed so a failure is reproducible.
  */
 public class ExportTimestampShapeCoverageTest extends AbstractCairoTest {
     private static final int CORPUS_SIZE = 4_000;
+    // Simulated fuzz runs testFactoryRetypesColumnsOfParquetPartitions drives through FuzzTableFactory, each building
+    // two or three tables of two siblings. The pinned seed yields 283 siblings that retype INT to LONG after their
+    // conversion and 266 that retype VARCHAR to STRING, in well under a second.
+    private static final int FACTORY_SWEEP_RUNS = 500;
+    private static final Pattern RETYPE_STATEMENT = Pattern.compile("ALTER TABLE (\\S+) ALTER COLUMN (\\S+) TYPE (\\S+)");
+
+    @Test
+    public void testFactoryRetypesColumnsOfParquetPartitions() throws SqlException {
+        // testGeneratedQueriesReachStreamedTimestampPaths builds its retyped tables by hand, so it pins what the
+        // generator writes over such tables, not that QueryFuzzTest's tables hold one. This sweep drives
+        // FuzzTableFactory as QueryFuzzTest does, with an executor that records the SQL instead of running it, and
+        // counts the tables with Parquet partitions that turn an INT column to LONG, or a VARCHAR column to STRING,
+        // after the conversion, so that the partitions keep the column in its old type. Every retyped column must
+        // carry its new type in the column lists of both siblings, which the generator and the diff-shadow oracle read.
+        final Rnd rnd = new Rnd(0x5eed, 0x7e7e);
+        final ObjList<String> statements = new ObjList<>();
+        int longRetypedCount = 0;
+        int stringRetypedCount = 0;
+        for (int run = 0; run < FACTORY_SWEEP_RUNS; run++) {
+            final FuzzConfig config = new FuzzConfig(rnd);
+            final FuzzTableFactory factory = new FuzzTableFactory(config);
+            for (int t = 0; t < config.getNumTables(); t++) {
+                statements.clear();
+                final FuzzTable primary = factory.create(rnd, "fuzz_t" + t, statements::add, () -> {
+                });
+                final FuzzTable shadow = primary.getShadow();
+                for (int i = 0, n = primary.getColumnCount(); i < n; i++) {
+                    Assert.assertSame(primary.getColumn(i).getName(), primary.getColumn(i).getType(), shadow.getColumn(i).getType());
+                }
+                for (FuzzTable table : new FuzzTable[]{primary, shadow}) {
+                    boolean isConverted = false;
+                    boolean isLongRetyped = false;
+                    boolean isStringRetyped = false;
+                    for (int i = 0, n = statements.size(); i < n; i++) {
+                        final String sql = statements.getQuick(i);
+                        if (sql.startsWith("ALTER TABLE " + table.getName() + " CONVERT PARTITION TO PARQUET ")) {
+                            isConverted = true;
+                            continue;
+                        }
+                        final Matcher matcher = RETYPE_STATEMENT.matcher(sql);
+                        if (matcher.matches() && matcher.group(1).equals(table.getName())) {
+                            final FuzzColumn column = findColumn(table, matcher.group(2));
+                            Assert.assertNotNull(sql, column);
+                            Assert.assertEquals(sql, matcher.group(3), column.getType().getDdl());
+                            if (isConverted && table.getParquetMode() != FuzzTableFactory.ParquetMode.NONE) {
+                                isLongRetyped |= column.getType() == LongType.INSTANCE;
+                                isStringRetyped |= column.getType() == StringType.INSTANCE;
+                            }
+                        }
+                    }
+                    longRetypedCount += isLongRetyped ? 1 : 0;
+                    stringRetypedCount += isStringRetyped ? 1 : 0;
+                }
+            }
+        }
+        final String counts = "INT to LONG: " + longRetypedCount + ", VARCHAR to STRING: " + stringRetypedCount;
+        Assert.assertTrue("a table with Parquet partitions retypes INT to LONG after the conversion, " + counts, longRetypedCount > 0);
+        Assert.assertTrue("a table with Parquet partitions retypes VARCHAR to STRING after the conversion, " + counts, stringRetypedCount > 0);
+    }
 
     @Test
     public void testGeneratedQueriesReachStreamedTimestampPaths() throws Exception {
@@ -209,6 +272,15 @@ public class ExportTimestampShapeCoverageTest extends AbstractCairoTest {
             Assert.assertTrue("a retyped column through a temp table, " + counts, tempTableCount > 0);
             Assert.assertEquals("the check runs on every streamed timestamp, " + counts, forwardCount + backwardCount, checkedCount);
         });
+    }
+
+    private static FuzzColumn findColumn(FuzzTable table, String columnName) {
+        for (int i = 0, n = table.getColumnCount(); i < n; i++) {
+            if (table.getColumn(i).getName().equals(columnName)) {
+                return table.getColumn(i);
+            }
+        }
+        return null;
     }
 
     private static boolean isSort(RecordCursorFactory factory) {
