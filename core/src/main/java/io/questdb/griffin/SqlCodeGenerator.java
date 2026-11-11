@@ -3917,8 +3917,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
                 // its WHERE reads the projection, which offers no page frames
                 case IQueryModel.SELECT_MODEL_VIRTUAL -> isFrameReaderAbove = false;
-                case IQueryModel.SELECT_MODEL_GROUP_BY, IQueryModel.SELECT_MODEL_WINDOW, IQueryModel.SELECT_MODEL_WINDOW_JOIN,
-                     IQueryModel.SELECT_MODEL_HORIZON_JOIN, IQueryModel.SELECT_MODEL_DISTINCT, IQueryModel.SELECT_MODEL_CURSOR,
+                case IQueryModel.SELECT_MODEL_GROUP_BY, IQueryModel.SELECT_MODEL_WINDOW,
+                     IQueryModel.SELECT_MODEL_WINDOW_JOIN,
+                     IQueryModel.SELECT_MODEL_HORIZON_JOIN, IQueryModel.SELECT_MODEL_DISTINCT,
+                     IQueryModel.SELECT_MODEL_CURSOR,
                      IQueryModel.SELECT_MODEL_SHOW -> {
                     return;
                 }
