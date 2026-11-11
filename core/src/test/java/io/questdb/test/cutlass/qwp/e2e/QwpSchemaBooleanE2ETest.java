@@ -31,24 +31,13 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.client.LineSenderSchemaException;
 import io.questdb.client.Sender;
 import io.questdb.client.cutlass.http.client.WebSocketClient;
-import io.questdb.client.cutlass.http.client.WebSocketClientFactory;
-import io.questdb.client.cutlass.http.client.WebSocketFrameHandler;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketEncoder;
 import io.questdb.client.cutlass.qwp.client.WebSocketResponse;
 import io.questdb.client.cutlass.qwp.client.sf.cursor.CursorSendEngine;
 import io.questdb.client.cutlass.qwp.protocol.QwpSchemaBinding;
-import io.questdb.client.cutlass.qwp.protocol.QwpSchemaProtocol;
-import io.questdb.client.cutlass.qwp.protocol.QwpSchemaResponse;
 import io.questdb.client.cutlass.qwp.protocol.QwpTableBuffer;
-import io.questdb.cutlass.qwp.protocol.QwpBooleanColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
-import io.questdb.cutlass.qwp.protocol.QwpFixedWidthColumnCursor;
-import io.questdb.cutlass.qwp.protocol.QwpMessageCursor;
-import io.questdb.cutlass.qwp.protocol.QwpStringColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.ObjList;
-import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8Sequence;
 import org.junit.Assert;
 import org.junit.Test;
@@ -60,7 +49,13 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicReference;
+
+import static io.questdb.test.cutlass.qwp.e2e.QwpSchemaE2ETestUtils.assertUtf8;
+import static io.questdb.test.cutlass.qwp.e2e.QwpSchemaE2ETestUtils.connectLegacyClient;
+import static io.questdb.test.cutlass.qwp.e2e.QwpSchemaE2ETestUtils.connectSchemaClient;
+import static io.questdb.test.cutlass.qwp.e2e.QwpSchemaE2ETestUtils.describe;
+import static io.questdb.test.cutlass.qwp.e2e.QwpSchemaE2ETestUtils.parseSingleTable;
+import static io.questdb.test.cutlass.qwp.e2e.QwpSchemaE2ETestUtils.receiveResponse;
 
 public class QwpSchemaBooleanE2ETest extends AbstractQwpWebSocketTest {
     private static final String BOOL_VECTORS = "/io/questdb/client/cutlass/qwp/boolean-to-target.tsv";
@@ -76,7 +71,7 @@ public class QwpSchemaBooleanE2ETest extends AbstractQwpWebSocketTest {
                 createTable(tableName, target.sqlType);
                 createTable(legacyTable, target.sqlType);
                 List<BoolVector> selected = select(vectors, target);
-                try (WebSocketClient client = connect(port);
+                try (WebSocketClient client = connectSchemaClient(port);
                      QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
                      QwpTableBuffer table = new QwpTableBuffer(tableName)) {
                     QwpSchemaBinding binding = new QwpSchemaBinding(table, describe(client, 100 + target.ordinal(), tableName));
@@ -89,7 +84,7 @@ public class QwpSchemaBooleanE2ETest extends AbstractQwpWebSocketTest {
                     client.sendBinary(encoder.getBuffer().getBufferPtr(), length);
                     assertResponse(client, true);
                 }
-                try (WebSocketClient client = connectLegacy(port);
+                try (WebSocketClient client = connectLegacyClient(port);
                      QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
                      QwpTableBuffer table = new QwpTableBuffer(legacyTable)) {
                     for (int i = 0; i < selected.size(); i++) {
@@ -115,7 +110,7 @@ public class QwpSchemaBooleanE2ETest extends AbstractQwpWebSocketTest {
             String legacyTable = "legacy_string_bool";
             createTable(schemaTable, "boolean");
             createTable(legacyTable, "boolean");
-            try (WebSocketClient client = connect(port);
+            try (WebSocketClient client = connectSchemaClient(port);
                  QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
                  QwpTableBuffer table = new QwpTableBuffer(schemaTable)) {
                 QwpSchemaBinding binding = new QwpSchemaBinding(table, describe(client, 200, schemaTable));
@@ -155,7 +150,7 @@ public class QwpSchemaBooleanE2ETest extends AbstractQwpWebSocketTest {
             int accepted = 0;
             for (StringVector vector : vectors) {
                 if (!vector.invalid) {
-                    try (WebSocketClient client = connectLegacy(port);
+                    try (WebSocketClient client = connectLegacyClient(port);
                          QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
                          QwpTableBuffer table = new QwpTableBuffer(legacyTable)) {
                         table.getOrCreateColumn("case_id", QwpConstants.TYPE_LONG, true).addLong(accepted++);
@@ -178,7 +173,7 @@ public class QwpSchemaBooleanE2ETest extends AbstractQwpWebSocketTest {
         runInContext(port -> {
             String tableName = "schema_bool_packed";
             createTable(tableName, "boolean");
-            try (WebSocketClient client = connect(port);
+            try (WebSocketClient client = connectSchemaClient(port);
                  QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
                  QwpTableBuffer table = new QwpTableBuffer(tableName)) {
                 QwpSchemaBinding binding = new QwpSchemaBinding(table, describe(client, 300, tableName));
@@ -228,7 +223,7 @@ public class QwpSchemaBooleanE2ETest extends AbstractQwpWebSocketTest {
         runInContext(port -> {
             execute("create table schema_bool_missing (i int, s string, ts timestamp) timestamp(ts) partition by day wal");
             execute("create table legacy_bool_missing (i int, s string, ts timestamp) timestamp(ts) partition by day wal");
-            try (WebSocketClient client = connect(port);
+            try (WebSocketClient client = connectSchemaClient(port);
                  QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
                  QwpTableBuffer table = new QwpTableBuffer("schema_bool_missing")) {
                 QwpSchemaBinding binding = new QwpSchemaBinding(table, describe(client, 350, "schema_bool_missing"));
@@ -248,7 +243,7 @@ public class QwpSchemaBooleanE2ETest extends AbstractQwpWebSocketTest {
                 client.sendBinary(encoder.getBuffer().getBufferPtr(), length);
                 assertResponse(client, true);
             }
-            try (WebSocketClient client = connectLegacy(port);
+            try (WebSocketClient client = connectLegacyClient(port);
                  QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
                  QwpTableBuffer table = new QwpTableBuffer("legacy_bool_missing")) {
                 // Legacy Sender boolean columns do not use a null bitmap, so omission appends false.
@@ -271,7 +266,7 @@ public class QwpSchemaBooleanE2ETest extends AbstractQwpWebSocketTest {
         runInContext(port -> {
             execute("create table schema_bool_rows (value boolean, only_b long, unsupported symbol, ts timestamp) "
                     + "timestamp(ts) partition by day wal");
-            try (WebSocketClient client = connect(port);
+            try (WebSocketClient client = connectSchemaClient(port);
                  QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
                  QwpTableBuffer table = new QwpTableBuffer("schema_bool_rows")) {
                 QwpSchemaBinding binding = new QwpSchemaBinding(table, describe(client, 400, "schema_bool_rows"));
@@ -311,7 +306,7 @@ public class QwpSchemaBooleanE2ETest extends AbstractQwpWebSocketTest {
             execute("create table schema_bool_replay (b boolean, n long, s varchar, ts timestamp) timestamp(ts) partition by day wal");
             File sfRoot = temp.newFolder("qwp-schema-bool-sf");
             String slot = new File(sfRoot, "default").getAbsolutePath();
-            try (WebSocketClient client = connect(port);
+            try (WebSocketClient client = connectSchemaClient(port);
                  QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
                  QwpTableBuffer table = new QwpTableBuffer("schema_bool_replay")) {
                 QwpSchemaBinding binding = new QwpSchemaBinding(table, describe(client, 500, "schema_bool_replay"));
@@ -357,7 +352,6 @@ public class QwpSchemaBooleanE2ETest extends AbstractQwpWebSocketTest {
         }
     }
 
-
     private static void assertBoolWire(QwpWebSocketEncoder encoder, int length, Target target, List<BoolVector> vectors) throws Exception {
         QwpTableBlockCursor table = parseSingleTable(encoder, length);
         Assert.assertEquals(target.wireType, table.getColumnDef(1).getTypeCode());
@@ -387,7 +381,7 @@ public class QwpSchemaBooleanE2ETest extends AbstractQwpWebSocketTest {
     }
 
     private void assertLegacyStringRejected(int port, String tableName, StringVector vector) throws Exception {
-        try (WebSocketClient client = connectLegacy(port);
+        try (WebSocketClient client = connectLegacyClient(port);
              QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
              QwpTableBuffer table = new QwpTableBuffer(tableName)) {
             table.getOrCreateColumn("value", io.questdb.client.cutlass.qwp.protocol.QwpConstants.TYPE_VARCHAR, true)
@@ -402,22 +396,6 @@ public class QwpSchemaBooleanE2ETest extends AbstractQwpWebSocketTest {
         }
     }
 
-    private static WebSocketClient connectLegacy(int port) {
-        WebSocketClient client = WebSocketClientFactory.newPlainTextInstance();
-        boolean success = false;
-        try {
-            client.connect("127.0.0.1", port);
-            client.upgrade("/write/v4", null);
-            Assert.assertFalse(client.isQwpSchemaEnabled());
-            success = true;
-            return client;
-        } finally {
-            if (!success) {
-                client.close();
-            }
-        }
-    }
-
     private static void sendLegacy(WebSocketClient client, QwpWebSocketEncoder encoder, QwpTableBuffer table) {
         int length = encoder.encode(table);
         client.sendBinary(encoder.getBuffer().getBufferPtr(), length);
@@ -428,79 +406,9 @@ public class QwpSchemaBooleanE2ETest extends AbstractQwpWebSocketTest {
         execute("create table " + name + " (case_id long, value " + type + ", ts timestamp) timestamp(ts) partition by day wal");
     }
 
-    private static WebSocketClient connect(int port) {
-        WebSocketClient client = WebSocketClientFactory.newPlainTextInstance();
-        boolean success = false;
-        try {
-            client.requestQwpSchema();
-            client.connect("127.0.0.1", port);
-            client.upgrade("/write/v4", null);
-            Assert.assertTrue(client.isQwpSchemaEnabled());
-            success = true;
-            return client;
-        } finally {
-            if (!success) {
-                client.close();
-            }
-        }
-    }
-
-    private static QwpSchemaResponse describe(WebSocketClient client, long requestId, String tableName) {
-        byte[] request = QwpSchemaProtocol.encodeDescribe(requestId, tableName);
-        long address = Unsafe.malloc(request.length, MemoryTag.NATIVE_DEFAULT);
-        try {
-            for (int i = 0; i < request.length; i++) Unsafe.putByte(address + i, request[i]);
-            client.sendBinary(address, request.length);
-        } finally {
-            Unsafe.free(address, request.length, MemoryTag.NATIVE_DEFAULT);
-        }
-        AtomicReference<QwpSchemaResponse> response = new AtomicReference<>();
-        Assert.assertTrue(client.receiveFrame(new WebSocketFrameHandler() {
-            @Override
-            public void onBinaryMessage(long payloadPtr, int payloadLen) {
-                response.set(QwpSchemaProtocol.decodeResponse(payloadPtr, payloadLen));
-            }
-
-            @Override
-            public void onClose(int code, String reason) {
-                Assert.fail("unexpected close [code=" + code + ", reason=" + reason + ']');
-            }
-        }, 5_000));
-        Assert.assertEquals(requestId, response.get().getRequestId());
-        return response.get();
-    }
-
     private static void assertResponse(WebSocketClient client, boolean success) {
         WebSocketResponse parsed = receiveResponse(client);
         Assert.assertEquals(parsed.getErrorMessage(), success, parsed.isSuccess());
-    }
-
-    private static WebSocketResponse receiveResponse(WebSocketClient client) {
-        AtomicReference<WebSocketResponse> response = new AtomicReference<>();
-        Assert.assertTrue(client.receiveFrame(new WebSocketFrameHandler() {
-            @Override
-            public void onBinaryMessage(long payloadPtr, int payloadLen) {
-                WebSocketResponse parsed = new WebSocketResponse();
-                Assert.assertTrue(parsed.readFrom(payloadPtr, payloadLen, true));
-                response.set(parsed);
-            }
-
-            @Override
-            public void onClose(int code, String reason) {
-                Assert.fail("unexpected close [code=" + code + ", reason=" + reason + ']');
-            }
-        }, 5_000));
-        Assert.assertNotNull(response.get());
-        return response.get();
-    }
-
-    private static QwpTableBlockCursor parseSingleTable(QwpWebSocketEncoder encoder, int length) throws Exception {
-        QwpMessageCursor cursor = new QwpMessageCursor();
-        cursor.of(encoder.getBuffer().getBufferPtr(), length, new ObjList<>());
-        Assert.assertTrue(cursor.hasNextTable());
-        QwpTableBlockCursor table = cursor.nextTable();
-        Assert.assertFalse(cursor.hasNextTable());
-        return table;
     }
 
     private static List<BoolVector> readBoolVectors() throws Exception {
@@ -562,7 +470,6 @@ public class QwpSchemaBooleanE2ETest extends AbstractQwpWebSocketTest {
         for (int i = 0; i < chars.length; i++) chars[i] = (char) Integer.parseInt(hex.substring(i * 4, i * 4 + 4), 16);
         return new String(chars);
     }
-
 
     private enum Target {
         BOOLEAN("boolean", ColumnType.BOOLEAN, QwpConstants.TYPE_BOOLEAN, "BOOLEAN"),
@@ -635,10 +542,4 @@ public class QwpSchemaBooleanE2ETest extends AbstractQwpWebSocketTest {
         return result;
     }
 
-    private static void assertUtf8(String caseId, byte[] expected, Utf8Sequence actual) {
-        Assert.assertNotNull(caseId, actual);
-        Assert.assertEquals(caseId, expected.length, actual.size());
-        for (int i = 0; i < expected.length; i++)
-            Assert.assertEquals(caseId + " byte " + i, expected[i], actual.byteAt(i));
-    }
 }

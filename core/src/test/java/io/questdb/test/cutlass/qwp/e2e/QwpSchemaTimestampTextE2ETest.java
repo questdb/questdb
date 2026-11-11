@@ -34,6 +34,8 @@ import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static io.questdb.test.cutlass.qwp.e2e.QwpSchemaE2ETestUtils.connectLegacyClient;
+
 public class QwpSchemaTimestampTextE2ETest extends AbstractQwpWebSocketTest {
     private static final String CORPUS = "/io/questdb/test/cutlass/qwp/e2e/timestamp-to-text.tsv";
 
@@ -186,7 +188,7 @@ public class QwpSchemaTimestampTextE2ETest extends AbstractQwpWebSocketTest {
         try (WebSocketClient client = WebSocketClientFactory.newPlainTextInstance();
              QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
              QwpTableBuffer table = new QwpTableBuffer(tableName)) {
-            connectLegacy(client, port);
+            connectLegacyClient(client, port);
             table.getOrCreateColumn("v", source.wireType, true).addLong(Long.MIN_VALUE);
             table.nextRow();
             if (bitmap) {
@@ -277,12 +279,6 @@ public class QwpSchemaTimestampTextE2ETest extends AbstractQwpWebSocketTest {
         Assert.assertEquals(50, valueCount);
         Assert.assertEquals(13, invalidCount);
         return vectors;
-    }
-
-    private static void connectLegacy(WebSocketClient client, int port) throws Exception {
-        client.connect("127.0.0.1", port);
-        client.upgrade("/write/v4", null);
-        Assert.assertFalse(client.isQwpSchemaEnabled());
     }
 
     private static void assertOk(WebSocketClient client) {

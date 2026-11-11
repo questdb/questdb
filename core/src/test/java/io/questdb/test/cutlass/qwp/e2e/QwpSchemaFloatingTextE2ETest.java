@@ -23,6 +23,8 @@ import org.junit.Test;
 import java.util.Locale;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static io.questdb.test.cutlass.qwp.e2e.QwpSchemaE2ETestUtils.connectLegacyClient;
+
 /**
  * Characterizes existing unflagged FLOAT/DOUBLE to text ingestion only.
  */
@@ -76,7 +78,7 @@ public class QwpSchemaFloatingTextE2ETest extends AbstractQwpWebSocketTest {
         try (WebSocketClient client = WebSocketClientFactory.newPlainTextInstance();
              QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
              QwpTableBuffer table = new QwpTableBuffer(tableName)) {
-            connectLegacy(client, port);
+            connectLegacyClient(client, port);
             QwpTableBuffer.ColumnBuffer caseId = table.getOrCreateColumn("case_id", QwpConstants.TYPE_LONG, false);
             QwpTableBuffer.ColumnBuffer value = table.getOrCreateColumn("v", input.wireType, true);
             for (int row = 0; row < valueCount; row++) {
@@ -159,12 +161,6 @@ public class QwpSchemaFloatingTextE2ETest extends AbstractQwpWebSocketTest {
             Assert.assertEquals(bitmap ? row == rowCount - 1 : nan, table.isColumnNull(1));
         }
         Assert.assertFalse(table.hasNextRow());
-    }
-
-    private static void connectLegacy(WebSocketClient client, int port) throws Exception {
-        client.connect("127.0.0.1", port);
-        client.upgrade("/write/v4", null);
-        Assert.assertFalse(client.isQwpSchemaEnabled());
     }
 
     private static void assertOk(WebSocketClient client) {

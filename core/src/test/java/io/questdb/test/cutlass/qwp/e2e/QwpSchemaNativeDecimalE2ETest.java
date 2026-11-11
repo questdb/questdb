@@ -11,7 +11,6 @@ import io.questdb.client.std.Decimal128;
 import io.questdb.client.std.Decimal256;
 import io.questdb.client.std.Decimal64;
 import io.questdb.client.cutlass.http.client.WebSocketClient;
-import io.questdb.client.cutlass.http.client.WebSocketClientFactory;
 import io.questdb.client.cutlass.http.client.WebSocketFrameHandler;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketEncoder;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
@@ -31,6 +30,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+
+import static io.questdb.test.cutlass.qwp.e2e.QwpSchemaE2ETestUtils.connectLegacyClient;
 
 public class QwpSchemaNativeDecimalE2ETest extends AbstractQwpWebSocketTest {
     private static final String CORPUS = "/io/questdb/client/cutlass/qwp/native-decimal-conversions.tsv";
@@ -158,7 +159,7 @@ public class QwpSchemaNativeDecimalE2ETest extends AbstractQwpWebSocketTest {
         String target = wireType == QwpConstants.TYPE_DECIMAL64 ? "decimal(18,0)"
                 : wireType == QwpConstants.TYPE_DECIMAL128 ? "decimal(38,0)" : "decimal(76,0)";
         execute("create table " + tableName + " (value " + target + ", ts timestamp) timestamp(ts) partition by day wal");
-        try (WebSocketClient client = connectLegacy(port);
+        try (WebSocketClient client = connectLegacyClient(port);
              QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
              QwpTableBuffer table = new QwpTableBuffer(tableName)) {
             QwpTableBuffer.ColumnBuffer value = table.getOrCreateColumn("value", wireType, true);
@@ -213,22 +214,6 @@ public class QwpSchemaNativeDecimalE2ETest extends AbstractQwpWebSocketTest {
                 break;
             default:
                 Assert.fail("unknown source type " + v.sourceType);
-        }
-    }
-
-    private static WebSocketClient connectLegacy(int port) {
-        WebSocketClient client = WebSocketClientFactory.newPlainTextInstance();
-        boolean success = false;
-        try {
-            client.connect("127.0.0.1", port);
-            client.upgrade("/write/v4", null);
-            Assert.assertFalse(client.isQwpSchemaEnabled());
-            success = true;
-            return client;
-        } finally {
-            if (!success) {
-                client.close();
-            }
         }
     }
 

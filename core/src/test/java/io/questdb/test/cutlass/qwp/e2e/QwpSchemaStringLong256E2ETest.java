@@ -7,7 +7,6 @@ package io.questdb.test.cutlass.qwp.e2e;
 
 import io.questdb.client.LineSenderSchemaException;
 import io.questdb.client.cutlass.http.client.WebSocketClient;
-import io.questdb.client.cutlass.http.client.WebSocketClientFactory;
 import io.questdb.client.cutlass.http.client.WebSocketFrameHandler;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketEncoder;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
@@ -17,11 +16,8 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
-import io.questdb.cutlass.qwp.protocol.QwpMessageCursor;
 import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.std.Long256;
-import io.questdb.std.ObjList;
-import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8s;
 import org.junit.Assert;
 import org.junit.Test;
@@ -36,6 +32,9 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static io.questdb.test.cutlass.qwp.e2e.QwpSchemaE2ETestUtils.connectLegacyClient;
+import static io.questdb.test.cutlass.qwp.e2e.QwpSchemaE2ETestUtils.parseSingleTable;
+
 public class QwpSchemaStringLong256E2ETest extends AbstractQwpWebSocketTest {
     private static final String CORPUS = "/io/questdb/client/cutlass/qwp/string-long256-conversions.tsv";
 
@@ -43,7 +42,7 @@ public class QwpSchemaStringLong256E2ETest extends AbstractQwpWebSocketTest {
     public void testLegacyVarcharToLong256ValueNullOmissionAndRejections() throws Exception {
         runInContext(port -> {
             execute("create table legacy_string_l256 (value long256, ts timestamp) timestamp(ts) partition by day wal");
-            try (WebSocketClient client = connectLegacy(port);
+            try (WebSocketClient client = connectLegacyClient(port);
                  QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
                  QwpTableBuffer table = new QwpTableBuffer("legacy_string_l256")) {
                 QwpTableBuffer.ColumnBuffer values = table.getOrCreateColumn("value", QwpConstants.TYPE_VARCHAR, true);
@@ -162,7 +161,7 @@ public class QwpSchemaStringLong256E2ETest extends AbstractQwpWebSocketTest {
     private void assertLegacyRejected(int port, String input, String suffix) throws Exception {
         String tableName = "legacy_string_l256_bad_" + suffix;
         execute("create table " + tableName + " (value long256, ts timestamp) timestamp(ts) partition by day wal");
-        try (WebSocketClient client = connectLegacy(port);
+        try (WebSocketClient client = connectLegacyClient(port);
              QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
              QwpTableBuffer table = new QwpTableBuffer(tableName)) {
             table.getOrCreateColumn("value", QwpConstants.TYPE_VARCHAR, true).addString(input);
@@ -174,20 +173,6 @@ public class QwpSchemaStringLong256E2ETest extends AbstractQwpWebSocketTest {
         }
         drainWalQueue();
         assertQuery("select count() from " + tableName).noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
-    }
-
-    private static WebSocketClient connectLegacy(int port) {
-        WebSocketClient client = WebSocketClientFactory.newPlainTextInstance();
-        boolean success = false;
-        try {
-            client.connect("127.0.0.1", port);
-            client.upgrade("/write/v4", null);
-            Assert.assertFalse(client.isQwpSchemaEnabled());
-            success = true;
-            return client;
-        } finally {
-            if (!success) client.close();
-        }
     }
 
     private static void assertResponse(WebSocketClient client, boolean success, long sequence, String messagePart) {
@@ -210,15 +195,6 @@ public class QwpSchemaStringLong256E2ETest extends AbstractQwpWebSocketTest {
         Assert.assertEquals(sequence, response.get().getSequence());
         if (messagePart != null)
             Assert.assertTrue(response.get().getErrorMessage(), response.get().getErrorMessage().contains(messagePart));
-    }
-
-    private static QwpTableBlockCursor parseSingleTable(QwpWebSocketEncoder encoder, int length) throws Exception {
-        QwpMessageCursor cursor = new QwpMessageCursor();
-        cursor.of(encoder.getBuffer().getBufferPtr(), length, new ObjList<>());
-        Assert.assertTrue(cursor.hasNextTable());
-        QwpTableBlockCursor table = cursor.nextTable();
-        Assert.assertFalse(cursor.hasNextTable());
-        return table;
     }
 
     private static List<Vector> readVectors() throws Exception {

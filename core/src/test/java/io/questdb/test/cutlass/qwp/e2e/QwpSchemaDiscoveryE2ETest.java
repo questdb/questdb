@@ -46,6 +46,8 @@ import java.util.Arrays;
 import java.util.Base64;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static io.questdb.test.cutlass.qwp.e2e.QwpSchemaE2ETestUtils.describe;
+
 public class QwpSchemaDiscoveryE2ETest extends AbstractQwpWebSocketTest {
 
     @Test
@@ -233,33 +235,6 @@ public class QwpSchemaDiscoveryE2ETest extends AbstractQwpWebSocketTest {
                 Assert.assertEquals(1002, closeCode[0]);
             }
         });
-    }
-
-    private static QwpSchemaResponse describe(WebSocketClient client, long requestId, String tableName) {
-        byte[] request = QwpSchemaProtocol.encodeDescribe(requestId, tableName);
-        long address = Unsafe.malloc(request.length, MemoryTag.NATIVE_DEFAULT);
-        try {
-            for (int i = 0; i < request.length; i++) {
-                Unsafe.getUnsafe().putByte(address + i, request[i]);
-            }
-            client.sendBinary(address, request.length);
-            AtomicReference<QwpSchemaResponse> response = new AtomicReference<>();
-            Assert.assertTrue(client.receiveFrame(new WebSocketFrameHandler() {
-                @Override
-                public void onBinaryMessage(long payloadPtr, int payloadLen) {
-                    response.set(QwpSchemaProtocol.decodeResponse(payloadPtr, payloadLen));
-                }
-
-                @Override
-                public void onClose(int code, String reason) {
-                    Assert.fail("unexpected close [code=" + code + ", reason=" + reason + ']');
-                }
-            }, 5_000));
-            Assert.assertEquals(requestId, response.get().getRequestId());
-            return response.get();
-        } finally {
-            Unsafe.free(address, request.length, MemoryTag.NATIVE_DEFAULT);
-        }
     }
 
     private static void send(WebSocketClient client, byte[] request) {

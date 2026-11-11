@@ -1085,6 +1085,13 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
      * it carries the QWP magic and the control flag. Reads through
      * {@code maskKey} (0 for an unmasked payload), so the receive loop can
      * classify a frame before unmasking it.
+     * <p>
+     * The magic check keeps non-QWP payloads on the data path: an ILP line such
+     * as "cpu,host=..." has 'o' (0x6f) at the flags offset, which sets the
+     * control bit. The data path answers it with a parse NACK instead of closing
+     * the connection. The check does not demand a whole header, so a control
+     * frame truncated to its first six bytes still reaches handleSchemaControl(),
+     * which rejects it as malformed instead of the data path acking it.
      */
     private static boolean isSchemaControlFrame(long payload, int length, int maskKey) {
         if (length < Integer.BYTES) {
@@ -2499,17 +2506,6 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                     rejectFragmentedFrame(context, state, opcode);
                     return;
                 }
-                // Only a frame that carries the QWP magic may be dispatched on its
-                // flags byte. Without the magic check any binary payload whose sixth
-                // byte happens to have 0x20 set is handled as a schema control
-                // frame -- an ILP line such as "cpu,host=..." carries 'o' (0x6f)
-                // there and sets it. Non-QWP payloads must instead reach
-                // handleBinaryMessage(), which applies normal data-frame validation
-                // and returns a parse NACK without closing the connection.
-                // The magic gate must not also demand a whole header: a control
-                // frame truncated to its first six bytes still has to reach
-                // handleSchemaControl() and be rejected as malformed, rather than
-                // fall through to the data path and collect an ACK.
                 if (isSchemaControlFrame(payload, length, 0)) {
                     // The receive loop committed any pending commit batch before
                     // this frame, so the reply send may block.

@@ -18,15 +18,10 @@ import io.questdb.client.cutlass.qwp.client.QwpWebSocketEncoder;
 import io.questdb.client.cutlass.qwp.client.WebSocketResponse;
 import io.questdb.client.cutlass.qwp.client.sf.cursor.CursorSendEngine;
 import io.questdb.client.cutlass.qwp.protocol.QwpSchemaBinding;
-import io.questdb.client.cutlass.qwp.protocol.QwpSchemaProtocol;
-import io.questdb.client.cutlass.qwp.protocol.QwpSchemaResponse;
 import io.questdb.client.cutlass.qwp.protocol.QwpTableBuffer;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpFixedWidthColumnCursor;
-import io.questdb.cutlass.qwp.protocol.QwpMessageCursor;
 import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Test;
@@ -39,6 +34,11 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
+
+import static io.questdb.test.cutlass.qwp.e2e.QwpSchemaE2ETestUtils.connectSchemaClient;
+import static io.questdb.test.cutlass.qwp.e2e.QwpSchemaE2ETestUtils.describe;
+import static io.questdb.test.cutlass.qwp.e2e.QwpSchemaE2ETestUtils.parseSingleTable;
+import static io.questdb.test.cutlass.qwp.e2e.QwpSchemaE2ETestUtils.receiveResponse;
 
 public class QwpSchemaFloatingNumericE2ETest extends AbstractQwpWebSocketTest {
     private static final String VECTORS = "/io/questdb/client/cutlass/qwp/floating-to-numeric.tsv";
@@ -54,7 +54,7 @@ public class QwpSchemaFloatingNumericE2ETest extends AbstractQwpWebSocketTest {
                     String legacyTable = "legacy_" + input.suffix + '_' + target.suffix;
                     createTable(schemaTable, target);
                     createTable(legacyTable, target);
-                    try (WebSocketClient client = connect(port);
+                    try (WebSocketClient client = connectSchemaClient(port);
                          QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
                          QwpTableBuffer table = new QwpTableBuffer(schemaTable)) {
                         QwpSchemaBinding binding = new QwpSchemaBinding(table, describe(client, 100 + input.ordinal() * 10 + target.ordinal(), schemaTable));
@@ -91,7 +91,7 @@ public class QwpSchemaFloatingNumericE2ETest extends AbstractQwpWebSocketTest {
     public void testFailureRollbackAndDuplicateFirstWins() throws Exception {
         runInContext(port -> {
             execute("create table schema_float_rows (v byte, only_b long, ts timestamp) timestamp(ts) partition by day wal");
-            try (WebSocketClient client = connect(port);
+            try (WebSocketClient client = connectSchemaClient(port);
                  QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
                  QwpTableBuffer table = new QwpTableBuffer("schema_float_rows")) {
                 QwpSchemaBinding binding = new QwpSchemaBinding(table, describe(client, 300, "schema_float_rows"));
@@ -157,7 +157,7 @@ public class QwpSchemaFloatingNumericE2ETest extends AbstractQwpWebSocketTest {
                     for (boolean withOmission : new boolean[]{false, true}) {
                         String tableName = "schema_nan_" + input.suffix + '_' + target.suffix + (withOmission ? "_omitted" : "_plain");
                         createTable(tableName, target);
-                        try (WebSocketClient client = connect(port);
+                        try (WebSocketClient client = connectSchemaClient(port);
                              QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
                              QwpTableBuffer table = new QwpTableBuffer(tableName)) {
                             QwpSchemaBinding binding = new QwpSchemaBinding(table, describe(client, requestId++, tableName));
@@ -212,7 +212,7 @@ public class QwpSchemaFloatingNumericE2ETest extends AbstractQwpWebSocketTest {
             execute("create table schema_float_replay (i int, f float, d double, ts timestamp) timestamp(ts) partition by day wal");
             File sfRoot = temp.newFolder("qwp-schema-float-sf");
             String slot = new File(sfRoot, "default").getAbsolutePath();
-            try (WebSocketClient client = connect(port);
+            try (WebSocketClient client = connectSchemaClient(port);
                  QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
                  QwpTableBuffer table = new QwpTableBuffer("schema_float_replay")) {
                 QwpSchemaBinding binding = new QwpSchemaBinding(table, describe(client, 302, "schema_float_replay"));
@@ -378,46 +378,6 @@ public class QwpSchemaFloatingNumericE2ETest extends AbstractQwpWebSocketTest {
         return result;
     }
 
-    private static WebSocketClient connect(int port) {
-        WebSocketClient client = WebSocketClientFactory.newPlainTextInstance();
-        boolean success = false;
-        try {
-            client.requestQwpSchema();
-            client.connect("127.0.0.1", port);
-            client.upgrade("/write/v4", null);
-            Assert.assertTrue(client.isQwpSchemaEnabled());
-            success = true;
-            return client;
-        } finally {
-            if (!success) client.close();
-        }
-    }
-
-    private static QwpSchemaResponse describe(WebSocketClient client, long requestId, String table) {
-        byte[] request = QwpSchemaProtocol.encodeDescribe(requestId, table);
-        long address = Unsafe.malloc(request.length, MemoryTag.NATIVE_DEFAULT);
-        try {
-            for (int i = 0; i < request.length; i++) Unsafe.putByte(address + i, request[i]);
-            client.sendBinary(address, request.length);
-        } finally {
-            Unsafe.free(address, request.length, MemoryTag.NATIVE_DEFAULT);
-        }
-        AtomicReference<QwpSchemaResponse> result = new AtomicReference<>();
-        Assert.assertTrue(client.receiveFrame(new WebSocketFrameHandler() {
-            @Override
-            public void onBinaryMessage(long ptr, int len) {
-                result.set(QwpSchemaProtocol.decodeResponse(ptr, len));
-            }
-
-            @Override
-            public void onClose(int code, String reason) {
-                Assert.fail("unexpected close [code=" + code + ", reason=" + reason + ']');
-            }
-        }, 5_000));
-        Assert.assertEquals(requestId, result.get().getRequestId());
-        return result.get();
-    }
-
     private static void assertOk(WebSocketClient client) {
         AtomicReference<WebSocketResponse> result = new AtomicReference<>();
         Assert.assertTrue(client.receiveFrame(new WebSocketFrameHandler() {
@@ -434,34 +394,6 @@ public class QwpSchemaFloatingNumericE2ETest extends AbstractQwpWebSocketTest {
             }
         }, 5_000));
         Assert.assertTrue(result.get().getErrorMessage(), result.get().isSuccess());
-    }
-
-    private static WebSocketResponse receiveResponse(WebSocketClient client) {
-        AtomicReference<WebSocketResponse> result = new AtomicReference<>();
-        Assert.assertTrue(client.receiveFrame(new WebSocketFrameHandler() {
-            @Override
-            public void onBinaryMessage(long ptr, int len) {
-                WebSocketResponse response = new WebSocketResponse();
-                Assert.assertTrue(response.readFrom(ptr, len, false));
-                result.set(response);
-            }
-
-            @Override
-            public void onClose(int code, String reason) {
-                Assert.fail("unexpected close [code=" + code + ", reason=" + reason + ']');
-            }
-        }, 5_000));
-        Assert.assertNotNull(result.get());
-        return result.get();
-    }
-
-    private static QwpTableBlockCursor parseSingleTable(QwpWebSocketEncoder encoder, int length) throws Exception {
-        QwpMessageCursor cursor = new QwpMessageCursor();
-        cursor.of(encoder.getBuffer().getBufferPtr(), length, new ObjList<>());
-        Assert.assertTrue(cursor.hasNextTable());
-        QwpTableBlockCursor table = cursor.nextTable();
-        Assert.assertFalse(cursor.hasNextTable());
-        return table;
     }
 
     private enum Input {

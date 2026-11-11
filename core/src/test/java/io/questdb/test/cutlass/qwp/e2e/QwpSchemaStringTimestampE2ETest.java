@@ -7,7 +7,6 @@ package io.questdb.test.cutlass.qwp.e2e;
 
 import io.questdb.client.LineSenderSchemaException;
 import io.questdb.client.cutlass.http.client.WebSocketClient;
-import io.questdb.client.cutlass.http.client.WebSocketClientFactory;
 import io.questdb.client.cutlass.http.client.WebSocketFrameHandler;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketEncoder;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
@@ -23,7 +22,6 @@ import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -37,6 +35,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+
+import static io.questdb.test.cutlass.qwp.e2e.QwpSchemaE2ETestUtils.assertUtf8;
+import static io.questdb.test.cutlass.qwp.e2e.QwpSchemaE2ETestUtils.connectLegacyClient;
 
 public class QwpSchemaStringTimestampE2ETest extends AbstractQwpWebSocketTest {
     private static final String CORPUS = "/io/questdb/client/cutlass/qwp/string-to-timestamp.tsv";
@@ -213,7 +214,7 @@ public class QwpSchemaStringTimestampE2ETest extends AbstractQwpWebSocketTest {
         runInContext(port -> {
             execute("create table legacy_string_ts_wire (value timestamp, ts timestamp) "
                     + "timestamp(ts) partition by day wal");
-            try (WebSocketClient client = connectLegacy(port);
+            try (WebSocketClient client = connectLegacyClient(port);
                  QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
                  QwpTableBuffer table = new QwpTableBuffer("legacy_string_ts_wire")) {
                 QwpTableBuffer.ColumnBuffer value = table.getOrCreateColumn(
@@ -383,31 +384,6 @@ public class QwpSchemaStringTimestampE2ETest extends AbstractQwpWebSocketTest {
         }
         Assert.assertEquals("seven runtime inputs exercise both targets", 14, vectors.size());
         return vectors;
-    }
-
-    private static WebSocketClient connectLegacy(int port) {
-        WebSocketClient client = WebSocketClientFactory.newPlainTextInstance();
-        boolean success = false;
-        try {
-            client.connect("127.0.0.1", port);
-            client.upgrade("/write/v4", null);
-            Assert.assertFalse(client.isQwpSchemaEnabled());
-            success = true;
-            return client;
-        } finally {
-            if (!success) {
-                client.close();
-            }
-        }
-    }
-
-    private static void assertUtf8(String expected, Utf8Sequence actual) {
-        Assert.assertNotNull(actual);
-        byte[] bytes = expected.getBytes(StandardCharsets.UTF_8);
-        Assert.assertEquals(bytes.length, actual.size());
-        for (int i = 0; i < bytes.length; i++) {
-            Assert.assertEquals("byte " + i, bytes[i], actual.byteAt(i));
-        }
     }
 
     private static void assertOk(WebSocketClient client) {

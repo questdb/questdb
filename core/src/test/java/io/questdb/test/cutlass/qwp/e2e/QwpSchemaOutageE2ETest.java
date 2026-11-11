@@ -47,8 +47,6 @@ import java.util.concurrent.TimeUnit;
  *   <li>{@code strict} waits out {@code schema_wait_millis} and fails typed,
  *       then works again once the server is back.</li>
  * </ul>
- * This is the scenario that produced the {@code SCHEMA_UNAVAILABLE} failures
- * across the store-and-forward CI suites when {@code table()} always waited.
  */
 public class QwpSchemaOutageE2ETest extends AbstractCairoTest {
     private static final String KNOWN_TABLE = "schema_outage_known";

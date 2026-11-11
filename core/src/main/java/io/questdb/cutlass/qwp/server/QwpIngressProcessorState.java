@@ -2027,7 +2027,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             }
             tud.setReportedSchemaVersion(version);
         } catch (CairoException e) {
-            LOG.info().$("could not compare QWP schema identity; scheduling cache invalidation [table=")
+            LOG.info().$("could not read QWP schema version; scheduling schema feedback [table=")
                     .$safe(tableName).$(", error=").$safe(e.getFlyweightMessage()).I$();
         }
         if (tableName != null) {

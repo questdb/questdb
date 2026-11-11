@@ -8,13 +8,11 @@ package io.questdb.test.cutlass.qwp.e2e;
 import io.questdb.client.LineSenderSchemaException;
 import io.questdb.client.Sender;
 import io.questdb.client.cutlass.http.client.WebSocketClient;
-import io.questdb.client.cutlass.http.client.WebSocketClientFactory;
 import io.questdb.client.cutlass.http.client.WebSocketFrameHandler;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketEncoder;
 import io.questdb.client.cutlass.qwp.client.WebSocketResponse;
 import io.questdb.client.cutlass.qwp.client.sf.cursor.CursorSendEngine;
 import io.questdb.client.cutlass.qwp.protocol.QwpSchemaBinding;
-import io.questdb.client.cutlass.qwp.protocol.QwpSchemaProtocol;
 import io.questdb.client.cutlass.qwp.protocol.QwpSchemaResponse;
 import io.questdb.client.cutlass.qwp.protocol.QwpTableBuffer;
 import io.questdb.client.std.bytes.DirectByteSlice;
@@ -22,12 +20,10 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
-import io.questdb.cutlass.qwp.protocol.QwpMessageCursor;
 import io.questdb.cutlass.qwp.protocol.QwpStringColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.MemoryTag;
-import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Test;
@@ -41,6 +37,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static io.questdb.test.cutlass.qwp.e2e.QwpSchemaE2ETestUtils.connectSchemaClient;
+import static io.questdb.test.cutlass.qwp.e2e.QwpSchemaE2ETestUtils.describe;
+import static io.questdb.test.cutlass.qwp.e2e.QwpSchemaE2ETestUtils.parseSingleTable;
+
 public class QwpSchemaBinaryE2ETest extends AbstractQwpWebSocketTest {
     private static final String VECTORS = "/io/questdb/client/cutlass/qwp/binary-input.tsv";
 
@@ -52,7 +52,7 @@ public class QwpSchemaBinaryE2ETest extends AbstractQwpWebSocketTest {
         execute("create table legacy_binary_corpus (case_id long, value binary, ts timestamp) "
                 + "timestamp(ts) partition by day wal");
         runInContext(port -> {
-            try (WebSocketClient client = connect(port);
+            try (WebSocketClient client = connectSchemaClient(port);
                  QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
                  QwpTableBuffer table = new QwpTableBuffer("schema_binary_corpus")) {
                 QwpSchemaResponse schema = describe(client, 100, "schema_binary_corpus");
@@ -99,7 +99,7 @@ public class QwpSchemaBinaryE2ETest extends AbstractQwpWebSocketTest {
         runInContext(port -> {
             long ptr = Unsafe.malloc(4, MemoryTag.NATIVE_DEFAULT);
             try {
-                try (WebSocketClient client = connect(port);
+                try (WebSocketClient client = connectSchemaClient(port);
                      QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
                      QwpTableBuffer table = new QwpTableBuffer("schema_binary_rows")) {
                     QwpSchemaResponse schema = describe(client, 101, "schema_binary_rows");
@@ -219,7 +219,7 @@ public class QwpSchemaBinaryE2ETest extends AbstractQwpWebSocketTest {
             long ptr = Unsafe.malloc(payload.length, MemoryTag.NATIVE_DEFAULT);
             try {
                 putBytes(ptr, payload);
-                try (WebSocketClient client = connect(port);
+                try (WebSocketClient client = connectSchemaClient(port);
                      QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
                      QwpTableBuffer table = new QwpTableBuffer("schema_binary_replay")) {
                     QwpSchemaResponse schema = describe(client, 102, "schema_binary_replay");
@@ -283,7 +283,7 @@ public class QwpSchemaBinaryE2ETest extends AbstractQwpWebSocketTest {
             }
 
             RuntimeException schemaFailure = new RuntimeException("synthetic schema UTF-16 append failure");
-            try (WebSocketClient client = connect(port);
+            try (WebSocketClient client = connectSchemaClient(port);
                  QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
                  QwpTableBuffer table = new QwpTableBuffer("schema_throwing_binary")) {
                 QwpSchemaResponse schema = describe(client, 103, "schema_throwing_binary");
@@ -476,49 +476,6 @@ public class QwpSchemaBinaryE2ETest extends AbstractQwpWebSocketTest {
         return new String(chars);
     }
 
-    private static WebSocketClient connect(int port) {
-        WebSocketClient client = WebSocketClientFactory.newPlainTextInstance();
-        boolean success = false;
-        try {
-            client.requestQwpSchema();
-            client.connect("127.0.0.1", port);
-            client.upgrade("/write/v4", null);
-            Assert.assertTrue(client.isQwpSchemaEnabled());
-            success = true;
-            return client;
-        } finally {
-            if (!success) {
-                client.close();
-            }
-        }
-    }
-
-    private static QwpSchemaResponse describe(WebSocketClient client, long requestId, String tableName) {
-        byte[] request = QwpSchemaProtocol.encodeDescribe(requestId, tableName);
-        long address = Unsafe.malloc(request.length, MemoryTag.NATIVE_DEFAULT);
-        try {
-            putBytes(address, request);
-            client.sendBinary(address, request.length);
-        } finally {
-            Unsafe.free(address, request.length, MemoryTag.NATIVE_DEFAULT);
-        }
-        AtomicReference<QwpSchemaResponse> response = new AtomicReference<>();
-        Assert.assertTrue(client.receiveFrame(new WebSocketFrameHandler() {
-            @Override
-            public void onBinaryMessage(long payloadPtr, int payloadLen) {
-                response.set(QwpSchemaProtocol.decodeResponse(payloadPtr, payloadLen));
-            }
-
-            @Override
-            public void onClose(int code, String reason) {
-                Assert.fail("unexpected close [code=" + code + ", reason=" + reason + ']');
-            }
-        }, 5_000));
-        Assert.assertNotNull(response.get());
-        Assert.assertEquals(requestId, response.get().getRequestId());
-        return response.get();
-    }
-
     private static void assertOk(WebSocketClient client) {
         AtomicReference<WebSocketResponse> response = new AtomicReference<>();
         Assert.assertTrue(client.receiveFrame(new WebSocketFrameHandler() {
@@ -536,15 +493,6 @@ public class QwpSchemaBinaryE2ETest extends AbstractQwpWebSocketTest {
         }, 5_000));
         Assert.assertNotNull(response.get());
         Assert.assertTrue(response.get().getErrorMessage(), response.get().isSuccess());
-    }
-
-    private static QwpTableBlockCursor parseSingleTable(QwpWebSocketEncoder encoder, int length) throws Exception {
-        QwpMessageCursor cursor = new QwpMessageCursor();
-        cursor.of(encoder.getBuffer().getBufferPtr(), length, new ObjList<>());
-        Assert.assertTrue(cursor.hasNextTable());
-        QwpTableBlockCursor table = cursor.nextTable();
-        Assert.assertFalse(cursor.hasNextTable());
-        return table;
     }
 
     private static void putBytes(long ptr, byte[] bytes) {

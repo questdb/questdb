@@ -8,21 +8,14 @@ package io.questdb.test.cutlass.qwp.e2e;
 import io.questdb.client.LineSenderSchemaException;
 import io.questdb.client.Sender;
 import io.questdb.client.cutlass.http.client.WebSocketClient;
-import io.questdb.client.cutlass.http.client.WebSocketClientFactory;
-import io.questdb.client.cutlass.http.client.WebSocketFrameHandler;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketEncoder;
 import io.questdb.client.cutlass.qwp.client.WebSocketResponse;
 import io.questdb.client.cutlass.qwp.client.sf.cursor.CursorSendEngine;
 import io.questdb.client.cutlass.qwp.protocol.QwpSchemaBinding;
-import io.questdb.client.cutlass.qwp.protocol.QwpSchemaProtocol;
-import io.questdb.client.cutlass.qwp.protocol.QwpSchemaResponse;
 import io.questdb.client.cutlass.qwp.protocol.QwpTableBuffer;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
-import io.questdb.cutlass.qwp.protocol.QwpMessageCursor;
 import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.cutlass.qwp.protocol.QwpTimestampColumnCursor;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Test;
@@ -35,7 +28,12 @@ import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicReference;
+
+import static io.questdb.test.cutlass.qwp.e2e.QwpSchemaE2ETestUtils.connectLegacyClient;
+import static io.questdb.test.cutlass.qwp.e2e.QwpSchemaE2ETestUtils.connectSchemaClient;
+import static io.questdb.test.cutlass.qwp.e2e.QwpSchemaE2ETestUtils.describe;
+import static io.questdb.test.cutlass.qwp.e2e.QwpSchemaE2ETestUtils.parseSingleTable;
+import static io.questdb.test.cutlass.qwp.e2e.QwpSchemaE2ETestUtils.receiveResponse;
 
 public class QwpSchemaTimestampE2ETest extends AbstractQwpWebSocketTest {
     private static final String INPUT_VECTORS = "/io/questdb/client/cutlass/qwp/timestamp-inputs.tsv";
@@ -49,7 +47,7 @@ public class QwpSchemaTimestampE2ETest extends AbstractQwpWebSocketTest {
                 List<InputVector> targetVectors = forInputTarget(vectors, target);
                 String tableName = "schema_ts_inputs_" + target.suffix;
                 createTable(tableName, target);
-                try (WebSocketClient client = connect(port);
+                try (WebSocketClient client = connectSchemaClient(port);
                      QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
                      QwpTableBuffer table = new QwpTableBuffer(tableName)) {
                     QwpSchemaBinding binding = new QwpSchemaBinding(
@@ -106,7 +104,7 @@ public class QwpSchemaTimestampE2ETest extends AbstractQwpWebSocketTest {
         execute("create table legacy_ts_inputs (wrapped timestamp_ns, instant_value timestamp_ns, ts timestamp) "
                 + "timestamp(ts) partition by day wal");
         runInContext(port -> {
-            try (WebSocketClient client = connectLegacy(port);
+            try (WebSocketClient client = connectLegacyClient(port);
                  QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
                  QwpTableBuffer table = new QwpTableBuffer("legacy_ts_inputs")) {
                 // Raw-server characterization of the unchecked microsecond values already normalized
@@ -135,7 +133,7 @@ public class QwpSchemaTimestampE2ETest extends AbstractQwpWebSocketTest {
                 createTable(schemaTable, target);
                 createTable(legacyTable, target);
 
-                try (WebSocketClient client = connect(port);
+                try (WebSocketClient client = connectSchemaClient(port);
                      QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
                      QwpTableBuffer table = new QwpTableBuffer(schemaTable)) {
                     QwpSchemaBinding binding = new QwpSchemaBinding(table, describe(client, 10 + target.ordinal(), schemaTable));
@@ -179,7 +177,7 @@ public class QwpSchemaTimestampE2ETest extends AbstractQwpWebSocketTest {
         execute("create table schema_ts_rows (u timestamp, n timestamp_ns, only_b long, ts timestamp) "
                 + "timestamp(ts) partition by day wal");
         runInContext(port -> {
-            try (WebSocketClient client = connect(port);
+            try (WebSocketClient client = connectSchemaClient(port);
                  QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
                  QwpTableBuffer table = new QwpTableBuffer("schema_ts_rows")) {
                 QwpSchemaBinding binding = new QwpSchemaBinding(table, describe(client, 50, "schema_ts_rows"));
@@ -239,7 +237,7 @@ public class QwpSchemaTimestampE2ETest extends AbstractQwpWebSocketTest {
                         String name = "legacy_ts_min_" + target.suffix + '_'
                                 + unit.name().toLowerCase() + (withOmission ? "_bitmap" : "_plain");
                         createTable(name, target);
-                        try (WebSocketClient client = connect(port);
+                        try (WebSocketClient client = connectSchemaClient(port);
                              QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
                              QwpTableBuffer table = new QwpTableBuffer(name)) {
                             byte sourceType = unit == ChronoUnit.NANOS
@@ -260,7 +258,7 @@ public class QwpSchemaTimestampE2ETest extends AbstractQwpWebSocketTest {
                             Assert.assertFalse("supplied MIN must remain bitmap-present", wire.isColumnNull(1));
                             Assert.assertEquals(Long.MIN_VALUE, wire.getTimestampColumn(1).getTimestamp());
                             client.sendBinary(encoder.getBuffer().getBufferPtr(), length);
-                            WebSocketResponse response = receive(client);
+                            WebSocketResponse response = receiveResponse(client);
                             boolean overflow = unit == ChronoUnit.MICROS && target == Target.NANOS;
                             Assert.assertEquals(name, !overflow, response.isSuccess());
                             if (overflow) {
@@ -293,7 +291,7 @@ public class QwpSchemaTimestampE2ETest extends AbstractQwpWebSocketTest {
                         String name = "schema_ts_min_" + target.suffix + '_'
                                 + unit.name().toLowerCase() + (withOmission ? "_bitmap" : "_plain");
                         createTable(name, target);
-                        try (WebSocketClient client = connect(port);
+                        try (WebSocketClient client = connectSchemaClient(port);
                              QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
                              QwpTableBuffer table = new QwpTableBuffer(name)) {
                             QwpSchemaBinding binding = new QwpSchemaBinding(table, describe(client, 100, name));
@@ -342,7 +340,7 @@ public class QwpSchemaTimestampE2ETest extends AbstractQwpWebSocketTest {
     public void testSchemaTimestampUsesGorillaEncodingOnSmoothValues() throws Exception {
         execute("create table schema_ts_gorilla (value timestamp, ts timestamp) timestamp(ts) partition by day wal");
         runInContext(port -> {
-            try (WebSocketClient client = connect(port);
+            try (WebSocketClient client = connectSchemaClient(port);
                  QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
                  QwpTableBuffer table = new QwpTableBuffer("schema_ts_gorilla")) {
                 QwpSchemaBinding binding = new QwpSchemaBinding(table, describe(client, 200, "schema_ts_gorilla"));
@@ -384,7 +382,7 @@ public class QwpSchemaTimestampE2ETest extends AbstractQwpWebSocketTest {
         runInContext(port -> {
             java.io.File sfRoot = temp.newFolder("qwp-schema-ts-sf");
             String slot = new java.io.File(sfRoot, "default").getAbsolutePath();
-            try (WebSocketClient client = connect(port);
+            try (WebSocketClient client = connectSchemaClient(port);
                  QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
                  QwpTableBuffer table = new QwpTableBuffer("schema_ts_replay")) {
                 QwpSchemaBinding binding = new QwpSchemaBinding(table, describe(client, 300, "schema_ts_replay"));
@@ -451,7 +449,7 @@ public class QwpSchemaTimestampE2ETest extends AbstractQwpWebSocketTest {
             List<Vector> vectors,
             ChronoUnit unit
     ) throws Exception {
-        try (WebSocketClient client = connectLegacy(port);
+        try (WebSocketClient client = connectLegacyClient(port);
              QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
              QwpTableBuffer table = new QwpTableBuffer(tableName)) {
             byte sourceType = unit == ChronoUnit.NANOS
@@ -481,7 +479,7 @@ public class QwpSchemaTimestampE2ETest extends AbstractQwpWebSocketTest {
             if (!vector.invalid()) {
                 continue;
             }
-            try (WebSocketClient client = connectLegacy(port);
+            try (WebSocketClient client = connectLegacyClient(port);
                  QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
                  QwpTableBuffer table = new QwpTableBuffer(tableName)) {
                 table.getOrCreateColumn("case_id", QwpConstants.TYPE_LONG, true).addLong(-1);
@@ -489,7 +487,7 @@ public class QwpSchemaTimestampE2ETest extends AbstractQwpWebSocketTest {
                 table.nextRow();
                 int length = encoder.encode(table);
                 client.sendBinary(encoder.getBuffer().getBufferPtr(), length);
-                WebSocketResponse response = receive(client);
+                WebSocketResponse response = receiveResponse(client);
                 Assert.assertFalse(vector.caseId, response.isSuccess());
                 Assert.assertTrue(vector.caseId + ": " + response.getErrorMessage(),
                         response.getErrorMessage().contains("overflow"));
@@ -600,39 +598,6 @@ public class QwpSchemaTimestampE2ETest extends AbstractQwpWebSocketTest {
         return vectors;
     }
 
-    private static WebSocketClient connect(int port) {
-        WebSocketClient client = WebSocketClientFactory.newPlainTextInstance();
-        boolean success = false;
-        try {
-            client.requestQwpSchema();
-            client.connect("127.0.0.1", port);
-            client.upgrade("/write/v4", null);
-            Assert.assertTrue(client.isQwpSchemaEnabled());
-            success = true;
-            return client;
-        } finally {
-            if (!success) {
-                client.close();
-            }
-        }
-    }
-
-    private static WebSocketClient connectLegacy(int port) {
-        WebSocketClient client = WebSocketClientFactory.newPlainTextInstance();
-        boolean success = false;
-        try {
-            client.connect("127.0.0.1", port);
-            client.upgrade("/write/v4", null);
-            Assert.assertFalse(client.isQwpSchemaEnabled());
-            success = true;
-            return client;
-        } finally {
-            if (!success) {
-                client.close();
-            }
-        }
-    }
-
     private static void sendLegacy(WebSocketClient client, QwpWebSocketEncoder encoder, QwpTableBuffer table) {
         sendLegacy(client, encoder, table, encoder.encode(table));
     }
@@ -647,66 +612,10 @@ public class QwpSchemaTimestampE2ETest extends AbstractQwpWebSocketTest {
         assertOk(client);
     }
 
-    private static QwpSchemaResponse describe(WebSocketClient client, long requestId, String tableName) {
-        byte[] request = QwpSchemaProtocol.encodeDescribe(requestId, tableName);
-        long address = Unsafe.malloc(request.length, MemoryTag.NATIVE_DEFAULT);
-        try {
-            for (int i = 0; i < request.length; i++) {
-                Unsafe.putByte(address + i, request[i]);
-            }
-            client.sendBinary(address, request.length);
-        } finally {
-            Unsafe.free(address, request.length, MemoryTag.NATIVE_DEFAULT);
-        }
-        AtomicReference<QwpSchemaResponse> response = new AtomicReference<>();
-        Assert.assertTrue(client.receiveFrame(new WebSocketFrameHandler() {
-            @Override
-            public void onBinaryMessage(long payloadPtr, int payloadLen) {
-                response.set(QwpSchemaProtocol.decodeResponse(payloadPtr, payloadLen));
-            }
-
-            @Override
-            public void onClose(int code, String reason) {
-                Assert.fail("unexpected close [code=" + code + ", reason=" + reason + ']');
-            }
-        }, 5_000));
-        Assert.assertNotNull(response.get());
-        Assert.assertEquals(requestId, response.get().getRequestId());
-        return response.get();
-    }
-
     private static void assertOk(WebSocketClient client) {
-        WebSocketResponse response = receive(client);
+        WebSocketResponse response = receiveResponse(client);
         Assert.assertTrue(response.getErrorMessage(), response.isSuccess());
         Assert.assertEquals(0, response.getSequence());
-    }
-
-    private static WebSocketResponse receive(WebSocketClient client) {
-        AtomicReference<WebSocketResponse> response = new AtomicReference<>();
-        Assert.assertTrue(client.receiveFrame(new WebSocketFrameHandler() {
-            @Override
-            public void onBinaryMessage(long payloadPtr, int payloadLen) {
-                WebSocketResponse parsed = new WebSocketResponse();
-                Assert.assertTrue(parsed.readFrom(payloadPtr, payloadLen, true));
-                response.set(parsed);
-            }
-
-            @Override
-            public void onClose(int code, String reason) {
-                Assert.fail("unexpected close [code=" + code + ", reason=" + reason + ']');
-            }
-        }, 5_000));
-        Assert.assertNotNull(response.get());
-        return response.get();
-    }
-
-    private static QwpTableBlockCursor parseSingleTable(QwpWebSocketEncoder encoder, int length) throws Exception {
-        QwpMessageCursor cursor = new QwpMessageCursor();
-        cursor.of(encoder.getBuffer().getBufferPtr(), length, new ObjList<>());
-        Assert.assertTrue(cursor.hasNextTable());
-        QwpTableBlockCursor table = cursor.nextTable();
-        Assert.assertFalse(cursor.hasNextTable());
-        return table;
     }
 
     private enum Target {

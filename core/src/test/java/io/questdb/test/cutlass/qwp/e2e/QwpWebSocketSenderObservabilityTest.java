@@ -244,11 +244,9 @@ public class QwpWebSocketSenderObservabilityTest extends AbstractQwpWebSocketTes
      * under NACK policy v2), the error handler fires, and the delivered counter
      * advances past zero.
      * <p>
-     * The rejection has to come from the server. This test used to write a string
-     * into a DOUBLE column, but schema-aware senders convert against the server
-     * schema before buffering, so that input now fails locally in
-     * {@code stringColumn()} and no frame -- and therefore no NACK and no
-     * notification -- ever reaches the wire.
+     * The rejection has to come from the server: a schema-aware sender refuses a
+     * value the column cannot take locally, so no frame, NACK or notification
+     * would reach the wire.
      */
     @Test
     public void testGetTotalErrorNotificationsDeliveredAfterSchemaMismatch() throws Exception {

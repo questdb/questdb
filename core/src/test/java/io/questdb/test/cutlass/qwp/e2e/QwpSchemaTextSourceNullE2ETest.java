@@ -27,6 +27,8 @@ import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static io.questdb.test.cutlass.qwp.e2e.QwpSchemaE2ETestUtils.connectLegacyClient;
+
 public class QwpSchemaTextSourceNullE2ETest extends AbstractQwpWebSocketTest {
     private static final long UUID_HI = 0x123e4567e89b12d3L;
     private static final long UUID_LO = 0xa456426614174000L;
@@ -82,7 +84,7 @@ public class QwpSchemaTextSourceNullE2ETest extends AbstractQwpWebSocketTest {
         try (WebSocketClient client = WebSocketClientFactory.newPlainTextInstance();
              QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
              QwpTableBuffer table = new QwpTableBuffer(tableName)) {
-            connectLegacy(client, port);
+            connectLegacyClient(client, port);
             for (int row = 0; row < (bitmap ? 2 : values.length); row++) {
                 table.getOrCreateColumn("case_id", QwpConstants.TYPE_LONG, false).addLong(row);
                 if (!bitmap || row == 0) {
@@ -118,7 +120,7 @@ public class QwpSchemaTextSourceNullE2ETest extends AbstractQwpWebSocketTest {
         try (WebSocketClient client = WebSocketClientFactory.newPlainTextInstance();
              QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
              QwpTableBuffer table = new QwpTableBuffer(tableName)) {
-            connectLegacy(client, port);
+            connectLegacyClient(client, port);
             for (int row = 0; row < (bitmap ? 2 : 1); row++) {
                 table.getOrCreateColumn("case_id", QwpConstants.TYPE_LONG, false).addLong(row);
                 if (row == 0) {
@@ -162,7 +164,7 @@ public class QwpSchemaTextSourceNullE2ETest extends AbstractQwpWebSocketTest {
         try (WebSocketClient client = WebSocketClientFactory.newPlainTextInstance();
              QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
              QwpTableBuffer table = new QwpTableBuffer(tableName)) {
-            connectLegacy(client, port);
+            connectLegacyClient(client, port);
             for (int row = 0; row < (bitmap ? 2 : values.length); row++) {
                 table.getOrCreateColumn("case_id", QwpConstants.TYPE_LONG, false).addLong(row);
                 if (!bitmap || row == 0) {
@@ -264,12 +266,6 @@ public class QwpSchemaTextSourceNullE2ETest extends AbstractQwpWebSocketTest {
         }
         Assert.assertFalse(table.hasNextRow());
         return values;
-    }
-
-    private static void connectLegacy(WebSocketClient client, int port) throws Exception {
-        client.connect("127.0.0.1", port);
-        client.upgrade("/write/v4", null);
-        Assert.assertFalse(client.isQwpSchemaEnabled());
     }
 
     private static void assertOk(WebSocketClient client) {

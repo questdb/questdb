@@ -26,21 +26,15 @@ package io.questdb.test.cutlass.qwp.e2e;
 
 import io.questdb.client.LineSenderSchemaException;
 import io.questdb.client.cutlass.http.client.WebSocketClient;
-import io.questdb.client.cutlass.http.client.WebSocketClientFactory;
-import io.questdb.client.cutlass.http.client.WebSocketFrameHandler;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketEncoder;
 import io.questdb.client.cutlass.qwp.client.WebSocketResponse;
-import io.questdb.client.cutlass.qwp.protocol.QwpSchemaProtocol;
-import io.questdb.client.cutlass.qwp.protocol.QwpSchemaResponse;
 import io.questdb.client.cutlass.qwp.protocol.QwpSchemaBinding;
 import io.questdb.client.cutlass.qwp.protocol.QwpTableBuffer;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpFixedWidthColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpMessageCursor;
 import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
-import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -50,7 +44,10 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicReference;
+
+import static io.questdb.test.cutlass.qwp.e2e.QwpSchemaE2ETestUtils.connectSchemaClient;
+import static io.questdb.test.cutlass.qwp.e2e.QwpSchemaE2ETestUtils.describeKnown;
+import static io.questdb.test.cutlass.qwp.e2e.QwpSchemaE2ETestUtils.receiveResponse;
 
 public class QwpSchemaRowBufferE2ETest extends AbstractQwpWebSocketTest {
     private static final String UUID_VECTORS = "/io/questdb/client/cutlass/qwp/uuid-string-conformance.tsv";
@@ -59,10 +56,10 @@ public class QwpSchemaRowBufferE2ETest extends AbstractQwpWebSocketTest {
     public void testLocalFailureCancelsOnlyCurrentRowAndEncodesBinaryUuid() throws Exception {
         runInContext(port -> {
             execute("create table schema_rows (id uuid, n long, only_b long, extra boolean, ts timestamp) timestamp(ts) partition by day wal");
-            try (WebSocketClient client = connect(port);
+            try (WebSocketClient client = connectSchemaClient(port);
                  QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
                  QwpTableBuffer table = new QwpTableBuffer("schema_rows")) {
-                QwpSchemaBinding binding = new QwpSchemaBinding(table, describe(client, 1, "schema_rows"));
+                QwpSchemaBinding binding = new QwpSchemaBinding(table, describeKnown(client, 1, "schema_rows"));
                 binding.stringColumn("id", "01234567-89ab-cdef-fedc-ba9876543210").longColumn("n", 11);
                 table.nextRow();
 
@@ -96,10 +93,10 @@ public class QwpSchemaRowBufferE2ETest extends AbstractQwpWebSocketTest {
     public void testDuplicateFirstValueWinsBeforeCrossSetterConversion() throws Exception {
         runInContext(port -> {
             execute("create table schema_duplicate (id uuid, n long, ts timestamp) timestamp(ts) partition by day wal");
-            try (WebSocketClient client = connect(port);
+            try (WebSocketClient client = connectSchemaClient(port);
                  QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
                  QwpTableBuffer table = new QwpTableBuffer("schema_duplicate")) {
-                QwpSchemaBinding binding = new QwpSchemaBinding(table, describe(client, 2, "schema_duplicate"));
+                QwpSchemaBinding binding = new QwpSchemaBinding(table, describeKnown(client, 2, "schema_duplicate"));
                 binding.uuidColumn("id", 0xfedcba9876543210L, 0x0123456789abcdefL)
                         .stringColumn("id", "malformed duplicate must not be parsed")
                         .longColumn("n", 1)
@@ -120,10 +117,10 @@ public class QwpSchemaRowBufferE2ETest extends AbstractQwpWebSocketTest {
     public void testNullOmissionAndUnsupportedUsedColumns() throws Exception {
         runInContext(port -> {
             execute("create table schema_sparse (id uuid, n long, unsupported binary, ts timestamp) timestamp(ts) partition by day wal");
-            try (WebSocketClient client = connect(port);
+            try (WebSocketClient client = connectSchemaClient(port);
                  QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
                  QwpTableBuffer table = new QwpTableBuffer("schema_sparse")) {
-                QwpSchemaBinding binding = new QwpSchemaBinding(table, describe(client, 3, "schema_sparse"));
+                QwpSchemaBinding binding = new QwpSchemaBinding(table, describeKnown(client, 3, "schema_sparse"));
                 binding.stringColumn("id", null);
                 table.nextRow();
                 binding.longColumn("n", 7);
@@ -163,10 +160,10 @@ public class QwpSchemaRowBufferE2ETest extends AbstractQwpWebSocketTest {
         List<String[]> vectors = readVectors();
         runInContext(port -> {
             execute("create table schema_uuid_vectors (case_id long, value uuid, ts timestamp) timestamp(ts) partition by day wal");
-            try (WebSocketClient client = connect(port);
+            try (WebSocketClient client = connectSchemaClient(port);
                  QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
                  QwpTableBuffer table = new QwpTableBuffer("schema_uuid_vectors")) {
-                QwpSchemaBinding binding = new QwpSchemaBinding(table, describe(client, 4, "schema_uuid_vectors"));
+                QwpSchemaBinding binding = new QwpSchemaBinding(table, describeKnown(client, 4, "schema_uuid_vectors"));
                 int accepted = 0;
                 for (String[] vector : vectors) {
                     String input = "<NULL>".equals(vector[1]) ? null : vector[1];
@@ -193,7 +190,7 @@ public class QwpSchemaRowBufferE2ETest extends AbstractQwpWebSocketTest {
                     .expectSize().returns(expectedValidValues(vectors));
 
             execute("create table legacy_uuid_vectors (case_id long, value uuid, ts timestamp) timestamp(ts) partition by day wal");
-            try (WebSocketClient client = connect(port);
+            try (WebSocketClient client = connectSchemaClient(port);
                  QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
                  QwpTableBuffer table = new QwpTableBuffer("legacy_uuid_vectors")) {
                 int accepted = 0;
@@ -228,7 +225,7 @@ public class QwpSchemaRowBufferE2ETest extends AbstractQwpWebSocketTest {
                 }
                 String tableName = "legacy_uuid_bad_" + invalidTable++;
                 execute("create table " + tableName + " (value uuid, ts timestamp) timestamp(ts) partition by day wal");
-                try (WebSocketClient client = connect(port);
+                try (WebSocketClient client = connectSchemaClient(port);
                      QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
                      QwpTableBuffer table = new QwpTableBuffer(tableName)) {
                     table.getOrCreateColumn("value", QwpConstants.TYPE_VARCHAR, true).addString(vector[1]);
@@ -271,52 +268,6 @@ public class QwpSchemaRowBufferE2ETest extends AbstractQwpWebSocketTest {
         Assert.assertEquals(sequence, response.getSequence());
     }
 
-    private static WebSocketClient connect(int port) {
-        WebSocketClient client = WebSocketClientFactory.newPlainTextInstance();
-        boolean success = false;
-        try {
-            client.requestQwpSchema();
-            client.connect("127.0.0.1", port);
-            client.upgrade("/write/v4", null);
-            Assert.assertTrue(client.isQwpSchemaEnabled());
-            success = true;
-            return client;
-        } finally {
-            if (!success) {
-                client.close();
-            }
-        }
-    }
-
-    private static QwpSchemaResponse describe(WebSocketClient client, long requestId, String tableName) {
-        byte[] request = QwpSchemaProtocol.encodeDescribe(requestId, tableName);
-        long address = Unsafe.malloc(request.length, MemoryTag.NATIVE_DEFAULT);
-        try {
-            for (int i = 0; i < request.length; i++) {
-                Unsafe.getUnsafe().putByte(address + i, request[i]);
-            }
-            client.sendBinary(address, request.length);
-            AtomicReference<QwpSchemaResponse> response = new AtomicReference<>();
-            Assert.assertTrue(client.receiveFrame(new WebSocketFrameHandler() {
-                @Override
-                public void onBinaryMessage(long payloadPtr, int payloadLen) {
-                    response.set(QwpSchemaProtocol.decodeResponse(payloadPtr, payloadLen));
-                }
-
-                @Override
-                public void onClose(int code, String reason) {
-                    Assert.fail("unexpected close [code=" + code + ", reason=" + reason + ']');
-                }
-            }, 5_000));
-            Assert.assertNotNull(response.get());
-            Assert.assertEquals(requestId, response.get().getRequestId());
-            Assert.assertEquals(QwpSchemaProtocol.RESULT_KNOWN, response.get().getResult());
-            return response.get();
-        } finally {
-            Unsafe.free(address, request.length, MemoryTag.NATIVE_DEFAULT);
-        }
-    }
-
     private static String expectedValidValues(List<String[]> vectors) {
         StringBuilder sink = new StringBuilder("value\n");
         for (String[] vector : vectors) {
@@ -350,19 +301,4 @@ public class QwpSchemaRowBufferE2ETest extends AbstractQwpWebSocketTest {
         return vectors;
     }
 
-    private static WebSocketResponse receiveResponse(WebSocketClient client) {
-        WebSocketResponse response = new WebSocketResponse();
-        Assert.assertTrue(client.receiveFrame(new WebSocketFrameHandler() {
-            @Override
-            public void onBinaryMessage(long payloadPtr, int payloadLen) {
-                Assert.assertTrue(response.readFrom(payloadPtr, payloadLen, client.isQwpSchemaEnabled()));
-            }
-
-            @Override
-            public void onClose(int code, String reason) {
-                Assert.fail("unexpected close [code=" + code + ", reason=" + reason + ']');
-            }
-        }, 5_000));
-        return response;
-    }
 }

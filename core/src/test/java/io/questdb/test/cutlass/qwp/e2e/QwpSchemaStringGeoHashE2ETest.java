@@ -7,7 +7,6 @@ package io.questdb.test.cutlass.qwp.e2e;
 
 import io.questdb.client.LineSenderSchemaException;
 import io.questdb.client.cutlass.http.client.WebSocketClient;
-import io.questdb.client.cutlass.http.client.WebSocketClientFactory;
 import io.questdb.client.cutlass.http.client.WebSocketFrameHandler;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketEncoder;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
@@ -19,10 +18,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpGeoHashColumnCursor;
-import io.questdb.cutlass.qwp.protocol.QwpMessageCursor;
 import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
-import io.questdb.std.ObjList;
-import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -36,6 +32,9 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static io.questdb.test.cutlass.qwp.e2e.QwpSchemaE2ETestUtils.connectLegacyClient;
+import static io.questdb.test.cutlass.qwp.e2e.QwpSchemaE2ETestUtils.parseSingleTable;
+
 public class QwpSchemaStringGeoHashE2ETest extends AbstractQwpWebSocketTest {
     private static final String CORPUS = "/io/questdb/client/cutlass/qwp/string-geohash-conversions.tsv";
 
@@ -43,7 +42,7 @@ public class QwpSchemaStringGeoHashE2ETest extends AbstractQwpWebSocketTest {
     public void testLegacyVarcharAndNativeGeoHashBlockContexts() throws Exception {
         runInContext(port -> {
             execute("create table legacy_geo_text (value geohash(8b), ts timestamp) timestamp(ts) partition by day wal");
-            try (WebSocketClient client = connectLegacy(port);
+            try (WebSocketClient client = connectLegacyClient(port);
                  QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
                  QwpTableBuffer table = new QwpTableBuffer("legacy_geo_text")) {
                 QwpTableBuffer.ColumnBuffer value = table.getOrCreateColumn("value", QwpConstants.TYPE_VARCHAR, true);
@@ -176,7 +175,7 @@ public class QwpSchemaStringGeoHashE2ETest extends AbstractQwpWebSocketTest {
     private void assertNativeMaxContext(int port, int bits, boolean bitmap) throws Exception {
         String tableName = "legacy_geo_native_" + bits + (bitmap ? "_bitmap" : "_plain");
         execute("create table " + tableName + " (value geohash(" + bits + "b), ts timestamp) timestamp(ts) partition by day wal");
-        try (WebSocketClient client = connectLegacy(port);
+        try (WebSocketClient client = connectLegacyClient(port);
              QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
              QwpTableBuffer table = new QwpTableBuffer(tableName)) {
             QwpTableBuffer.ColumnBuffer value = table.getOrCreateColumn("value", QwpConstants.TYPE_GEOHASH, true);
@@ -223,7 +222,7 @@ public class QwpSchemaStringGeoHashE2ETest extends AbstractQwpWebSocketTest {
     private void assertLegacyVarcharContext(int port, int bits) throws Exception {
         String tableName = "legacy_geo_text_" + bits;
         execute("create table " + tableName + " (value geohash(" + bits + "b), ts timestamp) timestamp(ts) partition by day wal");
-        try (WebSocketClient client = connectLegacy(port);
+        try (WebSocketClient client = connectLegacyClient(port);
              QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
              QwpTableBuffer table = new QwpTableBuffer(tableName)) {
             QwpTableBuffer.ColumnBuffer value = table.getOrCreateColumn("value", QwpConstants.TYPE_VARCHAR, true);
@@ -265,7 +264,7 @@ public class QwpSchemaStringGeoHashE2ETest extends AbstractQwpWebSocketTest {
     private void assertLegacyInvalid(int port, String input, int bits, String suffix) throws Exception {
         String tableName = "legacy_geo_bad_" + suffix;
         execute("create table " + tableName + " (value geohash(" + bits + "b), ts timestamp) timestamp(ts) partition by day wal");
-        try (WebSocketClient client = connectLegacy(port);
+        try (WebSocketClient client = connectLegacyClient(port);
              QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
              QwpTableBuffer table = new QwpTableBuffer(tableName)) {
             table.getOrCreateColumn("value", QwpConstants.TYPE_VARCHAR, true).addString(input);
@@ -314,22 +313,6 @@ public class QwpSchemaStringGeoHashE2ETest extends AbstractQwpWebSocketTest {
         return "zzzzzzzzzzzz".substring(0, (bits + 4) / 5);
     }
 
-    private static WebSocketClient connectLegacy(int port) {
-        WebSocketClient client = WebSocketClientFactory.newPlainTextInstance();
-        boolean ok = false;
-        try {
-            client.connect("127.0.0.1", port);
-            client.upgrade("/write/v4", null);
-            Assert.assertFalse(client.isQwpSchemaEnabled());
-            ok = true;
-            return client;
-        } finally {
-            if (!ok) {
-                client.close();
-            }
-        }
-    }
-
     private static void assertResponse(WebSocketClient client, boolean success, String part) {
         AtomicReference<WebSocketResponse> ref = new AtomicReference<>();
         Assert.assertTrue(client.receiveFrame(new WebSocketFrameHandler() {
@@ -351,15 +334,6 @@ public class QwpSchemaStringGeoHashE2ETest extends AbstractQwpWebSocketTest {
         if (part != null) {
             Assert.assertTrue(ref.get().getErrorMessage(), ref.get().getErrorMessage().contains(part));
         }
-    }
-
-    private static QwpTableBlockCursor parseSingleTable(QwpWebSocketEncoder encoder, int length) throws Exception {
-        QwpMessageCursor cursor = new QwpMessageCursor();
-        cursor.of(encoder.getBuffer().getBufferPtr(), length, new ObjList<>());
-        Assert.assertTrue(cursor.hasNextTable());
-        QwpTableBlockCursor table = cursor.nextTable();
-        Assert.assertFalse(cursor.hasNextTable());
-        return table;
     }
 
     private static List<Vector> readVectors() throws Exception {

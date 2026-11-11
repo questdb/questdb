@@ -8,8 +8,6 @@ package io.questdb.test.cutlass.qwp.e2e;
 import io.questdb.client.LineSenderSchemaException;
 import io.questdb.client.Sender;
 import io.questdb.client.cutlass.http.client.WebSocketClient;
-import io.questdb.client.cutlass.http.client.WebSocketClientFactory;
-import io.questdb.client.cutlass.http.client.WebSocketFrameHandler;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketEncoder;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
 import io.questdb.client.cutlass.qwp.client.WebSocketResponse;
@@ -20,9 +18,7 @@ import io.questdb.client.std.Decimal256;
 import io.questdb.client.std.Decimal64;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpDecimalColumnCursor;
-import io.questdb.cutlass.qwp.protocol.QwpMessageCursor;
 import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
-import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Test;
@@ -35,6 +31,10 @@ import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+
+import static io.questdb.test.cutlass.qwp.e2e.QwpSchemaE2ETestUtils.connectLegacyClient;
+import static io.questdb.test.cutlass.qwp.e2e.QwpSchemaE2ETestUtils.parseSingleTable;
+import static io.questdb.test.cutlass.qwp.e2e.QwpSchemaE2ETestUtils.receiveResponse;
 
 public class QwpSchemaNativeDecimalTextE2ETest extends AbstractQwpWebSocketTest {
     private static final String CORPUS = "/io/questdb/client/cutlass/qwp/native-decimal-to-text.tsv";
@@ -177,7 +177,7 @@ public class QwpSchemaNativeDecimalTextE2ETest extends AbstractQwpWebSocketTest 
                     + "d128_string string, d128_varchar varchar, "
                     + "d256_string string, d256_varchar varchar, "
                     + "ts timestamp) timestamp(ts) partition by day wal");
-            try (WebSocketClient client = connectLegacy(port);
+            try (WebSocketClient client = connectLegacyClient(port);
                  QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
                  QwpTableBuffer table = new QwpTableBuffer(tableName)) {
                 ColumnBuffer caseId = table.getOrCreateColumn("case_id", QwpConstants.TYPE_LONG, false);
@@ -315,31 +315,6 @@ public class QwpSchemaNativeDecimalTextE2ETest extends AbstractQwpWebSocketTest 
         Assert.assertEquals(ll, cursor.getDecimal256Ll());
     }
 
-    private static WebSocketClient connectLegacy(int port) {
-        WebSocketClient client = WebSocketClientFactory.newPlainTextInstance();
-        boolean success = false;
-        try {
-            client.connect("127.0.0.1", port);
-            client.upgrade("/write/v4", null);
-            Assert.assertFalse(client.isQwpSchemaEnabled());
-            success = true;
-            return client;
-        } finally {
-            if (!success) {
-                client.close();
-            }
-        }
-    }
-
-    private static QwpTableBlockCursor parseSingleTable(QwpWebSocketEncoder encoder, int length) throws Exception {
-        QwpMessageCursor message = new QwpMessageCursor();
-        message.of(encoder.getBuffer().getBufferPtr(), length, new ObjList<>());
-        Assert.assertTrue(message.hasNextTable());
-        QwpTableBlockCursor table = message.nextTable();
-        Assert.assertFalse(message.hasNextTable());
-        return table;
-    }
-
     private static List<Vector> readVectors() throws Exception {
         List<Vector> vectors = new ArrayList<>();
         try (InputStream stream = QwpSchemaNativeDecimalTextE2ETest.class.getResourceAsStream(CORPUS)) {
@@ -355,22 +330,6 @@ public class QwpSchemaNativeDecimalTextE2ETest extends AbstractQwpWebSocketTest 
             }
         }
         return vectors;
-    }
-
-    private static WebSocketResponse receiveResponse(WebSocketClient client) {
-        WebSocketResponse response = new WebSocketResponse();
-        Assert.assertTrue(client.receiveFrame(new WebSocketFrameHandler() {
-            @Override
-            public void onBinaryMessage(long payloadPtr, int payloadLen) {
-                Assert.assertTrue(response.readFrom(payloadPtr, payloadLen));
-            }
-
-            @Override
-            public void onClose(int code, String reason) {
-                Assert.fail("unexpected close [code=" + code + ", reason=" + reason + ']');
-            }
-        }, 5_000));
-        return response;
     }
 
     private enum Target {

@@ -28,7 +28,6 @@ import io.questdb.client.LineSenderSchemaException;
 import io.questdb.client.Sender;
 import io.questdb.client.cutlass.http.client.WebSocketClient;
 import io.questdb.client.cutlass.http.client.WebSocketClientFactory;
-import io.questdb.client.cutlass.http.client.WebSocketFrameHandler;
 import io.questdb.client.cutlass.qwp.client.DurableAckTiers;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketEncoder;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
@@ -49,7 +48,9 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.util.concurrent.atomic.AtomicReference;
+import static io.questdb.test.cutlass.qwp.e2e.QwpSchemaE2ETestUtils.connectSchemaClient;
+import static io.questdb.test.cutlass.qwp.e2e.QwpSchemaE2ETestUtils.describe;
+import static io.questdb.test.cutlass.qwp.e2e.QwpSchemaE2ETestUtils.receiveResponse;
 
 public class QwpSchemaFeedbackEvolutionE2ETest extends AbstractQwpWebSocketTest {
 
@@ -201,7 +202,7 @@ public class QwpSchemaFeedbackEvolutionE2ETest extends AbstractQwpWebSocketTest 
     public void testStaleIntBytesYieldLongSnapshotAndNewTypedLongFrame() throws Exception {
         execute("create table feedback_evolution (n int, ts timestamp) timestamp(ts) partition by day wal");
         runInContext(port -> {
-            try (WebSocketClient client = connect(port);
+            try (WebSocketClient client = connectSchemaClient(port);
                  QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
                  QwpTableBuffer table = new QwpTableBuffer("feedback_evolution")) {
                 QwpSchemaBinding oldBinding = new QwpSchemaBinding(
@@ -214,7 +215,7 @@ public class QwpSchemaFeedbackEvolutionE2ETest extends AbstractQwpWebSocketTest 
 
                 execute("alter table feedback_evolution alter column n type long");
                 sendBytes(client, oldBytes);
-                WebSocketResponse staleAck = receive(client);
+                WebSocketResponse staleAck = receiveResponse(client);
                 Assert.assertTrue(staleAck.isSuccess());
                 Assert.assertEquals(1, staleAck.getSchemaUpdateCount());
                 Assert.assertEquals("feedback_evolution", staleAck.getSchemaUpdateTableName(0));
@@ -238,7 +239,7 @@ public class QwpSchemaFeedbackEvolutionE2ETest extends AbstractQwpWebSocketTest 
                 assertColumnWire(currentBytes, QwpConstants.TYPE_LONG);
                 assertColumnWire(oldBytes, QwpConstants.TYPE_INT);
                 sendBytes(client, currentBytes);
-                WebSocketResponse matchingAck = receive(client);
+                WebSocketResponse matchingAck = receiveResponse(client);
                 Assert.assertTrue(matchingAck.isSuccess());
                 Assert.assertFalse(matchingAck.hasSchemaUpdates());
                 Assert.assertFalse(matchingAck.isSchemaInvalidation());
@@ -272,23 +273,6 @@ public class QwpSchemaFeedbackEvolutionE2ETest extends AbstractQwpWebSocketTest 
                 + "auto_flush_interval=2147483646;close_flush_timeout_millis=0;";
     }
 
-    private static WebSocketClient connect(int port) {
-        WebSocketClient client = WebSocketClientFactory.newPlainTextInstance();
-        boolean success = false;
-        try {
-            client.requestQwpSchema();
-            client.connect("127.0.0.1", port);
-            client.upgrade("/write/v4", null);
-            Assert.assertTrue(client.isQwpSchemaEnabled());
-            success = true;
-            return client;
-        } finally {
-            if (!success) {
-                client.close();
-            }
-        }
-    }
-
     private static WebSocketClient connectCoordinator(int port) {
         WebSocketClient client = WebSocketClientFactory.newPlainTextInstance();
         boolean success = false;
@@ -313,47 +297,6 @@ public class QwpSchemaFeedbackEvolutionE2ETest extends AbstractQwpWebSocketTest 
             bytes[i] = Unsafe.getByte(address + i);
         }
         return bytes;
-    }
-
-    private static QwpSchemaResponse describe(WebSocketClient client, long requestId, String tableName) {
-        byte[] request = QwpSchemaProtocol.encodeDescribe(requestId, tableName);
-        sendBytes(client, request);
-        AtomicReference<QwpSchemaResponse> response = new AtomicReference<>();
-        Assert.assertTrue(client.receiveFrame(new WebSocketFrameHandler() {
-            @Override
-            public void onBinaryMessage(long payloadPtr, int payloadLen) {
-                response.set(QwpSchemaProtocol.decodeResponse(payloadPtr, payloadLen));
-            }
-
-            @Override
-            public void onClose(int code, String reason) {
-                Assert.fail("unexpected close [code=" + code + ", reason=" + reason + ']');
-            }
-
-        }, 5_000));
-        Assert.assertNotNull(response.get());
-        Assert.assertEquals(requestId, response.get().getRequestId());
-        return response.get();
-    }
-
-    private static WebSocketResponse receive(WebSocketClient client) {
-        AtomicReference<WebSocketResponse> received = new AtomicReference<>();
-        Assert.assertTrue(client.receiveFrame(new WebSocketFrameHandler() {
-            @Override
-            public void onBinaryMessage(long payloadPtr, int payloadLen) {
-                WebSocketResponse response = new WebSocketResponse();
-                Assert.assertTrue(response.readFrom(payloadPtr, payloadLen, true));
-                received.set(response);
-            }
-
-            @Override
-            public void onClose(int code, String reason) {
-                Assert.fail("unexpected close [code=" + code + ", reason=" + reason + ']');
-            }
-
-        }, 5_000));
-        Assert.assertNotNull(received.get());
-        return received.get();
     }
 
     private static void sendBytes(WebSocketClient client, byte[] bytes) {

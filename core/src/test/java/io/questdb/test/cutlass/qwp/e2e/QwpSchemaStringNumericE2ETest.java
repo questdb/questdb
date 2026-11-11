@@ -12,21 +12,17 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.client.LineSenderSchemaException;
 import io.questdb.client.cutlass.http.client.WebSocketClient;
 import io.questdb.client.cutlass.http.client.WebSocketClientFactory;
-import io.questdb.client.cutlass.http.client.WebSocketFrameHandler;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketEncoder;
 import io.questdb.client.cutlass.qwp.client.WebSocketResponse;
 import io.questdb.client.cutlass.qwp.client.sf.cursor.CursorSendEngine;
 import io.questdb.client.cutlass.qwp.protocol.QwpTableBuffer;
 import io.questdb.client.cutlass.qwp.protocol.QwpSchemaBinding;
-import io.questdb.client.cutlass.qwp.protocol.QwpSchemaProtocol;
 import io.questdb.client.cutlass.qwp.protocol.QwpSchemaResponse;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpFixedWidthColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpMessageCursor;
 import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
-import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8Sequence;
 import org.junit.Assert;
 import org.junit.Test;
@@ -39,7 +35,9 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
-import java.util.concurrent.atomic.AtomicReference;
+
+import static io.questdb.test.cutlass.qwp.e2e.QwpSchemaE2ETestUtils.describe;
+import static io.questdb.test.cutlass.qwp.e2e.QwpSchemaE2ETestUtils.receiveResponse;
 
 public class QwpSchemaStringNumericE2ETest extends AbstractQwpWebSocketTest {
     private static final String CORPUS = "/io/questdb/client/cutlass/qwp/string-to-numeric.tsv";
@@ -348,31 +346,6 @@ public class QwpSchemaStringNumericE2ETest extends AbstractQwpWebSocketTest {
         }
     }
 
-    private static QwpSchemaResponse describe(WebSocketClient client, long requestId, String table) {
-        byte[] request = QwpSchemaProtocol.encodeDescribe(requestId, table);
-        long address = Unsafe.malloc(request.length, MemoryTag.NATIVE_DEFAULT);
-        try {
-            for (int i = 0; i < request.length; i++) Unsafe.putByte(address + i, request[i]);
-            client.sendBinary(address, request.length);
-        } finally {
-            Unsafe.free(address, request.length, MemoryTag.NATIVE_DEFAULT);
-        }
-        AtomicReference<QwpSchemaResponse> result = new AtomicReference<>();
-        Assert.assertTrue(client.receiveFrame(new WebSocketFrameHandler() {
-            @Override
-            public void onBinaryMessage(long ptr, int len) {
-                result.set(QwpSchemaProtocol.decodeResponse(ptr, len));
-            }
-
-            @Override
-            public void onClose(int code, String reason) {
-                Assert.fail("unexpected close [code=" + code + ", reason=" + reason + ']');
-            }
-        }, 5_000));
-        Assert.assertEquals(requestId, result.get().getRequestId());
-        return result.get();
-    }
-
     private static List<Vector> readVectors() throws Exception {
         List<Vector> result = new ArrayList<>();
         try (InputStream stream = QwpSchemaStringNumericE2ETest.class.getResourceAsStream(CORPUS)) {
@@ -410,25 +383,6 @@ public class QwpSchemaStringNumericE2ETest extends AbstractQwpWebSocketTest {
         StringBuilder value = new StringBuilder(hex.length() / 4);
         for (int i = 0; i < hex.length(); i += 4) value.append((char) Integer.parseInt(hex.substring(i, i + 4), 16));
         return value.toString();
-    }
-
-    private static WebSocketResponse receiveResponse(WebSocketClient client) {
-        AtomicReference<WebSocketResponse> result = new AtomicReference<>();
-        Assert.assertTrue(client.receiveFrame(new WebSocketFrameHandler() {
-            @Override
-            public void onBinaryMessage(long ptr, int len) {
-                WebSocketResponse response = new WebSocketResponse();
-                Assert.assertTrue(response.readFrom(ptr, len, true));
-                result.set(response);
-            }
-
-            @Override
-            public void onClose(int code, String reason) {
-                Assert.fail("unexpected close [code=" + code + ", reason=" + reason + ']');
-            }
-        }, 5_000));
-        Assert.assertNotNull(result.get());
-        return result.get();
     }
 
     private static void sendLegacyAccepted(int port, String tableName, List<Vector> vectors) throws Exception {

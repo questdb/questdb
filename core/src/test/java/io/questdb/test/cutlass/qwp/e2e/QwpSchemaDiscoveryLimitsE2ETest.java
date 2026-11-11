@@ -30,13 +30,9 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.client.Sender;
 import io.questdb.client.cutlass.http.client.WebSocketClient;
-import io.questdb.client.cutlass.http.client.WebSocketClientFactory;
-import io.questdb.client.cutlass.http.client.WebSocketFrameHandler;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
 import io.questdb.client.cutlass.qwp.protocol.QwpSchemaProtocol;
 import io.questdb.client.cutlass.qwp.protocol.QwpSchemaResponse;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import org.junit.After;
@@ -45,7 +41,9 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
+
+import static io.questdb.test.cutlass.qwp.e2e.QwpSchemaE2ETestUtils.connectSchemaClient;
+import static io.questdb.test.cutlass.qwp.e2e.QwpSchemaE2ETestUtils.describe;
 
 public class QwpSchemaDiscoveryLimitsE2ETest extends AbstractQwpWebSocketTest {
     // 80 chars: within the client's 127-char limit, over the lowered server limit
@@ -262,23 +260,6 @@ public class QwpSchemaDiscoveryLimitsE2ETest extends AbstractQwpWebSocketTest {
         });
     }
 
-    private static WebSocketClient connectSchemaClient(int port) {
-        WebSocketClient client = WebSocketClientFactory.newPlainTextInstance();
-        boolean success = false;
-        try {
-            client.requestQwpSchema();
-            client.connect("127.0.0.1", port);
-            client.upgrade("/write/v4", null);
-            Assert.assertTrue(client.isQwpSchemaEnabled());
-            success = true;
-            return client;
-        } finally {
-            if (!success) {
-                client.close();
-            }
-        }
-    }
-
     /**
      * QuestDB 6.0 to 6.2.0 accepted dashed ILP column names such as Telegraf's
      * user-agent, and upgrades keep them. TableModel writes the metadata directly,
@@ -293,31 +274,4 @@ public class QwpSchemaDiscoveryLimitsE2ETest extends AbstractQwpWebSocketTest {
         AbstractCairoTest.createTable(model);
     }
 
-    private static QwpSchemaResponse describe(WebSocketClient client, long requestId, String tableName) {
-        byte[] request = QwpSchemaProtocol.encodeDescribe(requestId, tableName);
-        long address = Unsafe.malloc(request.length, MemoryTag.NATIVE_DEFAULT);
-        try {
-            for (int i = 0; i < request.length; i++) {
-                Unsafe.getUnsafe().putByte(address + i, request[i]);
-            }
-            client.sendBinary(address, request.length);
-            AtomicReference<QwpSchemaResponse> response = new AtomicReference<>();
-            Assert.assertTrue(client.receiveFrame(new WebSocketFrameHandler() {
-                @Override
-                public void onBinaryMessage(long payloadPtr, int payloadLen) {
-                    response.set(QwpSchemaProtocol.decodeResponse(payloadPtr, payloadLen));
-                }
-
-                @Override
-                public void onClose(int code, String reason) {
-                    Assert.fail("unexpected close [code=" + code + ", reason=" + reason + ']');
-                }
-            }, 5_000));
-            Assert.assertNotNull(response.get());
-            Assert.assertEquals(requestId, response.get().getRequestId());
-            return response.get();
-        } finally {
-            Unsafe.free(address, request.length, MemoryTag.NATIVE_DEFAULT);
-        }
-    }
 }
