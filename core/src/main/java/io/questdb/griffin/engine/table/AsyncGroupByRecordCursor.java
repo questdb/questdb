@@ -121,6 +121,9 @@ class AsyncGroupByRecordCursor implements RecordCursor {
             } finally {
                 mapCursor = Misc.free(mapCursor);
                 isOpen = false;
+                // of() initialized these; free their query-accounted state before the
+                // query's MemoryTracker goes back to its pool
+                Function.cursorClosed(nonGroupByFunctions);
             }
         }
     }

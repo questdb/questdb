@@ -31,6 +31,7 @@ import org.junit.Assert;
 import org.junit.Test;
 import org.postgresql.util.PSQLException;
 
+import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Statement;
@@ -157,6 +158,53 @@ public class PGMemoryLimitTest extends BasePGTest {
     }
 
     @Test
+    public void testSimpleInsertCastToSymbolDuringOpenSelectReleasesQueryMemory() throws Exception {
+        // A simple-protocol INSERT runs while a SELECT on the same connection still holds its query
+        // memory tracker, so the INSERT's cast-to-SYMBOL dictionary is charged to that tracker. The
+        // INSERT must free the dictionary when it finishes: otherwise the SELECT gives its tracker
+        // back charged, and the server drops the tracker and leaks its native block.
+        // A single-choice rnd_varchar() keeps the cast from folding to a constant.
+        final String insert = "INSERT INTO t VALUES (rnd_varchar('a', 'a')::SYMBOL)";
+        // pgjdbc sends prepared statements over the extended protocol and plain ones as simple
+        // queries; with auto-commit off, a fetch size suspends the SELECT's portal mid-result
+        assertWithPgServer(Mode.EXTENDED_FOR_PREPARED, false, -1, (connection, binary, mode, port) -> {
+            try (Statement stat = connection.createStatement()) {
+                stat.execute("CREATE TABLE t (k SYMBOL)");
+            }
+            connection.setAutoCommit(false);
+            try (PreparedStatement select = connection.prepareStatement("SELECT x FROM long_sequence(20)")) {
+                select.setFetchSize(5);
+                try (ResultSet resultSet = select.executeQuery()) {
+                    for (int i = 1; i <= 3; i++) {
+                        Assert.assertTrue(resultSet.next());
+                        Assert.assertEquals(i, resultSet.getLong(1));
+                    }
+                    try (Statement stat = connection.createStatement()) {
+                        for (int i = 0; i < 3; i++) {
+                            Assert.assertEquals(1, stat.executeUpdate(insert));
+                        }
+                    }
+                    // closing the result set closes the suspended portal, and the SELECT gives
+                    // its tracker back
+                }
+            }
+            connection.commit();
+            connection.setAutoCommit(true);
+            assertTableRows(connection, 3);
+        });
+        // a simple query with two statements runs the INSERT before the SELECT's cursor closes
+        assertWithPgServer(Mode.SIMPLE, false, -1, (connection, binary, mode, port) -> {
+            try (Statement stat = connection.createStatement()) {
+                stat.execute("CREATE TABLE t (k SYMBOL)");
+                for (int i = 0; i < 3; i++) {
+                    stat.execute("SELECT 1; " + insert);
+                }
+            }
+            assertTableRows(connection, 3);
+        });
+    }
+
+    @Test
     public void testUpdateRecoversFromOomError() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement stat = connection.createStatement()) {
@@ -267,5 +315,12 @@ public class PGMemoryLimitTest extends BasePGTest {
                 assertResultSet(expected, sink, resultSet);
             }
         });
+    }
+
+    private void assertTableRows(Connection connection, int rowCount) throws Exception {
+        try (Statement stat = connection.createStatement(); ResultSet resultSet = stat.executeQuery("SELECT k, count() c FROM t")) {
+            sink.clear();
+            assertResultSet("k[VARCHAR],c[BIGINT]\n" + "a," + rowCount + "\n", sink, resultSet);
+        }
     }
 }

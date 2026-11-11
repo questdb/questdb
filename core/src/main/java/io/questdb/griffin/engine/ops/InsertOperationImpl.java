@@ -157,9 +157,17 @@ public class InsertOperationImpl implements InsertOperation {
 
         @Override
         public long execute(SqlExecutionContext executionContext) {
-            for (int i = 0, n = insertRows.size(); i < n; i++) {
-                InsertRowImpl row = insertRows.get(i);
-                row.append(executionContext, writer);
+            try {
+                for (int i = 0, n = insertRows.size(); i < n; i++) {
+                    InsertRowImpl row = insertRows.get(i);
+                    row.append(executionContext, writer);
+                }
+            } finally {
+                // the writer holds the rows now; free what the functions built for them before
+                // the query's MemoryTracker goes back to its pool
+                for (int i = 0, n = insertRows.size(); i < n; i++) {
+                    insertRows.get(i).cursorClosed();
+                }
             }
             return insertRows.size();
         }

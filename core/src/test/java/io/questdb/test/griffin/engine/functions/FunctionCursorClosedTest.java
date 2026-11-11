@@ -108,6 +108,30 @@ public class FunctionCursorClosedTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsyncGroupByProjectionReleasesCastDictionary() throws Exception {
+        // abs() keeps the constant out of constant folding, so the cast to symbol runs above the
+        // parallel GROUP BY, as a projection function that the GROUP BY cursor initializes. SAMPLE BY
+        // FILL and an outer GROUP BY read the symbol by key, which fills the cast's dictionary.
+        assertMemoryLeak(() -> {
+            createVarcharTable();
+            sqlExecutionContext.setParallelGroupByEnabled(true);
+            final String sampleBy = "select (abs(0.5))::symbol k, count() c, ts from t sample by 1m fill(null)";
+            assertOwnerReleasesCastDictionaries(sampleBy, "Async Group By");
+            // rows sit 1s apart from 1s to 1000s, so the 1m buckets run from 00:00 to 16:00
+            assertQuery("select k, count() n, sum(c) c from (" + sampleBy + ")").noLeakCheck().expectSize().returns("""
+                    k\tn\tc
+                    0.5\t17\t1000
+                    """);
+            final String outerGroupBy = "select k, count() n, sum(c) c from (select (abs(0.5))::symbol k, count() c from t)";
+            assertOwnerReleasesCastDictionaries(outerGroupBy, "Async Group By");
+            assertQuery(outerGroupBy).noLeakCheck().expectSize().returns("""
+                    k\tn\tc
+                    0.5\t1\t1000
+                    """);
+        });
+    }
+
+    @Test
     public void testAsyncGroupingSetsFilterReleasesCastDictionary() throws Exception {
         assertMemoryLeak(() -> {
             createVarcharTable();
@@ -116,6 +140,38 @@ public class FunctionCursorClosedTest extends AbstractCairoTest {
                     "select s, max(l) m from t where cast(v as symbol) <> 'k7' group by rollup(s) order by s",
                     "groupingSets: true"
             );
+        });
+    }
+
+    @Test
+    public void testAsyncHorizonJoinProjectionReleasesCastDictionary() throws Exception {
+        // the cast to symbol runs above the parallel horizon join, as a projection function that the
+        // join cursor initializes; the outer GROUP BY reads the symbol by key
+        assertMemoryLeak(() -> {
+            createVarcharTable();
+            final String sql = "select k, count() n, sum(c) c from (" +
+                    "select (abs(0.5))::symbol k, count() c from t a horizon join t b on (s) list (0s, 1s) as h)";
+            assertOwnerReleasesCastDictionaries(sql, "Async Horizon Join");
+            // each of the 1000 rows of a joins once per offset
+            assertQuery(sql).noLeakCheck().expectSize().returns("""
+                    k\tn\tc
+                    0.5\t1\t2000
+                    """);
+        });
+    }
+
+    @Test
+    public void testAsyncMultiHorizonJoinProjectionReleasesCastDictionary() throws Exception {
+        assertMemoryLeak(() -> {
+            createVarcharTable();
+            final String sql = "select k, count() n, sum(c) c from (" +
+                    "select (abs(0.5))::symbol k, count() c from t a horizon join t b on (s) horizon join t d on (s) list (0s, 1s) as h)";
+            assertOwnerReleasesCastDictionaries(sql, "Async Multi Horizon Join");
+            // each of the 1000 rows of a joins once per offset
+            assertQuery(sql).noLeakCheck().expectSize().returns("""
+                    k\tn\tc
+                    0.5\t1\t2000
+                    """);
         });
     }
 
@@ -167,6 +223,52 @@ public class FunctionCursorClosedTest extends AbstractCairoTest {
             assertQuery("select count() from target").noRandomAccess().expectSize().returns("""
                     count
                     8000
+                    """);
+        });
+    }
+
+    @Test
+    public void testCastToSymbolInsertValuesReleasesDictionaries() throws Exception {
+        // An INSERT ... VALUES initializes its value functions on each execution, so it must also
+        // free what they built once the rows are in the writer. A single-choice rnd_varchar() keeps
+        // the cast from folding to a constant and still yields a known value. The designated
+        // timestamp has a cast of its own, which InsertRowImpl evaluates apart from the other values.
+        assertMemoryLeak(() -> {
+            execute("create table target (k symbol capacity 2048, v long, ts timestamp) timestamp(ts) partition by day");
+            execute("create table target_no_ts (k symbol capacity 2048, v long)");
+            final String[] inserts = {
+                    "insert into target values (rnd_varchar('a', 'a')::symbol, 1, rnd_varchar('2024-01-01', '2024-01-01')::symbol::timestamp)",
+                    "insert into target_no_ts values (rnd_varchar('a', 'a')::symbol, 1), (rnd_varchar('b', 'b')::symbol, 2)"
+            };
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                for (String insert : inserts) {
+                    final CompiledQuery cq = compiler.compile(insert, sqlExecutionContext);
+                    Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
+                    try (InsertOperation op = cq.popInsertOperation()) {
+                        for (int run = 0; run < 2; run++) {
+                            final long nativeBaseline = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS);
+                            op.execute(sqlExecutionContext).await();
+                            Assert.assertEquals(
+                                    "the executed insert must free the native cast-to-symbol dictionaries",
+                                    nativeBaseline,
+                                    Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS)
+                            );
+                        }
+                    }
+                }
+            }
+            // both executions of each cached insert added their rows
+            assertQuery("select k, v, ts from target").noLeakCheck().timestamp("ts").expectSize().returns("""
+                    k\tv\tts
+                    a\t1\t2024-01-01T00:00:00.000000Z
+                    a\t1\t2024-01-01T00:00:00.000000Z
+                    """);
+            assertQuery("select k, v from target_no_ts order by v, k").noLeakCheck().expectSize().returns("""
+                    k\tv
+                    a\t1
+                    a\t1
+                    b\t2
+                    b\t2
                     """);
         });
     }
