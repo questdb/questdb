@@ -208,6 +208,8 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
 
         LOG.info().$("recovering from the checkpoint").$();
         createTriggerFile();
+        // a restore restarts the server, which drops the column purges queued before it
+        engine.getMessageBus().getColumnPurgeSubSeq().clear();
         engine.checkpointRecover();
         engine.getTableSequencerAPI().releaseAll();
         engine.reloadTableNames();

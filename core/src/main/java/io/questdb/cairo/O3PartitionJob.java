@@ -507,7 +507,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             // fresh sibling partition. A valid move wins over a discretionary fresh-version rewrite; only the
             // prefix's republish needing a geometry generation stands in its way, in which case the fresh
             // version below is the reclaim.
-            final int moveTailCut = isCompositeSource ? tableWriter.moveTailCut(partitionIndex, ctx.bounds, plan) : 0;
+            // Two kept pieces starting on one timestamp cannot be published as pieces, here or in a MOVE-TAIL
+            // prefix, so the partition is written flat into a fresh version instead.
+            final boolean hasTsLoTie = hasPlannedTsLoTie(ctx.bounds, plan, sortedTimestampsAddr);
+            final int moveTailCut = isCompositeSource && !hasTsLoTie ? tableWriter.moveTailCut(partitionIndex, ctx.bounds, plan) : 0;
             if (moveTailCut > 0 && geometry.hasGenerationForNextPublish(partitionIndex, moveTailCut)) {
                 // The fresh sibling copies every live row past the cut
                 long tailRows = 0;
@@ -534,7 +537,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 );
                 return;
             }
-            if (shouldAssembleFreshPartitionVersion(geometry, txReader, tableWriter, partitionIndex, plan, isPendingSquashSource)) {
+            if (hasTsLoTie || shouldAssembleFreshPartitionVersion(geometry, txReader, tableWriter, partitionIndex, plan, isPendingSquashSource)) {
                 // A fresh version copies every live row
                 tableWriter.addO3CopyStats(true, oldPartitionSize, oldPartitionSize);
                 assembleFreshPartitionVersion(
@@ -1967,8 +1970,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
      *                             it ends on - but the geometry orders them by tsLo and refuses two founded at one
      *                             timestamp. A pre-split gains nothing from carving off that tie tail: a batch at the
      *                             shared timestamp is spared by the lower piece and merges into the one above. A
-     *                             replace-range cut passes false: it has to carve the tail out to drop it, and the
-     *                             rows it carves never reach the geometry.
+     *                             replace-range cut passes false: it has to carve the tail out to drop it. When the
+     *                             carved half lies above the range it is kept instead, and the plan is written as a
+     *                             fresh version - see {@link #hasPlannedTsLoTie}.
      * @return true when the cut was applied
      */
     private static boolean applyCutResolved(
@@ -5174,6 +5178,35 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     return true;
                 }
             }
+        }
+        return false;
+    }
+
+    /**
+     * Whether two pieces the plan keeps would start on the same timestamp, which the geometry refuses. Only a
+     * replace-range edge cut makes this shape: when its upper half starts on the next piece's {@code tsLo} - the two
+     * pieces touched there - and lies above the range, that half is kept rather than dropped.
+     */
+    private static boolean hasPlannedTsLoTie(LongList bounds, O3CompositeMergeStrategy.Plan plan, long sortedTimestampsAddr) {
+        long prevTsLo = Numbers.LONG_NULL;
+        for (int i = 0, n = plan.actions.size(); i < n; i++) {
+            final O3CompositeMergeStrategy.Action action = plan.actions.getQuick(i);
+            final long tsLo = switch (action.type) {
+                case APPEND, KEEP -> O3CompositeMergeStrategy.getTsLo(bounds, action.pieceIndex);
+                case NEW_PIECE -> getTimestampIndexValue(sortedTimestampsAddr, action.o3Lo);
+                case MERGE -> Math.min(
+                        O3CompositeMergeStrategy.getTsLo(bounds, action.pieceIndex),
+                        getTimestampIndexValue(sortedTimestampsAddr, action.o3Lo)
+                );
+                case DROP -> Numbers.LONG_NULL;
+            };
+            if (tsLo == Numbers.LONG_NULL) {
+                continue;
+            }
+            if (tsLo == prevTsLo) {
+                return true;
+            }
+            prevTsLo = tsLo;
         }
         return false;
     }
