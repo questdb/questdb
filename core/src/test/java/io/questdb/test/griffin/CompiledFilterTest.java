@@ -1825,7 +1825,10 @@ public class CompiledFilterTest extends AbstractCairoTest {
             final String h = "'2020-01-01T00:00:00.000000500Z'";
             final String p = "'1969-12-31T23:59:59.9999995Z'";
             final String all = "p0\nz0\nn1\nnoon\nn0\nnul\n";
-            // filter, expected keys, whether the JIT compiles it, the bind variable $1: H as text or as TIMESTAMP_NS
+            final String hText = "2020-01-01T00:00:00.000000500Z";
+            final long hNanos = 1_577_836_800_000_000_500L;
+            final long pNanos = -500L;
+            // filter, expected keys, whether the JIT compiles it, the bind variable $1: text, or a TIMESTAMP_NS value
             final Object[][] cases = {
                     {"m < " + h, "p0\nz0\nn0\n", true, null},
                     {"m <= " + h, "p0\nz0\nn0\n", true, null},
@@ -1839,7 +1842,7 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     {"d >= " + h, "n1\nnoon\n", true, null},
                     {"d >= " + p, "z0\nn1\nnoon\nn0\n", true, null},
                     {"d = " + h, "", false, null},
-                    {"d >= $1", "n1\nnoon\n", false, "text"},
+                    {"d >= $1", "n1\nnoon\n", false, hText},
                     {"d IN (" + h + ", '2020-01-01T12:00:00.000Z')", "noon\n", false, null},
                     // a one-item list names a period; the period of H holds no value of the column
                     {"m IN (" + h + ")", "", false, null},
@@ -1847,7 +1850,10 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     {"d IN ('2020-01-01')", "n1\nnoon\nn0\n", true, null},
                     {"ts IN " + h, "", false, null},
                     {"m < " + h + "::TIMESTAMP_NS", "p0\nz0\nn0\n", false, null},
-                    {"m < $1", "p0\nz0\nn0\n", false, "ns"},
+                    {"m < $1", "p0\nz0\nn0\n", false, hNanos},
+                    {"d = $1", "", false, hText},
+                    {"d >= $1", "z0\nn1\nnoon\nn0\n", false, pNanos},
+                    {"d < " + h + "::TIMESTAMP_NS", "p0\nz0\nn0\n", false, null},
             };
             for (int run = 0; run < 2; run++) {
                 if (run == 1) {
@@ -1861,10 +1867,10 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     for (Object[] c : cases) {
                         final String filter = (String) c[0];
                         bindVariableService.clear();
-                        if ("text".equals(c[3])) {
-                            bindVariableService.setStr(0, "2020-01-01T00:00:00.000000500Z");
-                        } else if ("ns".equals(c[3])) {
-                            bindVariableService.setTimestampNano(0, 1_577_836_800_000_000_500L);
+                        if (c[3] instanceof String text) {
+                            bindVariableService.setStr(0, text);
+                        } else if (c[3] instanceof Long nanos) {
+                            bindVariableService.setTimestampNano(0, nanos);
                         }
                         try (RecordCursorFactory factory = select("SELECT k FROM x WHERE " + filter)) {
                             Assert.assertEquals(filter, isParallel && isJit && (boolean) c[2], factory.usesCompiledFilter());
