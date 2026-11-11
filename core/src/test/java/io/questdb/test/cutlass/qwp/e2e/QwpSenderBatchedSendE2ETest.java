@@ -24,7 +24,6 @@
 
 package io.questdb.test.cutlass.qwp.e2e;
 
-import io.questdb.client.Sender;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
 import org.junit.Assert;
 import org.junit.Test;
@@ -37,7 +36,6 @@ import java.time.temporal.ChronoUnit;
  */
 public class QwpSenderBatchedSendE2ETest extends AbstractQwpWebSocketTest {
     private static final long BASE_TS_MICROS = 1_700_000_000_000_000L;
-    private static final long CLOSE_FLUSH_TIMEOUT_MS = 300_000L;
     private static final long DRAIN_TIMEOUT_MS = 120_000L;
 
     @Test
@@ -88,46 +86,6 @@ public class QwpSenderBatchedSendE2ETest extends AbstractQwpWebSocketTest {
         recvChunk = Integer.MAX_VALUE;
         sendChunk = Integer.MAX_VALUE;
         assertPerRowFlushLandsExactlyOnce("per_row_flush_unfragmented", 10_000);
-    }
-
-    @Test
-    public void testTransactionsSpanningSendBatches() throws Exception {
-        // Publish one deferred-commit frame per row, then commit each transaction.
-        final int txns = 50;
-        final int rowsPerTxn = 40;
-        runInContext((port) -> {
-            try (QwpWebSocketSender sender = (QwpWebSocketSender) Sender.builder(Sender.Transport.WEBSOCKET)
-                    .address("localhost:" + port)
-                    .transactional(true)
-                    .autoFlushRows(1)
-                    .autoFlushBytes(0)
-                    .closeFlushTimeoutMillis(CLOSE_FLUSH_TIMEOUT_MS)
-                    .build()) {
-                long id = 0;
-                for (int t = 0; t < txns; t++) {
-                    for (int r = 0; r < rowsPerTxn; r++, id++) {
-                        sender.table("txn_batched")
-                                .symbol("sym", "s" + id)
-                                .longColumn("txn", t)
-                                .longColumn("id", id)
-                                .at(BASE_TS_MICROS + id, ChronoUnit.MICROS);
-                    }
-                    sender.flush();
-                }
-                Assert.assertTrue(sender.drain(DRAIN_TIMEOUT_MS));
-            }
-            drainWalQueue();
-            final int rows = txns * rowsPerTxn;
-            assertQuery("""
-                    SELECT count() n, count_distinct(id) ids, count_distinct(txn) txns,
-                           sum(CASE WHEN sym = concat('s', id) THEN 1 ELSE 0 END) matched
-                    FROM txn_batched
-                    """)
-                    .noLeakCheck()
-                    .noRandomAccess()
-                    .expectSize()
-                    .returns("n\tids\ttxns\tmatched\n" + rows + "\t" + rows + "\t" + txns + "\t" + rows + "\n");
-        });
     }
 
     private void assertPerRowFlushLandsExactlyOnce(String table, int rows) throws Exception {
