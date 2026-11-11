@@ -229,6 +229,12 @@ abstract class AbstractPageFrameSequence {
                 : interruptionReason);
     }
 
+    protected final void detachContextIfOwnerCannotPark() {
+        if (dispatchContext != null && !isFiberSuspendable()) {
+            dispatchContext = null;
+        }
+    }
+
     void enterReducerCancellationScope() {
         final CancellationBinding cancellationBinding = SuspensionScope.getCancellationBindingScratch();
         getCircuitBreaker().copyCancelledFlagTo(cancellationBinding);

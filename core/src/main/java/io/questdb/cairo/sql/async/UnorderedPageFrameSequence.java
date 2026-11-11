@@ -243,6 +243,8 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
             return;
         }
 
+        detachContextIfOwnerCannotPark();
+
         // Initialize the circuit breaker for work stealing and local reduces.
         workStealCircuitBreaker.init(sqlExecutionContext.getCircuitBreaker());
 
