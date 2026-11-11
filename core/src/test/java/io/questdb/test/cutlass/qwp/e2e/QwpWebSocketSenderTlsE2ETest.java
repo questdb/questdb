@@ -141,10 +141,7 @@ public class QwpWebSocketSenderTlsE2ETest extends AbstractQwpBootstrapTest {
 
     @Test
     public void testTlsPerRowFlushNewSymbolPerRow() throws Exception {
-        // A producer that flushes every row runs ahead of the I/O thread, so
-        // the client packs bursts of frames into one TLS write; each frame
-        // carries a symbol-dictionary delta, so a lost or reordered frame
-        // surfaces as a wrong or NULL symbol.
+        // Flush each row over TLS; distinct symbols check dictionary updates.
         final int rows = 1_000;
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startFragmented(

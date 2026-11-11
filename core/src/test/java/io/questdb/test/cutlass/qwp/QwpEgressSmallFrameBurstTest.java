@@ -35,10 +35,8 @@ import org.junit.Before;
 import org.junit.Test;
 
 /**
- * A result streamed one row per frame reaches the client as bursts of small
- * frames, many of them in one recv, with the last frame of a recv often cut
- * short. The client parses such a burst in place and keeps the unread tail
- * until its next recv; every row must still arrive once and in order.
+ * Checks that a result streamed one row per frame reaches the real client
+ * exactly once and in order.
  */
 public class QwpEgressSmallFrameBurstTest extends AbstractBootstrapTest {
 
@@ -53,10 +51,9 @@ public class QwpEgressSmallFrameBurstTest extends AbstractBootstrapTest {
     public void testOneRowPerFrameStreamArrivesInOrder() throws Exception {
         final int rows = 20_000;
         TestUtils.assertMemoryLeak(() -> {
-            // No forced fragmentation: the server writes whole bursts of frames.
+            // Use normal sockets without forced fragmentation.
             try (TestServerMain ignored = startWithEnvVariables()) {
                 final long[] next = {1};
-                final int[] maxRowsPerBatch = {0};
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
                         "ws::addr=127.0.0.1:" + HTTP_PORT + ";max_batch_rows=1;")) {
                     client.connect();
@@ -64,7 +61,7 @@ public class QwpEgressSmallFrameBurstTest extends AbstractBootstrapTest {
                         @Override
                         public void onBatch(QwpColumnBatch batch) {
                             final int n = batch.getRowCount();
-                            maxRowsPerBatch[0] = Math.max(maxRowsPerBatch[0], n);
+                            Assert.assertTrue("max_batch_rows=1 must limit each batch to at most one row: " + n, n <= 1);
                             for (int r = 0; r < n; r++) {
                                 Assert.assertEquals(next[0]++, batch.getLongValue(0, r));
                             }
@@ -83,7 +80,6 @@ public class QwpEgressSmallFrameBurstTest extends AbstractBootstrapTest {
                     });
                 }
                 Assert.assertEquals("every row must arrive exactly once", rows + 1, next[0]);
-                Assert.assertEquals("max_batch_rows=1 must stream one row per frame", 1, maxRowsPerBatch[0]);
             }
         });
     }
