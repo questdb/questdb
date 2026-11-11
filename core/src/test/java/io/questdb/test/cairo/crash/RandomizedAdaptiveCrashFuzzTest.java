@@ -1280,34 +1280,6 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
                 + " (14, '2024-01-02T18:00:00.000000Z', 's1', 140)");
     }
 
-    // Picks the sealed POSTING files of one sym index version, the .pv and .pc files, out of a directory listing.
-    private static final class SealedPostingFileMatcher implements PostingIndexUtils.SealedFileVisitor {
-        private final long symNameTxn;
-        private int coverDataFileCount;
-        private boolean isMatch;
-        private int valueFileCount;
-
-        SealedPostingFileMatcher(long symNameTxn) {
-            this.symNameTxn = symNameTxn;
-        }
-
-        @Override
-        public void onCoverDataFile(int includeIdx, long postingColumnNameTxn, long coveredColumnNameTxn, long sealTxn) {
-            if (postingColumnNameTxn == PostingIndexUtils.coverFilePostingColumnNameTxn(symNameTxn)) {
-                coverDataFileCount++;
-                isMatch = true;
-            }
-        }
-
-        @Override
-        public void onValueFile(long postingColumnNameTxn, long sealTxn) {
-            if (postingColumnNameTxn == symNameTxn) {
-                valueFileCount++;
-                isMatch = true;
-            }
-        }
-    }
-
     private final class ParquetInPlaceWorkload implements AdaptiveCrashWorkload {
         // The twin's full dump and index-free lookups after 0..IPQ_COMMIT_COUNT commits: the independent oracle.
         private final ObjList<String> fingerprints = new ObjList<>();
@@ -1498,18 +1470,29 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
             final File dir = new File(path.trimTo(dirLen).toString());
             final String[] names = dir.list();
             Assert.assertNotNull("no Parquet day directory " + dir, names);
-            final SealedPostingFileMatcher matcher = new SealedPostingFileMatcher(symNameTxn);
+            int valueFileCount = 0;
+            int coverDataFileCount = 0;
             for (String name : names) {
-                matcher.isMatch = false;
-                PostingIndexUtils.parseSealedFileName(name, "sym", matcher);
-                if (matcher.isMatch) {
+                if (!name.startsWith("sym.")) {
+                    continue;
+                }
+                // the .pv and .pc<N> files of the version: a .pc name spells the version as its host token
+                final long fileColumnNameTxn = PostingIndexUtils.sealedFileColumnNameTxn(name, 4);
+                if (fileColumnNameTxn == PostingIndexUtils.PARSE_FAIL) {
+                    continue;
+                }
+                if (name.charAt(5) == 'v' && fileColumnNameTxn == symNameTxn) {
+                    valueFileCount++;
+                    files.add(new File(dir, name).getPath());
+                } else if (name.charAt(5) == 'c' && fileColumnNameTxn == PostingIndexUtils.coverFileHostTxn(symNameTxn)) {
+                    coverDataFileCount++;
                     files.add(new File(dir, name).getPath());
                 }
             }
             Assert.assertTrue("no .pv of sym index version " + symNameTxn + " in " + Arrays.toString(names),
-                    matcher.valueFileCount > 0);
+                    valueFileCount > 0);
             Assert.assertTrue("no .pc of sym index version " + symNameTxn + " in " + Arrays.toString(names),
-                    matcher.coverDataFileCount > 0);
+                    coverDataFileCount > 0);
         }
 
         private String crashPoint(int k) {

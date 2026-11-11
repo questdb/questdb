@@ -436,6 +436,83 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     }
 }
 
+fn row_offset_from(row_offset: jlong) -> ParquetResult<usize> {
+    usize::try_from(row_offset)
+        .map_err(|_| fmt_err!(InvalidLayout, "negative row_offset: {}", row_offset))
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_isRowGroupRewriteUnchanged(
+    mut env: JNIEnv,
+    _class: JClass,
+    updater: *const ParquetUpdater,
+    row_group_lo: jint,
+    row_group_hi: jint,
+    row_offset: jlong,
+) -> jboolean {
+    let env = &mut env;
+    if updater.is_null() {
+        let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
+        err.add_context("error in PartitionUpdater.isRowGroupRewriteUnchanged");
+        return err.into_cairo_exception().throw(env);
+    }
+    // SAFETY: Pointer was created by `Box::into_raw` in the create function.
+    // Single-threaded JNI access guarantees no aliasing.
+    let parquet_updater = unsafe { &*updater };
+    let is_unchanged = usize::try_from(row_group_lo)
+        .ok()
+        .zip(usize::try_from(row_group_hi).ok())
+        .ok_or_else(|| {
+            fmt_err!(
+                InvalidLayout,
+                "negative row group index: [{},{}]",
+                row_group_lo,
+                row_group_hi
+            )
+        })
+        .and_then(|(rg_lo, rg_hi)| {
+            parquet_updater.is_row_group_rewrite_unchanged(
+                rg_lo,
+                rg_hi,
+                row_offset_from(row_offset)?,
+            )
+        });
+    match is_unchanged {
+        Ok(is_unchanged) => is_unchanged as jboolean,
+        Err(mut err) => {
+            err.add_context("error in PartitionUpdater.isRowGroupRewriteUnchanged");
+            err.into_cairo_exception().throw(env)
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_setColumnTopRowLimit(
+    mut env: JNIEnv,
+    _class: JClass,
+    updater: *mut ParquetUpdater,
+    limit: jlong,
+) {
+    let env = &mut env;
+    if updater.is_null() {
+        let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
+        err.add_context("error in PartitionUpdater.setColumnTopRowLimit");
+        return err.into_cairo_exception().throw(env);
+    }
+    match usize::try_from(limit) {
+        Ok(limit) => {
+            // SAFETY: Pointer was created by `Box::into_raw` in the create function.
+            // Single-threaded JNI access guarantees no aliasing.
+            unsafe { &mut *updater }.set_column_top_row_limit(limit);
+        }
+        Err(_) => {
+            let mut err = fmt_err!(InvalidLayout, "negative column top row limit: {}", limit);
+            err.add_context("error in PartitionUpdater.setColumnTopRowLimit");
+            err.into_cairo_exception().throw(env)
+        }
+    }
+}
+
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_updateRowGroup(
     mut env: JNIEnv,
@@ -444,6 +521,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     table_name_len: u32,
     table_name_ptr: *const u8,
     row_group_id: jint,
+    row_offset: jlong,
     col_count: jint,
     col_names_ptr: *const u8,
     col_names_len: jint,
@@ -475,7 +553,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
             row_count,
             timestamp_index,
         )?;
-        parquet_updater.replace_row_group(&partition, row_group_id)
+        parquet_updater.replace_row_group(&partition, row_group_id, row_offset_from(row_offset)?)
     };
 
     match update() {
@@ -504,6 +582,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     table_name_len: u32,
     table_name_ptr: *const u8,
     position: jint,
+    row_offset: jlong,
     col_count: jint,
     col_names_ptr: *const u8,
     col_names_len: jint,
@@ -532,7 +611,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
             row_count,
             timestamp_index,
         )?;
-        parquet_updater.insert_row_group(&partition, position)
+        parquet_updater.insert_row_group(&partition, position, row_offset_from(row_offset)?)
     };
 
     match insert() {
@@ -2066,14 +2145,16 @@ fn convert_row_group_buffers_to_partition(
                 column_bufs.len()
             )
         })?;
-        if col_buf.column_top > row_count {
-            return Err(fmt_err!(
-                InvalidLayout,
-                "decoded column top {} exceeds row count {}, column index: {}",
-                col_buf.column_top,
-                row_count,
-                i
-            ));
+        if let Some(&[_, top_rows_hi]) = col_buf.top_rows().last() {
+            if top_rows_hi > row_count as u64 {
+                return Err(fmt_err!(
+                    InvalidLayout,
+                    "decoded column top rows end {} past row count {}, column index: {}",
+                    top_rows_hi,
+                    row_count,
+                    i
+                ));
+            }
         }
         let mut column = *column_template;
         column.row_count = row_count;
@@ -2226,13 +2307,18 @@ mod validation_tests {
     fn decoded_partition_rejects_column_top_past_row_count() {
         let allocator_state = TestAllocatorState::new();
         let mut column_bufs = vec![ColumnChunkBuffers::new(allocator_state.allocator())];
-        column_bufs[0].column_top = 2;
+        column_bufs[0].add_top_rows(0, 2).unwrap();
         let partition = one_column_partition(ColumnTypeTag::Int.into_type());
 
         assert_error_contains(
             convert_row_group_buffers_to_partition(&partition, &column_bufs, 1, 0),
-            "decoded column top 2 exceeds row count 1, column index: 0",
+            "decoded column top rows end 2 past row count 1, column index: 0",
         );
+
+        // top rows up to the row count are of the decoded rows
+        column_bufs[0].reset();
+        column_bufs[0].add_top_rows(0, 1).unwrap();
+        assert!(convert_row_group_buffers_to_partition(&partition, &column_bufs, 1, 0).is_ok());
     }
 
     #[test]
@@ -2504,6 +2590,13 @@ mod validation_tests {
             ),
             "column count must not be negative",
         );
+    }
+
+    #[test]
+    fn negative_row_offset_is_rejected() {
+        assert_eq!(row_offset_from(0).unwrap(), 0);
+        assert_eq!(row_offset_from(i64::MAX).unwrap(), i64::MAX as usize);
+        assert_error_contains(row_offset_from(-1), "negative row_offset: -1");
     }
 }
 

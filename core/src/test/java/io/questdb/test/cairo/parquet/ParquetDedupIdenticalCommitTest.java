@@ -25,13 +25,9 @@
 package io.questdb.test.cairo.parquet;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.O3PartitionPurgeJob;
-import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableUtils;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.fuzz.O3ParquetPathCounts;
@@ -42,7 +38,6 @@ import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.test.cairo.parquet.ParquetCommitTestUtils.assertTwinsEqual;
 import static io.questdb.test.cairo.parquet.ParquetCommitTestUtils.indexFiles;
@@ -76,11 +71,11 @@ public class ParquetDedupIdenticalCommitTest extends AbstractCairoTest {
 
     @Test
     public void testDeferredCopyFaultInRewriteRemovesNewDirectory() throws Exception {
-        // As testOneValueDiffersInRewriteModeStillMerges: row group 0 is a deferred copy,
-        // and the merge of row group 1 writes it before its own rows. The rewrite's new
-        // data.parquet opens read-only, so that first write, the deferred copy, fails. The
-        // job must remove the new directory and publish nothing, and the retry after
-        // RESUME WAL must converge.
+        // As testOneValueDiffersInRewriteModeStillMerges: row group 0 stays as stored until
+        // the merge of row group 1 opens the rewrite, which copies it before its own rows.
+        // The rewrite's new data.parquet opens read-only, so that first write, the copy of
+        // row group 0, fails. The job must remove the new directory and publish nothing, and
+        // the retry after RESUME WAL must converge.
         final AtomicBoolean armed = new AtomicBoolean(false);
         final AtomicInteger faults = new AtomicInteger();
         final FilesFacade ff = new TestFilesFacadeImpl() {
@@ -164,9 +159,9 @@ public class ParquetDedupIdenticalCommitTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, 0);
             createTwins();
-            // row group 0 is a deferred copy, row group 1 an identical MERGE (deferred
-            // too), then one new row at 15:00 lands in the gap before row group 2 as a
-            // COPY_O3: it must write both deferred row groups before its own
+            // row group 0 is a copy and row group 1 an identical MERGE, both stay as stored,
+            // then one new row at 15:00 lands in the gap before row group 2 as a COPY_O3:
+            // the rewrite must copy both row groups before its own
             assertChangedCommitMerges(
                     """
                             SELECT * FROM nat WHERE ts BETWEEN '2024-01-01T08:00' AND '2024-01-01T14:00'
@@ -223,9 +218,8 @@ public class ParquetDedupIdenticalCommitTest extends AbstractCairoTest {
             execute("ALTER TABLE nat ALTER COLUMN d TYPE FLOAT");
             execute("ALTER TABLE pq ALTER COLUMN d TYPE FLOAT");
             drainWalQueue();
-            // d stays DOUBLE in the parquet file: the merge compares the converted
-            // FLOAT buffer, and the rewrite copies eagerly (materialized), then the
-            // identical commit abandons it
+            // d stays DOUBLE in the parquet file: the identity check compares the converted
+            // FLOAT buffer, and the identical commit opens no rewrite
             assertIdenticalCommitIsNoop("SELECT * FROM nat WHERE ts BETWEEN '2024-01-01T16:00' AND '2024-01-01T22:00'", true);
         });
     }
@@ -342,11 +336,11 @@ public class ParquetDedupIdenticalCommitTest extends AbstractCairoTest {
     @Test
     public void testIdenticalInRewriteModeLeavesPartitionUnchanged() throws Exception {
         assertMemoryLeak(() -> {
-            // any merge now crosses the dead-bytes gate, so the job opens a rewrite;
-            // the identical commit must abandon it: no new directory, no txn change
+            // any merge now crosses the dead-bytes gate, so a change rewrites the partition;
+            // the identical commit opens no rewrite: no new directory, no txn change
             node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, 0);
             createTwins();
-            // row group 2 only: row groups 0 and 1 are leading copies the rewrite defers
+            // row group 2 only: row groups 0 and 1 are copies the rewrite would start with
             assertIdenticalCommitIsNoop("SELECT * FROM nat WHERE ts BETWEEN '2024-01-01T16:00' AND '2024-01-01T22:00'", true);
         });
     }
@@ -399,9 +393,9 @@ public class ParquetDedupIdenticalCommitTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, 0);
             createTwins();
-            // row groups 0 and 2 identical, row group 1 changes one double: the leading
-            // identical row group is a deferred copy that must be flushed before the
-            // merge writes, and the trailing one is copied as is
+            // row groups 0 and 2 identical, row group 1 changes one double: the rewrite
+            // copies the leading identical row group as stored before the merge writes,
+            // and merges the trailing one, which follows the change
             assertChangedCommitMerges(
                     "SELECT id, ts, v, sym, CASE WHEN id = 6 THEN -1.0 ELSE d END, s, bin FROM nat WHERE ts IN '2024-01-01'",
                     true,
@@ -427,70 +421,13 @@ public class ParquetDedupIdenticalCommitTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testPhantomDirRemovalFailureLeavesTableConsistent() throws Exception {
-        // An identical commit in rewrite mode abandons its rewrite and removes the new
-        // directory. That removal fails once and leaves the directory behind. The commit
-        // must still publish nothing, a later real change must rewrite the partition, and
-        // the partition purge must remove the leftover and keep the live directory.
-        final AtomicReference<String> pqDir = new AtomicReference<>();
-        final AtomicBoolean armed = new AtomicBoolean(false);
-        final AtomicInteger faults = new AtomicInteger();
-        final FilesFacade ff = new TestFilesFacadeImpl() {
-            @Override
-            public boolean rmdir(Path name, boolean haltOnError) {
-                final String dir = pqDir.get();
-                if (armed.get()
-                        && dir != null
-                        && Utf8s.containsAscii(name, dir)
-                        && Utf8s.containsAscii(name, "2024-01-01.")
-                        && armed.compareAndSet(true, false)) {
-                    faults.incrementAndGet();
-                    return false;
-                }
-                return super.rmdir(name, haltOnError);
-            }
-        };
-        assertMemoryLeak(ff, () -> {
-            node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, 0);
-            createTwins();
-            pqDir.set(engine.verifyTableName("pq").getDirName());
-            final long txnBefore = partitionNameTxn(engine, "pq", 0);
-            final long sizeBefore = parquetFileSize(engine, "pq", 0);
-            final int dirsBefore = partitionDirCount(engine, "pq", "2024-01-01");
-            armed.set(true);
-            insertBoth("SELECT * FROM nat WHERE ts BETWEEN '2024-01-01T16:00' AND '2024-01-01T22:00'");
-            Assert.assertEquals("fault must fire exactly once", 1, faults.get());
-            assertTwinsEqual(engine, sqlExecutionContext);
-            Assert.assertEquals("name txn", txnBefore, partitionNameTxn(engine, "pq", 0));
-            Assert.assertEquals("parquet file size", sizeBefore, parquetFileSize(engine, "pq", 0));
-            Assert.assertEquals("the abandoned rewrite's directory stays", dirsBefore + 1, partitionDirCount(engine, "pq", "2024-01-01"));
-
-            assertChangedCommitMerges(
-                    "SELECT id, ts, v, sym, CASE WHEN id = 6 THEN -1.0 ELSE d END, s, bin FROM nat WHERE ts IN '2024-01-01'",
-                    true,
-                    "SELECT d FROM pq WHERE id = 6",
-                    "d\n-1.0\n"
-            );
-
-            // Under ADAPTIVE the save points still name the superseded directory.
-            releaseSavePointHolds("pq");
-            TableUtils.schedulePurgeO3Partitions(engine.getMessageBus(), engine.verifyTableName("pq"), ColumnType.TIMESTAMP, PartitionBy.DAY);
-            try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1)) {
-                purgeJob.drain(0);
-            }
-            Assert.assertEquals("only the live directory may stay", 1, partitionDirCount(engine, "pq", "2024-01-01"));
-            assertTwinsEqual(engine, sqlExecutionContext);
-        });
-    }
-
-    @Test
     public void testTailInsertSingleRowGroupInRewriteFlushesDeferredCopy() throws Exception {
         assertMemoryLeak(() -> {
             // 12 rows per day -> one row group, which always takes the rewrite path;
             // 6 new rows fold into it only below 16 / 4 rows, so they form a COPY_O3
             node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 16);
             createTwins();
-            // after the only row group's max (22:00): its deferred copy must be written
+            // after the only row group's max (22:00): its copy must be written
             // before the new row group, or the rewrite publishes the new rows alone
             assertChangedCommitMerges(
                     "SELECT (100 + id)::INT, '2024-01-01T22:30'::TIMESTAMP + id * 60_000_000L, v, sym, d, s, bin FROM nat WHERE id <= 6",

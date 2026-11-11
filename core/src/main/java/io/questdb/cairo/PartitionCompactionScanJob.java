@@ -144,20 +144,6 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     private final LongList rewriteRanges = new LongList();
     private final Rnd rnd;
     private final StringSink sidecarName = new StringSink();
-    private final PostingIndexUtils.SealedFileVisitor sidecarSealedFileVisitor = new PostingIndexUtils.SealedFileVisitor() {
-        @Override
-        public void onCoverDataFile(int includeIdx, long postingColumnNameTxn, long coveredColumnNameTxn, long sealTxn) {
-            // A cover data file spells COLUMN_NAME_TXN_NONE as 0, so the parsed NONE also stands for a live txn of 0.
-            sidecarFileColumnNameTxn = postingColumnNameTxn == TableUtils.COLUMN_NAME_TXN_NONE && sidecarLiveColumnNameTxn == 0
-                    ? 0
-                    : postingColumnNameTxn;
-        }
-
-        @Override
-        public void onValueFile(long postingColumnNameTxn, long sealTxn) {
-            sidecarFileColumnNameTxn = postingColumnNameTxn;
-        }
-    };
     private final FindVisitor sidecarVisitor = this::copyParquetPartitionSidecar;
     private final TableUtils.SymbolTableProviderFromReader symbolTableProvider = new TableUtils.SymbolTableProviderFromReader();
     private final long squashIdleTimeoutMicros;
@@ -193,8 +179,6 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     private LongHashSet retiringCleanParquetPartitions = new LongHashSet();
     private ColumnVersionReader sidecarColumnVersionReader;
     private int sidecarDstLen;
-    private long sidecarFileColumnNameTxn;
-    private long sidecarLiveColumnNameTxn;
     private TableReaderMetadata sidecarMetadata;
     private long sidecarPartitionTimestamp;
     private int sidecarSrcLen;
@@ -1996,7 +1980,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         if (columnIndex < 0 || !sidecarMetadata.isColumnIndexed(columnIndex)) {
             return false;
         }
-        sidecarLiveColumnNameTxn = sidecarColumnVersionReader.getColumnNameTxn(
+        final long liveColumnNameTxn = sidecarColumnVersionReader.getColumnNameTxn(
                 sidecarPartitionTimestamp,
                 sidecarMetadata.getWriterIndex(columnIndex)
         );
@@ -2010,16 +1994,19 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         if (isUnsealedIndexFileKind(fileName, kindLo, kindHi)) {
             fileColumnNameTxn = parseUnsealedIndexFileColumnNameTxn(fileName, kindHi);
         } else {
-            // The sealed posting files, .pv and .pc<N>; the visitor sets sidecarFileColumnNameTxn on a match.
-            sidecarFileColumnNameTxn = UNKNOWN_COLUMN_NAME_TXN;
-            PostingIndexUtils.parseSealedFileName(
-                    fileName,
-                    sidecarMetadata.getColumnName(columnIndex),
-                    sidecarSealedFileVisitor
-            );
-            fileColumnNameTxn = sidecarFileColumnNameTxn;
+            // The sealed posting files, .pv and .pc<N>
+            final long sealedFileColumnNameTxn = PostingIndexUtils.sealedFileColumnNameTxn(fileName, kindLo);
+            if (sealedFileColumnNameTxn == PostingIndexUtils.PARSE_FAIL) {
+                fileColumnNameTxn = UNKNOWN_COLUMN_NAME_TXN;
+            } else if (fileName.charAt(kindLo + 1) == 'c'
+                    && sealedFileColumnNameTxn == PostingIndexUtils.coverFileHostTxn(liveColumnNameTxn)) {
+                // A cover data file spells COLUMN_NAME_TXN_NONE and txn 0 alike, as 0.
+                fileColumnNameTxn = liveColumnNameTxn;
+            } else {
+                fileColumnNameTxn = sealedFileColumnNameTxn;
+            }
         }
-        return fileColumnNameTxn != UNKNOWN_COLUMN_NAME_TXN && fileColumnNameTxn != sidecarLiveColumnNameTxn;
+        return fileColumnNameTxn != UNKNOWN_COLUMN_NAME_TXN && fileColumnNameTxn != liveColumnNameTxn;
     }
 
     /**

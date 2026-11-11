@@ -355,12 +355,13 @@ public class FrameAlgebraMergeIdenticalTest extends AbstractCairoTest {
             }
             return FrameAlgebra.isColumnMergeIdentical(
                     type,
-                    ROWS,
                     existingAux != null ? existingAux.addressOf(0) : 0,
                     existingData.addressOf(0),
+                    ROWS,
                     o3Aux != null ? o3Aux.addressOf(0) : 0,
                     o3Data.addressOf(0),
-                    index
+                    index,
+                    ROWS
             );
         } finally {
             Unsafe.free(index, indexSize, MemoryTag.NATIVE_DEFAULT);

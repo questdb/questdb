@@ -25,6 +25,7 @@
 package io.questdb.cairo.idx;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableUtils;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FindVisitor;
@@ -355,7 +356,10 @@ public final class PostingIndexUtils {
     private static final int EF_RANK_TRAILER_HEADER_SIZE = 16;
     private static final int EF_RANK_TRAILER_MAGIC = 0x32465245; // "EFR2" in little-endian bytes
     private static final int EF_RANK_TRAILER_VERSION = 2;
-    private static final long PARSE_FAIL = Long.MIN_VALUE;
+    /**
+     * Returned by {@link #sealedFileColumnNameTxn} for a name that is not a sealed posting file name.
+     */
+    public static final long PARSE_FAIL = Long.MIN_VALUE;
     /**
      * Tri-state sentinel returned by {@link #readSealTxnFromKeyFdTriState} to
      * mark a read-or-corruption failure. Distinct from {@link #V2_NO_HEAD},
@@ -423,7 +427,7 @@ public final class PostingIndexUtils {
             long sealTxn
     ) {
         path.concat(name).put(".pc").put(includeIdx);
-        path.put('.').put(postingColumnNameTxn == COLUMN_NAME_TXN_NONE ? 0 : postingColumnNameTxn);
+        path.put('.').put(coverFileHostTxn(postingColumnNameTxn));
         if (coveredColumnNameTxn > COLUMN_NAME_TXN_NONE) {
             path.put('.').put(coveredColumnNameTxn);
         }
@@ -432,12 +436,12 @@ public final class PostingIndexUtils {
     }
 
     /**
-     * The posting column name txn {@link #scanSealedFiles} reports for a cover data file of the given name txn. The
-     * file name writes no name txn as 0, so name txn 0 reads back as no name txn: compare a scanned cover data file
-     * against this, not against the column's name txn.
+     * The posting column name txn segment of a {@code .pc} file name. The segment is always present,
+     * so that the optional covered column name txn segment after it parses unambiguously, which
+     * makes {@code COLUMN_NAME_TXN_NONE} and txn 0 share the token 0.
      */
-    public static long coverFilePostingColumnNameTxn(long postingColumnNameTxn) {
-        return postingColumnNameTxn == 0 ? COLUMN_NAME_TXN_NONE : postingColumnNameTxn;
+    public static long coverFileHostTxn(long postingColumnNameTxn) {
+        return postingColumnNameTxn == COLUMN_NAME_TXN_NONE ? 0 : postingColumnNameTxn;
     }
 
     public static LPSZ coverInfoFileName(Path path, CharSequence name, long postingColumnNameTxn) {
@@ -1386,107 +1390,6 @@ public final class PostingIndexUtils {
     }
 
     /**
-     * Parses a directory entry name and calls {@code visitor} when it names a sealed
-     * file of {@code columnName}:
-     * <ul>
-     *   <li>{@code <columnName>.pv[.<postingColumnNameTxn>].<sealTxn>}: value file</li>
-     *   <li>{@code <columnName>.pc<includeIdx>.<postingColumnNameTxn>[.<coveredColumnNameTxn>].<sealTxn>}:
-     *   cover data file; a posting column name txn of 0 stands for {@code COLUMN_NAME_TXN_NONE}</li>
-     * </ul>
-     * A txn segment the name omits reaches the visitor as {@code COLUMN_NAME_TXN_NONE}.
-     * Ignores every other name: another column, {@code .pk}, {@code .pci}, partition data.
-     */
-    public static void parseSealedFileName(CharSequence fileName, CharSequence columnName, SealedFileVisitor visitor) {
-        int nameLen = columnName.length();
-        int fileLen = fileName.length();
-        if (fileLen < nameLen + 4) {
-            return;
-        }
-        for (int i = 0; i < nameLen; i++) {
-            if (fileName.charAt(i) != columnName.charAt(i)) {
-                return;
-            }
-        }
-        if (fileName.charAt(nameLen) != '.') {
-            return;
-        }
-        int pos = nameLen + 1;
-        if (pos + 1 >= fileLen || fileName.charAt(pos) != 'p') {
-            return;
-        }
-        char kind = fileName.charAt(pos + 1);
-        if (kind != 'v' && kind != 'c') {
-            return;
-        }
-        pos += 2;
-        int includeIdx = -1;
-        if (kind == 'c') {
-            int idxStart = pos;
-            while (pos < fileLen && fileName.charAt(pos) != '.') {
-                char ch = fileName.charAt(pos);
-                if (ch < '0' || ch > '9') {
-                    return;
-                }
-                pos++;
-            }
-            if (pos == idxStart || pos >= fileLen) {
-                return;
-            }
-            try {
-                includeIdx = Numbers.parseInt(fileName, idxStart, pos);
-            } catch (NumericException e) {
-                return;
-            }
-        }
-        if (pos >= fileLen || fileName.charAt(pos) != '.') {
-            return;
-        }
-        pos++;
-
-        if (kind == 'v') {
-            int dot = nextDot(fileName, pos, fileLen);
-            long columnNameTxn;
-            long sealTxn;
-            if (dot < 0) {
-                columnNameTxn = COLUMN_NAME_TXN_NONE;
-                sealTxn = parseTxnSegment(fileName, pos, fileLen);
-            } else {
-                columnNameTxn = parseTxnSegment(fileName, pos, dot);
-                sealTxn = parseTxnSegment(fileName, dot + 1, fileLen);
-            }
-            if (columnNameTxn == PARSE_FAIL || sealTxn == PARSE_FAIL) {
-                return;
-            }
-            visitor.onValueFile(columnNameTxn, sealTxn);
-            return;
-        }
-
-        int hostDot = nextDot(fileName, pos, fileLen);
-        if (hostDot < 0) {
-            return;
-        }
-        long rawHost = parseTxnSegment(fileName, pos, hostDot);
-        if (rawHost == PARSE_FAIL) {
-            return;
-        }
-        long postingColumnNameTxn = rawHost == 0 ? COLUMN_NAME_TXN_NONE : rawHost;
-        long coveredColumnNameTxn;
-        long sealTxn;
-        int secondDot = nextDot(fileName, hostDot + 1, fileLen);
-        if (secondDot < 0) {
-            coveredColumnNameTxn = COLUMN_NAME_TXN_NONE;
-            sealTxn = parseTxnSegment(fileName, hostDot + 1, fileLen);
-        } else {
-            coveredColumnNameTxn = parseTxnSegment(fileName, hostDot + 1, secondDot);
-            sealTxn = parseTxnSegment(fileName, secondDot + 1, fileLen);
-        }
-        if (coveredColumnNameTxn == PARSE_FAIL || sealTxn == PARSE_FAIL) {
-            return;
-        }
-        visitor.onCoverDataFile(includeIdx, postingColumnNameTxn, coveredColumnNameTxn, sealTxn);
-    }
-
-    /**
      * Walks the v2 chain via fd-based reads and returns the head entry's
      * {@code SEAL_TXN}. Useful when the caller has just opened the .pk file
      * (e.g. snapshot restore, seal-purge job) and would otherwise pay an
@@ -1747,16 +1650,14 @@ public final class PostingIndexUtils {
             return -1;
         }
         final boolean[] hasPv = {false};
-        scanSealedFiles(ff, path, pathTrimTo, columnName, new SealedFileVisitor() {
+        scanSealedFiles(ff, path, pathTrimTo, columnName, postingColumnNameTxn, new SealedFileVisitor() {
             @Override
-            public void onCoverDataFile(int includeIdx, long filePostingColumnNameTxn, long coveredColumnNameTxn, long fileSealTxn) {
+            public void onCoverDataFile(int includeIdx, long coveredColumnNameTxn, long fileSealTxn) {
             }
 
             @Override
-            public void onValueFile(long filePostingColumnNameTxn, long fileSealTxn) {
-                if (filePostingColumnNameTxn == postingColumnNameTxn) {
-                    hasPv[0] = true;
-                }
+            public void onValueFile(long fileSealTxn) {
+                hasPv[0] = true;
             }
         });
         if (hasPv[0]) {
@@ -1773,7 +1674,9 @@ public final class PostingIndexUtils {
 
     /**
      * Removes the .pci file plus every sealed .pv.* and .pc&lt;N&gt;.*.* file that
-     * belongs to the given posting-column-name txn.
+     * belongs to the given posting-column-name txn. For {@code COLUMN_NAME_TXN_NONE} it keeps the
+     * {@code .pc} files when the directory holds {@code <columnName>.d.0}: they belong to instance 0,
+     * which shares their host token 0, see {@link #coverFileHostTxn(long)}.
      *
      * @return {@code true} when at least one file failed to remove and is
      * still on disk afterwards. The caller must treat this as "purge could
@@ -1790,17 +1693,78 @@ public final class PostingIndexUtils {
         return new SealedFileRemover().remove(ff, path, pathTrimTo, columnName, postingColumnNameTxn);
     }
 
+    /**
+     * Reports to {@code visitor} every sealed {@code .pv} and {@code .pc} file of the posting column
+     * instance {@code columnName} with column name txn {@code postingColumnNameTxn} in the directory
+     * {@code path}, trimmed to {@code pathTrimTo}. Files of other instances of the same column name
+     * are not reported.
+     */
     public static void scanSealedFiles(
             FilesFacade ff,
             Path path,
             int pathTrimTo,
             CharSequence columnName,
+            long postingColumnNameTxn,
             SealedFileVisitor visitor
     ) {
         path.trimTo(pathTrimTo);
         StringSink fileName = Misc.getThreadLocalSink();
-        ff.iterateDir(path.$(), (pUtf8NameZ, type) -> parseSealedDirEntry(pUtf8NameZ, type, fileName, columnName, visitor));
+        ff.iterateDir(path.$(), (pUtf8NameZ, type) -> parseSealedDirEntry(pUtf8NameZ, type, fileName, columnName, postingColumnNameTxn, visitor));
         path.trimTo(pathTrimTo);
+    }
+
+    /**
+     * The posting column name txn segment of a sealed posting file name, given the index {@code lo} of
+     * the first character after {@code <columnName>.}:
+     * <ul>
+     *   <li>{@code pv.<sealTxn>} gives {@code COLUMN_NAME_TXN_NONE}</li>
+     *   <li>{@code pv.<postingColumnNameTxn>.<sealTxn>} gives the posting column name txn</li>
+     *   <li>{@code pc<includeIdx>.<coverFileHostTxn>[.<coveredColumnNameTxn>].<sealTxn>} gives the
+     *   {@link #coverFileHostTxn(long)} token, 0 for both {@code COLUMN_NAME_TXN_NONE} and txn 0</li>
+     * </ul>
+     * Any other name, including {@code .pk} and {@code .pci}, gives {@link #PARSE_FAIL}.
+     */
+    public static long sealedFileColumnNameTxn(CharSequence fileName, int lo) {
+        final int fileLen = fileName.length();
+        if (lo + 2 >= fileLen || fileName.charAt(lo) != 'p') {
+            return PARSE_FAIL;
+        }
+        final char kind = fileName.charAt(lo + 1);
+        int pos = lo + 2;
+        if (kind == 'v') {
+            if (fileName.charAt(pos) != '.') {
+                return PARSE_FAIL;
+            }
+            pos++;
+            final int dot = nextDot(fileName, pos, fileLen);
+            if (dot < 0) {
+                return parseTxnSegment(fileName, pos, fileLen) == PARSE_FAIL ? PARSE_FAIL : COLUMN_NAME_TXN_NONE;
+            }
+            final long columnNameTxn = parseTxnSegment(fileName, pos, dot);
+            return parseTxnSegment(fileName, dot + 1, fileLen) == PARSE_FAIL ? PARSE_FAIL : columnNameTxn;
+        }
+        if (kind != 'c') {
+            return PARSE_FAIL;
+        }
+        final int includeIdxLo = pos;
+        while (pos < fileLen && fileName.charAt(pos) >= '0' && fileName.charAt(pos) <= '9') {
+            pos++;
+        }
+        if (pos == includeIdxLo || pos == fileLen || fileName.charAt(pos) != '.') {
+            return PARSE_FAIL;
+        }
+        pos++;
+        final int hostDot = nextDot(fileName, pos, fileLen);
+        if (hostDot < 0) {
+            return PARSE_FAIL;
+        }
+        final long hostTxn = parseTxnSegment(fileName, pos, hostDot);
+        final int secondDot = nextDot(fileName, hostDot + 1, fileLen);
+        final boolean isTailValid = secondDot < 0
+                ? parseTxnSegment(fileName, hostDot + 1, fileLen) != PARSE_FAIL
+                : parseTxnSegment(fileName, hostDot + 1, secondDot) != PARSE_FAIL
+                  && parseTxnSegment(fileName, secondDot + 1, fileLen) != PARSE_FAIL;
+        return isTailValid ? hostTxn : PARSE_FAIL;
     }
 
     /**
@@ -1986,6 +1950,7 @@ public final class PostingIndexUtils {
             int type,
             StringSink fileName,
             CharSequence columnName,
+            long postingColumnNameTxn,
             SealedFileVisitor visitor
     ) {
         if (type != Files.DT_FILE && type != Files.DT_LNK && type != Files.DT_UNKNOWN) {
@@ -1993,7 +1958,115 @@ public final class PostingIndexUtils {
         }
         fileName.clear();
         Utf8s.utf8ToUtf16Z(pUtf8NameZ, fileName);
-        parseSealedFileName(fileName, columnName, visitor);
+        parseSealedFileName(fileName, columnName, postingColumnNameTxn, visitor);
+    }
+
+    /**
+     * Parses a directory entry name and dispatches to the visitor if it matches
+     * a sealed-file pattern of the posting column instance {@code columnName},
+     * {@code postingColumnNameTxn}.
+     * <p>
+     * Recognised patterns (segment indices use 0-based dot splits):
+     * <ul>
+     *   <li>{@code <columnName>.pv[.<postingColumnNameTxn>].<sealTxn>} — value file,
+     *   no txn segment for {@code COLUMN_NAME_TXN_NONE}</li>
+     *   <li>{@code <columnName>.pc<includeIdx>.<coverFileHostTxn>[.<coveredColumnNameTxn>].<sealTxn>}
+     *   — cover data file, see {@link #coverFileHostTxn(long)}</li>
+     * </ul>
+     * Files that do not match (different column or instance, .pk, .pci, partition data, etc.)
+     * are silently ignored.
+     */
+    private static void parseSealedFileName(
+            CharSequence fileName,
+            CharSequence columnName,
+            long postingColumnNameTxn,
+            SealedFileVisitor visitor
+    ) {
+        int nameLen = columnName.length();
+        int fileLen = fileName.length();
+        if (fileLen < nameLen + 4) {
+            return;
+        }
+        for (int i = 0; i < nameLen; i++) {
+            if (fileName.charAt(i) != columnName.charAt(i)) {
+                return;
+            }
+        }
+        if (fileName.charAt(nameLen) != '.') {
+            return;
+        }
+        int pos = nameLen + 1;
+        if (pos + 1 >= fileLen || fileName.charAt(pos) != 'p') {
+            return;
+        }
+        char kind = fileName.charAt(pos + 1);
+        if (kind != 'v' && kind != 'c') {
+            return;
+        }
+        pos += 2;
+        int includeIdx = -1;
+        if (kind == 'c') {
+            int idxStart = pos;
+            while (pos < fileLen && fileName.charAt(pos) != '.') {
+                char ch = fileName.charAt(pos);
+                if (ch < '0' || ch > '9') {
+                    return;
+                }
+                pos++;
+            }
+            if (pos == idxStart || pos >= fileLen) {
+                return;
+            }
+            try {
+                includeIdx = Numbers.parseInt(fileName, idxStart, pos);
+            } catch (NumericException e) {
+                return;
+            }
+        }
+        if (pos >= fileLen || fileName.charAt(pos) != '.') {
+            return;
+        }
+        pos++;
+
+        if (kind == 'v') {
+            int dot = nextDot(fileName, pos, fileLen);
+            long columnNameTxn;
+            long sealTxn;
+            if (dot < 0) {
+                columnNameTxn = COLUMN_NAME_TXN_NONE;
+                sealTxn = parseTxnSegment(fileName, pos, fileLen);
+            } else {
+                columnNameTxn = parseTxnSegment(fileName, pos, dot);
+                sealTxn = parseTxnSegment(fileName, dot + 1, fileLen);
+            }
+            if (columnNameTxn != postingColumnNameTxn || sealTxn == PARSE_FAIL) {
+                return;
+            }
+            visitor.onValueFile(sealTxn);
+            return;
+        }
+
+        int hostDot = nextDot(fileName, pos, fileLen);
+        if (hostDot < 0) {
+            return;
+        }
+        if (parseTxnSegment(fileName, pos, hostDot) != coverFileHostTxn(postingColumnNameTxn)) {
+            return;
+        }
+        long coveredColumnNameTxn;
+        long sealTxn;
+        int secondDot = nextDot(fileName, hostDot + 1, fileLen);
+        if (secondDot < 0) {
+            coveredColumnNameTxn = COLUMN_NAME_TXN_NONE;
+            sealTxn = parseTxnSegment(fileName, hostDot + 1, fileLen);
+        } else {
+            coveredColumnNameTxn = parseTxnSegment(fileName, hostDot + 1, secondDot);
+            sealTxn = parseTxnSegment(fileName, secondDot + 1, fileLen);
+        }
+        if (coveredColumnNameTxn == PARSE_FAIL || sealTxn == PARSE_FAIL) {
+            return;
+        }
+        visitor.onCoverDataFile(includeIdx, coveredColumnNameTxn, sealTxn);
     }
 
     private static long parseTxnSegment(CharSequence s, int from, int end) {
@@ -2208,21 +2281,21 @@ public final class PostingIndexUtils {
     }
 
     /**
-     * Receives one callback per sealed file discovered by {@link #scanSealedFiles}.
-     * Implementations are typically used to enumerate orphan files for purge or
-     * crash recovery.
+     * Receives one callback per sealed file of the scanned posting column instance
+     * that {@link #scanSealedFiles} discovers. Implementations are typically used to
+     * enumerate orphan files for purge or crash recovery.
      */
     public interface SealedFileVisitor {
 
         /**
-         * Called for each {@code .pc<includeIdx>.<postingColumnNameTxn>.<coveredColumnNameTxn>.<sealTxn>} file.
+         * Called for each {@code .pc<includeIdx>.<postingColumnNameTxn>[.<coveredColumnNameTxn>].<sealTxn>} file.
          */
-        void onCoverDataFile(int includeIdx, long postingColumnNameTxn, long coveredColumnNameTxn, long sealTxn);
+        void onCoverDataFile(int includeIdx, long coveredColumnNameTxn, long sealTxn);
 
         /**
-         * Called for each {@code .pv.<postingColumnNameTxn>.<sealTxn>} file.
+         * Called for each {@code .pv[.<postingColumnNameTxn>].<sealTxn>} file.
          */
-        void onValueFile(long postingColumnNameTxn, long sealTxn);
+        void onValueFile(long sealTxn);
     }
 
     /**
@@ -2233,21 +2306,21 @@ public final class PostingIndexUtils {
     public static final class SealedFileRemover implements SealedFileVisitor {
         private final FindVisitor dirEntryVisitor = this::onDirEntry;
         private CharSequence columnName;
-        // The posting column name txn as the scan reports it for a cover data file.
-        private long coverFilePostingColumnNameTxn;
         private FilesFacade ff;
         private StringSink fileName;
         private boolean isAnyFailed;
+        // the .pc files of the host token 0 belong to instance 0, see removeAllSealedFiles()
+        private boolean isCoverDataOfInstanceZero;
         private Path path;
         private int pathTrimTo;
         private long postingColumnNameTxn;
 
         @Override
-        public void onCoverDataFile(int includeIdx, long filePostingColumnNameTxn, long coveredColumnNameTxn, long sealTxn) {
-            if (filePostingColumnNameTxn != coverFilePostingColumnNameTxn) {
+        public void onCoverDataFile(int includeIdx, long coveredColumnNameTxn, long sealTxn) {
+            if (isCoverDataOfInstanceZero) {
                 return;
             }
-            LPSZ p = coverDataFileName(path.trimTo(pathTrimTo), columnName, includeIdx, filePostingColumnNameTxn, coveredColumnNameTxn, sealTxn);
+            LPSZ p = coverDataFileName(path.trimTo(pathTrimTo), columnName, includeIdx, postingColumnNameTxn, coveredColumnNameTxn, sealTxn);
             if (!ff.removeQuiet(p) && ff.exists(p)) {
                 isAnyFailed = true;
             }
@@ -2255,11 +2328,8 @@ public final class PostingIndexUtils {
         }
 
         @Override
-        public void onValueFile(long fileColumnNameTxn, long sealTxn) {
-            if (fileColumnNameTxn != postingColumnNameTxn) {
-                return;
-            }
-            LPSZ p = valueFileName(path.trimTo(pathTrimTo), columnName, fileColumnNameTxn, sealTxn);
+        public void onValueFile(long sealTxn) {
+            LPSZ p = valueFileName(path.trimTo(pathTrimTo), columnName, postingColumnNameTxn, sealTxn);
             if (!ff.removeQuiet(p) && ff.exists(p)) {
                 isAnyFailed = true;
             }
@@ -2281,13 +2351,20 @@ public final class PostingIndexUtils {
             this.pathTrimTo = pathTrimTo;
             this.columnName = columnName;
             this.postingColumnNameTxn = postingColumnNameTxn;
-            this.coverFilePostingColumnNameTxn = coverFilePostingColumnNameTxn(postingColumnNameTxn);
             this.isAnyFailed = false;
             try {
                 LPSZ pciFile = coverInfoFileName(path.trimTo(pathTrimTo), columnName, postingColumnNameTxn);
                 if (ff.exists(pciFile) && !ff.removeQuiet(pciFile) && ff.exists(pciFile)) {
                     isAnyFailed = true;
                 }
+                // A .pc name writes instance NONE and instance 0 with the same host token 0. Both share a
+                // directory only after a change at table txn 0 in the default partition of a table that is not
+                // partitioned (DROP INDEX, ALTER COLUMN TYPE). Instance NONE committed no rows there and sealed
+                // no .pc file, so every .pc file of the token 0 belongs to instance 0. The change writes
+                // <columnName>.d.0 before it queues the purge of NONE, and only the purge of instance 0, which
+                // takes its .pc files too, removes it.
+                isCoverDataOfInstanceZero = postingColumnNameTxn == COLUMN_NAME_TXN_NONE
+                        && ff.exists(TableUtils.dFile(path.trimTo(pathTrimTo), columnName, 0));
                 fileName = Misc.getThreadLocalSink();
                 ff.iterateDir(path.trimTo(pathTrimTo).$(), dirEntryVisitor);
                 return isAnyFailed;
@@ -2301,7 +2378,7 @@ public final class PostingIndexUtils {
         }
 
         private void onDirEntry(long pUtf8NameZ, int type) {
-            parseSealedDirEntry(pUtf8NameZ, type, fileName, columnName, this);
+            parseSealedDirEntry(pUtf8NameZ, type, fileName, columnName, postingColumnNameTxn, this);
         }
     }
 

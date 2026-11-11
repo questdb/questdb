@@ -37,6 +37,7 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.Arrays;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -402,6 +403,202 @@ public class PostingIndexChainTest {
             Assert.assertTrue(sz >= 56 + n * 44);
             Assert.assertTrue(sz < 56 + n * 44 + 8);
         }
+    }
+
+    @Test
+    public void testFindVisibleBySealTxn() {
+        // sealTxns 1, 2 and 4 along the walk from head: 4 -> 2 -> 1, which pick() returns from txn 40, 20 to 39
+        // and 10 to 19
+        PostingIndexChainHeader.initialiseEmpty(mem);
+        long off1 = appendEntry(1, 10, PostingIndexUtils.V2_NO_HEAD);
+        long off2 = appendEntry(2, 20, off1);
+        long off4 = appendEntry(4, 40, off2);
+        publishHead(off4, /* count */ 3, /* genCounter */ 4);
+
+        PostingIndexChainHeader.Snapshot header = new PostingIndexChainHeader.Snapshot();
+        PostingIndexChainEntry.Snapshot entry = new PostingIndexChainEntry.Snapshot();
+        // {sealTxn, minPinnedTableTxn, txnAtSeal}: bounds below and at the txnAtSeal of each entry, and at the last
+        // txn that picks it
+        final long[][] visible = {
+                {4, Long.MIN_VALUE, 40}, {4, 0, 40}, {4, 40, 40}, {4, Long.MAX_VALUE - 1, 40},
+                {2, 0, 20}, {2, 20, 20}, {2, 39, 20},
+                {1, 0, 10}, {1, 19, 10}
+        };
+        for (long[] c : visible) {
+            Assert.assertEquals("sealTxn " + c[0] + ", min " + c[1], PostingIndexChainPicker.RESULT_OK,
+                    PostingIndexChainPicker.findVisibleBySealTxn(mem, c[0], c[1], header, entry));
+            Assert.assertEquals(c[0], entry.sealTxn);
+            Assert.assertEquals(c[2], entry.txnAtSeal);
+        }
+        // bounds at the first txn that picks a later entry, or past every txn, and sealTxns no entry names: above
+        // the head, between two entries, and below the oldest one, which walks off the chain
+        final long[][] invisible = {
+                {4, Long.MAX_VALUE}, {2, 40}, {2, 41}, {1, 20}, {1, Long.MAX_VALUE},
+                {5, 0}, {3, 0}, {0, 0}
+        };
+        for (long[] c : invisible) {
+            Assert.assertEquals("sealTxn " + c[0] + ", min " + c[1], PostingIndexChainPicker.RESULT_NO_VISIBLE_ENTRY,
+                    PostingIndexChainPicker.findVisibleBySealTxn(mem, c[0], c[1], header, entry));
+        }
+    }
+
+    @Test
+    public void testFindVisibleBySealTxnAgreesWithPick() {
+        // pick() is the reference: an entry is visible at or above a txn when pick() returns it for a txn at or above
+        // it. The shapes include entries of one txnAtSeal, the later of which hides the earlier at every txn, and
+        // an entry after one of a higher txnAtSeal, which hides it as well.
+        final long[][] txnAtSealsOfShapes = {
+                {5},
+                {0, 3, 3, 7},
+                {2, 4, 6, 8, 10},
+                {10, 30, 20, 40},
+                {1, 1, 1},
+                {5, 9, 6, 6, 12}
+        };
+        PostingIndexChainHeader.Snapshot header = new PostingIndexChainHeader.Snapshot();
+        PostingIndexChainEntry.Snapshot entry = new PostingIndexChainEntry.Snapshot();
+        PostingIndexChainEntry.Snapshot picked = new PostingIndexChainEntry.Snapshot();
+        for (long[] txnAtSeals : txnAtSealsOfShapes) {
+            PostingIndexChainHeader.initialiseEmpty(mem);
+            long offset = PostingIndexUtils.V2_NO_HEAD;
+            long maxTxnAtSeal = 0;
+            for (int i = 0; i < txnAtSeals.length; i++) {
+                // sealTxns 2, 4, 6, ...: the gaps are sealTxns that no entry names
+                offset = appendEntry(2L * (i + 1), txnAtSeals[i], offset);
+                maxTxnAtSeal = Math.max(maxTxnAtSeal, txnAtSeals[i]);
+            }
+            publishHead(offset, txnAtSeals.length, 2L * txnAtSeals.length);
+
+            for (long sealTxn = 0; sealTxn <= 2L * txnAtSeals.length + 1; sealTxn++) {
+                for (long minTxn = -1; minTxn <= maxTxnAtSeal + 1; minTxn++) {
+                    boolean isPicked = false;
+                    // above the highest txnAtSeal, pick() returns what it returns at it
+                    for (long txn = Math.max(minTxn, 0); txn <= maxTxnAtSeal + 1 && !isPicked; txn++) {
+                        isPicked = PostingIndexChainPicker.pick(mem, txn, header, picked) == PostingIndexChainPicker.RESULT_OK
+                                && picked.sealTxn == sealTxn;
+                    }
+                    final String message = "txnAtSeals " + Arrays.toString(txnAtSeals) + ", sealTxn " + sealTxn + ", min " + minTxn;
+                    final int result = PostingIndexChainPicker.findVisibleBySealTxn(mem, sealTxn, minTxn, header, entry);
+                    Assert.assertEquals(message, isPicked ? PostingIndexChainPicker.RESULT_OK : PostingIndexChainPicker.RESULT_NO_VISIBLE_ENTRY, result);
+                    if (isPicked) {
+                        Assert.assertEquals(message, sealTxn, entry.sealTxn);
+                        Assert.assertEquals(message, txnAtSeals[(int) (sealTxn / 2 - 1)], entry.txnAtSeal);
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    public void testFindVisibleBySealTxnCircularChainDetected() {
+        PostingIndexChainHeader.initialiseEmpty(mem);
+        long off1 = PostingIndexUtils.V2_ENTRY_REGION_BASE;
+        long off2 = off1 + PostingIndexChainEntry.entrySize(1);
+        PostingIndexChainEntry.writeHeader(mem, off1, 1, 10, 0, 0, 0, 1, 64, 0, off2);
+        PostingIndexChainEntry.writeHeader(mem, off2, 2, 20, 0, 0, 0, 1, 64, 0, off1);
+        publishHead(off2, /* count */ 2, 2, off2 + PostingIndexChainEntry.entrySize(1));
+
+        PostingIndexChainHeader.Snapshot header = new PostingIndexChainHeader.Snapshot();
+        PostingIndexChainEntry.Snapshot entry = new PostingIndexChainEntry.Snapshot();
+        Assert.assertEquals(PostingIndexChainPicker.RESULT_HEADER_UNREADABLE,
+                PostingIndexChainPicker.findVisibleBySealTxn(mem, 0, 0, header, entry));
+    }
+
+    @Test
+    public void testFindVisibleBySealTxnCorruptedLenDetected() {
+        PostingIndexChainHeader.Snapshot header = new PostingIndexChainHeader.Snapshot();
+        PostingIndexChainEntry.Snapshot entry = new PostingIndexChainEntry.Snapshot();
+        for (long len : new long[]{0L, -8L, 99_999_999L}) {
+            PostingIndexChainHeader.initialiseEmpty(mem);
+            long entryOffset = PostingIndexUtils.V2_ENTRY_REGION_BASE;
+            PostingIndexChainEntry.writeHeader(mem, entryOffset, 1, 10, 0, 0, 0, 1, 64, 0, PostingIndexUtils.V2_NO_HEAD);
+            mem.putLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_LEN, len);
+            publishHead(entryOffset, 1, 1, entryOffset + PostingIndexChainEntry.entrySize(1));
+            Assert.assertEquals("len " + len, PostingIndexChainPicker.RESULT_HEADER_UNREADABLE,
+                    PostingIndexChainPicker.findVisibleBySealTxn(mem, 1, 0, header, entry));
+        }
+    }
+
+    @Test
+    public void testFindVisibleBySealTxnCorruptedPrevPointerDetected() {
+        PostingIndexChainHeader.Snapshot header = new PostingIndexChainHeader.Snapshot();
+        PostingIndexChainEntry.Snapshot entry = new PostingIndexChainEntry.Snapshot();
+        // past the end of the entry region, and into the header pages before it
+        for (long prevEntryOffset : new long[]{999_999L, 64L}) {
+            PostingIndexChainHeader.initialiseEmpty(mem);
+            long entryOffset = PostingIndexUtils.V2_ENTRY_REGION_BASE;
+            PostingIndexChainEntry.writeHeader(mem, entryOffset, 2, 20, 0, 0, 0, 1, 64, 0, prevEntryOffset);
+            publishHead(entryOffset, 1, 2, entryOffset + PostingIndexChainEntry.entrySize(1));
+            Assert.assertEquals("prev " + prevEntryOffset, PostingIndexChainPicker.RESULT_HEADER_UNREADABLE,
+                    PostingIndexChainPicker.findVisibleBySealTxn(mem, 1, 0, header, entry));
+        }
+    }
+
+    @Test
+    public void testFindVisibleBySealTxnEmptyChain() {
+        PostingIndexChainHeader.initialiseEmpty(mem);
+
+        PostingIndexChainHeader.Snapshot header = new PostingIndexChainHeader.Snapshot();
+        PostingIndexChainEntry.Snapshot entry = new PostingIndexChainEntry.Snapshot();
+        Assert.assertEquals(PostingIndexChainPicker.RESULT_EMPTY_CHAIN,
+                PostingIndexChainPicker.findVisibleBySealTxn(mem, 1, 0, header, entry));
+    }
+
+    @Test
+    public void testFindVisibleBySealTxnEntryPastMappingDetected() {
+        // a head that a writer published past the end of the reader's mapping
+        PostingIndexChainHeader.initialiseEmpty(mem);
+        final long headOffset = mem.size() - 16;
+        publishHead(headOffset, 1, 1, mem.size() + 4096);
+
+        PostingIndexChainHeader.Snapshot header = new PostingIndexChainHeader.Snapshot();
+        PostingIndexChainEntry.Snapshot entry = new PostingIndexChainEntry.Snapshot();
+        Assert.assertEquals(PostingIndexChainPicker.RESULT_HEADER_UNREADABLE,
+                PostingIndexChainPicker.findVisibleBySealTxn(mem, 1, 0, header, entry));
+    }
+
+    @Test
+    public void testFindVisibleBySealTxnLenChangedAfterPeekDetected() {
+        // a writer that extends the head between the peek of its LEN and the read of the entry
+        final long[] lenOffset = {-1};
+        final int[] lenReads = {0};
+        mem = Misc.free(mem);
+        mem = new MemoryCARWImpl(64 * 1024, 4, MemoryTag.NATIVE_DEFAULT) {
+            @Override
+            public long getLong(long offset) {
+                final long value = super.getLong(offset);
+                return offset == lenOffset[0] && ++lenReads[0] == 2 ? value + 8 : value;
+            }
+        };
+        mem.jumpTo(64 * 1024);
+        for (long o = 0; o < 64 * 1024; o += 8) {
+            mem.putLong(o, 0L);
+        }
+        PostingIndexChainHeader.initialiseEmpty(mem);
+        long off1 = appendEntry(1, 10, PostingIndexUtils.V2_NO_HEAD);
+        publishHead(off1, 1, 1);
+        lenOffset[0] = off1 + PostingIndexUtils.V2_ENTRY_OFFSET_LEN;
+
+        PostingIndexChainHeader.Snapshot header = new PostingIndexChainHeader.Snapshot();
+        PostingIndexChainEntry.Snapshot entry = new PostingIndexChainEntry.Snapshot();
+        Assert.assertEquals(PostingIndexChainPicker.RESULT_HEADER_UNREADABLE,
+                PostingIndexChainPicker.findVisibleBySealTxn(mem, 1, 0, header, entry));
+        Assert.assertEquals(2, lenReads[0]);
+    }
+
+    @Test
+    public void testFindVisibleBySealTxnUnreadableHeader() {
+        PostingIndexChainHeader.initialiseEmpty(mem);
+        long off1 = appendEntry(1, 10, PostingIndexUtils.V2_NO_HEAD);
+        publishHead(off1, 1, 1);
+        // a publish in flight on both header pages: odd sequences that never settle
+        mem.putLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.V2_HEADER_OFFSET_SEQUENCE_START, 3);
+        mem.putLong(PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.V2_HEADER_OFFSET_SEQUENCE_START, 5);
+
+        PostingIndexChainHeader.Snapshot header = new PostingIndexChainHeader.Snapshot();
+        PostingIndexChainEntry.Snapshot entry = new PostingIndexChainEntry.Snapshot();
+        Assert.assertEquals(PostingIndexChainPicker.RESULT_HEADER_UNREADABLE,
+                PostingIndexChainPicker.findVisibleBySealTxn(mem, 1, 0, header, entry));
     }
 
     @Test

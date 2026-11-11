@@ -25,12 +25,14 @@
 package io.questdb.test.cairo.parquet;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ColumnPurgeJob;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.table.parquet.ParquetVersion;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -267,6 +269,9 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
 
             String oracleTable = walTable + "_oracle";
             fuzzer.createInitialTableNonWal(oracleTable, null);
+            // Native WAL twin: takes the same WAL transactions without the parquet conversion.
+            String twinTable = walTable + "_twin";
+            fuzzer.createInitialTableWal(twinTable, initialRowCount);
 
             // Insert rows into a later day so that 2022-02-24 is no longer
             // the active (last) partition and can be converted to Parquet.
@@ -276,6 +281,7 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
             // the Parquet partition as the last one for the later rounds.
             execute("INSERT INTO " + walTable + "(ts) VALUES ('2022-02-26T00:00:00.000000Z'), ('2022-02-26T00:00:01.000000Z')");
             execute("INSERT INTO " + oracleTable + "(ts) VALUES ('2022-02-26T00:00:00.000000Z'), ('2022-02-26T00:00:01.000000Z')");
+            execute("INSERT INTO " + twinTable + "(ts) VALUES ('2022-02-26T00:00:00.000000Z'), ('2022-02-26T00:00:01.000000Z')");
             drainWalQueue();
 
             final long partitionTs;
@@ -329,21 +335,39 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
                 ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(walTable, rnd, start, end);
                 try {
                     fuzzer.applyNonWal(transactions, oracleTable, rnd);
+                    // The twin applies with the same random choices as the WAL table.
+                    Rnd twinRnd = new Rnd(rnd.getSeed0(), rnd.getSeed1());
                     fuzzer.applyWal(transactions, walTable, 1, rnd);
+                    fuzzer.applyWal(transactions, twinTable, 1, twinRnd);
                 } finally {
                     Misc.freeObjListAndClear(transactions);
                 }
                 drainWalQueue();
+                drainColumnPurgeQueue();
             }
 
             assertSentinelPartitionSurvives(walTable);
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, oracleTable, walTable, LOG);
+                // assertSqlCursors ignores the order of rows with equal timestamps; the native twin
+                // pins it: an O3 row goes after every stored row of its timestamp
+                TestUtils.assertEqualsExactOrder(compiler, sqlExecutionContext, twinTable, walTable);
             }
 
             assertRowGroupSizes(walTable, rowGroupSize, true);
             assertParquetMetaInvariants(walTable);
         });
+    }
+
+    /**
+     * Runs ColumnPurgeJob, as a server's worker does, over the column version purges the round queued: the
+     * in-place index rebuilds of an ADAPTIVE WAL table and the column changes. A VACUUM that the fuzz generates
+     * fails once the queue is full, and no worker drains it in this test.
+     */
+    private static void drainColumnPurgeQueue() throws SqlException {
+        try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
+            purgeJob.run();
+        }
     }
 
     /**
@@ -606,6 +630,12 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
             // Create non-WAL oracle from the same data.
             String oracleTable = walTable + "_oracle";
             fuzzer.createInitialTableNonWal(oracleTable, null);
+            // Native WAL twin: takes the same WAL transactions without the parquet conversion. A failed
+            // WAL apply spreads the commits over several WAL writers, so the twin runs without failures.
+            final String twinTable = hasWalIoFailures ? null : walTable + "_twin";
+            if (twinTable != null) {
+                fuzzer.createInitialTableWal(twinTable, initialRowCount);
+            }
 
             if (hasSentinel) {
                 // Insert rows into a later day so that 2022-02-24 is not the last partition.
@@ -615,6 +645,9 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
                 // the Parquet partition as the last one for the later rounds.
                 execute("INSERT INTO " + walTable + "(ts) VALUES ('2022-02-26T00:00:00.000000Z'), ('2022-02-26T00:00:01.000000Z')");
                 execute("INSERT INTO " + oracleTable + "(ts) VALUES ('2022-02-26T00:00:00.000000Z'), ('2022-02-26T00:00:01.000000Z')");
+                if (twinTable != null) {
+                    execute("INSERT INTO " + twinTable + "(ts) VALUES ('2022-02-26T00:00:00.000000Z'), ('2022-02-26T00:00:01.000000Z')");
+                }
                 drainWalQueue();
             }
 
@@ -734,12 +767,16 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
                         walApplyCallsMax = Math.max(walApplyCallsMax, calls);
                         walApplyCallsMin = Math.min(walApplyCallsMin, calls);
                     } else {
+                        // The twin applies with the same random choices as the WAL table.
+                        Rnd twinRnd = new Rnd(rnd.getSeed0(), rnd.getSeed1());
                         fuzzer.applyWal(transactions, walTable, 1, rnd);
+                        fuzzer.applyWal(transactions, twinTable, 1, twinRnd);
                     }
                 } finally {
                     Misc.freeObjListAndClear(transactions);
                 }
                 drainWalQueue();
+                drainColumnPurgeQueue();
                 if (convertToParquetIfNative(walTable, partitionTsNative)) {
                     reconversions++;
                     LOG.info().$("round ").$(round).$(" left the partition native, converted it back to parquet").$();
@@ -769,6 +806,11 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
             }
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, oracleTable, walTable, LOG);
+                if (twinTable != null) {
+                    // assertSqlCursors ignores the order of rows with equal timestamps; the native twin
+                    // pins it: an O3 row goes after every stored row of its timestamp
+                    TestUtils.assertEqualsExactOrder(compiler, sqlExecutionContext, twinTable, walTable);
+                }
             }
 
             assertRowGroupSizes(walTable, rowGroupSize);

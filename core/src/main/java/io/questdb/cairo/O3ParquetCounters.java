@@ -48,7 +48,8 @@ public final class O3ParquetCounters {
     }
 
     /**
-     * Dedup commits identical to the partition, which leave it unchanged.
+     * Dedup commits that leave the partition unchanged: an UPSERT that resends rows the partition
+     * holds, or a SKIP whose dedup drops every O3 row of the partition.
      */
     @TestOnly
     public static long getDedupIdenticalCount() {
