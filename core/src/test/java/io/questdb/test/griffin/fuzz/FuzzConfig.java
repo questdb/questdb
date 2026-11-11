@@ -275,7 +275,8 @@ public final class FuzzConfig {
     /**
      * Whether a SAMPLE BY FILL at this interval over a join of two of this config's tables,
      * keyed on a column from each side, can emit more than {@link #MAX_JOIN_FILL_ROWS} rows.
-     * The smallest join key domain has 8 values, so at most an eighth of all row pairs join.
+     * The join keys sym and vk draw 8 values plus NULL with equal probability, and NULL keys
+     * match, so about a ninth of all row pairs join; an eighth leaves margin.
      */
     public boolean isJoinFillTooLarge(long intervalMicros) {
         final long joinedRows = (long) rowsPerTable * rowsPerTable / 8;
