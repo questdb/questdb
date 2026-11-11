@@ -119,11 +119,6 @@ public class GroupByLongTopKJob extends AbstractQueueConsumerJob<GroupByLongTopK
             failure = th;
         }
         try {
-            dispatcher.signalQueueProgress();
-        } catch (Throwable th) {
-            failure = Misc.foldCleanupFailure(failure, th);
-        }
-        try {
             runDetached(
                     workerId,
                     circuitBreaker,
