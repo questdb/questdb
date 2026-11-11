@@ -711,6 +711,23 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
                     "filter: v>=0",
                     "Frame backward scan on: zi"
             );
+            // ... LATEST ON a symbol without an index and with no filter, and on a column that is not a symbol, ...
+            assertOverrideDeniedInScan(
+                    "DECLARE OVERRIDABLE @c := 0 SELECT k2, @c AS o FROM (SELECT * FROM zi LATEST ON ts PARTITION BY k2)",
+                    "{zi=[?*, k2]}",
+                    "DECLARE @c := w SELECT * FROM v",
+                    "permission denied [table=zi, columns=w]",
+                    "LatestByDeferredListValuesFiltered",
+                    "Frame backward scan on: zi"
+            );
+            assertOverrideDeniedInScan(
+                    "DECLARE OVERRIDABLE @c := 0 SELECT v, @c AS o FROM (SELECT * FROM zi LATEST ON ts PARTITION BY v)",
+                    "{zi=[?*, v]}",
+                    "DECLARE @c := w SELECT * FROM v",
+                    "permission denied [table=zi, columns=w]",
+                    "LatestByAllFiltered",
+                    "Frame backward scan on: zi"
+            );
             // ... and the distinct values of a column with a posting index, without and with a filter on the
             // designated timestamp, beside a sub-query that the read that names o alone keeps whole
             assertOverrideDeniedInScan(
@@ -2129,6 +2146,41 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
     }
 
     @Test
+    public void testViewCreatorNeedsColumnsOfPlanThatScansNothing() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            execute("CREATE VIEW v_cols AS (SELECT k, a FROM x)");
+            drainWalAndViewQueues();
+            // The SAMPLE BY and the ASOF JOIN take ts, the designated timestamp of x, which v_cols lends to no read.
+            // The filter is false by default, so the plan of the SELECT scans nothing as the statement opens it, while
+            // a read that sets @f scans ts. The statement checks that the principal that records the view may read ts,
+            // which the view lends to its readers, also when the SELECT reads x itself.
+            final String[] viewSqls = {
+                    "DECLARE OVERRIDABLE @f := false SELECT k, count() n FROM v_cols WHERE @f SAMPLE BY 1h",
+                    "DECLARE OVERRIDABLE @f := false SELECT s.k, s.a, u.c FROM v_cols s ASOF JOIN y u WHERE @f",
+                    "DECLARE OVERRIDABLE @f := false SELECT k, count() n FROM x WHERE @f SAMPLE BY 1h"
+            };
+            final String accessDenied = "permission denied [table=x, column=ts]";
+            try (SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(new ColumnDenyingSecurityContext("x", "ts"), bindVariableService, null, -1, null)) {
+                execute("CREATE VIEW v AS (SELECT k FROM v_cols)", context);
+                drainWalAndViewQueues();
+                for (String viewSql : viewSqls) {
+                    TestUtils.assertContains(denialOf("CREATE VIEW v_empty AS (" + viewSql + ")", context), accessDenied);
+                    Assert.assertNull(engine.getTableTokenIfExists("v_empty"));
+                    TestUtils.assertContains(denialOf("ALTER VIEW v AS (" + viewSql + ")", context), accessDenied);
+                    TestUtils.assertContains(denialOf("CREATE OR REPLACE VIEW v AS (" + viewSql + ")", context), accessDenied);
+                    Assert.assertEquals("{v_cols=[], x=[k]}", dependenciesOf("v"));
+                }
+                execute("DROP VIEW v");
+                drainWalAndViewQueues();
+            }
+            // A principal that may read ts records the view, which lends ts to the reads that set @f.
+            assertReads(false, viewSqls[0], "{v_cols=[], x=[k, ts]}", "DECLARE @f := true SELECT * FROM v");
+            assertReads(false, viewSqls[1], "{v_cols=[], x=[a, k, ts], y=[c, ts]}", "DECLARE @f := true SELECT * FROM v");
+        });
+    }
+
+    @Test
     public void testViewOverViewLendsNoColumnThatViewLendsToNoRead() throws Exception {
         assertMemoryLeak(() -> {
             createTablesWithTwoTimestamps();
@@ -2270,6 +2322,20 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
                         "{x=[*], y=[*]}"
                 );
             }
+        });
+    }
+
+    @Test
+    public void testWildcardOfMatViewWithRowExpiryUnderLatestOn() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM x) EXPIRE ROWS WHEN a < 2");
+            drainWalAndMatViewQueues();
+            // The row-expiry policy makes a read of mv a sub-query that filters it, and the optimiser moves the scan of
+            // mv out of that sub-query into the model that runs LATEST ON, see SqlOptimiser.pushLatestByToTableModel().
+            // That scan reads every column the wildcard selects, whatever the read names.
+            assertReads("SELECT count() n FROM (SELECT * FROM mv LATEST ON ts PARTITION BY k)", "{mv=[*]}", "SELECT n FROM v");
+            assertReads("SELECT 1 one FROM (SELECT * FROM mv LATEST ON ts PARTITION BY a)", "{mv=[*]}", "SELECT one FROM v");
         });
     }
 

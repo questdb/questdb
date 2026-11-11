@@ -7125,6 +7125,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
             final boolean isOrderByCleared = optimiser.isOrderByCleared();
             SqlUtil.collectTableColumnReads(engine, queryModel, dependencies, viewWildcardSources, viewCompileRecord, true);
+            // The view lends its readers the columns its plan reads that no view it reads lends. Opening the plan
+            // checks the principal's permission on what it scans, but a plan that folds to an empty table, as by a
+            // filter an OVERRIDABLE variable makes false by default, scans nothing as it opens.
+            viewWildcardSources.authorizeOwnReads(executionContext.getSecurityContext());
             final boolean isReadPlannedOtherwise = viewWildcardSources.hasReadPlannedOtherwise();
             if (isReadPlannedOtherwise || isOrderByCleared) {
                 // before generation, which then finds a table that changed meanwhile out of date
