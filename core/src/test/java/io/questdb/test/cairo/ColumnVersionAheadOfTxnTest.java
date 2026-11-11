@@ -33,6 +33,7 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.TxWriter;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Files;
@@ -504,7 +505,8 @@ public class ColumnVersionAheadOfTxnTest extends AbstractCairoTest {
     }
 
     // One WAL transaction that merges a row into each of 200 day partitions written before column c, which gives
-    // them column tops in _cv, and adds 400 partitions to the table: its commit grows both _cv and _txn.
+    // them column tops in _cv, and adds 400 partitions to the table. Its commit writes _cv up to byte 6,584 and _txn
+    // up to byte 32,640, past the mappings that ApplyFaultFacade has their writers grow in 4 KB pages.
     private TableToken createTableWithPendingCommit() throws SqlException {
         execute("CREATE TABLE x (s SYMBOL, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
         execute("INSERT INTO x (s, v, ts) SELECT 'a', x::INT, dateadd('d', (x - 1)::INT, '2024-01-01T00:00:00.000000Z'::TIMESTAMP) FROM long_sequence(200)");
@@ -534,8 +536,16 @@ public class ColumnVersionAheadOfTxnTest extends AbstractCairoTest {
     }
 
     // Faults the first growth of _txn or _cv of table x while armed: allocate() or mremap() fails, or, for PAUSE,
-    // allocate() runs the test's code first, inside the commit.
+    // mremap() runs the test's code first, inside the commit.
+    //
+    // The pending commit of createTableWithPendingCommit() outgrows the mappings of _cv and _txn only when their
+    // writers map 4 KB pages, as on Linux x86-64. The 16 KB page of macOS arm64 holds the commit's _cv, and the 64 KB
+    // allocation granularity that Windows maps in holds its _txn too: there the commit would grow neither file. As
+    // TxnExtendFailingFacade does for _txn, this facade makes every platform behave as Linux. The _txn and _cv writers
+    // map their files in 4 KB pages, and while the allocate() fault is armed, the armed file reads as empty, so that
+    // its growth allocates disk space even when the platform created the file a page long.
     private static final class ApplyFaultFacade extends TestFilesFacadeImpl {
+        private static final long WRITER_PAGE_SIZE = 4 * 1024;
         private final Set<Long> cvFds = ConcurrentHashMap.newKeySet();
         private final AtomicInteger faultCount = new AtomicInteger();
         private final Set<Long> txnFds = ConcurrentHashMap.newKeySet();
@@ -551,9 +561,6 @@ public class ColumnVersionAheadOfTxnTest extends AbstractCairoTest {
             if (isFaulted(fd, Fault.ALLOCATE)) {
                 return false;
             }
-            if (isFaulted(fd, Fault.PAUSE)) {
-                pause.run();
-            }
             return super.allocate(fd, size);
         }
 
@@ -565,18 +572,28 @@ public class ColumnVersionAheadOfTxnTest extends AbstractCairoTest {
         }
 
         @Override
+        public long getPageSize() {
+            final long pageSize = super.getPageSize();
+            return pageSize > WRITER_PAGE_SIZE && isTxnOrCvWriterCalling() ? WRITER_PAGE_SIZE : pageSize;
+        }
+
+        @Override
         public long length(long fd) {
             if (isCvLengthFailureArmed && cvFds.contains(fd)) {
                 isCvLengthFailureArmed = false;
                 throw CairoException.critical(5).put("injected fstat failure [fd=").put(fd).put(']');
             }
-            return super.length(fd);
+            // a file at least as long as its grown mapping skips allocate()
+            return isArmed(fd, Fault.ALLOCATE) ? 0 : super.length(fd);
         }
 
         @Override
         public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
             if (isFaulted(fd, Fault.MREMAP)) {
                 return FilesFacade.MAP_FAILED;
+            }
+            if (isFaulted(fd, Fault.PAUSE)) {
+                pause.run();
             }
             return super.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
         }
@@ -599,8 +616,22 @@ public class ColumnVersionAheadOfTxnTest extends AbstractCairoTest {
             this.fault = fault;
         }
 
+        // Whether the _txn or _cv writer asks for the page size, which each does only to open its file. The other
+        // callers keep the page size of the platform: the configuration hands it to memory that maps pages at
+        // offsets of it.
+        private static boolean isTxnOrCvWriterCalling() {
+            return StackWalker.getInstance().walk(frames -> frames.anyMatch(frame -> {
+                final String className = frame.getClassName();
+                return TxWriter.class.getName().equals(className) || ColumnVersionWriter.class.getName().equals(className);
+            }));
+        }
+
+        private boolean isArmed(long fd, Fault kind) {
+            return fault == kind && (TXN_FILE_NAME.equals(faultFileName) ? txnFds : cvFds).contains(fd);
+        }
+
         private boolean isFaulted(long fd, Fault kind) {
-            if (fault != kind || !(TXN_FILE_NAME.equals(faultFileName) ? txnFds : cvFds).contains(fd)) {
+            if (!isArmed(fd, kind)) {
                 return false;
             }
             fault = Fault.NONE;
