@@ -418,6 +418,16 @@ public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursor
     }
 
     /**
+     * Sets the probe rows after which the factories that compile from here on switch from the shared
+     * stepper template to their stages' hidden copies, {@link AsyncHashJoinAtom#STEPPER_WARM_UP_ROWS}
+     * unless a test lowers it, as this does; 0 runs the copies from the first task.
+     */
+    @TestOnly
+    public static void setStepperWarmUpRowsForTesting(long rows) {
+        AsyncHashJoinAtom.setStepperWarmUpRows(rows);
+    }
+
+    /**
      * The serial hash join's rule: it hashes its left input and streams its right one when both
      * report a size and the left one is the smaller.
      */

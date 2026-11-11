@@ -39,7 +39,9 @@ import org.jetbrains.annotations.TestOnly;
  * key sink, its probe of the build, serial or partitioned, its SYMBOL key translation and its
  * filters. A shared copy of the lookup would profile every query's classes; see
  * {@link HiddenClassCopies}. {@link #newInstance()} therefore hands every stage a hidden copy of
- * {@link HashJoinStageStepperTemplate} of its own.
+ * {@link HashJoinStageStepperTemplate} of its own. A copy starts cold, so every stage also keeps an
+ * instance of the shared template, whose code the JVM has long compiled, and the operator runs those
+ * until it has probed enough rows to repay the copies' warm-up; see {@link AsyncHashJoinAtom}.
  * <p>
  * A stage's entry in a tuple is the locator of the build row that the probe row matches, see
  * {@code HashJoinPayloadSource.Reader.locator()}, {@link #NO_MATCH} for a LEFT join's miss, or a

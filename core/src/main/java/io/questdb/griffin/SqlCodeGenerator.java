@@ -2167,6 +2167,24 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return filter.supportsParallelism() && filter.isStableWithinExecution();
     }
 
+    /**
+     * True when a parallel hash join input's page frame scan reads Parquet frames as the query
+     * compiles: {@code read_parquet()}, or a scan of a table with Parquet partitions, whichever of
+     * them its intervals select. An execution reads the table as it stands then, which may differ.
+     */
+    private static boolean isParquetFrameScan(RecordCursorFactory frameScan, SqlExecutionContext executionContext) {
+        if (frameScan.mayHaveParquetPartitions(executionContext)) {
+            return true;
+        }
+        final TableToken tableToken = frameScan.getTableToken();
+        if (tableToken == null) {
+            return false;
+        }
+        try (TableReader reader = executionContext.getReader(tableToken)) {
+            return reader.hasParquetPartitions();
+        }
+    }
+
     private static boolean isSingleColumnFunction(ExpressionNode ast, CharSequence name) {
         return ast.type == FUNCTION && ast.paramCount == 1 && Chars.equalsIgnoreCase(ast.token, name) && ast.rhs.type == LITERAL;
     }
@@ -8670,6 +8688,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     // them reads from the first stage's payload: the left input's
                                     // columns as compiled, which lead the master's columns.
                                     parallelHashJoinSwapKeys = newParallelHashJoinStackSwapKeys(stack, listColumnFilterB, slaveToFree, listColumnFilterA);
+                                }
+                                if (parallelHashJoinKeys != null && isParallelHashJoinParquetVarSizeRead(
+                                        master,
+                                        slaveToFree,
+                                        slaveModel,
+                                        joinMetadata,
+                                        parallelHashJoinSwapKeys != null,
+                                        executionContext
+                                )) {
+                                    // The probe tasks would read a var-size payload of a Parquet
+                                    // build through a share of the decode cache, which it outgrows.
+                                    parallelHashJoinKeys = null;
                                 }
                                 if (parallelHashJoinKeys != null) {
                                     // The parallel hash join steals the inputs' filters, which cannot
@@ -15633,6 +15663,85 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         } else {
             out.add(node);
         }
+    }
+
+    /**
+     * True when the probe tasks of the parallel hash join that this join would plan, or join as a
+     * later stage, would read a STRING, VARCHAR, BINARY or ARRAY payload column of a build that reads
+     * Parquet frames as the query compiles, see {@link #isParquetFrameScan}: such a join keeps the
+     * ordinary plan, and a later join wraps the operator as an ordinary join. A probe task reads a
+     * stage's payload through its slot's reader, whose share of the Parquet decode cache such a
+     * payload outgrows, so that its matches decode the build's row groups again and again, and the
+     * payload copy holds fixed-size columns alone. The consumer reads the payload through a reader
+     * with the whole budget, so a join whose consumer alone reads such columns keeps the operator.
+     * <p>
+     * A probe task reads the columns that the join's LEFT ON residual and its post-join WHERE read,
+     * which the model holds before the operator absorbs the WHERE; the WHERE keeps the ordinary plan
+     * even when it would not run on the workers. A column of a build is a payload column: one of the
+     * slave's, or of a stage's of the master. A column of the left input is the probe record's, but
+     * for a join whose first join may swap its inputs: an execution that swaps them hashes the left
+     * input, whose columns its probe tasks then read from the first stage's payload, for the filters
+     * and, in a later join, for the join's keys.
+     *
+     * @param master          the join's master as compiled: an input that the operator may stream,
+     *                        or the operator that the join would join as a stage
+     * @param slave           the join's slave as compiled
+     * @param joinMetadata    the joined rows' metadata, the master's columns followed by the slave's
+     * @param isSwapCandidate true when the operator's first join may swap its inputs: the join's own,
+     *                        or the master's
+     */
+    private boolean isParallelHashJoinParquetVarSizeRead(
+            RecordCursorFactory master,
+            RecordCursorFactory slave,
+            IQueryModel slaveModel,
+            RecordMetadata joinMetadata,
+            boolean isSwapCandidate,
+            SqlExecutionContext executionContext
+    ) {
+        final AsyncHashJoinSpec spec = master instanceof AsyncHashJoinRecordCursorFactory join ? join.getSpec() : null;
+        final RecordMetadata masterMetadata = master.getMetadata();
+        final RecordCursorFactory leftScan = spec != null ? spec.getLeftInput().getFactory() : parallelHashJoinFrameScan(master);
+        if (isSwapCandidate && spec != null) {
+            // processJoinContext() left the master's key columns in B, the left input's.
+            for (int k = 0, n = listColumnFilterB.getColumnCount(); k < n; k++) {
+                if (ColumnType.isVarSize(masterMetadata.getColumnType(listColumnFilterB.getColumnIndexFactored(k)))) {
+                    if (isParquetFrameScan(leftScan, executionContext)) {
+                        return true;
+                    }
+                    break;
+                }
+            }
+        }
+        final IntHashSet columns = new IntHashSet();
+        final ExpressionNode residual = slaveModel.getOuterJoinExpressionClause();
+        if (residual != null) {
+            collectColumnIndexes(sqlNodeStack, joinMetadata, residual, columns);
+        }
+        final ExpressionNode postJoinWhere = slaveModel.getPostJoinWhereClause();
+        if (postJoinWhere != null) {
+            collectColumnIndexes(sqlNodeStack, joinMetadata, postJoinWhere, columns);
+        }
+        final int masterColumnCount = masterMetadata.getColumnCount();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final int column = columns.get(i);
+            if (!ColumnType.isVarSize(joinMetadata.getColumnType(column))) {
+                continue;
+            }
+            final boolean isParquetPayload;
+            if (column >= masterColumnCount) {
+                isParquetPayload = isParquetFrameScan(parallelHashJoinFrameScan(slave), executionContext);
+            } else {
+                // A master that is not the operator is the left input.
+                final int source = spec != null ? spec.getColumnSource(column) : 0;
+                isParquetPayload = source == 0
+                        ? isSwapCandidate && isParquetFrameScan(leftScan, executionContext)
+                        : isParquetFrameScan(spec.getStage(source - 1).getBuildInput().getFactory(), executionContext);
+            }
+            if (isParquetPayload) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

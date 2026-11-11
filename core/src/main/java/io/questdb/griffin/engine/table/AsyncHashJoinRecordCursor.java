@@ -64,6 +64,10 @@ import io.questdb.std.Os;
  * tuples are few, under a selective probe filter, keep more workers busy within the ring's budget.
  * {@code toTop()} probes again over the same builds, in the same orientation.
  * <p>
+ * The rows of every probe frame that the cursor collects count toward the factory's stepper
+ * warm-up, over all its executions, after which the tasks run the stages' hidden stepper copies
+ * rather than the shared template; see {@link AsyncHashJoinAtom#addProbedRows(long)}.
+ * <p>
  * Once the builds are done, and before the probe scan cuts its frames, the cursor caps the rows of
  * the probe's native frames at what a task's cap of tuples holds at the fan-out that the builds of
  * the stages whose matches the workers walk lead one to expect, see
@@ -451,6 +455,8 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
             atom.getRing().release(entryFrame);
         }
         if (cursor > -1) {
+            // The frame's rows count toward the factory's stepper warm-up, whatever its task did.
+            atom.addProbedRows(frameSequence.getTask(cursor).getFrameRowCount());
             frameSequence.collect(cursor, forceCollect);
             cursor = -1;
             // The record reads the task's frame memory, which the task releases on collection.

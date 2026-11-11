@@ -420,7 +420,12 @@ public class AsyncHashJoinBuildOnFilterTest extends AbstractCairoTest {
                 for (long minRows : new long[]{Long.MAX_VALUE, 0}) {
                     setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, minRows);
                     assertPushdown("t", "d", "t.k = d.k", "d.w % 3 = 0 AND d.w > t.v", "d.w % 3 = 0", false, 0);
-                    assertPushdown("t", "d", "t.k = d.k", "d.vch ~ 'v[12]' AND d.str IS NOT NULL", "d.vch ~ 'v[12]' AND d.str IS NOT NULL", true, 0);
+                    // A residual over d's VARCHAR and STRING, which the pairs would read from its
+                    // Parquet frames through a share of the decode budget when an execution runs it
+                    // over them, keeps the ordinary plan; one that computes a VARCHAR from a
+                    // fixed-size column pushes the same way.
+                    assertOrdinaryPlan("SELECT t.k, t.v, d.* FROM t t LEFT JOIN d d ON t.k = d.k AND d.vch ~ 'v[12]' AND d.str IS NOT NULL", sqlExecutionContext);
+                    assertPushdown("t", "d", "t.k = d.k", "d.w::VARCHAR ~ '[12]' AND d.w > 1", "d.w::VARCHAR ~ '[12]' AND d.w > 1", true, 0);
                     assertPushdown("t", "(SELECT * FROM d WHERE w > 2)", "t.sym = d.s", "d.s <> 's3' AND d.w < t.v", "d.s <> 's3'", false, 0);
                 }
             }
@@ -563,8 +568,12 @@ public class AsyncHashJoinBuildOnFilterTest extends AbstractCairoTest {
             // the pairs run the conjuncts that it governs; the others filter the build.
             final String build = "read_parquet('d.parquet')";
             assertPushdown("t", build, "t.k = d.k", "d.w % 3 = 0 AND d.w > t.v", "d.w % 3 = 0", false, 0);
-            assertPushdown("t", build, "t.k = d.k", "d.vch ~ 'v[12]' AND d.w > t.v", "d.vch ~ 'v[12]'", true, 0);
-            try (RecordCursorFactory factory = select("SELECT t.k, d.w FROM t LEFT JOIN read_parquet('d.parquet') d ON t.k = d.k AND d.vch ~ 'v[12]'")) {
+            assertPushdown("t", build, "t.k = d.k", "d.w::STRING ~ '[12]' AND d.w > t.v", "d.w::STRING ~ '[12]'", true, 0);
+            // A residual over d.vch, a VARCHAR that the pairs would read from read_parquet()'s frames
+            // through a share of the decode budget, keeps the ordinary plan.
+            assertOrdinaryPlan("SELECT t.k, t.v, d.* FROM t LEFT JOIN " + build + " d ON t.k = d.k AND d.vch ~ 'v[12]' AND d.w > t.v", sqlExecutionContext);
+            assertOrdinaryPlan("SELECT t.k, d.w FROM t LEFT JOIN read_parquet('d.parquet') d ON t.k = d.k AND d.vch ~ 'v[12]'", sqlExecutionContext);
+            try (RecordCursorFactory factory = select("SELECT t.k, d.w FROM t LEFT JOIN read_parquet('d.parquet') d ON t.k = d.k AND d.w::STRING ~ '[12]'")) {
                 TestUtils.assertContains(plan(factory, sqlExecutionContext), PUSHDOWN_RULE);
                 final HashJoinBuildStage stage = find(factory).getAtom().getStage(0);
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {

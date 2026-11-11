@@ -183,7 +183,14 @@ public class AsyncHashJoinModesTest extends AbstractCairoTest {
                     for (String build : STORAGES) {
                         for (String shape : STORAGE_SHAPES) {
                             final String sql = shape.replace("#t", "t_" + probe).replace("#d", "d_" + build);
-                            assertParallelHashJoin(sql, sqlExecutionContext);
+                            // The probe tasks would read d.vc, a VARCHAR, for the ON residual and the
+                            // post-join WHERE, from a build with Parquet frames, through a share of the
+                            // decode budget: such a join keeps the ordinary plan.
+                            if (!build.equals("native") && (shape.contains("AND d.vc <> ") || shape.contains("WHERE d.vc "))) {
+                                assertOrdinaryPlan(sql, sqlExecutionContext);
+                            } else {
+                                assertParallelHashJoin(sql, sqlExecutionContext);
+                            }
                         }
                     }
                 }

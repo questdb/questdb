@@ -336,12 +336,12 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(configuration.getCairoConfiguration().isSqlParallelHashJoinEnabled());
         Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getSqlParallelHashJoinTaskOutputMaxRows());
         // The query worker count, and with it the dispatch limit and the queue capacity, depends on
-        // the host's CPUs: min(dispatch limit, queue capacity) frames of 1,000,000 rows at 24 bytes.
+        // the host's CPUs: min(dispatch limit, queue capacity) frames of 1,000,000 rows at 48 bytes.
         Assert.assertEquals(
                 Math.min(
                         configuration.getCairoConfiguration().getSqlParallelFilterDispatchLimit(),
                         configuration.getCairoConfiguration().getPageFrameReduceQueueCapacity()
-                ) * 24_000_000L,
+                ) * 48_000_000L,
                 configuration.getCairoConfiguration().getSqlParallelHashJoinTupleRingMaxSize()
         );
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelReadParquetEnabled());
@@ -2562,29 +2562,29 @@ public class PropServerConfigurationTest {
     public void testParallelHashJoinTupleRingMaxSize() throws Exception {
         Properties properties = new Properties();
         // 32 query workers: dispatch limit min(32, 32) = 32, queue capacity min(4 * 32, 256) = 128,
-        // so 32 frames of 1,000,000 rows at 24 bytes per row.
+        // so 32 frames of 1,000,000 rows at 48 bytes per row, the tuples of a five-join stack.
         properties.setProperty("shared.query.worker.count", "32");
-        Assert.assertEquals(768_000_000, newPropServerConfiguration(properties).getCairoConfiguration().getSqlParallelHashJoinTupleRingMaxSize());
+        Assert.assertEquals(1_536_000_000, newPropServerConfiguration(properties).getCairoConfiguration().getSqlParallelHashJoinTupleRingMaxSize());
         // 4 query workers: dispatch limit 4, queue capacity 16.
         properties.setProperty("shared.query.worker.count", "4");
-        Assert.assertEquals(96_000_000, newPropServerConfiguration(properties).getCairoConfiguration().getSqlParallelHashJoinTupleRingMaxSize());
+        Assert.assertEquals(192_000_000, newPropServerConfiguration(properties).getCairoConfiguration().getSqlParallelHashJoinTupleRingMaxSize());
         // A dispatch limit above the queue capacity: the queue's 16 frames bound the ring.
         properties.setProperty("cairo.sql.parallel.filter.dispatch.limit", "100");
-        Assert.assertEquals(384_000_000, newPropServerConfiguration(properties).getCairoConfiguration().getSqlParallelHashJoinTupleRingMaxSize());
+        Assert.assertEquals(768_000_000, newPropServerConfiguration(properties).getCairoConfiguration().getSqlParallelHashJoinTupleRingMaxSize());
         // A queue capacity below the dispatch limit of 4.
         properties.remove("cairo.sql.parallel.filter.dispatch.limit");
         properties.setProperty("cairo.page.frame.reduce.queue.capacity", "2");
-        Assert.assertEquals(48_000_000, newPropServerConfiguration(properties).getCairoConfiguration().getSqlParallelHashJoinTupleRingMaxSize());
+        Assert.assertEquals(96_000_000, newPropServerConfiguration(properties).getCairoConfiguration().getSqlParallelHashJoinTupleRingMaxSize());
         // Smaller page frames: 2 frames of 1,000 rows.
         properties.setProperty("cairo.sql.page.frame.max.rows", "1000");
-        Assert.assertEquals(48_000, newPropServerConfiguration(properties).getCairoConfiguration().getSqlParallelHashJoinTupleRingMaxSize());
+        Assert.assertEquals(96_000, newPropServerConfiguration(properties).getCairoConfiguration().getSqlParallelHashJoinTupleRingMaxSize());
         // The largest page frames the server accepts, 2^24 rows, with the largest dispatch limit and
         // a queue capacity of 2^30, do not overflow.
         properties.setProperty("cairo.sql.page.frame.max.rows", "16777216");
         properties.setProperty("cairo.sql.parallel.filter.dispatch.limit", "2147483647");
         properties.setProperty("cairo.page.frame.reduce.queue.capacity", "1073741824");
         Assert.assertEquals(
-                432_345_564_227_567_616L,
+                864_691_128_455_135_232L,
                 newPropServerConfiguration(properties).getCairoConfiguration().getSqlParallelHashJoinTupleRingMaxSize()
         );
         properties.clear();

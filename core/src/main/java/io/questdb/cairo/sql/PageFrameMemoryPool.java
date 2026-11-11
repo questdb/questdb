@@ -195,6 +195,9 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     @Nullable
     private IntHashSet projection;
     private DirectLongList recordAtRows;
+    // The Parquet frames that navigateTo(int, PageFrameMemoryRecord) decoded on a cache miss since the
+    // pool was last bound; see getRecordFrameDecodeCount().
+    private long recordFrameDecodeCount;
 
     public PageFrameMemoryPool(CairoConfiguration configuration, long maxCacheBytes) {
         try {
@@ -294,6 +297,18 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     }
 
     /**
+     * The Parquet frames that {@link #navigateTo(int, PageFrameMemoryRecord)} decoded because its cache
+     * did not hold them, since the pool was last bound with {@code of()}: a frame counts once for each
+     * time the pool decodes it, again after it evicted it, and not for a navigation that its cache
+     * serves. The re-decode of a frame that a windowed frame memory navigation left decoded in part
+     * does not count; a pool that its owner navigates by records alone never holds such a frame.
+     */
+    @TestOnly
+    public long getRecordFrameDecodeCount() {
+        return recordFrameDecodeCount;
+    }
+
+    /**
      * Navigates to the given frame, potentially deserializing it to in-memory format
      * (for Parquet partitions). After this call, the input record can be used to access
      * any row within the frame.
@@ -368,6 +383,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     } else {
                         decodeAndAccount(frameIndex, parquetBuffers);
                     }
+                    recordFrameDecodeCount++;
                 } catch (Throwable th) {
                     // tryHit() unpinned the record's prior buffer, so any failure here leaves
                     // it evictable. Drop the stale binding so the fast path can't read freed
@@ -672,6 +688,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         this.decodeHint = hint;
         this.projection = projection;
         this.effectiveBudgetBytes = hint.applyTo(maxCacheBytes);
+        recordFrameDecodeCount = 0;
         Misc.free(parquetMetaDecoder);
         Misc.free(legacyDecoder);
         activeDecoder = null;

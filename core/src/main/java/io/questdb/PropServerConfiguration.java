@@ -2681,13 +2681,14 @@ public class PropServerConfiguration implements ServerConfiguration {
                         Integer.toString(sqlParallelHashJoinTaskOutputMaxRows));
             }
             // As many full-size probe frames as the join can have in flight, each holding the tuples
-            // of a two-join stack: a probe row id and one build locator per join, 8 bytes each.
+            // of a five-join stack: a probe row id and one build locator per join, 8 bytes each, so
+            // that stacks of up to five joins keep the whole window.
             final long parallelHashJoinRingFrames = Math.max(0, Math.min(sqlParallelFilterDispatchLimit, cairoPageFrameReduceQueueCapacity));
             this.sqlParallelHashJoinTupleRingMaxSize = getLongSize(
                     properties,
                     env,
                     PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TUPLE_RING_MAX_SIZE,
-                    parallelHashJoinRingFrames * sqlPageFrameMaxRows * 3 * Long.BYTES,
+                    parallelHashJoinRingFrames * sqlPageFrameMaxRows * 6 * Long.BYTES,
                     0
             );
             this.sqlParallelReadParquetEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_READ_PARQUET_ENABLED, defaultParallelSqlEnabled);

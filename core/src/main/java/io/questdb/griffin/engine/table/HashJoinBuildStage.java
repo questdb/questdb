@@ -50,6 +50,7 @@ import io.questdb.griffin.HashJoinKeyLayout;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.join.FrozenHashJoinBuild;
+import io.questdb.griffin.engine.join.HashJoinPayloadSource;
 import io.questdb.griffin.engine.join.IntHashJoinBuild;
 import io.questdb.griffin.engine.join.MapHashJoinBuild;
 import io.questdb.griffin.engine.join.SymbolKeyTranslatingRecord;
@@ -694,6 +695,44 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
      */
     public int getPartitionCount() {
         return isKeyStaged ? mapBuild.getPartitionCount() : intBuild.getPartitionCount();
+    }
+
+    /**
+     * Bytes of the open cursor's payload copy, which the execution's tracker counts; zero without one.
+     */
+    @TestOnly
+    public long getPayloadCopySize() {
+        return buildFrames.getCopySize();
+    }
+
+    /**
+     * The payload reader of a slot's probe of the open cursor's build: -1 for the owner's, 0 to the
+     * worker count less one for the workers', and, for a parallel hash join's stage, the worker count
+     * for the output slot's, which the join's consumer reads through. Null for a slot that has no
+     * probe yet. A test reads it while the cursor is open.
+     */
+    @TestOnly
+    public HashJoinPayloadSource.Reader getPayloadReader(int slotId) {
+        final FrozenHashJoinBuild.Probe probe = slots.getQuick(slotId + 1).getProbe();
+        return probe != null ? (HashJoinPayloadSource.Reader) probe.getRecord() : null;
+    }
+
+    /**
+     * The times that the payload readers of the open cursor's probes, every slot's, bound their page
+     * frame records since the probes were created; see
+     * {@link HashJoinBuildFrames#getRecordBindCount(HashJoinPayloadSource.Reader)}. A slot that has not
+     * probed adds nothing. A test reads it while the cursor is open and its tasks are done.
+     */
+    @TestOnly
+    public long getPayloadRecordBindCount() {
+        long count = 0;
+        for (int i = 0, n = slots.size(); i < n; i++) {
+            final FrozenHashJoinBuild.Probe probe = slots.getQuick(i).getProbe();
+            if (probe != null) {
+                count += HashJoinBuildFrames.getRecordBindCount((HashJoinPayloadSource.Reader) probe.getRecord());
+            }
+        }
+        return count;
     }
 
     /**
@@ -1444,6 +1483,11 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
     void bindProbes() {
         for (int i = 0, n = slots.size(); i < n; i++) {
             final Slot slot = slots.getQuick(i);
+            // A probe makes its payload reader when it is first bound, and keeps it. The output
+            // slot's readers read the payload of every row the join returns, so they take the whole
+            // Parquet decode budget, as the serial hash join's reader does, and the other slots'
+            // readers their shares of it.
+            buildFrames.setOutputReaders(i >= roundSlotCount);
             // Casting here, once per slot per execution, keeps the reducers' hot call sites
             // on a single probe implementation; see the monomorphic-reducer rule.
             if (isKeyStaged && isKeySourceSwapped && slot.swapProbeKeySink != null) {
@@ -1496,6 +1540,7 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
                 slot.probe = slot.intProbe;
             }
         }
+        buildFrames.setOutputReaders(false);
     }
 
     /**
@@ -1661,6 +1706,23 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
      * then read the copy. On failure the caller runs {@link #clear()}, which releases the copy.
      */
     void maybeCopyPayload(long probeRows, SqlExecutionCircuitBreaker circuitBreaker, PageFrameRoundDispatcher dispatcher) {
+        maybeCopyPayload(probeRows, false, circuitBreaker, dispatcher);
+    }
+
+    /**
+     * Copies the build's payload columns for a parallel hash join, as
+     * {@link #maybeCopyPayload(long, SqlExecutionCircuitBreaker, PageFrameRoundDispatcher)} copies
+     * them for the fused GROUP BY, unless a filter that the join stole from its probe input keeps
+     * the probe's rows: the probe's count is its frame rows, which such a filter thins, often to a
+     * few, whose matches then read too few build rows to repay the copy. Such a probe copies only a
+     * build whose Parquet frames with kept rows decode past a probe reader's share of the decode
+     * cache, see {@link HashJoinBuildFrames#isReaderCacheExceeded(long)}, which its matches could land
+     * on as often as the copy decodes them, since the readers would otherwise decode them again and
+     * again; and only within the copy's byte bound.
+     *
+     * @param isProbeFiltered true when the execution's probe input runs a filter that the join stole
+     */
+    void maybeCopyPayload(long probeRows, boolean isProbeFiltered, SqlExecutionCircuitBreaker circuitBreaker, PageFrameRoundDispatcher dispatcher) {
         assert frozen != null && !isPayloadCopied;
         final double minProbeRatio = isBuiltInRounds ? copyParallelMinProbeRatio : copyMinProbeRatio;
         final long buildRows = frozen.getRowCount();
@@ -1668,7 +1730,8 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
         final boolean isParquetOverReaderCache = isParquetReached
                 && parquetBuildRows > 0
                 && buildFrames.isReaderCacheExceeded(parquetFrameRows);
-        if (isPayloadCopyWorthIt(buildRows, parquetBuildRows, isParquetReached, isParquetOverReaderCache, buildFrames.getCopyRowSize(), probeRows, copyMaxSize, minProbeRatio)) {
+        if ((!isProbeFiltered || isParquetOverReaderCache)
+                && isPayloadCopyWorthIt(buildRows, parquetBuildRows, isParquetReached, isParquetOverReaderCache, buildFrames.getCopyRowSize(), probeRows, copyMaxSize, minProbeRatio)) {
             if (isBuiltInRounds) {
                 // A parallel build keeps each partition's rows in one region of the heap, so a pass in
                 // heap order would walk the frames once per partition, or it keeps each frame's rows

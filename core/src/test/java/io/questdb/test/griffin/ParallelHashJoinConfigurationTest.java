@@ -116,16 +116,16 @@ public class ParallelHashJoinConfigurationTest extends AbstractCairoTest {
         // The defaults follow the page frame size, the dispatch limit and the queue capacity of a
         // configuration that overrides them.
         Assert.assertEquals(4_096, new LimitedConfiguration(4_096, 4, 16).getSqlParallelHashJoinTaskOutputMaxRows());
-        // 4 frames of 4,096 rows at 24 bytes per row.
-        Assert.assertEquals(393_216, new LimitedConfiguration(4_096, 4, 16).getSqlParallelHashJoinTupleRingMaxSize());
+        // 4 frames of 4,096 rows at 48 bytes per row.
+        Assert.assertEquals(786_432, new LimitedConfiguration(4_096, 4, 16).getSqlParallelHashJoinTupleRingMaxSize());
         // The queue's 16 frames bound a larger dispatch limit.
-        Assert.assertEquals(1_572_864, new LimitedConfiguration(4_096, 64, 16).getSqlParallelHashJoinTupleRingMaxSize());
+        Assert.assertEquals(3_145_728, new LimitedConfiguration(4_096, 64, 16).getSqlParallelHashJoinTupleRingMaxSize());
         // A dispatch limit of 0 or below leaves no frame to size the budget from.
         Assert.assertEquals(0, new LimitedConfiguration(4_096, 0, 16).getSqlParallelHashJoinTupleRingMaxSize());
         Assert.assertEquals(0, new LimitedConfiguration(4_096, -1, 16).getSqlParallelHashJoinTupleRingMaxSize());
         // 2^30 frames of 2^24 rows, the largest frames the server accepts, fit a long.
         Assert.assertEquals(
-                432_345_564_227_567_616L,
+                864_691_128_455_135_232L,
                 new LimitedConfiguration(16_777_216, Integer.MAX_VALUE, 1_073_741_824).getSqlParallelHashJoinTupleRingMaxSize()
         );
     }
@@ -186,8 +186,8 @@ public class ParallelHashJoinConfigurationTest extends AbstractCairoTest {
         Assert.assertFalse(configuration.isSqlParallelHashJoinEnabled());
         Assert.assertEquals(1_000_000, configuration.getSqlParallelHashJoinTaskOutputMaxRows());
         // The dispatch limit is Integer.MAX_VALUE, so the queue capacity of 32 frames bounds the
-        // ring: 32 frames of 1,000,000 rows at 24 bytes per row.
-        Assert.assertEquals(768_000_000, configuration.getSqlParallelHashJoinTupleRingMaxSize());
+        // ring: 32 frames of 1,000,000 rows at 48 bytes per row.
+        Assert.assertEquals(1_536_000_000, configuration.getSqlParallelHashJoinTupleRingMaxSize());
     }
 
     // Creates a view over a base table with one row and refreshes the view with a refresh job that

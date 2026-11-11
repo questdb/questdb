@@ -480,13 +480,24 @@ public class AsyncHashJoinStackSwapTest extends AbstractCairoTest {
                     sqlExecutionContext.changePageFrameSizes(frameRows, frameRows);
                     // The swapped first stage hashes l's Parquet and native frames, and the later
                     // stages' keys read l's columns through its payload readers, which decode the
-                    // Parquet row group of each match, or through its copy.
+                    // Parquet row group of each match, or through its copy. A later join keyed on
+                    // l.str, a STRING, which the probe tasks would read from the Parquet frames of
+                    // the swapped first stage's payload, wraps the operator as an ordinary join.
                     for (String sql : new String[]{
                             "SELECT l.v, l.s, r.w, a.w1, b.w2, c.w3 FROM (SELECT ts, s, lk, ik, k, v FROM l) l JOIN r ON l.k = r.k"
                                     + " LEFT JOIN d1 a ON l.ik = a.ik JOIN d2 b ON l.lk = b.lk LEFT JOIN d3 c ON l.s = c.s",
                             "SELECT l.v, l.str, r.w, h.w2, g.w3 FROM l JOIN r ON l.k = r.k"
                                     + " LEFT JOIN d2 h ON l.lk = h.lk AND l.s = h.q LEFT JOIN d3 g ON l.str = g.str",
+                            // The swapped first stage's payload holds l.str, which the consumer reads.
+                            "SELECT l.v, l.str, r.w, h.w2 FROM l JOIN r ON l.k = r.k LEFT JOIN d2 h ON l.lk = h.lk AND l.s = h.q",
                     }) {
+                        if (sql.contains("ON l.str = ")) {
+                            final String plan = assertParallelHashJoin(sql, sqlExecutionContext);
+                            Assert.assertEquals(sql + '\n' + plan, 2, getStageCount(plan));
+                            Assert.assertEquals(sql + '\n' + plan, 1, countMatches(plan, "Hash Left Outer Join Light"));
+                            TestUtils.assertContains(plan, "inputSwap: when the left input is smaller");
+                            continue;
+                        }
                         assertSwappedStack(sql, countMatches(sql, " JOIN "), true);
                         try (RecordCursorFactory factory = select(sql)) {
                             final AsyncHashJoinRecordCursorFactory join = find(factory);

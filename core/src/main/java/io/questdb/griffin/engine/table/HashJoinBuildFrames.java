@@ -28,8 +28,10 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
-import io.questdb.cairo.vm.NullMemoryCMR;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -42,6 +44,8 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.vm.NullMemoryCMR;
+import io.questdb.cairo.vm.Vm;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.join.FrozenHashJoinBuild;
@@ -49,6 +53,7 @@ import io.questdb.griffin.engine.join.HashJoinPayloadSource;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
+import io.questdb.std.DirectByteSequenceView;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
@@ -65,7 +70,10 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rows;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.DirectString;
+import io.questdb.std.str.StableStringSource;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8SplitString;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
@@ -83,16 +91,20 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
  * Matches land on build rows in no particular order, so consecutive matches often sit in
  * different frames, and a reader cannot afford to rebind a record per match. The owner therefore
  * lays out the page address of every payload column of every native frame in one flat table, once
- * per execution, and every reader's fixed-size and SYMBOL getters read through it, returning the
- * nulls a page frame record returns for a column the frame lacks. A Parquet frame, and a getter
- * without such a path, reads through the reader's own page frame memory pool and record over the
- * shared, read-only address cache. That pool decodes the payload columns of a Parquet frame alone:
+ * per execution, with the aux page address and both page sizes of a STRING, VARCHAR, BINARY or
+ * ARRAY column, and every reader's fixed-size, SYMBOL and var-size getters read through it,
+ * returning the nulls a page frame record returns for a column the frame lacks. A Parquet frame,
+ * and a getter without such a path, a wide decimal or a LONG256 read where it lives, reads through
+ * the reader's own page frame memory pool and record over the shared, read-only address cache.
+ * That pool decodes the payload columns of a Parquet frame alone:
  * no reader reads another column of the build scan, such as a key, which the key table holds, or a
  * column that only the build's own filters read. Every reader of the execution decodes and caches
  * the row groups that its own matches land on, so the readers share the configured Parquet decode
  * cache budget, see {@link #HashJoinBuildFrames(CairoConfiguration, IntList, RecordMetadata, int)},
  * and a reader whose matches alternate between more row groups than its share holds decodes them
- * again. To spare the readers that cost, the owner copies a payload that fits the copy whenever
+ * again. A parallel hash join's output reader, which reads the payload of every joined row, takes
+ * the whole budget instead, as the serial hash join's reader of its build does; see
+ * {@link #setOutputReaders(boolean)}. To spare the readers that cost, the owner copies a payload that fits the copy whenever
  * the build's Parquet frames decode past a reader's share, see
  * {@link #isReaderCacheExceeded(long)}, for a probe whose matches can land on as many of those
  * frames as the copy decodes, and otherwise when the probe repays the copy; see
@@ -114,6 +126,9 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable, QuietCloseable {
     // The copy pass checks the breaker once per this many rows; a power of two.
     private static final int COPY_ROWS_PER_CHECK = 64 * 1024;
+    // The source of the strings that a reader reads from a native frame, whose pages stay mapped
+    // until the execution ends.
+    private static final StableStringSource STABLE = () -> true;
     private final PageFrameAddressCache addressCache = new PageFrameAddressCache();
     private final CairoConfiguration configuration;
     // Byte offset of each payload column within a copied row; empty when the payload cannot be copied.
@@ -126,9 +141,18 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
     // the planner admits as fixed-size alone; see isReaderCacheExceeded().
     private final int decodedRowSize;
     private final LongList frameRowCounts = new LongList();
+    // True when a payload column is a STRING, VARCHAR, BINARY or ARRAY, whose native reads need the
+    // aux page and both page sizes as well; see payloadAuxAddresses.
+    private final boolean hasVarSizePayload;
     // Page address of payload column c of native frame f at f * payloadColumns.length + c; zero for a
     // column the frame lacks, and for every column of a Parquet frame, which the readers decode.
     private final LongList payloadAddresses = new LongList();
+    // For a payload with a var-size column, laid out as payloadAddresses: the aux page address and
+    // the sizes of both pages of each column of each native frame, zero for a fixed-size column, a
+    // column the frame lacks and a Parquet frame; empty for a payload of fixed-size columns alone.
+    private final LongList payloadAuxAddresses = new LongList();
+    private final LongList payloadAuxSizes = new LongList();
+    private final LongList payloadSizes = new LongList();
     // The build scan columns of the payload, the only columns of a Parquet frame that a reader's pool
     // decodes; every pool reads it, and none changes it.
     private final IntHashSet payloadColumnSet = new IntHashSet();
@@ -144,6 +168,9 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
     private long copyAddress;
     private long copyCapacity;
     private PageFrameCursor frameCursor;
+    // True while the readers that newReader() creates read a parallel hash join's output, which take
+    // the whole Parquet decode cache budget; see setOutputReaders().
+    private boolean isOutputReaders;
     @Nullable
     private MemoryTracker memoryTracker;
     // The copy that copyRows() fills until publishCopy() hands it to the readers; zero otherwise.
@@ -167,7 +194,9 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
      * cursor that walks its frames in order: the readers of an execution hold at most
      * max(budget, readerCount * budget / 4) between them, and a reader whose matches land on more
      * row groups than its share holds decodes them again, see {@link #isReaderCacheExceeded(long)}.
-     * The copy readers walk the build's frames in order, and keep the configured budget.
+     * The copy readers walk the build's frames in order, and keep the configured budget, and so does
+     * a parallel hash join's output reader, one of the {@code readerCount}; see
+     * {@link #setOutputReaders(boolean)}.
      */
     public HashJoinBuildFrames(
             CairoConfiguration configuration,
@@ -184,6 +213,7 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
         this.payloadTypes = new int[n];
         final int[] offsets = new int[n];
         boolean isCopyable = n > 0;
+        boolean hasVarSizePayload = false;
         int decodedRowSize = 0;
         int offset = 0;
         int rowAlignment = 1;
@@ -195,6 +225,7 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
             this.payloadSymbols[i] = type == ColumnType.SYMBOL;
             this.payloadTypes[i] = type;
             payloadColumnSet.add(column);
+            hasVarSizePayload |= isVarSize(type);
             decodedRowSize += Math.max(ColumnType.sizeOf(columnType), 0);
             final int size = getCopySize(type);
             if (size < 0) {
@@ -211,6 +242,46 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
         this.copyOffsets = isCopyable ? offsets : new int[0];
         this.copyRowSize = isCopyable ? (offset + rowAlignment - 1) & -rowAlignment : 0;
         this.decodedRowSize = decodedRowSize;
+        this.hasVarSizePayload = hasVarSizePayload;
+    }
+
+    /**
+     * The times that a reader bound its page frame record to another frame, for a read that the
+     * reader's address table cannot serve: a read of a Parquet frame, or of a wide decimal or a
+     * LONG256 that the reader does not copy. Every other read of a native frame, var-size columns
+     * included, goes through the table, so a test reads it to see that it binds none for them.
+     */
+    @TestOnly
+    public static long getRecordBindCount(HashJoinPayloadSource.Reader reader) {
+        return ((Reader) reader).recordBindCount;
+    }
+
+    /**
+     * The bytes of decoded Parquet row groups that a reader's cache holds now.
+     */
+    @TestOnly
+    public static long getReaderCachedBytes(HashJoinPayloadSource.Reader reader) {
+        return ((Reader) reader).pool.getCachedBytes();
+    }
+
+    /**
+     * The bytes of the Parquet decode cache that a reader caches decoded row groups in: a probe
+     * reader's share of the configured budget, see {@link #getReaderCacheSize()}, or, for an output
+     * reader, the whole budget; see {@link #setOutputReaders(boolean)}.
+     */
+    @TestOnly
+    public static long getReaderCacheSize(HashJoinPayloadSource.Reader reader) {
+        return ((Reader) reader).cacheSize;
+    }
+
+    /**
+     * The Parquet frames that a reader decoded since the execution bound it: a frame counts once for
+     * each time the reader decodes it, again after its cache evicted it, and not for a match that its
+     * cache serves. A copy decodes nothing through the probes' readers.
+     */
+    @TestOnly
+    public static long getReaderFrameDecodeCount(HashJoinPayloadSource.Reader reader) {
+        return ((Reader) reader).pool.getRecordFrameDecodeCount();
     }
 
     /**
@@ -272,6 +343,9 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
         failure = Misc.freeBestEffort(failure, addressCache);
         frameRowCounts.clear();
         payloadAddresses.clear();
+        payloadAuxAddresses.clear();
+        payloadAuxSizes.clear();
+        payloadSizes.clear();
         rowCount = 0;
         memoryTracker = null;
         CairoException.rethrowCleanupFailure(failure);
@@ -332,6 +406,13 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
 
     public PageFrameAddressCache getAddressCache() {
         return addressCache;
+    }
+
+    /**
+     * Bytes of the execution's payload copy, zero without one.
+     */
+    public long getCopySize() {
+        return copyCapacity;
     }
 
     public int getFrameCount() {
@@ -411,18 +492,33 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
             rowCount += frameRows;
         }
         final DirectLongList pageAddresses = addressCache.getPageAddresses();
+        final DirectLongList auxPageAddresses = addressCache.getAuxPageAddresses();
+        final DirectLongList pageSizes = addressCache.getPageSizes();
+        final DirectLongList auxPageSizes = addressCache.getAuxPageSizes();
         for (int f = 0; f < frameIndex; f++) {
             final boolean isNative = addressCache.getFrameFormat(f) == PartitionFormat.NATIVE;
             final int columnOffset = addressCache.toColumnOffset(f);
-            for (int column : payloadColumns) {
-                payloadAddresses.add(isNative ? pageAddresses.get(columnOffset + column) : 0);
+            for (int c = 0, n = payloadColumns.length; c < n; c++) {
+                final long index = columnOffset + payloadColumns[c];
+                payloadAddresses.add(isNative ? pageAddresses.get(index) : 0);
+                if (hasVarSizePayload) {
+                    final boolean isDirectVarSize = isNative && isVarSize(payloadTypes[c]);
+                    payloadAuxAddresses.add(isDirectVarSize ? auxPageAddresses.get(index) : 0);
+                    payloadSizes.add(isDirectVarSize ? pageSizes.get(index) : 0);
+                    payloadAuxSizes.add(isDirectVarSize ? auxPageSizes.get(index) : 0);
+                }
             }
         }
     }
 
+    /**
+     * A reader whose cache takes a probe reader's share of the Parquet decode cache budget, see
+     * {@link #getReaderCacheSize()}, or, while {@link #setOutputReaders(boolean)} says so, the whole
+     * budget.
+     */
     @Override
     public HashJoinPayloadSource.Reader newReader() {
-        return new Reader(getReaderCacheSize());
+        return new Reader(isOutputReaders ? configuration.getSqlParquetCacheMemorySize() : getReaderCacheSize());
     }
 
     /**
@@ -438,6 +534,20 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
         copyCapacity = pendingCopySize;
         pendingCopyAddress = 0;
         pendingCopySize = 0;
+    }
+
+    /**
+     * Makes the readers that {@link #newReader()} creates from here on, until a call with false, the
+     * readers of a parallel hash join's output, which take the whole Parquet decode cache budget
+     * rather than a probe reader's share of it. The join's consumer positions its output reader on
+     * the match of every row it returns, in the probe's order, so the reader decodes the row groups
+     * that the matches land on as the serial hash join's reader of its build does, with the budget
+     * that one has: a share of it would decode a build whose payload outgrew the share again and
+     * again. The probe slots' readers keep their shares, and so do the readers of the fused GROUP BY,
+     * which has no output reader. A reader keeps its budget for the life of the frames.
+     */
+    public void setOutputReaders(boolean isOutputReaders) {
+        this.isOutputReaders = isOutputReaders;
     }
 
     /**
@@ -498,6 +608,14 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
      */
     public void open(PageFrameCursor frameCursor, RecordMetadata buildMetadata, SqlExecutionContext executionContext) {
         open0(frameCursor, buildMetadata, executionContext.getMemoryTracker());
+    }
+
+    // A type whose values live in a data page that an aux page indexes.
+    private static boolean isVarSize(int type) {
+        return switch (type) {
+            case ColumnType.STRING, ColumnType.VARCHAR, ColumnType.BINARY, ColumnType.ARRAY -> true;
+            default -> false;
+        };
     }
 
     /**
@@ -598,6 +716,14 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
      * row's ordinal once the execution's copy is published.
      */
     private final class Reader implements HashJoinPayloadSource.Reader {
+        // The flyweights that the var-size getters return for a native frame, one per var-size
+        // payload column, and a second set for the B getters of STRING and VARCHAR; null for other
+        // columns. A native frame's pages stay mapped until the execution ends, so the strings are
+        // stable, as a page frame record's are over a native frame.
+        private final BorrowedArray[] arrays;
+        private final DirectByteSequenceView[] binaries;
+        // The bytes of the Parquet decode cache that the reader's pool caches decoded row groups in.
+        private final long cacheSize;
         // Scratch sinks of the copy pass, which reads the two wide decimals through a sink alone;
         // null for a payload without them.
         private final Decimal128 decimal128;
@@ -608,6 +734,10 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
         private final Long256Impl[] long256B;
         private final PageFrameMemoryPool pool;
         private final BuildRecord record = new BuildRecord();
+        private final DirectString[] stringsA;
+        private final DirectString[] stringsB;
+        private final Utf8SplitString[] varcharsA;
+        private final Utf8SplitString[] varcharsB;
         // Where the current frame's payload addresses start in the shared table.
         private int addressBase;
         // The copied row of the current match, or zero while the reader reads the columns where they live.
@@ -617,15 +747,24 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
         private boolean isDirect;
         // The current row's locator: its ordinal while the reader reads the copy, its id otherwise.
         private long locator;
+        // The times the record bound to another frame; see getRecordBindCount().
+        private long recordBindCount;
         // The frame the record is bound to; the record binds only for a read the table cannot serve.
         private int recordFrameIndex = -1;
         private long row;
 
         private Reader(long cacheSize) {
+            this.cacheSize = cacheSize;
             pool = new PageFrameMemoryPool(configuration, cacheSize);
             final int n = payloadTypes.length;
             long256A = new Long256Impl[n];
             long256B = new Long256Impl[n];
+            arrays = new BorrowedArray[n];
+            binaries = new DirectByteSequenceView[n];
+            stringsA = new DirectString[n];
+            stringsB = new DirectString[n];
+            varcharsA = new Utf8SplitString[n];
+            varcharsB = new Utf8SplitString[n];
             boolean hasDecimal128 = false;
             boolean hasDecimal256 = false;
             for (int i = 0; i < n; i++) {
@@ -636,6 +775,16 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
                     }
                     case ColumnType.DECIMAL128 -> hasDecimal128 = true;
                     case ColumnType.DECIMAL256 -> hasDecimal256 = true;
+                    case ColumnType.STRING -> {
+                        stringsA[i] = new DirectString(STABLE);
+                        stringsB[i] = new DirectString(STABLE);
+                    }
+                    case ColumnType.VARCHAR -> {
+                        varcharsA[i] = new Utf8SplitString(STABLE);
+                        varcharsB[i] = new Utf8SplitString(STABLE);
+                    }
+                    case ColumnType.BINARY -> binaries[i] = new DirectByteSequenceView();
+                    case ColumnType.ARRAY -> arrays[i] = new BorrowedArray();
                     default -> {
                     }
                 }
@@ -657,16 +806,48 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
 
         @Override
         public ArrayView getArray(int col, int columnType) {
+            if (isDirect) {
+                // As a page frame record reads it: the aux page, absent for a column top, says NULL.
+                final BorrowedArray array = arrays[col];
+                final int index = addressBase + col;
+                final long auxAddress = payloadAuxAddresses.getQuick(index);
+                if (auxAddress != 0) {
+                    final long dataAddress = payloadAddresses.getQuick(index);
+                    array.of(
+                            columnType,
+                            auxAddress,
+                            auxAddress + payloadAuxSizes.getQuick(index),
+                            dataAddress,
+                            dataAddress + payloadSizes.getQuick(index),
+                            row
+                    );
+                } else {
+                    array.ofNull();
+                }
+                return array;
+            }
             return record().getArray(payloadColumns[col], columnType);
         }
 
         @Override
         public BinarySequence getBin(int col) {
+            if (isDirect) {
+                final long address = varSizeValueAddress(col);
+                if (address != 0) {
+                    final long len = Unsafe.getLong(address);
+                    return len != TableUtils.NULL_LEN ? binaries[col].of(address + Long.BYTES, len) : null;
+                }
+                return NullMemoryCMR.INSTANCE.getBin(0);
+            }
             return record().getBin(payloadColumns[col]);
         }
 
         @Override
         public long getBinLen(int col) {
+            if (isDirect) {
+                final long address = varSizeValueAddress(col);
+                return address != 0 ? Unsafe.getLong(address) : NullMemoryCMR.INSTANCE.getBinLen(0);
+            }
             return record().getBinLen(payloadColumns[col]);
         }
 
@@ -956,16 +1137,26 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
 
         @Override
         public CharSequence getStrA(int col) {
+            if (isDirect) {
+                return directStr(col, stringsA[col]);
+            }
             return record().getStrA(payloadColumns[col]);
         }
 
         @Override
         public CharSequence getStrB(int col) {
+            if (isDirect) {
+                return directStr(col, stringsB[col]);
+            }
             return record().getStrB(payloadColumns[col]);
         }
 
         @Override
         public int getStrLen(int col) {
+            if (isDirect) {
+                final long address = varSizeValueAddress(col);
+                return address != 0 ? Unsafe.getInt(address) : NullMemoryCMR.INSTANCE.getStrLen(0);
+            }
             return record().getStrLen(payloadColumns[col]);
         }
 
@@ -1012,16 +1203,26 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
 
         @Override
         public Utf8Sequence getVarcharA(int col) {
+            if (isDirect) {
+                return directVarchar(col, varcharsA[col]);
+            }
             return record().getVarcharA(payloadColumns[col]);
         }
 
         @Override
         public Utf8Sequence getVarcharB(int col) {
+            if (isDirect) {
+                return directVarchar(col, varcharsB[col]);
+            }
             return record().getVarcharB(payloadColumns[col]);
         }
 
         @Override
         public int getVarcharSize(int col) {
+            if (isDirect) {
+                final long auxAddress = payloadAuxAddresses.getQuick(addressBase + col);
+                return auxAddress != 0 ? VarcharTypeDriver.getValueSize(auxAddress, row) : TableUtils.NULL_LEN;
+            }
             return record().getVarcharSize(payloadColumns[col]);
         }
 
@@ -1073,6 +1274,17 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
             }
         }
 
+        // The address of the length that starts a native frame's STRING or BINARY value at the current
+        // row, which the aux page indexes; zero for a column top.
+        private long varSizeValueAddress(int col) {
+            final int index = addressBase + col;
+            final long dataAddress = payloadAddresses.getQuick(index);
+            if (dataAddress != 0) {
+                return dataAddress + Unsafe.getLong(payloadAuxAddresses.getQuick(index) + (row << 3));
+            }
+            return 0;
+        }
+
         // Positions the reader at the build row with this id, where its columns live.
         private void positionRow(long rowId) {
             final int frameIndex = Rows.toPartitionIndex(rowId);
@@ -1103,6 +1315,36 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
             return copyRow + copyOffsets[col];
         }
 
+        // A native frame's STRING, as a page frame record reads it: NULL for a column top.
+        @Nullable
+        private CharSequence directStr(int col, DirectString view) {
+            final long address = varSizeValueAddress(col);
+            if (address != 0) {
+                final int len = Unsafe.getInt(address);
+                return len != TableUtils.NULL_LEN ? view.of(address + Vm.STRING_LENGTH_BYTES, len) : null;
+            }
+            return NullMemoryCMR.INSTANCE.getStrA(0);
+        }
+
+        // A native frame's VARCHAR, as a page frame record reads it: NULL for a column top.
+        @Nullable
+        private Utf8Sequence directVarchar(int col, Utf8SplitString view) {
+            final int index = addressBase + col;
+            final long auxAddress = payloadAuxAddresses.getQuick(index);
+            if (auxAddress != 0) {
+                final long dataAddress = payloadAddresses.getQuick(index);
+                return VarcharTypeDriver.getSplitValue(
+                        auxAddress,
+                        auxAddress + payloadAuxSizes.getQuick(index),
+                        dataAddress,
+                        dataAddress + payloadSizes.getQuick(index),
+                        row,
+                        view
+                );
+            }
+            return null;
+        }
+
         private Long256 copiedLong256(Long256Impl[] flyweights, int col) {
             final Long256Impl value = flyweights[col];
             final long address = copied(col);
@@ -1122,6 +1364,7 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
             if (recordFrameIndex != frameIndex) {
                 pool.navigateTo(frameIndex, record);
                 recordFrameIndex = frameIndex;
+                recordBindCount++;
             }
             record.setRowIndex(row);
             return record;

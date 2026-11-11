@@ -1473,11 +1473,12 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public long getSqlParallelHashJoinTupleRingMaxSize() {
         // As many full-size probe frames as the join can have in flight, each holding the tuples of
-        // a two-join stack: a probe row id and one build locator per join, 8 bytes each. The join
-        // keeps at most the smaller of the dispatch limit and the queue capacity frames in flight;
-        // this class's dispatch limit is Integer.MAX_VALUE.
+        // a five-join stack: a probe row id and one build locator per join, 8 bytes each, so that
+        // stacks of up to five joins keep the whole window. The join keeps at most the smaller of
+        // the dispatch limit and the queue capacity frames in flight; this class's dispatch limit is
+        // Integer.MAX_VALUE.
         final long frames = Math.max(0, Math.min(getSqlParallelFilterDispatchLimit(), getPageFrameReduceQueueCapacity()));
-        return frames * getSqlPageFrameMaxRows() * 3 * Long.BYTES;
+        return frames * getSqlPageFrameMaxRows() * 6 * Long.BYTES;
     }
 
     @Override

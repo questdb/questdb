@@ -35,13 +35,18 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.TextPlanSink;
+import io.questdb.griffin.engine.join.HashJoinPayloadSource;
+import io.questdb.griffin.engine.table.AsyncHashJoinAtom;
 import io.questdb.griffin.engine.table.AsyncHashJoinRecordCursorFactory;
+import io.questdb.griffin.engine.table.HashJoinBuildFrames;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
@@ -97,7 +102,17 @@ import java.util.concurrent.locks.LockSupport;
  *       the star, {@code STACK4_RESIDUAL} is a worker-bound stack of four LEFT joins with
  *       residuals, and {@code BUILD_ONLY_RESIDUAL} and {@code BUILD_ONLY_RESIDUAL_REGEX} are LEFT
  *       joins of the large dimension under a selective ON residual that reads the dimension alone,
- *       a comparison and a regular expression over a VARCHAR column.</li>
+ *       a comparison and a regular expression over a VARCHAR column. {@code SWAP_STACK_*} start
+ *       with a dimension joined with the fact table, which the join swaps to build the dimension,
+ *       and look a second dimension up by a key of the first one, which the workers read from its
+ *       build rows. {@code PARQUET_VAR_BUILD_*} join the first {@code probeRows} rows of the fact
+ *       table, an interval scan, with one, two and four copies of the Parquet large dimension and
+ *       read a VARCHAR column of each, a payload that the join cannot copy, so that its readers
+ *       decode the dimension's row groups, which the consumer reads, and {@code PARQUET_VAR_RESIDUAL}
+ *       reads it for a LEFT join's ON residual, which keeps the ordinary plan with the operator on:
+ *       the probe tasks would read it. {@code SMALL_SINGLE} and {@code SMALL_STAR} join the
+ *       first {@code probeRows} rows of the fact table with the small dimensions: one and two
+ *       joins.</li>
  *   <li>{@code workers}: the size of the query worker pool, and the context's worker count.</li>
  *   <li>{@code factRows}, {@code largeDimRows}: table sizes. The fact table holds a million rows
  *       per hourly partition.</li>
@@ -107,7 +122,22 @@ import java.util.concurrent.locks.LockSupport;
  *       125,000 at 8 and 62,500 at 16. With the default of 250,000 the shapes whose surviving
  *       fan-out exceeds two, {@code FANOUT_RESIDUAL} and {@code FANOUT_POST_FILTER}, overflow the
  *       cap at 8 workers and finish part of each frame on the consumer.</li>
+ *   <li>{@code ringBudgetFactor}: multiplies the default of
+ *       {@code cairo.sql.parallel.hash.join.tuple.ring.max.size}.</li>
+ *   <li>{@code payloadCopyMaxSize}: {@code cairo.sql.parallel.hash.join.groupby.payload.copy.max.size}
+ *       in bytes, 0 to never copy a payload; -1 keeps the default.</li>
+ *   <li>{@code freshCompile}: true compiles the query in every operation, so that each operation
+ *       runs a factory of its own, whose per-factory classes start cold.</li>
+ *   <li>{@code probeRows}: the fact rows that the {@code SMALL_*} and {@code PARQUET_VAR_BUILD_*}
+ *       shapes join.</li>
+ *   <li>{@code parquetCacheSize}: {@code cairo.sql.parquet.cache.memory.size} in bytes, the Parquet
+ *       decode cache budget; -1 keeps the default.</li>
+ *   <li>{@code warmUpRows}: the probe rows after which a factory switches from the shared stepper
+ *       template to its stages' hidden copies; -1 keeps the default.</li>
  * </ul>
+ * {@code plan=OPERATOR_TEMPLATE} runs the operator with the shared stepper template in place of a
+ * hidden class per stage, whichever the warm-up picks. The report line names the ring budget and the
+ * bytes of the payload copies, by which the memory rule of the final table nets the peak.
  * The configuration takes the server defaults that depend on the worker count: the reduce queue
  * capacity, its shard count and the parallel filter dispatch limit.
  * <p>
@@ -150,8 +180,26 @@ public class ParallelHashJoinBenchmark {
     @Param({"250000"})
     public int pageFrameMaxRows;
 
+    @Param({"-1"})
+    public long parquetCacheSize;
+
+    @Param({"-1"})
+    public long payloadCopyMaxSize;
+
+    @Param({"false"})
+    public boolean freshCompile;
+
     @Param({"ORDINARY", "OPERATOR"})
     public String plan;
+
+    @Param({"50000"})
+    public long probeRows;
+
+    @Param({"1"})
+    public double ringBudgetFactor;
+
+    @Param({"-1"})
+    public long warmUpRows;
 
     @Param({
             "STAR_INNER", "STAR_LEFT",
@@ -164,7 +212,10 @@ public class ParallelHashJoinBenchmark {
             "PARQUET_PROBE", "PARQUET_PROBE_FILTER", "PARQUET_PROBE_INNER_MISS", "PARQUET_BUILD", "MIXED_PROBE",
             "COUNT_STAR",
             "STACK4_RESIDUAL",
-            "BUILD_ONLY_RESIDUAL", "BUILD_ONLY_RESIDUAL_REGEX"
+            "BUILD_ONLY_RESIDUAL", "BUILD_ONLY_RESIDUAL_REGEX",
+            "SWAP_STACK_100K", "SWAP_STACK_LARGE",
+            "PARQUET_VAR_BUILD_1", "PARQUET_VAR_BUILD_2", "PARQUET_VAR_BUILD_4", "PARQUET_VAR_RESIDUAL",
+            "SMALL_SINGLE", "SMALL_STAR"
     })
     public String shape;
 
@@ -174,6 +225,7 @@ public class ParallelHashJoinBenchmark {
     private SqlExecutionContextImpl ctx;
     private CairoEngine engine;
     private RecordCursorFactory factory;
+    private String text;
     private int[] types;
     private long[] workerThreadIds;
     private WorkerPool workerPool;
@@ -187,6 +239,14 @@ public class ParallelHashJoinBenchmark {
 
     @Benchmark
     public long run() throws SqlException {
+        if (freshCompile) {
+            try (
+                    RecordCursorFactory fresh = engine.select(text, ctx);
+                    RecordCursor cursor = fresh.getCursor(ctx)
+            ) {
+                return consume(cursor, types);
+            }
+        }
         try (RecordCursor cursor = factory.getCursor(ctx)) {
             return consume(cursor, types);
         }
@@ -263,6 +323,14 @@ public class ParallelHashJoinBenchmark {
         return null;
     }
 
+    private String smallProbeBound() {
+        final StringSink sink = new StringSink();
+        sink.put('\'');
+        MicrosFormatUtils.appendDateTimeUSec(sink, probeRows * 3_600);
+        sink.put('\'');
+        return sink.toString();
+    }
+
     private static String starSql(String fact, String joins) {
         return STAR_SELECT + fact + " f" + joins;
     }
@@ -324,6 +392,8 @@ public class ParallelHashJoinBenchmark {
     }
 
     private void free() {
+        AsyncHashJoinRecordCursorFactory.setStepperCopiesEnabledForTesting(true);
+        AsyncHashJoinRecordCursorFactory.setStepperWarmUpRowsForTesting(AsyncHashJoinAtom.STEPPER_WARM_UP_ROWS);
         factory = Misc.free(factory);
         if (workerPool != null) {
             workerPool.halt();
@@ -360,6 +430,21 @@ public class ParallelHashJoinBenchmark {
             public int getSqlParallelFilterDispatchLimit() {
                 return Math.min(workers, 32);
             }
+
+            @Override
+            public long getSqlParallelHashJoinGroupByPayloadCopyMaxSize() {
+                return payloadCopyMaxSize < 0 ? super.getSqlParallelHashJoinGroupByPayloadCopyMaxSize() : payloadCopyMaxSize;
+            }
+
+            @Override
+            public long getSqlParquetCacheMemorySize() {
+                return parquetCacheSize < 0 ? super.getSqlParquetCacheMemorySize() : parquetCacheSize;
+            }
+
+            @Override
+            public long getSqlParallelHashJoinTupleRingMaxSize() {
+                return (long) (super.getSqlParallelHashJoinTupleRingMaxSize() * ringBudgetFactor);
+            }
         };
         engine = new CairoEngine(configuration);
         workerPool = new WorkerPool(new WorkerPoolConfiguration() {
@@ -383,16 +468,24 @@ public class ParallelHashJoinBenchmark {
 
         final boolean isOperator = switch (plan) {
             case "ORDINARY" -> false;
-            case "OPERATOR" -> true;
+            case "OPERATOR", "OPERATOR_TEMPLATE" -> true;
             default -> throw new IllegalArgumentException("unknown plan: " + plan);
         };
+        AsyncHashJoinRecordCursorFactory.setStepperCopiesEnabledForTesting(!"OPERATOR_TEMPLATE".equals(plan));
+        AsyncHashJoinRecordCursorFactory.setStepperWarmUpRowsForTesting(warmUpRows < 0 ? AsyncHashJoinAtom.STEPPER_WARM_UP_ROWS : warmUpRows);
         ctx.setParallelHashJoinEnabled(isOperator);
-        factory = engine.select(sql(), ctx);
+        text = sql();
+        factory = engine.select(text, ctx);
         final TextPlanSink planSink = new TextPlanSink();
         planSink.of(factory, ctx);
-        final String text = planSink.getSink().toString();
-        if (isOperator != text.contains(OPERATOR_NODE)) {
-            throw new IllegalStateException("routing drift: plan=" + plan + " shape=" + shape + '\n' + text);
+        final String planText = planSink.getSink().toString();
+        // The probe tasks of PARQUET_VAR_RESIDUAL would read a VARCHAR payload of a Parquet build,
+        // which keeps the ordinary plan.
+        if ((isOperator && !"PARQUET_VAR_RESIDUAL".equals(shape)) != planText.contains(OPERATOR_NODE)) {
+            throw new IllegalStateException("routing drift: plan=" + plan + " shape=" + shape + '\n' + planText);
+        }
+        if ((shape.startsWith("SMALL_") || shape.startsWith("PARQUET_VAR_")) && !planText.contains("Interval forward scan")) {
+            throw new IllegalStateException("the probe is not an interval scan: shape=" + shape + '\n' + planText);
         }
         final RecordMetadata metadata = factory.getMetadata();
         types = new int[metadata.getColumnCount()];
@@ -410,6 +503,12 @@ public class ParallelHashJoinBenchmark {
                 .append(" factRows=").append(factRows)
                 .append(" largeDimRows=").append(largeDimRows)
                 .append(" pageFrameMaxRows=").append(pageFrameMaxRows)
+                .append(" ringBudgetFactor=").append(ringBudgetFactor)
+                .append(" payloadCopyMaxSize=").append(payloadCopyMaxSize)
+                .append(" freshCompile=").append(freshCompile)
+                .append(" probeRows=").append(probeRows)
+                .append(" parquetCacheSize=").append(parquetCacheSize)
+                .append(" warmUpRows=").append(warmUpRows)
                 .append(" cpus=").append(Runtime.getRuntime().availableProcessors());
 
         final long workerCpu0 = cpuNanos(threads, workerThreadIds);
@@ -436,7 +535,20 @@ public class ParallelHashJoinBenchmark {
             }
             final AsyncHashJoinRecordCursorFactory join = findOperator(factory);
             if (join != null) {
-                line.append(" dispatchLimit=").append(join.getAtom().getRing().getDispatchLimit())
+                long copyBytes = 0;
+                long outputCacheBytes = 0;
+                final int workerSlot = ctx.getSharedQueryWorkerCount();
+                for (int k = 0, n = join.getSpec().getStageCount(); k < n; k++) {
+                    copyBytes += join.getAtom().getStage(k).getPayloadCopySize();
+                    final HashJoinPayloadSource.Reader output = join.getAtom().getStage(k).getPayloadReader(workerSlot);
+                    if (output != null) {
+                        outputCacheBytes += HashJoinBuildFrames.getReaderCachedBytes(output);
+                    }
+                }
+                line.append(" outputDecodeCacheBytes=").append(outputCacheBytes);
+                line.append(" ringBudget=").append(engine.getConfiguration().getSqlParallelHashJoinTupleRingMaxSize())
+                        .append(" copyBytes=").append(copyBytes)
+                        .append(" dispatchLimit=").append(join.getAtom().getRing().getDispatchLimit())
                         .append(" ringBytes=").append(join.getAtom().getRing().getAllocatedBytes())
                         .append(" continuations=").append(join.getAtom().getContinuationCount())
                         .append(" probeFrames=").append(join.getProbeFrameCount())
@@ -521,6 +633,24 @@ public class ParallelHashJoinBenchmark {
             // ON residuals of the large dimension alone that keep a sixteenth and a tenth of its rows.
             case "BUILD_ONLY_RESIDUAL" -> "SELECT f.id, f.v, x.w FROM fact f LEFT JOIN d3 x ON f.k3 = x.k AND x.s = 'c3'";
             case "BUILD_ONLY_RESIDUAL_REGEX" -> "SELECT f.id, f.v, x.w FROM fact f LEFT JOIN d3 x ON f.k3 = x.k AND x.name ~ '7$'";
+            // The dimension is the smaller input, so the first join builds it and probes the fact
+            // table; the second join's key, a column of the dimension, comes from its build rows.
+            case "SWAP_STACK_100K" -> "SELECT f.id, d2.w w2, d1.w w1 FROM d2 JOIN fact f ON d2.k = f.k2 JOIN d1 ON d2.kl = d1.kl";
+            case "SWAP_STACK_LARGE" -> "SELECT f.id, d3.w w3, d1.w w1 FROM d3 JOIN fact f ON d3.k = f.k3 JOIN d1 ON d3.kl = d1.kl";
+            // VARCHAR payloads of a Parquet build, which the join reads where they live.
+            case "PARQUET_VAR_BUILD_1" -> "SELECT f.id, a.name na FROM fact f JOIN d3_pq a ON f.k3 = a.k WHERE f.ts < " + smallProbeBound();
+            case "PARQUET_VAR_BUILD_2" -> "SELECT f.id, a.name na, b.name nb FROM fact f JOIN d3_pq a ON f.k3 = a.k " +
+                    "JOIN d3_pq b ON f.k3 = b.k WHERE f.ts < " + smallProbeBound();
+            case "PARQUET_VAR_BUILD_4" -> "SELECT f.id, a.name na, b.name nb, c.name nc, e.name ne FROM fact f " +
+                    "JOIN d3_pq a ON f.k3 = a.k JOIN d3_pq b ON f.k3 = b.k JOIN d3_pq c ON f.k3 = c.k JOIN d3_pq e ON f.k3 = e.k " +
+                    "WHERE f.ts < " + smallProbeBound();
+            // The probe tasks read the VARCHAR payload for an ON residual over both inputs.
+            case "PARQUET_VAR_RESIDUAL" -> "SELECT f.id, a.w FROM fact f LEFT JOIN d3_pq a ON f.k3 = a.k AND a.name <> f.note " +
+                    "WHERE f.ts < " + smallProbeBound();
+            // The fact table's first probeRows rows, an interval scan: timestamps step by 3,600 micros.
+            case "SMALL_SINGLE" -> "SELECT f.id, f.v, d1.w FROM fact f JOIN d1 ON f.k1 = d1.k WHERE f.ts < " + smallProbeBound();
+            case "SMALL_STAR" -> "SELECT f.id, f.v, d1.w w1, d2.w w2 FROM fact f JOIN d1 ON f.k1 = d1.k JOIN d2 ON f.k2 = d2.k WHERE f.ts < "
+                    + smallProbeBound();
             default -> throw new IllegalArgumentException("unknown shape: " + shape);
         };
     }

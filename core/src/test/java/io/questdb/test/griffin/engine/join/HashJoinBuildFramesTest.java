@@ -68,6 +68,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.Rows;
+import io.questdb.std.str.DirectString;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
@@ -590,6 +591,16 @@ public class HashJoinBuildFramesTest extends AbstractCairoTest {
                 sqlExecutionContext.restoreToDefaultPageFrameSizes();
             }
         });
+    }
+
+    @Test
+    public void testVarSizeReadsOfMixedFramesBindTheRecordForParquetFramesAlone() throws Exception {
+        assertVarSizeReads(true);
+    }
+
+    @Test
+    public void testVarSizeReadsOfNativeFramesBindNoRecord() throws Exception {
+        assertVarSizeReads(false);
     }
 
     @Test
@@ -1193,6 +1204,150 @@ public class HashJoinBuildFramesTest extends AbstractCairoTest {
     // Copies the payload, the DOUBLE v, of every build row through one copy reader, which walks the
     // rows in build order and keeps the row groups it decoded until the copy publishes, and checks
     // that it decoded the payload of the two Parquet row groups alone.
+    // Every var-size payload type, STRING, VARCHAR, BINARY and one- and two-dimensional arrays, over
+    // six daily partitions of twelve rows read in frames of five, the first and the fourth of them
+    // Parquet when hasParquet says so, with a second set of the columns added after the first two
+    // days, whose early rows sit below column tops. The values cycle through NULL, empty, a 4-byte
+    // UTF-8 character, a value long enough to leave a VARCHAR's inline bytes, and a short ASCII value.
+    // Two readers take turns at the keys in random order, so that nearly every read switches frames,
+    // and each checks every value, its A and B getters and its length, against what varSizeValues()
+    // wrote. A native frame's values come from the address table, so a reader binds its record only
+    // to read a Parquet frame, each time its reads move to another one, which the test counts
+    // independently, and a native frame's strings are stable, as a page frame record's are.
+    private void assertVarSizeReads(boolean hasParquet) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE vs (k INT, str STRING, vc VARCHAR, bin BINARY, arr DOUBLE[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO vs SELECT x::INT, " + varSizeValues("x", false)
+                    + ", timestamp_sequence('2020-01-01', 7_200_000_000L) FROM long_sequence(24)");
+            execute("ALTER TABLE vs ADD COLUMN str2 STRING");
+            execute("ALTER TABLE vs ADD COLUMN vc2 VARCHAR");
+            execute("ALTER TABLE vs ADD COLUMN bin2 BINARY");
+            execute("ALTER TABLE vs ADD COLUMN arr2 DOUBLE[][]");
+            execute("INSERT INTO vs SELECT (24 + x)::INT, " + varSizeValues("(24 + x)", false)
+                    + ", timestamp_sequence('2020-01-03', 7_200_000_000L), " + varSizeValues("(24 + x)", true)
+                    + " FROM long_sequence(48)");
+            if (hasParquet) {
+                execute("ALTER TABLE vs CONVERT PARTITION TO PARQUET WHERE ts < '2020-01-02'");
+                execute("ALTER TABLE vs CONVERT PARTITION TO PARQUET WHERE ts IN '2020-01-04'");
+            }
+            sqlExecutionContext.changePageFrameSizes(5, 5);
+            try (RecordCursorFactory factory = select("vs")) {
+                final RecordMetadata metadata = factory.getMetadata();
+                // The var-size columns, in reverse table order.
+                final IntList mapping = new IntList();
+                for (int i = metadata.getColumnCount() - 1; i > 0; i--) {
+                    if (i != metadata.getTimestampIndex()) {
+                        mapping.add(i);
+                    }
+                }
+                Assert.assertEquals(8, mapping.size());
+                final VarSizeColumns varSize = new VarSizeColumns(metadata, mapping);
+                try (HashJoinBuildFrames frames = new HashJoinBuildFrames(configuration, mapping, metadata);
+                     IntHashJoinBuild build = new IntHashJoinBuild(true, 2, 16)) {
+                    final FrozenHashJoinBuild.IntKeyed frozen = FrameBuilds.buildInt(configuration, build, frames, factory, 0, sqlExecutionContext);
+                    Assert.assertEquals(hasParquet, frames.hasParquetFrames());
+                    Assert.assertTrue("frames: " + frames.getFrameCount(), frames.getFrameCount() > 6);
+                    try (FrozenHashJoinBuild.IntProbe a = frozen.newProbe();
+                         FrozenHashJoinBuild.IntProbe b = frozen.newProbe()) {
+                        final FrozenHashJoinBuild.IntProbe[] probes = {a, b};
+                        // Per reader, the binds so far and the Parquet frame its record is bound to.
+                        final long[] binds = new long[2];
+                        final int[] boundFrames = {-1, -1};
+                        int nativeReads = 0;
+                        int parquetReads = 0;
+                        final Rnd rnd = TestUtils.generateRandom(LOG);
+                        final int[] keys = new int[72];
+                        for (int i = 0; i < keys.length; i++) {
+                            keys[i] = i + 1;
+                        }
+                        for (int round = 0; round < 3; round++) {
+                            shuffle(keys, rnd);
+                            for (int i = 0; i < keys.length; i++) {
+                                final int p = i % 2;
+                                final int key = keys[i];
+                                probes[p].find(key);
+                                Assert.assertTrue(probes[p].hasNext());
+                                probes[p].next();
+                                Assert.assertFalse(probes[p].hasNext());
+                                final HashJoinPayloadSource.Reader reader = (HashJoinPayloadSource.Reader) probes[p].getRecord();
+                                final int frameIndex = Rows.toPartitionIndex(reader.locator());
+                                final boolean isNative = frames.getAddressCache().getFrameFormat(frameIndex) == PartitionFormat.NATIVE;
+                                if (isNative) {
+                                    nativeReads++;
+                                } else {
+                                    parquetReads++;
+                                    if (boundFrames[p] != frameIndex) {
+                                        boundFrames[p] = frameIndex;
+                                        binds[p]++;
+                                    }
+                                }
+                                final String label = "key " + key;
+                                varSize.assertRow(label, reader, key);
+                                Assert.assertEquals(label, binds[p], HashJoinBuildFrames.getRecordBindCount(reader));
+                                // A native frame's strings live in pages that stay mapped for the
+                                // execution; a Parquet frame's, in decode buffers that the next frame reuses.
+                                if (key % 5 != 0) {
+                                    final CharSequence str = reader.getStrA(varSize.str);
+                                    Assert.assertTrue(label, str instanceof DirectString);
+                                    Assert.assertEquals(label, isNative, ((DirectString) str).isStable());
+                                    Assert.assertEquals(label, isNative, reader.getVarcharB(varSize.vc).isStable());
+                                }
+                            }
+                        }
+                        Assert.assertTrue("native reads: " + nativeReads, nativeReads > 100);
+                        Assert.assertEquals("parquet reads: " + parquetReads, hasParquet, parquetReads > 30);
+                        Assert.assertEquals(hasParquet, binds[0] + binds[1] > 10);
+
+                        // A/B independence: values read through the A getters of one row survive the
+                        // reader moving to another row and reading it through the B getters: any row
+                        // after a native frame's, whose pages stay mapped, and a row of the same frame
+                        // after a Parquet frame's, whose decode buffers the next frame may reuse.
+                        final HashJoinPayloadSource.Reader reader = (HashJoinPayloadSource.Reader) a.getRecord();
+                        int crossFramePairs = 0;
+                        for (int key = 1; key < 72; key++) {
+                            a.find(key);
+                            a.next();
+                            final int frameIndex = Rows.toPartitionIndex(reader.locator());
+                            final boolean isNative = frames.getAddressCache().getFrameFormat(frameIndex) == PartitionFormat.NATIVE;
+                            final CharSequence strA = reader.getStrA(varSize.str);
+                            final CharSequence strA2 = reader.getStrA(varSize.str2);
+                            final Utf8Sequence vcA = reader.getVarcharA(varSize.vc);
+                            final Utf8Sequence vcA2 = reader.getVarcharA(varSize.vc2);
+                            for (int other : new int[]{key + 1, 73 - key}) {
+                                a.find(other);
+                                a.next();
+                                final boolean isSameFrame = Rows.toPartitionIndex(reader.locator()) == frameIndex;
+                                if (!isNative && !isSameFrame) {
+                                    continue;
+                                }
+                                if (!isSameFrame) {
+                                    crossFramePairs++;
+                                }
+                                final String label = "keys " + key + " and " + other;
+                                TestUtils.assertEquals(label, varSizeText(other, "s"), reader.getStrB(varSize.str));
+                                Assert.assertEquals(label, varSizeText(other, "v"), utf8(reader.getVarcharB(varSize.vc)));
+                                TestUtils.assertEquals(label, other <= 24 ? null : varSizeText(other, "s"), reader.getStrB(varSize.str2));
+                                Assert.assertEquals(label, other <= 24 ? null : varSizeText(other, "v"), utf8(reader.getVarcharB(varSize.vc2)));
+                                TestUtils.assertEquals(label, varSizeText(key, "s"), strA);
+                                Assert.assertEquals(label, varSizeText(key, "v"), utf8(vcA));
+                                TestUtils.assertEquals(label, key <= 24 ? null : varSizeText(key, "s"), strA2);
+                                Assert.assertEquals(label, key <= 24 ? null : varSizeText(key, "v"), utf8(vcA2));
+                            }
+                        }
+                        Assert.assertTrue("cross-frame pairs: " + crossFramePairs, crossFramePairs > 20);
+                    }
+                }
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+        });
+    }
+
+    @Nullable
+    private static String utf8(@Nullable Utf8Sequence value) {
+        return value != null ? Utf8s.stringFromUtf8Bytes(value) : null;
+    }
+
     private static void assertCopyReaderDecodesPayloadOnly(
             HashJoinBuildFrames frames,
             FrozenHashJoinBuild frozen,
@@ -1621,8 +1776,9 @@ public class HashJoinBuildFramesTest extends AbstractCairoTest {
             vc2 = payloadIndex(metadata, mapping, "vc2");
             bin2 = payloadIndex(metadata, mapping, "bin2");
             arr2 = payloadIndex(metadata, mapping, "arr2");
-            sym = payloadIndex(metadata, mapping, "s");
-            long256 = payloadIndex(metadata, mapping, "l256");
+            // Absent, -1, from a table of var-size columns alone.
+            sym = mapping.indexOf(metadata.getColumnIndexQuiet("s"), 0, mapping.size());
+            long256 = mapping.indexOf(metadata.getColumnIndexQuiet("l256"), 0, mapping.size());
             arrType = metadata.getColumnType("arr");
             arr2Type = metadata.getColumnType("arr2");
         }

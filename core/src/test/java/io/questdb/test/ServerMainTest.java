@@ -1105,7 +1105,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.parallel.hash.join.enabled\tQDB_CAIRO_SQL_PARALLEL_HASH_JOIN_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.hash.join.task.output.max.rows\tQDB_CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS\t1000000\tdefault\tfalse\tfalse\n" +
                                     // min(dispatch limit 2, queue capacity 8) frames of 1,000,000 rows at 24 bytes per row
-                                    "cairo.sql.parallel.hash.join.tuple.ring.max.size\tQDB_CAIRO_SQL_PARALLEL_HASH_JOIN_TUPLE_RING_MAX_SIZE\t48000000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.parallel.hash.join.tuple.ring.max.size\tQDB_CAIRO_SQL_PARALLEL_HASH_JOIN_TUPLE_RING_MAX_SIZE\t96000000\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.groupby.batch.size\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_BATCH_SIZE\t2048\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.groupby.merge.shard.queue.capacity\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_MERGE_SHARD_QUEUE_CAPACITY\t8\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.groupby.sharding.threshold\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD\t10000\tdefault\tfalse\tfalse\n" +
