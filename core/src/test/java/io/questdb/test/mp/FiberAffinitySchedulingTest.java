@@ -56,6 +56,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.LockSupport;
 
 public class FiberAffinitySchedulingTest {
     private static final long AWAIT_SECONDS = 10;
@@ -1277,7 +1278,11 @@ public class FiberAffinitySchedulingTest {
                     // haltOnError: a thrown setup failure is indistinguishable from the
                     // deterministic failure injected below.
                     try {
-                        awaitWorkerReady(pool, 1);
+                        // Ready alone is not enough: the peer sets its ready bit before it re-checks
+                        // for work and parks, and a stale permit can return it from the park at once.
+                        // Until it is blocked in the park, it can steal both fibers from this
+                        // still-active owner, bypassing the orphan path under test.
+                        awaitWorkerParked(pool, 1);
                         for (int i = 0; i < 2; i++) {
                             final LaunchResult launchResult = runtime.launch(new FiberTask() {
                                 @Override
@@ -1785,6 +1790,23 @@ public class FiberAffinitySchedulingTest {
         Assert.assertEquals(expected, runtime.getWakeClaimCount());
     }
 
+    private static void awaitWorkerParked(WorkerPool pool, int workerId) {
+        final String threadName = pool.getPoolName() + '_' + workerId;
+        final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(AWAIT_SECONDS);
+        // WorkerPool.start() spawns workers one by one, so a lower-id worker can run its job
+        // before this worker's thread is alive and listed by Thread.getAllStackTraces().
+        Thread worker = findLiveThread(threadName);
+        while (worker == null && System.nanoTime() < deadline) {
+            Os.pause();
+            worker = findLiveThread(threadName);
+        }
+        Assert.assertNotNull("worker thread not found [name=" + threadName + ']', worker);
+        while (!isParkedReady(pool, workerId, worker) && System.nanoTime() < deadline) {
+            Os.pause();
+        }
+        Assert.assertTrue(isParkedReady(pool, workerId, worker));
+    }
+
     private static void awaitWorkerReady(WorkerPool pool, int workerId) {
         final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(AWAIT_SECONDS);
         while (!pool.isWorkerReadyForTesting(workerId) && System.nanoTime() < deadline) {
@@ -1909,6 +1931,15 @@ public class FiberAffinitySchedulingTest {
         };
     }
 
+    private static Thread findLiveThread(String threadName) {
+        for (Thread thread : Thread.getAllStackTraces().keySet()) {
+            if (threadName.equals(thread.getName())) {
+                return thread;
+            }
+        }
+        return null;
+    }
+
     private static boolean areWorkersReady(WorkerPool pool, int expected) {
         if (pool.getReadyWorkerCountForTesting() != expected) {
             return false;
@@ -1919,6 +1950,14 @@ public class FiberAffinitySchedulingTest {
             }
         }
         return true;
+    }
+
+    private static boolean isParkedReady(WorkerPool pool, int workerId, Thread worker) {
+        // Worker.parkFiberHost parks with the Worker itself as the blocker, so a non-null
+        // blocker while TIMED_WAITING means it is inside that park, past the work re-check.
+        return pool.isWorkerReadyForTesting(workerId)
+                && worker.getState() == Thread.State.TIMED_WAITING
+                && LockSupport.getBlocker(worker) == worker;
     }
 
     private static void recordFailure(AtomicReference<Throwable> sink, String message) {

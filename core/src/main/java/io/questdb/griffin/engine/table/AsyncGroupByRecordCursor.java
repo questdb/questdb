@@ -56,7 +56,6 @@ import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.Os;
 import io.questdb.tasks.GroupByLongTopKTask;
 import org.jetbrains.annotations.NotNull;
 
@@ -257,7 +256,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         int ownCount = 0;
         int reclaimed = 0;
         int total = 0;
-        int processedCount = 0; // used for work stealing decisions
+        int processedCount = 0; // positive completed-task count; the latch counts down from zero
 
         try {
             for (int shardIndex = 0; shardIndex < NUM_SHARDS; shardIndex++) {
@@ -278,20 +277,20 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                     ownerLoop.observeProgress();
                     long cursor = pubSeq.next();
                     if (cursor < 0) {
-                        if (workStealingStrategy.shouldSteal(processedCount)) {
+                        processedCount = -postAggregationDoneLatch.getCount();
+                        if (processedCount == queuedCount || workStealingStrategy.shouldSteal(processedCount)) {
                             ownerLoop.checkBeforeHelping();
                             final Map shard = atom.getDestShards().getQuick(shardIndex);
                             final DirectLongLongSortedList ownerList = atom.getLongTopKList(-1, destList.getOrder(), destList.getCapacity());
                             shard.getCursor().longTopK(ownerList, longFunc);
                             ownCount++;
                             total++;
-                            processedCount = postAggregationDoneLatch.getCount();
+                            processedCount = -postAggregationDoneLatch.getCount();
                             break;
                         }
                         if (!ownerLoop.awaitProgress()) {
-                            Os.pause();
+                            ownerLoop.pause();
                         }
-                        processedCount = postAggregationDoneLatch.getCount();
                     } else {
                         queue.get(cursor).of(
                                 postAggregationCircuitBreaker,
@@ -339,12 +338,12 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                             }
                             reclaimed++;
                         } else {
-                            Os.pause();
+                            ownerLoop.pause();
                         }
                     } else if (!ownerLoop.awaitProgressWhileDraining(isOwnerTripped)) {
-                        Os.pause();
+                        ownerLoop.pause();
                     }
-                    processedCount = postAggregationDoneLatch.getCount();
+                    processedCount = -postAggregationDoneLatch.getCount();
                 }
             }
         }

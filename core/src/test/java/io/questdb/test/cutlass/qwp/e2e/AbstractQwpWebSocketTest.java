@@ -122,12 +122,28 @@ public class AbstractQwpWebSocketTest extends AbstractCairoTest {
      * rejected sub-case escalate at once instead of after ~5s.
      */
     protected static QwpWebSocketSender connectWs(int port, SenderErrorHandler errorHandler, int maxFrameRejections) {
+        return connectWs(port, errorHandler, maxFrameRejections, Sender.SchemaMode.AUTO);
+    }
+
+    /**
+     * Like {@link #connectWs(int, SenderErrorHandler, int)} with an explicit
+     * {@code schema_mode}. {@link Sender.SchemaMode#OFF} keeps the legacy
+     * contract, so rows the schema-aware sender would refuse locally reach
+     * the server's own validation.
+     */
+    protected static QwpWebSocketSender connectWs(
+            int port,
+            SenderErrorHandler errorHandler,
+            int maxFrameRejections,
+            Sender.SchemaMode schemaMode
+    ) {
         return (QwpWebSocketSender) Sender.builder(Sender.Transport.WEBSOCKET)
                 .address("localhost:" + port)
                 .errorHandler(errorHandler)
                 .maxFrameRejections(maxFrameRejections)
                 .poisonMinEscalationWindowMillis(0)
                 .closeFlushTimeoutMillis(CLOSE_FLUSH_TIMEOUT_MS)
+                .schemaMode(schemaMode)
                 .build();
     }
 

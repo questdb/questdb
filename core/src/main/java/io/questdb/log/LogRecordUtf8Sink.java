@@ -41,8 +41,8 @@ import org.jetbrains.annotations.Nullable;
 
 public class LogRecordUtf8Sink implements Utf8Sink, DirectUtf8Sequence, Sinkable, Mutable {
     public static final int EOL_LENGTH = Misc.EOL.length();
-    private final static int UTF8_BYTE_CLASS_BAD = -1;
-    private final static int UTF8_BYTE_CLASS_CONTINUATION = 0;
+    static final int UTF8_BYTE_CLASS_BAD = -1;
+    static final int UTF8_BYTE_CLASS_CONTINUATION = 0;
     protected final long address;
     protected final long lim;
     private final AsciiCharSequence asciiCharSequence = new AsciiCharSequence();
@@ -66,9 +66,26 @@ public class LogRecordUtf8Sink implements Utf8Sink, DirectUtf8Sequence, Sinkable
         return Unsafe.getByte(address + index);
     }
 
+    public int capacity() {
+        return (int) (lim - address);
+    }
+
     @Override
     public void clear() {
         _wptr = address;
+        done = false;
+    }
+
+    /**
+     * Replaces the contents of this record with the bytes staged in the given
+     * sink. The staged bytes already follow this record's truncation rules when
+     * the staging capacity does not exceed {@link #capacity()}; a larger staged
+     * record gets cut at the capacity.
+     */
+    public void copyFrom(HeapLogRecordUtf8Sink src) {
+        final long len = Math.min(src.size(), lim - address);
+        Unsafe.copyMemory(src.buffer(), Unsafe.BYTE_OFFSET, null, address, len);
+        _wptr = address + len;
         done = false;
     }
 
@@ -233,7 +250,7 @@ public class LogRecordUtf8Sink implements Utf8Sink, DirectUtf8Sequence, Sinkable
         return Utf8s.stringFromUtf8Bytes(address, _wptr);
     }
 
-    private static int utf8ByteClass(byte b) {
+    static int utf8ByteClass(byte b) {
         // Reference the table at:
         // https://en.wikipedia.org/wiki/UTF-8#Encoding
         if (b >= 0) {

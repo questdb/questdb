@@ -25,6 +25,7 @@
 package io.questdb.test.cutlass.websocket;
 
 import io.questdb.cutlass.http.HttpRequestHeader;
+import io.questdb.cutlass.qwp.server.QwpBrowserAllowedOrigins;
 import io.questdb.cutlass.qwp.server.QwpIngressHttpProcessor;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.DirectUtf8Sequence;
@@ -69,6 +70,41 @@ public class QwpIngressHttpProcessorTest extends AbstractWebSocketTest {
     }
 
     @Test
+    public void testValidateHandshakeAllowsOnlyExactListedOrigins() throws Exception {
+        assertMemoryLeak(() -> {
+            QwpBrowserAllowedOrigins allowed = QwpBrowserAllowedOrigins.parse(
+                    "https://app.example.com, http://localhost:3000, https://[::1]:8443");
+            try (MockHttpRequestHeader header = new MockHttpRequestHeader()) {
+                header.setHeader("Upgrade", "websocket");
+                header.setHeader("Connection", "Upgrade");
+                header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
+                header.setHeader("Sec-WebSocket-Version", "13");
+                header.setHeader("Host", "questdb.example.com:9000");
+                header.setHeader("Origin", "https://app.example.com");
+                Assert.assertNull(QwpIngressHttpProcessor.validateHandshake(header, false, allowed));
+                Assert.assertNotNull(QwpIngressHttpProcessor.validateHandshake(header, false, QwpBrowserAllowedOrigins.EMPTY));
+            }
+            for (String origin : new String[]{
+                    "https://app.example.com:8443", "https://app.example.com.evil.com",
+                    "http://app.example.com", "https://app.example.com/",
+                    "https://app.example.com/path", "null", "https://APP.EXAMPLE.COM"
+            }) {
+                try (MockHttpRequestHeader header = new MockHttpRequestHeader()) {
+                    header.setHeader("Upgrade", "websocket");
+                    header.setHeader("Connection", "Upgrade");
+                    header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
+                    header.setHeader("Sec-WebSocket-Version", "13");
+                    header.setHeader("Host", "questdb.example.com:9000");
+                    header.setHeader("Origin", origin);
+                    Assert.assertNotNull(origin, QwpIngressHttpProcessor.validateHandshake(header, true, allowed));
+                }
+            }
+            Assert.assertTrue(allowed.isAllowed(new Utf8String("http://localhost:3000")));
+            Assert.assertTrue(allowed.isAllowed(new Utf8String("https://[::1]:8443")));
+        });
+    }
+
+    @Test
     public void testValidateHandshakeInvalidKey() throws Exception {
         assertMemoryLeak(() -> {
             try (MockHttpRequestHeader header = new MockHttpRequestHeader()) {
@@ -77,7 +113,7 @@ public class QwpIngressHttpProcessorTest extends AbstractWebSocketTest {
                 header.setHeader("Sec-WebSocket-Key", "tooshort");
                 header.setHeader("Sec-WebSocket-Version", "13");
 
-                String error = QwpIngressHttpProcessor.validateHandshake(header, false);
+                String error = QwpIngressHttpProcessor.validateHandshake(header, false, QwpBrowserAllowedOrigins.EMPTY);
                 Assert.assertNotNull(error);
                 Assert.assertTrue(error.contains("key"));
             }
@@ -93,7 +129,7 @@ public class QwpIngressHttpProcessorTest extends AbstractWebSocketTest {
                 header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
                 header.setHeader("Sec-WebSocket-Version", "12");
 
-                String error = QwpIngressHttpProcessor.validateHandshake(header, false);
+                String error = QwpIngressHttpProcessor.validateHandshake(header, false, QwpBrowserAllowedOrigins.EMPTY);
                 Assert.assertNotNull(error);
                 Assert.assertTrue(error.contains("version"));
             }
@@ -108,7 +144,7 @@ public class QwpIngressHttpProcessorTest extends AbstractWebSocketTest {
                 header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
                 header.setHeader("Sec-WebSocket-Version", "13");
 
-                String error = QwpIngressHttpProcessor.validateHandshake(header, false);
+                String error = QwpIngressHttpProcessor.validateHandshake(header, false, QwpBrowserAllowedOrigins.EMPTY);
                 Assert.assertNotNull(error);
                 Assert.assertTrue(error.contains("Connection"));
             }
@@ -123,7 +159,7 @@ public class QwpIngressHttpProcessorTest extends AbstractWebSocketTest {
                 header.setHeader("Connection", "Upgrade");
                 header.setHeader("Sec-WebSocket-Version", "13");
 
-                String error = QwpIngressHttpProcessor.validateHandshake(header, false);
+                String error = QwpIngressHttpProcessor.validateHandshake(header, false, QwpBrowserAllowedOrigins.EMPTY);
                 Assert.assertNotNull(error);
                 Assert.assertTrue(error.contains("Sec-WebSocket-Key"));
             }
@@ -138,7 +174,7 @@ public class QwpIngressHttpProcessorTest extends AbstractWebSocketTest {
                 header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
                 header.setHeader("Sec-WebSocket-Version", "13");
 
-                String error = QwpIngressHttpProcessor.validateHandshake(header, false);
+                String error = QwpIngressHttpProcessor.validateHandshake(header, false, QwpBrowserAllowedOrigins.EMPTY);
                 Assert.assertNotNull(error);
                 Assert.assertTrue(error.contains("Upgrade"));
             }
@@ -153,7 +189,7 @@ public class QwpIngressHttpProcessorTest extends AbstractWebSocketTest {
                 header.setHeader("Connection", "Upgrade");
                 header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
 
-                String error = QwpIngressHttpProcessor.validateHandshake(header, false);
+                String error = QwpIngressHttpProcessor.validateHandshake(header, false, QwpBrowserAllowedOrigins.EMPTY);
                 Assert.assertNotNull(error);
                 Assert.assertTrue(error.contains("Sec-WebSocket-Version"));
             }
@@ -177,7 +213,7 @@ public class QwpIngressHttpProcessorTest extends AbstractWebSocketTest {
                 header.setHeader("Origin", "http://evil.example.com");
                 header.setHeader("Host", "same.example.com");
 
-                String error = QwpIngressHttpProcessor.validateHandshake(header, false);
+                String error = QwpIngressHttpProcessor.validateHandshake(header, false, QwpBrowserAllowedOrigins.EMPTY);
                 Assert.assertNotNull(error);
                 Assert.assertTrue(error.contains("Origin"));
             }
@@ -193,7 +229,7 @@ public class QwpIngressHttpProcessorTest extends AbstractWebSocketTest {
                 header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
                 header.setHeader("Sec-WebSocket-Version", "13");
 
-                String error = QwpIngressHttpProcessor.validateHandshake(header, false);
+                String error = QwpIngressHttpProcessor.validateHandshake(header, false, QwpBrowserAllowedOrigins.EMPTY);
                 Assert.assertNull(error);
             }
         });

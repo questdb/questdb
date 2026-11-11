@@ -76,6 +76,20 @@ public class Utf8StringSinkTest {
     }
 
     @Test
+    public void testEscapeJsonStrUtf8Sequence() {
+        // Every control character is escaped, NUL included, and a multibyte character is copied
+        // byte for byte. The UTF-16 overload is the reference: both have to write the same JSON.
+        final String str = "a\0b\"c\\d\ne\u001fé世";
+        final Utf8StringSink sink = new Utf8StringSink();
+        sink.escapeJsonStr(new Utf8String(str));
+        TestUtils.assertEquals("a\\u0000b\\\"c\\\\d\\ne\\u001fé世", sink.toString());
+
+        final Utf8StringSink utf16Sink = new Utf8StringSink();
+        utf16Sink.escapeJsonStr(str);
+        TestUtils.assertEquals(utf16Sink.toString(), sink.toString());
+    }
+
+    @Test
     public void testPutUtf8Sequence() {
         Utf8StringSink sink = new Utf8StringSink(1);
         final String str = "こんにちは世界";

@@ -196,6 +196,7 @@ public class MutableModelsTest {
         model.intrinsicValue = IntrinsicModel.TRUE;
         model.keySubQuery = QueryModel.FACTORY.newInstance();
         model.keyExcludedNodes.add(newExpressionNode());
+        model.setBetweenNegated(true);
         // Note: keyValueFuncs and keyExcludedValueFuncs require Function instances
         // which are harder to create, but setting other fields is sufficient
         // to verify the clear() method works correctly
@@ -295,8 +296,14 @@ public class MutableModelsTest {
         model.setFillTo(newExpressionNode());
         model.setFillFrom(newExpressionNode());
         model.setFillStride(newExpressionNode());
+        model.setFillBucketKey(newExpressionNode());
         model.setAllowPropagationOfOrderByAdvice(false);
         model.getAliasSequenceMap().put("foobar", 1);
+        model.setScalarExpiryRead(true);
+        model.setExpiryKeepFilter(true);
+        model.setExpiryWindowBarrier(true);
+        model.setExpiryViewNameExpr(newExpressionNode());
+        model.getExpiryWindowPartitionBy().add(newExpressionNode());
         // Setup HorizonJoinContext
         HorizonJoinContext hjc = model.getHorizonJoinContext();
         hjc.setMode(HorizonJoinContext.MODE_RANGE);
@@ -375,8 +382,8 @@ public class MutableModelsTest {
         LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses = new LowerCaseCharSequenceObjHashMap<>();
         withClauses.put("cte1", WithClauseModel.FACTORY.newInstance());
         model.of(42, withClauses, QueryModel.FACTORY.newInstance());
-        // Force initialization of withClauses field
-        model.getWithClauses();
+        // of() sets every field, so clear() has each one to reset
+        Assert.assertSame(withClauses, model.getWithClauses());
         assertDifferentFromFresh(model, WithClauseModel.FACTORY.newInstance());
 
         model.clear();

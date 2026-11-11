@@ -47,6 +47,16 @@ public class TestFilesFacadeImpl extends FilesFacadeImpl {
     public static synchronized void resetTracking() {
     }
 
+    /**
+     * Routes the ranged allocation through {@link #allocate(long, long)}, so a facade that injects allocation
+     * failures by overriding only that method sees every allocation, frame columns included. Callers only ever grow
+     * a file with it, so allocating the whole file instead ends in the same file, at a cost tests don't measure.
+     */
+    @Override
+    public boolean allocate(long fd, long allocatedSize, long size) {
+        return allocate(fd, size);
+    }
+
     @Override
     public boolean close(long fd) {
         if (fd > -1 && fd == this.fd) {
@@ -80,6 +90,13 @@ public class TestFilesFacadeImpl extends FilesFacadeImpl {
     @Override
     public long openRW(LPSZ name, int opts) {
         long fd = super.openRW(name, opts);
+        track(name, fd);
+        return fd;
+    }
+
+    @Override
+    public long openRWExisting(LPSZ name) {
+        long fd = super.openRWExisting(name);
         track(name, fd);
         return fd;
     }

@@ -24,18 +24,23 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.ColumnVersionWriter;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -48,11 +53,662 @@ import org.junit.Test;
 import java.util.Formatter;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
+import static io.questdb.cairo.ColumnVersionReader.BLOCK_SIZE_BYTES;
 import static io.questdb.cairo.ColumnVersionReader.HEADER_SIZE;
+import static io.questdb.cairo.ColumnVersionReader.OFFSET_OFFSET_A_64;
+import static io.questdb.cairo.ColumnVersionReader.OFFSET_OFFSET_B_64;
+import static io.questdb.cairo.ColumnVersionReader.OFFSET_SIZE_A_64;
+import static io.questdb.cairo.ColumnVersionReader.OFFSET_SIZE_B_64;
+import static io.questdb.cairo.ColumnVersionReader.OFFSET_VERSION_64;
 
 public class ColumnVersionWriterTest extends AbstractCairoTest {
+
+    // Representative area for the helper unit tests: 3 entries * 32 bytes = 96 bytes.
+    private static final long CV_AREA_SIZE = 3L * BLOCK_SIZE_BYTES;
+
+    @Test
+    public void testCvReaderCopiedSnapshotStillVerifies() throws Exception {
+        assertMemoryLeak(() -> {
+            final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+            try (Path path = new Path()) {
+                final LPSZ cvPath = path.of(root).concat("_cv").$();
+                for (boolean copyArea : new boolean[]{false, true}) {
+                    try (ColumnVersionWriter writer = new ColumnVersionWriter(configuration, cvPath, true)) {
+                        writer.upsert(0, 0, 1, 10);
+                        writer.commit();
+                        writer.upsert(0, 0, 2, 20);
+                        writer.commit();
+                    }
+                    try (ColumnVersionReader source = new ColumnVersionReader().ofRO(ff, cvPath);
+                         ColumnVersionReader target = new ColumnVersionReader().ofRO(ff, cvPath)) {
+                        Assert.assertTrue(source.readSafe());
+                        final long version = source.getVersion();
+                        if (copyArea) {
+                            source.readAreaTo(version, target);
+                        } else {
+                            target.readFrom(source);
+                        }
+                        final boolean areaA = (version & 1) == 0;
+                        final long offset = peekLong(ff, cvPath, areaA ? OFFSET_OFFSET_A_64 : OFFSET_OFFSET_B_64);
+                        final long size = peekLong(ff, cvPath, areaA ? OFFSET_SIZE_A_64 : OFFSET_SIZE_B_64);
+                        final long checksumOffset = offset + size + Long.BYTES;
+                        final long checksum = peekLong(ff, cvPath, checksumOffset);
+                        pokeLong(ff, cvPath, checksumOffset, checksum ^ 1);
+                        Assert.assertTrue(target.readSafe());
+                        Assert.assertEquals(version - 1, target.getVersion());
+                        Assert.assertEquals(10, target.getColumnTopQuick(0, 0));
+                        pokeLong(ff, cvPath, checksumOffset, checksum);
+                        Assert.assertTrue(target.readSafe());
+                        Assert.assertEquals(version, target.getVersion());
+                        Assert.assertEquals(20, target.getColumnTopQuick(0, 0));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCvReaderRefreshChecksOnlyInitialMapping() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicInteger lengths = new AtomicInteger();
+            final FilesFacade ff = new TestFilesFacadeImpl() {
+                @Override
+                public long length(long fd) {
+                    lengths.incrementAndGet();
+                    return super.length(fd);
+                }
+            };
+            try (Path path = new Path()) {
+                final LPSZ cvPath = path.of(root).concat("_cv").$();
+                try (ColumnVersionWriter writer = new ColumnVersionWriter(configuration, cvPath, true);
+                     ColumnVersionReader reader = new ColumnVersionReader().ofRO(ff, cvPath)) {
+                    writer.upsert(0, 0, 1, 10);
+                    writer.commit();
+                    lengths.set(0);
+                    Assert.assertTrue(reader.readSafe());
+                    Assert.assertEquals(1, lengths.get());
+                    for (int i = 1; i <= 128; i++) {
+                        writer.upsert(i, 0, i, i * 10L);
+                        writer.commit();
+                        lengths.set(0);
+                        Assert.assertTrue(reader.readSafe());
+                        Assert.assertEquals("live refresh must not stat _cv, including mapping growth", 0, lengths.get());
+                        Assert.assertEquals(i * 10L, reader.getColumnTopQuick(i, 0));
+                    }
+                    writer.upsert(129, 0, 129, 1290);
+                    writer.commit();
+                    final long version = peekLong(TestFilesFacadeImpl.INSTANCE, cvPath, OFFSET_VERSION_64);
+                    final boolean areaA = (version & 1) == 0;
+                    final long offset = peekLong(TestFilesFacadeImpl.INSTANCE, cvPath, areaA ? OFFSET_OFFSET_A_64 : OFFSET_OFFSET_B_64);
+                    final long size = peekLong(TestFilesFacadeImpl.INSTANCE, cvPath, areaA ? OFFSET_SIZE_A_64 : OFFSET_SIZE_B_64);
+                    final long checksumOffset = offset + size + Long.BYTES;
+                    final long checksum = peekLong(TestFilesFacadeImpl.INSTANCE, cvPath, checksumOffset);
+                    // Alter only the trailer to distinguish live publication from first-open verification.
+                    pokeLong(TestFilesFacadeImpl.INSTANCE, cvPath, checksumOffset, checksum ^ 1);
+                    lengths.set(0);
+                    Assert.assertTrue(reader.readSafe());
+                    Assert.assertEquals(0, lengths.get());
+                    Assert.assertEquals(version, reader.getVersion());
+                    Assert.assertEquals(1290, reader.getColumnTopQuick(129, 0));
+                    reader.ofRO(ff, cvPath);
+                    lengths.set(0);
+                    Assert.assertTrue(reader.readSafe());
+                    Assert.assertTrue("reopen must verify again", lengths.get() > 0);
+                    Assert.assertEquals(version - 1, reader.getVersion());
+                    pokeLong(TestFilesFacadeImpl.INSTANCE, cvPath, checksumOffset, checksum);
+                    lengths.set(0);
+                    Assert.assertTrue(reader.readSafe());
+                    Assert.assertEquals("fallback must not consume verification", 1, lengths.get());
+                    Assert.assertEquals(version, reader.getVersion());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCvAreaChecksumChangesWhenAnyByteChanges() {
+        long addr = Unsafe.malloc(CV_AREA_SIZE, MemoryTag.NATIVE_DEFAULT);
+        try {
+            fillPattern(addr, CV_AREA_SIZE, 0x1234);
+            long base = TableUtils.calculateCvAreaChecksum(addr, CV_AREA_SIZE);
+            // The checksum covers every byte of the area: flipping any one must change it.
+            for (long off = 0; off < CV_AREA_SIZE; off++) {
+                byte orig = Unsafe.getByte(addr + off);
+                Unsafe.putByte(addr + off, (byte) (orig ^ 0x5a));
+                Assert.assertNotEquals("checksum did not change for covered byte offset " + off, base, TableUtils.calculateCvAreaChecksum(addr, CV_AREA_SIZE));
+                Unsafe.putByte(addr + off, orig);
+            }
+        } finally {
+            Unsafe.free(addr, CV_AREA_SIZE, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testCvAreaChecksumIsDeterministicAndNeverZero() {
+        long addr = Unsafe.malloc(CV_AREA_SIZE, MemoryTag.NATIVE_DEFAULT);
+        try {
+            for (int seed = 0; seed < 100_000; seed++) {
+                fillPattern(addr, CV_AREA_SIZE, seed);
+                long c1 = TableUtils.calculateCvAreaChecksum(addr, CV_AREA_SIZE);
+                long c2 = TableUtils.calculateCvAreaChecksum(addr, CV_AREA_SIZE);
+                Assert.assertEquals("checksum must be deterministic for seed " + seed, c1, c2);
+                Assert.assertNotEquals("checksum returned 0 for seed " + seed, 0L, c1);
+            }
+            // The checksum of an all-zero area must still differ from the 0 = "absent" sentinel.
+            for (long off = 0; off < CV_AREA_SIZE; off++) {
+                Unsafe.putByte(addr + off, (byte) 0);
+            }
+            Assert.assertNotEquals("all-zero area must not collide with the absent sentinel", 0L, TableUtils.calculateCvAreaChecksum(addr, CV_AREA_SIZE));
+        } finally {
+            Unsafe.free(addr, CV_AREA_SIZE, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testCvChecksumAbsentOldFormat() throws Exception {
+        // An old-format _cv truncated to end exactly at offset+size, with no trailer. The file is too
+        // short for a 16-byte trailer, so readSafe() skips the verify: no SIGBUS, no throw, no fallback.
+        // A typical legacy _cv is page-rounded instead; testCvChecksumAbsentRealLegacyShape covers that.
+        assertMemoryLeak(() -> {
+            final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+            try (Path path = new Path()) {
+                LPSZ cvPath = path.of(root).concat("_cv").$();
+                long liveOffset;
+                long liveSize;
+                try (ColumnVersionWriter w = new ColumnVersionWriter(configuration, cvPath, true)) {
+                    for (int i = 0; i < 5; i++) {
+                        w.upsert(i, i, i + 1, i * 10L);
+                    }
+                    w.commit();
+                    long version = peekLong(ff, cvPath, OFFSET_VERSION_64);
+                    boolean areaA = (version & 1L) == 0;
+                    liveOffset = peekLong(ff, cvPath, areaA ? OFFSET_OFFSET_A_64 : OFFSET_OFFSET_B_64);
+                    liveSize = peekLong(ff, cvPath, areaA ? OFFSET_SIZE_A_64 : OFFSET_SIZE_B_64);
+                }
+
+                // Truncate the file to exactly offset+size, removing the trailer: an old-format _cv with
+                // no bytes after the last block.
+                truncateFile(ff, cvPath, liveOffset + liveSize);
+                Assert.assertEquals(liveOffset + liveSize, ff.length(cvPath));
+
+                ColumnVersionReader.resetBodyChecksumFallbackCount();
+                try (ColumnVersionReader r = new ColumnVersionReader().ofRO(ff, cvPath)) {
+                    // No SIGBUS, no throw, and the data reads back correctly.
+                    r.readSafe(configuration.getMillisecondClock(), 1);
+                    for (int i = 0; i < 5; i++) {
+                        Assert.assertEquals(i * 10L, r.getColumnTopQuick(i, i));
+                    }
+                    Assert.assertEquals("absent checksum must not trigger fallback", 0L, ColumnVersionReader.getBodyChecksumFallbackCount());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCvChecksumAbsentRealLegacyShape() throws Exception {
+        // Reproduces the on-disk shape of a healthy pre-checksum _cv and proves the reader reads it
+        // cleanly (no throw, no fallback). A legacy writer closes with close(false), so the file stays
+        // page-rounded, well past offset+size, and the bytes at offset+size are often non-zero data of an
+        // adjacent area. Neither the file length nor a zero check can tell such a file from one with a
+        // trailer; only the magic can.
+        //
+        // The test commits several times so areas are packed with real data around the live area, checks
+        // that the file is page-rounded past offset+size+16, then fills the trailer slot at offset+size
+        // with non-magic, non-zero bytes. The reader must see no magic, treat the checksum as absent and
+        // skip the verify.
+        assertMemoryLeak(() -> {
+            final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+            try (Path path = new Path()) {
+                LPSZ cvPath = path.of(root).concat("_cv").$();
+                long liveOffset;
+                long liveSize;
+                long fileLen;
+                try (ColumnVersionWriter w = new ColumnVersionWriter(configuration, cvPath, true)) {
+                    // Several commits with varying shapes, so areas get packed and the bytes around the live
+                    // area hold real (non-zero) column-version data.
+                    int gen = 0;
+                    for (int round = 0; round < 8; round++) {
+                        for (int n = 1; n <= 6; n++) {
+                            w.upsert(n, n, ++gen, n * 7L);
+                            w.commit();
+                        }
+                        for (int n = 6; n >= 2; n--) {
+                            w.removePartition(n);
+                            w.commit();
+                        }
+                    }
+                    // Final commit so the live area is well-populated.
+                    for (int n = 1; n <= 5; n++) {
+                        w.upsert(n, n, ++gen, n * 13L);
+                    }
+                    w.commit();
+
+                    long version = peekLong(ff, cvPath, OFFSET_VERSION_64);
+                    boolean areaA = (version & 1L) == 0;
+                    liveOffset = peekLong(ff, cvPath, areaA ? OFFSET_OFFSET_A_64 : OFFSET_OFFSET_B_64);
+                    liveSize = peekLong(ff, cvPath, areaA ? OFFSET_SIZE_A_64 : OFFSET_SIZE_B_64);
+                }
+                // close() is close(false): the writer does not truncate, so the file stays page-rounded.
+                fileLen = ff.length(cvPath);
+
+                // Check the page-rounded legacy shape: the file extends past the live area's 16-byte trailer
+                // slot, so the length alone cannot call the trailer absent, and the length is page-aligned,
+                // which is what close(false) leaves behind.
+                Assert.assertTrue(
+                        "file must be page-rounded past offset+size+16 (got len=" + fileLen
+                                + ", need > " + (liveOffset + liveSize + 16) + ")",
+                        fileLen > liveOffset + liveSize + 16
+                );
+                Assert.assertEquals("legacy file length must be page-aligned", 0L, fileLen % ff.getPageSize());
+
+                // Simulate a pre-checksum file: stamp non-magic, non-zero bytes across the 16-byte trailer
+                // slot at offset+size, and a bit beyond, to model data of an adjacent area.
+                pokeBytes(ff, cvPath, liveOffset + liveSize, 0x01, 64);
+                // The stamped bytes are neither the magic nor zero.
+                long trailerWord = peekLong(ff, cvPath, liveOffset + liveSize);
+                Assert.assertNotEquals("trailer slot must not be the magic (it's legacy garbage)", TableUtils.CV_CHECKSUM_MAGIC, trailerWord);
+                Assert.assertNotEquals("trailer slot must be non-zero (defeats the zero sentinel)", 0L, trailerWord);
+
+                ColumnVersionReader.resetBodyChecksumFallbackCount();
+                try (ColumnVersionReader r = new ColumnVersionReader().ofRO(ff, cvPath)) {
+                    // Reads cleanly: no SIGBUS, no throw, no fallback, and the data round-trips.
+                    r.readSafe(configuration.getMillisecondClock(), 1);
+                    for (int n = 1; n <= 5; n++) {
+                        Assert.assertEquals(n * 13L, r.getColumnTopQuick(n, n));
+                    }
+                    Assert.assertEquals(
+                            "healthy page-rounded legacy _cv must NOT trigger a checksum fallback",
+                            0L, ColumnVersionReader.getBodyChecksumFallbackCount()
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCvChecksumAbsentPageRoundedNoTrailer() throws Exception {
+        // A page-rounded legacy file whose 16-byte trailer slot does not hold the magic. The file is long
+        // enough for a trailer, but without the magic at offset+size the reader treats the checksum as
+        // absent and skips the verify: the magic, not the file length, gates presence.
+        assertMemoryLeak(() -> {
+            final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+            try (Path path = new Path()) {
+                LPSZ cvPath = path.of(root).concat("_cv").$();
+                long liveOffset;
+                long liveSize;
+                try (ColumnVersionWriter w = new ColumnVersionWriter(configuration, cvPath, true)) {
+                    for (int i = 0; i < 7; i++) {
+                        w.upsert(i, i, i + 2, i * 11L);
+                    }
+                    w.commit();
+                    long version = peekLong(ff, cvPath, OFFSET_VERSION_64);
+                    boolean areaA = (version & 1L) == 0;
+                    liveOffset = peekLong(ff, cvPath, areaA ? OFFSET_OFFSET_A_64 : OFFSET_OFFSET_B_64);
+                    liveSize = peekLong(ff, cvPath, areaA ? OFFSET_SIZE_A_64 : OFFSET_SIZE_B_64);
+                }
+                long fileLen = ff.length(cvPath);
+                Assert.assertTrue("file must be page-rounded past the trailer slot", fileLen >= liveOffset + liveSize + 16);
+
+                // Overwrite the trailer's magic slot with the bitwise-NOT of the magic, leaving the checksum
+                // slot as it is. No magic means no checksum.
+                pokeLong(ff, cvPath, liveOffset + liveSize, ~TableUtils.CV_CHECKSUM_MAGIC);
+                Assert.assertNotEquals(TableUtils.CV_CHECKSUM_MAGIC, peekLong(ff, cvPath, liveOffset + liveSize));
+
+                ColumnVersionReader.resetBodyChecksumFallbackCount();
+                try (ColumnVersionReader r = new ColumnVersionReader().ofRO(ff, cvPath)) {
+                    r.readSafe(configuration.getMillisecondClock(), 1);
+                    for (int i = 0; i < 7; i++) {
+                        Assert.assertEquals(i * 11L, r.getColumnTopQuick(i, i));
+                    }
+                    Assert.assertEquals("no-magic trailer must be treated as absent (no fallback)", 0L, ColumnVersionReader.getBodyChecksumFallbackCount());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCvReadSafeNamesTornLiveAreaOnlyForItsOwnVersion() throws Exception {
+        // The A/B fallback serves a consumer of the previous commit (a _txn that fell back alongside it names
+        // exactly that version). A consumer of the torn commit itself gets an error that names the torn area,
+        // at once: waiting cannot repair a torn area, and a timeout would suggest contention instead.
+        assertMemoryLeak(() -> {
+            final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+            try (Path path = new Path()) {
+                LPSZ cvPath = path.of(root).concat("_cv").$();
+                long liveOffset;
+                try (ColumnVersionWriter w = new ColumnVersionWriter(configuration, cvPath, true)) {
+                    w.upsert(1, 0, 1, 10);
+                    w.commit();
+                    w.upsert(1, 0, 2, 20);
+                    w.commit();
+                    long version = peekLong(ff, cvPath, OFFSET_VERSION_64);
+                    Assert.assertEquals(2, version);
+                    liveOffset = peekLong(ff, cvPath, (version & 1L) == 0 ? OFFSET_OFFSET_A_64 : OFFSET_OFFSET_B_64);
+                }
+                // Tear the live body under its own, matching, stamp.
+                long orig = peekLong(ff, cvPath, liveOffset);
+                pokeLong(ff, cvPath, liveOffset, orig ^ 0x5a5aL);
+
+                ColumnVersionReader.resetBodyChecksumFallbackCount();
+                try (ColumnVersionReader r = new ColumnVersionReader().ofRO(ff, cvPath)) {
+                    r.readSafe(configuration.getMillisecondClock(), 100, 1);
+                    Assert.assertEquals(1, r.getVersion());
+                    Assert.assertEquals(10, r.getColumnTopQuick(1, 0));
+                    Assert.assertEquals(1L, ColumnVersionReader.getBodyChecksumFallbackCount());
+                    try {
+                        r.readSafe(configuration.getMillisecondClock(), 100, 2);
+                        Assert.fail("the torn commit must not be reported as reached");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(
+                                e.getFlyweightMessage(),
+                                "_cv live area is torn, reader cannot advance past the previous column version [version=1, expected=2]"
+                        );
+                    }
+                    Assert.assertEquals("one more attempt, no spin", 2L, ColumnVersionReader.getBodyChecksumFallbackCount());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCvReadSafeNamesVersionBehindExpected() throws Exception {
+        assertMemoryLeak(() -> {
+            final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+            try (Path path = new Path()) {
+                LPSZ cvPath = path.of(root).concat("_cv").$();
+                try (ColumnVersionWriter w = new ColumnVersionWriter(configuration, cvPath, true)) {
+                    w.upsert(1, 0, 1, 10);
+                    w.commit();
+                    w.upsert(1, 0, 2, 20);
+                    w.commit();
+                }
+                Assert.assertEquals(2, peekLong(ff, cvPath, OFFSET_VERSION_64));
+                try (ColumnVersionReader r = new ColumnVersionReader().ofRO(ff, cvPath)) {
+                    // Exactly what _txn names, or ahead of it (a commit in flight): both are the caller's to act on.
+                    r.readSafe(configuration.getMillisecondClock(), 100, 2);
+                    Assert.assertEquals(2, r.getVersion());
+                    r.readSafe(configuration.getMillisecondClock(), 100, 1);
+                    Assert.assertEquals(2, r.getVersion());
+                    // Behind it: _cv is published before the _txn that references it, so there is no writer to
+                    // wait for. Named, with no clock involved.
+                    try {
+                        r.readSafe(configuration.getMillisecondClock(), 100, 3);
+                        Assert.fail("a _cv behind the expected version must not be reported as reached");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "_cv is behind the column version _txn references [version=2, expected=3]");
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCvChecksumDetectsCorruption() throws Exception {
+        // After a single commit only the live area is valid; the other area is empty. Corrupting a covered
+        // byte of the live area, leaving its checksum stale, must not return the wrong value: with no valid
+        // other area, readSafe() throws.
+        assertMemoryLeak(() -> {
+            final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+            try (Path path = new Path()) {
+                LPSZ cvPath = path.of(root).concat("_cv").$();
+                long liveOffset;
+                try (ColumnVersionWriter w = new ColumnVersionWriter(configuration, cvPath, true)) {
+                    for (int i = 0; i < 4; i++) {
+                        w.upsert(i, i, i + 1, i * 100L);
+                    }
+                    w.commit();
+                    long version = peekLong(ff, cvPath, OFFSET_VERSION_64);
+                    boolean areaA = (version & 1L) == 0;
+                    liveOffset = peekLong(ff, cvPath, areaA ? OFFSET_OFFSET_A_64 : OFFSET_OFFSET_B_64);
+                }
+
+                // Flip the first block's partition timestamp without recomputing the trailing checksum.
+                long orig = peekLong(ff, cvPath, liveOffset);
+                pokeLong(ff, cvPath, liveOffset, orig ^ 0x5a5a_5a5aL);
+
+                ColumnVersionReader.resetBodyChecksumFallbackCount();
+                try (ColumnVersionReader r = new ColumnVersionReader().ofRO(ff, cvPath)) {
+                    try {
+                        r.readSafe(configuration.getMillisecondClock(), 1);
+                        Assert.fail("expected CairoException - corrupt live area with no valid fallback");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "_cv checksum mismatch in both A and B areas");
+                    }
+                    Assert.assertEquals("exactly one fallback attempt expected", 1L, ColumnVersionReader.getBodyChecksumFallbackCount());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCvChecksumFallbackAfterManyCommits() throws Exception {
+        // Area placement under the +16 trailer reservation. Many commits with varying entry counts (grow,
+        // then shrink, repeatedly) make calculateWriteOffset both append new areas after the current one
+        // and reuse freed space at the front, so both branches reserve the trailer footprint. The test then
+        // corrupts only the current area; readSafe() must fall back to the prior area and return exactly
+        // its content as read straight off disk. A wrong reservation lets a commit clobber the prior area's
+        // data or trailer, so the fallback content is wrong or both areas fail the checksum.
+        assertMemoryLeak(() -> {
+            final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+            try (Path path = new Path()) {
+                LPSZ cvPath = path.of(root).concat("_cv").$();
+
+                final int cycles = 60;
+                long priorOffset;
+                long priorSize;
+                long currentOffset;
+                long currentSize;
+
+                try (ColumnVersionWriter w = new ColumnVersionWriter(configuration, cvPath, true)) {
+                    // Repeatedly grow the entry set up to a peak then shrink back down, committing on every
+                    // step. The oscillating size makes calculateWriteOffset alternate between front-reuse
+                    // (when the new, smaller area fits before the current one) and append (when it doesn't).
+                    int gen = 0;
+                    for (int cycle = 0; cycle < cycles; cycle++) {
+                        int peak = 4 + (cycle % 13); // varies the peak so offsets don't settle into a pattern
+                        // grow
+                        for (int n = 1; n <= peak; n++) {
+                            w.upsert(n, 0, gen++, n * 3L);
+                            w.commit();
+                        }
+                        // shrink, keeping partition 1 so the area never becomes empty: the size oscillates
+                        // between front reuse and append without hitting the empty-area edge case
+                        for (int n = peak; n >= 2; n--) {
+                            w.removePartition(n);
+                            w.commit();
+                        }
+                    }
+                    // A final pair of distinct commits so both A and B hold a real, checksummed area.
+                    w.upsert(1, 0, gen++, 11L);
+                    w.upsert(2, 0, gen++, 22L);
+                    w.commit();
+                    w.upsert(3, 0, gen++, 33L);
+                    w.commit();
+
+                    long version = peekLong(ff, cvPath, OFFSET_VERSION_64);
+                    boolean areaA = (version & 1L) == 0;
+                    currentOffset = peekLong(ff, cvPath, areaA ? OFFSET_OFFSET_A_64 : OFFSET_OFFSET_B_64);
+                    currentSize = peekLong(ff, cvPath, areaA ? OFFSET_SIZE_A_64 : OFFSET_SIZE_B_64);
+                    priorOffset = peekLong(ff, cvPath, areaA ? OFFSET_OFFSET_B_64 : OFFSET_OFFSET_A_64);
+                    priorSize = peekLong(ff, cvPath, areaA ? OFFSET_SIZE_B_64 : OFFSET_SIZE_A_64);
+                }
+
+                // The +16 reservation keeps the two areas' full footprints [offset, offset+size+16) disjoint.
+                assertNoAreaOverlap(currentOffset, currentSize, priorOffset, priorSize);
+
+                // Corrupt the current/live area's first block, leaving its trailing checksum stale.
+                long origFirst = peekLong(ff, cvPath, currentOffset);
+                pokeLong(ff, cvPath, currentOffset, origFirst ^ 0x33);
+
+                ColumnVersionReader.resetBodyChecksumFallbackCount();
+                try (ColumnVersionReader r = new ColumnVersionReader().ofRO(ff, cvPath)) {
+                    r.readSafe(configuration.getMillisecondClock(), 1);
+                    Assert.assertEquals("must fall back to the prior area exactly once", 1L, ColumnVersionReader.getBodyChecksumFallbackCount());
+                    // The fallback exposes the prior area: its block count and content equal the prior area
+                    // read straight off disk, so it is neither clobbered nor mis-sized.
+                    Assert.assertEquals(
+                            "fallback must expose the prior area's full block set",
+                            (int) (priorSize / BLOCK_SIZE_BYTES) * ColumnVersionWriter.BLOCK_SIZE,
+                            r.getCachedColumnVersionList().size()
+                    );
+                    assertReaderMatchesArea(ff, cvPath, priorOffset, priorSize, r);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCvNoFalsePositiveUnderConcurrentCommits() throws Exception {
+        // A concurrent writer (thousands of commits) and a reader looping readSafe(). The whole _cv area is
+        // immutable once committed, so the reader never sees a checksum mismatch on a stable version: the
+        // fallback counter stays 0 for the whole run.
+        assertMemoryLeak(() -> {
+            final int N = 10_000;
+            final FilesFacade ff = configuration.getFilesFacade();
+            try (
+                    Path path = new Path();
+                    ColumnVersionWriter w = new ColumnVersionWriter(configuration, path.of(root).concat("_cv").$(), true);
+                    ColumnVersionReader r = new ColumnVersionReader().ofRO(ff, path.$())
+            ) {
+                ColumnVersionReader.resetBodyChecksumFallbackCount();
+                final CyclicBarrier barrier = new CyclicBarrier(2);
+                final ConcurrentLinkedQueue<Throwable> exceptions = new ConcurrentLinkedQueue<>();
+                final AtomicInteger done = new AtomicInteger();
+
+                Thread writer = new Thread(() -> {
+                    final Rnd rnd = new Rnd();
+                    try {
+                        barrier.await();
+                        for (int txn = 0; txn < N; txn++) {
+                            int increment = rnd.nextInt(32);
+                            for (int j = 0; j < increment; j++) {
+                                w.upsert(rnd.nextLong(20), rnd.nextInt(10), txn, -1);
+                            }
+                            w.commit();
+                        }
+                    } catch (Throwable th) {
+                        exceptions.add(th);
+                    } finally {
+                        done.incrementAndGet();
+                    }
+                });
+
+                Thread reader = new Thread(() -> {
+                    try {
+                        barrier.await();
+                        while (done.get() == 0) {
+                            try {
+                                // A generous timeout: the test checks only that a healthy concurrent commit
+                                // never trips a body-checksum fallback, not liveness.
+                                r.readSafe(configuration.getMillisecondClock(), 5_000);
+                            } catch (CairoException ex) {
+                                if (Chars.contains(ex.getFlyweightMessage(), "timeout")) {
+                                    continue;
+                                }
+                                throw ex;
+                            }
+                            Os.pause();
+                        }
+                    } catch (Throwable th) {
+                        exceptions.add(th);
+                    }
+                });
+
+                writer.start();
+                reader.start();
+                writer.join();
+                reader.join();
+
+                if (!exceptions.isEmpty()) {
+                    Assert.fail(exceptions.poll().toString());
+                }
+                Assert.assertEquals("no false-positive fallback under healthy concurrent commits", 0L, ColumnVersionReader.getBodyChecksumFallbackCount());
+            }
+        });
+    }
+
+    @Test
+    public void testCvRollbackVerifies() throws Exception {
+        // rollback() re-exposes the prior area (version - 1). Its trailing checksum still verifies, so the
+        // latest commit's placement did not clobber the prior area's data or checksum.
+        assertMemoryLeak(() -> {
+            final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+            try (Path path = new Path()) {
+                LPSZ cvPath = path.of(root).concat("_cv").$();
+                try (ColumnVersionWriter w = new ColumnVersionWriter(configuration, cvPath, true)) {
+                    // First committed state.
+                    for (int i = 0; i < 6; i++) {
+                        w.upsert(i + 1, i, 10 + i, 100L + i);
+                    }
+                    w.commit();
+                    StringSink before = new StringSink();
+                    before.put(w.toString());
+
+                    // Second commit with a different shape, so the area placement moves.
+                    w.upsert(99, 0, 999, 9999);
+                    w.upsert(100, 1, 1000, 10000);
+                    w.commit();
+
+                    // Roll back to the prior committed area. readUnsafe() inside rollback() only logs a bad
+                    // checksum, so a fresh reader's readSafe() below does the strict check.
+                    w.rollback();
+                    Assert.assertEquals("rollback must restore the prior committed state", before.toString(), w.toString());
+                }
+
+                // The current (post-rollback) area passes the strict readSafe() check.
+                ColumnVersionReader.resetBodyChecksumFallbackCount();
+                try (ColumnVersionReader r = new ColumnVersionReader().ofRO(ff, cvPath)) {
+                    r.readSafe(configuration.getMillisecondClock(), 1);
+                    Assert.assertEquals("rollback area must verify cleanly (no fallback)", 0L, ColumnVersionReader.getBodyChecksumFallbackCount());
+                    for (int i = 0; i < 6; i++) {
+                        Assert.assertEquals(100L + i, r.getColumnTopQuick(i + 1, i));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCvTornBodyUnderAnEarlierCommitsTrailerIsTorn() throws Exception {
+        // The writer reuses the slot of the commit two back, so the new trailer lands where that commit's
+        // trailer sits. A crash can persist the new version word and part of the new body but not the new
+        // trailer. The trailer left in place does not describe the body: the live area is torn on every
+        // path that verifies it.
+        assertMemoryLeak(() -> {
+            final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+            try (Path path = new Path()) {
+                LPSZ cvPath = path.of(root).concat("_cv").$();
+                try (ColumnVersionWriter w = new ColumnVersionWriter(configuration, cvPath, true)) {
+                    for (int i = 1; i <= 4; i++) {
+                        w.upsert(1, 0, i, i);
+                        w.commit();
+                    }
+                }
+                Assert.assertEquals(4, peekLong(ff, cvPath, OFFSET_VERSION_64));
+                // Commit 3 lives in B at the header; commit 4 in A right after it. Commit 5 goes back to B.
+                final long areaOffset = peekLong(ff, cvPath, OFFSET_OFFSET_B_64);
+                Assert.assertEquals(HEADER_SIZE, areaOffset);
+                Assert.assertEquals(BLOCK_SIZE_BYTES, peekLong(ff, cvPath, OFFSET_SIZE_B_64));
+                Assert.assertEquals(HEADER_SIZE + BLOCK_SIZE_BYTES + TableUtils.CV_CHECKSUM_TRAILER_SIZE, peekLong(ff, cvPath, OFFSET_OFFSET_A_64));
+                pokeLong(ff, cvPath, areaOffset + 2 * Long.BYTES, 5);
+                pokeLong(ff, cvPath, areaOffset + 3 * Long.BYTES, 55);
+                pokeLong(ff, cvPath, OFFSET_VERSION_64, 5);
+
+                ColumnVersionReader.resetBodyChecksumFallbackCount();
+                try (ColumnVersionReader r = new ColumnVersionReader().ofRO(ff, cvPath)) {
+                    Assert.assertFalse("the live area must not verify", r.isAreaIntact(5));
+                    Assert.assertTrue("the previous area must verify", r.isAreaIntact(4));
+                    r.readSafe(configuration.getMillisecondClock(), 100);
+                    Assert.assertEquals(1, ColumnVersionReader.getBodyChecksumFallbackCount());
+                    Assert.assertEquals(4, r.getVersion());
+                    Assert.assertEquals(4, r.getColumnTopQuick(1, 0));
+                }
+            }
+        });
+    }
 
     @Test
     public void testColumnAddRemove() throws Exception {
@@ -640,6 +1296,106 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    // Deterministic, seed-dependent pseudo-random byte fill (xorshift): every byte position carries
+    // entropy and distinct seeds produce distinct content. Mirrors TxnTest.fillPattern.
+    private static void fillPattern(long addr, long size, int seed) {
+        int x = seed | 1; // avoid the zero-stuck xorshift state
+        for (long i = 0; i < size; i++) {
+            x ^= x << 13;
+            x ^= x >>> 17;
+            x ^= x << 5;
+            Unsafe.putByte(addr + i, (byte) x);
+        }
+    }
+
+    // Asserts the two areas' full on-disk footprints [offset, offset+size+16) (data plus the 16-byte trailer:
+    // magic and checksum) are disjoint, as the +16 placement reservation guarantees.
+    private static void assertNoAreaOverlap(long offsetA, long sizeA, long offsetB, long sizeB) {
+        long endA = offsetA + sizeA + TableUtils.CV_CHECKSUM_TRAILER_SIZE; // exclusive end incl. the trailer
+        long endB = offsetB + sizeB + TableUtils.CV_CHECKSUM_TRAILER_SIZE;
+        boolean disjoint = endA <= offsetB || endB <= offsetA;
+        Assert.assertTrue(
+                "area footprints overlap: A=[" + offsetA + "," + endA + ") B=[" + offsetB + "," + endB + ")",
+                disjoint
+        );
+    }
+
+    // Reads `size` bytes of blocks from the on-disk area at `offset` and asserts they equal what the reader
+    // loaded into its cached list, in the same order.
+    private static void assertReaderMatchesArea(FilesFacade ff, LPSZ path, long offset, long size, ColumnVersionReader r) {
+        int blocks = (int) (size / BLOCK_SIZE_BYTES);
+        LongList list = r.getCachedColumnVersionList();
+        Assert.assertEquals(blocks * ColumnVersionWriter.BLOCK_SIZE, list.size());
+        for (int b = 0; b < blocks; b++) {
+            long base = offset + (long) b * BLOCK_SIZE_BYTES;
+            for (int w = 0; w < ColumnVersionWriter.BLOCK_SIZE; w++) {
+                long onDisk = peekLong(ff, path, base + (long) w * Long.BYTES);
+                long inReader = list.getQuick(b * ColumnVersionWriter.BLOCK_SIZE + w);
+                Assert.assertEquals("block " + b + " word " + w + " mismatch vs prior area on disk", onDisk, inReader);
+            }
+        }
+    }
+
+    // Positional 8-byte read of the _cv file (no mmap, so it cannot truncate the file on close).
+    private static long peekLong(FilesFacade ff, LPSZ path, long offset) {
+        long fd = ff.openRO(path);
+        Assert.assertTrue(fd > -1);
+        long buf = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Assert.assertEquals(Long.BYTES, ff.read(fd, buf, Long.BYTES, offset));
+            return Unsafe.getLong(buf);
+        } finally {
+            Unsafe.free(buf, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            ff.close(fd);
+        }
+    }
+
+    // Positional 8-byte write of the _cv file. Corrupts a committed area on disk without recomputing its
+    // trailing checksum and without truncating the file, which a writable mmap would do. Mirrors TxnTest.
+    private static void pokeLong(FilesFacade ff, LPSZ path, long offset, long value) {
+        long fd = ff.openRW(path, CairoConfiguration.O_NONE);
+        Assert.assertTrue(fd > -1);
+        long buf = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Unsafe.putLong(buf, value);
+            Assert.assertEquals(Long.BYTES, ff.write(fd, buf, Long.BYTES, offset));
+            ff.fsync(fd);
+        } finally {
+            Unsafe.free(buf, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            ff.close(fd);
+        }
+    }
+
+    // Writes `count` identical bytes `b` starting at `offset` of the _cv file (no mmap, so it cannot
+    // truncate the file). Stamps non-magic, non-zero bytes into the trailer slot of a page-rounded file to
+    // forge a healthy pre-checksum (legacy) _cv.
+    private static void pokeBytes(FilesFacade ff, LPSZ path, long offset, int b, int count) {
+        long fd = ff.openRW(path, CairoConfiguration.O_NONE);
+        Assert.assertTrue(fd > -1);
+        long buf = Unsafe.malloc(count, MemoryTag.NATIVE_DEFAULT);
+        try {
+            for (int i = 0; i < count; i++) {
+                Unsafe.putByte(buf + i, (byte) b);
+            }
+            Assert.assertEquals(count, ff.write(fd, buf, count, offset));
+            ff.fsync(fd);
+        } finally {
+            Unsafe.free(buf, count, MemoryTag.NATIVE_DEFAULT);
+            ff.close(fd);
+        }
+    }
+
+    // Truncates the _cv file to exactly `len` bytes (used to forge an old-format file with no trailing long).
+    private static void truncateFile(FilesFacade ff, LPSZ path, long len) {
+        long fd = ff.openRW(path, CairoConfiguration.O_NONE);
+        Assert.assertTrue(fd > -1);
+        try {
+            Assert.assertTrue(ff.truncate(fd, len));
+        } finally {
+            ff.close(fd);
+        }
     }
 
     private static abstract class CVStringTable {

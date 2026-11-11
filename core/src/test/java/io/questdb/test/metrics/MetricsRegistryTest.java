@@ -28,13 +28,19 @@ import io.questdb.metrics.Counter;
 import io.questdb.metrics.CounterWithOneLabel;
 import io.questdb.metrics.CounterWithTwoLabels;
 import io.questdb.metrics.LongGauge;
+import io.questdb.metrics.MetricSnapshotVisitor;
+import io.questdb.metrics.MetricType;
 import io.questdb.metrics.MetricsRegistry;
 import io.questdb.metrics.MetricsRegistryImpl;
 import io.questdb.metrics.NullMetricsRegistry;
 import io.questdb.metrics.Target;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.ArrayList;
+import java.util.List;
 
 public class MetricsRegistryTest {
 
@@ -113,6 +119,71 @@ public class MetricsRegistryTest {
                 "questdb_gauge 1\n" +
                 "\n";
         assertScrapable(gauge, expected2);
+    }
+
+    @Test
+    public void testEveryRegisteredMetricIsEnumerable() {
+        MetricsRegistry metricsRegistry = new MetricsRegistryImpl();
+        metricsRegistry.newAtomicLongGauge("atomic").setValue(1);
+        metricsRegistry.newCounter("counter").add(2);
+        CounterWithOneLabel oneLabel = metricsRegistry.newCounter(
+                "one_label",
+                "label",
+                new CharSequence[]{"a", "b"}
+        );
+        oneLabel.inc((short) 1);
+        CounterWithTwoLabels twoLabels = metricsRegistry.newCounter(
+                "two_labels",
+                "label0",
+                new CharSequence[]{"a"},
+                "label1",
+                new CharSequence[]{"x", "y"}
+        );
+        twoLabels.inc((short) 0, (short) 1);
+        metricsRegistry.newDoubleGauge("double").setValue(3.5);
+        metricsRegistry.newLongGauge("long").setValue(4);
+        metricsRegistry.newVirtualGauge("virtual", () -> 5);
+
+        final List<String> values = new ArrayList<>();
+        metricsRegistry.snapshot(new MetricSnapshotVisitor() {
+            @Override
+            public void visitDouble(CharSequence name, double value) {
+                values.add(name + ":DOUBLE_GAUGE:" + value);
+            }
+
+            @Override
+            public void visitLong(CharSequence name, MetricType type, long value) {
+                values.add(name + ":" + type + ":" + value);
+            }
+
+            @Override
+            public void visitLong(CharSequence name, MetricType type, CharSequence labelValue0, long value) {
+                values.add(name + "__" + labelValue0 + ":" + type + ":" + value);
+            }
+
+            @Override
+            public void visitLong(
+                    CharSequence name,
+                    MetricType type,
+                    CharSequence labelValue0,
+                    CharSequence labelValue1,
+                    long value
+            ) {
+                values.add(name + "__" + labelValue0 + "__" + labelValue1 + ":" + type + ":" + value);
+            }
+        });
+
+        Assert.assertEquals(List.of(
+                "atomic:LONG_GAUGE:1",
+                "counter:COUNTER:2",
+                "one_label__a:COUNTER:0",
+                "one_label__b:COUNTER:1",
+                "two_labels__a__x:COUNTER:0",
+                "two_labels__a__y:COUNTER:1",
+                "double:DOUBLE_GAUGE:3.5",
+                "long:LONG_GAUGE:4",
+                "virtual:VIRTUAL_LONG_GAUGE:5"
+        ), values);
     }
 
     @Test

@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TxReader;
 import io.questdb.std.Rnd;
@@ -62,6 +63,11 @@ public class NativePartitionSeqTxnMonotonicFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testNativeSeqTxnStaysMonotonicSafeAcrossBlockBatching() throws Exception {
+        // Samples every native partition's offset-3 seqTxn stamp. A COMPOSITE partition spends that
+        // field on its geometry pointer and keeps its seqTxn in the _geometry record instead, so it
+        // reports no stamp here. Pin the production default so the invariant is exercised against the
+        // partitions it was written for.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(() -> {
             final Rnd rnd = TestUtils.generateRandom(LOG);
             final int txnCount = 30 + rnd.nextInt(60);

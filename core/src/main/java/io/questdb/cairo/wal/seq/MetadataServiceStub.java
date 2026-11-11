@@ -28,6 +28,7 @@ import io.questdb.cairo.AttachDetachStatus;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.UpdateOperator;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.wal.MetadataService;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
@@ -86,12 +87,32 @@ public interface MetadataServiceStub extends MetadataService {
     }
 
     @Override
-    default boolean enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
+    default boolean enableDeduplication(LongList columnsIndexes, int dedupMode) {
         return false;
+    }
+
+    @Override
+    default void forceReindex(
+            @Nullable CharSequence columnName,
+            LongList partitions,
+            int tableNamePosition,
+            @Nullable SqlExecutionCircuitBreaker circuitBreaker
+    ) {
+        throw CairoException.critical(0).put("force reindex does not update sequencer metadata");
     }
 
     default void forceRemovePartitions(LongList partitionTimestamps) {
         throw CairoException.critical(0).put("recover partitions does not update sequencer metadata");
+    }
+
+    @Override
+    default long getExpiryCleanupIntervalMicros() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    default String getExpiryPredicate() {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -152,6 +173,11 @@ public interface MetadataServiceStub extends MetadataService {
     @Override
     default void setMatViewRefreshTimer(long startUs, int interval, char unit) {
         throw CairoException.critical(0).put("change of materialized view refresh timer does not update sequencer metadata");
+    }
+
+    @Override
+    default void setMetaExpiry(String predicate, long cleanupIntervalMicros) {
+        throw CairoException.critical(0).put("change of row-expiry policy does not update sequencer metadata");
     }
 
     @Override

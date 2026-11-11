@@ -240,6 +240,41 @@ JNIEXPORT jdouble JNICALL Java_io_questdb_std_Vect_ ## func(JNIEnv *env, jclass 
 \
 }
 
+typedef int64_t IntMinMaxVecFuncType(int32_t *, int64_t, int32_t *);
+
+#define INT_MIN_MAX_DISPATCHER(func) \
+\
+IntMinMaxVecFuncType F_SSE2(func), F_SSE41(func), F_AVX2(func), F_AVX512(func), F_DISPATCH(func); \
+\
+IntMinMaxVecFuncType *POINTER_NAME(func) = &func ## _dispatch; \
+\
+int64_t F_DISPATCH(func) (int32_t *pi, int64_t count, int32_t *minMax) { \
+    const int iset = instrset_detect();  \
+    if (iset >= 10) { \
+        POINTER_NAME(func) = &F_AVX512(func); \
+    } else if (iset >= 8) { \
+        POINTER_NAME(func) = &F_AVX2(func); \
+    } else if (iset >= 5) { \
+        POINTER_NAME(func) = &F_SSE41(func); \
+    } else if (iset >= 2) { \
+        POINTER_NAME(func) = &F_SSE2(func); \
+    } else { \
+        POINTER_NAME(func) = &F_VANILLA(func); \
+    }\
+    return (*POINTER_NAME(func))(pi, count, minMax); \
+} \
+\
+inline int64_t func(int32_t *pi, int64_t count, int32_t *minMax) { \
+    return (*POINTER_NAME(func))(pi, count, minMax); \
+}\
+\
+extern "C" { \
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Vect_ ## func(JNIEnv *env, jclass cl, jlong pInt, jlong count, jlong pMinMax) { \
+    return func((int32_t *) pInt, count, (int32_t *) pMinMax); \
+}\
+\
+}
+
 typedef int32_t IntIntVecFuncType(int32_t *, int64_t);
 
 #define INT_INT_DISPATCHER(func) \

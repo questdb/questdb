@@ -216,10 +216,9 @@ public class PostingIndexWriter implements IndexWriter {
     private final ObjList<PendingSealPurge> pendingPurges = new ObjList<>();
     // Reusable scratch list for sealTxns that recoveryDropAbandoned dropped
     // out of the chain on writer-open. Populated by of(...) when
-    // currentTableTxn was supplied via setCurrentTableTxn; the orphan
-    // sealTxns are then forwarded to the seal-purge outbox so the
-    // background job removes the .pv.{N} / .pc{i}.{N} files. Cleared on
-    // every of() call to avoid leaking entries across reopens.
+    // currentTableTxn was supplied via setCurrentTableTxn; the walk then
+    // unlinks the .pv.{N} / .pc{i}.{N} files of the orphan sealTxns. Cleared
+    // on every of() call to avoid leaking entries across reopens.
     private final LongList recoveryOrphanScratch = new LongList();
     private final byte rowIdEncoding;
     private final MemoryMARW sealValueMem = Vm.getCMARWInstance();
@@ -281,6 +280,9 @@ public class PostingIndexWriter implements IndexWriter {
     private boolean isPoisoned;
     private int keyCapacity;
     private int keyCount;
+    // The commit mode this indexer flushes under. Seeded from the instance-global cairo.commit.mode and
+    // overridden via setCommitMode() while the owning table is not yet enrolled in adaptive.
+    private int indexCommitMode;
     // In-memory mirror of the head entry's MAX_VALUE field. setMaxValue
     // updates it directly; flush/seal callsites read it back without going
     // to mmap. Persisted to the head entry on every chain publish (or via
@@ -341,6 +343,7 @@ public class PostingIndexWriter implements IndexWriter {
     public PostingIndexWriter(CairoConfiguration configuration, byte rowIdEncoding) {
         this.alignedBitWidthThreshold = configuration.getPostingIndexAlignedBitWidthThreshold();
         this.configuration = configuration;
+        this.indexCommitMode = configuration.getCommitMode();
         this.ff = configuration.getFilesFacade();
         this.indexerSpillBytesMax = configuration.getPostingIndexerSpillBytesMax();
         this.rowIdEncoding = rowIdEncoding;
@@ -368,6 +371,38 @@ public class PostingIndexWriter implements IndexWriter {
         // historical .pv.0 filename for a freshly-initialised, never-sealed
         // index.
         initKeyMemory(keyMem, 0L);
+    }
+
+    @Override
+    public void abandon() {
+        // Unlike closeNoTruncate(), no seal here: the caller's files were already rewritten by a different writer
+        // instance, so this writer's own pending/sealed state - however consistent it looks locally - describes bytes
+        try {
+            if (keyMem.isOpen()) {
+                keyMem.close(false);
+            }
+        } finally {
+            try {
+                Misc.free(sealValueMem);
+                Misc.free(stagingValueMem);
+                if (valueMem.isOpen()) {
+                    valueMem.close(false);
+                }
+            } finally {
+                closeSidecarMems();
+                freeNativeBuffers();
+                keyCount = 0;
+                valueMemSize = 0;
+                genCount = 0;
+                maxValue = 0;
+                hasPendingData = false;
+                activeKeyCount = 0;
+                coverCount = 0;
+                pendingTxnAtSeal = -1;
+                releasePendingPurges();
+                chain.resetState();
+            }
+        }
     }
 
     @Override
@@ -540,15 +575,14 @@ public class PostingIndexWriter implements IndexWriter {
                     // full -- precisely what a saturated log under the ENOSPC / OOM
                     // pressure this catch exists for looks like.
                     // The logging sits inside its own swallow: AsyncLogRecord
-                    // .$(Throwable) releases the log ring slot and RETHROWS when
-                    // formatting `e` fails, which an OutOfMemoryError can do in
-                    // exactly the ENOSPC / OOM case this catch exists for -- and
-                    // that throw would otherwise escape close(). $(Object),
-                    // $(Sinkable) and $(Throwable) all self-release; $safe and
-                    // $(CharSequence) do not, so the trailing rec.I$() is what
-                    // returns the slot if one of THOSE throws. I$() no-ops unless
-                    // isLogRecordInProgress, which $() clears on release, so it
-                    // cannot double-release after a self-releasing segment.
+                    // .$(Throwable) publishes the partial message and RETHROWS
+                    // when formatting `e` fails, which an OutOfMemoryError can do
+                    // in exactly the ENOSPC / OOM case this catch exists for --
+                    // and that throw would otherwise escape close(). The chain
+                    // claims its log ring slot only in $(), so a failed segment
+                    // never holds a slot; the trailing rec.I$() publishes what
+                    // was staged. I$() no-ops unless isLogRecordInProgress,
+                    // which $() clears, so it cannot publish twice.
                     try {
                         LogRecord rec = LOG.critical();
                         try {
@@ -692,10 +726,20 @@ public class PostingIndexWriter implements IndexWriter {
     @Override
     public void commit() {
         checkNotPoisoned();
+        // flushAllPending() runs in every mode: it publishes buffered native-memory postings into the mapped
+        // .pk/.pv files, and without it readers see keyCount=0 until the writer closes. Only the flush below
+        // depends on the mode.
         flushAllPending();
-        if (configuration.getCommitMode() != CommitMode.NOSYNC) {
-            sync(configuration.getCommitMode() == CommitMode.ASYNC);
+        // SYNC and ASYNC only; see IndexWriter.setCommitMode.
+        final int commitMode = indexCommitMode;
+        if (CommitMode.appliesColumnSync(commitMode)) {
+            sync(commitMode == CommitMode.ASYNC);
         }
+    }
+
+    @Override
+    public void setCommitMode(int commitMode) {
+        this.indexCommitMode = commitMode;
     }
 
     // Sync order is .pv and covering sidecars before .pk: a torn write must
@@ -735,8 +779,9 @@ public class PostingIndexWriter implements IndexWriter {
         } else {
             flushAllPendingDense();
         }
-        int commitMode = configuration.getCommitMode();
-        if (commitMode != CommitMode.NOSYNC) {
+        // Same gate as commit(); see IndexWriter.setCommitMode.
+        final int commitMode = indexCommitMode;
+        if (CommitMode.appliesColumnSync(commitMode)) {
             boolean async = commitMode == CommitMode.ASYNC;
             if (valueMem.isOpen()) {
                 valueMem.sync(async);
@@ -943,6 +988,7 @@ public class PostingIndexWriter implements IndexWriter {
             valueMem.close(false, (byte) 0);
             Path p = Path.getThreadLocal(partitionPath);
             LPSZ fileName = PostingIndexUtils.valueFileName(p, indexName, postingColumnNameTxn, newSealTxn);
+            TableUtils.removeExistingOrFail(ff, fileName);
             valueMem.of(ff, fileName,
                     configuration.getDataIndexValueAppendPageSize(), 0L,
                     MemoryTag.MMAP_INDEX_WRITER, configuration.getWriterFileOpenOpts(), -1);
@@ -1314,7 +1360,18 @@ public class PostingIndexWriter implements IndexWriter {
         of(path, name, columnNameTxn, false);
     }
 
+    @Override
+    public void of(Path path, CharSequence name, long columnNameTxn, long partitionTimestamp, long partitionNameTxn, boolean allowFreshIfMissing) {
+        this.partitionTimestamp = partitionTimestamp;
+        this.partitionNameTxn = partitionNameTxn;
+        of(path, name, columnNameTxn, false, allowFreshIfMissing);
+    }
+
     public void of(Path path, CharSequence name, long columnNameTxn, boolean isInit) {
+        of(path, name, columnNameTxn, isInit, false);
+    }
+
+    private void of(Path path, CharSequence name, long columnNameTxn, boolean isInit, boolean allowFreshIfMissing) {
         // close() releases resources but does NOT flush pending add() calls,
         // so the caller must have already committed or sealed. On the
         // TableWriter path this is guaranteed by commit() in switchPartition
@@ -1333,11 +1390,15 @@ public class PostingIndexWriter implements IndexWriter {
             LPSZ keyFile = PostingIndexUtils.keyFileName(path, name, columnNameTxn);
 
             if (isInit) {
+                // A new index: never truncate a file an older partition version may share through a hard link
+                TableUtils.removeExistingOrFail(ff, keyFile);
                 keyMem.of(ff, keyFile, configuration.getDataIndexKeyAppendPageSize(), 0L, MemoryTag.MMAP_INDEX_WRITER);
                 this.blockCapacity = BLOCK_CAPACITY;
                 initKeyMemory(keyMem);
             } else {
-                if (!ff.exists(keyFile)) {
+                // allowFreshIfMissing skips this exists() pre-check rather than falling back to a fresh, empty index:
+                // the caller has independently established this column had no data before the writer session now.
+                if (!allowFreshIfMissing && !ff.exists(keyFile)) {
                     throw CairoException.critical(0).put("index does not exist [path=").put(path).put(']');
                 }
 
@@ -1374,7 +1435,7 @@ public class PostingIndexWriter implements IndexWriter {
                 this.valueMemSize = 0;
             } else {
                 chain.openExisting(keyMem);
-                runRecoveryWalkIfRequested();
+                runRecoveryWalkIfRequested(path, plen);
                 if (chain.hasHead()) {
                     PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
                     chain.loadHeadEntry(keyMem, head);
@@ -1393,9 +1454,22 @@ public class PostingIndexWriter implements IndexWriter {
                 }
             }
 
+            if (!isInit && valueMemSize > 0) {
+                LPSZ pvName = PostingIndexUtils.valueFileName(path.trimTo(plen), name, postingColumnNameTxn, this.sealTxn);
+                long pvActual = ff.length(pvName);
+                if (valueMemSize > pvActual) {
+                    throw CairoException.critical(0)
+                            .put("posting index value file too short [expected=").put(valueMemSize)
+                            .put(", actual=").put(pvActual).put(", path=").put(pvName).put(']');
+                }
+            }
+            final LPSZ valueFile = PostingIndexUtils.valueFileName(path.trimTo(plen), name, postingColumnNameTxn, this.sealTxn);
+            if (isInit) {
+                TableUtils.removeExistingOrFail(ff, valueFile);
+            }
             valueMem.of(
                     ff,
-                    PostingIndexUtils.valueFileName(path.trimTo(plen), name, postingColumnNameTxn, this.sealTxn),
+                    valueFile,
                     configuration.getDataIndexValueAppendPageSize(),
                     isInit ? 0 : valueMemSize,
                     MemoryTag.MMAP_INDEX_WRITER
@@ -1638,6 +1712,25 @@ public class PostingIndexWriter implements IndexWriter {
         this.coveredColumnAddrSizes.clear();
         this.coveredColumnAuxAddrs.clear();
         this.coveredColumnAuxAddrSizes.clear();
+    }
+
+    /**
+     * Drops this writer's mappings of its covered sidecar files, before ANOTHER writer instance appends to those same
+     * files - the O3 composite executor and the seal sweep both open their own {@link PostingIndexWriter} on a
+     * partition the TableWriter's live indexer may hold as well.
+     */
+    public void releaseSidecarWriteMappings() {
+        closeSidecarMems();
+    }
+
+    /**
+     * True when {@link #rollbackConditionally(long)} at {@code row} would evict entries, i.e.
+     */
+    public boolean hasIndexedRowsAtOrAbove(long row) {
+        if (row < 0 || (genCount == 0 && !hasPendingData)) {
+            return false;
+        }
+        return row == 0 || getMaxValue() >= row;
     }
 
     @Override
@@ -2129,6 +2222,7 @@ public class PostingIndexWriter implements IndexWriter {
             valueMem.close(false, (byte) 0);
             Path p = Path.getThreadLocal(partitionPath);
             LPSZ fileName = PostingIndexUtils.valueFileName(p, indexName, postingColumnNameTxn, newTxn);
+            TableUtils.removeExistingOrFail(ff, fileName);
             valueMem.of(ff, fileName,
                     configuration.getDataIndexValueAppendPageSize(), 0L,
                     MemoryTag.MMAP_INDEX_WRITER, configuration.getWriterFileOpenOpts(), -1);
@@ -2973,7 +3067,7 @@ public class PostingIndexWriter implements IndexWriter {
         }
 
         // Trial delta encode from the pre-merged buffer (encode directly from native memory)
-        int bpDataTotal = 0;
+        long bpDataTotal = 0;
         for (int j = 0; j < ks; j++) {
             int count = keyCounts[j];
             if (count > 0) {
@@ -3009,55 +3103,24 @@ public class PostingIndexWriter implements IndexWriter {
         int naturalBitWidth = strideRange <= 0 ? 1 : BitpackUtils.bitsNeeded(strideRange);
         int alignedBitWidth = maybeAlignBitWidth(naturalBitWidth, alignedBitWidthThreshold);
 
-        // Compute sizes for all three options: delta, flat-natural, flat-aligned
         int deltaHeaderSize = PostingIndexUtils.strideDeltaHeaderSize(ks);
-        int deltaSize = deltaHeaderSize + bpDataTotal;
-
+        long deltaSize = deltaHeaderSize + bpDataTotal;
         int flatHeaderSize = PostingIndexUtils.strideFlatHeaderSize(ks);
-        int naturalFlatDataSize = BitpackUtils.packedDataSize(totalStrideValues, naturalBitWidth);
-        int naturalFlatSize = flatHeaderSize + naturalFlatDataSize;
-
-        // Choose: prefer aligned flat (AVX2-friendly) if it still beats delta,
-        // otherwise natural flat if it beats delta, otherwise delta.
-        int localBitWidth;
-        int flatDataSize;
-        int flatSize;
-        if (alignedBitWidth != naturalBitWidth) {
-            int alignedFlatDataSize = BitpackUtils.packedDataSize(totalStrideValues, alignedBitWidth);
-            int alignedFlatSize = flatHeaderSize + alignedFlatDataSize;
-            if (alignedFlatSize < deltaSize) {
-                // Aligned flat beats delta — use it for AVX2 decode
-                localBitWidth = alignedBitWidth;
-                flatDataSize = alignedFlatDataSize;
-                flatSize = alignedFlatSize;
-            } else if (naturalFlatSize < deltaSize) {
-                // Aligned too big, but natural flat still beats delta
-                localBitWidth = naturalBitWidth;
-                flatDataSize = naturalFlatDataSize;
-                flatSize = naturalFlatSize;
-            } else {
-                localBitWidth = naturalBitWidth;
-                flatDataSize = naturalFlatDataSize;
-                flatSize = naturalFlatSize;
-            }
-        } else {
-            localBitWidth = naturalBitWidth;
-            flatDataSize = naturalFlatDataSize;
-            flatSize = naturalFlatSize;
-        }
-
-        boolean useFlat = flatSize < deltaSize;
+        int localBitWidth = PostingIndexUtils.selectFlatBitWidth(totalStrideValues, naturalBitWidth, alignedBitWidth, flatHeaderSize, deltaSize);
+        boolean isFlat = localBitWidth != 0;
+        int flatDataSize = isFlat ? BitpackUtils.packedDataSize(totalStrideValues, localBitWidth) : 0;
+        long flatSize = flatHeaderSize + (isFlat ? flatDataSize : ((long) totalStrideValues * naturalBitWidth + 7) / 8);
 
         LOG.debug().$("stride mode [s=").$(s)
                 .$(", deltaSize=").$(deltaSize)
                 .$(", flatSize=").$(flatSize)
                 .$(", natBW=").$(naturalBitWidth)
-                .$(", alnBW=").$(localBitWidth)
+                .$(", alnBW=").$(isFlat ? localBitWidth : naturalBitWidth)
                 .$(", totalVals=").$(totalStrideValues)
-                .$(", useFlat=").$(useFlat)
+                .$(", useFlat=").$(isFlat)
                 .$(']').$();
 
-        if (useFlat) {
+        if (isFlat) {
             writePackedStride(ks, keyCounts, keyOffsets, localBitWidth, strideMinValue, flatHeaderSize, flatDataSize,
                     localHeaderBuf, mergedValuesAddr);
         } else {
@@ -3069,7 +3132,7 @@ public class PostingIndexWriter implements IndexWriter {
             int ks, int[] keyCounts, long[] keyOffsets, long strideValsAddr,
             int[] bpKeySizes, long bpTrialBuf, long localHeaderBuf
     ) {
-        int bpDataTotal = 0;
+        long bpDataTotal = 0;
         for (int j = 0; j < ks; j++) {
             int count = keyCounts[j];
             if (count > 0) {
@@ -3083,7 +3146,7 @@ public class PostingIndexWriter implements IndexWriter {
         }
 
         int deltaHeaderSize = PostingIndexUtils.strideDeltaHeaderSize(ks);
-        int deltaSize = deltaHeaderSize + bpDataTotal;
+        long deltaSize = deltaHeaderSize + bpDataTotal;
         int flatHeaderSize = PostingIndexUtils.strideFlatHeaderSize(ks);
 
         long totalStrideValuesL = 0;
@@ -3104,38 +3167,12 @@ public class PostingIndexWriter implements IndexWriter {
             strideMaxValue = 0;
         }
 
-        boolean useFlat;
-        int localBitWidth = 0;
-        int flatDataSize = 0;
-
-        if (totalStrideValuesL > Integer.MAX_VALUE) {
-            useFlat = false;
-        } else {
-            int totalStrideValues = (int) totalStrideValuesL;
-            long strideRange = strideMaxValue - strideMinValue;
-            int naturalBitWidth = strideRange <= 0 ? 1 : BitpackUtils.bitsNeeded(strideRange);
-            int alignedBitWidth = maybeAlignBitWidth(naturalBitWidth, alignedBitWidthThreshold);
-            int naturalFlatDataSize = BitpackUtils.packedDataSize(totalStrideValues, naturalBitWidth);
-
-            if (alignedBitWidth != naturalBitWidth) {
-                int alignedFlatDataSize = BitpackUtils.packedDataSize(totalStrideValues, alignedBitWidth);
-                int alignedFlatSize = flatHeaderSize + alignedFlatDataSize;
-                if (alignedFlatSize < deltaSize) {
-                    localBitWidth = alignedBitWidth;
-                    flatDataSize = alignedFlatDataSize;
-                } else {
-                    localBitWidth = naturalBitWidth;
-                    flatDataSize = naturalFlatDataSize;
-                }
-            } else {
-                localBitWidth = naturalBitWidth;
-                flatDataSize = naturalFlatDataSize;
-            }
-            int flatSize = flatHeaderSize + flatDataSize;
-            useFlat = flatSize < deltaSize;
-        }
-
-        if (useFlat) {
+        long strideRange = strideMaxValue - strideMinValue;
+        int naturalBitWidth = strideRange <= 0 ? 1 : BitpackUtils.bitsNeeded(strideRange);
+        int alignedBitWidth = maybeAlignBitWidth(naturalBitWidth, alignedBitWidthThreshold);
+        int localBitWidth = PostingIndexUtils.selectFlatBitWidth(totalStrideValuesL, naturalBitWidth, alignedBitWidth, flatHeaderSize, deltaSize);
+        if (localBitWidth != 0) {
+            int flatDataSize = BitpackUtils.packedDataSize((int) totalStrideValuesL, localBitWidth);
             writePackedStride(ks, keyCounts, keyOffsets, localBitWidth, strideMinValue,
                     flatHeaderSize, flatDataSize, localHeaderBuf, strideValsAddr);
         } else {
@@ -4233,22 +4270,37 @@ public class PostingIndexWriter implements IndexWriter {
                 ? TableUtils.iFile(p, colName, colNameTxn)
                 : TableUtils.dFile(p, colName, colNameTxn);
         long fd = ff.openRO(fileName);
-        if (fd >= 0) {
-            try {
-                long fileSize = ff.length(fd);
-                if (fileSize > 0) {
-                    long mapped = ff.mmap(fd, fileSize, 0, Files.MAP_RO, MemoryTag.MMAP_INDEX_WRITER);
-                    if (mapped == FilesFacade.MAP_FAILED) {
-                        throw CairoException.critical(ff.errno())
-                                .put("could not mmap covered column [file=").put(fileName)
-                                .put(", size=").put(fileSize).put(']');
-                    }
-                    addrs[idx] = mapped;
-                    sizes[idx] = fileSize;
-                }
-            } finally {
-                ff.close(fd); // mmap keeps data accessible after FD close
+        if (fd < 0) {
+            final int errno = ff.errno();
+            // A covered column whose top spans the whole partition has no file here, and every row reads
+            // as NULL from the top. Any other open failure must fail the write: leaving the mapping at 0
+            // would publish NULL covered values for rows the column holds.
+            if (!ff.exists(fileName)) {
+                return;
             }
+            // Reset the lazy read maps, or ensureCoveredColumnReadMaps() would early-return on arrays
+            // with this slot at 0 and the next covered read on this writer would resolve to NULL.
+            unmapCoveredColumnReads();
+            throw CairoException.critical(errno).put("could not open covered column [file=").put(fileName).put(']');
+        }
+        try {
+            long fileSize = ff.length(fd);
+            if (fileSize > 0) {
+                long mapped = ff.mmap(fd, fileSize, 0, Files.MAP_RO, MemoryTag.MMAP_INDEX_WRITER);
+                if (mapped == FilesFacade.MAP_FAILED) {
+                    throw CairoException.critical(ff.errno())
+                            .put("could not mmap covered column [file=").put(fileName)
+                            .put(", size=").put(fileSize).put(']');
+                }
+                addrs[idx] = mapped;
+                sizes[idx] = fileSize;
+            }
+        } catch (Throwable th) {
+            // same reset as for the failed open above
+            unmapCoveredColumnReads();
+            throw th;
+        } finally {
+            ff.close(fd); // mmap keeps data accessible after FD close
         }
     }
 
@@ -4359,6 +4411,8 @@ public class PostingIndexWriter implements IndexWriter {
     private void openSealValueFile(long newTxn) {
         Path p = Path.getThreadLocal(partitionPath);
         LPSZ fileName = PostingIndexUtils.valueFileName(p, indexName, postingColumnNameTxn, newTxn);
+        // A new seal generation: never write into a file an older partition version may share through a hard link
+        TableUtils.removeExistingOrFail(ff, fileName);
         sealValueMem.of(ff, fileName,
                 configuration.getDataIndexValueAppendPageSize(),
                 MemoryTag.MMAP_INDEX_WRITER,
@@ -4387,10 +4441,12 @@ public class PostingIndexWriter implements IndexWriter {
                     continue;
                 }
                 long covT = getCoveredColumnNameTxn(c);
+                final LPSZ pcFile = PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, c, postingColumnNameTxn, covT, sealTxn);
+                TableUtils.removeExistingOrFail(ff, pcFile);
                 MemoryMARW mem = Vm.getCMARWInstance();
                 mem.of(
                         ff,
-                        PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, c, postingColumnNameTxn, covT, sealTxn),
+                        pcFile,
                         configuration.getDataIndexValueAppendPageSize(),
                         0L,
                         MemoryTag.MMAP_INDEX_WRITER
@@ -5053,8 +5109,9 @@ public class PostingIndexWriter implements IndexWriter {
                     // purge delete the live file. The orphan .pv.{newSealTxn} only
                     // becomes reachable later if a freed+reopened writer REUSES
                     // newSealTxn and publishes it live; PostingSealPurgeOperator
-                    // re-reads the .pk head at delete time and abandons the purge
-                    // when the file is live again, so the deferral is safe past reuse.
+                    // re-reads the .pk chain at delete time and abandons the purge
+                    // when a reader above the purge's reader window can see an entry
+                    // that names newSealTxn, so the deferral is safe past reuse.
                     // Poison FIRST, before the LOG record and scheduleOrphanPurge (both
                     // allocate and can throw under heap pressure): a secondary failure
                     // must still leave the half-switched writer poisoned.
@@ -5452,8 +5509,9 @@ public class PostingIndexWriter implements IndexWriter {
                             // the now-live .pv.{newSealTxn}. The remaining route --
                             // a freed+reopened writer REUSING newSealTxn and
                             // publishing it live -- is closed at delete time:
-                            // PostingSealPurgeOperator re-reads the .pk head and
-                            // abandons the purge when the file is live again.
+                            // PostingSealPurgeOperator re-reads the .pk chain and
+                            // abandons the purge when a reader above the purge's reader
+                            // window can see an entry that names newSealTxn.
                             // Poison FIRST, before the LOG record and scheduleOrphanPurge
                             // (both allocate and can throw under heap pressure): a secondary
                             // failure must still leave the half-switched writer poisoned.
@@ -6018,8 +6076,8 @@ public class PostingIndexWriter implements IndexWriter {
      * Run the v2 chain recovery walk if {@link #setCurrentTableTxn} was
      * called with a non-negative value before this {@code of(...)}. Drops
      * chain entries with {@code txnAtSeal > currentTableTxn} (abandoned by
-     * a previous distressed writer) and queues their {@code sealTxn} files
-     * for purge.
+     * a previous distressed writer, or by a crash recovery that rewound the
+     * table) and unlinks their {@code sealTxn} files.
      * <p>
      * The setter's value is consumed: {@code currentTableTxn} is reset to
      * {@code -1} so a stale value can't accidentally drive a future open's
@@ -6027,7 +6085,7 @@ public class PostingIndexWriter implements IndexWriter {
      * scratch list is cleared on entry so a previous open's residue is
      * never reused.
      */
-    private void runRecoveryWalkIfRequested() {
+    private void runRecoveryWalkIfRequested(Path path, int plen) {
         if (currentTableTxn < 0) {
             return;
         }
@@ -6045,22 +6103,28 @@ public class PostingIndexWriter implements IndexWriter {
         if (dropped <= 0 && !isHeadTrimmed) {
             return;
         }
+        // An entry above the committed txn is named by no reader: a reader
+        // pins a committed txn and picks the newest entry at or below it. No
+        // save point names it either, a save point is never above the
+        // committed txn, and its sealTxn is never reused, the generation
+        // counter does not go back. So its files go now; nothing else would
+        // ever remove them. A dropped entry at or below the committed txn
+        // (every generation in flight) can have a reader, and a file that
+        // fails to unlink stays: both go to the purge job, under its
+        // scoreboard check, with the widest window.
+        if (chain.isVisibleEntryDroppedOnLastRecovery()) {
+            final int last = recoveryOrphanScratch.size() - 1;
+            scheduleOrphanPurge(recoveryOrphanScratch.getQuick(last));
+            recoveryOrphanScratch.removeIndex(last);
+        }
+        final int unlinked = unlinkAbandonedSealFiles(path, plen);
         LOG.info().$("posting index recovery [")
                 .$("indexName=").$(indexName)
                 .$(", postingColumnNameTxn=").$(postingColumnNameTxn)
                 .$(", dropped=").$(dropped)
                 .$(", isHeadTrimmed=").$(isHeadTrimmed)
+                .$(", unlinked=").$(unlinked)
                 .$(']').$();
-        // Conservatively schedule each orphan .pv.{N} (and .pc{i}.{N}) for
-        // purge with the widest possible reader window. Orphans were
-        // published by a distressed attempt that never committed, so no
-        // reader could ever have pinned at their txnAtSeal — but the
-        // scoreboard check inside the purge job is the safety net we rely
-        // on, not the [fromTxn, toTxn) interval. Using [0, MAX) is safe.
-        for (int i = 0, n = recoveryOrphanScratch.size(); i < n; i++) {
-            long orphanSealTxn = recoveryOrphanScratch.getQuick(i);
-            scheduleOrphanPurge(orphanSealTxn);
-        }
         recoveryOrphanScratch.clear();
     }
 
@@ -6956,6 +7020,50 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     /**
+     * Unlinks the {@code .pv} and every {@code .pc} file of each sealTxn in
+     * {@link #recoveryOrphanScratch}; a sealTxn with a file left on disk goes
+     * to the purge job instead. Returns the number of sealTxns fully removed.
+     */
+    private int unlinkAbandonedSealFiles(Path path, int plen) {
+        final LongList sealTxns = recoveryOrphanScratch;
+        if (sealTxns.size() == 0) {
+            return 0;
+        }
+        for (int i = 0, n = sealTxns.size(); i < n; i++) {
+            final long sealTxn = sealTxns.getQuick(i);
+            if (!ff.removeQuiet(PostingIndexUtils.valueFileName(path.trimTo(plen), indexName, postingColumnNameTxn, sealTxn))) {
+                scheduleOrphanPurge(sealTxn);
+                sealTxns.setQuick(i, -1L);
+            }
+        }
+        PostingIndexUtils.scanSealedFiles(ff, path, plen, indexName, postingColumnNameTxn, new PostingIndexUtils.SealedFileVisitor() {
+            @Override
+            public void onCoverDataFile(int includeIdx, long coveredColumnNameTxn, long sealTxn) {
+                final int i = sealTxns.indexOf(sealTxn);
+                if (i < 0) {
+                    return;
+                }
+                if (!ff.removeQuiet(PostingIndexUtils.coverDataFileName(path.trimTo(plen), indexName, includeIdx, postingColumnNameTxn, coveredColumnNameTxn, sealTxn))) {
+                    scheduleOrphanPurge(sealTxn);
+                    sealTxns.setQuick(i, -1L);
+                }
+            }
+
+            @Override
+            public void onValueFile(long sealTxn) {
+            }
+        });
+        path.trimTo(plen);
+        int unlinked = 0;
+        for (int i = 0, n = sealTxns.size(); i < n; i++) {
+            if (sealTxns.getQuick(i) > -1) {
+                unlinked++;
+            }
+        }
+        return unlinked;
+    }
+
+    /**
      * Best-effort removal of the {@code .pv.{newSealTxn}} and any matching
      * {@code .pc{c}.{...}.{newSealTxn}} sidecar files when seal staging
      * aborts before {@link #switchToSealedValueFile}. The chain never
@@ -7088,7 +7196,7 @@ public class PostingIndexWriter implements IndexWriter {
         long offsetsBase = countsBase + (long) ks * Integer.BYTES;
 
         long dataOffset = 0;
-        int bpBufOffset = 0;
+        long bpBufOffset = 0;
         for (int j = 0; j < ks; j++) {
             Unsafe.putInt(countsBase + (long) j * Integer.BYTES, keyCounts[j]);
             Unsafe.putLong(offsetsBase + (long) j * Long.BYTES, dataOffset);

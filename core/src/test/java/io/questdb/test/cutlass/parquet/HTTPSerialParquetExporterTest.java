@@ -125,7 +125,9 @@ public class HTTPSerialParquetExporterTest extends AbstractCairoTest {
                 capture.start();
                 Assert.assertThrows(PeerIsSlowToReadException.class, exporter::process);
                 Assert.assertEquals(CopyExportRequestTask.Phase.SUCCESS, exporter.process());
-                capture.waitFor("hybrid stream export completed");
+                // The log writer thread appends a record to the capture char by char,
+                // so wait for the closing bracket of the line before asserting on its tail.
+                capture.waitForRegex("hybrid stream export completed \\[id=[^,]+, totalRows=\\d+\\]");
                 capture.assertLogged(", totalRows=3]");
 
                 final CopyExportContext.ExportTaskData progress = new CopyExportContext.ExportTaskData();
@@ -338,9 +340,9 @@ public class HTTPSerialParquetExporterTest extends AbstractCairoTest {
         }
 
         @Override
-        protected void dropTempTable(CopyExportContext.ExportTaskEntry entry, TableToken tableToken) {
+        protected void dropTempTable(CopyExportContext.ExportTaskEntry entry, CharSequence tempTableName, TableToken tableToken) {
             dropCount++;
-            super.dropTempTable(entry, tableToken);
+            super.dropTempTable(entry, tempTableName, tableToken);
         }
     }
 

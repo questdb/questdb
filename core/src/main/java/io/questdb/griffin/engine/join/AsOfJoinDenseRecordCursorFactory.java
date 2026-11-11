@@ -71,7 +71,7 @@ public final class AsOfJoinDenseRecordCursorFactory extends AsOfJoinDenseRecordC
         this.masterKeyCopier = masterKeyCopier;
         this.slaveKeyCopier = slaveKeyCopier;
         this.symbolTranslatingRecord = masterSymbolKeyColumnIndices != null
-                ? new SymbolTranslatingRecord(masterFactory.getMetadata().getColumnCount(), masterSymbolKeyColumnIndices, slaveSymbolKeyColumnIndices)
+                ? new SymbolTranslatingRecord(configuration, masterFactory.getMetadata().getColumnCount(), masterSymbolKeyColumnIndices, slaveSymbolKeyColumnIndices)
                 : null;
         Map fwdScanKeyToRowId = null;
         Map bwdScanKeyToRowId = null;
@@ -167,18 +167,22 @@ public final class AsOfJoinDenseRecordCursorFactory extends AsOfJoinDenseRecordC
         public void close() {
             Misc.free(slaveSinkTarget);
             Misc.free(masterSinkTarget);
+            Misc.free(symbolTranslatingRecord);
             super.close();
         }
 
         @Override
         public void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
-            // Reopen the sinks before super.of() adopts the cursors so an open-time breach frees each exactly once.
+            // Reopen the sinks and the translation caches before super.of() adopts the cursors
+            // so an open-time breach frees each exactly once.
             masterSinkTarget.reopen();
             slaveSinkTarget.reopen();
+            if (symbolTranslatingRecord != null) {
+                symbolTranslatingRecord.initSources(masterCursor, slaveCursor);
+            }
             super.of(masterCursor, slaveCursor, circuitBreaker);
             masterKeyRecord = masterRecord;
             if (symbolTranslatingRecord != null) {
-                symbolTranslatingRecord.initSources(masterCursor, slaveCursor);
                 symbolTranslatingRecord.of(masterRecord);
                 masterKeyRecord = symbolTranslatingRecord;
             }
@@ -190,6 +194,9 @@ public final class AsOfJoinDenseRecordCursorFactory extends AsOfJoinDenseRecordC
             super.setMemoryTracker(tracker);
             masterSinkTarget.setMemoryTracker(tracker);
             slaveSinkTarget.setMemoryTracker(tracker);
+            if (symbolTranslatingRecord != null) {
+                symbolTranslatingRecord.setMemoryTracker(tracker);
+            }
         }
 
         @Override

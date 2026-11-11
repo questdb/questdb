@@ -117,23 +117,15 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
             dot = -1;
         }
         addAlias(tableAlias, columnName, dot);
-        TableColumnMetadata cm;
-        if (dot == -1 && tableAlias != null) {
-            // qualify the column with its side's alias; a re-quoted dotted name lands here too
-            // (dot == -1 after quoting), producing alias."a.b"
-            cm = new TableColumnMetadata(
-                    Misc.getThreadLocalSink().put(tableAlias).put('.').put(columnName).toString(),
-                    m.getColumnType(),
-                    m.getIndexType(),
-                    m.getIndexValueBlockCapacity(),
-                    m.isSymbolTableStatic(),
-                    m.getMetadata()
-            );
-            cm.setParquetEncodingConfig(m.getParquetEncodingConfig());
-        } else {
-            cm = m;
-        }
-        addToMap(columnName, dot, cm);
+        addToMap(columnName, dot, qualify(tableAlias, columnName, m));
+    }
+
+    // The column keeps its record position and qualified name, but no name resolves to it.
+    public void addHidden(CharSequence tableAlias, TableColumnMetadata m) {
+        final CharSequence columnName = m.getColumnName();
+        final int dot = Chars.indexOfLastUnquoted(columnName, '.');
+        columnMetadata.add(qualify(tableAlias, protectDottedColumnName(tableAlias, columnName, dot), m));
+        columnCount++;
     }
 
     @Override
@@ -244,6 +236,24 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
             return Misc.getThreadLocalSink().put('"').put(columnName).put('"').toString();
         }
         return columnName;
+    }
+
+    private TableColumnMetadata qualify(CharSequence tableAlias, CharSequence columnName, TableColumnMetadata m) {
+        if (tableAlias == null) {
+            return m;
+        }
+        // qualify the column with its side's alias; a re-quoted dotted name lands here too,
+        // producing alias."a.b"
+        final TableColumnMetadata cm = new TableColumnMetadata(
+                Misc.getThreadLocalSink().put(tableAlias).put('.').put(columnName).toString(),
+                m.getColumnType(),
+                m.getIndexType(),
+                m.getIndexValueBlockCapacity(),
+                m.isSymbolTableStatic(),
+                m.getMetadata()
+        );
+        cm.setParquetEncodingConfig(m.getParquetEncodingConfig());
+        return cm;
     }
 
     static {

@@ -49,6 +49,11 @@ public class DoubleGaugeImpl implements Target, DoubleGauge {
         this.value = value;
     }
 
+    @Override
+    public void snapshot(MetricSnapshotVisitor visitor) {
+        visitor.visitDouble(name, value);
+    }
+
     private void appendMetricName(CharSink<?> sink) {
         sink.putAscii(PrometheusFormatUtils.METRIC_NAME_PREFIX);
         sink.put(name);

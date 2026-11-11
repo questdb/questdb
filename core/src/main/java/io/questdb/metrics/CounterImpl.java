@@ -61,4 +61,9 @@ public class CounterImpl implements Counter {
         PrometheusFormatUtils.appendSampleLineSuffix(sink, counter.longValue());
         PrometheusFormatUtils.appendNewLine(sink);
     }
+
+    @Override
+    public void snapshot(MetricSnapshotVisitor visitor) {
+        visitor.visitLong(name, MetricType.COUNTER, counter.longValue());
+    }
 }

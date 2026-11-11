@@ -44,8 +44,14 @@ public interface MapWriter extends SymbolCountProvider {
             CharSequence columnName,
             long columnNameTxn,
             int symbolCapacity,
-            boolean symbolCacheFlag
+            boolean symbolCacheFlag,
+            int commitMode
     ) {
+        // Table-level metadata is synced once per table by the caller. Under NOSYNC, skip the
+        // per-column msyncs: a CREATE TABLE with thousands of symbol columns would otherwise
+        // pay two synchronous flushes per column.
+        final boolean sync = commitMode != CommitMode.NOSYNC;
+        final boolean async = commitMode == CommitMode.ASYNC;
         int plen = path.size();
         try {
             mem.smallFile(ff, offsetFileName(path.trimTo(plen), columnName, columnNameTxn), MemoryTag.MMAP_INDEX_WRITER);
@@ -53,7 +59,9 @@ public interface MapWriter extends SymbolCountProvider {
             mem.putInt(symbolCapacity);
             mem.putBool(symbolCacheFlag);
             mem.jumpTo(SymbolMapWriter.HEADER_SIZE);
-            mem.sync(false);
+            if (sync) {
+                mem.sync(async);
+            }
             mem.close();
 
             if (!ff.touch(charFileName(path.trimTo(plen), columnName, columnNameTxn))) {
@@ -62,7 +70,9 @@ public interface MapWriter extends SymbolCountProvider {
 
             mem.smallFile(ff, BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName, columnNameTxn), MemoryTag.MMAP_INDEX_WRITER);
             BitmapIndexWriter.initKeyMemory(mem, TableUtils.MIN_INDEX_VALUE_BLOCK_SIZE);
-            mem.sync(false);
+            if (sync) {
+                mem.sync(async);
+            }
             ff.touch(BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn));
         } finally {
             path.trimTo(plen);
@@ -107,9 +117,53 @@ public interface MapWriter extends SymbolCountProvider {
 
     void rollback(int symbolCount);
 
+    /**
+     * Marks this symbol writer's char memory as append-only, as
+     * {@link io.questdb.cairo.vm.api.MemoryMA#setAppendOnly(boolean)} does for column memories. Only safe
+     * under {@link io.questdb.cairo.CommitMode#ADAPTIVE}; other modes pass false and keep the full-extent
+     * {@code sync()}. The default does nothing, for writers with no such memory (e.g.
+     * {@link io.questdb.cairo.vm.NullMapWriter}).
+     */
+    default void setAppendOnly(boolean isAppendOnly) {
+    }
+
     void setSymbolIndexInTxWriter(int symbolIndexInTxWriter);
 
     void sync(boolean async);
+
+    /**
+     * Follows {@link #sync(boolean)}'s msync with an fsync of the underlying files.
+     * <p>
+     * A save point ends with one device barrier that, per {@code fcntl(2)}, persists "data that had been
+     * fsync'd on the same device before". Symbol maps live in the table root rather than a partition
+     * directory, so the save point's partition sweep never reaches them, and msync alone leaves them outside
+     * that guarantee. The default does nothing: the no-op and view map writers have no files.
+     */
+    default void fsyncFiles() {
+    }
+
+    /**
+     * Stage 2 of the batched flush (Linux only); see {@link io.questdb.cairo.vm.api.MemoryMA#syncFlushDrain()}.
+     * The default does nothing.
+     */
+    default void syncFlushDrain() {
+    }
+
+    /**
+     * Stage 3 of the batched flush; see {@link io.questdb.cairo.vm.api.MemoryMA#syncFlushFinishIfExtended()}.
+     * The default runs a full {@code sync(false)}, for writers that do not implement the first two stages.
+     */
+    default void syncFlushFinishIfExtended() {
+        sync(false);
+    }
+
+    /**
+     * Stage 1 of the batched flush (Linux only); see {@link io.questdb.cairo.vm.api.MemoryMA#syncFlushKick()}.
+     * The default does nothing, and the default {@link #syncFlushFinishIfExtended()} then flushes with
+     * {@code sync(false)}.
+     */
+    default void syncFlushKick() {
+    }
 
     void truncate();
 

@@ -40,9 +40,11 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.JoinContext;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rows;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * AsOf Join factory that leverages symbol bitmap indexes for efficient row lookup.
@@ -95,12 +97,16 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
         TimeFrameCursor slaveCursor = null;
         try {
             slaveCursor = slaveFactory.getTimeFrameCursor(executionContext);
+            // Bind before of(), which reopens the symbol key cache before adopting the cursors.
+            cursor.setMemoryTracker(executionContext.getMemoryTracker());
             slaveCursor.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
             cursor.of(masterCursor, slaveCursor, executionContext.getCircuitBreaker());
             return cursor;
         } catch (Throwable e) {
             Misc.free(slaveCursor);
             Misc.free(masterCursor);
+            // of() reopens the symbol key cache before adopting the cursors, so close() here frees only the cache.
+            Misc.free(cursor);
             throw e;
         }
     }
@@ -125,7 +131,8 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
 
     @Override
     protected void _close() {
-        final Throwable failure = closeJoinOwnersBestEffort();
+        Throwable failure = closeJoinOwnersBestEffort();
+        failure = Misc.freeBestEffort(failure, symbolJoinKeyMapping);
         CairoException.rethrowCleanupFailure(failure);
     }
 
@@ -144,9 +151,22 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
         }
 
         @Override
+        public void close() {
+            symbolJoinKeyMapping.close();
+            super.close();
+        }
+
+        @Override
         public void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
+            // Reopen the symbol key cache before super.of() adopts the cursors so an open-time breach frees it exactly once.
+            symbolJoinKeyMapping.reopen();
             super.of(masterCursor, slaveCursor, circuitBreaker);
             symbolJoinKeyMapping.of(slaveCursor);
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            symbolJoinKeyMapping.setMemoryTracker(tracker);
         }
 
         @Override
@@ -165,11 +185,9 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
                         slaveSymbolColumnIndex,
                         IndexReader.DIR_BACKWARD
                 );
-                // indexReader.getCursor() takes absolute row IDs, but TimeFrameCursor uses numbering relative to
-                // the first row within the BETWEEN ... AND ... range selected by the query.
-                // Use Record.getUpdateRowId() to get the absolute row ID.
-                slaveTimeFrameCursor.recordAt(slaveRecA, Rows.toRowID(frameIndex, slaveTimeFrame.getRowLo()));
-                final long rowLo = Rows.toLocalRowID(slaveRecA.getUpdateRowId());
+                // indexReader.getCursor() takes the index's own row ids, but TimeFrameCursor numbers rows relative to
+                // the first row of the frame.
+                final long rowLo = slaveTimeFrameCursor.getIndexRowLoForCurrentFrame();
                 try (RowCursor rowCursor = indexReader.getCursor(symbolKey, rowLo, rowMax + rowLo)) {
                     // Check the first entry only. They are sorted descending by timestamp,
                     // so there aren't any entries more recent than the first one.

@@ -160,4 +160,12 @@ public class MetricsRegistryImpl implements MetricsRegistry {
             snapshot[i].scrapeIntoPrometheus(sink);
         }
     }
+
+    @Override
+    public void snapshot(MetricSnapshotVisitor visitor) {
+        final Target[] snapshot = targets;
+        for (int i = 0, n = snapshot.length; i < n; i++) {
+            snapshot[i].snapshot(visitor);
+        }
+    }
 }

@@ -338,8 +338,23 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public ExpressionNode getExpiryViewNameExpr() {
+        return delegate.getExpiryViewNameExpr();
+    }
+
+    @Override
+    public ObjList<ExpressionNode> getExpiryWindowPartitionBy() {
+        return delegate.getExpiryWindowPartitionBy();
+    }
+
+    @Override
     public ObjList<ExpressionNode> getExpressionModels() {
         return delegate.getExpressionModels();
+    }
+
+    @Override
+    public ExpressionNode getFillBucketKey() {
+        return delegate.getFillBucketKey();
     }
 
     @Override
@@ -375,6 +390,21 @@ public class QueryModelWrapper implements IQueryModel {
     @Override
     public ObjList<ExpressionNode> getGroupBy() {
         return delegate.getGroupBy();
+    }
+
+    @Override
+    public int getGroupByPosition() {
+        return delegate.getGroupByPosition();
+    }
+
+    @Override
+    public ObjList<CharSequence> getGroupingKeyAliases() {
+        return delegate.getGroupingKeyAliases();
+    }
+
+    @Override
+    public ObjList<IntList> getGroupingSets() {
+        return delegate.getGroupingSets();
     }
 
     @Override
@@ -548,6 +578,11 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public LowerCaseCharSequenceHashSet getAuditedDecls() {
+        return delegate.getAuditedDecls();
+    }
+
+    @Override
     public LowerCaseCharSequenceHashSet getOverridableDecls() {
         return delegate.getOverridableDecls();
     }
@@ -585,6 +620,11 @@ public class QueryModelWrapper implements IQueryModel {
     @Override
     public ObjList<ViewDefinition> getReferencedViews() {
         return delegate.getReferencedViews();
+    }
+
+    @Override
+    public ObjList<ViewAuditModel> getViewAudits() {
+        return delegate.getViewAudits();
     }
 
     @Override
@@ -807,6 +847,11 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public boolean hasGroupingSets() {
+        return delegate.hasGroupingSets();
+    }
+
+    @Override
     public boolean hasSharedRefs() {
         return false;
     }
@@ -850,6 +895,21 @@ public class QueryModelWrapper implements IQueryModel {
     @Override
     public boolean isExplicitTimestamp() {
         return delegate.isExplicitTimestamp();
+    }
+
+    @Override
+    public boolean isExpiryKeepFilter() {
+        return delegate.isExpiryKeepFilter();
+    }
+
+    @Override
+    public boolean isExpiryStructuralPolicy() {
+        return delegate.isExpiryStructuralPolicy();
+    }
+
+    @Override
+    public boolean isExpiryWindowBarrier() {
+        return delegate.isExpiryWindowBarrier();
     }
 
     @Override
@@ -900,6 +960,11 @@ public class QueryModelWrapper implements IQueryModel {
     @Override
     public boolean isPivotGroupByColumnHasNoAlias() {
         return delegate.isPivotGroupByColumnHasNoAlias();
+    }
+
+    @Override
+    public boolean isScalarExpiryRead() {
+        return delegate.isScalarExpiryRead();
     }
 
     @Override
@@ -999,6 +1064,11 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public void recordViewAudits(ObjList<ViewAuditModel> viewAudits) {
+        delegate.recordViewAudits(viewAudits);
+    }
+
+    @Override
     public void recordViews(LowerCaseCharSequenceObjHashMap<ViewDefinition> viewDefinitions) {
         throw new UnsupportedOperationException();
     }
@@ -1084,6 +1154,31 @@ public class QueryModelWrapper implements IQueryModel {
 
     @Override
     public void setExplicitTimestamp(boolean explicitTimestamp) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setExpiryKeepFilter(boolean isExpiryKeepFilter) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setExpiryStructuralPolicy(boolean isExpiryStructuralPolicy) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setExpiryViewNameExpr(ExpressionNode expiryViewNameExpr) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setExpiryWindowBarrier(boolean isExpiryWindowBarrier) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setFillBucketKey(ExpressionNode fillBucketKey) {
         throw new UnsupportedOperationException();
     }
 
@@ -1174,6 +1269,11 @@ public class QueryModelWrapper implements IQueryModel {
 
     @Override
     public void setLimitPosition(int limitPosition) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setGroupByPosition(int groupByPosition) {
         throw new UnsupportedOperationException();
     }
 
@@ -1274,6 +1374,11 @@ public class QueryModelWrapper implements IQueryModel {
 
     @Override
     public void setSampleByTimezoneName(ExpressionNode sampleByTimezoneName) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setScalarExpiryRead(boolean isScalarExpiryRead) {
         throw new UnsupportedOperationException();
     }
 
@@ -1385,6 +1490,16 @@ public class QueryModelWrapper implements IQueryModel {
     @Override
     public void setWhereClause(ExpressionNode whereClause) {
         throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Takes the delegate's factory. The wrapper rejects {@link #setTableNameFunction}, so the
+     * default take operation, which clears the slot through that setter, has to route the whole
+     * operation to the delegate that owns the field.
+     */
+    @Override
+    public RecordCursorFactory takeTableNameFunction() {
+        return delegate.takeTableNameFunction();
     }
 
     @Override

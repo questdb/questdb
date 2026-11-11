@@ -29,6 +29,8 @@ import io.questdb.griffin.engine.table.parquet.ParquetRowGroupSkipper;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntIntHashMap;
+import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
@@ -112,6 +114,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     private static final int BLOCK_ALIGNMENT_SHIFT = 3;
     private static final int COLUMN_CHUNK_MAX_STAT_OFF = 56;
     private static final int COLUMN_CHUNK_MIN_STAT_OFF = 48;
+    private static final int COLUMN_CHUNK_NULL_COUNT_OFF = 32;
     // Column chunk layout (64B per chunk, starting at row group block offset + 8)
     private static final int COLUMN_CHUNK_SIZE = 64;
     private static final int COLUMN_CHUNK_STAT_FLAGS_OFF = 2;
@@ -136,6 +139,9 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     private static final int HEADER_DESIGNATED_TS_OFF = 16;
     private static final int HEADER_FEATURE_FLAGS_OFF = 8;
     private static final int HEADER_SORTING_COL_CNT_OFF = 20;
+    // Required footer flag, section [u64 indexRowCount][u64 indexRowLo; rowGroupCount]. Bit 32 is the highest
+    // known footer bit, so its section is the last one before the CRC.
+    private static final long INDEX_ROW_MAP_FOOTER_FLAG = 1L << 32;
     // Feature flag bits 32-63 are required: unknown bits must cause rejection.
     private static final long OPTIONAL_FEATURE_MASK = 0x0000_0000_FFFF_FFFFL;
     // Trailing bytes after a parquet file's footer body: 4-byte footer length + 4-byte PAR1 magic.
@@ -152,13 +158,15 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     // Stat flag bits within the column chunk stat_flags byte at COLUMN_CHUNK_STAT_FLAGS_OFF.
     // Layout mirrors the Rust writer (see parquet_metadata::types::StatFlags):
     //   bit 0 MIN_PRESENT, bit 1 MIN_INLINED, bit 2 MIN_EXACT,
-    //   bit 3 MAX_PRESENT, bit 4 MAX_INLINED, bit 5 MAX_EXACT.
+    //   bit 3 MAX_PRESENT, bit 4 MAX_INLINED, bit 5 MAX_EXACT,
+    //   bit 6 DISTINCT_COUNT_PRESENT, bit 7 NULL_COUNT_PRESENT.
     // Reading the 8-byte inline stat at COLUMN_CHUNK_MIN_STAT_OFF / COLUMN_CHUNK_MAX_STAT_OFF is
     // only meaningful when both PRESENT and INLINED are set for that side.
     private static final int STAT_FLAG_MAX_INLINED = 1 << 4;
     private static final int STAT_FLAG_MAX_PRESENT = 1 << 3;
     private static final int STAT_FLAG_MIN_INLINED = 1 << 1;
     private static final int STAT_FLAG_MIN_PRESENT = 1;
+    private static final int STAT_FLAG_NULL_COUNT_PRESENT = 1 << 7;
     private final DirectUtf8String flyweightColName = new DirectUtf8String();
     private long addr;
     // CRC32 verification result for the currently bound _pm mapping. Set
@@ -171,6 +179,8 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     private IntIntHashMap columnIdToIndex;
     private long fileSize;
     private long footerAddr;
+    // The resolved footer's index row map section, 0 for the identity map.
+    private long indexRowMapAddr;
     private boolean isColumnIdToIndexBuilt;
     // Committed _pm snapshot size the native handle was parsed at.
     // Meaningful only while nativeReaderPtr != 0.
@@ -332,10 +342,65 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
         this.fileSize = 0;
         this.resolvedFileSize = 0;
         this.footerAddr = 0;
+        this.indexRowMapAddr = 0;
         this.columnCount = 0;
         this.isColumnIdToIndexBuilt = false;
         this.rowGroupCount = 0;
         this.checksumVerified = false;
+    }
+
+    /**
+     * Appends to {@code out} the index row ranges {@code [lo, hi)} that partition rows {@code [rowLo, rowHi)} map to,
+     * merging row groups whose index rows are contiguous.
+     */
+    public void collectIndexRowRanges(long rowLo, long rowHi, LongList out) {
+        final int outLo = out.size();
+        long rowGroupStartRow = 0;
+        for (int i = 0; i < rowGroupCount && rowGroupStartRow < rowHi; i++) {
+            final long rowGroupEndRow = rowGroupStartRow + getRowGroupSize(i);
+            final long lo = Math.max(rowLo, rowGroupStartRow);
+            final long hi = Math.min(rowHi, rowGroupEndRow);
+            if (lo < hi) {
+                final long shift = getRowGroupIndexRowLo(i, rowGroupStartRow) - rowGroupStartRow;
+                final int n = out.size();
+                if (n > outLo && out.getQuick(n - 1) == lo + shift) {
+                    // Contiguous in index rows with the previous range: extend it.
+                    out.setQuick(n - 1, hi + shift);
+                } else {
+                    out.add(lo + shift, hi + shift);
+                }
+            }
+            rowGroupStartRow = rowGroupEndRow;
+        }
+    }
+
+    /**
+     * Lists row groups in index row order, the order an index build must add them in.
+     */
+    public void collectRowGroupsInIndexRowOrder(IntList rowGroupOrder, LongList rowGroupIndexRowLos) {
+        rowGroupOrder.clear();
+        rowGroupIndexRowLos.clear();
+        long rowGroupStartRow = 0;
+        boolean isSorted = true;
+        for (int i = 0; i < rowGroupCount; i++) {
+            final long indexRowLo = getRowGroupIndexRowLo(i, rowGroupStartRow);
+            isSorted &= i == 0 || indexRowLo > rowGroupIndexRowLos.getQuick(i - 1);
+            rowGroupIndexRowLos.add(indexRowLo);
+            rowGroupOrder.add(i);
+            rowGroupStartRow += getRowGroupSize(i);
+        }
+        if (!isSorted) {
+            for (int i = 1; i < rowGroupCount; i++) {
+                final int rowGroup = rowGroupOrder.getQuick(i);
+                final long indexRowLo = rowGroupIndexRowLos.getQuick(rowGroup);
+                int j = i - 1;
+                while (j >= 0 && rowGroupIndexRowLos.getQuick(rowGroupOrder.getQuick(j)) > indexRowLo) {
+                    rowGroupOrder.setQuick(j + 1, rowGroupOrder.getQuick(j));
+                    j--;
+                }
+                rowGroupOrder.setQuick(j + 1, rowGroup);
+            }
+        }
     }
 
     public long getAddr() {
@@ -360,6 +425,15 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
                 == (STAT_FLAG_MIN_PRESENT | STAT_FLAG_MIN_INLINED)
                 : "min_stat absent or not inlined for row group " + rowGroupIndex + ", column " + columnIndex;
         return Unsafe.getLong(chunkAddr + COLUMN_CHUNK_MIN_STAT_OFF);
+    }
+
+    public long getChunkNullCount(int rowGroupIndex, int columnIndex) {
+        assert rowGroupIndex >= 0 && rowGroupIndex < rowGroupCount;
+        assert columnIndex >= 0 && columnIndex < columnCount;
+        long chunkAddr = columnChunkAddr(rowGroupIndex, columnIndex);
+        assert (Unsafe.getByte(chunkAddr + COLUMN_CHUNK_STAT_FLAGS_OFF) & STAT_FLAG_NULL_COUNT_PRESENT) != 0
+                : "null_count absent for row group " + rowGroupIndex + ", column " + columnIndex;
+        return Unsafe.getLong(chunkAddr + COLUMN_CHUNK_NULL_COUNT_OFF);
     }
 
     public int getChunkStatFlags(int rowGroupIndex, int columnIndex) {
@@ -462,6 +536,13 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     }
 
     /**
+     * Index rows the symbol indexes cover, dead rows included; see {@link #getRowGroupIndexRowLo(int, long)}.
+     */
+    public long getIndexRowCount() {
+        return indexRowMapAddr != 0 ? Unsafe.getLong(indexRowMapAddr) : getPartitionRowCount();
+    }
+
+    /**
      * Returns the native reader handle, allocating it lazily when the
      * verified parse from {@link #resolveFooter(long)} was not retained.
      * The handle caches the parsed {@code _pm} header / footer / feature-flag
@@ -527,6 +608,17 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
 
     public int getRowGroupCount() {
         return rowGroupCount;
+    }
+
+    /**
+     * Index row the symbol indexes store for a row group's first row; {@code rowGroupStartRow} under identity.
+     */
+    public long getRowGroupIndexRowLo(int rowGroupIndex, long rowGroupStartRow) {
+        assert rowGroupIndex >= 0 && rowGroupIndex < rowGroupCount;
+        if (indexRowMapAddr == 0) {
+            return rowGroupStartRow;
+        }
+        return Unsafe.getLong(indexRowMapAddr + Long.BYTES + (long) rowGroupIndex * Long.BYTES);
     }
 
     /**
@@ -624,6 +716,57 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
         return Unsafe.getLong(footerAddr + FOOTER_UNUSED_BYTES_OFF);
     }
 
+    public boolean hasChunkNullCount(int rowGroupIndex, int columnIndex) {
+        return (getChunkStatFlags(rowGroupIndex, columnIndex) & STAT_FLAG_NULL_COUNT_PRESENT) != 0;
+    }
+
+    public boolean hasChunkNulls(int columnIndex) {
+        for (int rowGroupIndex = 0; rowGroupIndex < rowGroupCount; rowGroupIndex++) {
+            if (hasChunkNullCount(rowGroupIndex, columnIndex) && getChunkNullCount(rowGroupIndex, columnIndex) > 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public boolean hasIndexRowMap() {
+        return indexRowMapAddr != 0;
+    }
+
+    public boolean hasNoChunkNulls(int columnIndex) {
+        for (int rowGroupIndex = 0; rowGroupIndex < rowGroupCount; rowGroupIndex++) {
+            if (!hasChunkNullCount(rowGroupIndex, columnIndex) || getChunkNullCount(rowGroupIndex, columnIndex) > 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Whether the column holds a non-NULL value inside the column top {@code columnTop} - rows {@code [0, columnTop)}
+     * - judged from the row group null counts alone. Answers false when it cannot tell: for a REQUIRED column (it has no NULLs, so a column top region
+     * reads as values) and for row groups without a null count.
+     */
+    public boolean hasNonNullValuesInsideColumnTop(int columnIndex, long columnTop) {
+        if (getColumnMaxDefLevel(columnIndex) == 0) {
+            return false;
+        }
+        long rowGroupLo = 0;
+        for (int rowGroup = 0; rowGroup < rowGroupCount && rowGroupLo < columnTop; rowGroup++) {
+            final long rowGroupSize = getRowGroupSize(rowGroup);
+            final long rowGroupHi = rowGroupLo + rowGroupSize;
+            if (hasChunkNullCount(rowGroup, columnIndex)) {
+                final long nonNullCount = rowGroupSize - getChunkNullCount(rowGroup, columnIndex);
+                // only the row group's rows past the column top may hold values
+                if (nonNullCount > Math.max(0, rowGroupHi - columnTop)) {
+                    return true;
+                }
+            }
+            rowGroupLo = rowGroupHi;
+        }
+        return false;
+    }
+
     public boolean isOpen() {
         return addr != 0 && footerAddr != 0;
     }
@@ -682,6 +825,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
         this.fileSize = other.fileSize;
         this.resolvedFileSize = other.resolvedFileSize;
         this.footerAddr = other.footerAddr;
+        this.indexRowMapAddr = other.indexRowMapAddr;
         this.columnCount = other.columnCount;
         this.rowGroupCount = other.rowGroupCount;
         this.checksumVerified = other.checksumVerified;
@@ -928,7 +1072,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
             }
         }
         long footerFeatureFlags = Unsafe.getLong(footerAddr + FOOTER_FEATURE_FLAGS_OFF);
-        long unknownRequiredFooter = footerFeatureFlags & REQUIRED_FEATURE_MASK;
+        long unknownRequiredFooter = footerFeatureFlags & REQUIRED_FEATURE_MASK & ~INDEX_ROW_MAP_FOOTER_FLAG;
         if (unknownRequiredFooter != 0) {
             throw CairoException.critical(0)
                     .put("unsupported required _pm footer feature flags [flags=0x")
@@ -939,15 +1083,30 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
         // Cross-check the footer's actual length against its base size: extra
         // bytes with no optional feature flag (header or footer) to justify them
         // signal corruption. baseFooterLength already includes the trailing CRC.
+        final boolean hasIndexRowMap = (footerFeatureFlags & INDEX_ROW_MAP_FOOTER_FLAG) != 0;
+        final long indexRowMapSize = hasIndexRowMap ? Long.BYTES + rowGroupCountLong * Long.BYTES : 0;
         long knownOptionalFeatureFlags = featureFlags & OPTIONAL_FEATURE_MASK;
         long knownOptionalFooterFeatureFlags = footerFeatureFlags & OPTIONAL_FEATURE_MASK;
         if (knownOptionalFeatureFlags == 0
                 && knownOptionalFooterFeatureFlags == 0
-                && currentFooterLength != baseFooterLength) {
+                && currentFooterLength != baseFooterLength + indexRowMapSize) {
             throw CairoException.critical(0)
-                    .put("unexpected _pm footer feature bytes [expected=").put(baseFooterLength)
+                    .put("unexpected _pm footer feature bytes [expected=").put(baseFooterLength + indexRowMapSize)
                     .put(", actual=").put(currentFooterLength)
                     .put(']');
+        }
+        long indexRowMapAddr = 0;
+        if (hasIndexRowMap) {
+            // The section ends at the CRC, which sits at the end of the footer length.
+            final long indexRowMapOffset = currentOffset + currentFooterLength - Integer.BYTES - indexRowMapSize;
+            if (indexRowMapOffset < currentOffset + FOOTER_FIXED_SIZE + rowGroupCountLong * ROW_GROUP_ENTRY_SIZE) {
+                throw CairoException.critical(0)
+                        .put("invalid _pm index row map [rowGroupCount=").put(rowGroupCount)
+                        .put(", footerOffset=").put(currentOffset)
+                        .put(", footerLength=").put(currentFooterLength)
+                        .put(']');
+            }
+            indexRowMapAddr = addr + indexRowMapOffset;
         }
 
         long minBlockSize = ROW_GROUP_BLOCK_HEADER_SIZE + (long) columnCount * COLUMN_CHUNK_SIZE;
@@ -961,6 +1120,24 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
                         .put(", offset=").put(blockOffset)
                         .put(", parquetMetaFileSize=").put(parquetMetaFileSize)
                         .put(']');
+            }
+        }
+
+        if (indexRowMapAddr != 0) {
+            final long indexRowCount = Unsafe.getLong(indexRowMapAddr);
+            for (int i = 0; i < rowGroupCount; i++) {
+                final long entryAddr = footerAddr + FOOTER_FIXED_SIZE + (long) i * ROW_GROUP_ENTRY_SIZE;
+                final long blockOffset = Integer.toUnsignedLong(Unsafe.getInt(entryAddr)) << BLOCK_ALIGNMENT_SHIFT;
+                final long rowGroupRows = Unsafe.getLong(addr + blockOffset);
+                final long indexRowLo = Unsafe.getLong(indexRowMapAddr + Long.BYTES + (long) i * Long.BYTES);
+                if (indexRowLo < 0 || rowGroupRows < 0 || indexRowLo > indexRowCount - rowGroupRows) {
+                    throw CairoException.critical(0)
+                            .put("invalid _pm index row map entry [rowGroup=").put(i)
+                            .put(", indexRowLo=").put(indexRowLo)
+                            .put(", rowGroupRows=").put(rowGroupRows)
+                            .put(", indexRowCount=").put(indexRowCount)
+                            .put(']');
+                }
             }
         }
 
@@ -994,6 +1171,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
             nativeReaderFileSize = 0;
         }
         this.footerAddr = footerAddr;
+        this.indexRowMapAddr = indexRowMapAddr;
         this.resolvedFileSize = currentSize;
         this.columnCount = columnCount;
         this.rowGroupCount = rowGroupCount;

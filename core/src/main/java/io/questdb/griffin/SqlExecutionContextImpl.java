@@ -32,6 +32,7 @@ import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.pool.ResourcePoolSupervisor;
 import io.questdb.cairo.security.DenyAllSecurityContext;
@@ -39,6 +40,7 @@ import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowContextImpl;
@@ -81,6 +83,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final ObjStack<RuntimeIntrinsicIntervalModel> intervalModelObjStack = new ObjStack<>();
     private final MicrosecondClock microClock;
     private final NanosecondClock nanoClock;
+    private final ObjList<PageFrameSequence<?>> pageFrameSequences = new ObjList<>();
     private final int sharedQueryWorkerCount;
     private final AtomicBooleanCircuitBreaker simpleCircuitBreaker;
     private final Telemetry<TelemetryTask> telemetry;
@@ -89,15 +92,20 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final ObjList<WindowContextImpl> windowContexts = new ObjList<>();
     protected BindVariableService bindVariableService;
     protected SecurityContext securityContext;
+    private boolean allowBareNoArgFunctionCalls = true;
     private boolean allowNonDeterministicFunction = true;
     private boolean cacheHit;
     private SqlExecutionCircuitBreaker circuitBreaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
     private boolean clockUseNow = false;
     private boolean cloneSymbolTables;
     private boolean containsSecret;
+    private CharSequence expiryMaterializingViewName;
+    private TableToken expiryRawReadTable;
+    private ExpiryReadPolicy expiryReadPolicy = ExpiryReadPolicy.FILTER;
     private int intervalFunctionType;
     private long intervalPlanGeneration;
     private long intervalPlanGenerationCounter;
+    private boolean isMetadataProbe;
     private int jitMode;
     private boolean liveViewCompile;
     private MemoryTracker memoryTracker;
@@ -109,6 +117,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private int pageFrameMinRows;
     private boolean parallelFilterEnabled;
     private boolean parallelGroupByEnabled;
+    private boolean parallelHashJoinGroupByEnabled;
     private boolean parallelReadParquetEnabled;
     private boolean parquetRowGroupPruningEnabled;
     private boolean parallelTopKEnabled;
@@ -119,6 +128,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private Rnd random;
     private ResourcePoolSupervisor<TableReader> readerPoolSupervisor;
     private long requestFd = -1;
+    private TableFunctionView tableFunctionView;
     private boolean useSimpleCircuitBreaker;
     private boolean validationOnly = false;
     private SecurityContext validationSecurityContext;
@@ -138,6 +148,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         jitMode = cairoConfiguration.getSqlJitMode();
         parallelFilterEnabled = cairoConfiguration.isSqlParallelFilterEnabled() && sharedQueryWorkerCount > 0;
         parallelGroupByEnabled = cairoConfiguration.isSqlParallelGroupByEnabled() && sharedQueryWorkerCount > 0;
+        parallelHashJoinGroupByEnabled = cairoConfiguration.isSqlParallelHashJoinGroupByEnabled();
         parallelTopKEnabled = cairoConfiguration.isSqlParallelTopKEnabled() && sharedQueryWorkerCount > 0;
         parallelHorizonJoinEnabled = cairoConfiguration.isSqlParallelHorizonJoinEnabled() && sharedQueryWorkerCount > 0;
         parallelWindowJoinEnabled = cairoConfiguration.isSqlParallelWindowJoinEnabled() && sharedQueryWorkerCount > 0;
@@ -159,8 +170,20 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public boolean allowBareNoArgFunctionCalls() {
+        return allowBareNoArgFunctionCalls;
+    }
+
+    @Override
     public boolean allowNonDeterministicFunctions() {
         return allowNonDeterministicFunction;
+    }
+
+    @Override
+    public void awaitPageFrameSequences() {
+        for (int i = 0, n = pageFrameSequences.size(); i < n; i++) {
+            pageFrameSequences.getQuick(i).awaitReduced();
+        }
     }
 
     @Override
@@ -417,6 +440,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public TableFunctionView getTableFunctionView() {
+        return tableFunctionView;
+    }
+
+    @Override
     public WindowContext getWindowContext() {
         return windowContext;
     }
@@ -440,8 +468,42 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public boolean isExpiryReadFilterEnabled() {
+        return expiryReadPolicy == ExpiryReadPolicy.FILTER;
+    }
+
+    @Override
+    public CharSequence getExpiryMaterializingViewName() {
+        return expiryMaterializingViewName;
+    }
+
+    @Override
+    public @Nullable TableToken getExpiryRawReadTable() {
+        return expiryRawReadTable;
+    }
+
+    @Override
+    public ExpiryReadPolicy getExpiryReadPolicy() {
+        return expiryReadPolicy;
+    }
+
+    @Override
+    public ExpiryReadPolicy getExpiryReadPolicy(TableToken tableToken) {
+        // The raw table overrides only a filtered read: a materializing compile in REJECT mode keeps
+        // rejecting every policied table.
+        return expiryReadPolicy == ExpiryReadPolicy.FILTER && tableToken.equals(expiryRawReadTable)
+                ? ExpiryReadPolicy.RAW
+                : expiryReadPolicy;
+    }
+
+    @Override
     public boolean isLiveViewCompile() {
         return liveViewCompile;
+    }
+
+    @Override
+    public boolean isMetadataProbe() {
+        return isMetadataProbe;
     }
 
     @Override
@@ -452,6 +514,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public boolean isParallelGroupByEnabled() {
         return parallelGroupByEnabled;
+    }
+
+    @Override
+    public boolean isParallelHashJoinGroupByEnabled() {
+        return parallelHashJoinGroupByEnabled && isParallelGroupByEnabled() && sharedQueryWorkerCount > 0;
     }
 
     @Override
@@ -560,6 +627,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public void registerPageFrameSequence(PageFrameSequence<?> frameSequence) {
+        pageFrameSequences.add(frameSequence);
+    }
+
+    @Override
     public void reset() {
         checkNoMountedQueryOwner();
         resetState();
@@ -583,6 +655,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     public void restoreToDefaultPageFrameSizes() {
         this.pageFrameMinRows = defaultPageFrameMinRows;
         this.pageFrameMaxRows = defaultPageFrameMaxRows;
+    }
+
+    @Override
+    public void setAllowBareNoArgFunctionCalls(boolean value) {
+        this.allowBareNoArgFunctionCalls = value;
     }
 
     @Override
@@ -619,6 +696,23 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public void setExpiryRawReadTable(@Nullable TableToken tableToken) {
+        this.expiryRawReadTable = tableToken;
+    }
+
+    @Override
+    public void setExpiryReadFilterEnabled(boolean enabled) {
+        this.expiryReadPolicy = enabled ? ExpiryReadPolicy.FILTER : ExpiryReadPolicy.RAW;
+        this.expiryMaterializingViewName = null;
+    }
+
+    @Override
+    public void setExpiryReadPolicy(ExpiryReadPolicy policy, @Nullable CharSequence materializingViewName) {
+        this.expiryReadPolicy = policy;
+        this.expiryMaterializingViewName = materializingViewName;
+    }
+
+    @Override
     public void setIntervalFunctionType(int intervalType) {
         this.intervalFunctionType = intervalType;
     }
@@ -642,6 +736,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void setMemoryTracker(@Nullable MemoryTracker tracker) {
         this.memoryTracker = tracker;
+    }
+
+    @Override
+    public void setMetadataProbe(boolean value) {
+        this.isMetadataProbe = value;
     }
 
     @Override
@@ -670,6 +769,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void setParallelGroupByEnabled(boolean parallelGroupByEnabled) {
         this.parallelGroupByEnabled = parallelGroupByEnabled;
+    }
+
+    @Override
+    public void setParallelHashJoinGroupByEnabled(boolean isEnabled) {
+        this.parallelHashJoinGroupByEnabled = isEnabled;
     }
 
     @Override
@@ -705,6 +809,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void setReaderPoolSupervisor(@Nullable ResourcePoolSupervisor<TableReader> supervisor) {
         this.readerPoolSupervisor = supervisor;
+    }
+
+    @Override
+    public void setTableFunctionView(TableFunctionView view) {
+        this.tableFunctionView = view;
     }
 
     @Override
@@ -747,6 +856,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
         sink.putAscii("principal=").put(securityContext.getPrincipal()).putAscii(", cache=").put(isCacheHit());
+    }
+
+    @Override
+    public void unregisterPageFrameSequence(PageFrameSequence<?> frameSequence) {
+        pageFrameSequences.remove(frameSequence);
     }
 
     public SqlExecutionContextImpl with(@NotNull SecurityContext securityContext, @Nullable BindVariableService bindVariableService, @Nullable Rnd rnd) {
@@ -823,6 +937,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.containsSecret = false;
         this.useSimpleCircuitBreaker = false;
         this.cacheHit = false;
+        this.allowBareNoArgFunctionCalls = true;
         this.allowNonDeterministicFunction = true;
         this.intervalPlanGeneration = 0;
         this.validationOnly = false;
@@ -832,6 +947,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         // but a reused per-connection context must never inherit a stale live-view flag.
         // setLiveViewCompile also clears the mirrored windowContext flag.
         setLiveViewCompile(false);
+        this.tableFunctionView = null;
+        isMetadataProbe = false;
         // QueryRegistry owns the tracker lifecycle; null it defensively so an error
         // unwinding between register() and unregister() cannot leak it into reuse.
         this.memoryTracker = null;

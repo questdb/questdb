@@ -89,7 +89,7 @@ final class Mig607 {
                             throw CairoException.critical(0).put("file is too short [path=").put(path).put("]");
                         }
 
-                        TableUtils.allocateDiskSpace(ff, fd, offset + 8);
+                        TableUtils.allocateDiskSpaceUnaligned(ff, fd, offset + 8);
                         long dataOffset = TableUtils.readLongOrFail(ff, fd, offset - 8L, mem, path.$());
                         final long fd2 = TableUtils.openRO(ff, dFile(path.trimTo(plen2), columnName), MigrationActions.LOG);
                         try {
@@ -275,7 +275,7 @@ final class Mig607 {
                                 if (fileLen < offset) {
                                     MigrationActions.LOG.error().$("file is too short [path=").$(path).I$();
                                 } else {
-                                    TableUtils.allocateDiskSpace(ff, fd, offset + 8);
+                                    TableUtils.allocateDiskSpaceUnaligned(ff, fd, offset + 8);
                                     long dataOffset = TableUtils.readLongOrFail(ff, fd, offset - 8L, tmpMem, path.$());
                                     // string length
                                     charFileName(path.trimTo(plen), columnName);

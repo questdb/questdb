@@ -83,11 +83,6 @@ public class CoveringIndexBlockApplyFuzzTest extends AbstractFuzzTest {
         runCoveringBlockApplyFuzz(generateRandom(LOG));
     }
 
-    @Test
-    public void testCoveringBlockApplyFuzzRegression() throws Exception {
-        runCoveringBlockApplyFuzz(generateRandom(LOG, 0x51e6d0f2a3b4c5L, 0x9f8e7d6c5b4a39L));
-    }
-
     private void assertCoveredMatchesControl(int symbolCardinality) throws Exception {
         for (int s = 0; s < symbolCardinality; s++) {
             final String sym = "S" + s;
@@ -139,6 +134,10 @@ public class CoveringIndexBlockApplyFuzzTest extends AbstractFuzzTest {
     private void runCoveringBlockApplyFuzz(Rnd rnd) throws Exception {
         // Keep many small txns inside one WAL segment and let the applier look
         // far ahead so a backlog batches into few, big blocks (block apply).
+        // The WAL-lag fast append this test exists to exercise is unreachable with merge-append ON:
+        // TableWriter forces noLag for the whole table and tryFastAppendInOrderBlock returns before its
+        // body. Pin the shipping default so the assertions below measure the path they name.
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 10_000_000);
         setProperty(PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 2000);
         setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 600_000);

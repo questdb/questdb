@@ -1,0 +1,221 @@
+# name: test/sql/test_approx_percentile.test
+# description: Test APPROX_PERCENTILE against the exact percentile
+# group: [aggregates]
+#
+# Ported from DuckDB test/sql/aggregate/aggregates/test_approx_quantile.test.
+# DuckDB checks its t-digest approx_quantile within 100 of the exact
+# quantile over 0..9999. QuestDB's approx_percentile keeps an HDR histogram
+# whose resolution follows the precision argument (significant decimal
+# digits, default 1), so these checks pass precision 2 and keep DuckDB's
+# tolerance. QuestDB has no reservoir_quantile and no TIME/DECIMAL input.
+
+statement ok
+CREATE TABLE quantile AS (
+    SELECT * FROM (
+        SELECT x - 1 r, rnd_double() q FROM long_sequence(10_000)
+        UNION ALL
+        SELECT NULL, 0.1
+        UNION ALL
+        SELECT NULL, 0.5
+        UNION ALL
+        SELECT NULL, 0.9
+    )
+    ORDER BY 2
+);
+
+query I
+SELECT abs(approx - exact) <= 100
+FROM (SELECT approx_percentile(r::double, 0.5, 2) approx, percentile_disc(r, 0.5) exact FROM quantile)
+----
+true
+
+query I
+SELECT abs(approx - exact) <= 100
+FROM (SELECT approx_percentile(r::double, 1.0, 2) approx, percentile_disc(r, 1.0) exact FROM quantile)
+----
+true
+
+query I
+SELECT abs(approx - exact) <= 100
+FROM (SELECT approx_percentile(r::double, 0.0, 2) approx, percentile_disc(r, 0.0) exact FROM quantile)
+----
+true
+
+query I
+SELECT abs(approx - exact) <= 100
+FROM (SELECT approx_percentile(r::double, 0.1, 2) approx, percentile_disc(r, 0.1) exact FROM quantile)
+----
+true
+
+query I
+SELECT abs(approx - exact) <= 100
+FROM (SELECT approx_percentile(r::double, 0.9, 2) approx, percentile_disc(r, 0.9) exact FROM quantile)
+----
+true
+
+# LONG input
+query I
+SELECT abs(approx - exact) <= 100
+FROM (SELECT approx_percentile(r, 0.5, 2) approx, percentile_disc(r, 0.5) exact FROM quantile)
+----
+true
+
+# the default precision keeps one significant digit; it stays within 10%
+query II
+SELECT abs(approx - exact) <= exact * 0.1, abs(approxl - exact) <= exact * 0.1
+FROM (SELECT approx_percentile(r::double, 0.5) approx, approx_percentile(r, 0.5) approxl, percentile_disc(r, 0.5) exact FROM quantile)
+----
+true true
+
+query RR
+SELECT approx_percentile(NULL::double, 0.5), percentile_disc(NULL::double, 0.5)
+----
+NULL NULL
+
+query RR
+SELECT approx_percentile(42.0, 0.5), percentile_disc(42.0, 0.5)
+----
+42.000000 42.000000
+
+query RR
+SELECT approx_percentile(NULL::double, 0.5), percentile_disc(NULL::double, 0.5) FROM quantile
+----
+NULL NULL
+
+query RR
+SELECT approx_percentile(1.0, 0.5), percentile_disc(1.0, 0.5) FROM quantile
+----
+1.000000 1.000000
+
+# List versions
+query III
+SELECT abs(a[1] - q[1]) <= 100, abs(a[2] - q[2]) <= 100, abs(a[3] - q[3]) <= 100
+FROM (
+    SELECT approx_percentile(r::double, ARRAY[0.25, 0.5, 0.75], 2) a,
+           percentile_disc(r, ARRAY[0.25, 0.5, 0.75]) q
+    FROM quantile
+)
+----
+true true true
+
+query III
+SELECT abs(a[1] - q[1]) <= 100, abs(a[2] - q[2]) <= 100, abs(a[3] - q[3]) <= 100
+FROM (
+    SELECT approx_percentile(r, ARRAY[0.25, 0.5, 0.75], 2) a,
+           percentile_disc(r, ARRAY[0.25, 0.5, 0.75]) q
+    FROM quantile
+)
+----
+true true true
+
+# each element of the list equals the scalar approx_percentile
+query III
+SELECT a[1] = s1, a[2] = s2, a[3] = s3
+FROM (
+    SELECT approx_percentile(r::double, ARRAY[0.25, 0.5, 0.75], 2) a,
+           approx_percentile(r::double, 0.25, 2) s1,
+           approx_percentile(r::double, 0.5, 2) s2,
+           approx_percentile(r::double, 0.75, 2) s3
+    FROM quantile
+)
+----
+true true true
+
+query R
+SELECT approx_percentile(NULL::double, ARRAY[0.5])
+----
+NULL
+
+query R
+SELECT approx_percentile(42.0, ARRAY[0.5, 0.1]) FROM quantile
+----
+{42.000000,42.000000}
+
+# Array lists: the result keeps the order of the quantiles. DuckDB's t-digest
+# returns [2, 1, 0]; the histogram returns the exact percentile_disc values.
+query RR
+SELECT approx_percentile(col::double, ARRAY[0.5, 0.4, 0.1]), percentile_disc(col, ARRAY[0.5, 0.4, 0.1])
+FROM (SELECT 0 col UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 10)
+----
+{1.000000,1.000000,0.000000} {1.000000,1.000000,0.000000}
+
+# Errors
+statement error
+SELECT approx_percentile(r::double, -0.1) FROM quantile
+
+statement error
+SELECT approx_percentile(r::double, 1.1) FROM quantile
+
+statement error
+SELECT approx_percentile(r::double, NULL) FROM quantile
+
+statement error
+SELECT approx_percentile(r::double, r::double) FROM quantile
+
+statement error
+SELECT approx_percentile(r::double) FROM quantile
+
+statement error
+SELECT approx_percentile(r::double, 0.1, 0.2) FROM quantile
+
+statement error
+SELECT approx_percentile(r::double, 'NaN'::double) FROM quantile
+
+statement error
+SELECT approx_percentile(r::double, ARRAY[0.5, 'NaN'::double]) FROM quantile
+
+statement error
+SELECT approx_percentile(r::double, ARRAY[0.5, 1.1]) FROM quantile
+
+statement error
+SELECT approx_percentile(r::double, ARRAY[0.5, -0.1]) FROM quantile
+
+statement error
+SELECT approx_percentile(r, ARRAY[-0.5], 3) FROM quantile
+
+# parallel execution - QuestDB skips the pragma, the next queries repeat the above,
+# except the multiple groups query
+statement ok
+pragma threads=4
+
+statement ok
+PRAGMA verify_parallelism
+
+query I
+SELECT abs(approx - exact) <= 100
+FROM (SELECT approx_percentile(r::double, 0.1, 2) approx, percentile_disc(r, 0.1) exact FROM quantile)
+----
+true
+
+query I
+SELECT abs(approx - exact) <= 100
+FROM (SELECT approx_percentile(r::double, 0.9, 2) approx, percentile_disc(r, 0.9) exact FROM quantile)
+----
+true
+
+query I
+SELECT abs(approx - exact) <= 100
+FROM (SELECT approx_percentile(r::double, 0.5, 2) approx, percentile_disc(r, 0.5) exact FROM quantile)
+----
+true
+
+# multiple groups
+query IIII
+SELECT g, abs(a[1] - q[1]) <= 100, abs(a[2] - q[2]) <= 100, abs(a[3] - q[3]) <= 100
+FROM (
+    SELECT r % 10 g, approx_percentile(r::double, ARRAY[0.1, 0.5, 0.9], 2) a, percentile_disc(r, ARRAY[0.1, 0.5, 0.9]) q
+    FROM quantile
+    WHERE r IS NOT NULL
+)
+ORDER BY g
+----
+0 true true true
+1 true true true
+2 true true true
+3 true true true
+4 true true true
+5 true true true
+6 true true true
+7 true true true
+8 true true true
+9 true true true

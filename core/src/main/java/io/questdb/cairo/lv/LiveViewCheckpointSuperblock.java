@@ -233,7 +233,7 @@ public class LiveViewCheckpointSuperblock implements Closeable {
     public LiveViewCheckpointSuperblock(@NotNull CairoConfiguration configuration) {
         this.ff = configuration.getFilesFacade();
         this.commitMode = configuration.getCommitMode();
-        this.mem = Vm.getCMARWInstance();
+        this.mem = Vm.getExactCMARWInstance();
     }
 
     /**

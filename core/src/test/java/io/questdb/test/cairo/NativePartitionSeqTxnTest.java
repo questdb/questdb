@@ -29,14 +29,19 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.PartitionCompactionScanJob;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.TxWriter;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.str.Path;
@@ -173,10 +178,11 @@ public class NativePartitionSeqTxnTest extends AbstractCairoTest {
             // writing physical NULL values or leaving the older-partition -1 sentinel.
             execute("ALTER TABLE t ADD COLUMN x STRING");
             drainWalQueue();
-            execute("INSERT INTO t (ts, x) VALUES ('2024-01-02T00:00:00', 'active')");
-            drainWalQueue();
-
+            // Converted while active, which keeps an all-NULL column's full top in the parquet file; the
+            // single-pass conversion of an older partition publishes every top as zero.
             execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            execute("INSERT INTO t (ts, x) VALUES ('2024-01-02T00:00:00', 'active')");
             drainWalQueue();
 
             try (TableWriter writer = getWriter("t")) {
@@ -243,17 +249,30 @@ public class NativePartitionSeqTxnTest extends AbstractCairoTest {
             execute("CREATE TABLE t (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
             execute("INSERT INTO t VALUES ('2024-01-01T00:00:00', 1), ('2024-01-02T00:00:00', 2)");
 
-            try (TableWriter writer = getWriter("t")) {
-                TxWriter tx = writer.getTxWriter();
-                tx.setPartitionReadOnlyByTimestamp(tx.getPartitionTimestampByIndex(0), true);
-                writer.bumpPartitionTableVersion();
-                writer.commit();
+            final String alterSql = "ALTER TABLE t ALTER COLUMN x TYPE LONG";
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                // Compiled while no partition is read-only, so the compile-time rejection does not
+                // fire; the apply-time check in TableWriter must.
+                final CompiledQuery cq = compiler.compile(alterSql, sqlExecutionContext);
+
+                try (TableWriter writer = getWriter("t")) {
+                    TxWriter tx = writer.getTxWriter();
+                    tx.setPartitionReadOnlyByTimestamp(tx.getPartitionTimestampByIndex(0), true);
+                    writer.bumpPartitionTableVersion();
+                    writer.commit();
+                }
+
+                CairoException ex = Assert.assertThrows(CairoException.class, () -> {
+                    try (OperationFuture fut = cq.execute(null)) {
+                        fut.await();
+                    }
+                });
+                TestUtils.assertContains(ex.getFlyweightMessage(), "cannot change column type, partition is read-only");
             }
 
-            CairoException ex = Assert.assertThrows(
-                    CairoException.class,
-                    () -> execute("ALTER TABLE t ALTER COLUMN x TYPE LONG"));
-            TestUtils.assertContains(ex.getFlyweightMessage(), "cannot change column type, partition is read-only");
+            // A fresh compile rejects the ALTER up front.
+            SqlException ex = Assert.assertThrows(SqlException.class, () -> execute(alterSql));
+            TestUtils.assertContains(ex.getFlyweightMessage(), "cannot change column type, table has read-only partitions [table=t, partition=2024-01-01]");
 
             // the ALTER was rejected before any rewrite; the data still reads back unchanged
             assertQuery("SELECT * FROM t ORDER BY ts")
@@ -457,48 +476,10 @@ public class NativePartitionSeqTxnTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFailedToParquetSwitchKeepsNativeSeqTxn() throws Exception {
-        // switchNativePartitionWithParquet aborts with SWITCH_NO_PARQUET when data.parquet is
-        // missing. The partition stays native and its data is unchanged, so its stamped seqTxn must
-        // survive: the abort clears only parquet_generated, it must not blank offset 3 to the -1
-        // sentinel (that would throw away a still-valid version and make the partition look changed when it is not).
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00', 10)");
-            drainWalQueue();
-            // day2 becomes the active partition, leaving day1 (index 0) non-active and stamped.
-            execute("INSERT INTO t VALUES ('2024-01-02T00:00:00', 20)");
-            drainWalQueue();
-
-            try (TableWriter writer = getWriter("t")) {
-                TxWriter tx = writer.getTxWriter();
-                long partitionTs = tx.getPartitionTimestampByIndex(0);
-                Assert.assertFalse(tx.isPartitionParquet(0));
-                final long preSwitchSeqTxn = tx.getNativePartitionSeqTxn(0);
-                Assert.assertTrue("day1 must be stamped", preSwitchSeqTxn > 0);
-
-                // Flag the partition parquet-generated (keeping its seqTxn) without creating a
-                // data.parquet, so the switch reaches the "no parquet file to switch to" abort.
-                tx.setPartitionParquetGenerated(0, true);
-                writer.bumpPartitionTableVersion();
-                writer.commit();
-
-                Assert.assertEquals(TableWriter.SWITCH_NO_PARQUET,
-                        writer.switchNativePartitionWithParquet(partitionTs, 0L));
-
-                Assert.assertFalse("the aborted switch clears parquet_generated", tx.isPartitionParquetGenerated(0));
-                Assert.assertFalse("partition stays native", tx.isPartitionParquet(0));
-                Assert.assertEquals("the stamped seqTxn must survive the aborted switch",
-                        preSwitchSeqTxn, tx.getNativePartitionSeqTxn(0));
-            }
-        });
-    }
-
-    @Test
-    public void testMarkPartitionParquetReadyLegacyStampsSeqTxn() throws Exception {
+    public void testParquetCopyLegacyStampsSeqTxn() throws Exception {
         // A legacy/unstamped WAL partition reads offset 3 as -1 (an old binary's word or a cleared
-        // slot). markPartitionParquetReady's "< 0 && isWal()" gate fires, stamping the current table
-        // seqTxn so the staged-parquet native partition gains a real version instead of staying -1.
+        // slot). Installing its parquet copy stamps the version the copy's footer carries, the table
+        // seqTxn, so the native partition the copy uploads from gains a real version instead of staying -1.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO t VALUES ('2024-01-01T00:00:00', 1)");
@@ -506,23 +487,21 @@ public class NativePartitionSeqTxnTest extends AbstractCairoTest {
             execute("INSERT INTO t VALUES ('2024-01-02T00:00:00', 2)");
             drainWalQueue();
 
-            final long day1Ts;
-            final long day1NameTxn;
-            final int tsType;
             try (TableWriter writer = getWriter("t")) {
                 TxWriter tx = writer.getTxWriter();
                 Assert.assertFalse("day1 must be native", tx.isPartitionParquet(0));
                 // Roll day1 back to the cleared/unstamped sentinel to mimic a legacy partition.
                 tx.setPartitionSeqTxnByRawIndex(0, 0L);
+                writer.bumpPartitionTableVersion();
+                writer.commit();
                 Assert.assertEquals("legacy day1 reads as unstamped", -1L, tx.getNativePartitionSeqTxn(0));
-                day1Ts = tx.getPartitionTimestampByIndex(0);
-                day1NameTxn = tx.getPartitionNameTxn(0);
-                tsType = tx.getTimestampType();
+            }
+            final long day1Ts = installParquetCopy("t");
 
-                plantEmptyDataParquet(day1Ts, day1NameTxn, tsType);
-                Assert.assertTrue(writer.markPartitionParquetReady(day1Ts));
-
-                Assert.assertTrue("the legacy gate stamps the table seqTxn", tx.getNativePartitionSeqTxn(0) > 0);
+            try (TableReader reader = getReader("t")) {
+                TxReader tx = reader.getTxFile();
+                Assert.assertEquals(day1Ts, tx.getPartitionTimestampByIndex(0));
+                Assert.assertTrue("the install stamps the table seqTxn", tx.getNativePartitionSeqTxn(0) > 0);
                 Assert.assertTrue("partition is flagged parquet-generated", tx.isPartitionParquetGenerated(0));
                 Assert.assertFalse("partition stays native", tx.isPartitionParquet(0));
             }
@@ -530,10 +509,9 @@ public class NativePartitionSeqTxnTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMarkPartitionParquetReadyNonLegacyDoesNotBumpVersion() throws Exception {
-        // Non-legacy WAL partition already carries a stamped seqTxn (separate commits). Flagging it
-        // parquet-generated must NOT bump that version -- the "< 0" gate keeps the existing seqTxn,
-        // and the partition stays native, not remote.
+    public void testParquetCopyNonLegacyDoesNotBumpVersion() throws Exception {
+        // Non-legacy WAL partition already carries a stamped seqTxn (separate commits). Installing its
+        // parquet copy must NOT bump that version, and the partition stays native, not remote.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
             // separate commits so day1 is a stamped, non-active native partition
@@ -542,60 +520,43 @@ public class NativePartitionSeqTxnTest extends AbstractCairoTest {
             execute("INSERT INTO t VALUES ('2024-01-02T00:00:00', 2)");
             drainWalQueue();
 
-            final long day1Ts;
-            final long day1NameTxn;
-            final int tsType;
             final long preSeqTxn;
-            try (TableWriter writer = getWriter("t")) {
-                TxWriter tx = writer.getTxWriter();
-                Assert.assertFalse("day1 must be native", tx.isPartitionParquet(0));
-                preSeqTxn = tx.getNativePartitionSeqTxn(0);
+            try (TableReader reader = getReader("t")) {
+                preSeqTxn = reader.getTxFile().getNativePartitionSeqTxn(0);
                 Assert.assertTrue("day1 is stamped", preSeqTxn > 0);
-                day1Ts = tx.getPartitionTimestampByIndex(0);
-                day1NameTxn = tx.getPartitionNameTxn(0);
-                tsType = tx.getTimestampType();
+            }
+            installParquetCopy("t");
 
-                plantEmptyDataParquet(day1Ts, day1NameTxn, tsType);
-                Assert.assertTrue(writer.markPartitionParquetReady(day1Ts));
-
+            try (TableReader reader = getReader("t")) {
+                TxReader tx = reader.getTxFile();
                 Assert.assertTrue("partition is flagged parquet-generated", tx.isPartitionParquetGenerated(0));
                 Assert.assertEquals("a present version must not be bumped", preSeqTxn, tx.getNativePartitionSeqTxn(0));
                 Assert.assertFalse("partition stays native", tx.isPartitionParquet(0));
-                Assert.assertFalse("staging parquet does not mark the partition remote", tx.isPartitionRemote(0));
+                Assert.assertFalse("a parquet copy does not mark the partition remote", tx.isPartitionRemote(0));
             }
         });
     }
 
     @Test
-    public void testMarkPartitionParquetReadyNonWalLeavesUnknownVersion() throws Exception {
-        // Non-WAL partition never carries a seqTxn (offset 3 stays -1). markPartitionParquetReady's
-        // "< 0 && isWal()" gate skips the stamp because there is no real version to write, yet still
-        // flags the partition parquet-generated and reads its native data unchanged.
+    public void testParquetCopyNonWalLeavesUnknownVersion() throws Exception {
+        // Non-WAL partition never carries a seqTxn (offset 3 stays -1): installing its copy skips the
+        // stamp but still flags the partition parquet-generated.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
             execute("INSERT INTO t VALUES ('2024-01-01T00:00:00', 1), ('2024-01-02T00:00:00', 2)");
+            try (TableReader reader = getReader("t")) {
+                Assert.assertEquals("non-WAL day1 has no version", -1L, reader.getTxFile().getNativePartitionSeqTxn(0));
+            }
+            installParquetCopy("t");
 
-            final long day1Ts;
-            final long day1NameTxn;
-            final int tsType;
-            try (TableWriter writer = getWriter("t")) {
-                TxWriter tx = writer.getTxWriter();
-                Assert.assertFalse("day1 must be native", tx.isPartitionParquet(0));
-                Assert.assertEquals("non-WAL day1 has no version", -1L, tx.getNativePartitionSeqTxn(0));
-                day1Ts = tx.getPartitionTimestampByIndex(0);
-                day1NameTxn = tx.getPartitionNameTxn(0);
-                tsType = tx.getTimestampType();
-
-                plantEmptyDataParquet(day1Ts, day1NameTxn, tsType);
-                Assert.assertTrue(writer.markPartitionParquetReady(day1Ts));
-
-                Assert.assertEquals("the isWal() gate skips the stamp on a non-WAL table",
-                        -1L, tx.getNativePartitionSeqTxn(0));
+            try (TableReader reader = getReader("t")) {
+                TxReader tx = reader.getTxFile();
+                Assert.assertEquals("a non-WAL table takes no stamp", -1L, tx.getNativePartitionSeqTxn(0));
                 Assert.assertTrue("partition is flagged parquet-generated", tx.isPartitionParquetGenerated(0));
                 Assert.assertFalse("partition stays native", tx.isPartitionParquet(0));
             }
 
-            // the native data still reads correctly; the empty staged parquet is ignored
+            // the native data still reads correctly; the parquet copy beside it is not read
             assertQuery("SELECT * FROM t ORDER BY ts")
                     .timestamp("ts").expectSize()
                     .returns("ts\tx\n" +
@@ -845,6 +806,153 @@ public class NativePartitionSeqTxnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCompositePartitionSeqTxnResolvesOnAColdReader() throws Exception {
+        // getSeqTxn was the one geometry accessor reading the already-resolved cache instead of
+        // resolving, so a reader that had not yet opened the partition read -1 and table_partitions
+        // rendered its seqTxn null. The cursor reads seqTxn BEFORE the accessors that do resolve, so
+        // the same query answered differently on a cold and on a warm reader.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t SELECT timestamp_sequence('2024-01-01T00', 60*1_000_000L), x FROM long_sequence(600)");
+            drainWalQueue();
+            // A later day, so 2024-01-01 stops being the active partition.
+            execute("INSERT INTO t VALUES ('2024-01-03T00:00:00', 1)");
+            drainWalQueue();
+            // Backdated: merge-append rewrites 2024-01-01's owning piece at the shared file tail, which
+            // leaves the partition composite with its stamp in _geometry, not in the offset-3 word.
+            execute("INSERT INTO t SELECT timestamp_sequence('2024-01-01T02', 1_000_000L), x FROM long_sequence(200)");
+            drainWalQueue();
+
+            final long warmSeqTxn;
+            try (TableReader reader = getReader("t")) {
+                Assert.assertTrue("fixture left 2024-01-01 plain", reader.getTxFile().isPartitionComposite(0));
+                // Resolve first, the way a reader that has already served a query over this partition
+                // would have; every other geometry accessor does this for the caller.
+                reader.getGeometry().getPieceCount(0);
+                warmSeqTxn = reader.getGeometry().getSeqTxn(0);
+                Assert.assertEquals("the composite partition must carry the modifying WAL transaction", 3L, warmSeqTxn);
+            }
+
+            engine.releaseInactive();
+            try (TableReader reader = getReader("t")) {
+                Assert.assertEquals("a cold reader must resolve the composite partition's stamp",
+                        warmSeqTxn, reader.getGeometry().getSeqTxn(0));
+            }
+
+            engine.releaseInactive();
+            // One piece, but it sits at a non-zero row offset: merge-append rewrote the owning piece at
+            // the file tail and abandoned the copy in front of it, which is what makes the partition
+            // composite here. seqTxn must render as the stamp, not null.
+            assertQuery("SELECT index, pieceCount, seqTxn FROM table_partitions('t') WHERE index = 0")
+                    .noLeakCheck().noRandomAccess().sizeMayVary()
+                    .returns("index\tpieceCount\tseqTxn\n" +
+                            "0\t1\t" + warmSeqTxn + "\n");
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeMovesACompositePartitionsStalenessKey() throws Exception {
+        // ALTER COLUMN TYPE rewrites a partition's bytes under a new writer index and then calls
+        // markPartitionDataChanged, whose whole job is to move the version identifying those bytes. On a
+        // COMPOSITE partition the offset-3 word is the geometry pointer, so setPartitionSeqTxn has nowhere to
+        // stamp and returns false - the key would stand still while the bytes changed underneath it. UPDATE is
+        // not exposed: it folds to plain first (UpdateOperatorImpl.compactPartitionNoCommit). ALTER does not,
+        // it converts the whole physical extent piece by piece and keeps the partition composite, along with
+        // its name txn and row count. The squash counter lives in the masked-size word, which a composite
+        // partition does not spend, and it is already half the staleness key every incremental consumer reads.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t SELECT timestamp_sequence('2024-01-01T00', 60*1_000_000L), x FROM long_sequence(600)");
+            drainWalQueue();
+            // A later day, so 2024-01-01 stops being the active partition.
+            execute("INSERT INTO t VALUES ('2024-01-03T00:00:00', 1)");
+            drainWalQueue();
+            // Backdated: merge-append leaves 2024-01-01 composite, its pointer in the offset-3 word.
+            execute("INSERT INTO t SELECT timestamp_sequence('2024-01-01T02', 1_000_000L), x FROM long_sequence(200)");
+            drainWalQueue();
+
+            final int squashCountBefore;
+            final long nameTxnBefore;
+            try (TableReader reader = getReader("t")) {
+                final TxReader tx = reader.getTxFile();
+                Assert.assertTrue("fixture left 2024-01-01 plain", tx.isPartitionComposite(0));
+                Assert.assertEquals("a composite partition records no offset-3 stamp, so the squash counter is"
+                        + " the only key left to move", -1L, tx.getNativePartitionSeqTxn(0));
+                squashCountBefore = tx.getPartitionSquashCount(0);
+                nameTxnBefore = tx.getPartitionNameTxn(0);
+            }
+
+            engine.releaseInactive();
+            execute("ALTER TABLE t ALTER COLUMN x TYPE DOUBLE");
+            drainWalQueue();
+
+            try (TableReader reader = getReader("t")) {
+                final TxReader tx = reader.getTxFile();
+                Assert.assertTrue("ALTER folded the partition, so this test no longer covers the composite path",
+                        tx.isPartitionComposite(0));
+                Assert.assertEquals("ALTER published a new partition version; the counter reset with it and this"
+                        + " test proves nothing", nameTxnBefore, tx.getPartitionNameTxn(0));
+                Assert.assertTrue("the partition's bytes were rewritten but its staleness key did not move",
+                        tx.getPartitionSquashCount(0) > squashCountBefore);
+            }
+
+            // The rewrite has to be correct, not merely versioned.
+            assertQuery("SELECT count() FROM t WHERE ts IN '2024-01-01'")
+                    .noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\n800\n");
+        });
+    }
+
+    @Test
+    public void testParquetGeneratedMustNotMaskACompositePartition() throws Exception {
+        // isPartitionCompositeByRawIndex reads false as soon as parquet_generated is set, but that bit lives in
+        // the masked-size word while the geometry pointer lives in offset 3: setting it on a partition that
+        // carries a pointer does not move the pointer, it just stops everything from seeing it. The partition
+        // then resolves as a flat [0, liveRows) range over a multi-piece layout -- wrong rows, no error -- and
+        // the next setPartitionSeqTxn no longer takes its composite early-out, so it overwrites the pointer
+        // for good. setPartitionGeometryRef asserts !isPartitionParquetByRawIndex; the generated bit needs the
+        // symmetric guard. No caller sets the bit on a composite partition today (installGeneratedParquet
+        // refuses a composite partition), so this pins the invariant, not a live path.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t SELECT timestamp_sequence('2024-01-01T00', 60*1_000_000L), x FROM long_sequence(600)");
+            drainWalQueue();
+            // A later day, so 2024-01-01 stops being the active partition.
+            execute("INSERT INTO t VALUES ('2024-01-03T00:00:00', 1)");
+            drainWalQueue();
+            // Backdated: merge-append leaves 2024-01-01 composite, its pointer in the offset-3 word.
+            execute("INSERT INTO t SELECT timestamp_sequence('2024-01-01T02', 1_000_000L), x FROM long_sequence(200)");
+            drainWalQueue();
+
+            try (TableWriter writer = getWriter("t")) {
+                final TxWriter tx = writer.getTxWriter();
+                Assert.assertTrue("fixture left 2024-01-01 plain", tx.isPartitionComposite(0));
+                final long geometryRef = tx.getGeometryRef(0);
+                Assert.assertTrue("fixture published no geometry ref", geometryRef != -1L);
+
+                boolean rejected = false;
+                try {
+                    tx.setPartitionParquetGenerated(0, true);
+                } catch (AssertionError | CairoException expected) {
+                    rejected = true;
+                }
+                if (!rejected) {
+                    Assert.assertTrue("parquet_generated masked the composite bit: the partition now resolves" +
+                            " as flat [0, liveRows) over a multi-piece layout", tx.isPartitionComposite(0));
+                    // Unreached while the mask holds; kept so the compounding damage is named where it happens.
+                    tx.setPartitionSeqTxn(0, 42);
+                    tx.setPartitionParquetGenerated(0, false);
+                    Assert.assertEquals("the stamp overwrote the geometry pointer", geometryRef, tx.getGeometryRef(0));
+                }
+                writer.rollback();
+            }
+        });
+    }
+
+    @Test
     public void testShowPartitionsDoesNotLeakSeqTxnAsFileSize() throws Exception {
         // Reader regression: every native partition now carries a non-(-1) seqTxn in offset 3, but
         // table_partitions gates the parquet-file-size read on the format bit, so it must still show
@@ -882,6 +990,12 @@ public class NativePartitionSeqTxnTest extends AbstractCairoTest {
         // merge with the max. A released-base word (a parquet file size, no VALID bit) on one split
         // must not be promoted into a trusted stamp by that read -- the gated read quarantines it to
         // -1 (floored to 0 by the merge), so the result is max(trusted sources), never the file size.
+        // Drives squashSplitPartitions over SPLIT sub-partitions. Merge-append folds a backdated
+        // write into the partition's own composite geometry instead of opening a split directory, so
+        // the split this test's setup asserts never appears. Squash over composite partitions is a
+        // known gap; until it closes, pin the production default so the test keeps covering what it
+        // was written for.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4 << 10);
             node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
@@ -934,6 +1048,12 @@ public class NativePartitionSeqTxnTest extends AbstractCairoTest {
         // table high-water. Build a split partition last written at seqTxn S, let the high-water climb
         // past S (a later partition + the squash command), then squash: the merged partition keeps S,
         // not the high-water -- otherwise a manager switch would spuriously re-upload unchanged bytes.
+        // Drives squashSplitPartitions over SPLIT sub-partitions. Merge-append folds a backdated
+        // write into the partition's own composite geometry instead of opening a split directory, so
+        // the split this test's setup asserts never appears. Squash over composite partitions is a
+        // known gap; until it closes, pin the production default so the test keeps covering what it
+        // was written for.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4 << 10);
             node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
@@ -980,12 +1100,14 @@ public class NativePartitionSeqTxnTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
             execute("INSERT INTO t VALUES ('2024-01-01T00:00:00', 1), ('2024-01-02T00:00:00', 2)");
+
             execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
 
             try (TableReader reader = getReader("t")) {
                 Assert.assertTrue(reader.getTxFile().isPartitionParquet(0));
             }
 
+            // Non-WAL: no compile-time rejection, the apply-time check refuses the parquet partition.
             CairoException ex = Assert.assertThrows(
                     CairoException.class,
                     () -> execute("UPDATE t SET x = 10 WHERE ts = '2024-01-01T00:00:00'")
@@ -1243,17 +1365,21 @@ public class NativePartitionSeqTxnTest extends AbstractCairoTest {
         }
     }
 
-    // Plants an empty data.parquet next to a native partition's columns; markPartitionParquetReady
-    // only checks the file exists, it never reads it.
-    private void plantEmptyDataParquet(long partitionTimestamp, long partitionNameTxn, int tsType) {
-        final FilesFacade ff = configuration.getFilesFacade();
-        try (Path p = new Path()) {
-            TableToken tt = engine.verifyTableName("t");
-            p.of(configuration.getDbRoot()).concat(tt);
-            TableUtils.setPathForNativePartition(p, tsType, PartitionBy.DAY, partitionTimestamp, partitionNameTxn);
-            p.concat(TableUtils.PARQUET_PARTITION_NAME).$();
-            Assert.assertTrue("plant empty data.parquet", ff.touch(p.$()));
+    // Builds and installs a parquet copy of the first partition, as cold storage asks. Returns its timestamp.
+    private long installParquetCopy(String table) throws Exception {
+        final TableToken tt = engine.verifyTableName(table);
+        final long partitionTs;
+        try (TableReader reader = getReader(table)) {
+            partitionTs = reader.getTxFile().getPartitionTimestampByIndex(0);
         }
+        engine.releaseAllWriters();
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, -1);
+        try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine)) {
+            Assert.assertTrue(engine.getPartitionCompactionRequestQueue().tryRequestParquetGeneration(tt, partitionTs));
+            Assert.assertTrue("the request must dispatch the parquet copy", job.run());
+        }
+        engine.releaseInactive();
+        return partitionTs;
     }
 
     // Rewrites a partition's raw offset-3 _txn word with an in-place 8-byte file write, no version
@@ -1270,17 +1396,32 @@ public class NativePartitionSeqTxnTest extends AbstractCairoTest {
         try (Path path = new Path()) {
             path.of(configuration.getDbRoot()).concat(tt).concat(TableUtils.TXN_FILE_NAME);
             final long fileOffset;
+            final int baseOffset;
+            final long recordSize;
+            final long partitionTableStart;
             try (TxReader txReader = new TxReader(ff)) {
                 txReader.ofRO(path.$(), tsType, PartitionBy.DAY);
                 txReader.unsafeLoadAll();
                 // raw long index of the partition's offset-3 (version) slot in the partition table
                 final int rawIndex = partitionIndex * TableUtils.LONGS_PER_TX_ATTACHED_PARTITION + 3;
-                fileOffset = txReader.getBaseOffset() + TableUtils.getPartitionTableIndexOffset(
-                        TableUtils.getPartitionTableSizeOffset(txReader.getSymbolColumnCount()), rawIndex);
+                baseOffset = txReader.getBaseOffset();
+                recordSize = txReader.getRecordSize();
+                partitionTableStart = TableUtils.getPartitionTableSizeOffset(txReader.getSymbolColumnCount());
+                fileOffset = baseOffset + TableUtils.getPartitionTableIndexOffset(partitionTableStart, rawIndex);
             }
             try (MemoryCMARW mem = Vm.getCMARWInstance()) {
                 mem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
                 mem.putLong(fileOffset, word);
+                // The _txn body checksum covers [0,80) plus the partition table, so a raw poke into a
+                // partition word tears the live area. This test wants a "well-formed but wrong" released-base
+                // word that the gated read has to quarantine, so it restamps the checksum over the poked bytes.
+                // Otherwise TxReader falls back to the previous A/B area, whose older txn the reader scoreboard
+                // refuses, and every reader open spins to a "Transaction read timeout". The _txn checksum tests
+                // cover a byte that does not match its checksum.
+                mem.putLong(
+                        baseOffset + TableUtils.TX_OFFSET_BODY_CHECKSUM_64,
+                        TableUtils.calculateTxnBodyChecksum(mem.addressOf(baseOffset), recordSize, partitionTableStart)
+                );
                 mem.close(false);
             }
         }

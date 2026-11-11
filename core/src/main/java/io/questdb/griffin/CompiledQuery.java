@@ -120,13 +120,6 @@ public interface CompiledQuery {
         }
     }
 
-    /**
-     * Returns number of rows changed by this command. Used e.g. in pg wire protocol.
-     *
-     * @return number of rows changed by this command
-     */
-    long getAffectedRowsCount();
-
     @Transient
     AlterOperation getAlterOperation();
 

@@ -136,7 +136,7 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
         TimeFrameCursor slaveCursor = null;
         try {
             slaveCursor = slaveFactory.getTimeFrameCursor(executionContext);
-            // Bind before of(), which reopens rememberedSymbols before adopting the cursors.
+            // Bind before of(), which reopens rememberedSymbols and the symbol key cache before adopting the cursors.
             cursor.setMemoryTracker(executionContext.getMemoryTracker());
             slaveCursor.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
             cursor.of(masterCursor, slaveCursor, executionContext.getCircuitBreaker());
@@ -144,7 +144,8 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
         } catch (Throwable e) {
             Misc.free(slaveCursor);
             Misc.free(masterCursor);
-            // of() reopens rememberedSymbols before adopting the cursors, so close() here frees only the partial heap.
+            // of() reopens rememberedSymbols and the symbol key cache before adopting the cursors,
+            // so close() here frees only the partial heap.
             Misc.free(cursor);
             throw e;
         }
@@ -219,14 +220,17 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
         @Override
         public void close() {
             Misc.free(rememberedSymbols);
+            symbolJoinKeyMapping.close();
             super.close();
         }
 
         @Override
         public void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
-            // Reopen rememberedSymbols before super.of() adopts the cursors so an open-time breach frees it exactly once.
+            // Reopen rememberedSymbols and the symbol key cache before super.of() adopts the cursors
+            // so an open-time breach frees each exactly once.
             rememberedSymbols.reopen();
             rememberedSymbols.clear();
+            symbolJoinKeyMapping.reopen();
             super.of(masterCursor, slaveCursor, circuitBreaker);
             symbolJoinKeyMapping.of(slaveCursor);
             earliestRowId = Long.MIN_VALUE;
@@ -234,8 +238,9 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
 
         @Override
         public void setMemoryTracker(@Nullable MemoryTracker tracker) {
-            // Bound lazily before of() reopens it; map malloc/free nets on the per-query counter.
+            // Bound lazily before of() reopens them; map malloc/free nets on the per-query counter.
             rememberedSymbols.setMemoryTracker(tracker);
+            symbolJoinKeyMapping.setMemoryTracker(tracker);
         }
 
         @Override

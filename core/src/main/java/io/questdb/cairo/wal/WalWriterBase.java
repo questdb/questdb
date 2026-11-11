@@ -26,7 +26,9 @@ package io.questdb.cairo.wal;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -127,6 +129,28 @@ abstract class WalWriterBase implements AutoCloseable {
         return segmentPathLen;
     }
 
+    /**
+     * Makes a new segment's entry in {@code wal<N>} durable, and for segment 0 the entry of {@code wal<N>} in the
+     * table directory, in the modes that promise durability across a power loss. The writer's first record in the
+     * segment names both, so they must survive a power loss by the time it is sequenced. One table directory
+     * barrier per writer is enough: later segments add entries to {@code wal<N>}, not to the table directory.
+     */
+    void fsyncSegmentDirEntries(int commitMode, int newSegmentId) {
+        if (CommitMode.isPowerLossDurable(commitMode)) {
+            TableUtils.fsyncDirDurable(ff, path.trimTo(pathSize).$());
+            if (newSegmentId == 0) {
+                final int tableDirLen = pathSize - walName.length() - 1;
+                try {
+                    TableUtils.fsyncDirDurable(ff, path.trimTo(tableDirLen).$());
+                } finally {
+                    // $() wrote a NUL over the separator in front of wal<N>, and every other use of `path` extends it
+                    // past that point again, so restore the prefix.
+                    path.trimTo(tableDirLen).concat(walName);
+                }
+            }
+        }
+    }
+
     void lockWal() {
         walLocker.lockWriter(tableToken, walId, 0);
         minSegmentLocked = 0;
@@ -156,6 +180,28 @@ abstract class WalWriterBase implements AutoCloseable {
         return true;
     }
 
+    /**
+     * Sequences the writer's last record. It first makes the files the record relies on durable, in the modes that
+     * promise it: every record the writer has appended and not flushed, and the segment's own files
+     * ({@link #syncSegmentFilesBeforeSequencing(int)}). This method and {@link #nextSeqTxnIfLastTxn} are the only
+     * calls a WAL writer makes to sequence a record, so no write path can get a sequencer record ahead of a file it
+     * names.
+     */
+    long nextSeqTxn(long structureVersion, long txnMinTimestamp, long txnMaxTimestamp, long txnRowCount) {
+        syncBeforeSequencing();
+        return sequencer.nextTxn(tableToken, walId, structureVersion, segmentId, lastSegmentTxn, txnMinTimestamp, txnMaxTimestamp, txnRowCount);
+    }
+
+    /**
+     * Sequences the writer's last record like {@link #nextSeqTxn}, but only while {@code expectedLastTxn} is still
+     * the table's latest txn, and returns {@code TableSequencer.FENCE_REJECTED} otherwise. It makes the same files
+     * durable first, whichever way the sequencer decides.
+     */
+    long nextSeqTxnIfLastTxn(long expectedLastTxn, long structureVersion, long txnMinTimestamp, long txnMaxTimestamp, long txnRowCount) {
+        syncBeforeSequencing();
+        return sequencer.nextTxnIfLastTxn(tableToken, expectedLastTxn, walId, structureVersion, segmentId, lastSegmentTxn, txnMinTimestamp, txnMaxTimestamp, txnRowCount);
+    }
+
     void notifySegmentClosure(long oldLastSegmentTxn, int segmentId) {
         if (oldLastSegmentTxn >= 0) {
             sequencer.notifySegmentClosed(tableToken, lastSeqTxn, walId, segmentId);
@@ -179,5 +225,19 @@ abstract class WalWriterBase implements AutoCloseable {
     void releaseWalLock() {
         walLocker.unlockWriter(tableToken, walId);
         LOG.debug().$("released WAL lock [walId=").$(walId).I$();
+    }
+
+    /**
+     * Makes the writer's per-segment files other than the event files durable before {@link #nextSeqTxn} or
+     * {@link #nextSeqTxnIfLastTxn} sequences a record in the segment, in the modes that promise durability across a
+     * power loss, and does nothing for a file that has not changed since its last flush.
+     */
+    abstract void syncSegmentFilesBeforeSequencing(int commitMode);
+
+    private void syncBeforeSequencing() {
+        // Local WAL commits keep the configured grade; a replica does not upload them.
+        final int commitMode = configuration.getCommitMode();
+        events.syncBeforeSequencing(commitMode);
+        syncSegmentFilesBeforeSequencing(commitMode);
     }
 }

@@ -61,6 +61,13 @@ public class VirtualLongGauge extends AbstractLongGauge implements LongGauge {
         // do nothing as this gauge is RO view of some stat
     }
 
+    @Override
+    public void snapshot(MetricSnapshotVisitor visitor) {
+        if (visitor.isVirtualMetricsEnabled()) {
+            visitor.visitLong(getName(), MetricType.VIRTUAL_LONG_GAUGE, getValue());
+        }
+    }
+
     @FunctionalInterface
     public interface StatProvider {
         long getValue();
