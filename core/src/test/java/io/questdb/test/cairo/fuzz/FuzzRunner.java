@@ -163,6 +163,7 @@ public class FuzzRunner {
     private FailureFileFacade ff;
     private int fuzzRowCount;
     private boolean hasApplySeeds;
+    private boolean hasPoolColumnPurgeJob;
     private int ioFailureCount;
     private int ioFailureCreatedCount;
     private boolean isNoSentinelTypeChangeEnabled;
@@ -1000,6 +1001,14 @@ public class FuzzRunner {
      */
     public void setDropIndexProbability(double dropIndexProb) {
         this.dropIndexProb = dropIndexProb;
+    }
+
+    /**
+     * Tells the applies that a worker pool runs a {@link ColumnPurgeJob}. A pool job that fails to save a purge frees
+     * the purge log but keeps draining the queue, so the purge log cannot tell.
+     */
+    public void setHasPoolColumnPurgeJob(boolean hasPoolColumnPurgeJob) {
+        this.hasPoolColumnPurgeJob = hasPoolColumnPurgeJob;
     }
 
     /**
@@ -2169,10 +2178,13 @@ public class FuzzRunner {
     }
 
     /**
-     * Opens the column purge job of an apply, or returns null when another job, such as the job of a server or of a
-     * worker pool, holds the purge log: the log takes one job at a time, and that job drains the queue.
+     * Opens the column purge job of an apply, or returns null when another job drains the queue, which takes one
+     * consumer: the job of a worker pool, see {@link #setHasPoolColumnPurgeJob}, or a job that holds the purge log.
      */
     private @Nullable ColumnPurgeJob openColumnPurgeJob() {
+        if (hasPoolColumnPurgeJob) {
+            return null;
+        }
         try {
             return new ColumnPurgeJob(engine);
         } catch (EntryUnavailableException e) {

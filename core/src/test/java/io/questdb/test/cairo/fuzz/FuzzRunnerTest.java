@@ -65,6 +65,24 @@ public class FuzzRunnerTest extends AbstractCairoTest {
     private final Rnd rnd = TestUtils.generateRandom(LOG);
 
     @Test
+    public void testApplyLeavesColumnPurgeToPoolJob() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 0);
+        assertMemoryLeak(() -> {
+            final File staleFile = createStaleColumnVersion("t", false);
+            // no job holds the purge log, as after a pool job failed to save a purge
+            final FuzzRunner runner = newRunner();
+            runner.setHasPoolColumnPurgeJob(true);
+            runner.applyNonWal(new ObjList<>(), "t", new Rnd());
+            Assert.assertTrue(staleFile.exists());
+
+            runner.setHasPoolColumnPurgeJob(false);
+            runner.applyNonWal(new ObjList<>(), "t", new Rnd());
+            Assert.assertFalse(staleFile.exists());
+            assertQuery("SELECT x FROM t").noLeakCheck().expectSize().returns("x\n2\n");
+        });
+    }
+
+    @Test
     public void testApplyLeavesColumnPurgeToRunningJob() throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 0);
         assertMemoryLeak(() -> {
@@ -151,14 +169,14 @@ public class FuzzRunnerTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testApplyNonWalPurgesColumnVersionsAfterEachCommit() throws Exception {
+    public void testApplyNonWalPurgesColumnVersionsAfterEachTransaction() throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 0);
         assertMemoryLeak(() -> {
             final File staleFile = createStaleColumnVersion("t", false);
             final ObjList<FuzzTransaction> transactions = new ObjList<>();
             transactions.add(assertingTransaction(() -> Assert.assertTrue(staleFile.exists())));
             transactions.add(assertingTransaction(() -> Assert.assertFalse(staleFile.exists())));
-            // the first draw of the reload Rnd is false, so applyNonWal purges and reloads after every commit
+            // the first draw of the reload Rnd is false, so applyNonWal purges and reloads after every transaction
             Assert.assertFalse(new Rnd().nextBoolean());
 
             newRunner().applyNonWal(transactions, "t", new Rnd());
