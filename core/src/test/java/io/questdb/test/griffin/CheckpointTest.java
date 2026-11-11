@@ -3032,14 +3032,7 @@ public class CheckpointTest extends AbstractCairoTest {
             TableToken tableToken = engine.verifyTableName("t_pi_parquet");
             String dbRoot = engine.getConfiguration().getDbRoot();
             File tableDir = new File(dbRoot, tableToken.getDirName());
-            // After conversion the native "2024-01-01" version can remain next to the
-            // parquet "2024-01-01.1" version until a purge removes it, and listFiles()
-            // makes no ordering promise. Select the version that holds the parquet metadata.
-            File[] partDirs = tableDir.listFiles((_, n) -> n.startsWith("2024-01-01")
-                    && new File(new File(tableDir, n), TableUtils.PARQUET_METADATA_FILE_NAME).exists());
-            Assert.assertNotNull("parquet partition dir missing", partDirs);
-            Assert.assertEquals("exactly one parquet partition dir expected", 1, partDirs.length);
-            File partDir = partDirs[0];
+            File partDir = findParquetPartitionDir(tableDir, "2024-01-01");
 
             File[] pciBefore = partDir.listFiles((_, n) -> n.startsWith("sym.pci"));
             Assert.assertNotNull("setup: sym.pci must exist after parquet conversion", pciBefore);
