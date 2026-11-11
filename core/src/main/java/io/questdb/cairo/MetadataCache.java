@@ -844,6 +844,7 @@ public class MetadataCache implements QuietCloseable {
             }
             table.setExpiry(expiryPredicate, expiryCleanupIntervalMicros);
             table.setTableFormat(TableUtils.getTableFormat(metaMem));
+            table.setDedupMode(TableUtils.getDedupMode(metaMem));
             table.setSoftLinkFlag(isSoftLink);
 
             TableUtils.buildColumnListFromMetadataFile(metaMem, columnCount, table.columnOrderList);
@@ -1519,6 +1520,7 @@ public class MetadataCache implements QuietCloseable {
             final String expiryPredicate = tableMetadata.getExpiryPredicate();
             table.setExpiry(expiryPredicate, tableMetadata.getExpiryCleanupIntervalMicros());
             table.setTableFormat(tableMetadata.getTableFormat());
+            table.setDedupMode(tableMetadata.getDedupMode());
             Path tempPath = Path.getThreadLocal(engine.getConfiguration().getDbRoot());
             table.setSoftLinkFlag(Files.isSoftLink(tempPath.concat(tableToken.getDirNameUtf8()).$()));
 
