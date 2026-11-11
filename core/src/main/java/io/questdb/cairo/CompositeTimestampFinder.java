@@ -52,32 +52,23 @@ public class CompositeTimestampFinder implements TimestampFinder, Mutable {
     }
 
     @Override
-    public long findTimestamp(long value, long rowLo, long rowHi) {
-        // Timestamps do not decrease across the directory, so the qualifying rows are a prefix and the
-        // window only has to clamp it. Resolving against the whole directory rather than the window costs
-        // nothing here - both are one binary search - and keeps the piece arithmetic out of the clamp.
-        final long row = findRow(value);
-        return row < rowLo ? rowLo - 1 : Math.min(row, rowHi);
+    public long countBefore(long timestamp) {
+        return rowCount == 0 || timestamp == Long.MIN_VALUE ? 0 : findRow(timestamp - 1) + 1;
     }
 
     @Override
-    public long maxTimestampApproxFromMetadata() {
+    public long countThrough(long timestamp) {
+        return rowCount == 0 ? 0 : findRow(timestamp) + 1;
+    }
+
+    @Override
+    public long maxTimestampUpperBound() {
         return maxTimestampApprox;
     }
 
     @Override
-    public long maxTimestampExact() {
-        return timestampAt(rowCount - 1);
-    }
-
-    @Override
-    public long minTimestampApproxFromMetadata() {
+    public long minTimestampLowerBound() {
         return minTimestampApprox;
-    }
-
-    @Override
-    public long minTimestampExact() {
-        return timestampAt(0);
     }
 
     public CompositeTimestampFinder of(TableReader reader, int partitionIndex, int timestampIndex, long rowCount) {
@@ -94,12 +85,6 @@ public class CompositeTimestampFinder implements TimestampFinder, Mutable {
     @Override
     public void prepare() {
         this.column = reader.getColumn(timestampColumnOffset);
-    }
-
-    @Override
-    public long timestampAt(long rowIndex) {
-        final int piece = geometry.findPieceByRow(partitionIndex, rowIndex);
-        return column.getLong((rowIndex + geometry.getPieceShift(partitionIndex, piece)) * 8);
     }
 
     /**

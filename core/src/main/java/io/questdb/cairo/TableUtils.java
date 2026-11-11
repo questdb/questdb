@@ -122,6 +122,9 @@ public final class TableUtils {
     // UPSERT: a new row replaces the existing row with the same dedup key values, the latest write wins.
     public static final int DEDUP_MODE_UPSERT = 0;
     public static final String DEFAULT_PARTITION_NAME = "default";
+    // Delta state of one partition version: <partition>/_delta/_catalog.
+    public static final String DELTA_CATALOG_FILE_NAME = "_catalog";
+    public static final String DELTA_DIR_NAME = "_delta";
     public static final String DETACHED_DIR_MARKER = ".detached";
     // A DETACH's temporary name, <partition>.<txn of its commit>.detaching, until the commit is final.
     public static final String DETACHING_DIR_MARKER = ".detaching";
@@ -3346,7 +3349,7 @@ public final class TableUtils {
     ) {
         try {
             final long memSize = checkMemSize(metaMem, META_OFFSET_COLUMN_TYPES);
-            validateMetaVersion(metaPath, metaMem, META_OFFSET_VERSION, expectedVersion, ColumnType.MAX_STORAGE_VERSION);
+            validateMetaVersion(metaPath, metaMem, META_OFFSET_VERSION, expectedVersion, ColumnType.DELTA_STORAGE_VERSION);
             final int columnCount = getColumnCount(metaPath, metaMem, META_OFFSET_COUNT);
 
             long offset = getColumnNameOffset(columnCount);
@@ -3433,8 +3436,8 @@ public final class TableUtils {
 
     public static void validateMetaVersion(Utf8Sequence metaPath, MemoryMR metaMem, long metaVersionOffset, int expectedVersion, int maxVersion) {
         final int metaVersion = metaMem.getInt(metaVersionOffset);
-        // A table that currently holds composite partitions carries ColumnType.MAX_STORAGE_VERSION
-        // rather than ColumnType.VERSION; both are readable by this binary, so accept the whole
+        // A table holding composite or Delta partitions carries an elevated storage version
+        // rather than ColumnType.VERSION; all are readable by this binary, so accept the whole
         // [expectedVersion, maxVersion] range. A version below expectedVersion is a table
         // that predates a migration (migrations bring it up before it is opened), and a version
         // above maxVersion comes from a newer binary this one cannot read.

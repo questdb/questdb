@@ -32,6 +32,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.PartitionDeltaStats;
 import io.questdb.cairo.PartitionGeometry;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
@@ -168,6 +169,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
 
     private class ShowPartitionsRecordCursor implements NoRandomAccessRecordCursor {
         private final ObjList<String> attachablePartitions = new ObjList<>(4);
+        private final PartitionDeltaStats deltaStats = new PartitionDeltaStats();
         private final ObjList<String> detachedPartitions = new ObjList<>(8);
         private final StringSink partitionName = new StringSink();
         private final PartitionsRecord partitionRecord = new PartitionsRecord();
@@ -309,6 +311,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             partitionName.clear();
             dynamicPartitionIndex = partitionIndex;
             CharSequence dynamicTsColName = tsColName;
+            boolean hasDelta = false;
             path.trimTo(rootLen).$();
 
             TxReader tableTxReader = tableReader.getTxFile();
@@ -348,6 +351,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                 // converted partition doesn't show 0 where its native form shows nothing.
                 seqTxn = resolvedSeqTxn > 0 ? resolvedSeqTxn : Numbers.LONG_NULL;
                 numRows = tableTxReader.getPartitionSize(partitionIndex);
+                hasDelta = tableTxReader.getPartitionHasDelta(partitionIndex);
                 long physicalRows = tableReader.getPartitionPhysicalRowCount(partitionIndex);
                 deadRows = physicalRows - numRows;
                 pieceCount = tableReader.getGeometry().getPieceCount(partitionIndex);
@@ -421,10 +425,11 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                 path.parent();
             }
 
+            final long baseRows = numRows;
             partitionSize = ff.getDirSize(path);
             partitionSizeSink.clear();
             SizePrettyFunctionFactory.toSizePretty(partitionSizeSink, partitionSize);
-            if (PartitionBy.isPartitioned(partitionBy) && numRows > 0L) {
+            if (PartitionBy.isPartitioned(partitionBy) && baseRows > 0L) {
                 if (isParquet && parquetMetaReader != null && parquetMetaReader.isOpen()) {
                     int tsIndex = parquetMetaReader.getDesignatedTimestampColumnIndex();
                     int rowGroupCount = parquetMetaReader.getRowGroupCount();
@@ -447,7 +452,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                     long fd = -1;
                     try {
                         fd = TableUtils.openRO(ff, path.$(), LOG);
-                        long lastOffset = (numRows - 1) * Long.BYTES; // timestamp size
+                        long lastOffset = (baseRows - 1) * Long.BYTES; // timestamp size
                         minTimestamp = ff.readNonNegativeLong(fd, 0);
                         maxTimestamp = ff.readNonNegativeLong(fd, lastOffset);
                     } catch (CairoException e) {
@@ -461,6 +466,20 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                 } else {
                     minTimestamp = Long.MIN_VALUE;
                     maxTimestamp = Long.MIN_VALUE;
+                }
+            }
+            if (hasDelta) {
+                tableReader.readDeltaStats(partitionIndex, deltaStats);
+                numRows = deltaStats.getRowCount();
+                // Preserve unknown base bounds when its timestamp source is unavailable.
+                if (baseRows == 0) {
+                    if (deltaStats.getMinTimestamp() != Long.MAX_VALUE) {
+                        minTimestamp = deltaStats.getMinTimestamp();
+                        maxTimestamp = deltaStats.getMaxTimestamp();
+                    }
+                } else if (minTimestamp != Numbers.LONG_NULL && maxTimestamp != Numbers.LONG_NULL) {
+                    minTimestamp = Math.min(minTimestamp, deltaStats.getMinTimestamp());
+                    maxTimestamp = Math.max(maxTimestamp, deltaStats.getMaxTimestamp());
                 }
             }
         }

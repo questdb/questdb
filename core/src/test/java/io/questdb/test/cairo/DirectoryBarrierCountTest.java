@@ -477,6 +477,39 @@ public class DirectoryBarrierCountTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * The writer's parquet rebuild: {@code data.parquet} under SYNC and ADAPTIVE; {@code _pm} and the new partition
+     * directory in every mode but NOSYNC; under SYNC that directory again, then the table directory.
+     */
+    @Test
+    public void testParquetRebuildBarriers() throws Exception {
+        assertMemoryLeak(ff, () -> {
+            final boolean durable = isSyncOrAdaptive();
+            final boolean isNoSync = "nosync".equals(commitMode);
+            final boolean isSync = "sync".equals(commitMode);
+            execute("CREATE TABLE w (ts TIMESTAMP, s SYMBOL INDEX, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO w VALUES ('2024-01-01T00:00:00.000000Z', 'a', 1), "
+                    + "('2024-01-01T02:00:00.000000Z', 'b', 2), ('2024-01-02T00:00:00.000000Z', 'c', 3)");
+            drainWalQueue();
+            execute("ALTER TABLE w CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            // The file keeps LONG, which makes the partition not compact.
+            execute("ALTER TABLE w ALTER COLUMN v TYPE INT");
+            drainWalQueue();
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            final String tableDir = tableDir("w");
+            try (TableWriter writer = engine.getWriter(engine.verifyTableName("w"), "test")) {
+                ff.clear();
+                Assert.assertTrue(writer.compactParquetPartition(0));
+                Assert.assertEquals(ff.dump(), isSync ? 1 : 0, ff.count(tableDir));
+                Assert.assertEquals(ff.dump(), (isNoSync ? 0 : 1) + (isSync ? 1 : 0), ff.countChildren(tableDir));
+                Assert.assertEquals(ff.dump(), (durable ? 1 : 0) + (isNoSync ? 0 : 1), ff.countOther());
+            }
+        });
+    }
+
     @Test
     public void testSchemaChangeDataFileFsyncs() throws Exception {
         assertMemoryLeak(ff, () -> {

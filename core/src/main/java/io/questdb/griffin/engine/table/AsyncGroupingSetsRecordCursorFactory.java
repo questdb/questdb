@@ -296,7 +296,7 @@ public class AsyncGroupingSetsRecordCursorFactory extends AbstractRecordCursorFa
         } finally {
             try {
                 if (memoryPool != null) {
-                    memoryPool.releaseParquetBuffers();
+                    memoryPool.releaseDecodedFrameBuffers();
                 }
             } finally {
                 atom.releaseSlot(slotId);
@@ -388,7 +388,7 @@ public class AsyncGroupingSetsRecordCursorFactory extends AbstractRecordCursorFa
             }
         } finally {
             try {
-                memoryPool.releaseParquetBuffers();
+                memoryPool.releaseDecodedFrameBuffers();
             } finally {
                 atom.releaseSlot(slotId);
             }

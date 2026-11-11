@@ -1137,6 +1137,51 @@ public class ReaderPoolTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyOfSize() throws Exception {
+        // A copy reports the source row count, both as a new reader and as a pooled
+        // reader that the copy moves to the source txn.
+        assertWithPool(pool -> {
+            final String tableName = "test";
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
+                    .col("sym", ColumnType.SYMBOL)
+                    .timestamp("ts");
+            AbstractCairoTest.create(model);
+
+            try (TableWriter writer = newOffPoolWriter(configuration, tableName)) {
+                TableWriter.Row r = writer.newRow(1);
+                r.putSym(0, "foo");
+                r.append();
+                writer.commit();
+            }
+
+            final TableToken tableToken = engine.verifyTableName(tableName);
+            TableReader copyReaderRef;
+            try (
+                    TableReader ogReader = pool.get(tableToken);
+                    TableReader copyReader = pool.getCopyOf(ogReader, null)
+            ) {
+                copyReaderRef = copyReader;
+                Assert.assertEquals(1, copyReader.size());
+            }
+
+            try (TableWriter writer = newOffPoolWriter(configuration, tableName)) {
+                TableWriter.Row r = writer.newRow(Micros.DAY_MICROS + 1);
+                r.putSym(0, "bar");
+                r.append();
+                writer.commit();
+            }
+
+            try (
+                    TableReader ogReader = pool.get(tableToken);
+                    TableReader copyReader = pool.getCopyOf(ogReader, null)
+            ) {
+                Assert.assertSame(copyReaderRef, copyReader);
+                Assert.assertEquals(2, copyReader.size());
+            }
+        });
+    }
+
+    @Test
     public void testDetachedRefCount() throws Exception {
         TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("ts", ColumnType.DATE);
         AbstractCairoTest.create(model);

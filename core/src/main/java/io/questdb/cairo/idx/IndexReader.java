@@ -30,9 +30,12 @@ import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.IndexFrameCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.DirectBitSet;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -70,6 +73,16 @@ public interface IndexReader extends Closeable {
         return -1;
     }
 
+    default int collectDistinctKeysInRange(
+            DirectBitSet foundKeys,
+            long rowLo,
+            long rowHi,
+            long timestampLo,
+            long timestampHi
+    ) {
+        return collectDistinctKeysInRange(foundKeys, rowLo, rowHi);
+    }
+
     long getColumnTop();
 
     long getColumnTxn();
@@ -84,12 +97,56 @@ public interface IndexReader extends Closeable {
      * @param key      index key
      * @param minValue inclusive minimum value
      * @param maxValue inclusive maximum value
-     * @return index value cursor, relative to the minValue
+     * @return data-row cursor, relative to minValue
      */
     RowCursor getCursor(int key, long minValue, long maxValue);
 
     default RowCursor getCursor(int key, long minValue, long maxValue, int[] requiredCoverColumns) {
         return getCursor(key, minValue, maxValue);
+    }
+
+    /**
+     * Opens a source-backed cursor for the inclusive timestamp range.
+     * {@link SourceRowCursor#nextOrdinal()} returns an index-frame ordinal, never
+     * a data-row ID. {@link SourceRowCursor#getCursorRowRef()} identifies the
+     * underlying row. Returns null when this reader uses {@link #getCursor}.
+     */
+    default @Nullable SourceRowCursor getSourceRowCursor(
+            int key,
+            int[] requiredCoverColumns,
+            long timestampLo,
+            long timestampHi
+    ) {
+        return null;
+    }
+
+    /**
+     * Opens one source-backed cursor that merges the first {@code keyCount} keys.
+     * The cursor assigns one ordinal after it merges all key streams.
+     * Returns null when this reader uses one ordinary row cursor per key.
+     */
+    default @Nullable SourceRowCursor getSourceRowCursor(
+            int[] keys,
+            int keyCount,
+            int[] requiredCoverColumns,
+            long timestampLo,
+            long timestampHi
+    ) {
+        return null;
+    }
+
+    /**
+     * Opens a cursor whose source rows can be resolved to rows in the current data frame.
+     * Ordinary readers ignore the resolver.
+     */
+    default RowCursor getCursor(
+            int key,
+            long minValue,
+            long maxValue,
+            int[] requiredCoverColumns,
+            SourceRowResolver sourceRows
+    ) {
+        return getCursor(key, minValue, maxValue, requiredCoverColumns);
     }
 
     /**
@@ -109,6 +166,31 @@ public interface IndexReader extends Closeable {
 
     default IndexFrameCursor getFrameCursor(int key, long minValue, long maxValue) {
         throw new UnsupportedOperationException();
+    }
+
+    default IndexFrameCursor getFrameCursor(
+            int key,
+            long minValue,
+            long maxValue,
+            SourceRowResolver sourceRows
+    ) {
+        return getFrameCursor(key, minValue, maxValue);
+    }
+
+    /**
+     * Opens an index-frame cursor with caller-owned storage available to readers that must
+     * materialize row IDs. The caller is responsible for binding the appropriate memory tracker
+     * and closing the storage. It must keep {@code frameRows} open and unchanged until it finishes
+     * consuming the returned frame.
+     */
+    default IndexFrameCursor getFrameCursor(
+            int key,
+            long minValue,
+            long maxValue,
+            SourceRowResolver sourceRows,
+            DirectLongList frameRows
+    ) {
+        return getFrameCursor(key, minValue, maxValue, sourceRows);
     }
 
     long getKeyBaseAddress();
@@ -131,6 +213,16 @@ public interface IndexReader extends Closeable {
     int getValueBlockCapacity();
 
     long getValueMemorySize();
+
+    /**
+     * Returns true when the frame producer must copy covered values into frame buffers.
+     * A reader may return false only when worker threads can reopen the exact hit range
+     * through {@link #getDetachedCursor} after the reader freezes. In that case, the
+     * producer emits a metadata-only frame and workers decode its covered values later.
+     */
+    default boolean isCoveringFrameMaterializationRequired() {
+        return true;
+    }
 
     boolean isOpen();
 
@@ -179,5 +271,47 @@ public interface IndexReader extends Closeable {
      * {@link #of}; the setter itself does not re-pick.
      */
     default void setPinnedTableTxn(long pinnedTableTxn) {
+    }
+
+    interface SourceRowResolver {
+        SourceRowResolver NONE = (timestamp, sourceRowRef) -> -1;
+
+        /**
+         * Resolves an opaque, query-local source row reference. Callers must not persist it.
+         */
+        int find(long timestamp, long sourceRowRef);
+
+        default long getBaseRowHi() {
+            return -1;
+        }
+
+        default long getBaseRowLo() {
+            return 0;
+        }
+
+        /**
+         * Breaker of the query that owns this resolver; readers that scan on open can consult it.
+         */
+        default SqlExecutionCircuitBreaker getCircuitBreaker() {
+            return SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
+        }
+
+        /**
+         * Inclusive timestamp maximum represented by this resolver.
+         */
+        default long getTimestampHi() {
+            return Long.MAX_VALUE;
+        }
+
+        /**
+         * Inclusive timestamp minimum represented by this resolver.
+         */
+        default long getTimestampLo() {
+            return Long.MIN_VALUE;
+        }
+
+        default boolean isAvailable() {
+            return this != NONE;
+        }
     }
 }

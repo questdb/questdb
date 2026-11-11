@@ -30,6 +30,7 @@ import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
@@ -61,6 +62,21 @@ public class CompositeStorageVersionTest extends AbstractCairoTest {
             drainWalQueue();
             Assert.assertTrue("ADD COLUMN folded the composite partition away", isComposite("2024-01-01"));
             Assert.assertEquals(ColumnType.MAX_STORAGE_VERSION, metaStorageVersion());
+        });
+    }
+
+    @Test
+    public void testDeltaOnCompositeTableStampsDeltaVersion() throws Exception {
+        assertMemoryLeak(() -> {
+            createCompositeMiddleDay();
+            Assert.assertEquals(ColumnType.MAX_STORAGE_VERSION, metaStorageVersion());
+
+            final TableToken tt = engine.verifyTableName("x");
+            try (TableWriter writer = engine.getWriter(tt, "test")) {
+                writer.getTxWriter().setPartitionDeltaActiveByTimestamp(MicrosTimestampDriver.floor("2024-01-03T00:00:00.000000Z"));
+                writer.commitSeqTxn(writer.getTxWriter().getSeqTxn() + 1);
+            }
+            Assert.assertEquals(ColumnType.DELTA_STORAGE_VERSION, metaStorageVersion());
         });
     }
 

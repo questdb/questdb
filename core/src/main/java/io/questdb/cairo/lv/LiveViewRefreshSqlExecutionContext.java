@@ -166,7 +166,9 @@ public class LiveViewRefreshSqlExecutionContext extends SqlExecutionContextImpl 
                         baseTableReader.getMetadataVersion()
                 );
             }
-            return getCairoEngine().getReaderAtTxn(baseTableReader, this);
+            final TableReader reader = getCairoEngine().getReaderAtTxn(baseTableReader, this);
+            reader.setMemoryTracker(getMemoryTracker());
+            return reader;
         }
         return super.getReader(tableToken, version);
     }
@@ -174,7 +176,9 @@ public class LiveViewRefreshSqlExecutionContext extends SqlExecutionContextImpl 
     @Override
     public TableReader getReader(TableToken tableToken) {
         if (baseTableReader != null && tableToken.equals(baseTableReader.getTableToken())) {
-            return getCairoEngine().getReaderAtTxn(baseTableReader, this);
+            final TableReader reader = getCairoEngine().getReaderAtTxn(baseTableReader, this);
+            reader.setMemoryTracker(getMemoryTracker());
+            return reader;
         }
         return super.getReader(tableToken);
     }
