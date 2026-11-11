@@ -45,6 +45,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCM;
 import io.questdb.cairo.vm.api.MemoryCMARW;
@@ -179,6 +180,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                 op.forceTestTimeout();
                 // Row by row updates for now
                 // This should happen parallel per file (partition and column)
+                PageFrameSequence.enterUntrackedScope();
                 try (RecordCursor recordCursor = factory.getCursor(sqlExecutionContext)) {
                     Record masterRecord = recordCursor.getRecord();
 
@@ -249,6 +251,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                         finishPartitionUpdate(partitionIndex, affectedColumnCount, prevRow, minRow, tableMetadata);
                     }
                 } finally {
+                    PageFrameSequence.leaveUntrackedScope();
                     Misc.freeObjList(srcColumns);
                     Misc.freeObjList(dstColumns);
                     // todo: we are opening columns incrementally, e.g. if we don't have enough objects

@@ -39,6 +39,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.pool.PoolListener;
@@ -78,7 +79,12 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.QueryAssertion;
 import io.questdb.test.cairo.TestTableReaderRecord;
+import io.questdb.test.fuzz.FuzzAddCoveringIndexOperation;
+import io.questdb.test.fuzz.FuzzChangeColumnTypeOperation;
+import io.questdb.test.fuzz.FuzzConvertPartitionToNativeOperation;
+import io.questdb.test.fuzz.FuzzConvertPartitionToParquetOperation;
 import io.questdb.test.fuzz.FuzzDropCreateTableOperation;
+import io.questdb.test.fuzz.FuzzDropIndexOperation;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.fuzz.FuzzTransactionGenerator;
 import io.questdb.test.fuzz.FuzzTransactionOperation;
@@ -89,6 +95,7 @@ import org.junit.Assert;
 import org.junit.Before;
 
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -102,11 +109,26 @@ import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
 
 public class FuzzRunner {
     public final static int MAX_WAL_APPLY_TIME_PER_TABLE_CEIL = 250;
+    public static final String TXN_ZERO_SYMBOL_COLUMN = "sym0";
     protected static final Log LOG = LogFactory.getLog(AbstractFuzzTest.class);
     protected static final StringSink sink = new StringSink();
+    // the CONVERT PARTITION operations that applyWalChecked() checked
+    private static final AtomicInteger checkedFormatChanges = new AtomicInteger();
+    // the widenings of columns without a NULL sentinel that applyWalChecked() checked, and those of them that ran
+    // while the table had a parquet partition
+    private static final AtomicInteger checkedNoSentinelWidenings = new AtomicInteger();
+    private static final AtomicInteger checkedNoSentinelWideningsOnParquet = new AtomicInteger();
+    // the widenings that applyWalChecked() checked over a day whose NULLs of the column do not lead the day: the rows
+    // of a column top that come after rows with values, which a split or composite day converts into one row group;
+    // and those of them that a lazy change decodes at the width of the source type, see
+    // FuzzChangeColumnTypeOperation.isDecodedAtSourceWidth()
+    private static final AtomicInteger checkedNoSentinelWideningsOverNonLeadingNulls = new AtomicInteger();
+    private static final AtomicInteger checkedSourceWidthWideningsOverNonLeadingNulls = new AtomicInteger();
     private static final int MAX_COVERED_KEYS_CHECKED = 32;
     // Share of fuzz runs that use TIMESTAMP_NS designated timestamp instead of TIMESTAMP
     private static final int NANOS_TIMESTAMP_PERCENT = 40;
+    // the table that convertNoSentinelValues() converts every value of a type without a NULL sentinel in
+    private static final String NO_SENTINEL_VALUES_TABLE = "fuzz_no_sentinel_values";
     private static final long OPEN_RETRY_TIMEOUT_MILLIS = 10_000;
     // Columns a covering index on sym2 / sym_top may INCLUDE; sym_top's add the column-top columns.
     private static final String[] SYM2_INCLUDE_CANDIDATES = {"c1", "c2", "c3", "rnd_str", "bool1"};
@@ -116,7 +138,11 @@ public class FuzzRunner {
     private static final int SNAPSHOT_SAMPLE_ROWS = 16;
     private static final int SNAPSHOT_TAIL_ROWS = 16;
     private final TableSequencerAPI.TableSequencerCallback checkNoSuspendedTablesRef;
+    // the native conversions of every value of a type without a NULL sentinel, by source type and target type
+    private final Map<String, Map<String, String>> noSentinelConversions = new HashMap<>();
     private final Map<TableReader, ReaderSnapshot> readerSnapshots = Collections.synchronizedMap(new IdentityHashMap<>());
+    // the columns the generator widened from a type without a NULL sentinel, see setNoSentinelWideningChecked()
+    private final ObjHashSet<String> widenedColumns = new ObjHashSet<>();
     protected int initialRowCount;
     protected int partitionCount;
     private double addCoveringIndexProb;
@@ -130,6 +156,7 @@ public class FuzzRunner {
     private double colTypeChangeProb;
     private boolean createWalAsParquet;
     private double dataAddProb;
+    private double dropIndexProb;
     private CairoEngine engine;
     private double equalTsRowsProb;
     private FailureFileFacade ff;
@@ -137,6 +164,8 @@ public class FuzzRunner {
     private boolean hasApplySeeds;
     private int ioFailureCount;
     private int ioFailureCreatedCount;
+    private boolean isNoSentinelTypeChangeEnabled;
+    private boolean isNoSentinelWideningChecked;
     private boolean isO3;
     private double notSetProb;
     private double nullSetProb;
@@ -163,13 +192,46 @@ public class FuzzRunner {
     private int timestampType = ColumnType.TIMESTAMP_MICRO;
     private int transactionCount;
     private double truncateProb;
+    // INCLUDE list and index type of the covering index on sym0, the column the txn-0 setup adds to
+    // the still-empty table; null when the setup is off
+    private IntList txnZeroCoveredIncludeIndices;
+    private String txnZeroCoveringIndexTypeName;
+    private double vacuumProb = 0.001;
 
     public FuzzRunner() {
         checkNoSuspendedTablesRef = this::checkNoSuspendedTables;
     }
 
+    public static int getCheckedFormatChanges() {
+        return checkedFormatChanges.get();
+    }
+
+    public static int getCheckedNoSentinelWidenings() {
+        return checkedNoSentinelWidenings.get();
+    }
+
+    public static int getCheckedNoSentinelWideningsOnParquet() {
+        return checkedNoSentinelWideningsOnParquet.get();
+    }
+
+    public static int getCheckedNoSentinelWideningsOverNonLeadingNulls() {
+        return checkedNoSentinelWideningsOverNonLeadingNulls.get();
+    }
+
+    public static int getCheckedSourceWidthWideningsOverNonLeadingNulls() {
+        return checkedSourceWidthWideningsOverNonLeadingNulls.get();
+    }
+
     public static String getWalParallelApplyTableName(String tableNameBase, int i) {
         return tableNameBase + "_" + i;
+    }
+
+    public static void resetCheckedChanges() {
+        checkedFormatChanges.set(0);
+        checkedNoSentinelWidenings.set(0);
+        checkedNoSentinelWideningsOnParquet.set(0);
+        checkedNoSentinelWideningsOverNonLeadingNulls.set(0);
+        checkedSourceWidthWideningsOverNonLeadingNulls.set(0);
     }
 
     public void after() {
@@ -181,6 +243,17 @@ public class FuzzRunner {
     }
 
     public void applyManyWalParallel(ObjList<ObjList<FuzzTransaction>> fuzzTransactions, Rnd rnd, String tableNameBase, boolean multiTable, boolean waitApply) {
+        applyManyWalParallel(fuzzTransactions, rnd, tableNameBase, multiTable, waitApply, null);
+    }
+
+    public void applyManyWalParallel(
+            ObjList<ObjList<FuzzTransaction>> fuzzTransactions,
+            Rnd rnd,
+            String tableNameBase,
+            boolean multiTable,
+            boolean waitApply,
+            @Nullable Runnable onWalWritersDone
+    ) {
         final ObjList<WalWriter> writers = new ObjList<>();
         final int tableCount = fuzzTransactions.size();
         final AtomicInteger done = new AtomicInteger();
@@ -254,6 +327,15 @@ public class FuzzRunner {
                     TestUtils.unchecked(() -> threads.get(k).join());
                 }
             } finally {
+                // Stop external WAL producers before the apply workers drain and exit. A producer
+                // that waits for this method to return can otherwise keep their drain alive forever.
+                if (onWalWritersDone != null) {
+                    try {
+                        onWalWritersDone.run();
+                    } catch (Throwable th) {
+                        errors.add(th);
+                    }
+                }
                 done.incrementAndGet();
                 Misc.freeObjList(writers);
                 // Join the apply/purge workers before reading errors: a worker that fails after the
@@ -336,6 +418,14 @@ public class FuzzRunner {
                             writer.rollback();
                         } else {
                             writer.commit();
+                        }
+                        for (int opIdx = 0; opIdx < size; opIdx++) {
+                            if (transaction.operationList.getQuick(opIdx) instanceof FuzzDropIndexOperation dropIndexOp) {
+                                Misc.free(writer);
+                                writer = null;
+                                dropIndexOp.executePostDrain(engine, tableName);
+                                writer = TestUtils.getWriter(engine, tableName);
+                            }
                         }
                     }
                 } catch (CairoException | CairoError e) {
@@ -457,8 +547,15 @@ public class FuzzRunner {
 
     public void applyWal(ObjList<FuzzTransaction> transactions, String tableName, int walWriterCount, Rnd applyRnd) {
         TableToken tableToken = engine.verifyTableName(tableName);
-        applyToWal(transactions, tableName, walWriterCount, applyRnd);
-        drainWalQueue(applyRnd, tableName);
+        if (isNoSentinelWideningChecked && walWriterCount == 1) {
+            applyWalChecked(transactions, tableName, applyRnd);
+        } else {
+            applyToWal(transactions, tableName, walWriterCount, applyRnd);
+            drainWalQueue(applyRnd, tableName);
+        }
+        if (executeDropIndexOps(transactions, tableName, applyRnd)) {
+            drainWalQueue(applyRnd, tableName);
+        }
         Assert.assertFalse("Table is suspended", engine.getTableSequencerAPI().isSuspended(tableToken));
     }
 
@@ -575,8 +672,14 @@ public class FuzzRunner {
                 generateSymbols(rnd, rnd.nextInt(Math.max(1, symbolCountMax - 5)) + 5, symbolStrLenMax, tableName),
                 (int) sequencerMetadata.getMetadataVersion(),
                 setParquetEncodingProb,
-                addCoveringIndexProb, setTableFormatProb,
-                backfillProb
+                addCoveringIndexProb,
+                dropIndexProb,
+                setTableFormatProb,
+                vacuumProb,
+                backfillProb,
+                isNoSentinelTypeChangeEnabled,
+                isNoSentinelWideningChecked,
+                widenedColumns
         );
     }
 
@@ -878,6 +981,74 @@ public class FuzzRunner {
     }
 
     /**
+     * Makes the generator drop the index of a symbol column, and index it again with BITMAP or a POSTING
+     * kind five times in eight, see {@link FuzzDropIndexOperation}. Every setFuzzProbabilities() call
+     * keeps it.
+     */
+    public void setDropIndexProbability(double dropIndexProb) {
+        this.dropIndexProb = dropIndexProb;
+    }
+
+    /**
+     * Makes the generator change a STRING, SYMBOL or VARCHAR column to BOOLEAN, BYTE or SHORT on a parquet
+     * partition and those types back to text, with in-order writes only, see
+     * FuzzTransactionGenerator.generateSet(). The parallel WAL apply needs one WAL writer to keep the order.
+     */
+    public void setNoSentinelTypeChangeEnabled(boolean isNoSentinelTypeChangeEnabled) {
+        this.isNoSentinelTypeChangeEnabled = isNoSentinelTypeChangeEnabled;
+    }
+
+    /**
+     * Makes the generator change BYTE and SHORT columns to types with NULL, the first time lazily on parquet
+     * partitions, see FuzzTransactionGenerator.generateSet(). The single-writer WAL apply of
+     * {@link #runFuzz(String, Rnd)} then drains the WAL before and after each CONVERT PARTITION and each column type
+     * change, and checks the rows of the WAL table, see {@link #applyWalChecked}: a CONVERT PARTITION keeps every
+     * row, and a widening reads every stored value as native ALTER COLUMN TYPE converts it, with a 0 or false that
+     * may read NULL, as a column top does.
+     * <p>
+     * The WAL tables and the non-WAL twin keep different column tops: only the WAL tables convert partitions, and
+     * their merges cover other rows than the twin's commits. The comparisons with the twin therefore take NULL and
+     * the converted 0 of a widened column as one value, and the symbol index checks, which compare every column,
+     * do not run. The generator should rename and drop no column and drop no table, so that the widened columns
+     * keep their names.
+     */
+    public void setNoSentinelWideningChecked(boolean isNoSentinelWideningChecked) {
+        this.isNoSentinelWideningChecked = isNoSentinelWideningChecked;
+    }
+
+    /**
+     * Makes the next initial tables start with {@value #TXN_ZERO_SYMBOL_COLUMN}, a SYMBOL column that
+     * ALTER TABLE ADD COLUMN adds while the table is still empty, so its column name txn is 0.
+     * {@link FuzzAddCoveringIndexOperation} covers it before the first row goes in, and every fuzz
+     * operation after that (O3, CONVERT PARTITION, RENAME and DROP COLUMN, purges) runs on that
+     * covering index. A .pc sidecar name carries the token 0 for both txn 0 and txn NONE, and a scan
+     * that read 0 as NONE once made CONVERT, RENAME and the purges miss the sidecars of such a column.
+     * The WAL tables and the non-WAL twin get the same INCLUDE list and index type, drawn from rnd.
+     */
+    public void setTxnZeroCoveredSymbol(Rnd rnd) {
+        // writer indexes of the data_temp columns c1 (LONG), c2 (SYMBOL), c3 (INT), rnd_str (STRING)
+        // and bool1 (BOOLEAN)
+        final IntList candidates = new IntList();
+        candidates.add(0);
+        candidates.add(1);
+        candidates.add(4);
+        candidates.add(7);
+        candidates.add(8);
+        txnZeroCoveredIncludeIndices = new IntList();
+        for (int i = 0, n = 1 + rnd.nextInt(3); i < n; i++) {
+            final int pick = rnd.nextInt(candidates.size());
+            txnZeroCoveredIncludeIndices.add(candidates.getQuick(pick));
+            candidates.removeIndex(pick);
+        }
+        final double indexKindPick = rnd.nextDouble();
+        txnZeroCoveringIndexTypeName = indexKindPick < 0.6
+                ? "POSTING"
+                : (indexKindPick < 0.8 ? "POSTING DELTA" : "POSTING EF");
+        LOG.info().$("txn 0 covered symbol [index=").$(txnZeroCoveringIndexTypeName)
+                .$(", include=").$(txnZeroCoveredIncludeIndices).I$();
+    }
+
+    /**
      * A timestamp whose partition {@link #requestParquetConversionDuringApply} converts half the time instead of a
      * random one: a test that knows where its next commit lands points the conversion there.
      * {@link Long#MIN_VALUE}, the default, leaves every pick random.
@@ -903,15 +1074,45 @@ public class FuzzRunner {
         this.timestampType = timestampType;
     }
 
+    /**
+     * Inserts VACUUM before each generated transaction with this probability, independently of operation weights.
+     */
+    public void setVacuumProbability(double vacuumProb) {
+        this.vacuumProb = vacuumProb;
+    }
+
     public void withDb(CairoEngine engine, SqlExecutionContext sqlExecutionContext) {
         this.engine = engine;
         this.sqlExecutionContext = sqlExecutionContext;
         this.ff = new FailureFileFacade(engine.getConfiguration().getFilesFacade());
     }
 
+    // the first line that differs between two printed results, with the header line
+    private static String firstDifference(String before, String after) {
+        final String[] beforeLines = before.split("\n", -1);
+        final String[] afterLines = after.split("\n", -1);
+        for (int i = 0, n = Math.max(beforeLines.length, afterLines.length); i < n; i++) {
+            final String beforeLine = i < beforeLines.length ? beforeLines[i] : "<no line>";
+            final String afterLine = i < afterLines.length ? afterLines[i] : "<no line>";
+            if (!beforeLine.equals(afterLine)) {
+                return "line " + i + " of " + beforeLines.length + "\nheader: " + beforeLines[0]
+                        + "\nbefore: " + beforeLine + "\nafter:  " + afterLine;
+            }
+        }
+        return "no line differs";
+    }
+
     // Tables with different designated timestamp types need separate source tables
     private static String getDataTempTableName(int timestampType) {
         return timestampType == ColumnType.TIMESTAMP_NANO ? "data_temp_ns" : "data_temp";
+    }
+
+    // the text printSql() shows for a NULL of the type
+    private static String nullTextOf(int columnType) {
+        return switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.INT, ColumnType.LONG, ColumnType.FLOAT, ColumnType.DOUBLE -> "null";
+            default -> "";
+        };
     }
 
     /**
@@ -959,10 +1160,49 @@ public class FuzzRunner {
         return tsSink.toString();
     }
 
+    // applies the transactions of run to the WAL table with one WAL writer, drains the WAL, and empties run
+    private void applyRun(ObjList<FuzzTransaction> run, String tableName, Rnd applyRnd) {
+        if (run.size() > 0) {
+            applyToWal(run, tableName, 1, applyRnd);
+            run.clear();
+        }
+        // a check reads the table after a drain: the WAL also holds the ALTERs that created the table
+        drainWalQueue(applyRnd, tableName);
+    }
+
+    /**
+     * Applies the transactions to the WAL table with one WAL writer, in runs that end before each CONVERT PARTITION
+     * and each column type change, and checks what each of these does to the rows of the table: see
+     * {@link #checkFormatChange} and {@link #checkNoSentinelWidening}. The drain after each run applies the WAL,
+     * converts and compacts partitions as {@link #drainWalQueue} does for the whole WAL.
+     */
+    private void applyWalChecked(ObjList<FuzzTransaction> transactions, String tableName, Rnd applyRnd) {
+        final ObjList<FuzzTransaction> run = new ObjList<>();
+        for (int i = 0, n = transactions.size(); i < n; i++) {
+            final FuzzTransaction transaction = transactions.getQuick(i);
+            final FuzzTransactionOperation checkedOperation = findCheckedOperation(transaction);
+            if (checkedOperation == null) {
+                run.add(transaction);
+                continue;
+            }
+            applyRun(run, tableName, applyRnd);
+            run.add(transaction);
+            if (checkedOperation instanceof FuzzChangeColumnTypeOperation typeChange) {
+                checkNoSentinelWidening(typeChange, tableName, () -> applyRun(run, tableName, applyRnd));
+            } else {
+                checkFormatChange(tableName, () -> applyRun(run, tableName, applyRnd));
+            }
+        }
+        applyRun(run, tableName, applyRnd);
+    }
+
     private void applyWalParallel(ObjList<FuzzTransaction> transactions, String tableName, Rnd applyRnd) {
         ObjList<ObjList<FuzzTransaction>> tablesTransactions = new ObjList<>();
         tablesTransactions.add(transactions);
         applyManyWalParallel(tablesTransactions, applyRnd, tableName, false, true);
+        if (executeDropIndexOps(transactions, tableName, applyRnd)) {
+            drainWalQueue(applyRnd, tableName);
+        }
     }
 
     private void assertMinMaxTimestamp(SqlExecutionContext sqlExecutionContext, String tableName) throws Exception {
@@ -1247,6 +1487,76 @@ public class FuzzRunner {
         return ts.subSequence(prefix.length(), ts.length() - 1).toString();
     }
 
+    // a CONVERT PARTITION, with the WAL apply, conversions and compactions of the drain after it, keeps every row
+    private void checkFormatChange(String tableName, Runnable apply) {
+        final String sql = "SELECT * FROM " + tableName;
+        final String before = printToString(sql);
+        apply.run();
+        final String after = printToString(sql);
+        checkedFormatChanges.incrementAndGet();
+        LOG.info().$("checked CONVERT PARTITION [table=").$(tableName).$(", isChanged=").$(!before.equals(after)).I$();
+        if (!before.equals(after)) {
+            Assert.fail("CONVERT PARTITION changed the rows of " + tableName + ", " + firstDifference(before, after));
+        }
+    }
+
+    /**
+     * A change of a column without a NULL sentinel to a type with NULL reads every row as native ALTER COLUMN TYPE
+     * converts the value it held, see {@link #convertNoSentinelValues}, but a 0 or false may read NULL instead: the
+     * row can be a column top, which the source type reads as 0 or false. Any other column type change runs unchecked.
+     */
+    private void checkNoSentinelWidening(FuzzChangeColumnTypeOperation typeChange, String tableName, Runnable apply) {
+        final int columnType;
+        final String columnName;
+        final String timestampColumnName;
+        try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName(tableName))) {
+            final int columnIndex = metadata.getColumnIndexQuiet(typeChange.getColumnName());
+            columnType = columnIndex < 0 ? ColumnType.UNDEFINED : metadata.getColumnType(columnIndex);
+            columnName = columnIndex < 0 ? null : metadata.getColumnName(columnIndex);
+            timestampColumnName = metadata.getColumnName(metadata.getTimestampIndex());
+        }
+        final int newColumnType = typeChange.getNewColumnType();
+        if (columnName == null || !FuzzChangeColumnTypeOperation.isNoSentinelWidening(columnType, newColumnType)) {
+            apply.run();
+            return;
+        }
+        final boolean isOnParquet = !"count\n0\n".equals(printToString("SELECT count() FROM table_partitions('" + tableName + "') WHERE isParquet"));
+        final String sql = "SELECT \"" + columnName + "\" FROM " + tableName;
+        final String[] before = printToString(sql).split("\n", -1);
+        apply.run();
+        final String[] after = printToString(sql).split("\n", -1);
+        final Map<String, String> conversions = convertNoSentinelValues(columnType, newColumnType);
+        final String zero = columnType == ColumnType.BOOLEAN ? "false" : "0";
+        final String nullText = nullTextOf(newColumnType);
+        final String change = columnName + " " + ColumnType.nameOf(columnType) + " -> " + ColumnType.nameOf(newColumnType)
+                + " of " + tableName + (isOnParquet ? " with a parquet partition" : "");
+        Assert.assertEquals("rows after the change of " + change, before.length, after.length);
+        // the header line comes first and an empty line after the last row
+        for (int row = 1, n = before.length - 1; row < n; row++) {
+            final String expected = conversions.get(before[row]);
+            Assert.assertNotNull("no conversion of " + before[row] + " for the change of " + change, expected);
+            if (!after[row].equals(expected) && !(before[row].equals(zero) && after[row].equals(nullText))) {
+                Assert.fail("the change of " + change + " read row " + (row - 1) + ", which held " + before[row]
+                        + ", as [" + after[row] + "] instead of [" + expected + "]");
+            }
+        }
+        checkedNoSentinelWidenings.incrementAndGet();
+        if (isOnParquet) {
+            checkedNoSentinelWideningsOnParquet.incrementAndGet();
+        }
+        final int nonLeadingNullDays = countNonLeadingNullDays(tableName, timestampColumnName, columnName);
+        if (nonLeadingNullDays > 0) {
+            checkedNoSentinelWideningsOverNonLeadingNulls.incrementAndGet();
+            if (FuzzChangeColumnTypeOperation.isDecodedAtSourceWidth(columnType, newColumnType)) {
+                checkedSourceWidthWideningsOverNonLeadingNulls.incrementAndGet();
+            }
+        }
+        LOG.info().$("checked widening [change=").$(change)
+                .$(", rows=").$(before.length - 2)
+                .$(", nonLeadingNullDays=").$(nonLeadingNullDays)
+                .I$();
+    }
+
     private void checkNoSuspendedTables(int tableId, TableToken tableName, long lastTxn) {
         Assert.assertFalse(tableName.getTableName(), engine.getTableSequencerAPI().isSuspended(tableName));
     }
@@ -1309,43 +1619,140 @@ public class FuzzRunner {
         return committed;
     }
 
+    /**
+     * The SQL that reads {@code tableName} for a comparison with its twin: the columns of {@code metadataTableName}, a
+     * widened column with NULL for a converted 0 or false, which the twin and the WAL tables can each hold as a column
+     * top, see {@link #setNoSentinelWideningChecked}. Without a widened column, the name of the table.
+     */
+    private String comparedSql(String tableName, String metadataTableName) {
+        if (widenedColumns.size() == 0) {
+            return tableName;
+        }
+        try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName(metadataTableName))) {
+            final StringBuilder sql = new StringBuilder("SELECT ");
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                if (i > 0) {
+                    sql.append(", ");
+                }
+                final String name = metadata.getColumnName(i);
+                if (isWidenedColumn(name)) {
+                    sql.append("CASE WHEN \"").append(name).append("\"::VARCHAR IN ('0', 'false', '0.0', ")
+                            .append("'1970-01-01T00:00:00.000Z', '1970-01-01T00:00:00.000000Z', '1970-01-01T00:00:00.000000000Z')")
+                            .append(" THEN NULL ELSE \"").append(name).append("\" END \"").append(name).append('"');
+                } else {
+                    sql.append('"').append(name).append('"');
+                }
+            }
+            return sql.append(" FROM ").append(tableName).toString();
+        }
+    }
+
+    /**
+     * The text of every value of {@code columnType}, a type without a NULL sentinel, mapped to its text after a native
+     * ALTER COLUMN TYPE to {@code newColumnType} of a table that stores the values, without a column top.
+     */
+    private Map<String, String> convertNoSentinelValues(int columnType, int newColumnType) {
+        final String key = ColumnType.nameOf(columnType) + " -> " + ColumnType.nameOf(newColumnType);
+        Map<String, String> conversions = noSentinelConversions.get(key);
+        if (conversions == null) {
+            final String values = switch (columnType) {
+                case ColumnType.BOOLEAN -> "SELECT x = 1 FROM long_sequence(2)";
+                case ColumnType.BYTE -> "SELECT (x - 129)::BYTE FROM long_sequence(256)";
+                default -> "SELECT (x - 32_769)::SHORT FROM long_sequence(65_536)";
+            };
+            try {
+                engine.execute("DROP TABLE IF EXISTS " + NO_SENTINEL_VALUES_TABLE, sqlExecutionContext);
+                engine.execute("CREATE TABLE " + NO_SENTINEL_VALUES_TABLE + " (v " + ColumnType.nameOf(columnType) + ")", sqlExecutionContext);
+                engine.execute("INSERT INTO " + NO_SENTINEL_VALUES_TABLE + " " + values, sqlExecutionContext);
+                final String[] sources = printToString("SELECT v FROM " + NO_SENTINEL_VALUES_TABLE).split("\n", -1);
+                engine.execute("ALTER TABLE " + NO_SENTINEL_VALUES_TABLE + " ALTER COLUMN v TYPE " + ColumnType.nameOf(newColumnType), sqlExecutionContext);
+                final String[] targets = printToString("SELECT v FROM " + NO_SENTINEL_VALUES_TABLE).split("\n", -1);
+                engine.execute("DROP TABLE " + NO_SENTINEL_VALUES_TABLE, sqlExecutionContext);
+                Assert.assertEquals(key, sources.length, targets.length);
+                conversions = new HashMap<>();
+                for (int i = 1, n = sources.length - 1; i < n; i++) {
+                    conversions.put(sources[i], targets[i]);
+                }
+            } catch (SqlException e) {
+                throw new AssertionError("could not convert the values of " + key, e);
+            }
+            noSentinelConversions.put(key, conversions);
+        }
+        return conversions;
+    }
+
+    // the days of tableName in which a NULL of the column comes after a value
+    private int countNonLeadingNullDays(String tableName, String timestampColumnName, String columnName) {
+        final String[] rows = printToString(
+                "SELECT \"" + timestampColumnName + "\"::DATE::VARCHAR, \"" + columnName + "\" IS NULL FROM " + tableName
+        ).split("\n", -1);
+        int nonLeadingNullDays = 0;
+        String day = null;
+        boolean isValueSeen = false;
+        boolean isDayCounted = false;
+        // the header line comes first and an empty line after the last row
+        for (int row = 1, n = rows.length - 1; row < n; row++) {
+            final String[] cells = rows[row].split("\t", -1);
+            // the date part of the DATE text
+            final String rowDay = cells[0].substring(0, 10);
+            if (!rowDay.equals(day)) {
+                day = rowDay;
+                isValueSeen = false;
+                isDayCounted = false;
+            }
+            if ("false".equals(cells[1])) {
+                isValueSeen = true;
+            } else if (isValueSeen && !isDayCounted) {
+                nonLeadingNullDays++;
+                isDayCounted = true;
+            }
+        }
+        return nonLeadingNullDays;
+    }
+
     private TableToken createInitialTable(String tableName, ObjList<FuzzTransaction> transactions) throws SqlException {
         SharedRandom.RANDOM.set(newApplyRnd());
         final Rnd schemaRnd = newSchemaRnd();
 
         if (engine.getTableTokenIfExists(tableName) == null) {
             final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
-            sink.clear();
-            sink.put("create atomic table ")
-                    .put(tableName)
-                    .put(" as (")
-                    .put("select c1, c2, ts, sym2, c3, c4, c5, rnd_str, bool1 from ")
-                    .put(getDataTempTableName(timestampType));
-
+            final StringSink rowFilter = new StringSink();
             if (transactions != null) {
                 LongList noCommitRanges = calculateReplaceRanges(transactions);
 
                 if (noCommitRanges != null) {
-                    sink.put(" where");
+                    rowFilter.put(" where");
                     for (int i = 0, n = noCommitRanges.size(); i < n; i += 2) {
                         long lo = noCommitRanges.getQuick(i);
                         long hi = noCommitRanges.getQuick(i + 1);
                         if (i > 0) {
-                            sink.put(" and");
+                            rowFilter.put(" and");
                         }
-                        sink.put(" (ts not between '" + timestampToString(driver, lo) + "' and '" + timestampToString(driver, hi) + "')");
+                        rowFilter.put(" (ts not between '" + timestampToString(driver, lo) + "' and '" + timestampToString(driver, hi) + "')");
                     }
                 }
             }
 
             final String sym2IndexType = randomIndexTypeClause(schemaRnd);
             final String sym2Include = randomIncludeClause(schemaRnd, sym2IndexType, SYM2_INCLUDE_CANDIDATES);
-            sink.put(")");
-            if (sym2Include == null) {
-                sink.put(", index(sym2 ").put(sym2IndexType).put(")");
+            final String dataTempTableName = getDataTempTableName(timestampType);
+            if (txnZeroCoveringIndexTypeName != null) {
+                createTxnZeroCoveredTable(tableName, dataTempTableName, rowFilter, "BYPASS WAL", false, sym2IndexType, sym2Include);
+            } else {
+                sink.clear();
+                sink.put("create atomic table ")
+                        .put(tableName)
+                        .put(" as (")
+                        .put("select c1, c2, ts, sym2, c3, c4, c5, rnd_str, bool1 from ")
+                        .put(dataTempTableName)
+                        .put(rowFilter)
+                        .put(")");
+                if (sym2Include == null) {
+                    sink.put(", index(sym2 ").put(sym2IndexType).put(")");
+                }
+                sink.put(" timestamp(ts) partition by DAY BYPASS WAL");
+                engine.execute(sink, sqlExecutionContext);
             }
-            sink.put(" timestamp(ts) partition by DAY BYPASS WAL");
-            engine.execute(sink, sqlExecutionContext);
             addInitialColumns(tableName, schemaRnd, sym2IndexType, sym2Include);
         }
         return engine.verifyTableName(tableName);
@@ -1392,12 +1799,16 @@ public class FuzzRunner {
             }
             final String sym2IndexType = randomIndexTypeClause(schemaRnd);
             final String sym2Include = randomIncludeClause(schemaRnd, sym2IndexType, SYM2_INCLUDE_CANDIDATES);
-            engine.execute(
-                    "create atomic table " + tableName + " as (" +
-                            "select * from " + dataTempTableName +
-                            ")" + (sym2Include == null ? ", index(sym2 " + sym2IndexType + ")" : "") + " timestamp(ts) partition by DAY " + tail,
-                    sqlExecutionContext
-            );
+            if (txnZeroCoveringIndexTypeName != null) {
+                createTxnZeroCoveredTable(tableName, dataTempTableName, "", tail, isWal, sym2IndexType, sym2Include);
+            } else {
+                engine.execute(
+                        "create atomic table " + tableName + " as (" +
+                                "select * from " + dataTempTableName +
+                                ")" + (sym2Include == null ? ", index(sym2 " + sym2IndexType + ")" : "") + " timestamp(ts) partition by DAY " + tail,
+                        sqlExecutionContext
+                );
+            }
             addInitialColumns(tableName, schemaRnd, sym2IndexType, sym2Include);
         }
     }
@@ -1416,6 +1827,71 @@ public class FuzzRunner {
         engine.releaseInactive();
 
         return transactions;
+    }
+
+    /**
+     * Creates the shape of dataTempTableName, data_temp or data_temp_ns, with {@value #TXN_ZERO_SYMBOL_COLUMN}
+     * added to the still-empty table, covers it with {@link FuzzAddCoveringIndexOperation}, then inserts the rows
+     * of dataTempTableName that pass rowFilter. See {@link #setTxnZeroCoveredSymbol(Rnd)}.
+     */
+    private void createTxnZeroCoveredTable(
+            String tableName,
+            String dataTempTableName,
+            CharSequence rowFilter,
+            String tail,
+            boolean isWal,
+            String sym2IndexType,
+            String sym2Include
+    ) throws SqlException {
+        // with sym2Include, addInitialColumns() adds the covering index of sym2 after the rows
+        engine.execute(
+                "create atomic table " + tableName + " as (select c1, c2, ts, sym2, c3, c4, c5, rnd_str, bool1 from " + dataTempTableName + " where c1 < 0)"
+                        + (sym2Include == null ? ", index(sym2 " + sym2IndexType + ")" : "") + " timestamp(ts) partition by DAY " + tail,
+                sqlExecutionContext
+        );
+        engine.execute("alter table " + tableName + " add column " + TXN_ZERO_SYMBOL_COLUMN + " symbol", sqlExecutionContext);
+        if (isWal) {
+            drainWalQueue(new Rnd(), tableName);
+        }
+        try (TableReader reader = getReader(tableName)) {
+            final int columnIndex = reader.getMetadata().getColumnIndex(TXN_ZERO_SYMBOL_COLUMN);
+            Assert.assertEquals(
+                    "column name txn of " + TXN_ZERO_SYMBOL_COLUMN + " in " + tableName,
+                    0,
+                    reader.getColumnVersionReader().getDefaultColumnNameTxn(reader.getMetadata().getWriterIndex(columnIndex))
+            );
+            try (TableWriterAPI writer = engine.getTableWriterAPI(reader.getTableToken(), "fuzz txn 0 covering index")) {
+                new FuzzAddCoveringIndexOperation(columnIndex, txnZeroCoveredIncludeIndices, txnZeroCoveringIndexTypeName)
+                        .apply(new Rnd(), engine, writer, -1, null);
+            }
+        }
+        if (isWal) {
+            drainWalQueue(new Rnd(), tableName);
+        }
+        engine.execute(
+                "insert into " + tableName + " select c1, c2, ts, sym2, c3, c4, c5, rnd_str, bool1,"
+                        + " case when c1 % 4 = 0 then null else c2 end from " + dataTempTableName + rowFilter,
+                sqlExecutionContext
+        );
+        if (isWal) {
+            drainWalQueue(new Rnd(), tableName);
+        }
+        try (TableReader reader = getReader(tableName)) {
+            final TableReaderMetadata metadata = reader.getMetadata();
+            final int columnIndex = metadata.getColumnIndex(TXN_ZERO_SYMBOL_COLUMN);
+            final IntList coveringIndices = metadata.getCoveringColumnIndices(columnIndex);
+            Assert.assertTrue(
+                    "covering index on " + TXN_ZERO_SYMBOL_COLUMN + " in " + tableName,
+                    metadata.isColumnIndexed(columnIndex) && coveringIndices != null && coveringIndices.size() > 0
+            );
+            for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
+                Assert.assertEquals(
+                        "column name txn of " + TXN_ZERO_SYMBOL_COLUMN + " in " + tableName + ", partition " + i,
+                        0,
+                        reader.getColumnVersionReader().getColumnNameTxn(reader.getPartitionTimestampByIndex(i), metadata.getWriterIndex(columnIndex))
+                );
+            }
+        }
     }
 
     @NotNull
@@ -1548,6 +2024,9 @@ public class FuzzRunner {
     }
 
     private void drainWalQueue(Rnd applyRnd, String tableName) {
+        // the drain loop runs a timing-dependent number of times: a copy keeps its draws off applyRnd,
+        // so that the seeded draws after the drain replay from the printed seeds
+        final Rnd drainRnd = new Rnd(applyRnd.getSeed0(), applyRnd.getSeed1());
         try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 0);
              O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1);
              PartitionCompactionScanJob compactionJob = new PartitionCompactionScanJob(engine);
@@ -1560,14 +2039,14 @@ public class FuzzRunner {
             final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
             long committedAtRelease = -1;
             while (true) {
-                if (parquetConversionRequestProb > 0 && applyRnd.nextDouble() < parquetConversionRequestProb) {
-                    requestParquetConversionDuringApply(applyRnd, tableName, walApplyJob, compactionJob, rdr1, rdr2);
+                if (parquetConversionRequestProb > 0 && drainRnd.nextDouble() < parquetConversionRequestProb) {
+                    requestParquetConversionDuringApply(drainRnd, tableName, walApplyJob, compactionJob, rdr1, rdr2);
                 }
                 if (!walApplyJob.run() && !checkWalTransactionsJob.run()) {
                     break;
                 }
-                committedAtRelease = forceReleaseTableWriter(applyRnd, tableTokenBucket, committedAtRelease);
-                purgeAndReloadReaders(applyRnd, rdr1, rdr2, purgeJob, 0.25);
+                committedAtRelease = forceReleaseTableWriter(drainRnd, tableTokenBucket, committedAtRelease);
+                purgeAndReloadReaders(drainRnd, rdr1, rdr2, purgeJob, 0.25);
             }
             // This path is the ONLY compaction coverage for single-writer tables driven through
             // applyWal() -> applyToWal() (walWriterCount=1 never goes through
@@ -1575,6 +2054,41 @@ public class FuzzRunner {
             // not just the threaded one.
             compactionJob.drain(0);
         }
+    }
+
+    /**
+     * Runs the {@link FuzzDropIndexOperation} of the transactions, which change the index once the WAL
+     * drained, and returns whether there was any. {@link FuzzAddCoveringIndexOperation} applies in order
+     * with the other operations instead.
+     */
+    private boolean executeDropIndexOps(ObjList<FuzzTransaction> transactions, String tableName, Rnd applyRnd) {
+        boolean hasDropIndexOps = false;
+        for (int i = 0, n = transactions.size(); i < n; i++) {
+            ObjList<FuzzTransactionOperation> ops = transactions.getQuick(i).operationList;
+            for (int j = 0, m = ops.size(); j < m; j++) {
+                if (ops.getQuick(j) instanceof FuzzDropIndexOperation dropIndexOp) {
+                    // the drop op skips the columns that other indexes cover, so it must read the
+                    // applied metadata of the index changes queued before it
+                    drainWalQueue(applyRnd, tableName);
+                    dropIndexOp.executePostDrain(engine, tableName);
+                    hasDropIndexOps = true;
+                }
+            }
+        }
+        return hasDropIndexOps;
+    }
+
+    // the CONVERT PARTITION or column type change of the transaction, which applyWalChecked() checks, or null
+    private @Nullable FuzzTransactionOperation findCheckedOperation(FuzzTransaction transaction) {
+        for (int i = 0, n = transaction.operationList.size(); i < n; i++) {
+            final FuzzTransactionOperation operation = transaction.operationList.getQuick(i);
+            if (operation instanceof FuzzConvertPartitionToParquetOperation
+                    || operation instanceof FuzzConvertPartitionToNativeOperation
+                    || operation instanceof FuzzChangeColumnTypeOperation) {
+                return operation;
+            }
+        }
+        return null;
     }
 
     // Sometimes WAL Apply Job does not finish table in one go and return TableWriter to the pool
@@ -1619,6 +2133,15 @@ public class FuzzRunner {
     // Every apply path (non-WAL, WAL, parallel WAL threads) gets an Rnd with the same seeds,
     // so apply-time random choices match across the tables being compared.
     // The seeds come from the test Rnd, see generateRandom().
+    private boolean isWidenedColumn(String columnName) {
+        for (int i = 0, n = widenedColumns.size(); i < n; i++) {
+            if (Chars.equalsIgnoreCase(widenedColumns.get(i), columnName)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private Rnd newApplyRnd() {
         if (!hasApplySeeds) {
             // The test did not call generateRandom(), draw the seeds from a fresh random
@@ -1647,6 +2170,16 @@ public class FuzzRunner {
             CursorPrinter.println(record, reader.getMetadata(), rows);
         }
         return rows.toString();
+    }
+
+    private String printToString(CharSequence sql) {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            final StringSink text = new StringSink();
+            TestUtils.printSql(compiler, sqlExecutionContext, sql, text);
+            return text.toString();
+        } catch (SqlException e) {
+            throw new AssertionError("could not print " + sql, e);
+        }
     }
 
     /**
@@ -2084,16 +2617,20 @@ public class FuzzRunner {
                 assertMinMaxTimestamp(sqlExecutionContext, tableNameWal);
 
                 String limit = ""; // For debugging
-                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal + limit, tableNameWal + limit, LOG);
-                assertRandomIndexes(tableNameNoWal, tableNameWal, rnd);
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, comparedSql(tableNameNoWal, tableNameWal) + limit, comparedSql(tableNameWal, tableNameWal) + limit, LOG);
+                if (widenedColumns.size() == 0) {
+                    assertRandomIndexes(tableNameNoWal, tableNameWal, rnd);
+                }
 
                 startMicro = System.nanoTime() / 1000;
                 applyWalParallel(transactions, tableNameWal2, rnd);
                 endWalMicro = System.nanoTime() / 1000;
                 long totalWalParallel = endWalMicro - startMicro;
 
-                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal, tableNameWal2, LOG);
-                assertRandomIndexes(tableNameNoWal, tableNameWal2, rnd);
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, comparedSql(tableNameNoWal, tableNameWal2), comparedSql(tableNameWal2, tableNameWal2), LOG);
+                if (widenedColumns.size() == 0) {
+                    assertRandomIndexes(tableNameNoWal, tableNameWal2, rnd);
+                }
                 LOG.infoW().$("=== non-wal(ms): ").$(nonWalTotal / 1000).$(" === wal(ms): ").$(walTotal / 1000).$(" === wal_parallel(ms): ").$(totalWalParallel / 1000).$();
 
                 assertMinMaxTimestamp(sqlExecutionContext, tableNameWal2);

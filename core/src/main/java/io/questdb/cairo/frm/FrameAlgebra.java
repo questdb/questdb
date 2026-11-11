@@ -130,6 +130,46 @@ public class FrameAlgebra {
         return true;
     }
 
+    /**
+     * Whether the commit rows that a dedup merge index maps onto the partition rows hold the same values, as
+     * {@link #isColumnReplaceIdentical(int, Frame, long, long, Frame, long, long, long, long)} checks for column
+     * files. The partition rows are a buffer without a column top, the first mergeIndexRows rows of the merge
+     * index map one to one onto them.
+     */
+    public static boolean isColumnMergeIdentical(
+            int columnType,
+            long partitionAuxAddr,
+            long partitionDataAddr,
+            long partitionRowCount,
+            long commitAuxAddr,
+            long commitDataAddr,
+            long mergeIndexAddr,
+            long mergeIndexRows
+    ) {
+        final short columnTypeTag = ColumnType.tagOf(columnType);
+        final TypeDriver typeDriver = ColumnType.getTypeDriver(columnType);
+        return isColumnReplaceIdentical(
+                columnTypeTag,
+                ColumnType.isVarSize(columnType) ? -1 : ColumnType.sizeOf(columnType),
+                0,
+                0,
+                partitionRowCount,
+                partitionAuxAddr,
+                partitionDataAddr,
+                0,
+                0,
+                0,
+                commitAuxAddr,
+                commitDataAddr,
+                mergeIndexAddr,
+                mergeIndexRows,
+                typeDriver.getNullLong(0),
+                typeDriver.getNullLong(1),
+                typeDriver.getNullLong(2),
+                typeDriver.getNullLong(3)
+        );
+    }
+
     public static boolean isDesignatedTimestampColumnReplaceIdentical(
             int columnIndex,
             Frame partitionFrame,

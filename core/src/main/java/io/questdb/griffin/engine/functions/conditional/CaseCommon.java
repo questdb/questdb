@@ -105,6 +105,30 @@ public class CaseCommon {
         return arg;
     }
 
+    /**
+     * Casts a CASE, SWITCH or coalesce branch to the common type of all branches.
+     * getCommonType() folds the branch types left to right, so the common type can be one that
+     * the branch type does not escalate to on its own: SYMBOL, STRING, IPv4 gives IPv4. Such a
+     * branch has neither a cast factory nor a getter for the common type, so this method rejects
+     * it, as getCommonType() rejects the pair of the branch type and the common type.
+     */
+    public static Function getCastToCommonTypeFunction(
+            Function branch,
+            int branchPosition,
+            int commonType,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        final int branchType = branch.getType();
+        if (branchType != commonType && !isNull(branchType) && !ColumnType.isDecimal(commonType)) {
+            final long typePair = Numbers.encodeLowHighInts(branchType, commonType);
+            if (castFactories.keyIndex(typePair) > -1 && typeEscalationMap.get(typePair) != commonType) {
+                throw SqlException.inconvertibleTypes(branchPosition, branchType, ColumnType.nameOf(branchType), commonType, ColumnType.nameOf(commonType));
+            }
+        }
+        return getCastFunction(branch, branchPosition, commonType, configuration, sqlExecutionContext);
+    }
+
     // public for testing
     @TestOnly
     public static int getCommonType(int commonType, int valueType, int valuePos, String undefinedErrorMsg) throws SqlException {

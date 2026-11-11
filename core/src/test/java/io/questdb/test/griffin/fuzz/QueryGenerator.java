@@ -27,6 +27,7 @@ package io.questdb.test.griffin.fuzz;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.test.griffin.fuzz.clauses.GroupByClause;
+import io.questdb.test.griffin.fuzz.clauses.GroupingSetsClause;
 import io.questdb.test.griffin.fuzz.clauses.HashJoinGroupByClause;
 import io.questdb.test.griffin.fuzz.clauses.HorizonJoinClause;
 import io.questdb.test.griffin.fuzz.clauses.LatestOnClause;
@@ -59,7 +60,10 @@ import io.questdb.test.griffin.fuzz.expr.BindContext;
  * distribution. When equi-join GROUP BY fuzzing is enabled
  * ({@code hashJoinEnabled}, on by default), its band is carved out of the top
  * of the GROUP BY range ([65, 70)), since the shape is a GROUP BY over a join;
- * disabling it gives the band back to GROUP BY without an extra rnd draw.
+ * disabling it gives the band back to GROUP BY without an extra rnd draw. When
+ * grouping sets fuzzing is enabled ({@code groupingSetsEnabled}, on by default),
+ * ROLLUP, CUBE and GROUPING SETS queries take the band [60, 65) of the GROUP BY
+ * range in the same way.
  * <p>
  * For non-join shapes the {@link FuzzSource} is usually a direct
  * reference to a real table, but occasionally wrapped in a subquery or
@@ -87,7 +91,8 @@ public final class QueryGenerator {
             boolean latestOnEnabled,
             boolean horizonJoinEnabled,
             boolean windowJoinEnabled,
-            boolean hashJoinEnabled
+            boolean hashJoinEnabled,
+            boolean groupingSetsEnabled
     ) {
         int pick = rnd.nextInt(100);
         FuzzTable t = tables.getQuick(rnd.nextInt(tables.size()));
@@ -134,6 +139,9 @@ public final class QueryGenerator {
                 return SimpleClause.generate(rnd, source, ctx, injectFaultFn);
             }
             return SampleByClause.generate(rnd, source, ctx, injectFaultFn).withShape(QueryShape.SAMPLE_BY);
+        }
+        if (groupingSetsEnabled && pick >= 60 && pick < 65) {
+            return GroupingSetsClause.generate(rnd, source, ctx, injectFaultFn).withShape(QueryShape.GROUPING_SETS);
         }
         if (pick < 70) {
             return GroupByClause.generate(rnd, source, ctx, injectFaultFn).withShape(QueryShape.GROUP_BY);

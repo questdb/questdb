@@ -473,11 +473,12 @@ final class ParquetCoveredColumnAccumulator {
                 dataBuf = Unsafe.malloc(dataBufCap, MemoryTag.NATIVE_TABLE_WRITER);
             }
             try {
-                final int convColumnTop = (int) rowGroupBuffers.getChunkColumnTop(decodedChunkIdx);
+                final long topRowsPtr = rowGroupBuffers.getChunkTopRowsPtr(decodedChunkIdx);
+                final long topRowCount = rowGroupBuffers.getChunkTopRowCount(decodedChunkIdx);
                 if (ColumnType.isVarchar(columnType)) {
-                    ParquetColumnTypeConverter.convertFixedColumnToVarchar(parquetColType, parquetColNullPolicy, srcDataPtr, (int) rowGroupRowCount, convColumnTop, auxBuf, dataBuf, dataBufCap, utf8Sink);
+                    ParquetColumnTypeConverter.convertFixedColumnToVarchar(parquetColType, parquetColNullPolicy, srcDataPtr, (int) rowGroupRowCount, topRowsPtr, topRowCount, auxBuf, dataBuf, dataBufCap, utf8Sink);
                 } else {
-                    ParquetColumnTypeConverter.convertFixedColumnToString(parquetColType, parquetColNullPolicy, srcDataPtr, (int) rowGroupRowCount, convColumnTop, auxBuf, dataBuf, dataBufCap, utf16Sink);
+                    ParquetColumnTypeConverter.convertFixedColumnToString(parquetColType, parquetColNullPolicy, srcDataPtr, (int) rowGroupRowCount, topRowsPtr, topRowCount, auxBuf, dataBuf, dataBufCap, utf16Sink);
                 }
                 final long actualDataSize = driver.getDataVectorSizeAt(auxBuf, rowGroupRowCount - 1);
                 long auxWritePtr = auxBuf;

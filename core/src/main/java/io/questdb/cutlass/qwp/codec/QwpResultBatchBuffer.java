@@ -39,6 +39,7 @@ import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpGorillaEncoder;
 import io.questdb.cutlass.qwp.protocol.QwpVarint;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.std.Decimals;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
@@ -282,10 +283,10 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     break;
                 }
                 default:
-                    // VARCHAR, STRING, BINARY, UUID, LONG256, DECIMAL128/256, GEOHASH,
-                    // ARRAYS: columnar path not implemented yet -- fall back to per-row
-                    // for this one column. Other columns on this frame still took the
-                    // columnar path above.
+                    // VARCHAR, STRING, BINARY, UUID, LONG256, DECIMAL8/16/32 (widened per
+                    // row), DECIMAL128/256, GEOHASH, ARRAYS: columnar path not implemented
+                    // yet -- fall back to per-row for this one column. Other columns on
+                    // this frame still took the columnar path above.
                     perColumnRowLoop(record, lo, hi, ci);
             }
         }
@@ -648,12 +649,17 @@ public class QwpResultBatchBuffer implements QuietCloseable {
             case IPV4 -> ColumnType.IPv4;
             case VARCHAR -> ColumnType.VARCHAR;
             case ARRAY -> ColumnType.ARRAY;
+            // DECIMAL8/16/32 travel as DECIMAL64 (see QwpColumnTypeMapper.toWireType); appendCell
+            // widens each from its own width
+            case DECIMAL8 -> ColumnType.DECIMAL8;
+            case DECIMAL16 -> ColumnType.DECIMAL16;
+            case DECIMAL32 -> ColumnType.DECIMAL32;
             case DECIMAL64 -> ColumnType.DECIMAL64;
             case DECIMAL128 -> ColumnType.DECIMAL128;
             case DECIMAL256 -> ColumnType.DECIMAL256;
             // no wire code (toWireType refuses them before a batch starts); appendCell's default
             // arm reports them
-            case DECIMAL8, DECIMAL16, DECIMAL32, LONG128, INTERVAL -> ColumnType.UNDEFINED;
+            case LONG128, INTERVAL -> ColumnType.UNDEFINED;
         };
     }
 
@@ -981,6 +987,23 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                 long bits = readGeoBits(record, ci, precBits);
                 if (bits == -1L) scratch.appendNull();
                 else scratch.appendGeohash(bits, (precBits + 7) >>> 3);
+                break;
+            }
+            // DECIMAL8/16/32 travel as DECIMAL64. Each narrow NULL sentinel (the type's MIN_VALUE)
+            // lies outside the type's precision, so no real value collides with it.
+            case ColumnType.DECIMAL8: {
+                final byte v = record.getDecimal8(ci);
+                scratch.appendLongOrNull(v == Decimals.DECIMAL8_NULL ? Decimals.DECIMAL64_NULL : v);
+                break;
+            }
+            case ColumnType.DECIMAL16: {
+                final short v = record.getDecimal16(ci);
+                scratch.appendLongOrNull(v == Decimals.DECIMAL16_NULL ? Decimals.DECIMAL64_NULL : v);
+                break;
+            }
+            case ColumnType.DECIMAL32: {
+                final int v = record.getDecimal32(ci);
+                scratch.appendLongOrNull(v == Decimals.DECIMAL32_NULL ? Decimals.DECIMAL64_NULL : v);
                 break;
             }
             case ColumnType.DECIMAL64:

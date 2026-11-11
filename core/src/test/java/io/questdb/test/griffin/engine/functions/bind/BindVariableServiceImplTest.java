@@ -230,6 +230,20 @@ public class BindVariableServiceImplTest {
     }
 
     @Test
+    public void testDoubleArrayVarSetToNullStr() throws Exception {
+        assertMemoryLeak(() -> {
+            final int type = ColumnType.encodeArrayType(ColumnType.DOUBLE, 2);
+            bindVariableService.define(0, type, 0);
+            bindVariableService.setStr(0, "{{1.0,2.0},{3.0,4.0}}");
+            Assert.assertFalse(bindVariableService.getFunction(0).getArray(null).isNull());
+            bindVariableService.setStr(0, null);
+            final Function function = bindVariableService.getFunction(0);
+            Assert.assertEquals(type, function.getType());
+            Assert.assertTrue(function.getArray(null).isNull());
+        });
+    }
+
+    @Test
     public void testDoubleIndexedOverride() throws Exception {
         assertMemoryLeak(() -> {
             bindVariableService.setInt(2, 10);
@@ -367,6 +381,47 @@ public class BindVariableServiceImplTest {
             bindVariableService.setInt(0);
             bindVariableService.setInt(0, 99999001);
             Assert.assertEquals(99999001, bindVariableService.getFunction(0).getInt(null));
+        });
+    }
+
+    @Test
+    public void testLong256VarSetToHexStr() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.define(0, ColumnType.LONG256, 0);
+            bindVariableService.setLong256("v");
+            final String digest = "0123456789abcdef".repeat(4);
+            final String prefixedDigest = "0x123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0";
+            final String[][] inputsAndExpected = {
+                    {"0x02", "0x02"},
+                    {"0X02", "0x02"},
+                    {"0x3", "0x03"},
+                    {"02", "0x02"},
+                    {"012", "0x12"},
+                    {digest, "0x" + digest},
+                    {prefixedDigest, prefixedDigest},
+                    {null, ""}
+            };
+            final StringSink sink = new StringSink();
+            for (String[] inputAndExpected : inputsAndExpected) {
+                final String value = inputAndExpected[0];
+                final String expected = inputAndExpected[1];
+                bindVariableService.setStr(0, value);
+                bindVariableService.setStr("v", value);
+                sink.clear();
+                bindVariableService.getFunction(0).getLong256(null, sink);
+                TestUtils.assertEquals(expected, sink);
+                sink.clear();
+                bindVariableService.getFunction(":v").getLong256(null, sink);
+                TestUtils.assertEquals(expected, sink);
+            }
+            for (String value : new String[]{"0x", "0X", "0xg", "1x02", "0x" + "1".repeat(65)}) {
+                try {
+                    bindVariableService.setStr(0, value);
+                    Assert.fail("Accepted invalid LONG256: " + value);
+                } catch (ImplicitCastException expected) {
+                    TestUtils.assertContains(expected.getFlyweightMessage(), "STRING -> LONG256");
+                }
+            }
         });
     }
 

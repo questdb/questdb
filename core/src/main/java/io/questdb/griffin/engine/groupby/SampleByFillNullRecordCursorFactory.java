@@ -151,12 +151,13 @@ public class SampleByFillNullRecordCursorFactory extends AbstractSampleByFillRec
             throw SqlException.$(recordFunctionPositions.getQuick(index), "Unsupported type: ").put(ColumnType.nameOf(type));
         }
         return switch (driver.getAccessor()) {
-            case INT, IPv4, LONG, FLOAT, DOUBLE, BYTE, SHORT, UUID, TIMESTAMP, ARRAY,
-                 DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256 -> driver.getNullConstant(type);
+            case INT, IPv4, LONG, FLOAT, DOUBLE, BYTE, SHORT, UUID, TIMESTAMP, DATE, STRING, VARCHAR, SYMBOL,
+                 LONG256, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256 ->
+                    driver.getNullConstant(type);
             // the geohash placeholder is the bare-tag NULL constant, whatever the column's bit
             // count
             case GEOBYTE, GEOSHORT, GEOINT, GEOLONG -> driver.getNullConstant(ColumnType.tagOf(type));
-            case BOOLEAN, CHAR, DATE, STRING, SYMBOL, LONG256, BINARY, LONG128, VARCHAR, INTERVAL ->
+            case BOOLEAN, CHAR, BINARY, LONG128, INTERVAL ->
                     throw SqlException.$(recordFunctionPositions.getQuick(index), "Unsupported type: ").put(ColumnType.nameOf(type));
         };
     }

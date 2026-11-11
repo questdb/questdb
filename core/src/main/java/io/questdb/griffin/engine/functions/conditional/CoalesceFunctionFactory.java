@@ -105,7 +105,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             // a timestamp argument keeps its unit: the timestamp coalesce converts only the value it
             // returns, which is cheaper than converting every argument it reads
             if (!ColumnType.isTimestamp(returnType) || !ColumnType.isTimestamp(arg.getType())) {
-                args.setQuick(i, CaseCommon.getCastFunction(arg, argPositions.getQuick(i), returnType, configuration, sqlExecutionContext));
+                args.setQuick(i, CaseCommon.getCastToCommonTypeFunction(arg, argPositions.getQuick(i), returnType, configuration, sqlExecutionContext));
             }
         }
 

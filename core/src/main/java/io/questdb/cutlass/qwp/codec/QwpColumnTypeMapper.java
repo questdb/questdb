@@ -72,7 +72,9 @@ public final class QwpColumnTypeMapper {
             case GEOBYTE, GEOSHORT, GEOINT, GEOLONG -> QwpConstants.TYPE_GEOHASH;
             case UUID -> QwpConstants.TYPE_UUID;
             case BINARY -> QwpConstants.TYPE_BINARY;
-            case DECIMAL64 -> QwpConstants.TYPE_DECIMAL64;
+            // DECIMAL8/16/32 have no wire type of their own; they widen to DECIMAL64,
+            // which keeps the column's scale and carries every value they can hold.
+            case DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64 -> QwpConstants.TYPE_DECIMAL64;
             case DECIMAL128 -> QwpConstants.TYPE_DECIMAL128;
             case DECIMAL256 -> QwpConstants.TYPE_DECIMAL256;
             case ARRAY -> {
@@ -84,8 +86,8 @@ public final class QwpColumnTypeMapper {
                             "QWP egress: unsupported array element type " + ColumnType.nameOf(elementTag));
                 };
             }
-            // no wire code: the narrow decimals (the wire starts at DECIMAL64), LONG128 and INTERVAL
-            case DECIMAL8, DECIMAL16, DECIMAL32, LONG128, INTERVAL -> throw new UnsupportedOperationException(
+            // no wire code: LONG128 and INTERVAL
+            case LONG128, INTERVAL -> throw new UnsupportedOperationException(
                     "QWP egress: unsupported column type " + ColumnType.nameOf(questdbColumnType));
         };
     }

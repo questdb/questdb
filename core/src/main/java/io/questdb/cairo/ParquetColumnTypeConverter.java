@@ -74,15 +74,6 @@ final class ParquetColumnTypeConverter {
         };
     }
 
-    // Column-top rows of a no-NULL source decode to 0 or false, which the converter cannot tell
-    // from a value, so they count as leading NULLs; a sentinel source decodes them to its NULL.
-    private static int leadingNullCount(NullPolicy sourceNullPolicy, int columnTop) {
-        return switch (sourceNullPolicy) {
-            case SENTINEL -> 0;
-            case NONE -> columnTop;
-        };
-    }
-
     private static int maxCharsPerRow(WireKind kind, int sourceType) {
         return switch (kind) {
             case BOOLEAN -> 5;
@@ -124,6 +115,21 @@ final class ParquetColumnTypeConverter {
     // plus 3, every other pseudo tag and VARCHAR_SLICE 40
     private static int noKindAllowance(int sourceType) {
         return ColumnType.tagOf(sourceType) == ColumnType.DECIMAL ? ColumnType.getDecimalPrecision(sourceType) + 3 : 40;
+    }
+
+    // Bound `side` (0 = lo, 1 = hi) of column-top run `run` of the `runCount` runs at `topRowsAddress`;
+    // Long.MAX_VALUE past the last run, so a row below it is a row outside every run.
+    private static long topRowsBound(long topRowsAddress, long runCount, long run, int side) {
+        return run < runCount ? Unsafe.getLong(topRowsAddress + (2 * run + side) * Long.BYTES) : Long.MAX_VALUE;
+    }
+
+    // Column-top rows of a no-NULL source decode to 0 or false, which the converter cannot tell
+    // from a value, so its column-top runs convert to NULL; a sentinel source decodes them to its NULL.
+    private static long topRunCount(NullPolicy sourceNullPolicy, long topRowCount) {
+        return switch (sourceNullPolicy) {
+            case SENTINEL -> 0;
+            case NONE -> topRowCount;
+        };
     }
 
     private static void writeFixedNull(int targetOpcode, long targetAddress, int rowIndex) {
@@ -281,12 +287,18 @@ final class ParquetColumnTypeConverter {
         return targetType;
     }
 
+    /**
+     * Converts a fixed-size column to STRING. For a source type without a NULL sentinel, the
+     * {@code topRowCount} column-top runs at {@code topRowsAddress} (see
+     * {@link RowGroupBuffers#getChunkTopRowsPtr}) convert to NULL.
+     */
     static void convertFixedColumnToString(
             int sourceType,
             NullPolicy sourceNullPolicy,
             long sourceDataAddress,
             int rowCount,
-            int columnTop,
+            long topRowsAddress,
+            long topRowCount,
             long auxAddress,
             long dataAddress,
             long dataSize,
@@ -300,11 +312,19 @@ final class ParquetColumnTypeConverter {
         final long elementSize = ColumnType.sizeOf(sourceType);
         final int argument1 = ColumnType.isDecimal(sourceType) ? ColumnType.getDecimalPrecision(sourceType) : 0;
         final int argument2 = ColumnType.isDecimal(sourceType) ? ColumnType.getDecimalScale(sourceType) : 0;
-        final int leadingNulls = leadingNullCount(sourceNullPolicy, columnTop);
+        final long runCount = topRunCount(sourceNullPolicy, topRowCount);
+        long run = 0;
+        long runLo = topRowsBound(topRowsAddress, runCount, run, 0);
+        long runHi = topRowsBound(topRowsAddress, runCount, run, 1);
 
         for (int i = 0; i < rowCount; i++) {
+            while (i >= runHi) {
+                run++;
+                runLo = topRowsBound(topRowsAddress, runCount, run, 0);
+                runHi = topRowsBound(topRowsAddress, runCount, run, 1);
+            }
             sink.clear();
-            final boolean hasValue = i >= leadingNulls
+            final boolean hasValue = i < runLo
                     && converter.convert(sourceDataAddress + i * elementSize, sink, argument1, argument2);
             if (!hasValue) {
                 Unsafe.putInt(dataAddress + dataOffset, -1);
@@ -326,12 +346,18 @@ final class ParquetColumnTypeConverter {
                 + " sourceType=" + ColumnType.nameOf(sourceType);
     }
 
+    /**
+     * Converts a fixed-size column to VARCHAR. For a source type without a NULL sentinel, the
+     * {@code topRowCount} column-top runs at {@code topRowsAddress} (see
+     * {@link RowGroupBuffers#getChunkTopRowsPtr}) convert to NULL.
+     */
     static void convertFixedColumnToVarchar(
             int sourceType,
             NullPolicy sourceNullPolicy,
             long sourceDataAddress,
             int rowCount,
-            int columnTop,
+            long topRowsAddress,
+            long topRowCount,
             long auxAddress,
             long dataAddress,
             long dataSize,
@@ -343,11 +369,19 @@ final class ParquetColumnTypeConverter {
         final long elementSize = ColumnType.sizeOf(sourceType);
         final int argument1 = ColumnType.isDecimal(sourceType) ? ColumnType.getDecimalPrecision(sourceType) : 0;
         final int argument2 = ColumnType.isDecimal(sourceType) ? ColumnType.getDecimalScale(sourceType) : 0;
-        final int leadingNulls = leadingNullCount(sourceNullPolicy, columnTop);
+        final long runCount = topRunCount(sourceNullPolicy, topRowCount);
+        long run = 0;
+        long runLo = topRowsBound(topRowsAddress, runCount, run, 0);
+        long runHi = topRowsBound(topRowsAddress, runCount, run, 1);
 
         for (int i = 0; i < rowCount; i++) {
+            while (i >= runHi) {
+                run++;
+                runLo = topRowsBound(topRowsAddress, runCount, run, 0);
+                runHi = topRowsBound(topRowsAddress, runCount, run, 1);
+            }
             sink.clear();
-            final boolean hasValue = i >= leadingNulls
+            final boolean hasValue = i < runLo
                     && converter.convert(sourceDataAddress + i * elementSize, sink, argument1, argument2);
             final long auxEntryAddress = auxAddress + (long) i * VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES;
 
@@ -490,7 +524,8 @@ final class ParquetColumnTypeConverter {
                     ownedBuffers.setQuick(slot, auxBuffer);
                     ownedBuffers.setQuick(slot + 1, auxSize);
 
-                    final int conversionColumnTop = (int) rowGroupBuffers.getChunkColumnTop(decodeIndex);
+                    final long topRowsAddress = rowGroupBuffers.getChunkTopRowsPtr(decodeIndex);
+                    final long topRowCount = rowGroupBuffers.getChunkTopRowCount(decodeIndex);
                     if (ColumnType.isVarchar(columnType)) {
                         final long dataSize = estimateVarcharDataSize(sourceType, rowGroupSize);
                         final long dataBuffer = dataSize > 0 ? Unsafe.malloc(dataSize, memoryTag) : 0;
@@ -503,7 +538,8 @@ final class ParquetColumnTypeConverter {
                                 decoder.metadata().getColumnNullPolicy(parquetIndex),
                                 columnDataAddress,
                                 rowGroupSize,
-                                conversionColumnTop,
+                                topRowsAddress,
+                                topRowCount,
                                 auxBuffer,
                                 dataBuffer,
                                 dataSize,
@@ -523,7 +559,8 @@ final class ParquetColumnTypeConverter {
                                 decoder.metadata().getColumnNullPolicy(parquetIndex),
                                 columnDataAddress,
                                 rowGroupSize,
-                                conversionColumnTop,
+                                topRowsAddress,
+                                topRowCount,
                                 auxBuffer,
                                 dataBuffer,
                                 dataSize,

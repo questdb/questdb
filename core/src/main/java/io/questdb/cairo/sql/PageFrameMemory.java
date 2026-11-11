@@ -35,6 +35,10 @@ import org.jetbrains.annotations.Nullable;
  * For Parquet partitions, it's a deserialized in-memory native format.
  */
 public interface PageFrameMemory {
+    /**
+     * Longs per column in {@link #getColumnTopRows()}.
+     */
+    int COLUMN_TOP_ROWS_STRIDE = 3;
 
     /**
      * Populates remaining columns (those not in filterColumnIndexes) for filtered rows.
@@ -72,12 +76,14 @@ public interface PageFrameMemory {
     int getColumnOffset();
 
     /**
-     * Returns the per-column leading column-top count for this frame, or {@code null} when
-     * the frame has none (e.g. native frames). Used by {@link PageFrameMemoryRecord} to
-     * surface NULL for column-top rows during a lazy fixed-&gt;var conversion, where the
-     * decoded source value is an in-band 0 indistinguishable from a real 0.
+     * Returns the column-top rows of each column of this frame, or {@code null} when the frame
+     * has none (e.g. native frames): {@link #COLUMN_TOP_ROWS_STRIDE} longs per column, the
+     * address and count of its runs ({@code RowGroupBuffers.getChunkTopRowsPtr}) and the frame
+     * row of their buffer row 0. Used by {@link PageFrameMemoryRecord} to surface NULL for
+     * column-top rows during a lazy fixed-&gt;var conversion, where the decoded source value is an
+     * in-band 0 indistinguishable from a real 0.
      */
-    default DirectLongList getColumnTops() {
+    default DirectLongList getColumnTopRows() {
         return null;
     }
 

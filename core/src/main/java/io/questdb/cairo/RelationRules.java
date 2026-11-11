@@ -78,8 +78,10 @@ public final class RelationRules {
     private static final short[][] CAST_ADD = {{BYTE, CHAR}, {CHAR, GEOBYTE}, {CHAR, SYMBOL}, {SYMBOL, TIMESTAMP}, {UUID, VARCHAR}};
     private static final short[][] CAST_REMOVE = {{IPv4, STRING}, {IPv4, VARCHAR}, {INTERVAL, STRING}};
     // E: {from, other, result} cells that override the rule: LONG with FLOAT is FLOAT (the rule
-    // gives DOUBLE), both ways; SYMBOL then CHAR is STRING (the rule gives SYMBOL)
-    private static final int[][] CASE_REPLACE = {{LONG, FLOAT, FLOAT}, {FLOAT, LONG, FLOAT}, {SYMBOL, CHAR, STRING}};
+    // gives DOUBLE), both ways; SYMBOL with CHAR is STRING (the rule gives SYMBOL), both ways
+    private static final int[][] CASE_REPLACE = {
+            {LONG, FLOAT, FLOAT}, {FLOAT, LONG, FLOAT}, {SYMBOL, CHAR, STRING}, {CHAR, SYMBOL, STRING}
+    };
     // K: BYTE has a BOOLEAN arm, and SYMBOL parses into TIMESTAMP as text does
     private static final short[][] COPIER_ADD = {{BYTE, BOOLEAN}, {SYMBOL, TIMESTAMP}};
     private static final short[][] NARROWING_REMOVE = {{INT, CHAR}, {DOUBLE, DATE}, {DOUBLE, TIMESTAMP}};

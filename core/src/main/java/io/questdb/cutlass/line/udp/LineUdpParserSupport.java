@@ -293,7 +293,7 @@ public class LineUdpParserSupport {
                 break;
             case ColumnType.IPv4:
                 row.putIPv4(columnIndex, Numbers.IPv4_NULL);
-                // known inconsistency: no break, so an IPv4 NULL also runs the SHORT arm
+                break;
             case ColumnType.SHORT:
                 row.putShort(columnIndex, (short) 0);
                 break;

@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
+import io.questdb.std.Long256;
 import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
 
@@ -103,9 +104,8 @@ public class GroupByColumnSink implements Mutable {
     /**
      * The tag {@link #put} and {@link #putAt} switch on for a batch argument of this type: the
      * opcode of its accessor family ({@link PhysicalDescriptor.Accessor#opcode()}), or the type's
-     * own tag when it has none. Known inconsistency: for STRING, SYMBOL, VARCHAR, LONG256, BINARY,
-     * ARRAY, INTERVAL, VARCHAR_SLICE and the pseudo types both methods append nothing and do not
-     * fail.
+     * own tag when it has none. Known inconsistency: for STRING, SYMBOL, VARCHAR, BINARY, ARRAY,
+     * INTERVAL, VARCHAR_SLICE and the pseudo types both methods append nothing and do not fail.
      */
     public static short argTag(int argType) {
         final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.accessorOf(argType);
@@ -161,6 +161,9 @@ public class GroupByColumnSink implements Mutable {
             case ColumnType.LONG128, ColumnType.UUID:
                 putLong128(function.getLong128Lo(record), function.getLong128Hi(record));
                 break;
+            case ColumnType.LONG256:
+                putLong256(function.getLong256A(record));
+                break;
             case ColumnType.CHAR:
                 putChar(function.getChar(record));
                 break;
@@ -184,11 +187,10 @@ public class GroupByColumnSink implements Mutable {
                 function.getDecimal256(record, decimal256);
                 putDecimal256();
                 break;
-            case ColumnType.UNDEFINED, ColumnType.STRING, ColumnType.SYMBOL, ColumnType.LONG256, ColumnType.BINARY,
-                 ColumnType.CURSOR, ColumnType.VAR_ARG, ColumnType.RECORD, ColumnType.GEOHASH, ColumnType.VARCHAR,
-                 ColumnType.ARRAY, ColumnType.DECIMAL, ColumnType.REGCLASS, ColumnType.REGPROCEDURE,
-                 ColumnType.ARRAY_STRING, ColumnType.PARAMETER, ColumnType.INTERVAL, ColumnType.VARCHAR_SLICE,
-                 ColumnType.NULL:
+            case ColumnType.UNDEFINED, ColumnType.STRING, ColumnType.SYMBOL, ColumnType.BINARY, ColumnType.CURSOR,
+                 ColumnType.VAR_ARG, ColumnType.RECORD, ColumnType.GEOHASH, ColumnType.VARCHAR, ColumnType.ARRAY,
+                 ColumnType.DECIMAL, ColumnType.REGCLASS, ColumnType.REGPROCEDURE, ColumnType.ARRAY_STRING,
+                 ColumnType.PARAMETER, ColumnType.INTERVAL, ColumnType.VARCHAR_SLICE, ColumnType.NULL:
                 // the sink appends nothing for these types; see argTag()
                 break;
             default:
@@ -243,6 +245,9 @@ public class GroupByColumnSink implements Mutable {
             case ColumnType.LONG128, ColumnType.UUID:
                 putLong128At(index, function.getLong128Lo(record), function.getLong128Hi(record));
                 break;
+            case ColumnType.LONG256:
+                putLong256At(index, function.getLong256A(record));
+                break;
             case ColumnType.CHAR:
                 putCharAt(index, function.getChar(record));
                 break;
@@ -266,11 +271,10 @@ public class GroupByColumnSink implements Mutable {
                 function.getDecimal256(record, decimal256);
                 putDecimal256At(index);
                 break;
-            case ColumnType.UNDEFINED, ColumnType.STRING, ColumnType.SYMBOL, ColumnType.LONG256, ColumnType.BINARY,
-                 ColumnType.CURSOR, ColumnType.VAR_ARG, ColumnType.RECORD, ColumnType.GEOHASH, ColumnType.VARCHAR,
-                 ColumnType.ARRAY, ColumnType.DECIMAL, ColumnType.REGCLASS, ColumnType.REGPROCEDURE,
-                 ColumnType.ARRAY_STRING, ColumnType.PARAMETER, ColumnType.INTERVAL, ColumnType.VARCHAR_SLICE,
-                 ColumnType.NULL:
+            case ColumnType.UNDEFINED, ColumnType.STRING, ColumnType.SYMBOL, ColumnType.BINARY, ColumnType.CURSOR,
+                 ColumnType.VAR_ARG, ColumnType.RECORD, ColumnType.GEOHASH, ColumnType.VARCHAR, ColumnType.ARRAY,
+                 ColumnType.DECIMAL, ColumnType.REGCLASS, ColumnType.REGPROCEDURE, ColumnType.ARRAY_STRING,
+                 ColumnType.PARAMETER, ColumnType.INTERVAL, ColumnType.VARCHAR_SLICE, ColumnType.NULL:
                 // the sink writes nothing for these types; see argTag()
                 break;
             default:
@@ -417,6 +421,16 @@ public class GroupByColumnSink implements Mutable {
         long p = ptr + HEADER_SIZE + offset;
         Unsafe.putLong(p, lo);
         Unsafe.putLong(p + 8, hi);
+    }
+
+    private void putLong256(Long256 value) {
+        Long256.putLong256(value, reserve(Long256.BYTES));
+    }
+
+    private void putLong256At(int index, Long256 value) {
+        long offset = (long) Long256.BYTES * index;
+        assert offset <= size() - Long256.BYTES;
+        Long256.putLong256(value, ptr + HEADER_SIZE + offset);
     }
 
     private void putShort(short value) {

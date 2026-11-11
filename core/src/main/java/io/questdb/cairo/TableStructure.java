@@ -38,6 +38,14 @@ public interface TableStructure {
 
     int getColumnType(int columnIndex);
 
+    /**
+     * Returns the dedup mode of the table, {@link TableUtils#DEDUP_MODE_UPSERT} (default) or
+     * {@link TableUtils#DEDUP_MODE_SKIP}. It applies only when the table has dedup keys.
+     */
+    default int getDedupMode() {
+        return TableUtils.DEDUP_MODE_UPSERT;
+    }
+
     int getIndexBlockCapacity(int columnIndex);
 
     default int getParquetEncodingConfig(int columnIndex) {
@@ -83,6 +91,21 @@ public interface TableStructure {
      */
     default int getTtlHoursOrMonths() {
         return 0; // TTL disabled by default
+    }
+
+    /**
+     * Returns the row-expiry predicate (raw SQL text) for this table, or {@code null} when no
+     * row-expiry policy is configured.
+     */
+    default String getExpiryPredicate() {
+        return null;
+    }
+
+    /**
+     * Returns the row-expiry cleanup interval in microseconds, or {@code 0} when unset.
+     */
+    default long getExpiryCleanupIntervalMicros() {
+        return 0;
     }
 
     default ViewDefinition getViewDefinition() {

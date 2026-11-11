@@ -684,11 +684,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::ptr;
 
     use parquet2::encoding::{uleb128, zigzag_leb128};
 
-    use crate::allocator::{AcVec, TestAllocatorState};
+    use crate::allocator::TestAllocatorState;
     use crate::parquet_read::column_sink::Pushable;
     use crate::parquet_read::decoders::delta_binary_packed::{
         DeltaBinaryPackedDecoder, MiniblockIterator,
@@ -696,20 +695,7 @@ mod tests {
     use crate::parquet_read::ColumnChunkBuffers;
 
     fn create_buffers(allocator: &crate::allocator::QdbAllocator) -> ColumnChunkBuffers {
-        ColumnChunkBuffers {
-            data_size: 0,
-            data_ptr: ptr::null_mut(),
-            data_vec: AcVec::new_in(allocator.clone()),
-            aux_size: 0,
-            aux_ptr: ptr::null_mut(),
-            aux_vec: AcVec::new_in(allocator.clone()),
-            page_buffers_size: 0,
-            page_buffers: Vec::new(),
-            column_top: 0,
-            page_buffers_capacity: 0,
-            page_buffers_charged: 0,
-            page_buffers_counted: 0,
-        }
+        ColumnChunkBuffers::new(allocator.clone())
     }
 
     fn write_uleb128(buf: &mut Vec<u8>, value: u64) {

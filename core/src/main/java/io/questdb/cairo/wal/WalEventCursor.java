@@ -831,14 +831,6 @@ public class WalEventCursor {
                     case ColumnType.UUID:
                         bindVariableService.setUuid(name, readLong(), readLong());
                         break;
-                    case ColumnType.ARRAY:
-                        // Multiple arrayView objects might be bind to variables, and in `ArrayBindVariable`,
-                        // arrayView does not clone its meta information, so `arrayViewPool` is needed.
-                        // Same as `setBin`
-                        // known inconsistency: unlike the other named-variable arms, ARRAY binds by
-                        // index, not by name
-                        bindVariableService.setArray(i, readArray(arrayViewPool.next()));
-                        break;
                     case ColumnType.DECIMAL8:
                     case ColumnType.DECIMAL16:
                     case ColumnType.DECIMAL32:
