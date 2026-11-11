@@ -1624,7 +1624,7 @@ public class PostingIndexWriter implements IndexWriter {
                 // and the chain inconsistent; drop the entry rather than delete the
                 // live head (the C1 endgame this backstops).
                 LOG.critical().$("posting seal-purge skipped: sealTxn is the live chain head [")
-                        .$("indexName=").$(indexName)
+                        .$("indexName=").$safe(indexName)
                         .$(", postingColumnNameTxn=").$(entry.postingColumnNameTxn)
                         .$(", sealTxn=").$(entry.sealTxn)
                         .$(']').$();
@@ -1969,7 +1969,7 @@ public class PostingIndexWriter implements IndexWriter {
                                                 // snapshots already taken earlier in this loop.
                                                 final long snapshotHeadroom = rssHeadroom();
                                                 if (sealedLen > snapshotHeadroom) {
-                                                    LOG.info().$("posting index incremental seal sidecar snapshot would exceed RSS headroom, sealing full [indexName=").$(indexName)
+                                                    LOG.info().$("posting index incremental seal sidecar snapshot would exceed RSS headroom, sealing full [indexName=").$safe(indexName)
                                                             .$(", postingColumnNameTxn=").$(postingColumnNameTxn)
                                                             .$(", sealTxn=").$(sealTxn)
                                                             .$(", cover=").$(c)
@@ -2004,7 +2004,7 @@ public class PostingIndexWriter implements IndexWriter {
                         break;
                     }
                     if (!isTrusted) {
-                        LOG.info().$("posting index sidecar snapshot not trusted, sealing full [indexName=").$(indexName)
+                        LOG.info().$("posting index sidecar snapshot not trusted, sealing full [indexName=").$safe(indexName)
                                 .$(", postingColumnNameTxn=").$(postingColumnNameTxn)
                                 .$(", sealTxn=").$(sealTxn)
                                 .$(", cover=").$(c)
@@ -2053,7 +2053,7 @@ public class PostingIndexWriter implements IndexWriter {
                 // publishing a live chain entry at newSealTxn.
                 isPoisoned = true;
                 LOG.error().$("posting index seal post-switch failure, poisoning writer and scheduling orphan purge [")
-                        .$("indexName=").$(indexName)
+                        .$("indexName=").$safe(indexName)
                         .$(", newSealTxn=").$(newSealTxn)
                         .$(']').$();
                 scheduleOrphanPurge(newSealTxn);
@@ -5121,7 +5121,7 @@ public class PostingIndexWriter implements IndexWriter {
                     // must still leave the half-switched writer poisoned.
                     isPoisoned = true;
                     LOG.error().$("posting index rebuildSidecarsByCopy post-switch failure, poisoning writer and scheduling orphan purge [")
-                            .$("indexName=").$(indexName)
+                            .$("indexName=").$safe(indexName)
                             .$(", newSealTxn=").$(newSealTxn)
                             .$(']').$();
                     scheduleOrphanPurge(newSealTxn);
@@ -5201,7 +5201,7 @@ public class PostingIndexWriter implements IndexWriter {
             PendingSealPurge oldest = pendingPurges.getQuick(0);
             LOG.critical()
                     .$("posting seal-purge outbox saturated, dropping oldest entry [")
-                    .$("indexName=").$(indexName)
+                    .$("indexName=").$safe(indexName)
                     .$(", postingColumnNameTxn=").$(oldest.postingColumnNameTxn)
                     .$(", sealTxn=").$(oldest.sealTxn)
                     .$(", outboxMax=").$(outboxMax)
@@ -5521,7 +5521,7 @@ public class PostingIndexWriter implements IndexWriter {
                             // failure must still leave the half-switched writer poisoned.
                             isPoisoned = true;
                             LOG.error().$("posting index rollback post-switch failure, poisoning writer and scheduling orphan purge [")
-                                    .$("indexName=").$(indexName)
+                                    .$("indexName=").$safe(indexName)
                                     .$(", newSealTxn=").$(newSealTxn)
                                     .$(']').$();
                             scheduleOrphanPurge(newSealTxn);
@@ -6123,7 +6123,7 @@ public class PostingIndexWriter implements IndexWriter {
         }
         final int unlinked = unlinkAbandonedSealFiles(path, plen);
         LOG.info().$("posting index recovery [")
-                .$("indexName=").$(indexName)
+                .$("indexName=").$safe(indexName)
                 .$(", postingColumnNameTxn=").$(postingColumnNameTxn)
                 .$(", dropped=").$(dropped)
                 .$(", isHeadTrimmed=").$(isHeadTrimmed)
@@ -6151,7 +6151,7 @@ public class PostingIndexWriter implements IndexWriter {
             PendingSealPurge oldest = pendingPurges.getQuick(0);
             LOG.critical()
                     .$("posting seal-purge outbox saturated, dropping oldest entry [")
-                    .$("indexName=").$(indexName)
+                    .$("indexName=").$safe(indexName)
                     .$(", postingColumnNameTxn=").$(oldest.postingColumnNameTxn)
                     .$(", sealTxn=").$(oldest.sealTxn)
                     .$(", outboxMax=").$(outboxMax)

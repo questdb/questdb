@@ -10033,7 +10033,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 int dropped = chain.recoveryDropAbandoned(keyMem, currentTableTxn, linkPostingIndexOrphanSealTxns);
                 if (dropped > 0 || chain.isHeadTrimmedOnLastRecovery()) {
                     LOG.info().$("posting index link recovery [table=").$(tableToken)
-                            .$(", column=").$(columnName)
+                            .$(", column=").$safe(columnName)
                             .$(", columnNameTxn=").$(columnNameTxn)
                             .$(", dropped=").$(dropped)
                             .$(", isHeadTrimmed=").$(chain.isHeadTrimmedOnLastRecovery())
