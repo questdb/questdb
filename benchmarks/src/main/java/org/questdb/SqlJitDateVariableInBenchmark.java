@@ -63,17 +63,27 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
 /**
- * Filters a non-designated TIMESTAMP column with a date variable IN whose list also holds static
- * days, with the JIT on and off. The JIT compiles one range check per interval that the
- * expression can yield, and declines an expression with more than
- * cairo.sql.jit.max.in.list.size.threshold (10) of them. "now" is 2024-02-05T01:00Z, and the 5M
- * rows spread evenly over 2023-12-01 to 2024-02-29.
+ * Filters a non-designated TIMESTAMP or DATE column with a temporal IN, with the JIT on and off.
+ * The JIT compiles one range check per interval that the expression can yield, and declines an
+ * expression with more than cairo.sql.jit.max.in.list.size.threshold (10) of them. "now" is
+ * 2024-02-05T01:00Z, and the 5M rows spread evenly over 2023-12-01 to 2024-02-29; tm and dt hold
+ * the same instants.
  * <ul>
  *   <li>{@code DAYS_20}: {@code tm IN '[$today, 2024-01-[01..20]]'}</li>
  *   <li>{@code DAYS_5}: {@code tm IN '[$today, 2024-01-[01..05]]'}</li>
  *   <li>{@code WORKDAYS_20}: {@code tm IN '[$today, 2024-01-[01..20]]#workday'}</li>
  *   <li>{@code OR_REFERENCE}: {@code tm IN '$today' OR tm IN '2024-01-[01..20]'}, the rows of
  *   {@code DAYS_20} in two INs</li>
+ *   <li>{@code DAY_IN_PARENTHESES}: {@code tm IN ('2024-01-15')}, a single day in the
+ *   parenthesised IN form</li>
+ *   <li>{@code DATE_DAY}: {@code dt IN '2024-01-15'}, a single day on a DATE column</li>
+ *   <li>{@code TODAY}: {@code tm IN '$today'}, one range check</li>
+ *   <li>{@code TEN_VARIABLES}: {@code tm IN '[$today, $yesterday, $today - 2d, ..., $today - 9d]'},
+ *   ten range checks</li>
+ *   <li>{@code ELEVEN_VARIABLES}: the same list with {@code $today - 10d}, which exceeds the
+ *   threshold</li>
+ *   <li>{@code UNBOUNDED_RANGE}: {@code tm IN '$today - 2d..$today;1h'}, which the JIT cannot
+ *   bound</li>
  * </ul>
  * The setup prints whether each factory compiled its filter with the JIT.
  */
@@ -89,7 +99,10 @@ public class SqlJitDateVariableInBenchmark {
     // 91 days from 2023-12-01 over ROW_COUNT rows
     private static final long ROW_STEP_MICROS = 91 * Micros.DAY_MICROS / ROW_COUNT;
 
-    @Param({"DAYS_20", "DAYS_5", "WORKDAYS_20", "OR_REFERENCE"})
+    @Param({
+            "DAYS_20", "DAYS_5", "WORKDAYS_20", "OR_REFERENCE", "DAY_IN_PARENTHESES", "DATE_DAY", "TODAY",
+            "TEN_VARIABLES", "ELEVEN_VARIABLES", "UNBOUNDED_RANGE"
+    })
     public Filter filter;
     @Param({"ENABLED", "DISABLED"})
     public JitMode jitMode;
@@ -140,10 +153,14 @@ public class SqlJitDateVariableInBenchmark {
                 null
         );
         compiler = new SqlCompilerImpl(engine);
-        engine.execute("CREATE TABLE x (k INT, tm TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", ctx);
         engine.execute(
-                "INSERT INTO x SELECT x::INT, t, t FROM (SELECT x, timestamp_sequence('2023-12-01'::TIMESTAMP, "
-                        + ROW_STEP_MICROS + ") t FROM long_sequence(" + ROW_COUNT + "))",
+                "CREATE TABLE x (k INT, tm TIMESTAMP, dt DATE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                ctx
+        );
+        engine.execute(
+                "INSERT INTO x SELECT x::INT, t, t::DATE, t "
+                        + "FROM (SELECT x, timestamp_sequence('2023-12-01'::TIMESTAMP, " + ROW_STEP_MICROS + ") t "
+                        + "FROM long_sequence(" + ROW_COUNT + "))",
                 ctx
         );
         ctx.setNowAndFixClock(NOW_MICROS, ColumnType.TIMESTAMP_MICRO);
@@ -174,7 +191,15 @@ public class SqlJitDateVariableInBenchmark {
         DAYS_20("tm IN '[$today, 2024-01-[01..20]]'"),
         DAYS_5("tm IN '[$today, 2024-01-[01..05]]'"),
         WORKDAYS_20("tm IN '[$today, 2024-01-[01..20]]#workday'"),
-        OR_REFERENCE("tm IN '$today' OR tm IN '2024-01-[01..20]'");
+        OR_REFERENCE("tm IN '$today' OR tm IN '2024-01-[01..20]'"),
+        DAY_IN_PARENTHESES("tm IN ('2024-01-15')"),
+        DATE_DAY("dt IN '2024-01-15'"),
+        TODAY("tm IN '$today'"),
+        TEN_VARIABLES("tm IN '[$today, $yesterday, $today - 2d, $today - 3d, $today - 4d, $today - 5d, $today - 6d, "
+                + "$today - 7d, $today - 8d, $today - 9d]'"),
+        ELEVEN_VARIABLES("tm IN '[$today, $yesterday, $today - 2d, $today - 3d, $today - 4d, $today - 5d, $today - 6d, "
+                + "$today - 7d, $today - 8d, $today - 9d, $today - 10d]'"),
+        UNBOUNDED_RANGE("tm IN '$today - 2d..$today;1h'");
 
         private final String sql;
 
