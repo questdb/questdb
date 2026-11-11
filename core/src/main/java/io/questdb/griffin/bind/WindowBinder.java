@@ -1115,7 +1115,7 @@ final class WindowBinder {
         final long value;
         try {
             if (constant instanceof CharConstant) {
-                final long digit = (byte) (constant.getChar(null) - '0');
+                final long digit = constant.getChar(null) - '0';
                 value = digit > -1 && digit < 10 ? digit : Numbers.LONG_NULL;
             } else {
                 value = constant.getLong(null);

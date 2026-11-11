@@ -77,7 +77,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
 
     @Override
     public int getResultType(IntList argTypes) {
-        final long fold = foldValueTypes(argTypes);
+        final long fold = checkValueTypes(foldValueTypes(argTypes), argTypes);
         if (CaseCommon.getFoldFailureIndex(fold) >= 0) {
             return ColumnType.UNDEFINED;
         }
@@ -111,7 +111,8 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
 
         final int argsSize = args.size();
-        final long fold = foldValueTypes(ResultTypes.argTypes(args));
+        final IntList argTypes = ResultTypes.argTypes(args);
+        final long fold = checkValueTypes(foldValueTypes(argTypes), argTypes);
         final int failureIndex = CaseCommon.getFoldFailureIndex(fold);
         if (failureIndex >= 0) {
             throw CaseCommon.foldError(fold, args.getQuick(failureIndex).getType(), argPositions.getQuick(failureIndex), "coalesce cannot be used with bind variables");
@@ -182,13 +183,22 @@ public class CoalesceFunctionFactory implements FunctionFactory {
     }
 
     /**
+     * Checks the arguments in order, see {@link CaseCommon#checkValueType}.
+     */
+    private static long checkValueTypes(long fold, IntList argTypes) {
+        for (int i = 0, n = argTypes.size(); i < n; i++) {
+            fold = CaseCommon.checkValueType(fold, argTypes.getQuick(i), i);
+        }
+        return fold;
+    }
+
+    /**
      * Folds the arguments in order, see {@link CaseCommon#foldValueType}.
      */
     private static long foldValueTypes(IntList argTypes) {
-        final IntList foldedTypes = CaseCommon.foldedTypes();
         long fold = CaseCommon.EMPTY_FOLD;
         for (int i = 0, n = argTypes.size(); i < n; i++) {
-            fold = CaseCommon.foldValueType(fold, argTypes.getQuick(i), i, foldedTypes);
+            fold = CaseCommon.foldValueType(fold, argTypes.getQuick(i), i);
         }
         return fold;
     }

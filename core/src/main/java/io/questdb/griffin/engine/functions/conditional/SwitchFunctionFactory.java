@@ -89,7 +89,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
         if (argTypes.size() < 2) {
             return ColumnType.UNDEFINED;
         }
-        final long fold = foldValueTypes(argTypes);
+        final long fold = checkValueTypes(foldValueTypes(argTypes), argTypes);
         return CaseCommon.getFoldFailureIndex(fold) < 0 ? CaseCommon.getCaseFunctionType(CaseCommon.getFoldCommonType(fold)) : ColumnType.UNDEFINED;
     }
 
@@ -133,7 +133,9 @@ public class SwitchFunctionFactory implements FunctionFactory {
         final Function keyFunction = args.getQuick(0);
         final int keyType = keyFunction.getType();
 
-        final long fold = foldValueTypes(ResultTypes.argTypes(args));
+        final IntList argTypes = ResultTypes.argTypes(args);
+        final long fold = foldValueTypes(argTypes);
+        final long checkedFold = checkValueTypes(fold, argTypes);
         final int failureIndex = CaseCommon.getFoldFailureIndex(fold);
         Function elseBranch;
         final int elseBranchPosition;
@@ -183,6 +185,10 @@ public class SwitchFunctionFactory implements FunctionFactory {
                 throw CaseCommon.foldError(fold, args.getQuick(i + 1).getType(), argPositions.getQuick(i + 1), "CASE values cannot be bind variables");
             }
         }
+        final int checkFailureIndex = CaseCommon.getFoldFailureIndex(checkedFold);
+        if (checkFailureIndex >= 0) {
+            throw CaseCommon.foldError(checkedFold, args.getQuick(checkFailureIndex).getType(), argPositions.getQuick(checkFailureIndex), "CASE values cannot be bind variables");
+        }
         final int returnType = CaseCommon.getFoldCommonType(fold);
 
         for (int i = 2; i < n; i += 2) {
@@ -224,18 +230,31 @@ public class SwitchFunctionFactory implements FunctionFactory {
     }
 
     /**
+     * Checks the THEN values and then the ELSE value, see {@link CaseCommon#checkValueType}.
+     */
+    private static long checkValueTypes(long fold, IntList argTypes) {
+        final int n = argTypes.size();
+        for (int i = 2; i < n; i += 2) {
+            fold = CaseCommon.checkValueType(fold, argTypes.getQuick(i), i);
+        }
+        if (n % 2 == 0) {
+            fold = CaseCommon.checkValueType(fold, argTypes.getQuick(n - 1), n - 1);
+        }
+        return fold;
+    }
+
+    /**
      * Folds the ELSE value and then the THEN values, see {@link CaseCommon#foldValueType}.
      */
     private static long foldValueTypes(IntList argTypes) {
-        final IntList foldedTypes = CaseCommon.foldedTypes();
         int n = argTypes.size();
         long fold = CaseCommon.EMPTY_FOLD;
         if (n % 2 == 0) {
             n--;
-            fold = CaseCommon.foldValueType(fold, argTypes.getQuick(n), n, foldedTypes);
+            fold = CaseCommon.foldValueType(fold, argTypes.getQuick(n), n);
         }
         for (int i = 2; i < n; i += 2) {
-            fold = CaseCommon.foldValueType(fold, argTypes.getQuick(i), i, foldedTypes);
+            fold = CaseCommon.foldValueType(fold, argTypes.getQuick(i), i);
         }
         return fold;
     }

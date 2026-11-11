@@ -1539,6 +1539,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
 
                 final int partitionPathLen = path.size();
+                boolean isParquetMetaGenerated = false;
                 try {
                     if (isCopied) {
                         // Copy partition if configured to do so, and it's not CSV import
@@ -1605,6 +1606,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 ff.close(parquetFd);
                                 ff.close(parquetMetaFd);
                             }
+                            isParquetMetaGenerated = true;
                             if (!Os.isWindows() && getFlushCommitMode() != CommitMode.NOSYNC) {
                                 path.trimTo(partitionPathLen);
                                 final long dirFd = TableUtils.openRONoCache(ff, path.$(), LOG);
@@ -1627,11 +1629,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         parquetFileSize = ff.length(path.$());
                     }
                     path.trimTo(partitionPathLen);
+                    if (parquetFileSize >= 0) {
+                        attachValidateParquetColumnTypes(partitionPathLen, parquetFileSize);
+                    }
                     attachPartitionUpdateSymbolNullFlags(timestamp, partitionSize, parquetFileSize, isSymbolNullKnown);
                     checkPassed = true;
                 } finally {
                     path.trimTo(partitionPathLen);
                     if (!checkPassed) {
+                        if (isParquetMetaGenerated) {
+                            // Restore the partition as staged, so a retry with a replaced
+                            // data.parquet does not meet metadata generated for the old file.
+                            removeFileOrLog(ff, path.concat(PARQUET_METADATA_FILE_NAME).$());
+                            path.trimTo(partitionPathLen);
+                        }
                         attachPartitionRevertDir(isRenamed, isSoftLink, detachedPath.trimTo(detachedRootLen));
                     }
                 }
@@ -7076,6 +7087,37 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    // _pm stores type -1 for a foreign Parquet column QuestDB cannot read. Such a column is
+    // harmless while no live table column maps to it, but reads of a mapped one cannot succeed.
+    private void attachValidateParquetColumnTypes(int partitionPathLen, long parquetFileSize) {
+        try {
+            openParquetMetadataOrThrow(path, partitionPathLen, parquetFileSize);
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                if (metadata.getColumnType(i) <= 0) {
+                    continue;
+                }
+                final int parquetColumnIndex = findQueriedParquetColumnIndex(parquetMetaReader, i);
+                if (parquetColumnIndex < 0) {
+                    continue;
+                }
+                final int columnType = parquetMetaReader.getColumnType(parquetColumnIndex);
+                if (columnType <= 0 || ColumnType.sizeOf(columnType) == -1) {
+                    // The table is unchanged, so WAL apply can skip this ATTACH.
+                    throw CairoException.partitionManipulationRecoverable().put("invalid parquet column type [column=")
+                            .put(metadata.getColumnName(i)).put(", type=").put(columnType).put(']');
+                }
+            }
+        } finally {
+            final long parquetMetaAddr = parquetMetaReader.getAddr();
+            final long parquetMetaSize = parquetMetaReader.getFileSize();
+            parquetMetaReader.clear();
+            if (parquetMetaAddr != 0) {
+                ff.munmap(parquetMetaAddr, parquetMetaSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            }
+            path.trimTo(partitionPathLen);
+        }
+    }
+
     private long avgRecordSize() {
         return avgRecordSize != 0 ? avgRecordSize : (avgRecordSize = estimateAvgRecordSize(metadata));
     }
@@ -10244,6 +10286,29 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         }
         return -1;
+    }
+
+    // Finds the Parquet column that queries decode for the table column, matching
+    // PageFrameMemoryPool.buildColumnIdMap() and resolveParquetColumn(): a column without a
+    // field id is keyed by its position, a key held by several columns means the last one, and
+    // a column changed by ALTER COLUMN TYPE is looked up by its current writer index before its
+    // original one. A foreign file can hold columns under both.
+    private int findQueriedParquetColumnIndex(ParquetMetaFileReader parquetMetadata, int metadataColumnIndex) {
+        final TableColumnMetadata columnMetadata = metadata.getColumnMetadata(metadataColumnIndex);
+        final int writerIndex = columnMetadata.getWriterIndex();
+        final int originalWriterIndex = columnMetadata.getOriginalWriterIndex();
+        int currentIndexMatch = -1;
+        int originalIndexMatch = -1;
+        for (int idx = 0, cnt = parquetMetadata.getColumnCount(); idx < cnt; idx++) {
+            final int columnId = parquetMetadata.getColumnId(idx);
+            final int key = columnId < 0 ? idx : columnId;
+            if (key == writerIndex) {
+                currentIndexMatch = idx;
+            } else if (key == originalWriterIndex) {
+                originalIndexMatch = idx;
+            }
+        }
+        return currentIndexMatch > -1 ? currentIndexMatch : originalIndexMatch;
     }
 
     private void finishColumnPurge() {
