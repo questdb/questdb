@@ -92,6 +92,12 @@ public class LiveViewAdaptiveCheckpointCadenceTest extends AbstractLiveViewTest 
     private static final String BASE_DDL = "CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL";
     private static final String BASE_DDL_KEYED = "CREATE TABLE base (ts TIMESTAMP, sym SYMBOL INDEX, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL";
     private static final String BASE_DDL_NANOS = "CREATE TABLE base (ts TIMESTAMP_NS, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL";
+    // The same base with the columns the anchored families below read: a second DOUBLE, a
+    // DECIMAL and the 16 DOUBLEs whose sums fill the window's inline leaf budget.
+    private static final String BASE_DDL_WIDE = "CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE, y DOUBLE, d DECIMAL(18,2)"
+            + ", q1 DOUBLE, q2 DOUBLE, q3 DOUBLE, q4 DOUBLE, q5 DOUBLE, q6 DOUBLE, q7 DOUBLE, q8 DOUBLE"
+            + ", q9 DOUBLE, q10 DOUBLE, q11 DOUBLE, q12 DOUBLE, q13 DOUBLE, q14 DOUBLE, q15 DOUBLE, q16 DOUBLE"
+            + ") TIMESTAMP(ts) PARTITION BY DAY WAL";
 
     @Test
     public void testAnchoredDailyTightensToTheOneMinuteFloor() throws Exception {
@@ -196,6 +202,21 @@ public class LiveViewAdaptiveCheckpointCadenceTest extends AbstractLiveViewTest 
     }
 
     @Test
+    public void testIncrementalAnchoredFamiliesTighten() throws Exception {
+        // Every seal of these images only the keys a correction touched: residual tracked
+        // functions (a DECIMAL sum, first_value, the EMA), and a runtime-only member past the
+        // leaf budget whose class tracks its keys, fused or not. The view tightens.
+        final String[] projections = {"sum(d) OVER w s", "first_value(x) OVER w s", "avg(x, 'period', 5) OVER w s"};
+        for (String projection : projections) {
+            assertShallowCorrectionLearnsCadence(BASE_DDL_WIDE, anchoredView(projection), 5 * Micros.MINUTE_MICROS, Micros.MINUTE_MICROS);
+        }
+        for (boolean isFused : new boolean[]{true, false}) {
+            setProperty(PropertyKey.CAIRO_SQL_WINDOW_MAP_FUSION_ENABLED, String.valueOf(isFused));
+            assertShallowCorrectionLearnsCadence(BASE_DDL_WIDE, anchoredView(sums16() + ", avg(x) OVER w s"), 5 * Micros.MINUTE_MICROS, Micros.MINUTE_MICROS);
+        }
+    }
+
+    @Test
     public void testMixedViewKeepsTheConfiguredCadence() throws Exception {
         // One anchored and one bounded ROWS window: the bounded function keeps checkpoint state
         // but is not anchorable, so it images its whole map on every seal. The view stays off the
@@ -249,6 +270,29 @@ public class LiveViewAdaptiveCheckpointCadenceTest extends AbstractLiveViewTest 
         // A single stateless CURRENT ROW function and no ANCHOR window: off the gate, the view
         // keeps the configured cadence, as a base with no adaptation would.
         assertShallowCorrectionLearnsCadence(BASE_DDL, VIEW_STATELESS_ONLY, 5 * Micros.MINUTE_MICROS, 5 * Micros.MINUTE_MICROS);
+    }
+
+    @Test
+    public void testWholeImagedAnchoredFamiliesKeepTheConfiguredCadence() throws Exception {
+        // Under an ANCHOR window, yet every seal images these whole: lag keeps no dirty set,
+        // rank and corr keep no baseline, an EXCLUDE CURRENT ROW call is a ring, and row_number
+        // past the leaf budget is a runtime-only member that keeps no baseline, fused or not. A
+        // tightened cadence would turn into whole-map images, so the view keeps the configured one.
+        final String[] projections = {"lag(x) OVER w s", "rank() OVER w s", "corr(x, y) OVER w s"};
+        for (String projection : projections) {
+            assertShallowCorrectionLearnsCadence(BASE_DDL_WIDE, anchoredView(projection), 5 * Micros.MINUTE_MICROS, 5 * Micros.MINUTE_MICROS);
+        }
+        assertShallowCorrectionLearnsCadence(
+                BASE_DDL_WIDE,
+                "CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS SELECT ts, sym, x, avg(x) OVER w s FROM base "
+                        + "WINDOW w AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW ANCHOR DAILY '00:00')",
+                5 * Micros.MINUTE_MICROS,
+                5 * Micros.MINUTE_MICROS
+        );
+        for (boolean isFused : new boolean[]{true, false}) {
+            setProperty(PropertyKey.CAIRO_SQL_WINDOW_MAP_FUSION_ENABLED, String.valueOf(isFused));
+            assertShallowCorrectionLearnsCadence(BASE_DDL_WIDE, anchoredView(sums16() + ", row_number() OVER w rn"), 5 * Micros.MINUTE_MICROS, 5 * Micros.MINUTE_MICROS);
+        }
     }
 
     @Test
@@ -487,6 +531,22 @@ public class LiveViewAdaptiveCheckpointCadenceTest extends AbstractLiveViewTest 
         );
     }
 
+    private static String anchoredView(String projection) {
+        return "CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS SELECT ts, sym, x, " + projection
+                + " FROM base WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')";
+    }
+
+    private static String sums16() {
+        final StringBuilder sb = new StringBuilder();
+        for (int q = 1; q <= 16; q++) {
+            if (q > 1) {
+                sb.append(", ");
+            }
+            sb.append("sum(q").append(q).append(") OVER w s").append(q);
+        }
+        return sb.toString();
+    }
+
     private void assertShallowCorrectionLearnsCadence(
             String baseDdl,
             String viewSql,
@@ -530,8 +590,15 @@ public class LiveViewAdaptiveCheckpointCadenceTest extends AbstractLiveViewTest 
                 final LiveViewInstance instance = instance();
                 Assert.assertEquals("one correction must be recorded", 1, instance.getAdaptiveCheckpointCorrectionCount());
                 Assert.assertEquals(expectedDepthMicros, instance.getAdaptiveCheckpointLastCorrectionDepthMicros());
-                Assert.assertEquals(expectedCadenceMicros, instance.getEffectiveCheckpointDurationMicros(ceilingMicros));
+                Assert.assertEquals(viewSql, expectedCadenceMicros, instance.getEffectiveCheckpointDurationMicros(ceilingMicros));
             }
+            // Leaves the database as it found it, so one test may run several shapes.
+            execute("DROP LIVE VIEW lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            execute("DROP TABLE base");
+            drainWalQueue();
         });
     }
 

@@ -1037,6 +1037,14 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             return true;
         }
 
+        /**
+         * False: {@link #markPartitionAlive} keeps no checkpoint dirty set.
+         */
+        @Override
+        public boolean isCheckpointDirtyTracked() {
+            return false;
+        }
+
         @Override
         public void markPartitionAlive(Record record, boolean isFirstCadenceTouch) {
             // The flag goes unread: this override keeps no checkpoint dirty set, so every seal
@@ -1655,6 +1663,14 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             // which the contract allows: the values it emits are the same, up to the
             // documented floating drift.
             return true;
+        }
+
+        /**
+         * False: {@link #markPartitionAlive} keeps no checkpoint dirty set.
+         */
+        @Override
+        public boolean isCheckpointDirtyTracked() {
+            return false;
         }
 
         @Override

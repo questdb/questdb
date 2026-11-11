@@ -116,6 +116,14 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
     private long scanRowBudget;
     private long scanRows;
 
+    /**
+     * Normalizes a configured budget, mapping the disabling {@code <= 0} to no bound. The
+     * resume's chain price reads {@code scan.max.keys} through it too.
+     */
+    public static long budgetOf(long configured) {
+        return configured > 0 ? configured : Long.MAX_VALUE;
+    }
+
     public LiveViewCheckpointRowsBounds(@NotNull CairoConfiguration configuration) {
         this.configuration = configuration;
     }
@@ -328,13 +336,6 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
      */
     public boolean isScanBudgetExceeded() {
         return scanBudgetStatus != ScanBudgetStatus.WITHIN;
-    }
-
-    /**
-     * Normalizes a configured budget, mapping the disabling {@code <= 0} to no bound.
-     */
-    private static long budgetOf(long configured) {
-        return configured > 0 ? configured : Long.MAX_VALUE;
     }
 
     /**

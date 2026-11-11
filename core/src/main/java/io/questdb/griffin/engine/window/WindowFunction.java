@@ -709,6 +709,27 @@ public interface WindowFunction extends Function {
     }
 
     /**
+     * Whether this function keeps the bookkeeping an incremental checkpoint seal reads:
+     * {@link #onCheckpointPersisted} adopts the root as its baseline, clearing
+     * {@link #isCheckpointFullScanRequired()} and recording the generation, and
+     * {@link #markPartitionAlive(Record, boolean)} records every key a first-cadence touch
+     * moves in {@link #getCheckpointDirtyPartitionMap()} whenever the ANCHOR window dispatches
+     * a row to it. While a window-state group owns its state, the group's dirty set stands in
+     * for its own and only the baseline half is read.
+     * <p>
+     * Asked only of a function the ANCHOR window dispatches to, or of a runtime-only member of
+     * a fused group: nothing else ever marks a dirty set, and a ring-shaped function's seal
+     * walks its whole map whatever this answers, so a caller reads
+     * {@link #supportsCheckpointRingState()} first. A property of the implementation rather
+     * than of the runtime: the dirty set appears on the first dispatched row, so the answer is
+     * the same before and after a restart. False, the default, is the conservative answer: a
+     * caller prices every seal of the function as a walk of its whole map.
+     */
+    default boolean isCheckpointDirtyTracked() {
+        return false;
+    }
+
+    /**
      * @return true when the next seal must walk this function's whole partition map
      * rather than the keys {@link #getCheckpointDirtyPartitionMap()} names. A restore,
      * a repair and a frontier compaction all remove keys, and only a full scan detects

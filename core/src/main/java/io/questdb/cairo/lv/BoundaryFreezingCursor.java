@@ -47,7 +47,17 @@ final class BoundaryFreezingCursor implements RecordCursor {
     private ObjList<LiveViewCheckpointTimelineEntry> boundaries;
     private LiveViewCheckpointTimelineStoreWriter.RepairCapture capture;
     private int captured;
+    // What every freeze asks first, or null when the caller freezes every boundary. See
+    // setFreezeBudget().
+    private FreezeBudget freezeBudget;
+    // The boundaries this cursor may still reach: the list's size while it is bound, and the
+    // count captured when the budget refused one, so both freeze loops end there. Every caller
+    // binds a list it does not change while bound, and of() resets this, so a repair that
+    // parks and resumes starts from the whole list again.
+    private int freezeLimit;
     private ObjList<WindowFunction> functions;
+    // Whether the budget refused a boundary since of().
+    private boolean isFreezeDeclined;
     // The view whose batch-minimum window each freeze restarts, or null when the
     // caller does not keep one. See of().
     private LiveViewInstance instance;
@@ -84,6 +94,9 @@ final class BoundaryFreezingCursor implements RecordCursor {
         positions = null;
         instance = null;
         rowDrain = null;
+        freezeBudget = null;
+        freezeLimit = 0;
+        isFreezeDeclined = false;
     }
 
     /**
@@ -92,7 +105,7 @@ final class BoundaryFreezingCursor implements RecordCursor {
      * and any remaining boundary, so the state the replay ends on is theirs.
      */
     public void freezeRemaining() {
-        while (captured < boundaries.size()) {
+        while (captured < freezeLimit) {
             freezeOne();
         }
     }
@@ -127,11 +140,19 @@ final class BoundaryFreezingCursor implements RecordCursor {
         // Strictly below: a boundary AT this row's timestamp waits for the next
         // row, which is what admits the boundary's complete timestamp tie.
         final long timestamp = base.getRecord().getTimestamp(timestampIndex);
-        while (captured < boundaries.size()
+        while (captured < freezeLimit
                 && boundaries.getQuick(captured).maxTimestamp < timestamp) {
             freezeOne();
         }
         return true;
+    }
+
+    /**
+     * @return whether the budget refused a boundary since {@link #of}, which leaves every
+     * boundary from {@link #getCaptured()} up unfrozen
+     */
+    public boolean isFreezeDeclined() {
+        return isFreezeDeclined;
     }
 
     @Override
@@ -208,6 +229,9 @@ final class BoundaryFreezingCursor implements RecordCursor {
         this.instance = instance;
         this.rowDrain = null;
         this.rowPosition = 0;
+        this.freezeBudget = null;
+        this.freezeLimit = boundaries.size();
+        this.isFreezeDeclined = false;
     }
 
     @Override
@@ -221,6 +245,20 @@ final class BoundaryFreezingCursor implements RecordCursor {
         // dispatch does: recordAt positions on an arbitrary row out of order, and
         // a boundary only means anything against forward iteration.
         base.recordAt(record, atRowId);
+    }
+
+    /**
+     * Binds what every freeze asks before it freezes its boundary; call after {@link #of}. A
+     * refusal stops the freezing for good - this boundary and every one above it stay
+     * unfrozen - while the rows keep passing through unchanged.
+     * <p>
+     * Only a replay whose freeze stamps the running row position may bind one: a refused
+     * boundary would leave per-boundary positions or a keyed merge's drain misaligned with the
+     * boundaries above it.
+     */
+    public void setFreezeBudget(@Nullable FreezeBudget freezeBudget) {
+        assert positions == null && rowDrain == null : "a freeze budget beside per-boundary positions or a row drain";
+        this.freezeBudget = freezeBudget;
     }
 
     /**
@@ -263,6 +301,11 @@ final class BoundaryFreezingCursor implements RecordCursor {
     }
 
     private void freezeOne() {
+        if (freezeBudget != null && !freezeBudget.isAffordable(captured, boundaries.size())) {
+            isFreezeDeclined = true;
+            freezeLimit = captured;
+            return;
+        }
         if (rowDrain != null) {
             // Everything the merge owes at or below this boundary, appended before the
             // boundary records the position it stands at. The replay stamps the position
@@ -284,6 +327,22 @@ final class BoundaryFreezingCursor implements RecordCursor {
         if (session != null) {
             session.recordProgress(captured);
         }
+    }
+
+    /**
+     * What a replay that keeps its chain only while it pays for it asks before each freeze.
+     */
+    @FunctionalInterface
+    interface FreezeBudget {
+        /**
+         * Called where the boundary is about to freeze: every row at or below it folded,
+         * none above it.
+         *
+         * @param boundaryIndex the boundary about to freeze, which is how many froze before it
+         * @param boundaryCount every boundary the replay was bound with
+         * @return false to leave this boundary and every one above it unfrozen
+         */
+        boolean isAffordable(int boundaryIndex, int boundaryCount);
     }
 
     /**

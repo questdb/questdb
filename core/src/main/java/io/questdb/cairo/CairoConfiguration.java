@@ -457,7 +457,9 @@ public interface CairoConfiguration {
     /**
      * Maximum checkpoint boundaries one out-of-order repair may re-version as a chain; past it the
      * repair truncates the ladder above its floor and seals a single fresh head. A value
-     * {@code <= 0} disables the chain.
+     * {@code <= 0} disables the chain. A repair also stops keeping the chain, at the boundary
+     * where it learns it, once the keys its boundaries image whole would pass the larger of the
+     * base rows it reads and {@link #getLiveViewCheckpointRepairScanMaxKeys()}.
      */
     int getLiveViewCheckpointRepairMaxChainedBoundaries();
 
@@ -485,7 +487,10 @@ public interface CairoConfiguration {
      * the number of index seeks. A discovery that crosses this budget reports
      * an explicit budget status and hands the repair back to the unlocalized
      * rebuild instead of planning a replacement of that width. A value
-     * {@code <= 0} disables the budget.
+     * {@code <= 0} disables the budget. It is also the floor of what an
+     * out-of-order resume's checkpoint chain may image whole: a chain whose
+     * boundaries would image more keys whole than the larger of this and the base
+     * rows the resume reads truncates instead, and {@code <= 0} lifts that floor.
      */
     long getLiveViewCheckpointRepairScanMaxKeys();
 
@@ -1528,10 +1533,11 @@ public interface CairoConfiguration {
     /**
      * Whether a live view may shorten its checkpoint duration cadence from observed out-of-order
      * depth. Only a view whose seals image incrementally - it has an ANCHOR window and every
-     * stateful window function is anchorable - shortens it, and never below the longer of its
-     * {@code FLUSH EVERY} interval and one minute. Every other view records the correction depth
-     * but keeps {@link #getLiveViewCheckpointMaxDurationMicros()}, so a shallow late row does not
-     * make it seal and retain several times the checkpoint roots.
+     * stateful window function's seal images only the keys a correction touched - shortens it,
+     * and never below the longer of its {@code FLUSH EVERY} interval and one minute. Every
+     * other view records the correction depth but keeps
+     * {@link #getLiveViewCheckpointMaxDurationMicros()}, so a shallow late row does not make it
+     * seal and retain several times the checkpoint roots.
      */
     boolean isLiveViewCheckpointAdaptiveCadenceEnabled();
 

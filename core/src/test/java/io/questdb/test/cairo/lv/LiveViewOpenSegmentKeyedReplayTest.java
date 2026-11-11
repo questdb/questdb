@@ -1302,6 +1302,66 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testAKeyedResumeIsNotPricedAsAChain() throws Exception {
+        // A keyed resume's capture does not chain: each boundary images the isolated runtime,
+        // which holds the correction's keys alone. So the chain price, whose floor here is one
+        // key, never applies to it - neither to a correction on one existing account nor to one
+        // that brings accounts the primary never held.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_KEYS, 1);
+        assertMemoryLeak(() -> {
+            createView(seedFourAccountsOverTwoDays(), true);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                openTheDayAboveARoot(job);
+                final long keyedResumesBefore = job.getStatsForTest().getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_KEYED_RESUME_FROM_ANCHOR);
+                commit(row(4, 2, 35, "acct-1"), job);
+                Assert.assertEquals(keyedResumesBefore + 1, job.getStatsForTest().getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_KEYED_RESUME_FROM_ANCHOR));
+                Assert.assertEquals(0, job.getStatsForTest().get(RESUME_CHAIN_KEY_BUDGET_DECLINE_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(RESUME_CHAIN_DISCARDED_ROOT_COUNT));
+                assertViewMatchesRecompute();
+            }
+            restartAndCommitForwardRows(4, 12);
+            assertRestoredFromTimeline("lv");
+            assertViewMatchesRecompute();
+        });
+    }
+
+    @Test
+    public void testAKeyedResumeHoldingNoChainSealsItsPrimaryWhole() throws Exception {
+        // With the chain off, a keyed resume truncates instead of splicing. Its replay folded into
+        // the isolated runtime, so the primary still names the generation the truncate moved
+        // past: the truncated-head baseline is not adopted for it, and the closing seal images the
+        // primary's window whole.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+        assertMemoryLeak(() -> {
+            createView(seedFourAccountsOverTwoDays(), true);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                openTheDayAboveARoot(job);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                final long keyedResumesBefore = job.getStatsForTest().getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_KEYED_RESUME_FROM_ANCHOR);
+                final long windowCapturesBefore = instance.getCheckpointCaptureLedgerForTest().getWindowCaptures();
+                final long windowIncrementalBefore = instance.getCheckpointCaptureLedgerForTest().getWindowIncrementalCaptures();
+                commit(row(4, 2, 35, "acct-1"), job);
+                Assert.assertEquals(keyedResumesBefore + 1, job.getStatsForTest().getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_KEYED_RESUME_FROM_ANCHOR));
+                Assert.assertEquals(0, job.getStatsForTest().get(RESUME_CHAIN_KEY_BUDGET_DECLINE_COUNT));
+                Assert.assertEquals("the closing seal", windowCapturesBefore + 1, instance.getCheckpointCaptureLedgerForTest().getWindowCaptures());
+                Assert.assertEquals("images the window whole", windowIncrementalBefore, instance.getCheckpointCaptureLedgerForTest().getWindowIncrementalCaptures());
+                assertViewMatchesRecompute();
+            }
+            restartAndCommitForwardRows(4, 12);
+            assertRestoredFromTimeline("lv");
+            assertViewMatchesRecompute();
+        });
+    }
+
+    @Test
     public void testAKeyedResumeOfAnInsertOnlyRowTruncatesNothingAboveTheFrontier() throws Exception {
         // An insert-only correction removes no row, and the stored rows the keyed replay leaves
         // alone keep the view's frontier on the newest root its splice kept. Nothing above the

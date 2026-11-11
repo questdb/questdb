@@ -260,6 +260,20 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
         Function.init(partitionByRecord.getFunctions(), symbolTableSource, executionContext, null);
     }
 
+    /**
+     * True: {@link #onCheckpointPersisted} adopts the root as the baseline, and
+     * {@link #markPartitionAlive(Record, boolean)} builds the dirty set out of
+     * {@link #newCompactionScratch()}. A subclass that keeps no set answers false: lag supplies
+     * no scratch, and AvgDouble's bounded classes override {@code markPartitionAlive} to mark
+     * nothing. A bounded-frame subclass without a scratch inherits true unread, because CREATE
+     * refuses an ANCHOR on a bounded frame, so the ANCHOR window never dispatches to it; see
+     * the assertion in {@link #markCheckpointPartitionDirty(Record)}.
+     */
+    @Override
+    public boolean isCheckpointDirtyTracked() {
+        return true;
+    }
+
     @Override
     public boolean isCheckpointFullScanRequired() {
         return isCheckpointFullScanRequired;
@@ -632,6 +646,11 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
             // same shape for the same reason.
             final Map dirtyPartitions = newCompactionScratch();
             if (dirtyPartitions == null) {
+                // A dispatched function that keeps no set must not claim one: the checkpoint
+                // chain price and the adaptive cadence read the claim as an incremental seal.
+                // A stateless call holds no state to image at all.
+                assert isCheckpointStateless() || !isCheckpointDirtyTracked()
+                        : "a window function the ANCHOR window dispatches to keeps no checkpoint dirty set but claims one";
                 return;
             }
             if (memoryTracker != null) {

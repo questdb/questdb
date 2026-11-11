@@ -97,42 +97,49 @@ public final class LiveViewRefreshStats {
     // Repairs whose output carries no key the check can name.
     public static final int OUTPUT_UNIQUENESS_UNCHECKED_REPAIRS = 32;
     public static final int OUTPUT_UNIQUENESS_UNIQUE_REPAIRS = 33;
+    // Roots a resume's chain had frozen before its key budget refused a later boundary, all
+    // discarded with the chain.
+    public static final int RESUME_CHAIN_DISCARDED_ROOT_COUNT = 34;
+    // Anchor resumes whose chain the key budget refused at a boundary, so they truncated
+    // instead: the keys the boundaries would image whole passed the larger of the resume's
+    // estimated base rows and cairo.live.view.checkpoint.repair.scan.max.keys.
+    public static final int RESUME_CHAIN_KEY_BUDGET_DECLINE_COUNT = 35;
     // O3 resumes served from the live window state instead of restoring the same root.
-    public static final int RUNTIME_ANCHOR_REUSE_COUNT = 34;
+    public static final int RUNTIME_ANCHOR_REUSE_COUNT = 36;
     // Seals declined because their boundary sits above the newest row the view's table holds,
     // which no restart can restore a root from.
-    public static final int SEAL_ABOVE_DURABLE_FRONTIER_DECLINE_COUNT = 35;
+    public static final int SEAL_ABOVE_DURABLE_FRONTIER_DECLINE_COUNT = 37;
     // Base rows the change-set decomposition read one by one out of their WAL segments,
     // rather than folding their commit's span into the residual whole.
-    public static final int SEGMENT_CLASSIFY_WALKED_ROWS = 36;
+    public static final int SEGMENT_CLASSIFY_WALKED_ROWS = 38;
     // Closed anchor segments repaired over their own range whose replacement applied.
-    public static final int SEGMENT_REPAIR_COUNT = 37;
+    public static final int SEGMENT_REPAIR_COUNT = 39;
     // Segment replays parked on the refresh turn's budget.
-    public static final int SEGMENT_YIELD_COUNT = 38;
+    public static final int SEGMENT_YIELD_COUNT = 40;
     // Segment repairs and keyed resumes published as an upsert on the view's dedup keys.
-    public static final int SPARSE_PUBLICATION_COUNT = 39;
+    public static final int SPARSE_PUBLICATION_COUNT = 41;
     // Sparse publications abandoned before commit for a whole-range replacement.
-    public static final int SPARSE_PUBLICATION_FALLBACK_COUNT = 40;
+    public static final int SPARSE_PUBLICATION_FALLBACK_COUNT = 42;
     // Stored rows sparse publications left in place.
-    public static final int SPARSE_PUBLICATION_ROWS_KEPT = 41;
+    public static final int SPARSE_PUBLICATION_ROWS_KEPT = 43;
     // Anchor resumes whose output ended below the newest root their splice kept, so they
     // truncated the spliced timeline at the view's new frontier before the head seal.
-    public static final int SPLICE_FRONTIER_TRUNCATE_COUNT = 42;
+    public static final int SPLICE_FRONTIER_TRUNCATE_COUNT = 44;
     // Anchor resumes that emitted no row over a splice whose newest root sits at the view's
     // new frontier, and re-stamped the head on that root.
-    public static final int SPLICE_ZERO_ROW_KEEP_COUNT = 43;
+    public static final int SPLICE_ZERO_ROW_KEEP_COUNT = 45;
     // Attempts to take back the symbol ids a discarded pass assigned and no flush committed,
     // each one a call of LiveViewInMemoryTier.tryRewindSymbolCache.
-    public static final int SYMBOL_REWIND_ATTEMPT_COUNT = 44;
+    public static final int SYMBOL_REWIND_ATTEMPT_COUNT = 46;
     // Of those attempts, the ones a reader refused by pinning a slot whose symbol horizon
     // reaches the ids the rewind would take back.
-    public static final int SYMBOL_REWIND_REFUSAL_COUNT = 45;
+    public static final int SYMBOL_REWIND_REFUSAL_COUNT = 47;
     // Keys keyed resumes handed back to the primary runtime.
-    public static final int TRANSPLANTED_KEY_COUNT = 46;
+    public static final int TRANSPLANTED_KEY_COUNT = 48;
     // Anchor resumes holding no capture that emitted no row and put the head on a root at the
     // view's new frontier at the repair commit, instead of retiring the truncated timeline.
-    public static final int TRUNCATE_ZERO_ROW_KEEP_COUNT = 47;
-    private static final int STAT_COUNT = 48;
+    public static final int TRUNCATE_ZERO_ROW_KEEP_COUNT = 49;
+    private static final int STAT_COUNT = 50;
     // Completed repairs by route, one slot per LiveViewCheckpointRepairRoute.ROUTE_*, after the
     // counters above. A repair counts once, on the turn that publishes it.
     private final long[] values = new long[STAT_COUNT + LiveViewCheckpointRepairRoute.ROUTE_COUNT];

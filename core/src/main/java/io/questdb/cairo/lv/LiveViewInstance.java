@@ -1022,7 +1022,7 @@ public class LiveViewInstance implements QuietCloseable {
      * Learns a duration cadence from one observed out-of-order correction depth.
      * The configured duration stays the ceiling. The floor depends on whether this
      * view's seals image incrementally: an eligible view - one with an ANCHOR
-     * window whose stateful window functions are all anchorable, so a seal images
+     * window and no stateful window function a seal images whole, so a seal images
      * only the keys the interval touched - learns down to
      * {@code max(flushEveryMicros, 1 minute)}, while every other view keeps the
      * configured cadence ({@code isSealIncremental == false} floors at the ceiling,

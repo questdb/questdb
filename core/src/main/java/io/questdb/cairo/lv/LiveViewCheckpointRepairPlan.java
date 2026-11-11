@@ -547,7 +547,8 @@ public final class LiveViewCheckpointRepairPlan implements QuietCloseable {
      * @return the estimated base rows a resume from the selected anchor would pull -
      * every row at or above its floor, because its high bound is end-of-frame - or
      * {@link Numbers#LONG_NULL} when no anchor qualified or no {@link ScanCostSource}
-     * was supplied. Diagnostic; see {@link #getRebuildScanRows()}.
+     * was supplied. See {@link #getRebuildScanRows()}. The resume also prices its
+     * checkpoint chain against it: see {@link LiveViewResumeChainPrice}.
      */
     public long getResumeScanRows() {
         return resumeScanRows;

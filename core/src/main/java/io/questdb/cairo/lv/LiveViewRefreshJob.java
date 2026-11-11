@@ -400,6 +400,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // newest root. One instance per worker; mutated only on the refresh-worker
     // thread between restore calls. Avoids a per-call allocation on the resume.
     private final RestoredSeedState restoredSeedState = new RestoredSeedState();
+    // Prices a whole-range resume's checkpoint chain boundary by boundary, as the freeze cursor
+    // reaches each one. One per worker, bound per repair; repairs never nest.
+    private final LiveViewResumeChainPrice resumeChainPrice = new LiveViewResumeChainPrice();
     // Per-key ROWS repair-bound discovery, and the adapter the repair plan calls it
     // through. One of each per worker: the discovery owns a native counter map it
     // rebuilds per call, and the adapter carries the one repair's cursor factory and
@@ -7091,22 +7094,24 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Whether every window function of {@code instance} that keeps checkpoint state is one its
-     * ANCHOR window dispatches {@code markPartitionAlive} to, so a seal images only the keys a
-     * correction touched rather than the whole key map. Only such a view may tighten its
+     * Whether every seal of {@code instance} images only the keys a correction touched rather
+     * than a whole key map: the view has an ANCHOR window, and no window function that keeps
+     * checkpoint state is one a seal walks whole (see
+     * {@link LiveViewResumeChainPrice#isCheckpointImagedWhole}). Only such a view may tighten its
      * checkpoint duration cadence below the configured one (see
-     * {@link LiveViewInstance#recordAdaptiveCheckpointCorrection}). A view with a stateful bounded
-     * ROWS/RANGE function - or none under an ANCHOR window at all - images its whole map on every
-     * seal, because only {@link io.questdb.cairo.lv.LiveViewWindow} builds the dirty sets a seal
-     * images less from, so a tightened cadence there turns directly into retained roots and refresh
-     * CPU. A stateless CURRENT ROW function images nothing, so it does not keep an otherwise
-     * eligible view off the gate.
+     * {@link LiveViewInstance#recordAdaptiveCheckpointCorrection}), because a seal that images a
+     * whole map turns a tightened cadence directly into retained roots and refresh CPU. What
+     * keeps a view on the configured cadence: a stateful function outside the ANCHOR window;
+     * lag; rank and dense_rank; corr and covar*; an EXCLUDE CURRENT ROW call; row_number past
+     * the window's inline leaf budget. A stateless CURRENT ROW function images nothing, so it
+     * does not keep an otherwise eligible view off the gate.
      */
-    private static boolean isEveryStatefulWindowFunctionAnchored(
+    private static boolean isEveryCheckpointSealIncremental(
             LiveViewInstance instance,
             WindowRecordCursorFactory windowFactory
     ) {
-        if (instance.getAnchorWindow() == null) {
+        final LiveViewWindow anchorWindow = instance.getAnchorWindow();
+        if (anchorWindow == null) {
             return false;
         }
         final ObjList<WindowFunction> functions = windowFactory.getWindowFunctions();
@@ -7120,14 +7125,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             if (function.isCheckpointStateless()) {
                 continue;
             }
-            boolean anchored = false;
-            for (int j = 0, m = anchorable.size(); j < m; j++) {
-                if (anchorable.getQuick(j) == function) {
-                    anchored = true;
-                    break;
-                }
-            }
-            if (!anchored) {
+            if (LiveViewResumeChainPrice.isCheckpointImagedWhole(anchorWindow, anchorable, function)) {
                 return false;
             }
         }
@@ -7287,7 +7285,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         correctionDepthMicros,
                         engine.getConfiguration().getLiveViewCheckpointMaxDurationMicros(),
                         instance.getDefinition().getFlushEveryMicros(),
-                        isEveryStatefulWindowFunctionAnchored(instance, windowFactory)
+                        isEveryCheckpointSealIncremental(instance, windowFactory)
                 );
             }
         }
@@ -8255,17 +8253,24 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // the last in-order batch put it and the replayed range growing by one batch
         // per batch.
         //
-        // Chained, which is what makes it affordable: boundary i is frozen against
-        // boundary i - 1 out of the keys the replay touched between them, and published
-        // seeded from i - 1's new root. A repair then costs the keys its replay touched
-        // once, whatever K is. The capture is opened before the replay reads a row -
-        // it pins the generation it collects the boundaries from - and nothing it
-        // writes is reachable until the splice commits, so abandoning it anywhere costs
-        // one temporary data segment.
+        // Chained, which is what makes it affordable for the state a seal freezes
+        // incrementally: boundary i is frozen against boundary i - 1 out of the keys the
+        // replay touched between them, and published seeded from i - 1's new root, so that
+        // state costs the keys its replay touched once, whatever K is. Every other stateful
+        // function - one outside the ANCHOR window, and the anchored ones a seal walks whole
+        // - images all its live keys at every boundary, so the chain is kept only while
+        // LiveViewResumeChainPrice finds those images within the resume's budget, boundary
+        // by boundary. The capture is opened before the replay reads a row - it pins the
+        // generation it collects the boundaries from - and nothing it writes is reachable
+        // until the splice commits, so abandoning it anywhere costs one temporary data
+        // segment.
         LiveViewCheckpointRepairSession session = null;
         LiveViewCheckpointTimelineStoreWriter.RepairCapture timelineCapture = null;
         LiveViewCheckpointTimelineStoreWriter.RepairResult timelineSplice = null;
         int capturedBoundaries = 0;
+        // Roots the chain froze before its price refused a boundary above them, all dropped
+        // with the capture.
+        int discardedRoots = 0;
         boolean replayCompleted = false;
         boolean isSparseFallback = false;
         boolean isAdaptiveSampleValid = true;
@@ -8367,6 +8372,22 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 session.discardDescriptor();
                 repairBoundaries.clear();
             }
+            // What the chain the count guard admitted costs is decided boundary by boundary, as
+            // the freeze cursor reaches each one, against the keys of every function a chained
+            // freeze images whole. Bound here, before the restore clears the primary's maps,
+            // because those are the frontier's keys. A keyed capture does not chain - each
+            // boundary images Q alone, in a runtime holding Q alone - so it is not priced.
+            final boolean isChainPriced = timelineCapture != null
+                    && !isKeyed
+                    && repairBoundaries.size() > 0
+                    && resumeChainPrice.of(
+                    instance.getAnchorWindow(),
+                    windowFactory,
+                    Math.max(
+                            plan.getResumeScanRows(),
+                            LiveViewCheckpointRowsBounds.budgetOf(engine.getConfiguration().getLiveViewCheckpointRepairScanMaxKeys())
+                    )
+            );
             // No repair marker yet. The splice's marker goes down at the replacement commit
             // below, the first statement that moves durable output under the roots this
             // capture re-versions - not here, ahead of a replay that may fault or crash
@@ -8469,6 +8490,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                 // incremental seal exists to avoid.
                                 instance
                         );
+                        if (isChainPriced) {
+                            boundaryFreezingCursor.setFreezeBudget(resumeChainPrice);
+                        }
                         source = boundaryFreezingCursor;
                     }
                     source = compiledPlan.wrapWindowInput(source, executionContext);
@@ -8684,7 +8708,34 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             // position plus the exact count of new rows at or below it - and
                             // the freeze takes that instead of the replay's running count.
                             boundaryFreezingCursor.freezeRemaining();
-                            capturedBoundaries = boundaryFreezingCursor.getCaptured();
+                            if (boundaryFreezingCursor.isFreezeDeclined()) {
+                                // The price refused a boundary: the keys the chain would image
+                                // whole outgrew the budget. Drop back to the truncate, as the
+                                // count guard does, here rather than at the refusal, so that a
+                                // scan that throws on the way still finds the capture to free.
+                                // The rows already went through unchanged: a freeze writes
+                                // checkpoint bookkeeping, never state a window function reads.
+                                discardedRoots = boundaryFreezingCursor.getCaptured();
+                                stats.inc(RESUME_CHAIN_KEY_BUDGET_DECLINE_COUNT);
+                                stats.add(RESUME_CHAIN_DISCARDED_ROOT_COUNT, discardedRoots);
+                                final TimestampDriver driver = ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType());
+                                LOG.info().$("live view O3 resume declined the checkpoint chain, truncating instead [view=")
+                                        .$(viewName)
+                                        .$(", boundaries=").$(repairBoundaries.size())
+                                        .$(", max=").$(maxChainedBoundaries)
+                                        .$(", frozenRoots=").$(discardedRoots)
+                                        .$(", boundaryKeys=").$(resumeChainPrice.getBoundaryKeys())
+                                        .$(", frontierKeys=").$(resumeChainPrice.getFrontierKeys())
+                                        .$(", imagedKeys=").$(resumeChainPrice.getImagedKeys())
+                                        .$(", keyBudget=").$(resumeChainPrice.getBudgetKeys())
+                                        .$(", resumeScanRows=").$(plan.getResumeScanRows())
+                                        .$(", anchorMaxTs=").$ts(driver, anchorMaxTs).I$();
+                                timelineCapture = Misc.free(timelineCapture);
+                                session.discardDescriptor();
+                                repairBoundaries.clear();
+                            } else {
+                                capturedBoundaries = boundaryFreezingCursor.getCaptured();
+                            }
                         }
                         if (isKeyed
                                 && durableMaxTsBeforeRepair != Numbers.LONG_NULL
@@ -8794,7 +8845,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         final long timelineStart = System.nanoTime();
                         prefixMarkerLive = truncateOrRetireTimelineOnO3(instance, plan.getOutputLowTs(), false, truncatedHead);
                         openSegmentRepairPhases.timelinePublicationNanos += System.nanoTime() - timelineStart;
-                        if (!isKeyed) {
+                        // Unless the chain froze a boundary before its price refused one: that
+                        // freeze reset the dirty sets there, so they name only the keys touched
+                        // above it, and a seal built incrementally on the anchor would keep the
+                        // anchor's entry for every key touched below it. The provisional stamp
+                        // then stays, which the closing seal reads as no baseline and answers with
+                        // a complete scan.
+                        if (!isKeyed && discardedRoots == 0) {
                             adoptTruncatedHeadCheckpointBaseline(instance, windowFactory, truncatedHead, anchorMaxTs, anchorCheckpointId);
                         }
                     }
@@ -8840,6 +8897,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // cursor; its counter is already read back into capturedBoundaries. The merge
                 // keeps the counts it ended on, which the tail below still reads.
                 boundaryFreezingCursor.clear();
+                resumeChainPrice.clear();
                 // Return the stored-row cursor and release the capture and pinned reader even
                 // if closing the cursor fails; propagate the first cleanup failure afterward.
                 Throwable failure = closeStoredRowsBestEffort(null, keyedReplay);
