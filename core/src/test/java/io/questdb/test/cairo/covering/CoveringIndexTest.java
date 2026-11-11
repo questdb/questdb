@@ -3691,6 +3691,66 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCollectDistinctKeysReportsColumnTopNulls() throws Exception {
+        // The rows below the column top predate the column: they read as NULL, key 0, and hold no posting
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "dist_top", COLUMN_NAME_TXN_NONE)) {
+                    writer.add(1, 3);
+                    writer.add(2, 4);
+                    writer.add(1, 5);
+                    writer.setMaxValue(5);
+                    writer.commit();
+                    writer.seal();
+                }
+                // An index with no chain entry yet, over a partition whose first 4 rows predate the column
+                new PostingIndexWriter(configuration, path.trimTo(plen), "dist_top_empty", COLUMN_NAME_TXN_NONE).close();
+
+                try (DirectBitSet found = new DirectBitSet(8);
+                     PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                             configuration, path.trimTo(plen), "dist_top", COLUMN_NAME_TXN_NONE, -1, 3)) {
+                    assertEquals(3, reader.collectDistinctKeys(found));
+                    assertTrue(found.get(0));
+                    assertEquals(0, reader.collectDistinctKeys(found));
+
+                    found.clear();
+                    assertEquals(1, reader.collectDistinctKeysInRange(found, 0, 2));
+                    assertTrue(found.get(0));
+
+                    found.clear();
+                    assertEquals(2, reader.collectDistinctKeysInRange(found, 2, 3));
+                    assertTrue(found.get(0));
+                    assertTrue(found.get(1));
+
+                    found.clear();
+                    assertEquals(2, reader.collectDistinctKeysInRange(found, 3, 5));
+                    assertFalse(found.get(0));
+
+                    found.clear();
+                    assertEquals(0, reader.collectDistinctKeysInRange(found, 2, 1));
+                    assertFalse(found.get(0));
+                }
+
+                try (DirectBitSet found = new DirectBitSet(8);
+                     PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                             configuration, path.trimTo(plen), "dist_top_empty", COLUMN_NAME_TXN_NONE, -1, 4)) {
+                    assertEquals(1, reader.collectDistinctKeys(found));
+                    assertTrue(found.get(0));
+
+                    found.clear();
+                    assertEquals(1, reader.collectDistinctKeysInRange(found, 3, 9));
+                    assertTrue(found.get(0));
+
+                    found.clear();
+                    assertEquals(0, reader.collectDistinctKeysInRange(found, 4, 9));
+                    assertFalse(found.get(0));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testCommitSyncsCoveringSidecarsBeforeKeyFile() throws Exception {
         final java.util.concurrent.ConcurrentHashMap<Long, String> fdToPath = new java.util.concurrent.ConcurrentHashMap<>();
         final java.util.concurrent.ConcurrentHashMap<Long, Long> addrToFd = new java.util.concurrent.ConcurrentHashMap<>();
@@ -10959,6 +11019,52 @@ public class CoveringIndexTest extends AbstractCairoTest {
                                     Frame forward scan on: t_distinct_bmp
                             """);
         });
+    }
+
+    @Test
+    public void testDistinctSymColumnTopNulls() throws Exception {
+        assertDistinctSymColumnTopNulls("BYPASS WAL");
+    }
+
+    @Test
+    public void testDistinctSymColumnTopNullsNonPartitioned() throws Exception {
+        // The only partition gained the column after its first two rows
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_dist_top_np (v LONG)");
+            execute("INSERT INTO t_dist_top_np VALUES (1), (2)");
+            execute("ALTER TABLE t_dist_top_np ADD COLUMN s SYMBOL INDEX TYPE POSTING");
+            execute("INSERT INTO t_dist_top_np (v, s) VALUES (3, 'a')");
+            engine.releaseAllWriters();
+
+            assertQuery("SELECT DISTINCT s FROM t_dist_top_np")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .withPlanContaining("PostingIndex op: distinct on: s")
+                    .returns("""
+                            s
+                            a
+
+                            """);
+
+            // A column that never took a value: its symbol table is empty, and every row reads as NULL
+            execute("CREATE TABLE t_dist_top_np_null (v LONG)");
+            execute("INSERT INTO t_dist_top_np_null VALUES (1), (2)");
+            execute("ALTER TABLE t_dist_top_np_null ADD COLUMN s SYMBOL INDEX TYPE POSTING");
+            engine.releaseAllWriters();
+            assertQuery("SELECT DISTINCT s FROM t_dist_top_np_null")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .withPlanContaining("PostingIndex op: distinct on: s")
+                    .returns("""
+                            s
+
+                            """);
+        });
+    }
+
+    @Test
+    public void testDistinctSymColumnTopNullsWal() throws Exception {
+        assertDistinctSymColumnTopNulls("WAL");
     }
 
     @Test
@@ -21527,6 +21633,68 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 .noLeakCheck()
                 .assertsPlanContaining("CoveringIndex", "on: sym with:");
         assertSqlCursors("SELECT /*+ no_covering */" + tail, "SELECT" + tail);
+    }
+
+    // 2024-01-01 predates the column, and 2024-01-02 gained it after its first row: those rows read as NULL, though
+    // the index holds no posting for them.
+    private void assertDistinctSymColumnTopNulls(String walClause) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_dist_top (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY " + walClause);
+            execute("INSERT INTO t_dist_top VALUES (1, '2024-01-01T00:00'), (2, '2024-01-01T12:00'), (3, '2024-01-02T00:00')");
+            drainWalQueue();
+            execute("ALTER TABLE t_dist_top ADD COLUMN s SYMBOL INDEX TYPE POSTING");
+            execute("""
+                    INSERT INTO t_dist_top (v, ts, s) VALUES
+                    (4, '2024-01-02T12:00', 'a'), (5, '2024-01-03T00:00', 'b'), (6, '2024-01-03T12:00', 'a')
+                    """);
+            drainWalQueue();
+            engine.releaseAllWriters();
+
+            assertQuery("SELECT DISTINCT s FROM t_dist_top")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .withPlanContaining("PostingIndex op: distinct on: s")
+                    .returns("""
+                            s
+                            a
+                            b
+
+                            """);
+            assertQuery("SELECT count() FROM (SELECT DISTINCT s FROM t_dist_top)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            count
+                            3
+                            """);
+            // An interval reads part of a partition: below the column top of 2024-01-02, above it, and part of the
+            // partition that predates the column.
+            assertQuery("SELECT DISTINCT s FROM t_dist_top WHERE ts IN '2024-01-02T00'")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .withPlanContaining("PostingIndex op: distinct on: s")
+                    .returns("""
+                            s
+
+                            """);
+            assertQuery("SELECT DISTINCT s FROM t_dist_top WHERE ts IN '2024-01-02T12'")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .withPlanContaining("PostingIndex op: distinct on: s")
+                    .returns("""
+                            s
+                            a
+                            """);
+            assertQuery("SELECT DISTINCT s FROM t_dist_top WHERE ts IN '2024-01-01T00'")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .withPlanContaining("PostingIndex op: distinct on: s")
+                    .returns("""
+                            s
+
+                            """);
+        });
     }
 
     private void assertNullPrefixQueryOpensNoColumnMappings(String query, String expected) throws Exception {
