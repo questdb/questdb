@@ -84,6 +84,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.TreeMap;
+import java.util.TreeSet;
 import java.util.stream.Stream;
 
 import static io.questdb.cairo.lv.LiveViewRefreshStats.OPEN_SEGMENT_KEYED_RESUME_COUNT;
@@ -97,6 +98,15 @@ import static io.questdb.cairo.lv.LiveViewRefreshStats.TRANSPLANTED_KEY_COUNT;
  * below were captured from that build, so they are the oracle every later phase is held to:
  * no phase may edit them, and only {@link #scalarHex} may change, to read the scalar through
  * whatever accessor replaces {@code getScalarState()}.
+ * <p>
+ * The file digests also cover the segment catalogues, whose entries follow catalogue
+ * maintenance, not payloads. A repair publication carries the entries the last purge sweep
+ * left pending out of the catalogue, as a seal does, while the build the literals come from
+ * left them in. Seven catalogue lines in four cases therefore hold the captured catalogues
+ * re-framed without those dead entries, and with the shorter length a later catalogue records
+ * for a catalogue segment that lost them; the decoded roots and the elision logs of those
+ * cases stay as captured. The four cases also assert, around each repair commit, which
+ * catalogue entries named no file before it and that its publication carried them out.
  * <p>
  * Each case asserts three things:
  * <ul>
@@ -176,7 +186,8 @@ public class LiveViewCheckpointPayloadGoldenTest extends AbstractLiveViewTest {
                 // payloads it froze at one boundary into the next one's predecessor. The late
                 // amount is small against the sum the resume restores, so a restored state
                 // that is off in its lowest bit does not round away at the first boundary.
-                golden.commit(job, "late d3 acct-1", decimalRow("2026-01-03T09:05", "acct-1", "0.25"));
+                // Segments 40 and 41 are generation 7's timeline root and catalogue.
+                golden.commitRepair(job, "late d3 acct-1", decimalRow("2026-01-03T09:05", "acct-1", "0.25"), 40, 41);
                 golden.recordRoute();
                 Assert.assertTrue("the correction must resume from the anchor", instance.getO3ResumeReplayRows() > 0);
                 Assert.assertTrue("the resume must splice its roots", instance.getCheckpointRepairRootsVersioned() > 0);
@@ -231,7 +242,7 @@ public class LiveViewCheckpointPayloadGoldenTest extends AbstractLiveViewTest {
                             meta/m.0000000000000065 261 ef537c65c23039381cf8cbf343b80803a8396c7770c600655b81a9dde1592fb5
                             meta/m.0000000000000066 297 ba7f1ceb11ecb46491f16b7b3803eae1a9552f01bfca64ed9f93a4aac33c46dc
                             meta/m.0000000000000067 580 3d6f293e66d4da063279b48889f41bf18cbaca45a6e4937559b7849b3ce597cc
-                            meta/m.0000000000000068 1880 aeca9ce97fb65b44b98c825f03678122c633ed74d29f9edb26172b059dea0c5d
+                            meta/m.0000000000000068 1800 56d6e92006948fbdabded1be3d1afe1e066810f80e29f25cd23000ed0d8042a7
                             """,
                     """
                             boundary checkpoint=0 maxTs=1767258000000000 root=3/173/108
@@ -320,9 +331,11 @@ public class LiveViewCheckpointPayloadGoldenTest extends AbstractLiveViewTest {
                     golden.commit(job, "second " + second, ringRows(second, second + 1, 2));
                 }
                 final LiveViewInstance instance = viewInstance();
-                golden.commit(job, "correction 23", ringRows(23, 24, 2));
+                // Segments 18 and 19 are generation 4's timeline root and catalogue, 23 and
+                // 24 generation 5's.
+                golden.commitRepair(job, "correction 23", ringRows(23, 24, 2), 18, 19);
                 golden.recordRoute();
-                golden.commit(job, "correction 33", ringRows(33, 34, 2));
+                golden.commitRepair(job, "correction 33", ringRows(33, 34, 2), 23, 24);
                 golden.recordRoute();
                 Assert.assertTrue("the corrections must resume from an anchor", instance.getO3ResumeReplayRows() > 0);
                 final LiveViewCheckpointCompaction.Result result;
@@ -367,7 +380,7 @@ public class LiveViewCheckpointPayloadGoldenTest extends AbstractLiveViewTest {
                             meta/m.0000000000000037 554 c7438f80325ce49ba75516a46fc88a47347d4e8a6a25e19af13af93f671d5b90
                             meta/m.0000000000000038 278 f3720cc0c896e541e703154abb609f1e72d691ffd5bbc1afe7d7a3279c26f20c
                             meta/m.0000000000000039 400 d2316d0b04d78e39548269dcc80057685743dc634fe0d156bf983718d9af0c7f
-                            meta/m.0000000000000040 1400 8c8a3728fbe2ff88b9b46b49f5cd40e027a26d39aa9619e7f83f9cce41eb8e39
+                            meta/m.0000000000000040 1320 527175d6d9d3884f9e32f66d80da8cfe59facff97fddf52c766e95946ad52827
                             meta/m.0000000000000042 554 60b915fe8ede4f5435bbe21a286a4e1645a046ba1165507dd9171f9f3989dddd
                             meta/m.0000000000000043 278 c5aacf6329612d5061daf0929e336db0be62748a98aebe6aaccfe4fde6fb98e3
                             meta/m.0000000000000044 554 009ed50c6b35f782ca12a813d52592e9c7c43dece2c5f878bce5cbd34236c386
@@ -375,11 +388,11 @@ public class LiveViewCheckpointPayloadGoldenTest extends AbstractLiveViewTest {
                             meta/m.0000000000000046 554 2bc76153d14249913abf0d6a538f4071cceb3a354ba3813a595cf6120f331a8a
                             meta/m.0000000000000047 278 991e130dccfe5cc1c6b6a894fe2a131542eca763fb1dc3d64883005e216e3155
                             meta/m.0000000000000048 400 09cbb412ee55e8580175e79fbad5d2ccaa0d9293108b6d94a2ef3ae9736924b3
-                            meta/m.0000000000000049 1760 da7b70e08ed06de05c07243dd28d0cc80313d285149e3a42894d13d13215ee3a
+                            meta/m.0000000000000049 1600 5ef8fa9036a56ca6b3fac0b6a87ec16161ce5fe6bdb88f243b318a3365252b29
                             meta/m.0000000000000051 554 ecd0c7927d303d655f773a96351696d56b4e795d338f90b61b4392863a9a5ba1
                             meta/m.0000000000000052 278 4fb4bb300dbdfc068e88a37a5b879c6aa593e3e8d9b96c198c6fb5f7aba8adf0
                             meta/m.0000000000000053 400 59bae7421ed44936a60b6a57b77185e5c2cf074220427399a651a002d2477792
-                            meta/m.0000000000000054 1960 03a03005ee97259040cd645356703d148688f246e4f9dec4652571537feedb37
+                            meta/m.0000000000000054 1800 208f6bfebae84ec41866f32bcba8d70e8c2c7c730062f6606cc718113c4938b1
                             """,
                     """
                             boundary checkpoint=0 maxTs=1767258010000000 root=2/170/108
@@ -727,7 +740,8 @@ public class LiveViewCheckpointPayloadGoldenTest extends AbstractLiveViewTest {
                     golden.commit(job, "hot " + second, "('2026-01-01T00:" + String.format("%02d:%02d", second / 60, second % 60)
                             + ".000000Z', 'acct-0', " + second + ".0)");
                 }
-                golden.commit(job, "late hot", "('2026-01-01T00:00:55.000000Z', 'acct-0', 9000.0)");
+                // Segments 76 and 77 are generation 13's timeline root and catalogue.
+                golden.commitRepair(job, "late hot", "('2026-01-01T00:00:55.000000Z', 'acct-0', 9000.0)", 76, 77);
                 golden.recordRoute();
                 assertNoRefreshFaults("lv");
             }
@@ -800,7 +814,7 @@ public class LiveViewCheckpointPayloadGoldenTest extends AbstractLiveViewTest {
                             meta/m.0000000000000092 834 45dab6eea5d8c72218ccc6e1e622cb41d469d2b06cbbade2d0cb8bca990c2933
                             meta/m.0000000000000093 940 a9506d120e14f9b526c57f7c2256e1a32f06751b17bb486764cadd59294b6638
                             meta/m.0000000000000094 64 f4ee6adc8ca90e9c1ede4c7507882ebedeca1cf5554c5677f7fdcb6baebe23e1
-                            meta/m.0000000000000095 2968 1da2dac3cc77b0553f5be721763c1524a9e64505c67ce11de74038736b2dbc3e
+                            meta/m.0000000000000095 2888 56dc5e7e1215da62bab5c97f1e490b1f78883be6e65f5177c9e14e617b42fb6c
                             """,
                     """
                             boundary checkpoint=0 maxTs=1767225610000000 root=3/170/116
@@ -946,7 +960,8 @@ public class LiveViewCheckpointPayloadGoldenTest extends AbstractLiveViewTest {
                     }
                     golden.commit(job, "d4 h" + hour, rows.toString());
                 }
-                golden.commit(job, "keyed resume", keyedRow(4, 2, 35, 1));
+                // Segments 43 and 44 are generation 9's timeline root and catalogue.
+                golden.commitRepair(job, "keyed resume", keyedRow(4, 2, 35, 1), 43, 44);
                 Assert.assertEquals("the resume must follow the correction's keys", 1, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_RESUME_COUNT));
                 Assert.assertTrue("the corrected keys must be transplanted", job.getStatsForTest().get(TRANSPLANTED_KEY_COUNT) > 0);
                 golden.recordRoute();
@@ -964,11 +979,11 @@ public class LiveViewCheckpointPayloadGoldenTest extends AbstractLiveViewTest {
                             meta/m.0000000000000056 3504 39c826c14bfae532ed7e7a0fcc2ff78bc66ddd451eb60e08a40e15cbfe990237
                             meta/m.0000000000000057 984 4a481d80a2c0a6ed857191dbd845c451517021f90b8d1e47487fd730c7458bd1
                             meta/m.0000000000000058 700 a22b9f25396385d78cf81c7db992b43eae7ecef30e00610b5dbd084b02a68f9d
-                            meta/m.0000000000000059 1280 3797253665aca44bb64ba8c3d6f121f32b06625a13723e50050200dde183f39c
+                            meta/m.0000000000000059 1200 f2d6a0753323f260f30f4879b19704ba62f4a97a1a5495570ffa7dcf4bc5568f
                             meta/m.0000000000000061 459 9309006687ceb290705782b3ef6321353ec27aebe07f56b3e4de676a078379c6
                             meta/m.0000000000000062 144 8fb77e3068cd0439f93c290d9f4d1a28b25180114190f7dbd27668bbcece47df
                             meta/m.0000000000000063 760 30b2086c91a771eecd10a7fd899992ea58c2f529069a78aa4b7b99638e0c4ac3
-                            meta/m.0000000000000064 1280 2644569be8cf372a81899439b5d8fa69c2b96a2b6be317c03c1e91e84efa5ed3
+                            meta/m.0000000000000064 1280 fa06d09c186e31c0bfe5ca46891544468427c517794bb741cb59011fbbd54874
                             """,
                     """
                             boundary checkpoint=0 maxTs=1767433200000000 root=2/44/100
@@ -1647,6 +1662,41 @@ public class LiveViewCheckpointPayloadGoldenTest extends AbstractLiveViewTest {
             drainWalQueue();
             driveRefreshToQuiescence(job);
             record(job, label);
+        }
+
+        /**
+         * Commits rows whose repair publication must carry out of the catalogue every entry
+         * the last purge sweep left naming no file, as a seal does. With one seal per commit,
+         * each generation supersedes the previous one's timeline root and catalogue segments,
+         * and the sweep after generation g unlinks the segments retired at g - 1 or below. So
+         * before the commit that publishes generation g + 1, the dead entries are generation
+         * g - 2's timeline root and catalogue, whose segment ids the caller passes.
+         */
+        private void commitRepair(
+                LiveViewRefreshJob job,
+                String label,
+                String values,
+                long... carriedSegmentIds
+        ) throws Exception {
+            final LiveViewInstance instance = viewInstance();
+            final TreeSet<Long> carried = new TreeSet<>();
+            for (long segmentId : carriedSegmentIds) {
+                carried.add(segmentId);
+            }
+            Assert.assertEquals(
+                    "catalogue entries naming no file before '" + label + "'",
+                    carried,
+                    new TreeSet<>(deadCatalogueEntries(instance))
+            );
+            commit(job, label, values);
+            final TreeSet<Long> stillCatalogued = new TreeSet<>(carried);
+            stillCatalogued.retainAll(catalogue(instance));
+            Assert.assertEquals(
+                    "the repair publication of '" + label + "' must carry the entries the last sweep "
+                            + "left naming no file out of the catalogue",
+                    Collections.emptySet(),
+                    stillCatalogued
+            );
         }
 
         /**
