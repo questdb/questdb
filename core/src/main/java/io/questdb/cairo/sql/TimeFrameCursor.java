@@ -137,6 +137,37 @@ public interface TimeFrameCursor extends SymbolTableSource, QuietCloseable {
      */
     long open();
 
+    /**
+     * Moves to the next frame that has rows and opens it. A frame can open empty when its
+     * declared row count is only an upper bound, for example when dedup on read removes
+     * every row; such frames are skipped.
+     *
+     * @return false when no later frame has rows
+     */
+    default boolean openNext() {
+        while (next()) {
+            if (open() > 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Moves to the previous frame that has rows and opens it. Empty frames are skipped,
+     * as in {@link #openNext()}.
+     *
+     * @return false when no earlier frame has rows
+     */
+    default boolean openPrev() {
+        while (prev()) {
+            if (open() > 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     boolean prev();
 
     /**

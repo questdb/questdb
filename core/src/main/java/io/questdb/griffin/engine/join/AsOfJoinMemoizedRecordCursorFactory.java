@@ -485,7 +485,7 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                     rowId--;
                 } else {
                     // We exhausted this frame, let's try the previous one.
-                    if (!slaveTimeFrameCursor.prev()) {
+                    if (!slaveTimeFrameCursor.openPrev()) {
                         // There is no previous frame, our scan reached the beginning of the table.
                         earliestRowId = rowId;
                         // Memorize that we didn't find the matching symbol by saving rowId as (-rowId - 1).
@@ -502,7 +502,6 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                         record.hasSlave(false);
                         break;
                     }
-                    slaveTimeFrameCursor.open();
 
                     int frameIndex = slaveTimeFrame.getFrameIndex();
                     frameRowLo = Rows.toRowID(frameIndex, slaveTimeFrame.getRowLo());

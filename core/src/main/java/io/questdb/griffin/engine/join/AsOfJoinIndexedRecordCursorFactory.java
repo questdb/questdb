@@ -244,11 +244,10 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
                 }
 
                 // no match in this frame, try the previous frame
-                if (!slaveTimeFrameCursor.prev()) {
+                if (!slaveTimeFrameCursor.openPrev()) {
                     record.hasSlave(false);
                     return;
                 }
-                slaveTimeFrameCursor.open();
                 frameIndex = slaveTimeFrame.getFrameIndex();
                 rowMax = slaveTimeFrame.getRowHi() - 1;
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
