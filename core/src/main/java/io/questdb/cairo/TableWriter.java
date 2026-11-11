@@ -3373,15 +3373,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         assert txWriter.getLagRowCount() == 0;
         assert tableDedupMode == TableUtils.DEDUP_MODE_UPSERT || tableDedupMode == TableUtils.DEDUP_MODE_SKIP;
         checkDistressed();
-        for (int i = 0, n = tableDedupMode == TableUtils.DEDUP_MODE_SKIP ? txWriter.getPartitionCount() : 0; i < n; i++) {
-            // Delta reads resolve duplicates with UPSERT semantics only: the latest write wins.
-            if (txWriter.isPartitionDeltaActive(i)) {
-                throw CairoException.nonCritical().put("cannot enable DEDUP SKIP, table has a delta-active partition [table=")
-                        .put(tableToken.getTableName())
-                        .put(", partition=").ts(timestampDriver, txWriter.getPartitionTimestampByIndex(i))
-                        .put(']');
-            }
-        }
         LogRecord logRec = LOG.info().$("enabling row deduplication [table=").$(tableToken)
                 .$(", mode=").$(tableDedupMode == TableUtils.DEDUP_MODE_SKIP ? "SKIP" : "UPSERT")
                 .$(", columns=[");

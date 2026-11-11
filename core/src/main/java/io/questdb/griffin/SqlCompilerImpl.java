@@ -1400,33 +1400,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     /**
-     * Rejects DEDUP ENABLE SKIP on a table with a delta-active partition before WAL submission:
-     * Delta reads resolve duplicates as UPSERT only. {@code TableWriter} refuses it on apply,
-     * which would suspend the table.
-     */
-    private static void rejectDedupSkipEnable(
-            SqlExecutionContext executionContext,
-            TableToken tableToken,
-            int position
-    ) throws SqlException {
-        if (isPartitionLayoutCheckSkipped(executionContext, tableToken)) {
-            return;
-        }
-        try (TableReader reader = executionContext.getReader(tableToken)) {
-            final TxReader txFile = reader.getTxFile();
-            for (int i = 0, n = txFile.getPartitionCount(); i < n; i++) {
-                if (txFile.isPartitionDeltaActive(i)) {
-                    throw SqlException.position(position)
-                            .put("cannot enable DEDUP SKIP, table has delta-active partitions [table=")
-                            .put(tableToken.getTableName())
-                            .put(", partition=").put(formatPartitionName(reader, txFile.getPartitionTimestampByIndex(i)))
-                            .put("]; delta-active partitions resolve duplicates as UPSERT only");
-                }
-            }
-        }
-    }
-
-    /**
      * Rejects UPDATE on a WAL table that has a parquet-format partition, including partitions in cold
      * storage, or a Delta partition. Both are read-only for UPDATE; an UPDATE reaching one fails when applied, which on
      * a WAL table suspends the table because an acknowledged UPDATE can never be skipped. Rejecting
@@ -2114,9 +2087,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         } else {
             throw SqlException.$(lexer.getPosition(), "deduplicate key column list expected");
-        }
-        if (dedupMode == TableUtils.DEDUP_MODE_SKIP) {
-            rejectDedupSkipEnable(executionContext, tableToken, tableNamePosition);
         }
         compiledQuery.ofAlter(setDedup.build());
     }
