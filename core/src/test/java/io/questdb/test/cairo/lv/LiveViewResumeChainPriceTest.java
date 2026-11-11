@@ -54,6 +54,7 @@ import io.questdb.std.str.Utf8s;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.LogCapture;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
 import java.io.File;
@@ -78,6 +79,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * decision comes from that arithmetic, by hand.
  */
 public class LiveViewResumeChainPriceTest extends AbstractLiveViewTest {
+    // Runs what CI's time budget leaves out: the 256-root chain here, and every view of
+    // LiveViewCheckpointImagedWholeLedgerTest beyond one per family.
+    static final String FULL_MATRIX_PROPERTY = "questdb.lv.chain.price.full";
+    static final boolean IS_FULL_MATRIX = Boolean.getBoolean(FULL_MATRIX_PROPERTY);
     private static final String ANCHOR_WINDOW = " WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')";
     private static final String DECLINE_LOG = "live view O3 resume declined the checkpoint chain, truncating instead [view=lv";
     // 2026-01-01T00:00:00Z
@@ -413,38 +418,17 @@ public class LiveViewResumeChainPriceTest extends AbstractLiveViewTest {
 
     @Test
     public void testDeepChainUnderTheBoundaryGuardIsPriced() throws Exception {
-        // R = 256, the count guard's maximum: the price still decides, 256 x 4 = 1,024 > 257.
-        // R = 257: the count guard declines first, and the price's stat stays put.
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_KEYS, 1);
-        // No directory sweep per seal: it lists a directory every one of the 257 roots grows.
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_PURGE_INTERVAL, 0);
-        for (int roots : new int[]{256, 257}) {
-            assertMemoryLeak(() -> {
-                createBaseAndView(ROWS_SUM + " s");
-                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                    driveSeedToCompletion(job, "lv");
-                    seedKeys(job, 4);
-                    for (int i = 1; i <= roots; i++) {
-                        // One refresh pass per commit is enough for an in-order row to seal its root.
-                        execute("INSERT INTO base (ts, sym, k, v, x, y, d) VALUES " + row(DAY_ZERO_MICROS + HOUR_MICROS + i * 10_000_000L, "s1"));
-                        drainWalQueue();
-                        setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
-                        drainJob(job);
-                    }
-                    drainWalQueue();
-                    Assert.assertEquals(roots + 1, colLong("checkpoint_timeline_entries"));
-                    final long[] before = counters(job);
-                    commit(job, row(DAY_ZERO_MICROS + HOUR_MICROS + 5_000_000L, "s2"));
-                    Assert.assertEquals(
-                            roots == 256 ? "versioned=0 declines=1 discarded=0 fnCaptures=1 fnKeys=4" : "versioned=0 declines=0 discarded=0 fnCaptures=1 fnKeys=4",
-                            repairDelta(before, job, false)
-                    );
-                }
-                assertMatchesRecompute(ROWS_SUM + " s");
-                dropViewAndBase();
-            });
-        }
+        // R = 3 = max.chained.boundaries, the count guard's maximum: the price still decides,
+        // 3 x 4 = 12 > 4. R = 4: the count guard declines first, and the price's stat stays put.
+        assertChainAtTheBoundaryGuard(3);
+    }
+
+    @Test
+    public void testDeepChainUnderTheDefaultBoundaryGuardIsPriced() throws Exception {
+        // The same at the default guard: R = 256, 256 x 4 = 1,024 > 257; R = 257 meets the count
+        // guard. 513 sealed commits, past CI's time budget.
+        Assume.assumeTrue("the 256-root chain runs with -D" + FULL_MATRIX_PROPERTY + "=true", IS_FULL_MATRIX);
+        assertChainAtTheBoundaryGuard(256);
     }
 
     @Test
@@ -501,6 +485,34 @@ public class LiveViewResumeChainPriceTest extends AbstractLiveViewTest {
                 Assert.assertEquals("versioned=3 declines=0 discarded=0 fnCaptures=3 fnKeys=12", repairDelta(before, job, false));
             }
             assertMatchesRecompute(ROWS_SUM + " s", " WHERE x > 0");
+        });
+    }
+
+    @Test
+    public void testFrontierKeysAboveTheLiveKeysChargeEachBoundaryItsOwnKeys() throws Exception {
+        // T29's ladder: the frontier maps hold 12 keys (n1..n8 arrived with B2) and the replay
+        // reaches B1 with 4. scan.max.keys = 36; the late commit brings s2 below B1 and n9
+        // between B2 and B3: est 13, so B = 36. B1: max(12, 4) x 3 = 36 <= 36, admitted, and
+        // S = 4, the keys B1 images, not the projection's 12; B2: K = 12, 12 <= (36 - 4) / 2 = 16,
+        // S = 16; B3, in freezeRemaining: K = 13, 13 <= 36 - 16 = 20, kept. The chain images
+        // 4 + 12 + 13 = 29 keys. Charging B1 its projection would leave B3 a budget of 12 and
+        // decline it there, discarding two roots.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_KEYS, 36);
+        assertMemoryLeak(() -> {
+            createBaseAndView(ROWS_SUM + " s");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                seedKeys(job, 4);
+                commit(job, row("01:01:00", "s1"));
+                commit(job, newKeys("01:01:30", 1, 8) + ", " + row("01:02:00", "s1"));
+                commit(job, row("01:03:00", "s1"));
+                final long[] before = counters(job);
+                commit(job, row("01:00:30", "s2") + ", " + newKeys("01:02:30", 9, 9));
+                Assert.assertEquals("versioned=3 declines=0 discarded=0 fnCaptures=3 fnKeys=29", repairDelta(before, job, false));
+                Assert.assertEquals("resume from anchor", colStr("checkpoint_repair_last_disposition"));
+            }
+            assertMatchesRecompute(ROWS_SUM + " s");
         });
     }
 
@@ -721,23 +733,32 @@ public class LiveViewResumeChainPriceTest extends AbstractLiveViewTest {
     public void testNanosecondBaseIsPricedTheSame() throws Exception {
         // T4 over a TIMESTAMP_NS base: the price reads keys and rows, never a timestamp. The
         // anchor sits at hour 0's last nanosecond, so the resume floor is hour 1's floor and the
-        // estimate counts hour 1 whole, as over a microsecond base: 11.
+        // estimate counts hour 1 whole, as over a microsecond base: 11. The decline logs the
+        // anchor in the base's own unit.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_KEYS, 1);
-        assertMemoryLeak(() -> {
-            createBase("TIMESTAMP_NS", "HOUR");
-            createView(ROWS_SUM + " s", "");
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                driveSeedToCompletion(job, "lv");
-                commit(job, row("2026-01-01T00:59:59.999999996Z", "s1", 1, "s1", 1.0) + ", " + row("2026-01-01T00:59:59.999999997Z", "s2", 1, "s2", 1.0)
-                        + ", " + row("2026-01-01T00:59:59.999999998Z", "s3", 1, "s3", 1.0) + ", " + row("2026-01-01T00:59:59.999999999Z", "s4", 1, "s4", 1.0));
-                commitInOrder(job, new int[]{3, 3, 4});
-                final long[] before = counters(job);
-                commit(job, row("01:00:30", "s2"));
-                Assert.assertEquals("versioned=0 declines=1 discarded=0 fnCaptures=1 fnKeys=4", repairDelta(before, job, false));
-            }
-            assertMatchesRecompute(ROWS_SUM + " s");
-        });
+        final LogCapture capture = new LogCapture();
+        try {
+            assertMemoryLeak(() -> {
+                createBase("TIMESTAMP_NS", "HOUR");
+                createView(ROWS_SUM + " s", "");
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    driveSeedToCompletion(job, "lv");
+                    commit(job, row("2026-01-01T00:59:59.999999996Z", "s1", 1, "s1", 1.0) + ", " + row("2026-01-01T00:59:59.999999997Z", "s2", 1, "s2", 1.0)
+                            + ", " + row("2026-01-01T00:59:59.999999998Z", "s3", 1, "s3", 1.0) + ", " + row("2026-01-01T00:59:59.999999999Z", "s4", 1, "s4", 1.0));
+                    commitInOrder(job, new int[]{3, 3, 4});
+                    final long[] before = counters(job);
+                    capture.start();
+                    commit(job, row("01:00:30", "s2"));
+                    capture.drain();
+                    capture.assertLogged(DECLINE_LOG + ", boundaries=3, max=256, frozenRoots=0, boundaryKeys=4, frontierKeys=4, imagedKeys=0, keyBudget=11, resumeScanRows=11, anchorMaxTs=2026-01-01T00:59:59.999999999Z");
+                    Assert.assertEquals("versioned=0 declines=1 discarded=0 fnCaptures=1 fnKeys=4", repairDelta(before, job, false));
+                }
+                assertMatchesRecompute(ROWS_SUM + " s");
+            });
+        } finally {
+            capture.stop();
+        }
     }
 
     @Test
@@ -1078,6 +1099,45 @@ public class LiveViewResumeChainPriceTest extends AbstractLiveViewTest {
             assertMatchesRecompute(plain, "", projection);
             dropViewAndBase();
         });
+    }
+
+    // R = maxChainedBoundaries roots above the anchor, then R + 1, each with a late row below
+    // them all: est R + 1 and K = 4, so the price declines the first chain and the count guard
+    // the second.
+    private void assertChainAtTheBoundaryGuard(int maxChainedBoundaries) throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, maxChainedBoundaries);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_KEYS, 1);
+        // No directory sweep per seal: it lists a directory every one of the roots grows.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_PURGE_INTERVAL, 0);
+        for (int roots : new int[]{maxChainedBoundaries, maxChainedBoundaries + 1}) {
+            assertMemoryLeak(() -> {
+                createBaseAndView(ROWS_SUM + " s");
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    driveSeedToCompletion(job, "lv");
+                    seedKeys(job, 4);
+                    for (int i = 1; i <= roots; i++) {
+                        // One refresh pass per commit is enough for an in-order row to seal its root.
+                        execute("INSERT INTO base (ts, sym, k, v, x, y, d) VALUES " + row(DAY_ZERO_MICROS + HOUR_MICROS + i * 10_000_000L, "s1"));
+                        drainWalQueue();
+                        setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                        drainJob(job);
+                    }
+                    drainWalQueue();
+                    Assert.assertEquals(roots + 1, colLong("checkpoint_timeline_entries"));
+                    final long[] before = counters(job);
+                    commit(job, row(DAY_ZERO_MICROS + HOUR_MICROS + 5_000_000L, "s2"));
+                    Assert.assertEquals(
+                            roots == maxChainedBoundaries
+                                    ? "versioned=0 declines=1 discarded=0 fnCaptures=1 fnKeys=4"
+                                    : "versioned=0 declines=0 discarded=0 fnCaptures=1 fnKeys=4",
+                            repairDelta(before, job, false)
+                    );
+                }
+                assertMatchesRecompute(ROWS_SUM + " s");
+                dropViewAndBase();
+            });
+        }
     }
 
     private void assertMatchesRecompute(String projection) throws Exception {

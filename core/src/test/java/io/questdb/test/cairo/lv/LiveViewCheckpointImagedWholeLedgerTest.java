@@ -35,6 +35,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -62,7 +63,8 @@ import java.util.Collection;
  * </ol>
  * The expected counts come from the class table: durable and tracked families 0; lag, rank,
  * dense_rank, corr/covar*, every EXCLUDE CURRENT ROW call, row_number past the leaf budget and a
- * bounded ROWS call 1.
+ * bounded ROWS call 1. CI runs one view per family; every view runs with
+ * {@code -Dquestdb.lv.chain.price.full=true}.
  */
 @RunWith(Parameterized.class)
 public class LiveViewCheckpointImagedWholeLedgerTest extends AbstractLiveViewTest {
@@ -90,11 +92,24 @@ public class LiveViewCheckpointImagedWholeLedgerTest extends AbstractLiveViewTes
             "sum(x) OVER w s, sum(d64) OVER w v|0", "sum(x) OVER w s, last_value(x) OVER w v|0",
             "sum(x) OVER w s, sum(x) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) v|1"
     };
+    // One view of DEFAULT_FRAME_VIEWS per branch of the predicate, with its expected count.
+    private static final String[] DEFAULT_FRAME_FAMILY_VIEWS = {
+            // A durable projection, and a DECIMAL sum, a residual the window dispatches to and tracks.
+            "sum(x) OVER w v|0", "sum(d64) OVER w v|0",
+            // lag keeps no dirty set; rank and the bivariate calls keep no baseline.
+            "lag(x) OVER w v|1", "rank() OVER w v|1", "covar_pop(x, y) OVER w v|1",
+            // Runtime-only members past the 16-sum leaf budget, a tracked and an untracked one.
+            sums16() + ", avg(x) OVER w v|0", sums16() + ", row_number() OVER w v|1",
+            // A bounded ROWS call the ANCHOR window does not dispatch to.
+            "sum(x) OVER w s, sum(x) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) v|1"
+    };
     // Every call EXCLUDE CURRENT ROW accepts is a ring, which no seal freezes incrementally.
     private static final String[] EXCLUDE_FRAME_VIEWS = {
             "sum(x) OVER w v|1", "avg(x) OVER w v|1", "count(x) OVER w v|1", "count() OVER w v|1", "sum(d64) OVER w v|1",
             "avg(d128) OVER w v|1", "first_value(x) OVER w v|1", "last_value(x) OVER w v|1", "nth_value(x, 2) OVER w v|1"
     };
+    // An EXCLUDE CURRENT ROW avg: AvgDouble's bounded RANGE class, a ring claiming no dirty set.
+    private static final String[] EXCLUDE_FRAME_FAMILY_VIEWS = {"avg(x) OVER w v|1"};
     private final boolean isFused;
     private int viewSeq;
 
@@ -109,12 +124,32 @@ public class LiveViewCheckpointImagedWholeLedgerTest extends AbstractLiveViewTes
 
     @Test
     public void testDefaultFrameFamilies() throws Exception {
+        assertViews(DEFAULT_FRAME_FAMILY_VIEWS, ANCHOR);
+    }
+
+    @Test
+    public void testEveryDefaultFrameView() throws Exception {
+        assumeFullMatrix();
         assertViews(DEFAULT_FRAME_VIEWS, ANCHOR);
     }
 
     @Test
-    public void testExcludeCurrentRowFamilies() throws Exception {
+    public void testEveryExcludeCurrentRowView() throws Exception {
+        assumeFullMatrix();
         assertViews(EXCLUDE_FRAME_VIEWS, EXCLUDE);
+    }
+
+    @Test
+    public void testExcludeCurrentRowFamilies() throws Exception {
+        assertViews(EXCLUDE_FRAME_FAMILY_VIEWS, EXCLUDE);
+    }
+
+    // 140 views take minutes, past CI's time budget.
+    private static void assumeFullMatrix() {
+        Assume.assumeTrue(
+                "every view runs with -D" + LiveViewResumeChainPriceTest.FULL_MATRIX_PROPERTY + "=true",
+                LiveViewResumeChainPriceTest.IS_FULL_MATRIX
+        );
     }
 
     private static boolean isDispatched(ObjList<WindowFunction> anchorable, WindowFunction function) {
