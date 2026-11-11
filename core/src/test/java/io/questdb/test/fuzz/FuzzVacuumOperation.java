@@ -35,7 +35,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.Chars;
 import io.questdb.std.LongList;
-import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.test.cairo.fuzz.FailureFileFacade;
 
@@ -75,8 +74,11 @@ public class FuzzVacuumOperation implements FuzzTransactionOperation {
     // VACUUM rejects work while the partition purge discovery queue or ColumnPurgeJob's input queue is full
     // and asks the caller to retry. With VACUUM before every transaction from several writer threads, the
     // purge workers can fall behind on a loaded host, and a single-writer WAL run queues every operation
-    // before any apply worker starts. Retrying is safe: VACUUM rescans the table directory and re-discovers
-    // every stale partition and column version.
+    // before any apply worker starts. This thread drains the discovery queue itself and retries. A full
+    // ColumnPurgeJob queue skips the VACUUM instead: FuzzRunner runs that job between transactions, on this
+    // thread when it applies them one by one, so a wait here would not see the queue drain. Neither loses
+    // work: the next VACUUM rescans the table directory and re-discovers every stale partition and column
+    // version.
     private static void vacuum(SqlCompiler compiler, SqlExecutionContext context, O3PartitionPurgeJob purgeJob, String sql) throws SqlException {
         final long deadline = System.nanoTime() + QUEUE_FULL_TIMEOUT_NANOS;
         while (true) {
@@ -90,10 +92,10 @@ public class FuzzVacuumOperation implements FuzzTransactionOperation {
                 // This thread consumes the discovery queue itself, so the retry does not depend on another worker.
                 purgeJob.drain(0);
             } catch (CairoException e) {
-                if (!Chars.contains(e.getFlyweightMessage(), COLUMN_PURGE_QUEUE_FULL_MESSAGE) || System.nanoTime() > deadline) {
+                if (!Chars.contains(e.getFlyweightMessage(), COLUMN_PURGE_QUEUE_FULL_MESSAGE)) {
                     throw e;
                 }
-                Os.sleep(1);
+                return;
             }
         }
     }
