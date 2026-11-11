@@ -42,7 +42,6 @@ import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.mp.continuation.FiberTask;
 import io.questdb.mp.continuation.LaunchResult;
 import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
@@ -313,9 +312,6 @@ public class QueryFuzzTest extends AbstractCairoTest {
             }
             config.getHashJoinBuildMode().applyProperties(node1.getConfigurationOverrides());
             setProperty(PropertyKey.CAIRO_SQL_LATEST_BY_JIT_ENABLED, Boolean.toString(rnd.nextBoolean()));
-            // A keyed SAMPLE BY FILL over these larger tables returns millions of rows, and an
-            // ORDER BY over them overruns the 64m sort budget Overrides sets for tests.
-            setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES, 512 * Numbers.SIZE_1MB);
 
             final WorkerPool queryPool = new TestWorkerPool(QUERY_POOL_NAME, queryWorkerCount, Metrics.DISABLED, WorkerPoolMode.FIBER_HOST);
             WorkerPoolUtils.setupQueryJobs(queryPool, engine, true);
