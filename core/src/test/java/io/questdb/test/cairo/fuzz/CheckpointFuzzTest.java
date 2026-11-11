@@ -885,19 +885,20 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
 
     // The restore keeps the committed POSTING indexes of column versions that are not a column's first: a BITMAP index
     // moved to POSTING (DROP INDEX gives the column a version of its own in every partition), a column an UPDATE
-    // rewrote in one partition, and a column added after the table had rows. A full copy rebuilds the indexes first.
+    // rewrote in one partition, a column added after the table had rows, and a column ALTER COLUMN TYPE converted to an
+    // indexed SYMBOL. A full copy rebuilds the indexes first.
     private void assertCheckpointCopyKeepsPostingIndexOfColumnVersion(String walClause, boolean isHardLinkCopy) throws Exception {
         Assume.assumeFalse(Os.isWindows());
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (a SYMBOL INDEX TYPE BITMAP, b SYMBOL INDEX TYPE POSTING, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY " + walClause);
-            execute("INSERT INTO x VALUES ('p', 'q', 1, '2024-01-01T00:00'), ('r', 'u', 2, '2024-01-01T12:00')");
+            execute("CREATE TABLE x (junk LONG, a SYMBOL INDEX TYPE BITMAP, b SYMBOL INDEX TYPE POSTING, d VARCHAR, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY " + walClause);
+            execute("INSERT INTO x VALUES (0, 'p', 'q', 'g', 1, '2024-01-01T00:00'), (0, 'r', 'u', 'h', 2, '2024-01-01T12:00')");
             drainWalQueue();
             execute("ALTER TABLE x ADD COLUMN c SYMBOL INDEX TYPE POSTING");
             drainWalQueue();
             execute("""
-                    INSERT INTO x (a, b, v, ts, c) VALUES
-                    ('p', 'q', 3, '2024-01-02T00:00', 'k'), ('r', 'u', 4, '2024-01-02T12:00', 'm'),
-                    ('p', 'q', 5, '2024-01-03T00:00', 'k'), ('r', 'u', 6, '2024-01-03T12:00', 'm')
+                    INSERT INTO x (junk, a, b, d, v, ts, c) VALUES
+                    (0, 'p', 'q', 'g', 3, '2024-01-02T00:00', 'k'), (0, 'r', 'u', 'h', 4, '2024-01-02T12:00', 'm'),
+                    (0, 'p', 'q', 'g', 5, '2024-01-03T00:00', 'k'), (0, 'r', 'u', 'h', 6, '2024-01-03T12:00', 'm')
                     """);
             drainWalQueue();
             execute("ALTER TABLE x ALTER COLUMN a DROP INDEX");
@@ -906,23 +907,40 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
             drainWalQueue();
             execute("UPDATE x SET b = 'u' WHERE v = 1");
             drainWalQueue();
+            execute("ALTER TABLE x ALTER COLUMN d TYPE SYMBOL INDEX TYPE POSTING");
+            drainWalQueue();
+            execute("ALTER TABLE x DROP COLUMN junk");
+            drainWalQueue();
             final TableToken tableToken = engine.verifyTableName("x");
             // The column name txn _cv gives the column, then each partition.
             final long[] a = columnNameTxns("a");
             final long[] b = columnNameTxns("b");
             final long[] c = columnNameTxns("c");
+            final long[] d = columnNameTxns("d");
             Assert.assertEquals(-1, a[0]);
             for (int i = 1; i < a.length; i++) {
                 Assert.assertTrue(Arrays.toString(a), a[i] > -1);
             }
             Assert.assertTrue(Arrays.toString(b), b[0] == -1 && b[1] > -1 && b[2] == -1 && b[3] == -1);
             Assert.assertTrue(Arrays.toString(c), c[0] > -1);
+            for (long columnNameTxn : d) {
+                Assert.assertTrue(Arrays.toString(d), columnNameTxn > -1);
+            }
+            // Dropping junk leaves each column a metadata index below its writer index, and the conversion gives d the
+            // highest writer index: looked up by metadata index, _cv gives another column's version.
+            try (TableReader reader = getReader("x")) {
+                final TableReaderMetadata metadata = reader.getMetadata();
+                for (String column : new String[]{"a", "b", "c", "d"}) {
+                    final int columnIndex = metadata.getColumnIndex(column);
+                    Assert.assertNotEquals(column, columnIndex, metadata.getWriterIndex(columnIndex));
+                }
+            }
             checkpointCreate(false, isHardLinkCopy);
             checkpointRecover();
             drainWalQueue();
             assertNotSuspended(tableToken);
 
-            for (String column : new String[]{"a", "b", "c"}) {
+            for (String column : new String[]{"a", "b", "c", "d"}) {
                 assertPostingIndexChains(column);
             }
             assertQuery("SELECT v, ts FROM x WHERE a = 'p'")
@@ -952,6 +970,16 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
                     .withPlanContaining("Index forward scan on: c")
                     .returns("""
                             v\tts
+                            3\t2024-01-02T00:00:00.000000Z
+                            5\t2024-01-03T00:00:00.000000Z
+                            """);
+            assertQuery("SELECT v, ts FROM x WHERE d = 'g'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlanContaining("Index forward scan on: d")
+                    .returns("""
+                            v\tts
+                            1\t2024-01-01T00:00:00.000000Z
                             3\t2024-01-02T00:00:00.000000Z
                             5\t2024-01-03T00:00:00.000000Z
                             """);
