@@ -140,6 +140,13 @@ public class SqlOptimiser implements Mutable {
     private static final int JOIN_OP_EQUAL = 1;
     private static final int JOIN_OP_OR = 3;
     private static final int JOIN_OP_REGEX = 4;
+    // The most entries the propagation of the columns of a query in kept-whole mode adds to its sets of outputs and of
+    // columns reached, see takeKeptWholeWork(). A SELECT list whose columns each read the one before it and the nested
+    // model gives column i the outputs of the columns after it, so the entries grow with the square of the columns.
+    // Past the limit, a column serves every output, which keeps no sub-query whole for its sake and so leaves out of
+    // the dependencies of the view the columns only such a read would scan: a read of such a view that scans them
+    // needs SELECT on them. It keeps the work and the memory of the propagation in proportion to the SELECT.
+    private static final long KEPT_WHOLE_WORK_LIMIT = 1L << 20;
     // Rewriters that break the 1:1 relationship between baseModel rows and
     // the rows the outer LIMIT counts: DISTINCT and GROUP BY drop rows
     // (SAMPLE BY is encoded as GROUP BY); WINDOW preserves the count but
@@ -193,9 +200,9 @@ public class SqlOptimiser implements Mutable {
     private static final CharSequenceIntHashMap notOps = new CharSequenceIntHashMap();
     private static final CharSequenceHashSet nullConstants = new CharSequenceHashSet();
     private final static LowerCaseAsciiCharSequenceHashSet orderedGroupByFunctions;
-    // Test-only observability for the propagation of the columns of a query in kept-whole mode: the outputs it adds to
-    // the sets of outputs of the columns, see recordKeptWholeOrigins(). Tests read it on the thread that ran the
-    // compile and assert on deltas.
+    // Test-only observability for the propagation of the columns of a query in kept-whole mode: the entries it adds to
+    // the sets of outputs of the columns and of the columns they reach, see takeKeptWholeWork(). Tests read it on the
+    // thread that ran the compile and assert on deltas.
     private static long keptWholeOriginAddCount;
     protected final ObjList<CharSequence> literalCollectorANames = new ObjList<>();
     private final CharacterStore characterStore;
@@ -367,6 +374,8 @@ public class SqlOptimiser implements Mutable {
     private IntHashSet keptWholeEmittedOrigins;
     // the number of outputs of the view while the columns of a query propagate in kept-whole mode
     private int keptWholeOutputCount;
+    // the entries the propagation in kept-whole mode has added to its sets, see takeKeptWholeWork()
+    private long keptWholeWork;
     private OperatorExpression opAnd;
     private OperatorExpression opGeq;
     private OperatorExpression opLt;
@@ -462,11 +471,11 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
-     * Returns the number of outputs the propagation of the columns of a query in kept-whole mode has added to the sets
-     * of outputs of the columns since class load, see {@link #setSubQueryKeptWhole(boolean)}. Capture it before a
-     * compile and assert on the delta afterwards.
+     * Returns the number of entries the propagation of the columns of a query in kept-whole mode has added to the sets
+     * of outputs of the columns, and of the columns they reach, since class load, see
+     * {@link #setSubQueryKeptWhole(boolean)}. Capture it before a compile and assert on the delta afterwards.
      *
-     * @return count of outputs added to the sets of outputs of the columns
+     * @return count of entries added to the sets of the propagation
      */
     @TestOnly
     public static long getKeptWholeOriginAddCountForTesting() {
@@ -1967,7 +1976,11 @@ public class SqlOptimiser implements Mutable {
                     || nested.getAliasToColumnMap().contains(node.token)) {
                 return true;
             }
-            reached.addAll(reachedNestedReaders(index, model, nested, columns));
+            final IntHashSet nestedReaders = reachedNestedReaders(index, model, nested, columns);
+            // past the limit of the work, addSameModelReaderOrigins() gives up the outputs of the projection
+            if (takeKeptWholeWork(nestedReaders.size())) {
+                reached.addAll(nestedReaders);
+            }
             return false;
         }
         boolean isNestedRead = false;
@@ -1990,17 +2003,16 @@ public class SqlOptimiser implements Mutable {
             return;
         }
         final IntHashSet ownOrigins = keptWholeColumnOrigins.getQuick(reader);
-        if (origins == null || ownOrigins == null) {
+        if (origins == null || ownOrigins == null
+                || !takeKeptWholeWork(readerOrigins == null ? ownOrigins.size() + origins.size() : origins.size())) {
             keptWholeReaderOrigins.setQuick(reader, EVERY_OUTPUT);
             return;
         }
         if (readerOrigins == null) {
             readerOrigins = intHashSetPool.next();
-            keptWholeOriginAddCount += ownOrigins.size();
             readerOrigins.addAll(ownOrigins);
             keptWholeReaderOrigins.setQuick(reader, readerOrigins);
         }
-        keptWholeOriginAddCount += origins.size();
         readerOrigins.addAll(origins);
     }
 
@@ -2032,6 +2044,14 @@ public class SqlOptimiser implements Mutable {
                     addReaderOrigins(reader, origins);
                 }
             }
+        }
+        if (isKeptWholeWorkExhausted()) {
+            // The sets of columns reached and of outputs may have stopped short of what the columns need, see
+            // takeKeptWholeWork(), so every column of the projection serves every output, as one every read needs.
+            for (int i = 0; i < columnCount; i++) {
+                keptWholeColumnOrigins.setQuick(i, null);
+            }
+            return;
         }
         for (int i = 0; i < columnCount; i++) {
             final IntHashSet readerOrigins = keptWholeReaderOrigins.getQuick(i);
@@ -3503,21 +3523,26 @@ public class SqlOptimiser implements Mutable {
                 hasColumnEveryReadNeeds = true;
             } else {
                 // The columns of a projection share the sets of outputs they serve, see recordKeptWholeOrigins(), so
-                // each set is added once, which keeps the work in proportion to the columns plus the outputs.
+                // each set is added once, which keeps the work in proportion to the columns plus the outputs. Past
+                // the limit of the work, no read keeps the join model whole for the sake of the projection.
                 if (keptWholeServedOrigins.add(origins)) {
-                    keptWholeOriginAddCount += origins.size();
+                    if (!takeKeptWholeWork(origins.size())) {
+                        return;
+                    }
                     keptWholeServedBy.addAll(origins);
                 }
                 if (isReaching) {
                     if (keptWholeNeededOrigins.add(origins)) {
-                        keptWholeOriginAddCount += origins.size();
+                        if (!takeKeptWholeWork(origins.size())) {
+                            return;
+                        }
                         keptWholeNeededBy.addAll(origins);
                     }
                     isReached = true;
                 }
             }
         }
-        if (!isReached) {
+        if (!isReached || !takeKeptWholeWork(hasColumnEveryReadNeeds ? keptWholeOutputCount : keptWholeServedBy.size())) {
             return;
         }
         if (hasColumnEveryReadNeeds) {
@@ -5296,6 +5321,7 @@ public class SqlOptimiser implements Mutable {
     private void endKeptWholePropagation() {
         isSubQueryKeptWhole = false;
         isKeptWholeDryRun = false;
+        keptWholeWork = 0;
         keptWholeColumnIndexes.clear();
         keptWholeColumnJoins.clear();
         keptWholeColumnOrigins.clear();
@@ -6923,6 +6949,11 @@ public class SqlOptimiser implements Mutable {
         } catch (NumericException ne) {
             return false;
         }
+    }
+
+    // whether the propagation in kept-whole mode has reached the limit of its work, see takeKeptWholeWork()
+    private boolean isKeptWholeWorkExhausted() {
+        return keptWholeWork >= KEPT_WHOLE_WORK_LIMIT;
     }
 
     private boolean isLateralCountTemplateResolvable(
@@ -9784,18 +9815,18 @@ public class SqlOptimiser implements Mutable {
         if (recorded == null) {
             return;
         }
-        if (origins == null) {
+        final boolean isOwned = recorded instanceof KeptWholeOrigins columnSet && columnSet.isOwned;
+        if (origins == null || !takeKeptWholeWork(isOwned ? origins.size() : recorded.size() + origins.size())) {
+            // past the limit of the work, the column serves every output, as one every read needs
             columnOrigins.putAt(index, alias, null);
-        } else if (recorded instanceof KeptWholeOrigins columnSet && columnSet.isOwned) {
+        } else if (isOwned) {
             // the column made the set for itself, and no other column shares it yet
-            keptWholeOriginAddCount += origins.size();
-            columnSet.addAll(origins);
+            recorded.addAll(origins);
         } else {
             // The set may serve other columns too: a projection shares the set of its column with the columns the
             // column reads. So the column takes a copy of its own.
             final KeptWholeOrigins union = keptWholeOriginsPool.next();
             union.isOwned = true;
-            keptWholeOriginAddCount += recorded.size() + origins.size();
             union.addAll(recorded);
             union.addAll(origins);
             columnOrigins.putAt(index, alias, union);
@@ -10020,6 +10051,15 @@ public class SqlOptimiser implements Mutable {
                 throw SqlException.$(fillPosition, "SAMPLE BY FILL is not supported with duplicate grouping sets");
             }
         }
+    }
+
+    // The propagation in kept-whole mode takes the sets it fills from pools, which keep the capacity of their objects
+    // for the life of the compiler, up to KEPT_WHOLE_WORK_LIMIT entries. The pools start over instead, as the next
+    // statements of the compiler rarely propagate in kept-whole mode.
+    private void releaseKeptWholeMemory() {
+        intHashSetPool.resetCapacity();
+        keptWholeOriginMapPool.resetCapacity();
+        keptWholeOriginsPool.resetCapacity();
     }
 
     /**
@@ -15948,6 +15988,7 @@ public class SqlOptimiser implements Mutable {
     // set operation, are the outputs a read of the view can name.
     private void startKeptWholePropagation(IQueryModel root) {
         isSubQueryKeptWhole = true;
+        keptWholeWork = 0;
         final IQueryModel view = skipNoneTypeModels(root.getNestedModel());
         assert view != null : "a read of a view counts the rows of a SELECT";
         keptWholeOutputCount = view.getColumns().size();
@@ -16018,6 +16059,20 @@ public class SqlOptimiser implements Mutable {
                 target.setJoinType(IQueryModel.JOIN_INNER);
             }
         }
+    }
+
+    // Takes the work of adding count entries to the sets of the propagation in kept-whole mode, and returns whether the
+    // propagation may do it. Past KEPT_WHOLE_WORK_LIMIT it may not, and the caller gives the column every output, or
+    // keeps no join model whole: a column that serves more outputs keeps fewer sub-queries whole, so the dependencies
+    // of the view lend fewer columns.
+    private boolean takeKeptWholeWork(long count) {
+        if (count > KEPT_WHOLE_WORK_LIMIT - keptWholeWork) {
+            keptWholeWork = KEPT_WHOLE_WORK_LIMIT;
+            return false;
+        }
+        keptWholeWork += count;
+        keptWholeOriginAddCount += count;
+        return true;
     }
 
     private void traverseNamesAndIndices(IQueryModel parent, ExpressionNode node) throws SqlException {
@@ -17361,6 +17416,7 @@ public class SqlOptimiser implements Mutable {
             } finally {
                 if (isKeptWhole) {
                     endKeptWholePropagation();
+                    releaseKeptWholeMemory();
                 }
             }
             rewriteMultipleTermLimitedOrderByPart2(rewrittenModel);

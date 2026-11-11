@@ -1382,6 +1382,22 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return ColumnType.isTimestamp(to) && ColumnType.isConvertibleFrom(from, to);
     }
 
+    // Opens the cursor of the plan of a view's SELECT and closes it, reading no row: the open authorizes the
+    // principal's reads of what the plan scans. Nobody is handed a row, so the open is flagged as a metadata probe,
+    // which an audited view in the SELECT does not record as a read. The flag covers the open only, and comes back
+    // as it was, since any execution context may set it.
+    private static void openViewPlan(RecordCursorFactory factory, SqlExecutionContext executionContext) throws SqlException {
+        final boolean wasMetadataProbe = executionContext.isMetadataProbe();
+        executionContext.setMetadataProbe(true);
+        final RecordCursor cursor;
+        try {
+            cursor = factory.getCursor(executionContext);
+        } finally {
+            executionContext.setMetadataProbe(wasMetadataProbe);
+        }
+        Misc.free(cursor);
+    }
+
     /**
      * Copies the reason out of {@code e} so it survives being wrapped in a new {@link SqlException}.
      * <p>
@@ -2728,20 +2744,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                         .put(']');
                             }
                         }
-                        // test the cursor, if no exception thrown viewSql is working
-                        // Nobody is handed the row this reads, so the open is flagged like the probe in
+                        // Open the plan, as executeCreateView() does, which authorizes the principal's reads of what
+                        // it scans, and read no row of it: the plan keeps the ORDER BY of a sub-query that a reader's
+                        // SELECT inherits, see optimiseViewQuery(), and its first row would sort every row of such a
+                        // sub-query. Nobody is handed a row, so the open is flagged like the probe in
                         // executeCreateView: an audited view in the new body must not record a read.
-                        final boolean wasMetadataProbe = executionContext.isMetadataProbe();
-                        executionContext.setMetadataProbe(true);
-                        final RecordCursor cursor;
-                        try {
-                            cursor = factory.getCursor(executionContext);
-                        } finally {
-                            executionContext.setMetadataProbe(wasMetadataProbe);
-                        }
-                        try (cursor) {
-                            cursor.hasNext();
-                        }
+                        openViewPlan(factory, executionContext);
                     }
 
                     if (expiryPolicyVersion != engine.getMetadataCache().getExpiryPolicyVersion()) {
@@ -7352,19 +7360,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     engine.getViewGraph().validateNoCycle(viewToken, queryModel);
                     // A table out of date makes the loop compile the SELECT again, the dependencies included.
                     try (RecordCursorFactory factory = compiler.generateSelectWithoutRetries(queryModel, executionContext, false)) {
-                        // Nobody is handed the row this reads, so the open is flagged like the probe in
-                        // executeCreateView: an audited view in the body must not record a read.
-                        final boolean wasMetadataProbe = executionContext.isMetadataProbe();
-                        executionContext.setMetadataProbe(true);
-                        final RecordCursor cursor;
-                        try {
-                            cursor = factory.getCursor(executionContext);
-                        } finally {
-                            executionContext.setMetadataProbe(wasMetadataProbe);
-                        }
-                        try (cursor) {
-                            cursor.hasNext();
-                        }
+                        // like ALTER VIEW, open the plan and read no row of it, see alterViewExecution()
+                        openViewPlan(factory, executionContext);
                     }
                     if (expiryPolicyVersion == engine.getMetadataCache().getExpiryPolicyVersion()) {
                         engine.replaceViewDefinition(viewToken, viewSql, dependencies, blockFileWriter, path);

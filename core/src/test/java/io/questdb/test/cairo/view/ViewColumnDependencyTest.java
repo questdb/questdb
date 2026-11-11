@@ -1652,10 +1652,20 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
             // Each column of the sub-query reads the one before it, and a read that names one of the columns of the
             // view needs every column before it. The second compile adds the outputs a column serves to the columns
             // it reads once for the SELECT list, so its work grows with the columns, not with their square.
-            final long work100 = keptWholeWork(chainedColumns(100), "{w_chain=[c1]}");
-            final long work400 = keptWholeWork(chainedColumns(400), "{w_chain=[c1]}");
+            final long work100 = keptWholeWork(chainedColumns(100, "1"), "{w_chain=[c1]}");
+            final long work400 = keptWholeWork(chainedColumns(400, "1"), "{w_chain=[c1]}");
             Assert.assertTrue(work400 + " outputs added with 400 columns, " + work100 + " with 100", work400 < 8 * work100);
-            assertReads(chainedColumns(5), "{w_chain=[c1]}", "SELECT one FROM v", "SELECT a3 FROM v");
+            assertReads(chainedColumns(5, "1"), "{w_chain=[c1]}", "SELECT one FROM v", "SELECT a3 FROM v");
+            // Each column also reads c1, so each one serves the outputs of every column after it, and the outputs the
+            // second compile records grow with the square of the columns. Past a bound it gives every column every
+            // output instead, and its work stops growing with the columns.
+            final long readingWork400 = keptWholeWork(chainedColumns(400, "c1"), "{w_chain=[c1]}");
+            final long readingWork1600 = keptWholeWork(chainedColumns(1600, "c1"), "{w_chain=[c1]}");
+            Assert.assertTrue(
+                    readingWork1600 + " outputs added with 1600 columns, " + readingWork400 + " with 400",
+                    readingWork1600 < 4 * readingWork400
+            );
+            assertReads(chainedColumns(5, "c1"), "{w_chain=[c1]}", "SELECT one FROM v", "SELECT a3 FROM v");
         });
     }
 
@@ -2136,6 +2146,37 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
     }
 
     @Test
+    public void testViewReadInExpressionIsOverriddenByValuesThatReachIt() throws Exception {
+        assertMemoryLeak(() -> {
+            createTablesWithTwoTimestamps();
+            execute("CREATE TABLE z (ts TIMESTAMP, k2 SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO z VALUES (0, 'k1', 5)");
+            drainWalQueue();
+            // A read of w that names only k2 keeps the sub-query of x whole, and w lends the columns it scans only to
+            // the reads that set none of its variables.
+            execute("CREATE VIEW w AS (SELECT a, k2 FROM (SELECT * FROM x) CROSS JOIN (SELECT k2 FROM z))");
+            drainWalAndViewQueues();
+            Assert.assertEquals("{x=[?*, a], z=[k2]}", dependenciesOf("w"));
+            // A value of @p reaches the view, and not w, which the view reads in an expression, whether the view reads
+            // @p before w or after it.
+            for (String viewSql : new String[]{
+                    "DECLARE OVERRIDABLE @p := 0 SELECT a, @p q, k IN (SELECT k2 FROM w) f FROM x2",
+                    "DECLARE OVERRIDABLE @p := 0 SELECT a, k IN (SELECT k2 FROM w) f, @p q FROM x2"
+            }) {
+                assertReads(false, viewSql, "{w=[], x=[], x2=[a, k], z=[]}", "DECLARE @p := 1 SELECT * FROM v");
+            }
+            // A view whose own SELECT sets @s of v_marked reads v_marked as a read that sets @s, in an expression as in
+            // its FROM clause, see testViewSettingVariableOfViewItReadsLendsNoColumnThatViewMarks(), so v_marked lends
+            // it no ts2, which the count() of v_marked takes.
+            execute("CREATE VIEW v_marked AS (DECLARE OVERRIDABLE @s := 'k1' SELECT t.a, u.c FROM (SELECT k, a, ts FROM x2 WHERE k = @s ORDER BY ts) t ASOF JOIN y u ON (k))");
+            drainWalAndViewQueues();
+            final String countSql = "SELECT x FROM long_sequence(1) WHERE x = (SELECT count() FROM v_marked WHERE c = 5)";
+            assertReads(false, countSql, "{v_marked=[], x2=[], y=[]}", "SELECT * FROM v");
+            assertReadDenied("DECLARE @s := 'k1' " + countSql, "SELECT * FROM v", "permission denied [table=x2, columns=ts2]");
+        });
+    }
+
+    @Test
     public void testViewReadingWholeRowsReadsColumnAddedLater() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
@@ -2359,8 +2400,8 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
         Assert.assertTrue(visits16 + " visits with 16 LATERAL joins, " + visits8 + " with 8", visits16 < 3 * visits8);
     }
 
-    // the SELECT of the columns a1 to a(n-1) of a sub-query whose column a(i+1) reads ai, and a constant
-    private static String chainedColumns(int columnCount) {
+    // the SELECT of the columns a1 to a(n-1) of a sub-query whose column a(i+1) adds the term to ai, and a constant
+    private static String chainedColumns(int columnCount, String term) {
         final StringSink viewSql = new StringSink();
         viewSql.put("SELECT ");
         for (int i = 1; i < columnCount; i++) {
@@ -2368,7 +2409,7 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
         }
         viewSql.put("1 one FROM (SELECT c1 a1");
         for (int i = 2; i <= columnCount; i++) {
-            viewSql.put(", a").put(i - 1).put(" + 1 a").put(i);
+            viewSql.put(", a").put(i - 1).put(" + ").put(term).put(" a").put(i);
         }
         return viewSql.put(" FROM w_chain)").toString();
     }
