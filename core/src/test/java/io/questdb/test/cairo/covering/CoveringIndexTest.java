@@ -11043,7 +11043,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .returns("""
                             s
                             a
-
+                            
                             """);
 
             // A column that never took a value: its symbol table is empty, and every row reads as NULL
@@ -11057,7 +11057,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .withPlanContaining("PostingIndex op: distinct on: s")
                     .returns("""
                             s
-
+                            
                             """);
         });
     }
@@ -21658,7 +21658,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             s
                             a
                             b
-
+                            
                             """);
             assertQuery("SELECT count() FROM (SELECT DISTINCT s FROM t_dist_top)")
                     .noRandomAccess()
@@ -21676,7 +21676,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .withPlanContaining("PostingIndex op: distinct on: s")
                     .returns("""
                             s
-
+                            
                             """);
             assertQuery("SELECT DISTINCT s FROM t_dist_top WHERE ts IN '2024-01-02T12'")
                     .noRandomAccess()
@@ -21692,7 +21692,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .withPlanContaining("PostingIndex op: distinct on: s")
                     .returns("""
                             s
-
+                            
                             """);
         });
     }
