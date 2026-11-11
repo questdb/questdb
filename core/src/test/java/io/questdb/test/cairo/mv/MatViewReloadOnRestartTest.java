@@ -76,6 +76,14 @@ import static io.questdb.test.tools.TestUtils.assertContains;
 
 @RunWith(Parameterized.class)
 public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
+    private static final String[] PORTS_DISABLED_ENVS = {
+            PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true",
+            PropertyKey.LINE_TCP_ENABLED.getEnvVarName(), "false",
+            PropertyKey.LINE_UDP_ENABLED.getEnvVarName(), "false",
+            PropertyKey.HTTP_MIN_ENABLED.getEnvVarName(), "false",
+            PropertyKey.HTTP_ENABLED.getEnvVarName(), "false",
+            PropertyKey.PG_ENABLED.getEnvVarName(), "false"
+    };
     private static final LogCapture capture = new LogCapture();
     private final TestTimestampType timestampType;
 
@@ -123,41 +131,18 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
 
     @NotNull
     private static TestServerMain startMainPortsDisabled() {
-        return startWithEnvVariables0(
-                PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true",
-                PropertyKey.LINE_TCP_ENABLED.getEnvVarName(), "false",
-                PropertyKey.LINE_UDP_ENABLED.getEnvVarName(), "false",
-                PropertyKey.HTTP_MIN_ENABLED.getEnvVarName(), "false",
-                PropertyKey.HTTP_ENABLED.getEnvVarName(), "false",
-                PropertyKey.PG_ENABLED.getEnvVarName(), "false"
-        );
+        return startWithEnvVariables0(PORTS_DISABLED_ENVS);
     }
 
+    // The extra settings come after the ones that disable the ports, so they can override them.
     @NotNull
     private static TestServerMain startMainPortsDisabled(MicrosecondClock microsecondClock, String... extraEnvs) {
         assert extraEnvs.length % 2 == 0;
         ((MicrosTimestampDriver) (MicrosTimestampDriver.INSTANCE)).setTicker(microsecondClock);
         ((NanosTimestampDriver) (NanosTimestampDriver.INSTANCE)).setTicker((NanosecondClock) () -> NanosTimestampDriver.INSTANCE.fromMicros(microsecondClock.getTicks()));
 
-        final String[] disablePortsEnvs = new String[]{
-                PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true",
-                PropertyKey.LINE_TCP_ENABLED.getEnvVarName(), "false",
-                PropertyKey.LINE_UDP_ENABLED.getEnvVarName(), "false",
-                PropertyKey.HTTP_MIN_ENABLED.getEnvVarName(), "false",
-                PropertyKey.HTTP_ENABLED.getEnvVarName(), "false",
-                PropertyKey.PG_ENABLED.getEnvVarName(), "false"
-        };
-
-        final String[] envs = new String[disablePortsEnvs.length + extraEnvs.length];
-        for (int i = 0; i < extraEnvs.length; i += 2) {
-            envs[i] = extraEnvs[i];
-            envs[i + 1] = extraEnvs[i + 1];
-        }
-        for (int i = disablePortsEnvs.length; i < envs.length; i += 2) {
-            envs[i] = disablePortsEnvs[i - disablePortsEnvs.length];
-            envs[i + 1] = disablePortsEnvs[i + 1 - disablePortsEnvs.length];
-        }
-
+        final String[] envs = Arrays.copyOf(PORTS_DISABLED_ENVS, PORTS_DISABLED_ENVS.length + extraEnvs.length);
+        System.arraycopy(extraEnvs, 0, envs, PORTS_DISABLED_ENVS.length, extraEnvs.length);
         return startWithEnvVariables0(microsecondClock, envs);
     }
 

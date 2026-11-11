@@ -3361,7 +3361,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 );
 
                                 timerTimeZone = viewDefinition.getTimeZone();
-                                tzRulesMicros = viewDefinition.getTzRules();
+                                if (timerTimeZone != null) {
+                                    // The view definition holds the rules of the SAMPLE BY time zone in the base
+                                    // table's timestamp unit, nanoseconds for a TIMESTAMP_NS table, but the period
+                                    // timer counts in microseconds.
+                                    tzRulesMicros = MicrosTimestampDriver.INSTANCE.getTimezoneRules(DateLocaleFactory.EN_LOCALE, timerTimeZone);
+                                }
                                 if (viewDefinition.getTimeZoneOffset() != null) {
                                     final long val = Dates.parseOffset(viewDefinition.getTimeZoneOffset());
                                     if (val == Numbers.LONG_NULL) {

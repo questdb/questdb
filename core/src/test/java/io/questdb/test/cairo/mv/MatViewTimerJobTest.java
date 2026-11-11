@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.mv;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.mv.MatViewState;
@@ -35,7 +36,9 @@ import io.questdb.mp.ConcurrentQueue;
 import io.questdb.mp.Queue;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
@@ -45,8 +48,13 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.Collection;
 import java.util.List;
+import java.util.TreeSet;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -228,6 +236,116 @@ public class MatViewTimerJobTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimerEveryDayInTimeZoneFiresAtLocalTimesAroundDstEndAheadOfUtc() throws Exception {
+        // DST ends in Europe/Berlin on 2022-10-30 at 01:00Z (03:00 CEST -> 02:00 CET), and the clock passes
+        // 02:00-03:00 local twice.
+        testTimerFiresAtLocalTimes("Europe/Berlin", ChronoUnit.DAYS, 3, halfPastHoursOf("2022-10-29"));
+    }
+
+    @Test
+    public void testTimerEveryDayInTimeZoneFiresAtLocalTimesAroundDstEndBehindUtc() throws Exception {
+        // DST ends in America/New_York on 2022-11-06 at 06:00Z (02:00 EDT -> 01:00 EST), and the clock
+        // passes 01:00-02:00 local twice.
+        testTimerFiresAtLocalTimes("America/New_York", ChronoUnit.DAYS, 3, halfPastHoursOf("2022-11-05"));
+    }
+
+    @Test
+    public void testTimerEveryDayInTimeZoneFiresAtLocalTimesAroundDstEndSouthOfEquator() throws Exception {
+        // DST ends in Australia/Sydney on 2022-04-03 at 16:00Z the day before (03:00 AEDT -> 02:00 AEST),
+        // and the clock passes 02:00-03:00 local twice.
+        testTimerFiresAtLocalTimes("Australia/Sydney", ChronoUnit.DAYS, 3, halfPastHoursOf("2022-04-02"));
+    }
+
+    @Test
+    public void testTimerEveryDayInTimeZoneFiresAtLocalTimesAroundDstStartAheadOfUtc() throws Exception {
+        // DST starts in Europe/Berlin on 2022-03-27 at 01:00Z (02:00 CET -> 03:00 CEST), and the clock
+        // skips 02:00-03:00 local.
+        testTimerFiresAtLocalTimes("Europe/Berlin", ChronoUnit.DAYS, 3, halfPastHoursOf("2022-03-26"));
+    }
+
+    @Test
+    public void testTimerEveryDayInTimeZoneFiresAtLocalTimesAroundDstStartBehindUtc() throws Exception {
+        // DST starts in America/New_York on 2022-03-13 at 07:00Z (02:00 EST -> 03:00 EDT), and the clock
+        // skips 02:00-03:00 local.
+        testTimerFiresAtLocalTimes("America/New_York", ChronoUnit.DAYS, 3, halfPastHoursOf("2022-03-12"));
+    }
+
+    @Test
+    public void testTimerEveryDayInTimeZoneFiresAtLocalTimesAroundDstStartSouthOfEquator() throws Exception {
+        // DST starts in Australia/Sydney on 2022-10-02 at 16:00Z the day before (02:00 AEST -> 03:00 AEDT),
+        // and the clock skips 02:00-03:00 local.
+        testTimerFiresAtLocalTimes("Australia/Sydney", ChronoUnit.DAYS, 3, halfPastHoursOf("2022-10-01"));
+    }
+
+    @Test
+    public void testTimerEveryDayInTimeZoneKeepsLocalTimeAcrossDstEnd() throws Exception {
+        // DST ends in America/New_York on 2022-11-06 at 06:00Z (02:00 EDT -> 01:00 EST), so 03:00 local is
+        // 07:00Z the day before and 08:00Z from that day on. The timer job registers the timer on
+        // 2022-11-04, after START.
+        assertMemoryLeak(() -> {
+            createBaseTable(engine, sqlExecutionContext);
+            currentMicros = parseFloorPartialTimestamp("2022-11-04T12:00:00.000000Z");
+            execute("CREATE MATERIALIZED VIEW mv REFRESH EVERY 1d DEFERRED START '2022-03-01T03:00:00.000000Z' TIME ZONE 'America/New_York' AS SELECT ts, last(price) price FROM base SAMPLE BY 1h");
+            final MatViewTimerJob timer = new MatViewTimerJob(engine);
+            tickTimer(timer, "2022-11-04T12:00:00.000000Z");
+            assertLastRefreshStart("mv", "");
+            tickTimer(timer, "2022-11-05T06:59:59.999999Z");
+            assertLastRefreshStart("mv", "");
+            tickTimer(timer, "2022-11-05T07:00:00.000000Z");
+            assertLastRefreshStart("mv", "2022-11-05T07:00:00.000000Z");
+            tickTimer(timer, "2022-11-06T07:59:59.999999Z");
+            assertLastRefreshStart("mv", "2022-11-05T07:00:00.000000Z");
+            tickTimer(timer, "2022-11-06T08:00:00.000000Z");
+            assertLastRefreshStart("mv", "2022-11-06T08:00:00.000000Z");
+            tickTimer(timer, "2022-11-07T07:59:59.999999Z");
+            assertLastRefreshStart("mv", "2022-11-06T08:00:00.000000Z");
+            tickTimer(timer, "2022-11-07T08:00:00.000000Z");
+            assertLastRefreshStart("mv", "2022-11-07T08:00:00.000000Z");
+        });
+    }
+
+    @Test
+    public void testTimerEveryDayInTimeZoneKeepsLocalTimeAcrossDstStart() throws Exception {
+        // DST starts in America/New_York on 2022-03-13 at 07:00Z (02:00 EST -> 03:00 EDT), so 03:00 local
+        // is 08:00Z the day before and 07:00Z from that day on. The timer job registers the timer on
+        // 2022-03-11, after START.
+        assertMemoryLeak(() -> {
+            createBaseTable(engine, sqlExecutionContext);
+            currentMicros = parseFloorPartialTimestamp("2022-03-11T12:00:00.000000Z");
+            execute("CREATE MATERIALIZED VIEW mv REFRESH EVERY 1d DEFERRED START '2022-03-01T03:00:00.000000Z' TIME ZONE 'America/New_York' AS SELECT ts, last(price) price FROM base SAMPLE BY 1h");
+            final MatViewTimerJob timer = new MatViewTimerJob(engine);
+            tickTimer(timer, "2022-03-11T12:00:00.000000Z");
+            assertLastRefreshStart("mv", "");
+            tickTimer(timer, "2022-03-12T07:59:59.999999Z");
+            assertLastRefreshStart("mv", "");
+            tickTimer(timer, "2022-03-12T08:00:00.000000Z");
+            assertLastRefreshStart("mv", "2022-03-12T08:00:00.000000Z");
+            tickTimer(timer, "2022-03-13T06:59:59.999999Z");
+            assertLastRefreshStart("mv", "2022-03-12T08:00:00.000000Z");
+            tickTimer(timer, "2022-03-13T07:00:00.000000Z");
+            assertLastRefreshStart("mv", "2022-03-13T07:00:00.000000Z");
+            tickTimer(timer, "2022-03-14T06:59:59.999999Z");
+            assertLastRefreshStart("mv", "2022-03-13T07:00:00.000000Z");
+            tickTimer(timer, "2022-03-14T07:00:00.000000Z");
+            assertLastRefreshStart("mv", "2022-03-14T07:00:00.000000Z");
+        });
+    }
+
+    @Test
+    public void testTimerEveryHourInTimeZoneFiresAtLocalTimesAroundDstEnd() throws Exception {
+        // DST ends in America/New_York on 2022-11-06 at 06:00Z (02:00 EDT -> 01:00 EST). 01:00 local takes
+        // its first pass, at 05:00Z, and 02:00 local is 07:00Z, so the timer does not fire at 06:00Z.
+        testTimerFiresAtLocalTimes("America/New_York", ChronoUnit.HOURS, 6, "2022-11-06T00:00");
+    }
+
+    @Test
+    public void testTimerEveryHourInTimeZoneFiresAtLocalTimesAroundDstStart() throws Exception {
+        // DST starts in America/New_York on 2022-03-13 at 07:00Z (02:00 EST -> 03:00 EDT). 02:00 local
+        // moves later, to 03:00 EDT, so both 02:00 and 03:00 local are 07:00Z.
+        testTimerFiresAtLocalTimes("America/New_York", ChronoUnit.HOURS, 6, "2022-03-13T00:00");
+    }
+
+    @Test
     public void testTimerEveryMonthClampsStartDayToMonthEnd() throws Exception {
         // START falls on January 31st. The timer job registers the timer on 2024-02-10, so the first
         // deadline falls on the last day of February; later firings return to the 31st or clamp to
@@ -391,11 +509,40 @@ public class MatViewTimerJobTest extends AbstractCairoTest {
         }, "mat-view-drop");
     }
 
+    // Half past each hour from midnight to 04:00 local time on the given day: in and around the hour that a
+    // DST change skips or repeats in the time zones of the tests.
+    private static String[] halfPastHoursOf(String day) {
+        return new String[]{day + "T00:30", day + "T01:30", day + "T02:30", day + "T03:30"};
+    }
+
     private void assertLastRefreshStart(String viewName, String expectedTimestamp) throws Exception {
         assertQuery("SELECT last_refresh_start_timestamp FROM materialized_views WHERE view_name = '" + viewName + "'")
                 .noRandomAccess()
                 .noLeakCheck()
                 .returns("last_refresh_start_timestamp\n" + expectedTimestamp + "\n");
+    }
+
+    // Checks that every view "mv<i>" last refreshed at the latest of its refresh times, firings[i], at or
+    // before nowMicros, or has never refreshed.
+    private void assertLastRefreshStarts(long[][] firings, long nowMicros) throws Exception {
+        final StringSink expected = new StringSink();
+        expected.put("view_name\tlast_refresh_start_timestamp\n");
+        for (int i = 0; i < firings.length; i++) {
+            expected.put("mv").put(i).put('\t');
+            long lastFiring = Long.MIN_VALUE;
+            for (long firing : firings[i]) {
+                if (firing <= nowMicros) {
+                    lastFiring = Math.max(lastFiring, firing);
+                }
+            }
+            if (lastFiring != Long.MIN_VALUE) {
+                MicrosFormatUtils.appendDateTimeUSec(expected, lastFiring);
+            }
+            expected.put('\n');
+        }
+        assertQuery("SELECT view_name, last_refresh_start_timestamp FROM materialized_views ORDER BY view_name")
+                .noLeakCheck()
+                .returns(expected);
     }
 
     private void createBaseTable(CairoEngine testEngine, SqlExecutionContext context) throws Exception {
@@ -501,10 +648,56 @@ public class MatViewTimerJobTest extends AbstractCairoTest {
         });
     }
 
+    // Creates a view "mv<i>" for each START, a local time in the given time zone, that refreshes on a timer
+    // every unit from that START, and runs the timer job just before and at each of the first firingCount
+    // refresh times of every view. Each view must refresh at the local times that its START and EVERY give,
+    // as ZonedDateTime.of() puts them in the time zone: a local time that a DST start skips moves later by
+    // the length of the gap, and one that a DST end repeats takes its first pass. The STARTs lie within one
+    // unit of each other, so that no view refreshes again before the last of these refresh times.
+    private void testTimerFiresAtLocalTimes(String timeZone, ChronoUnit unit, int firingCount, String... starts) throws Exception {
+        // The clock moves on by up to a day at every tick, so every WAL apply would take a durable epoch,
+        // which syncs the table. The epochs play no part in the timers.
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        assertMemoryLeak(() -> {
+            final ZoneId zone = ZoneId.of(timeZone);
+            final long[][] firings = new long[starts.length][firingCount];
+            final TreeSet<Long> firingTimes = new TreeSet<>();
+            createBaseTable(engine, sqlExecutionContext);
+            for (int i = 0; i < starts.length; i++) {
+                execute(
+                        "CREATE MATERIALIZED VIEW mv" + i + " REFRESH EVERY 1" + (unit == ChronoUnit.HOURS ? 'h' : 'd') + " DEFERRED" +
+                                " START '" + starts[i] + ":00.000000Z' TIME ZONE '" + timeZone + "'" +
+                                " AS SELECT ts, last(price) price FROM base SAMPLE BY 1h"
+                );
+                final LocalDateTime start = LocalDateTime.parse(starts[i]);
+                for (int k = 0; k < firingCount; k++) {
+                    firings[i][k] = ZonedDateTime.of(start.plus(k, unit), zone).toEpochSecond() * Micros.SECOND_MICROS;
+                    firingTimes.add(firings[i][k]);
+                }
+            }
+
+            // The timer job registers the timers a day before the first refresh, so each timer fires first
+            // at its START.
+            final MatViewTimerJob timer = new MatViewTimerJob(engine);
+            tickTimer(timer, firingTimes.first() - Micros.DAY_MICROS);
+            assertLastRefreshStarts(firings, currentMicros);
+            for (long firingTime : firingTimes) {
+                tickTimer(timer, firingTime - 1);
+                assertLastRefreshStarts(firings, currentMicros);
+                tickTimer(timer, firingTime);
+                assertLastRefreshStarts(firings, currentMicros);
+            }
+        });
+    }
+
     // Commits a fresh base table row before every tick: a refresh that finds no new base table
     // transactions restores last_refresh_start_timestamp, which would hide the firing.
     private void tickTimer(MatViewTimerJob timer, String now) throws Exception {
-        currentMicros = parseFloorPartialTimestamp(now);
+        tickTimer(timer, parseFloorPartialTimestamp(now));
+    }
+
+    private void tickTimer(MatViewTimerJob timer, long nowMicros) throws Exception {
+        currentMicros = nowMicros;
         execute("INSERT INTO base VALUES ('2024-01-01T00:00:00.000000Z', 42)");
         drainWalAndMatViewQueues();
         drainMatViewTimerQueue(timer);

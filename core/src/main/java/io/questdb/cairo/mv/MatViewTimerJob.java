@@ -704,8 +704,10 @@ public class MatViewTimerJob extends SynchronizedJob {
             return tzRules != null ? utcTimeUs + tzRules.getOffset(utcTimeUs) : utcTimeUs;
         }
 
+        // Takes the offset in effect at the local time, as to_utc() does: a local time that a DST start skips
+        // moves later by the length of the gap, and one that a DST end repeats takes its first pass.
         private static long toUtc(long localTimeUs, TimeZoneRules tzRules) {
-            return tzRules != null ? localTimeUs - tzRules.getOffset(localTimeUs) : localTimeUs;
+            return tzRules != null ? localTimeUs - tzRules.getLocalOffset(localTimeUs) : localTimeUs;
         }
 
         private void nextDeadline() {
