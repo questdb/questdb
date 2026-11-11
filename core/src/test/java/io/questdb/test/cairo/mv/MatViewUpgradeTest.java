@@ -25,9 +25,14 @@
 package io.questdb.test.cairo.mv;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.mv.MatViewState;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.tools.TestUtils;
@@ -70,13 +75,24 @@ import java.util.zip.ZipInputStream;
  * </pre>
  * It holds a valid view, a view whose SQL calls bare {@code count}, a view whose SQL relies on generated names
  * ({@code avg} and {@code max} under the legacy alias rules), a never-refreshed view and an invalid view. The
- * expected rows after the further statements below are what the same 10.1.0 server returned for them.
+ * expected rows after the further statements below are what the same 10.1.0 server returned for them, up to the
+ * recipe that the release notes give for older views, ALTER MATERIALIZED VIEW ... AS with the SQL that SHOW CREATE
+ * prints, which this version alone runs; the rows after it follow from the base rows.
  */
 @RunWith(Parameterized.class)
 public class MatViewUpgradeTest extends AbstractCairoTest {
     private static final String COUNT_MV_AFTER_INSERTS = """
             ts\tsym\tcount
             2024-01-01T00:00:00.000000Z\ta\t3
+            2024-01-01T00:00:00.000000Z\tb\t1
+            2024-01-01T01:00:00.000000Z\ta\t1
+            2024-01-02T10:00:00.000000Z\tb\t2
+            2024-01-03T05:00:00.000000Z\tc\t1
+            """;
+    // The *_AFTER_RECIPE rows follow the release notes' recipe for older views and a row of 'a' at 00:55, 9.5 and 90.0.
+    private static final String COUNT_MV_AFTER_RECIPE = """
+            ts\tsym\tcount
+            2024-01-01T00:00:00.000000Z\ta\t4
             2024-01-01T00:00:00.000000Z\tb\t1
             2024-01-01T01:00:00.000000Z\ta\t1
             2024-01-02T10:00:00.000000Z\tb\t2
@@ -93,6 +109,14 @@ public class MatViewUpgradeTest extends AbstractCairoTest {
     private static final String GEN_MV_AFTER_INSERTS = """
             ts\tsym\tavg\tmax
             2024-01-01T00:00:00.000000Z\ta\t3.8333333333333335\t60.0
+            2024-01-01T00:00:00.000000Z\tb\t2.5\t20.0
+            2024-01-01T01:00:00.000000Z\ta\t4.5\t40.0
+            2024-01-02T10:00:00.000000Z\tb\t6.5\t70.0
+            2024-01-03T05:00:00.000000Z\tc\t8.5\t80.0
+            """;
+    private static final String GEN_MV_AFTER_RECIPE = """
+            ts\tsym\tavg\tmax
+            2024-01-01T00:00:00.000000Z\ta\t5.25\t90.0
             2024-01-01T00:00:00.000000Z\tb\t2.5\t20.0
             2024-01-01T01:00:00.000000Z\ta\t4.5\t40.0
             2024-01-02T10:00:00.000000Z\tb\t6.5\t70.0
@@ -132,6 +156,14 @@ public class MatViewUpgradeTest extends AbstractCairoTest {
     private static final String VALID_MV_AFTER_INSERTS = """
             ts\tsym\tavg_price\ttotal
             2024-01-01T00:00:00.000000Z\ta\t3.8333333333333335\t100.0
+            2024-01-01T00:00:00.000000Z\tb\t2.5\t20.0
+            2024-01-01T01:00:00.000000Z\ta\t4.5\t40.0
+            2024-01-02T10:00:00.000000Z\tb\t6.5\t120.0
+            2024-01-03T05:00:00.000000Z\tc\t8.5\t80.0
+            """;
+    private static final String VALID_MV_AFTER_RECIPE = """
+            ts\tsym\tavg_price\ttotal
+            2024-01-01T00:00:00.000000Z\ta\t5.25\t190.0
             2024-01-01T00:00:00.000000Z\tb\t2.5\t20.0
             2024-01-01T01:00:00.000000Z\ta\t4.5\t40.0
             2024-01-02T10:00:00.000000Z\tb\t6.5\t120.0
@@ -252,6 +284,23 @@ public class MatViewUpgradeTest extends AbstractCairoTest {
                 assertStatus(restarted, STATUS_LOADED.replace("invalid_mv\tinvalid\tdrop column operation", "invalid_mv\tvalid\t"));
                 assertBaseTableId(restarted, "invalid_mv", restarted.verifyTableName("trades2").getTableId());
                 assertViews(restarted, VALID_MV_AFTER_INSERTS, COUNT_MV_AFTER_INSERTS, GEN_MV_AFTER_INSERTS, NEVER_MV_AFTER_INSERTS);
+
+                // The release notes' recipe for an older view: ALTER ... AS with the SQL that SHOW CREATE prints, which
+                // writes the bare call with its parentheses and each generated name as an alias of its view column.
+                // Both views stay valid and keep their rows, and the view that relied on generated names maps its
+                // columns by name from then on.
+                Assert.assertEquals("SELECT ts, sym, count() AS count FROM trades SAMPLE BY 1h", showCreateSql(restarted, "count_mv"));
+                Assert.assertEquals("SELECT ts, sym, avg(price) AS avg, max(amount) AS max FROM trades SAMPLE BY 1h", showCreateSql(restarted, "gen_mv"));
+                for (String view : new String[]{"count_mv", "gen_mv"}) {
+                    restarted.execute("ALTER MATERIALIZED VIEW " + view + " AS (" + showCreateSql(restarted, view) + ")");
+                }
+                drainWalAndMatViewQueues(restarted);
+                restarted.execute("INSERT INTO trades VALUES ('a', 9.5, 90.0, '2024-01-01T00:55:00.000000Z')");
+                drainWalAndMatViewQueues(restarted);
+                assertStatus(restarted, STATUS_LOADED.replace("invalid_mv\tinvalid\tdrop column operation", "invalid_mv\tvalid\t"));
+                assertViews(restarted, VALID_MV_AFTER_RECIPE, COUNT_MV_AFTER_RECIPE, GEN_MV_AFTER_RECIPE, NEVER_MV_AFTER_INSERTS);
+                assertRecordCopy(restarted, "gen_mv", false);
+                assertRecordCopy(restarted, "count_mv", false);
             }
         });
     }
@@ -268,6 +317,25 @@ public class MatViewUpgradeTest extends AbstractCairoTest {
         Assert.assertNotNull(viewName, state.getRecordToRowCopier());
         Assert.assertEquals(viewName, isPositional, state.isRecordCopyPositional());
         Assert.assertNull(viewName, state.getRecordProjectionForTesting());
+    }
+
+    // The SQL that SHOW CREATE MATERIALIZED VIEW prints for the view, between "AS (" and ")".
+    private static String showCreateSql(CairoEngine engine, String viewName) throws SqlException {
+        final StringSink sink = new StringSink();
+        try (
+                SqlExecutionContextImpl context = TestUtils.createSqlExecutionCtx(engine, 1);
+                SqlCompiler compiler = engine.getSqlCompiler();
+                RecordCursorFactory factory = compiler.compile("SHOW CREATE MATERIALIZED VIEW " + viewName, context).getRecordCursorFactory();
+                RecordCursor cursor = factory.getCursor(context)
+        ) {
+            Assert.assertTrue(cursor.hasNext());
+            CursorPrinter.printColumn(cursor.getRecord(), factory.getMetadata(), 0, sink);
+        }
+        final String ddl = sink.toString();
+        final int lo = ddl.indexOf("AS (\n") + "AS (\n".length();
+        final int hi = ddl.indexOf("\n)", lo);
+        Assert.assertTrue(ddl, lo > "AS (\n".length() - 1 && hi > lo);
+        return ddl.substring(lo, hi);
     }
 
     private static void unzipFixture(String root) throws IOException {

@@ -27,6 +27,7 @@ package io.questdb.test.cairo.mv;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.mv.ForwardingMatViewStateStore;
@@ -40,6 +41,7 @@ import io.questdb.cairo.mv.MatViewTimerJob;
 import io.questdb.cairo.mv.NoOpMatViewStateStore;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.Files;
@@ -1051,6 +1053,46 @@ public class MatViewBaseOperationsTest extends AbstractCairoTest {
                     2024-01-01T00:00:00.000000Z\ta\t2.0
                     2024-01-02T00:00:00.000000Z\ta\t4.0
                     """);
+        });
+    }
+
+    @Test
+    public void testTruncateCutFollowsSequencerOrderAcrossWalWriters() throws Exception {
+        // Three WAL writers commit a row, a TRUNCATE and another row, in that sequencer order, before the view refreshes.
+        // The interval scan reads the transactions by WAL, not in their sequencer order, so it reads the row written
+        // after the truncate, from the first WAL, before the truncate, and the row written before it, from the third
+        // WAL, after it. The cut still drops the interval of the row sequenced before the truncate and keeps the one
+        // sequenced after it: the view keeps its row at 00:00, which the base no longer holds, and gains the 05:00
+        // row, as when one writer commits the three transactions.
+        assertMemoryLeak(() -> {
+            createBase();
+            execute(TRUNCATE_BASE_ROWS);
+            createView("price_1h", "IMMEDIATE");
+            drainWalAndMatViewQueues();
+
+            try (
+                    WalWriter first = getWalWriter("base");
+                    WalWriter second = getWalWriter("base");
+                    WalWriter third = getWalWriter("base")
+            ) {
+                Assert.assertTrue(first.getWalId() < second.getWalId());
+                Assert.assertTrue(second.getWalId() < third.getWalId());
+                TableWriter.Row row = third.newRow(parseFloorPartialTimestamp("2024-01-01T00:20:00.000000Z"));
+                row.putSym(0, "a");
+                row.putDouble(1, 11.0);
+                row.append();
+                third.commit();
+                second.truncateSoft();
+                row = first.newRow(parseFloorPartialTimestamp("2024-01-01T05:10:00.000000Z"));
+                row.putSym(0, "d");
+                row.putDouble(1, 4.0);
+                row.append();
+                first.commit();
+            }
+            drainWalAndMatViewQueues();
+
+            assertViewRows(VIEW_ROWS_AFTER_TRUNCATE);
+            assertViewValidAndCaughtUp("price_1h");
         });
     }
 

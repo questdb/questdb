@@ -45,6 +45,8 @@ import org.jetbrains.annotations.NotNull;
 import static io.questdb.cairo.wal.WalUtils.*;
 
 public class WalTxnRangeLoader implements QuietCloseable {
+    // the data intervals of the scanned transactions as triples: min timestamp, max timestamp, transaction index
+    private final LongList txnIntervals = new LongList();
     private final WalEventReader walEventReader;
     private boolean hasTruncate;
     private long maxTimestamp;
@@ -77,7 +79,7 @@ public class WalTxnRangeLoader implements QuietCloseable {
 
     /**
      * Loads the data intervals of the base table's transactions in {@code (txnLo, txnHi]} into {@code intervals},
-     * which the caller passes empty. A TRUNCATE drops the intervals of the transactions before it, see
+     * which the caller passes empty. A TRUNCATE drops the intervals of the transactions sequenced before it, see
      * {@link #hasTruncate()}.
      */
     public void load(
@@ -110,6 +112,10 @@ public class WalTxnRangeLoader implements QuietCloseable {
         minTimestamp = Long.MAX_VALUE;
         maxTimestamp = Long.MIN_VALUE;
         hasTruncate = false;
+        txnIntervals.clear();
+        // WalTxnDetails.loadTxns() sorts the transactions by WAL and segment, so the scan reads them out of their
+        // sequencer order, and the TRUNCATE cut compares transaction indexes instead of reading order.
+        int lastTruncateTxnIndex = -1;
 
         try (WalEventReader eventReader = walEventReader) {
             final int maxLoadTxnCount = (int) (txnHi - txnLo);
@@ -126,7 +132,8 @@ public class WalTxnRangeLoader implements QuietCloseable {
                     long long1 = txnDetails.get(2L * i);
                     long long2 = txnDetails.get(2L * i + 1);
 
-                    long seqTxn = Numbers.decodeHighInt(long2) + txnLo;
+                    final int txnIndex = Numbers.decodeHighInt(long2);
+                    long seqTxn = txnIndex + txnLo;
                     int walId = Numbers.decodeHighInt(long1) + MIN_WAL_ID;
                     int segmentId = Numbers.decodeLowInt(long1);
                     int segmentTxn = Numbers.decodeLowInt(long2);
@@ -159,7 +166,7 @@ public class WalTxnRangeLoader implements QuietCloseable {
                             // through the range tasks of the WAL apply job instead.
                             if (walEventCursor.getType() == WalTxnType.TRUNCATE) {
                                 hasTruncate = true;
-                                intervals.clear();
+                                lastTruncateTxnIndex = Math.max(lastTruncateTxnIndex, txnIndex);
                             }
                             continue;
                         }
@@ -175,7 +182,14 @@ public class WalTxnRangeLoader implements QuietCloseable {
                             // No rows, e.g. a REBASE WAL seed: nothing to refresh.
                             continue;
                         }
-                        intervals.add(minTimestamp1, maxTimestamp1);
+                        txnIntervals.add(minTimestamp1, maxTimestamp1);
+                        txnIntervals.add(txnIndex);
+                    }
+                }
+
+                for (int i = 0, n = txnIntervals.size(); i < n; i += 3) {
+                    if (txnIntervals.getQuick(i + 2) > lastTruncateTxnIndex) {
+                        intervals.add(txnIntervals.getQuick(i), txnIntervals.getQuick(i + 1));
                         IntervalUtils.unionInPlace(intervals, intervals.size() - 2);
                     }
                 }
