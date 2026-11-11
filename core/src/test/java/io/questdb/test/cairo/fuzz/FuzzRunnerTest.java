@@ -584,6 +584,7 @@ public class FuzzRunnerTest extends AbstractCairoTest {
             execute("UPDATE " + tableName + " SET x = 2");
             drainWalQueue();
         }
+        releaseSavePointHolds(tableName);
         engine.releaseInactive();
         Assert.assertTrue(staleFile.exists());
         return staleFile;
