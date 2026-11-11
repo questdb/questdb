@@ -87,7 +87,7 @@ public abstract class SymbolFunction implements Function, SymbolTable {
     @Override
     public char getChar(Record rec) {
         CharSequence value = getSymbol(rec);
-        return value == null ? 0 : value.charAt(0);
+        return value == null || value.length() == 0 ? 0 : value.charAt(0);
     }
 
     @Override
