@@ -3125,6 +3125,18 @@ public class SqlUtil {
         return viewNameExpr != null && viewNameExpr.tableFunctionView != null;
     }
 
+    // Whether the model only passes on the rows of the one source of its FROM clause, which it may filter: it has no
+    // SELECT list of its own, so it gives the source the columns a read gives it, and those its own clauses name. The
+    // optimiser keeps such a model above a sub-query, a CTE or a view when it cannot move the WHERE clause of the SELECT
+    // that reads the source into the source, as for a filter that names no column, such as WHERE @f or WHERE 1 = 1.
+    private static boolean isRowFilterModel(@NotNull IQueryModel model) {
+        return model.getSelectModelType() == IQueryModel.SELECT_MODEL_NONE
+                && model.getBottomUpColumns().size() == 0
+                && model.getTableNameExpr() == null
+                && model.getJoinModels().size() == 1
+                && model.getNestedModel() != null;
+    }
+
     // Whether a wildcard of the SELECT list selects every column of a source of its FROM clause: an
     // unqualified one selects every column of every source, and a qualified one, such as t.*, every
     // column of the source it names.
@@ -3148,8 +3160,14 @@ public class SqlUtil {
     // plan of the view does not: the plan of the view leaves a column of the sub-query out, and the model selects a
     // column whose expression names no column, which a read can name alone, see
     // SqlCompiler.collectOtherReadDependencies(). The window of a window function may name one all the same.
+    // The model may select from the sub-query through models that only filter its rows, see isRowFilterModel(): a
+    // read that gives such a model no column gives the sub-query only the columns the filter names, which the
+    // compile of the reads planned otherwise finds.
     private static boolean isSoleSourceKeptWholeBySomeRead(@NotNull IQueryModel model) {
-        final IQueryModel source = model.getNestedModel();
+        IQueryModel source = model.getNestedModel();
+        while (source != null && isRowFilterModel(source)) {
+            source = source.getNestedModel();
+        }
         if (source == null || source.getNestedModel() == null) {
             return false;
         }

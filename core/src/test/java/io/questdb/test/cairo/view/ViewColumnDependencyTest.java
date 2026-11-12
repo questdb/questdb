@@ -1682,6 +1682,33 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
     }
 
     @Test
+    public void testSubQueryKeptWholeByAReadThroughFilterThatNamesNoColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            execute("CREATE VIEW vx AS (SELECT * FROM x)");
+            drainWalAndViewQueues();
+            // The optimiser keeps a filter that names no column above the sub-query, in a model with no SELECT list. A
+            // read that names only outputs that read no column gives that model no column, and so leaves the sub-query
+            // without columns too.
+            final String flagSql = "DECLARE OVERRIDABLE @f := true SELECT 1 one, a FROM (SELECT * FROM x) WHERE @f";
+            assertReads(flagSql, "{x=[?*, a]}", "SELECT one FROM v", "SELECT one, count() FROM v", "SELECT a FROM v");
+            assertReads("SELECT 1 one, a FROM (SELECT * FROM x) WHERE 1 = 1", "{x=[?*, a]}", "SELECT one FROM v");
+            assertReads("DECLARE OVERRIDABLE @f := true SELECT 1 one, a FROM (SELECT * FROM x) WHERE @f AND b > 2", "{x=[?*, a, b]}", "SELECT one FROM v");
+            assertReads("DECLARE OVERRIDABLE @f := true SELECT count() n, sum(a) s FROM (SELECT * FROM x) WHERE @f", "{x=[?*, a]}", "SELECT n FROM v");
+            assertReads("DECLARE OVERRIDABLE @f := true WITH c AS (SELECT * FROM x) SELECT 1 one, a FROM c WHERE @f", "{x=[?*, a]}", "SELECT one FROM v");
+            assertReads("SELECT 1 one, a FROM vx WHERE 1 = 1", "{vx=[], x=[?*, a]}", "SELECT one FROM v");
+            assertReads("SELECT 1 one, a FROM (SELECT a, b FROM x UNION ALL SELECT c, d FROM y) WHERE 1 = 1", "{x=[?b, a], y=[?d, c]}", "SELECT one FROM v");
+            // a filter the optimiser cannot move under the LIMIT gives the sub-query the column it names in every read
+            assertReads("SELECT 1 one, b FROM (SELECT * FROM x LIMIT 5) WHERE a > 0", "{x=[a, b]}", "SELECT one FROM v");
+            // A read that groups by the constant drops the ORDER BY of the sub-query, and so keeps the sub-query whole.
+            // The reads assertDependenciesScanned() runs keep the order, so they do not scan what this one does.
+            assertReads(false, "SELECT a + 1 ap, 1 one FROM (SELECT * FROM x ORDER BY b) WHERE 1 = 1", "{x=[?*, a, b]}", "SELECT one, count() FROM v");
+            // a read that sets the variable reads the columns only such reads scan as the reader
+            assertOverrideDenied(flagSql, "DECLARE @f := true SELECT one FROM v", "permission denied [table=x, columns=ts,k,b]");
+        });
+    }
+
+    @Test
     public void testSubQueryKeptWholeByReadOfOutputThatSharesColumn() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
