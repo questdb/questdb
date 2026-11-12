@@ -45,6 +45,8 @@ import org.jetbrains.annotations.Nullable;
  * {@link MemoryTag#NATIVE_FUNC_RSS} and accounted to the query's {@link MemoryTracker}; it is
  * allocated on the first key and freed by {@link #clear()}, after which the dictionary is empty
  * and reusable. Looking up a value that is already present allocates nothing, native or Java.
+ * Function.init() registers the dictionary with the execution, which clears it before recycling
+ * the memory tracker. Cursor notifications do not release its contents.
  * <p>
  * A dictionary is looked up in exactly one of three ways, fixed by its owner:
  * <ul>

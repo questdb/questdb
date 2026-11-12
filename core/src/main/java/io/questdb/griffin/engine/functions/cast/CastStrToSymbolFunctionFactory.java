@@ -76,17 +76,6 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void cursorClosed() {
-            try {
-                arg.cursorClosed();
-            } finally {
-                // A cached factory can outlive its cursor. Free the query-accounted
-                // dictionary before the query's MemoryTracker is returned to its pool.
-                releaseDictionary();
-            }
-        }
-
-        @Override
         public Function getArg() {
             return arg;
         }
@@ -111,8 +100,7 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            // init() may be called again on a cached factory. The normal path releases in
-            // cursorClosed(); this defensive release also keeps failed/abandoned cursors safe.
+            // A parent can initialize this function again within the same execution.
             releaseDictionary();
             arg.init(symbolTableSource, executionContext);
             dictionary.init(executionContext);

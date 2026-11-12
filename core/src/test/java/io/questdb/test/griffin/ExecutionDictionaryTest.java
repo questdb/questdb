@@ -64,42 +64,7 @@ import java.util.List;
 public class ExecutionDictionaryTest extends AbstractCairoTest {
     @Test
     public void testAllCastTypesReleasedWithoutCursorClosed() throws Exception {
-        assertMemoryLeak(() -> {
-            bindVariableService.setLong(0, 42);
-            final long baseline = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS);
-            for (String type : List.of("byte", "short", "int", "long", "float", "double", "char", "date", "timestamp", "timestamp_ns", "string", "varchar")) {
-                final String expected = switch (type) {
-                    case "float" -> Float.toString(42);
-                    case "double" -> Double.toString(42);
-                    case "char" -> Character.toString((char) 42);
-                    default -> Long.toString(42);
-                };
-                try (RecordCursorFactory factory = select("SELECT ($1::" + type + ")::symbol s")) {
-                    RecordCursorFactory base = factory;
-                    while (!(base instanceof VirtualRecordCursorFactory)) {
-                        base = base.getBaseFactory();
-                        Assert.assertNotNull(base);
-                    }
-                    final SymbolFunction function = (SymbolFunction) ((VirtualRecordCursorFactory) base).getFunctions().getQuick(0);
-                    final QueryRegistry registry = engine.getQueryRegistry();
-                    for (int run = 0; run < 2; run++) {
-                        final long id = registry.register("cast " + type, sqlExecutionContext);
-                        final MemoryTracker tracker = sqlExecutionContext.getMemoryTracker();
-                        try {
-                            function.init(null, sqlExecutionContext);
-                            Assert.assertEquals(type, 0, function.getInt(null));
-                            TestUtils.assertEquals(expected, function.valueOf(0));
-                            Assert.assertTrue(type, tracker.getUsed() > 0);
-                        } finally {
-                            registry.unregister(id, sqlExecutionContext);
-                        }
-                        Assert.assertEquals(type, 0, tracker.getUsed());
-                        Assert.assertEquals(type, baseline, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS));
-                        Assert.assertNull(type, function.valueOf(0));
-                    }
-                }
-            }
-        });
+        assertAllCastTypesReleasedByExecution(false);
     }
 
     @Test
@@ -170,6 +135,11 @@ public class ExecutionDictionaryTest extends AbstractCairoTest {
             Assert.assertEquals(baseline, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS));
             assertQuery("compiled").expectSize().returns("x\n1\n");
         });
+    }
+
+    @Test
+    public void testCursorClosedKeepsDictionariesUntilExecutionEnds() throws Exception {
+        assertAllCastTypesReleasedByExecution(true);
     }
 
     @Test
@@ -545,6 +515,52 @@ public class ExecutionDictionaryTest extends AbstractCairoTest {
                     Assert.assertEquals(0, tracker.getUsed());
                     Assert.assertEquals(baseline, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS));
                     Assert.assertNull(((SymbolFunction) function).valueOf(0));
+                }
+            }
+        });
+    }
+
+    private static void assertAllCastTypesReleasedByExecution(boolean hasCursorNotification) throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.setLong(0, 42);
+            final long baseline = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS);
+            for (String type : List.of("byte", "short", "int", "long", "float", "double", "char", "date", "timestamp", "timestamp_ns", "string", "varchar")) {
+                final String expected = switch (type) {
+                    case "float" -> Float.toString(42);
+                    case "double" -> Double.toString(42);
+                    case "char" -> Character.toString((char) 42);
+                    default -> Long.toString(42);
+                };
+                try (RecordCursorFactory factory = select("SELECT ($1::" + type + ")::symbol s")) {
+                    RecordCursorFactory base = factory;
+                    while (!(base instanceof VirtualRecordCursorFactory)) {
+                        base = base.getBaseFactory();
+                        Assert.assertNotNull(base);
+                    }
+                    final SymbolFunction function = (SymbolFunction) ((VirtualRecordCursorFactory) base).getFunctions().getQuick(0);
+                    final QueryRegistry registry = engine.getQueryRegistry();
+                    for (int run = 0; run < 2; run++) {
+                        // Direct function calls need the same execution scope that QueryProgress supplies.
+                        final long id = registry.register("cast " + type, sqlExecutionContext);
+                        final MemoryTracker tracker = sqlExecutionContext.getMemoryTracker();
+                        try {
+                            function.init(null, sqlExecutionContext);
+                            Assert.assertEquals(type, 0, function.getInt(null));
+                            TestUtils.assertEquals(expected, function.valueOf(0));
+                            Assert.assertTrue(type, tracker.getUsed() > 0);
+                            if (hasCursorNotification) {
+                                final long used = tracker.getUsed();
+                                function.cursorClosed();
+                                Assert.assertEquals(type, used, tracker.getUsed());
+                                TestUtils.assertEquals(expected, function.valueOf(0));
+                            }
+                        } finally {
+                            registry.unregister(id, sqlExecutionContext);
+                        }
+                        Assert.assertEquals(type, 0, tracker.getUsed());
+                        Assert.assertEquals(type, baseline, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS));
+                        Assert.assertNull(type, function.valueOf(0));
+                    }
                 }
             }
         });

@@ -62,17 +62,6 @@ public abstract class AbstractCastToSymbolFunction extends SymbolFunction implem
     }
 
     @Override
-    public void cursorClosed() {
-        try {
-            arg.cursorClosed();
-        } finally {
-            // A cached factory can outlive its cursor. Free the query-accounted
-            // dictionary before the query's MemoryTracker is returned to its pool.
-            releaseDictionary();
-        }
-    }
-
-    @Override
     public Function getArg() {
         return arg;
     }

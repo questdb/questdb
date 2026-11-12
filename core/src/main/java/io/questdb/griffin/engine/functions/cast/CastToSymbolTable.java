@@ -42,8 +42,8 @@ import org.jetbrains.annotations.Nullable;
  * NULL. Handing out something that owns nothing removes that hazard rather than documenting it.
  * <p>
  * The keys the function has assigned by the hand-out are copied to the heap, so the view answers
- * for them even after the function has released its native dictionary - when its cursor closes,
- * or after the function itself is closed - and from any thread. A key the function assigns after
+ * for them even after the execution releases the native dictionary or a caller closes the function,
+ * and from any thread. A key the function assigns after
  * the hand-out resolves through its live dictionary instead, into this view's own A/B flyweights,
  * the same way the view of {@link CastStrToSymbolFunctionFactory.Func} does. That serves a
  * consumer such as lag(), which takes the view before the scan mints any key. Like that view, it is

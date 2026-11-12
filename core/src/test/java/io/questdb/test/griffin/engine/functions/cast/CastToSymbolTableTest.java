@@ -241,8 +241,8 @@ public class CastToSymbolTableTest extends AbstractCairoTest {
     public void testViewTakenBeforeTheScanFollowsTheLiveDictionary() throws Exception {
         // lag()/lead() take the view at init, before the scan mints any key, and resolve every key
         // through it. A key minted after the hand-out resolves through the cast's live native
-        // dictionary; once the cursor closes and frees that dictionary, it must read as null rather
-        // than as freed memory.
+        // dictionary; once QueryProgress ends the execution and frees that dictionary, it must read
+        // as null rather than as freed memory.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t AS (SELECT ('v' || (x % 7))::varchar v, x % 7 l, (x % 7)::int i, (x % 7) / 2.0 d FROM long_sequence(50))");
             for (String column : new String[]{"v", "l", "i", "d"}) {
