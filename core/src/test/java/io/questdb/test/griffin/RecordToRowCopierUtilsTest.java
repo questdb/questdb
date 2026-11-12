@@ -1180,6 +1180,30 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNullSourceColumnsAddNoBytecode() {
+        // a NULL-typed source column generates no copy, so a thousand of them leave one INT copy in a
+        // single method; counted as copies they would exceed the 8000-byte method limit
+        final ArrayColumnTypes fromTypes = new ArrayColumnTypes();
+        final GenericRecordMetadata toMetadata = new GenericRecordMetadata();
+        final ListColumnFilter columnFilter = new ListColumnFilter();
+        for (int i = 0; i <= 1000; i++) {
+            fromTypes.add(i < 1000 ? ColumnType.NULL : ColumnType.INT);
+            toMetadata.add(new TableColumnMetadata("c" + i, ColumnType.INT));
+            columnFilter.add(i + 1);
+        }
+        Assert.assertEquals(
+                RecordToRowCopierTestUtils.CopierMode.SINGLE_METHOD,
+                RecordToRowCopierTestUtils.copierModeOf(RecordToRowCopierUtils.generateCopier(
+                        new BytecodeAssembler(),
+                        fromTypes,
+                        toMetadata,
+                        columnFilter,
+                        configuration
+                ))
+        );
+    }
+
+    @Test
     public void testO3InsertSelectVarcharToString() throws Exception {
         assertMemoryLeak(() -> {
             setCopierType(RecordToRowCopierUtils.COPIER_TYPE_SINGLE_METHOD);
@@ -1481,6 +1505,7 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
                     return null;
                 }
         );
+        final boolean isNullSource = ColumnType.isNull(factory.getMetadata().getColumnType(0));
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             final Record record = cursor.getRecord();
             boolean isValueRow = true;
@@ -1493,7 +1518,10 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
                 } catch (Throwable th) {
                     throw new AssertionError(context + ": copy failed", th);
                 }
-                if (isValueRow) {
+                if (isNullSource) {
+                    // a NULL-typed column has no value to copy: the writer fills the column with NULL
+                    Assert.assertEquals(context + ": copier wrote a NULL-typed column", rowStart, outcome.length());
+                } else if (isValueRow) {
                     Assert.assertTrue(context + ": copier wrote nothing for a non-NULL value", outcome.length() > rowStart);
                     isValueRow = false;
                 }

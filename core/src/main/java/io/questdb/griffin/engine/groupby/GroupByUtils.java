@@ -71,6 +71,7 @@ import io.questdb.griffin.engine.functions.constants.IntConstant;
 import io.questdb.griffin.engine.functions.constants.Long256NullConstant;
 import io.questdb.griffin.engine.functions.constants.LongConstant;
 import io.questdb.griffin.engine.functions.constants.NullArrayConstant;
+import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.griffin.engine.functions.constants.ShortConstant;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
@@ -165,6 +166,9 @@ public class GroupByUtils {
                 break;
             case ColumnType.INTERVAL:
                 func = IntervalColumn.newInstance(keyColumnIndex - 1, type);
+                break;
+            case ColumnType.NULL:
+                func = NullConstant.NULL;
                 break;
             case ColumnType.ARRAY:
                 func = new ArrayColumn(keyColumnIndex - 1, type);

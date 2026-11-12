@@ -269,7 +269,7 @@ public class OrderedMap implements Map, Reopenable {
             for (int i = 0; i < keyColumnCount; i++) {
                 final int columnType = keyTypes.getColumnType(i);
                 final int size = ColumnType.sizeOf(columnType);
-                if (size > 0) {
+                if (size > 0 || columnType == ColumnType.NULL) {
                     keySize += size;
                 } else {
                     keySize = -1;
