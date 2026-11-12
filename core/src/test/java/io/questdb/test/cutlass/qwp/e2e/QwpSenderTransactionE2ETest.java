@@ -33,6 +33,8 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.function.Consumer;
+
 /**
  * Batches of any size and transactions over QWP/WebSocket, driven by the real
  * client against the real server: the client's byte trigger against the
@@ -74,6 +76,13 @@ public class QwpSenderTransactionE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testResetDuringServerOutageDiscardsTransaction() throws Exception {
+        // reset() used to wait 30 s for the server to ack the rollback, then abort the
+        // transaction, so every later row and flush threw even after the server came back.
+        assertDiscardDuringOutage("transaction=on;", Sender::reset);
+    }
+
+    @Test
     public void testRollbackDiscardsTransactionAlreadySent() throws Exception {
         runInContext(port -> {
             try (QwpWebSocketSender sender = (QwpWebSocketSender) Sender.fromConfig(conf(port) + "transaction=on;")) {
@@ -89,6 +98,11 @@ public class QwpSenderTransactionE2ETest extends AbstractQwpWebSocketTest {
             assertQuery("SELECT count(), min(v), max(v) FROM t").noLeakCheck().noRandomAccess().expectSize()
                     .returns("count\tmin\tmax\n10\t10000\t10009\n");
         });
+    }
+
+    @Test
+    public void testRollbackDuringServerOutageDiscardsTransaction() throws Exception {
+        assertDiscardDuringOutage("transaction=strict;", Sender::rollback);
     }
 
     @Test
@@ -168,6 +182,34 @@ public class QwpSenderTransactionE2ETest extends AbstractQwpWebSocketTest {
 
     private static String conf(int port) {
         return "ws::addr=localhost:" + port + ";close_flush_timeout_millis=300000;";
+    }
+
+    // The server goes down after the first frames of a transaction reached it, the
+    // transaction is discarded and the next one committed while the server is down, and
+    // the server comes back on the same port. The sender must keep working throughout:
+    // it replays the discarded frames with the rollback frame behind them, so only the
+    // next transaction commits.
+    private void assertDiscardDuringOutage(String mode, Consumer<Sender> discard) throws Exception {
+        assertMemoryLeak(() -> {
+            int port = RestartableQwpServer.pickFreePort();
+            try (RestartableQwpServer server = new RestartableQwpServer(engine, configuration, port)) {
+                server.start();
+                try (Sender sender = Sender.fromConfig(conf(port)
+                        + "reconnect_initial_backoff_millis=10;reconnect_max_backoff_millis=50;" + mode)) {
+                    writeRows(sender, 0, 3_000);
+                    awaitTable();
+                    server.stop();
+                    discard.accept(sender);
+                    writeRows(sender, 10_000, 10);
+                    sender.flush();
+                    server.start();
+                    Assert.assertTrue(sender.drain(60_000));
+                }
+            }
+            drainWalQueue();
+            assertQuery("SELECT count(), min(v), max(v) FROM t").noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\tmin\tmax\n10\t10000\t10009\n");
+        });
     }
 
     private static void writeRows(Sender sender, int from, int count) {
