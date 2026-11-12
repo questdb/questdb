@@ -40,6 +40,8 @@ import io.questdb.std.Files;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -51,6 +53,7 @@ import org.junit.Test;
 
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.function.LongUnaryOperator;
 
 /**
  * Pins {@link QwpBackwardReadAhead}, which keeps the rows of a backward page-frame stream
@@ -127,6 +130,43 @@ public class QwpBackwardReadAheadTest {
                     ff.isResident = false;
                     Assert.assertEquals(frame.frameBytes(), walk(readAhead, frame));
                     Assert.assertEquals(checks + 2 * TRUST_STREAK + 2, ff.residencyChecks);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testFirstBatchChecksItsLaterWindows() throws Exception {
+        // A first batch whose rows take more than one window goes out as soon as one that fits a
+        // window does: the stream asks for its first window unchecked and checks the later ones,
+        // as it checks the windows after the batch. Over data in memory, it asks for one window.
+        TestUtils.assertMemoryLeak(() -> {
+            final long rows = 20_000;
+            final long batchRows = QwpBackwardReadAhead.INITIAL_WINDOW_ROWS;
+            try (SyntheticFrame frame = new SyntheticFrame(new int[]{ColumnType.LONG, ColumnType.VARCHAR}, rows)) {
+                frame.values(1, 0, r -> 4_000);
+                // 8 bytes of LONG, a 16-byte aux entry and 4,000 bytes of data a row
+                final long fitRows = QwpBackwardReadAhead.MAX_WINDOW_BYTES / (8 + 16 + 4_000);
+                Assert.assertEquals(4_169, fitRows);
+                for (boolean isResident : new boolean[]{true, false}) {
+                    final RecordingFacade ff = new RecordingFacade(true);
+                    ff.isResident = isResident;
+                    final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
+                    readAhead.of(frame.metadata());
+                    readAhead.ofFrame(frame, rows);
+                    long bytes = 0;
+                    for (long emitted = 0; emitted < batchRows; emitted += SLICE_ROWS) {
+                        bytes += readAhead.advise(rows - emitted - SLICE_ROWS);
+                    }
+                    Assert.assertEquals(ff.requestedBytes(), bytes);
+                    if (isResident) {
+                        // the first window: the aux entries of the batch, which fitting the window
+                        // reads, and the LONG values and the data of the rows that fit
+                        Assert.assertEquals(16 * batchRows + (8 + 4_000) * fitRows, bytes);
+                        Assert.assertTrue("checks=" + ff.residencyChecks, ff.residencyChecks > 0);
+                    } else {
+                        frame.assertCovered("cold first batch", ff, rows - batchRows, rows);
+                    }
                 }
             }
         });
@@ -853,6 +893,43 @@ public class QwpBackwardReadAheadTest {
     }
 
     @Test
+    public void testWindowFitStaysInsideHostileExtents() throws Exception {
+        // Fitting windows to the byte cap reads aux entries that a damaged or hostile frame source
+        // can point anywhere. They cannot steer the windows out of the frame: the walk asks for
+        // nothing outside the published extents, and for every value and aux entry once.
+        TestUtils.assertMemoryLeak(() -> {
+            final long rows = 30_000;
+            final int array = ColumnType.encodeArrayType(ColumnType.DOUBLE, 1);
+            final int[] types = {ColumnType.LONG, ColumnType.VARCHAR, ColumnType.STRING, array, ColumnType.VARCHAR, ColumnType.BINARY};
+            try (SyntheticFrame frame = new SyntheticFrame(types, rows)) {
+                final long dataSize = rows * 3_000;
+                // every 1,000th entry points past the data extent
+                frame.offsets(1, dataSize, r -> r % 1_000 == 999 ? dataSize + 1_000_000 : r * 3_000);
+                // offsets that fall: each row's data would end before it starts
+                frame.offsets(2, dataSize, r -> (rows - r) * 3_000);
+                // offsets that jump back and forth
+                frame.offsets(3, dataSize, r -> (r * 7_919) % rows * 3_000);
+                // data without aux entries to tell its rows apart
+                frame.dataWithoutAux(4, dataSize, false);
+                frame.dataWithoutAux(5, dataSize, true);
+                final RecordingFacade ff = new RecordingFacade(true);
+                final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
+                readAhead.of(frame.metadata());
+                readAhead.ofFrame(frame, rows);
+                for (long emitted = 0; emitted < rows; emitted += SLICE_ROWS) {
+                    readAhead.advise(Math.max(0, rows - emitted - SLICE_ROWS));
+                }
+                ff.assertWithinExtents("hostile aux entries", frame);
+                // values and aux entries: the data of these columns means nothing
+                frame.assertTiled("hostile aux entries", ff);
+                // data whose rows the frame does not tell apart is not asked for
+                Assert.assertEquals(0, ff.coveredWithin(frame.getPageAddress(4), frame.getPageAddress(4) + dataSize));
+                Assert.assertEquals(0, ff.coveredWithin(frame.getPageAddress(5), frame.getPageAddress(5) + dataSize));
+            }
+        });
+    }
+
+    @Test
     public void testWindowsAskForNothingOutsideThePublishedExtents() throws Exception {
         // A frame source that publishes fewer bytes than the frame's rows take, or aux entries
         // that point outside the data extent, cannot steer the windows out of bounds: down a
@@ -994,6 +1071,53 @@ public class QwpBackwardReadAheadTest {
     }
 
     @Test
+    public void testWindowsHoldEveryByteOfLongValues() throws Exception {
+        // Down frames whose rows take more than the byte cap, in batches of the egress's size and
+        // of 7 rows, the stream asks for every byte of every column once, before the walk reads
+        // its row. A window takes at most the cap, unless it holds one slice of rows, and at most
+        // twice the rows of the window before it.
+        TestUtils.assertMemoryLeak(() -> {
+            final int array = ColumnType.encodeArrayType(ColumnType.DOUBLE, 1);
+            for (int batchRows : new int[]{(int) QwpBackwardReadAhead.INITIAL_WINDOW_ROWS, 7}) {
+                final String batch = ", batches of " + batchRows + " rows";
+                // the first batch holds 74 MB of 4,505-byte VARCHARs, from 1,000 bytes into the data
+                try (SyntheticFrame frame = new SyntheticFrame(new int[]{ColumnType.LONG, ColumnType.VARCHAR}, 20_000)) {
+                    frame.values(1, 1_000, r -> 4_505);
+                    assertWindowsHoldEveryByte("4,505-byte VARCHARs" + batch, frame, batchRows);
+                }
+                // one slice of 20,000-byte values takes more than the cap: windows of one slice
+                try (SyntheticFrame frame = new SyntheticFrame(new int[]{ColumnType.LONG, ColumnType.BINARY}, 5_000)) {
+                    frame.values(1, 0, r -> 20_000);
+                    assertWindowsHoldEveryByte("20,000-byte BINARYs" + batch, frame, batchRows);
+                }
+                // short values with a burst of long ones: the windows the burst falls in fit it
+                try (SyntheticFrame frame = new SyntheticFrame(new int[]{ColumnType.LONG, ColumnType.STRING}, 100_000)) {
+                    frame.values(1, 0, r -> r >= 40_000 && r < 43_000 ? 40_000 : 100);
+                    assertWindowsHoldEveryByte("a burst of 40,000-byte STRINGs" + batch, frame, batchRows);
+                }
+                // var-size columns that each fit the cap, but not all of them together
+                try (SyntheticFrame frame = new SyntheticFrame(new int[]{ColumnType.LONG, ColumnType.STRING, ColumnType.BINARY, ColumnType.VARCHAR, array}, 30_000)) {
+                    for (int ci = 1; ci < 5; ci++) {
+                        frame.values(ci, 0, r -> 900);
+                    }
+                    assertWindowsHoldEveryByte("four columns of 900-byte values" + batch, frame, batchRows);
+                }
+                // a column top and a VARCHAR column stored inline next to long VARCHARs
+                try (SyntheticFrame frame = new SyntheticFrame(new int[]{ColumnType.LONG, ColumnType.VARCHAR, ColumnType.VARCHAR, ColumnType.VARCHAR}, 20_000)) {
+                    frame.values(2, 0, r -> r % 10);
+                    frame.values(3, 0, r -> 4_000);
+                    assertWindowsHoldEveryByte("a column top and inline VARCHARs" + batch, frame, batchRows);
+                }
+                // a frame of fewer rows than a slice whose values take more than the cap
+                try (SyntheticFrame frame = new SyntheticFrame(new int[]{ColumnType.LONG, array}, 500)) {
+                    frame.values(1, 0, r -> 40_000);
+                    assertWindowsHoldEveryByte("a 500-row frame of 40,000-byte arrays" + batch, frame, batchRows);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testWindowsStayWithinTheByteCap() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             // 40 LONG columns: 320 bytes a row caps a window at 16 MiB / 320 rows
@@ -1014,8 +1138,10 @@ public class QwpBackwardReadAheadTest {
                 assertEachColumnTiled(frame, ff);
             }
 
-            // long values: 16,384 rows of 2 KiB VARCHARs hold 32 MiB, so the first window asks
-            // for the top 16 MiB of their data, and sizes the windows after it by what a row takes
+            // Long values: 16,384 rows of 2 KiB VARCHARs hold 32 MiB. The first window asks for the
+            // aux entries of those rows, which tell where their data starts, and holds the top rows
+            // that fit the cap: 2,064 bytes a row with its aux entry, so 8,128 rows. The windows
+            // after it hold the rest, every byte once.
             final int longRows = 20_000;
             try (
                     MemoryCARWImpl aux = new MemoryCARWImpl(1 << 20, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
@@ -1034,14 +1160,17 @@ public class QwpBackwardReadAheadTest {
 
                 final long first = readAhead.advise(longRows - SLICE_ROWS);
                 final long dataEnd = frame.getPageAddress(0) + frame.getPageSize(0);
-                // the aux entries of the first window, and the top 16 MiB of its data
-                Assert.assertEquals(16L * QwpBackwardReadAhead.INITIAL_WINDOW_ROWS + QwpBackwardReadAhead.MAX_WINDOW_BYTES, first);
-                Assert.assertTrue(ff.contains(dataEnd - QwpBackwardReadAhead.MAX_WINDOW_BYTES, dataEnd));
+                final long fitRows = QwpBackwardReadAhead.MAX_WINDOW_BYTES / (16 + 2_048);
+                Assert.assertEquals(8_128, fitRows);
+                Assert.assertEquals(16L * QwpBackwardReadAhead.INITIAL_WINDOW_ROWS + fitRows * 2_048, first);
+                Assert.assertTrue(ff.contains(dataEnd - fitRows * 2_048, dataEnd));
                 for (long emitted = SLICE_ROWS; emitted < longRows; emitted += SLICE_ROWS) {
                     final long bytes = readAhead.advise(Math.max(0, longRows - emitted - SLICE_ROWS));
-                    // a row takes 2,064 bytes with its aux entry: the next windows stay under the cap
                     Assert.assertTrue("bytes=" + bytes, bytes <= QwpBackwardReadAhead.MAX_WINDOW_BYTES);
                 }
+                // every byte of the data and of the aux entries was asked for once
+                ff.assertTiles("data", frame.getPageAddress(0), dataEnd);
+                ff.assertTiles("aux", frame.getAuxPageAddress(0), frame.getAuxPageAddress(0) + frame.getAuxPageSize(0));
             }
         });
     }
@@ -1086,6 +1215,50 @@ public class QwpBackwardReadAheadTest {
                 ff.assertTiles("data of column " + ci, dataRange[0], dataRange[1]);
             }
         }
+    }
+
+    // Walks the frame down as the egress appends it, in batches of batchRows rows and slices of
+    // at most SLICE_ROWS, over data out of memory. Before each slice, every byte of its rows has
+    // been asked for; each window takes at most the byte cap, unless it holds one slice of rows,
+    // and at most twice the rows of the window before it; at the end, every byte of every column
+    // has been asked for once, and nothing outside the published extents. Column 0 is a LONG,
+    // whose requests tell where each window starts.
+    private static void assertWindowsHoldEveryByte(String context, SyntheticFrame frame, int batchRows) {
+        final RecordingFacade ff = new RecordingFacade(true);
+        final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
+        readAhead.of(frame.metadata());
+        readAhead.ofFrame(frame, frame.rows);
+        final long longs = frame.getPageAddress(0);
+        long advisedLo = frame.rows;
+        long previousWindowRows = 0;
+        long batchLeft = batchRows;
+        for (long emitted = 0; emitted < frame.rows; ) {
+            if (batchLeft == 0) {
+                batchLeft = batchRows;
+            }
+            final long slice = Math.min(Math.min(batchLeft, frame.rows - emitted), SLICE_ROWS);
+            final long lo = frame.rows - emitted - slice;
+            readAhead.advise(lo);
+            final long windowLo = (ff.lowestWithin(longs, longs + 8 * frame.rows) - longs) / 8;
+            if (windowLo < advisedLo) {
+                final long windowRows = advisedLo - windowLo;
+                final long windowBytes = frame.bytesOfRows(windowLo, advisedLo);
+                Assert.assertTrue(
+                        context + ": window [" + windowLo + ", " + advisedLo + ") takes " + windowBytes + " bytes",
+                        windowBytes <= QwpBackwardReadAhead.MAX_WINDOW_BYTES || windowRows <= Math.max(SLICE_ROWS, advisedLo - lo)
+                );
+                if (previousWindowRows > 0 && windowLo > 0) {
+                    Assert.assertTrue(context + ": window of " + windowRows + " rows after " + previousWindowRows, windowRows <= 2 * previousWindowRows);
+                }
+                previousWindowRows = windowRows;
+                advisedLo = windowLo;
+            }
+            frame.assertCovered(context + ": slice [" + lo + ", " + (lo + slice) + ")", ff, lo, lo + slice);
+            emitted += slice;
+            batchLeft -= slice;
+        }
+        frame.assertTiled(context, ff);
+        ff.assertWithinExtents(context, frame);
     }
 
     // whether, after its first batch and TRUST_STREAK frames in memory, a stream of the frame trusts the next one
@@ -1383,6 +1556,11 @@ public class QwpBackwardReadAheadTest {
             missingRanges.add(lo, hi);
         }
 
+        // reports nothing out of memory any more, beyond what isResident says
+        void clearMisses() {
+            missingRanges.clear();
+        }
+
         boolean contains(long lo, long hi) {
             for (int i = 0, n = ranges.size(); i < n; i += 2) {
                 if (ranges.getQuick(i) == lo && ranges.getQuick(i + 1) == hi) {
@@ -1390,6 +1568,31 @@ public class QwpBackwardReadAheadTest {
                 }
             }
             return false;
+        }
+
+        // bytes of [lo, hi) the requests cover
+        long coveredWithin(long lo, long hi) {
+            final int n = ranges.size() / 2;
+            final long[][] clipped = new long[n][];
+            int k = 0;
+            for (int i = 0; i < n; i++) {
+                final long a = Math.max(lo, ranges.getQuick(2 * i));
+                final long b = Math.min(hi, ranges.getQuick(2 * i + 1));
+                if (b > a) {
+                    clipped[k++] = new long[]{a, b};
+                }
+            }
+            Arrays.sort(clipped, 0, k, Comparator.comparingLong(r -> r[0]));
+            long covered = 0;
+            long end = lo;
+            for (int i = 0; i < k; i++) {
+                final long a = Math.max(end, clipped[i][0]);
+                if (clipped[i][1] > a) {
+                    covered += clipped[i][1] - a;
+                    end = clipped[i][1];
+                }
+            }
+            return covered;
         }
 
         long lowestWithin(long lo, long hi) {
@@ -1416,6 +1619,180 @@ public class QwpBackwardReadAheadTest {
 
         private static boolean isInside(long lo, long hi, long address, long size) {
             return address != 0 && lo >= address && hi <= address + size;
+        }
+    }
+
+    /**
+     * Rows of columns of the given types, published as a backward page frame publishes them, with
+     * value sizes a test picks. Fixed-size columns hold values in memory. A var-size column holds
+     * aux entries in memory, laid out as its type's driver reads them, over data at an address
+     * that maps nothing: the advise path passes data addresses to the facade and never reads them,
+     * so a frame can stand for gigabytes of long values. A var-size column starts as a column top.
+     */
+    static final class SyntheticFrame extends AddressedFrame implements AutoCloseable {
+        private static final long FAKE_DATA_ADDRESS = 1L << 44;
+        final long rows;
+        // columns whose aux entries point anywhere, so their data ranges mean nothing
+        private final IntList hostileColumns = new IntList();
+        private final ObjList<MemoryCARWImpl> memories = new ObjList<>();
+        private final int[] types;
+
+        SyntheticFrame(int[] types, long rows) {
+            super(types.length, rows);
+            this.types = types;
+            this.rows = rows;
+            for (int ci = 0; ci < types.length; ci++) {
+                if (!ColumnType.isVarSize(types[ci])) {
+                    final long size = ColumnType.sizeOf(types[ci]) * rows;
+                    final MemoryCARWImpl values = memory();
+                    values.jumpTo(size);
+                    set(ci, values.addressOf(0), size, 0, 0);
+                }
+            }
+        }
+
+        @Override
+        public void close() {
+            Misc.freeObjList(memories);
+        }
+
+        // every byte the rows [rowLo, rowHi) take, of every column, has been asked for
+        void assertCovered(String context, RecordingFacade ff, long rowLo, long rowHi) {
+            final LongList ranges = rangesOfRows(rowLo, rowHi);
+            for (int i = 0, n = ranges.size(); i < n; i += 2) {
+                final long lo = ranges.getQuick(i);
+                final long hi = ranges.getQuick(i + 1);
+                Assert.assertEquals(context + ": range of " + (hi - lo) + " bytes", hi - lo, ff.coveredWithin(lo, hi));
+            }
+        }
+
+        // every byte of every column has been asked for once
+        void assertTiled(String context, RecordingFacade ff) {
+            final LongList ranges = rangesOfRows(0, rows);
+            for (int i = 0, n = ranges.size(); i < n; i += 2) {
+                ff.assertTiles(context, ranges.getQuick(i), ranges.getQuick(i + 1));
+            }
+        }
+
+        // bytes the rows [rowLo, rowHi) take over all columns: values, aux entries and data
+        long bytesOfRows(long rowLo, long rowHi) {
+            final LongList ranges = rangesOfRows(rowLo, rowHi);
+            long bytes = 0;
+            for (int i = 0, n = ranges.size(); i < n; i += 2) {
+                bytes += ranges.getQuick(i + 1) - ranges.getQuick(i);
+            }
+            return bytes;
+        }
+
+        // Sets var-size column ci to data that the frame publishes without aux entries to tell
+        // its rows apart: with no aux address at all, or with one and no bytes behind it.
+        SyntheticFrame dataWithoutAux(int ci, long dataSize, boolean hasAuxAddress) {
+            long auxAddress = 0;
+            if (hasAuxAddress) {
+                // memory has an address once something is written to it
+                final MemoryCARWImpl aux = memory();
+                aux.putLong(0);
+                auxAddress = aux.addressOf(0);
+            }
+            set(ci, dataAddress(ci), dataSize, auxAddress, 0);
+            hostileColumns.add(ci);
+            return this;
+        }
+
+        GenericRecordMetadata metadata() {
+            return QwpBackwardReadAheadTest.metadata(types);
+        }
+
+        // Sets var-size column ci to aux entries that point at offsetOfRow(row), inside a data
+        // extent of dataSize bytes or not, as a damaged or hostile frame source may publish them.
+        SyntheticFrame offsets(int ci, long dataSize, LongUnaryOperator offsetOfRow) {
+            final MemoryCARWImpl aux = memory();
+            for (long r = 0; r < rows; r++) {
+                putAuxEntry(aux, types[ci], offsetOfRow.applyAsLong(r), 1_000);
+            }
+            set(ci, dataAddress(ci), dataSize, aux.addressOf(0), aux.getAppendOffset());
+            hostileColumns.add(ci);
+            return this;
+        }
+
+        // The address ranges the rows [rowLo, rowHi) take in every column, as [lo, hi) pairs:
+        // values, aux entries, and data, but for that of columns whose aux entries point anywhere.
+        LongList rangesOfRows(long rowLo, long rowHi) {
+            final LongList ranges = new LongList();
+            for (int ci = 0; ci < types.length; ci++) {
+                final int type = types[ci];
+                if (!ColumnType.isVarSize(type)) {
+                    final int size = ColumnType.sizeOf(type);
+                    addRange(ranges, getPageAddress(ci) + rowLo * size, getPageAddress(ci) + rowHi * size);
+                    continue;
+                }
+                final long auxAddress = getAuxPageAddress(ci);
+                // a column top publishes no aux entries, and without them no row has data
+                if (auxAddress == 0 || getAuxPageSize(ci) <= 0) {
+                    continue;
+                }
+                final ColumnTypeDriver driver = ColumnType.getDriver(type);
+                addRange(ranges, auxAddress + driver.getAuxVectorOffset(rowLo), auxAddress + driver.getAuxVectorOffset(rowHi));
+                if (getPageAddress(ci) != 0 && !hostileColumns.contains(ci)) {
+                    final long dataHi = rowHi < rows ? driver.getDataVectorOffset(auxAddress, rowHi) : getPageSize(ci);
+                    addRange(ranges, getPageAddress(ci) + driver.getDataVectorOffset(auxAddress, rowLo), getPageAddress(ci) + dataHi);
+                }
+            }
+            return ranges;
+        }
+
+        // Sets var-size column ci to rows whose values take valueBytes(row) bytes each, their data
+        // from dataLo bytes into the column's data, where the frame of the rows before them ends.
+        // VARCHARs of up to 9 bytes sit inline in the aux vector, and one of no bytes is NULL.
+        SyntheticFrame values(int ci, long dataLo, LongUnaryOperator valueBytes) {
+            final int type = types[ci];
+            final MemoryCARWImpl aux = memory();
+            long offset = dataLo;
+            for (long r = 0; r < rows; r++) {
+                final long size = valueBytes.applyAsLong(r);
+                putAuxEntry(aux, type, offset, size);
+                if (!ColumnType.isVarchar(type) || size > VarcharTypeDriver.VARCHAR_MAX_BYTES_FULLY_INLINED) {
+                    offset += size;
+                }
+            }
+            // as a backward page frame does, publish data up to where the frame's last row ends,
+            // and no data address when no row of the column up to there takes data
+            set(ci, offset > 0 ? dataAddress(ci) : 0, offset, aux.addressOf(0), aux.getAppendOffset());
+            return this;
+        }
+
+        private static void addRange(LongList ranges, long lo, long hi) {
+            if (hi > lo) {
+                ranges.add(lo, hi);
+            }
+        }
+
+        private static long dataAddress(int ci) {
+            return FAKE_DATA_ADDRESS + ((long) ci << 40);
+        }
+
+        private static void putAuxEntry(MemoryCARWImpl aux, int type, long offset, long size) {
+            if (ColumnType.isVarchar(type)) {
+                // a header of the size and the flags, NULL 4 or inlined 1 above 4 flag bits; the
+                // offset in the top 48 bits of the second long
+                final long header = size == 0
+                        ? VarcharTypeDriver.VARCHAR_HEADER_FLAG_NULL
+                        : (size << 4) | (size <= VarcharTypeDriver.VARCHAR_MAX_BYTES_FULLY_INLINED ? 1 : 0);
+                aux.putLong(header);
+                aux.putLong(offset << 16);
+            } else if (ColumnType.isArray(type)) {
+                aux.putLong(offset);
+                aux.putLong(size);
+            } else {
+                // STRING and BINARY: the offset alone
+                aux.putLong(offset);
+            }
+        }
+
+        private MemoryCARWImpl memory() {
+            final MemoryCARWImpl memory = new MemoryCARWImpl(1 << 20, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+            memories.add(memory);
+            return memory;
         }
     }
 

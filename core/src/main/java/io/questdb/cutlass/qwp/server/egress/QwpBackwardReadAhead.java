@@ -48,9 +48,11 @@ import org.jetbrains.annotations.TestOnly;
  * {@link #INITIAL_WINDOW_ROWS} rows of the frame, the rows of its first batch. When the
  * stream moves into the last window it advised, or past the middle of the first one, it
  * advises the next window, twice as large, up to {@link #MAX_WINDOW_BYTES} over all its
- * columns. Every row is advised once, the work between two batches stays within one
- * window of requests, and a stream that its client abandons has asked for at most two
- * windows it did not use.
+ * columns, long values included: when the rows of a window take more, the window starts
+ * higher, at the row a binary search over the aux entries of its var-size columns finds,
+ * though it always holds the slice and at least one slice of rows. Every byte of every row
+ * is advised once, the work between two batches stays within one window of requests, and a
+ * stream that its client abandons has asked for at most two windows it did not use.
  * <p>
  * A request costs about a microsecond even when its pages are in memory, a cost that
  * dominates on small frames, so the stream asks only for what is missing. It sends the
@@ -91,8 +93,14 @@ public class QwpBackwardReadAhead implements Mutable {
     private static final long OS_PAGE_SIZE = Unsafe.getUnsafe().pageSize();
     private final IntList columnTypes = new IntList();
     private final FilesFacade ff;
+    // indexes of the var-size columns among the projected ones
+    private final IntList varSizeColumns = new IntList();
     // the frame's rows [advisedLo, frameRows) have been advised, or read
     private long advisedLo;
+    // The aux entries of the frame's rows [auxAdvisedLo, frameRows) have been advised. A window
+    // asks for the aux entries of all the rows it may hold before it fits itself to the byte
+    // cap, which reads them; the next window does not ask for those again.
+    private long auxAdvisedLo;
     // windows with missing pages in a row, which sets how many windows go out unchecked
     private int coldRun;
     private PageFrame frame;
@@ -104,6 +112,8 @@ public class QwpBackwardReadAhead implements Mutable {
     private boolean isSmallFrame;
     private boolean isTrusted;
     private boolean isWillNeedSupported;
+    // bytes a row of the frame takes in the columns whose size the type tells, see fixedRowBytes()
+    private long fixedRowBytes;
     // advise the next window once the stream appends a row below this one
     private long marker;
     private long maxWindowRows;
@@ -122,6 +132,8 @@ public class QwpBackwardReadAhead implements Mutable {
     private int trustStreakNeeded = TRUST_STREAK;
     // windows left to advise without checking
     private int uncheckedWindows;
+    // where the window that adviseRows() advised last starts
+    private long windowLo;
     private long windowRows;
 
     public QwpBackwardReadAhead(FilesFacade ff) {
@@ -152,9 +164,20 @@ public class QwpBackwardReadAhead implements Mutable {
             windowRows = Math.min(maxWindowRows, windowRows * 2);
         }
         // the window always holds the slice itself
-        final long windowLo = Math.max(0, Math.min(lo, advisedLo - windowRows));
+        final long rowLo = Math.max(0, Math.min(lo, advisedLo - windowRows));
+        // Long values can take more than the byte cap: the window then starts higher, never
+        // above the slice or less than a slice below advisedLo. A small frame goes in one window.
+        final long maxWindowLo = isSmallFrame || varSizeColumns.size() == 0
+                ? rowLo
+                : Math.max(rowLo, Math.min(lo, advisedLo - MIN_WINDOW_ROWS));
+        // a window the stream trusts to be in memory advises nothing, and starts at rowLo
+        windowLo = rowLo;
+        final long bytes = adviseWindow(rowLo, advisedLo, maxWindowLo);
+        if (windowLo > rowLo) {
+            // the next windows double from the rows this one holds
+            windowRows = advisedLo - windowLo;
+        }
         marker = isFirstWindow ? advisedLo - windowRows / 2 : advisedLo;
-        final long bytes = adviseWindow(windowLo, advisedLo);
         advisedLo = windowLo;
         return bytes;
     }
@@ -162,6 +185,7 @@ public class QwpBackwardReadAhead implements Mutable {
     @Override
     public void clear() {
         columnTypes.clear();
+        varSizeColumns.clear();
         clearFrame();
         clearStream();
     }
@@ -180,8 +204,13 @@ public class QwpBackwardReadAhead implements Mutable {
      */
     public void of(RecordMetadata metadata) {
         columnTypes.clear();
+        varSizeColumns.clear();
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            columnTypes.add(metadata.getColumnType(i));
+            final int columnType = metadata.getColumnType(i);
+            columnTypes.add(columnType);
+            if (ColumnType.isVarSize(columnType)) {
+                varSizeColumns.add(i);
+            }
         }
         clearFrame();
         clearStream();
@@ -203,7 +232,9 @@ public class QwpBackwardReadAhead implements Mutable {
         }
         isWillNeedSupported = ff.isMadviseWillNeedSupported();
         advisedLo = frameRows;
+        auxAdvisedLo = frameRows;
         marker = frameRows;
+        fixedRowBytes = rowBytes;
         maxWindowRows = windowCap(MAX_WINDOW_BYTES / rowBytes);
         windowRows = Math.min(INITIAL_WINDOW_ROWS, maxWindowRows);
         isSmallFrame = isWillNeedSupported && isSmall(frame);
@@ -236,12 +267,42 @@ public class QwpBackwardReadAhead implements Mutable {
         return sink + Unsafe.getByte(address + size - 1);
     }
 
-    // Advises the frame's rows [rowLo, rowHi) of every column; returns the bytes advised. When
-    // it checks, it skips the ranges that are in memory, and tells whether any was not.
-    private long adviseRows(long rowLo, long rowHi, boolean isChecking) {
-        hasMissingPages = false;
+    // Advises the aux entries of the frame's rows [rowLo, auxAdvisedLo) of every var-size column,
+    // those of the rows from rowLo up that no window has asked for; returns the bytes advised.
+    private long adviseAux(long rowLo, boolean isChecking) {
+        if (rowLo >= auxAdvisedLo) {
+            return 0;
+        }
         long advised = 0;
-        // the bytes the rows take, for sizing the next windows; a long value counts in full
+        for (int i = 0, n = varSizeColumns.size(); i < n; i++) {
+            final int ci = varSizeColumns.getQuick(i);
+            final long auxAddress = frame.getAuxPageAddress(ci);
+            final long auxSize = frame.getAuxPageSize(ci);
+            // a column top publishes no aux entries: the frame stores nothing for it
+            if (auxAddress != 0 && auxSize > 0) {
+                final ColumnTypeDriver driver = ColumnType.getDriver(columnTypes.getQuick(ci));
+                final long auxLo = driver.getAuxVectorOffset(rowLo);
+                final long auxHi = auxAdvisedLo < frameRows ? Math.min(auxSize, driver.getAuxVectorOffset(auxAdvisedLo)) : auxSize;
+                if (auxHi > auxLo) {
+                    advised += willNeed(auxAddress + auxLo, auxHi - auxLo, isChecking);
+                }
+            }
+        }
+        auxAdvisedLo = rowLo;
+        return advised;
+    }
+
+    // Advises a window of the frame that ends at row rowHi, every byte of every column, and sets
+    // windowLo to where it starts: at rowLo, or at the lowest row up to maxWindowLo from which
+    // the rows fit MAX_WINDOW_BYTES, or at maxWindowLo when none does. Returns the bytes advised.
+    // When it checks, it skips the ranges that are in memory, and tells whether any was not.
+    private long adviseRows(long rowLo, long rowHi, long maxWindowLo, boolean isChecking) {
+        hasMissingPages = false;
+        // the aux entries go first: they tell where the data of the rows starts, which fitting
+        // the window reads
+        long advised = adviseAux(rowLo, isChecking);
+        windowLo = maxWindowLo > rowLo ? fitWindow(rowLo, rowHi, maxWindowLo) : rowLo;
+        // the bytes the rows take, for sizing the next windows
         long extent = 0;
         for (int ci = 0, n = columnTypes.size(); ci < n; ci++) {
             final int columnType = columnTypes.getQuick(ci);
@@ -255,28 +316,25 @@ public class QwpBackwardReadAhead implements Mutable {
                     continue;
                 }
                 final ColumnTypeDriver driver = ColumnType.getDriver(columnType);
-                final long auxLo = driver.getAuxVectorOffset(rowLo);
+                final long auxLo = driver.getAuxVectorOffset(windowLo);
                 final long auxHi = rowHi < frameRows ? Math.min(auxSize, driver.getAuxVectorOffset(rowHi)) : auxSize;
                 if (auxHi > auxLo) {
-                    advised += willNeed(auxAddress + auxLo, auxHi - auxLo, isChecking);
                     extent += auxHi - auxLo;
                 }
                 // values that all sit inline in the aux vector leave no data
                 if (pageAddress == 0 || pageSize <= 0) {
                     continue;
                 }
-                final long dataLo = dataOffset(driver, auxAddress, auxSize, pageSize, rowLo);
+                final long dataLo = dataOffset(driver, auxAddress, auxSize, pageSize, windowLo);
                 final long dataHi = rowHi < frameRows ? dataOffset(driver, auxAddress, auxSize, pageSize, rowHi) : pageSize;
                 if (dataLo >= 0 && dataHi > dataLo) {
-                    // the walk down reads the top of the range first; a window of very long
-                    // values asks for at most the window cap of each column
-                    advised += willNeed(pageAddress + Math.max(dataLo, dataHi - MAX_WINDOW_BYTES), Math.min(dataHi - dataLo, MAX_WINDOW_BYTES), isChecking);
+                    advised += willNeed(pageAddress + dataLo, dataHi - dataLo, isChecking);
                     extent += dataHi - dataLo;
                 }
             } else if (pageAddress != 0 && pageSize > 0) {
                 // a type without a size, or rows past the published extent, leave nothing to ask for
                 final int size = ColumnType.sizeOf(columnType);
-                final long lo = rowLo * size;
+                final long lo = windowLo * size;
                 final long hi = Math.min(pageSize, rowHi * size);
                 if (hi > lo) {
                     advised += willNeed(pageAddress + lo, hi - lo, isChecking);
@@ -286,7 +344,7 @@ public class QwpBackwardReadAhead implements Mutable {
         }
         // size the next windows by what these rows take, long values included
         if (extent > 0) {
-            maxWindowRows = windowCap(MAX_WINDOW_BYTES * (rowHi - rowLo) / extent);
+            maxWindowRows = windowCap(MAX_WINDOW_BYTES * (rowHi - windowLo) / extent);
         }
         return advised;
     }
@@ -311,7 +369,7 @@ public class QwpBackwardReadAhead implements Mutable {
             trustStreak = 0;
         }
         final boolean isChecked = uncheckedWindows == 0;
-        final long bytes = adviseUnlessResident(0, frameRows);
+        final long bytes = adviseUnlessResident(0, frameRows, 0);
         if (!isChecked || hasMissingPages) {
             trustStreak = 0;
         } else if (++trustStreak >= trustStreakNeeded) {
@@ -331,12 +389,12 @@ public class QwpBackwardReadAhead implements Mutable {
     // Advises the ranges of the frame's rows [rowLo, rowHi) that are not in memory. After a
     // window with missing pages, advises the next windows without checking, twice as many
     // after each such window in a row.
-    private long adviseUnlessResident(long rowLo, long rowHi) {
+    private long adviseUnlessResident(long rowLo, long rowHi, long maxWindowLo) {
         if (uncheckedWindows > 0) {
             uncheckedWindows--;
-            return adviseRows(rowLo, rowHi, false);
+            return adviseRows(rowLo, rowHi, maxWindowLo, false);
         }
-        final long bytes = adviseRows(rowLo, rowHi, true);
+        final long bytes = adviseRows(rowLo, rowHi, maxWindowLo, true);
         if (hasMissingPages) {
             coldRun = Math.min(MAX_COLD_RUN, coldRun + 1);
             uncheckedWindows = (1 << coldRun) - 1;
@@ -346,19 +404,22 @@ public class QwpBackwardReadAhead implements Mutable {
         return bytes;
     }
 
-    // advises the window [rowLo, rowHi) of the current frame
-    private long adviseWindow(long rowLo, long rowHi) {
-        // the first batch goes out as soon as its rows are in memory: ask for them unchecked
-        if (frameStreamLo + frameRows - rowHi < INITIAL_WINDOW_ROWS) {
-            return adviseRows(rowLo, rowHi, false);
+    // advises the window of the current frame that ends at rowHi and starts in [rowLo, maxWindowLo]
+    private long adviseWindow(long rowLo, long rowHi, long maxWindowLo) {
+        // The first batch goes out as soon as its rows are in memory: the first window of a frame
+        // whose top row goes out in it asks for them unchecked. A batch whose rows take more than
+        // a window, of long values or wide rows, checks its later windows as any window after it.
+        if (rowHi == frameRows && frameStreamLo < INITIAL_WINDOW_ROWS) {
+            return adviseRows(rowLo, rowHi, maxWindowLo, false);
         }
-        return isSmallFrame ? adviseSmallFrame() : adviseUnlessResident(rowLo, rowHi);
+        return isSmallFrame ? adviseSmallFrame() : adviseUnlessResident(rowLo, rowHi, maxWindowLo);
     }
 
     private void clearFrame() {
         frame = null;
         frameRows = 0;
         advisedLo = 0;
+        auxAdvisedLo = 0;
         isSmallFrame = false;
     }
 
@@ -370,6 +431,27 @@ public class QwpBackwardReadAhead implements Mutable {
         trustStreakNeeded = TRUST_STREAK;
         coldRun = 0;
         uncheckedWindows = 0;
+    }
+
+    // The lowest row r in [rowLo, maxWindowLo] from which the frame's rows [r, rowHi) take at most
+    // MAX_WINDOW_BYTES, or maxWindowLo when none does. The bytes fall as r rises, so a binary
+    // search finds r; the aux entries it reads have been advised.
+    private long fitWindow(long rowLo, long rowHi, long maxWindowLo) {
+        if (windowBytes(rowLo, rowHi) <= MAX_WINDOW_BYTES) {
+            return rowLo;
+        }
+        // the rows from lo up take more than the cap; those from hi up fit, unless hi is maxWindowLo
+        long lo = rowLo;
+        long hi = maxWindowLo;
+        while (hi - lo > 1) {
+            final long mid = (lo + hi) >>> 1;
+            if (windowBytes(mid, rowHi) <= MAX_WINDOW_BYTES) {
+                hi = mid;
+            } else {
+                lo = mid;
+            }
+        }
+        return hi;
     }
 
     // bytes a row takes in the columns whose size the type tells: fixed-size values and aux
@@ -469,6 +551,29 @@ public class QwpBackwardReadAhead implements Mutable {
         }
         ff.madviseWillNeed(address, len);
         return len;
+    }
+
+    // Bytes the frame's rows [rowLo, rowHi) take over all columns, as adviseRows() asks for them:
+    // values and aux entries, and the data of var-size columns. Data whose offset an aux entry
+    // does not tell counts as none.
+    private long windowBytes(long rowLo, long rowHi) {
+        long bytes = fixedRowBytes * (rowHi - rowLo);
+        for (int i = 0, n = varSizeColumns.size(); i < n; i++) {
+            final int ci = varSizeColumns.getQuick(i);
+            final long pageAddress = frame.getPageAddress(ci);
+            final long pageSize = frame.getPageSize(ci);
+            final long auxAddress = frame.getAuxPageAddress(ci);
+            final long auxSize = frame.getAuxPageSize(ci);
+            if (pageAddress != 0 && pageSize > 0 && auxAddress != 0 && auxSize > 0) {
+                final ColumnTypeDriver driver = ColumnType.getDriver(columnTypes.getQuick(ci));
+                final long dataLo = dataOffset(driver, auxAddress, auxSize, pageSize, rowLo);
+                final long dataHi = rowHi < frameRows ? dataOffset(driver, auxAddress, auxSize, pageSize, rowHi) : pageSize;
+                if (dataLo >= 0 && dataHi > dataLo) {
+                    bytes += dataHi - dataLo;
+                }
+            }
+        }
+        return bytes;
     }
 
     private long windowCap(long rows) {

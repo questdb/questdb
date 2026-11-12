@@ -335,6 +335,41 @@ public class QwpEgressBackwardScanTest extends AbstractReusedServerQwpEgressTest
     }
 
     @Test
+    public void testBackwardScanReadsLongValuesAheadOnce() throws Exception {
+        // A frame whose values take more than a read-ahead window holds is still read ahead
+        // whole, every byte once, through MADV_WILLNEED windows and by reading each frame at
+        // once alike, whatever the batches and the parks in between.
+        for (boolean isWillNeed : new boolean[]{true, false}) {
+            TestUtils.assertMemoryLeak(() -> {
+                final ReadAheadFilesFacade ff = new ReadAheadFilesFacade(isWillNeed, true);
+                final String table = isWillNeed ? "t_long_advised" : "t_long_read";
+                try (TestServerMain serverMain = startServer(ff, PropertyKey.METRICS_ENABLED.getEnvVarName(), "true")) {
+                    serverMain.execute("CREATE TABLE " + table + " (x LONG, v VARCHAR, s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    // one day of 2,100 rows, one frame, whose 8,192-byte VARCHARs take 17.2 MB:
+                    // more than the 16 MiB a read-ahead window holds
+                    serverMain.execute("INSERT INTO " + table + " SELECT x, rpad(x::VARCHAR, 8_192, 'v'), rpad(x::STRING, 100, 's'), " +
+                            "((x - 1) * 41_000_000L)::TIMESTAMP FROM long_sequence(2_100)");
+                    serverMain.awaitTable(table);
+                    final QwpEgressMetrics metrics = serverMain.getEngine().getMetrics().qwpEgressMetrics();
+                    // x: 8 bytes; v: a 16-byte aux entry and 8,192 bytes of data; s: an 8-byte aux
+                    // entry, a 4-byte length and 100 UTF-16 chars
+                    final long frameBytes = 2_100 * (8 + 16 + 8_192 + 8 + 4 + 200L);
+                    final String desc = "SELECT x, v, s FROM " + table + " ORDER BY ts DESC";
+                    try (QwpQueryClient client = connect("")) {
+                        assertReadAhead(ff, metrics, isWillNeed, frameBytes, () -> Assert.assertEquals(descendingLongs(2_100, 1), column(qwpRows(client, desc), 0)));
+                    }
+                    // 7-row batches, each parked until the client grants credit
+                    try (QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";max_batch_rows=7;")
+                            .withInitialCredit(1)) {
+                        client.connect();
+                        assertReadAhead(ff, metrics, isWillNeed, frameBytes, () -> Assert.assertEquals(descendingLongs(2_100, 1), column(qwpRows(client, desc), 0)));
+                    }
+                }
+            });
+        }
+    }
+
+    @Test
     public void testBackwardStreamsReadAheadTheirOwnFramesConcurrently() throws Exception {
         // The read-ahead keeps its window per connection: streams that interleave their
         // batches on one server each read their own frames, every row once, over data that
