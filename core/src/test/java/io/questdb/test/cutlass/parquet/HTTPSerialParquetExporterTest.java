@@ -84,8 +84,6 @@ public class HTTPSerialParquetExporterTest extends AbstractCairoTest {
             execute("INSERT INTO growing SELECT 's' || (x % 7), x, timestamp_sequence('2024-01-01', 60_000_000L) FROM long_sequence(50)");
             drainWalQueue();
             final String query = "SELECT g.sym, g.v FROM growing g CROSS JOIN long_sequence(1)";
-            printSql(query);
-            final String expectedRows = sink.toString();
 
             final CopyExportContext copyExportContext = engine.getCopyExportContext();
             final CopyExportContext.ExportTaskEntry entry = copyExportContext.assignExportEntry(
@@ -155,7 +153,12 @@ public class HTTPSerialParquetExporterTest extends AbstractCairoTest {
                 cursor = null;
 
                 Assert.assertThrows(PeerIsSlowToReadException.class, exporter::process);
-                Assert.assertEquals("the table must hold the new rows before the export resumes", "count\n70\n", queryGrowingCount());
+                // the table must hold the new rows before the export resumes
+                assertQuery("SELECT count() FROM growing")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("count\n70\n");
                 Assert.assertEquals(CopyExportRequestTask.Phase.SUCCESS, exporter.process());
                 Assert.assertTrue("the export must write several row groups", callbackCount.get() > 2);
             } finally {
@@ -172,8 +175,15 @@ public class HTTPSerialParquetExporterTest extends AbstractCairoTest {
             java.nio.file.Files.write(java.nio.file.Path.of(parquetPath), fileBytes.toByteArray());
             ParquetTestUtils.assertRowGroupCount(parquetPath, configuration.getFilesFacade(), 5);
             ParquetTestUtils.assertColumnTypes(parquetPath, configuration.getFilesFacade(), ColumnType.SYMBOL, 0);
-            printSql("SELECT * FROM read_parquet('" + parquetPath + "')");
-            TestUtils.assertEquals(expectedRows, sink);
+            // the rows of the first insert: sym is 's' || (x % 7) and v is x, for x of 1 to 50
+            final StringBuilder expectedRows = new StringBuilder("sym\tv\n");
+            for (int x = 1; x <= 50; x++) {
+                expectedRows.append('s').append(x % 7).append('\t').append(x).append('\n');
+            }
+            assertQuery("SELECT * FROM read_parquet('" + parquetPath + "')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedRows);
         });
     }
 
@@ -440,11 +450,6 @@ public class HTTPSerialParquetExporterTest extends AbstractCairoTest {
                 }
             }
         }
-    }
-
-    private String queryGrowingCount() throws Exception {
-        printSql("SELECT count() FROM growing");
-        return sink.toString();
     }
 
     private static final class ProbeTask extends CopyExportRequestTask {

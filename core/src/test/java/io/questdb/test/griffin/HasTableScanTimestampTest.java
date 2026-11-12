@@ -32,9 +32,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.parquet.ParquetExportMode;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.StaleViewCheckFactory;
-import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
-import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Before;
@@ -301,18 +299,6 @@ public class HasTableScanTimestampTest extends AbstractCairoTest {
         }
     }
 
-    // The plan must name the factory a shape targets, so that a planner change fails the shape rather than leaving it
-    // to check another factory.
-    private static void assertPlan(String query, String... planFragments) throws SqlException {
-        final StringSink plan = new StringSink();
-        printSql("EXPLAIN " + query, plan);
-        for (String fragment : planFragments) {
-            if (!Chars.contains(plan, fragment)) {
-                Assert.fail(query + ": the plan does not name " + fragment + ":\n" + plan);
-            }
-        }
-    }
-
     // Reads the rows of a plan that answers true: the timestamp holds no NULL and follows the direction the plan
     // reports.
     private static void assertTableScanTimestampHolds(String query, RecordCursorFactory factory, int expectedRowCount) throws SqlException {
@@ -425,6 +411,17 @@ public class HasTableScanTimestampTest extends AbstractCairoTest {
             }
         } catch (Throwable th) {
             recordFailure(query, th);
+        }
+    }
+
+    // The plan must name the factory a shape targets, so that a planner change fails the shape rather than leaving it
+    // to check another factory.
+    private void assertPlan(String query, String... planFragments) throws Exception {
+        try {
+            assertQuery(query).noLeakCheck().assertsPlanContaining(planFragments);
+        } catch (AssertionError e) {
+            // recordFailure() keeps only the message of an AssertionError, and the builder's message names no query
+            throw new AssertionError(query + ": " + e.getMessage(), e);
         }
     }
 

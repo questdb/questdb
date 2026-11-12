@@ -555,16 +555,13 @@ public class CopyExportTest extends AbstractCairoTest {
         // A streamed export of a retyped table counts its buffers against the query memory limit: over the limit it
         // fails and leaves no temp directory behind, and without a limit it writes every row.
         assertMemoryLeak(() -> {
-            for (String tableName : new String[]{"big", "nbig"}) {
-                execute("CREATE TABLE " + tableName + " (v VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-                // 100_000 rows on 2024-01-01 and one on 2024-01-02
-                execute("INSERT INTO " + tableName + " SELECT x::VARCHAR, timestamp_sequence('2024-01-01', 864_000) FROM long_sequence(100_001)");
-            }
+            execute("CREATE TABLE big (v VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // 100_000 rows on 2024-01-01 and one on 2024-01-02
+            execute("INSERT INTO big SELECT x::VARCHAR, timestamp_sequence('2024-01-01', 864_000) FROM long_sequence(100_001)");
             drainWalQueue();
             execute("ALTER TABLE big CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
             drainWalQueue();
             execute("ALTER TABLE big ALTER COLUMN v TYPE LONG");
-            execute("ALTER TABLE nbig ALTER COLUMN v TYPE LONG");
             drainWalQueue();
 
             final String query = "SELECT * FROM big";
@@ -584,10 +581,16 @@ public class CopyExportTest extends AbstractCairoTest {
             assertNoTempDirOf(exportId);
 
             assertCopyStreamsRows(query, "no_limit");
-            assertQueriesPrintAlike(
-                    "SELECT count(), sum(v), min(v), max(v), min(ts), max(ts) FROM nbig",
-                    "SELECT count(), sum(v), min(v), max(v), min(ts), max(ts) FROM read_parquet('" + parquetPath("no_limit") + "')"
-            );
+            // v holds 1 to 100_001, whose sum is 100_001 * 100_002 / 2; the last row lands 100_000 steps of 0.864 s, one
+            // day, after the first
+            assertQuery("SELECT count(), sum(v), min(v), max(v), min(ts), max(ts) FROM read_parquet('" + parquetPath("no_limit") + "')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count\tsum\tmin\tmax\tmin1\tmax1
+                            100001\t5000150001\t1\t100001\t2024-01-01T00:00:00.000000Z\t2024-01-02T00:00:00.000000Z
+                            """);
         });
     }
 
@@ -723,10 +726,7 @@ public class CopyExportTest extends AbstractCairoTest {
                         try {
                             assertCopyStreamsRows(query, fileName);
                             assertParquetMatchesControl(controlQuery, fileName, null);
-                            assertQueriesPrintAlike(
-                                    "SELECT ts FROM (" + controlQuery + ") ORDER BY ts",
-                                    "SELECT ts FROM read_parquet('" + parquetPath(fileName) + "') ORDER BY ts"
-                            );
+                            assertParquetTimestampsMatchControl(controlQuery, fileName);
                         } catch (AssertionError e) {
                             throw new AssertionError(walMode + ": " + query, e);
                         }
@@ -1287,22 +1287,26 @@ public class CopyExportTest extends AbstractCairoTest {
             }
             ParquetTestUtils.assertRowGroupCount(parquetPath("pages_0"), ff, 10);
             ParquetTestUtils.assertRowGroupCount(parquetPath("pages_2"), ff, 1);
+            final String onlyRg2Rows = """
+                    sym\tv\tts
+                    only_rg2\t1100\t2024-01-01T03:03:10.000000Z
+                    only_rg2\t1200\t2024-01-01T03:19:50.000000Z
+                    only_rg2\t1300\t2024-01-01T03:36:30.000000Z
+                    only_rg2\t1500\t2024-01-01T04:09:50.000000Z
+                    only_rg2\t1600\t2024-01-01T04:26:30.000000Z
+                    only_rg2\t1700\t2024-01-01T04:43:10.000000Z
+                    only_rg2\t1800\t2024-01-01T04:59:50.000000Z
+                    only_rg2\t1900\t2024-01-01T05:16:30.000000Z
+                    only_rg2\t2000\t2024-01-01T05:33:10.000000Z
+                    """;
             assertQuery("SELECT * FROM read_parquet('" + parquetPath("pages_0") + "') WHERE sym = 'only_rg2'")
                     .noLeakCheck()
                     .timestamp("ts")
-                    .returns("""
-                            sym\tv\tts
-                            only_rg2\t1100\t2024-01-01T03:03:10.000000Z
-                            only_rg2\t1200\t2024-01-01T03:19:50.000000Z
-                            only_rg2\t1300\t2024-01-01T03:36:30.000000Z
-                            only_rg2\t1500\t2024-01-01T04:09:50.000000Z
-                            only_rg2\t1600\t2024-01-01T04:26:30.000000Z
-                            only_rg2\t1700\t2024-01-01T04:43:10.000000Z
-                            only_rg2\t1800\t2024-01-01T04:59:50.000000Z
-                            only_rg2\t1900\t2024-01-01T05:16:30.000000Z
-                            only_rg2\t2000\t2024-01-01T05:33:10.000000Z
-                            """);
-            assertQueriesPrintAlike("SELECT * FROM rg WHERE sym = 'only_rg2'", "SELECT * FROM read_parquet('" + parquetPath("pages_0") + "') WHERE sym = 'only_rg2'");
+                    .returns(onlyRg2Rows);
+            assertQuery("SELECT * FROM rg WHERE sym = 'only_rg2'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(onlyRg2Rows);
 
             // One row per row group
             final String twentyRowsQuery = "SELECT r.* FROM rg r CROSS JOIN long_sequence(1) WHERE r.v <= 20";
@@ -5955,10 +5959,7 @@ public class CopyExportTest extends AbstractCairoTest {
                             assertParquetMatchesControl(controlQuery, fileName, queries[i][1]);
                             ParquetTestUtils.assertColumnTypes(parquetPath(fileName), ff, ColumnType.typeOf(timestampType[0]), 2);
                             ParquetTestUtils.assertColumnMaxDefLevel(parquetPath(fileName), ff, 2, 0);
-                            assertQueriesPrintAlike(
-                                    "SELECT ts FROM (" + controlQuery + ") ORDER BY ts",
-                                    "SELECT ts FROM read_parquet('" + parquetPath(fileName) + "') ORDER BY ts"
-                            );
+                            assertParquetTimestampsMatchControl(controlQuery, fileName);
                         } catch (AssertionError e) {
                             throw new AssertionError(walMode + ", " + timestampType[0] + ": " + query, e);
                         }
@@ -8958,12 +8959,16 @@ public class CopyExportTest extends AbstractCairoTest {
         assertion.returns(expectedRows);
     }
 
-    private void assertQueriesPrintAlike(String expectedQuery, String actualQuery) throws Exception {
-        final StringSink expectedSink = new StringSink();
-        final StringSink actualSink = new StringSink();
-        TestUtils.printSql(engine, sqlExecutionContext, expectedQuery, expectedSink);
-        TestUtils.printSql(engine, sqlExecutionContext, actualQuery, actualSink);
-        TestUtils.assertEquals(expectedSink, actualSink);
+    // Asserts the timestamps of the file against those of the control query, sorted and to the last digit:
+    // assertParquetMatchesControl() compares timestamps to the millisecond only. ORDER BY ts sorts the rows of a file
+    // that designates no timestamp, and keeps the order of one that designates ts.
+    private void assertParquetTimestampsMatchControl(String controlQuery, String fileName) throws Exception {
+        printSql("SELECT ts FROM (" + controlQuery + ") ORDER BY ts");
+        assertQuery("SELECT ts FROM read_parquet('" + parquetPath(fileName) + "') ORDER BY ts")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("ts")
+                .returns(sink.toString());
     }
 
     private void assertReadParquetColumnTypes(String parquetPath, int expectedType, int... columnIndexes) throws SqlException {

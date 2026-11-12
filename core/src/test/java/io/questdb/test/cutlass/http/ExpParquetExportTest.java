@@ -3470,10 +3470,13 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
             SqlExecutionContext sqlExecutionContext,
             String fileName,
             String expectedRows
-    ) throws SqlException {
-        final StringSink actualSink = new StringSink();
-        TestUtils.printSql(engine, sqlExecutionContext, "read_parquet('" + fileName + "')", actualSink);
-        TestUtils.assertEquals(expectedRows, actualSink);
+    ) throws Exception {
+        assertQuery("read_parquet('" + fileName + "')")
+                .withEngine(engine)
+                .withContext(sqlExecutionContext)
+                .noLeakCheck()
+                .expectSize()
+                .returns(expectedRows);
     }
 
     private void exportParquet(TestHttpClient httpClient, DirectUtf8Sink sink, String query) {
