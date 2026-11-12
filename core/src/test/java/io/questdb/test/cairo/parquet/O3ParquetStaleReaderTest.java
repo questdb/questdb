@@ -4210,6 +4210,49 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAttachedForeignIndexDropIndexMoveRepairsStaleColumnTop() throws Exception {
+        // QuestDB 9.3.4 - 10.0.1 kept the _cv column top of a column across an in-place merge that wrote its values
+        // into the rows below the top, see StaleParquetColumnTopTest. Here t has such a top, 6 of the 12 rows of the
+        // attached partition, whose s carries the foreign version 31. No statement leaves such a top now, and no
+        // fixture has a foreign version, so the test writes the top through the writer. DROP INDEX on s moves the
+        // partition and rebuilds the index of t in the new directory: it zeroes the stale tops first, as ADD INDEX
+        // does, and the index covers the rows below the old top.
+        setInPlaceParquetO3Properties();
+        final String[] symbolColumnNames = {"s", "t"};
+        assertMemoryLeak(() -> {
+            createAttachedForeignParquetTable(symbolColumnNames, "s SYMBOL INDEX, t SYMBOL INDEX", false, "TIMESTAMP", "", SYM_ATTACHED_ROWS, 31, "s");
+            try (TableWriter writer = getWriter("pt")) {
+                writer.getColumnVersionWriter().upsertColumnTop(writer.getPartitionTimestamp(0), writer.getMetadata().getColumnIndex("t"), 6);
+                writer.commit();
+            }
+            Assert.assertEquals(4, getTableTxn("pt"));
+            Assert.assertEquals(6, getColumnTop("pt", 0, "t"));
+            assertExceptionNoLeakCheck(
+                    "SELECT t, v, ts FROM pt WHERE t = 'a'",
+                    -1,
+                    STALE_PARQUET_INDEX_ERROR + ", rebuild it with ALTER TABLE pt FORCE REINDEX PARQUET PARTITION LIST '2024-01-01'"
+                            + " [table=pt, partition=2024-01-01, index=t, column=t]"
+            );
+
+            execute("ALTER TABLE pt ALTER COLUMN s DROP INDEX");
+            Assert.assertEquals(4, getParquetPartitionNameTxn("pt", 0));
+            Assert.assertEquals(4, getColumnNameTxn("pt", 0, "s"));
+            for (String columnName : new String[]{"s", "t", "v", "ts"}) {
+                Assert.assertEquals(columnName, 0, getColumnTop("pt", 0, columnName));
+            }
+            Assert.assertEquals("[]", listColumnFiles("pt", 0, "s"));
+            Assert.assertEquals("[t.k, t.v]", listColumnFiles("pt", 0, "t"));
+            // rows 0 and 3, v 1 and 4, are below the old top
+            assertQuery("SELECT t, v, ts FROM pt WHERE t = 'a'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlanContaining("Index forward scan on: t")
+                    .returns(symRowsText(false, row -> "a".equals(row.s), SYM_ROW_BY_TS, SYM_ATTACHED_ROWS, SYM_ATTACH_TARGET_ROWS).replace("s\tv\tts", "t\tv\tts"));
+            assertIndexMatchesFullScan("t");
+        });
+    }
+
+    @Test
     public void testAttachedForeignIndexRenameCoveredByPosting() throws Exception {
         // As testAttachedForeignIndexDropIndexRebuildsOtherIndexes, RENAME COLUMN s TO s2 at txn 3: the partition
         // moves to a new directory, which holds the index of s2 under txn 3, and t's covering sidecars name s2 after
@@ -4262,6 +4305,75 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
         // link the data of s under txn 3 in the native partition 2024-01-02. DROP INDEX removes the new directory of
         // the moved partition and reloads _txn and _cv, and the retry moves the partition.
         assertAttachedForeignIndexDropIndexMoveFailure("s.d", "cannot hardLink");
+    }
+
+    @Test
+    public void testAttachedForeignIndexDropIndexMoveFailureOnBusyWriter() throws Exception {
+        // DROP INDEX on s runs on the command queue of a writer the test holds, and no rollback follows a failed
+        // command there: the writer goes on with what DROP INDEX left. In table pt of
+        // testAttachedForeignIndexDropIndexMoveNativeLinkFailure, DROP INDEX at txn 3 moves the attached partition,
+        // whose s carries the foreign version 31, then fails to link the data of s under txn 3 in the native partition
+        // 2024-01-02. In an all-native table, it fails to link that of 2024-01-01, which no move precedes. DROP INDEX
+        // removes the new directory and reloads _txn and _cv either way, so the writer commits its next row on the
+        // state of before it.
+        setInPlaceParquetO3Properties();
+        final ConvertToNativeFailingFacade ff = new ConvertToNativeFailingFacade("pt");
+        final String[] symbolColumnNames = {"s", "t"};
+        final SymRow[] newRows = {new SymRow("a", 95, "2024-01-02", "05:00")};
+        assertMemoryLeak(ff, () -> {
+            for (boolean isParquet : new boolean[]{true, false}) {
+                final String context = isParquet ? "attached parquet partition" : "all-native";
+                execute("DROP TABLE IF EXISTS pt");
+                execute("DROP TABLE IF EXISTS src");
+                if (isParquet) {
+                    createAttachedForeignParquetTable(symbolColumnNames, "s SYMBOL INDEX, t SYMBOL INDEX", false, "TIMESTAMP", "", SYM_ATTACHED_ROWS, 31, "s");
+                } else {
+                    execute("CREATE TABLE pt (s SYMBOL INDEX, t SYMBOL INDEX, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                    execute(twoSymbolRowsInsert("pt", SYM_ATTACHED_ROWS));
+                    execute(twoSymbolRowsInsert("pt", SYM_ATTACH_TARGET_ROWS));
+                }
+                final long txn = getTableTxn("pt");
+                final long partitionNameTxn = getPartitionNameTxn("pt", 0);
+                final long columnNameTxn = getColumnNameTxn("pt", 0, "s");
+                Assert.assertEquals(context, isParquet ? 31 : -1, columnNameTxn);
+                try (TableWriter writer = getWriter("pt")) {
+                    final int columnIndex = writer.getMetadata().getColumnIndex("s");
+                    ff.arm(false, "s.d");
+                    try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                        final CompiledQuery cq = compiler.compile("ALTER TABLE pt ALTER COLUMN s DROP INDEX", sqlExecutionContext);
+                        try (OperationFuture fut = cq.execute(eventSubSequence)) {
+                            writer.tick();
+                            fut.await();
+                        }
+                        Assert.fail(context + ": DROP INDEX must fail");
+                    } catch (SqlException | CairoException e) {
+                        TestUtils.assertContains(context, e.getMessage(), "cannot remove index for [txn=" + txn + ", table=pt, column=s]");
+                        TestUtils.assertContains(context, e.getMessage(), "cannot hardLink");
+                    }
+                    Assert.assertTrue(context, ff.hasFired());
+                    Assert.assertEquals(context, txn, writer.getTxn());
+                    Assert.assertEquals(context, partitionNameTxn, writer.getPartitionNameTxn(0));
+                    Assert.assertEquals(context, columnNameTxn, writer.getColumnNameTxn(writer.getPartitionTimestamp(0), columnIndex));
+                    Assert.assertEquals(context, -1, writer.getColumnNameTxn(writer.getPartitionTimestamp(1), columnIndex));
+                    if (isParquet) {
+                        Assert.assertFalse(context, new File(partitionDir("pt", "2024-01-01", txn)).exists());
+                    }
+                    // 2024-01-02T05:00
+                    final TableWriter.Row row = writer.newRow(1_704_153_600_000_000L + 5 * Micros.HOUR_MICROS);
+                    row.putSym(columnIndex, "a");
+                    row.putSym(writer.getMetadata().getColumnIndex("t"), "a");
+                    row.putInt(writer.getMetadata().getColumnIndex("v"), 95);
+                    row.append();
+                    writer.commit();
+                }
+                Assert.assertEquals(context, txn + 1, getTableTxn("pt"));
+                Assert.assertEquals(context, partitionNameTxn, getPartitionNameTxn("pt", 0));
+                Assert.assertEquals(context, columnNameTxn, getColumnNameTxn("pt", 0, "s"));
+                assertSColumnIndexed(context, true);
+                assertAttachedRows(context + ", after the commit", newRows);
+                assertIndexMatchesFullScan("t");
+            }
+        });
     }
 
     @Test

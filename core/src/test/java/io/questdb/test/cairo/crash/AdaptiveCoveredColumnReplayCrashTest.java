@@ -25,16 +25,27 @@
 package io.questdb.test.cairo.crash;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoError;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.std.Files;
+import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
+
+import java.io.File;
+import java.util.Arrays;
+import java.util.List;
 
 /**
  * A change that moves a covered column to a new name txn without rewriting its data (DROP INDEX, RENAME COLUMN)
@@ -50,8 +61,13 @@ import org.junit.Test;
  *   for them, and the replay creates them anew.</li>
  * </ul>
  * Either way the table must not be suspended, and the index that INCLUDEs the column must read its values.
+ * <p>
+ * Under SYNC, the directory DROP INDEX moves an attached parquet partition to must survive a power loss right after
+ * the DDL, and a failed sync of the move that DROP INDEX or RENAME COLUMN makes poisons the engine.
  */
 public class AdaptiveCoveredColumnReplayCrashTest extends AbstractAdaptiveCrashTest {
+    // the columns of the tables of createAttachedPartitionSource() and createAttachedParquetPartition()
+    private static final String ATTACHED_TABLE_COLUMNS = "(ts TIMESTAMP, s SYMBOL INDEX, t SYMBOL INDEX TYPE POSTING INCLUDE (s, v), v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY ";
 
     @Test
     public void testDropIndexMovingAttachedParquetPartitionReplayedAfterKill() throws Exception {
@@ -94,6 +110,75 @@ public class AdaptiveCoveredColumnReplayCrashTest extends AbstractAdaptiveCrashT
     }
 
     @Test
+    public void testSyncDdlMovingAttachedParquetPartitionFailedSyncIsFailStop() throws Exception {
+        Assume.assumeFalse("a directory takes no fsync on Windows", Os.isWindows());
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
+        // the barrier of the new directory
+        assertSyncDdlMoveSyncFailureIsFailStop(new FsyncFailureFacade("fsyncConvertedPartitionDir", 0, false));
+        // the sync of an index rebuilt in the new directory, which DROP INDEX would report as a plain error unless the
+        // move raised the stop itself
+        assertSyncDdlMoveSyncFailureIsFailStop(new FsyncFailureFacade("rebuildParquetRewriteIndexes", 0, true));
+    }
+
+    @Test
+    public void testSyncDropIndexMovingAttachedParquetPartitionSurvivesPowerLoss() throws Exception {
+        // Under SYNC, DROP INDEX on s moves the attached parquet partition, whose s carries the column version 31, to a
+        // directory named after its txn, see createAttachedParquetPartition(), and the power fails right after the
+        // DDL. The durable _txn names the new directory, which must survive with the links of data.parquet and _pm
+        // and the index of t rebuilt there. RENAME COLUMN s TO s2 is left out: under SYNC it loses the links of the
+        // symbol map files of s2 in the table directory on a power loss, a separate bug.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
+        runWithCrashFacade(() -> {
+            createAttachedPartitionSource();
+            for (boolean isWal : new boolean[]{true, false}) {
+                final String context = isWal ? "WAL" : "non-WAL";
+                execute("DROP TABLE IF EXISTS x");
+                createAttachedParquetPartition(isWal);
+                final TableToken token = engine.verifyTableName("x");
+                final long ddlTxn = getTableTxn("x");
+                Assert.assertTrue(context, partitionColumnNameTxn("x", "s") >= ddlTxn);
+                markDurableBaseline();
+
+                execute("ALTER TABLE x ALTER COLUMN s DROP INDEX");
+                drainWalQueue();
+                Assert.assertFalse(context + ": the DDL suspended the table", anyTableSuspended(token));
+                Assert.assertEquals(context + ": the DDL must move the partition", ddlTxn, firstPartitionNameTxn());
+
+                recoverAfterCrash(new TableToken[]{token});
+                Assert.assertFalse(context + ": recovery suspended the table", anyTableSuspended(token));
+                Assert.assertEquals(context + ": the DDL must survive", ddlTxn + 1, getTableTxn("x"));
+                Assert.assertEquals(context + ": _txn must name the moved directory", ddlTxn, firstPartitionNameTxn());
+                Assert.assertEquals(context, ddlTxn, partitionColumnNameTxn("x", "s"));
+                Assert.assertEquals(context, 31, partitionColumnNameTxn("x", "t"));
+                final List<String> files = partitionDirFiles(ddlTxn);
+                Assert.assertTrue(context + ": " + files, files.contains("data.parquet") && files.contains("_pm"));
+                Assert.assertTrue(context + ": " + files, files.stream().noneMatch(name -> name.startsWith("s.")));
+                Assert.assertTrue(context + ": " + files, indexKeyFileExists(ddlTxn, IndexType.POSTING, "t", 31));
+                assertQuery("SELECT t, s, v, ts FROM x WHERE t = 'a'")
+                        .noRandomAccess()
+                        .expectSize()
+                        .timestamp("ts")
+                        .withPlanContaining("CoveringIndex on: t")
+                        .returns("""
+                                t\ts\tv\tts
+                                a\ta\t1.0\t2024-01-01T00:00:00.000000Z
+                                a\ta\t3.0\t2024-01-01T02:00:00.000000Z
+                                a\ta\t4.0\t2024-01-02T00:00:00.000000Z
+                                """);
+                assertQuery("SELECT s, v, ts FROM x WHERE s = 'a'")
+                        .timestamp("ts")
+                        .returns("""
+                                s\tv\tts
+                                a\t1.0\t2024-01-01T00:00:00.000000Z
+                                a\t3.0\t2024-01-01T02:00:00.000000Z
+                                a\t4.0\t2024-01-02T00:00:00.000000Z
+                                """);
+                releaseEngineHandles();
+            }
+        });
+    }
+
+    @Test
     public void testUpdateCoveredColumnReplayedAfterKill() throws Exception {
         assertChangeReplayed(false, "UPDATE x SET v = v + 10 WHERE ts < '2024-01-03'", "v", this::assertUpdatedCoveredColumn);
     }
@@ -122,51 +207,11 @@ public class AdaptiveCoveredColumnReplayCrashTest extends AbstractAdaptiveCrashT
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1_000_000_000L);
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, Long.MAX_VALUE);
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
-        final String columns = "(ts TIMESTAMP, s SYMBOL INDEX, t SYMBOL INDEX TYPE POSTING INCLUDE (s, v), v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY ";
         final String columnName = isDropIndex ? "s" : "s2";
         runWithCrashFacade(() -> {
-            execute("CREATE TABLE src " + columns + "BYPASS WAL");
-            execute("""
-                    INSERT INTO src VALUES
-                        ('2024-01-01T00:00:00.000000Z', 'a', 'a', 1.0),
-                        ('2024-01-01T01:00:00.000000Z', 'b', 'b', 2.0),
-                        ('2024-01-01T02:00:00.000000Z', 'a', 'a', 3.0)
-                    """);
-            // src moves to txn 31, then s of 2024-01-01 takes column version 31 under a pinned reader
-            while (getTableTxn("src") < 31) {
-                execute("INSERT INTO src (ts) VALUES ('2024-01-09T00:00:00.000000Z')");
-            }
-            try (TableReader ignore = engine.getReader(engine.verifyTableName("src"))) {
-                execute("UPDATE src SET s = s WHERE ts IN '2024-01-01'");
-            }
-            Assert.assertEquals(31, partitionColumnNameTxn("src", "s"));
-
-            execute("CREATE TABLE x " + columns + "WAL");
-            // the symbols in the order src uses them first, so that they take the keys of the copied column files
-            execute("""
-                    INSERT INTO x VALUES
-                        ('2024-01-02T00:00:00.000000Z', 'a', 'a', 4.0),
-                        ('2024-01-02T01:00:00.000000Z', 'b', 'b', 5.0)
-                    """);
-            drainWalQueue();
+            createAttachedPartitionSource();
+            createAttachedParquetPartition(true);
             final TableToken token = engine.verifyTableName("x");
-            try (Path from = new Path(); Path to = new Path(); TableReader reader = engine.getReader(engine.verifyTableName("src"))) {
-                from.of(root).concat(reader.getTableToken().getDirName());
-                TableUtils.setPathForNativePartition(
-                        from,
-                        reader.getMetadata().getTimestampType(),
-                        reader.getPartitionedBy(),
-                        reader.getPartitionTimestampByIndex(0),
-                        reader.getPartitionNameTxnByIndex(0)
-                );
-                from.slash$();
-                to.of(root).concat(token.getDirName()).concat("2024-01-01").put(engine.getConfiguration().getAttachPartitionSuffix()).slash$();
-                TestUtils.copyDirectory(from, to, engine.getConfiguration().getMkDirMode());
-            }
-            execute("ALTER TABLE x ATTACH PARTITION LIST '2024-01-01'");
-            drainWalQueue();
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
-            drainWalQueue();
             // a save point covers the conversion; the DDL after it is the change recovery replays
             releaseSavePointHolds("x");
             final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
@@ -232,6 +277,83 @@ public class AdaptiveCoveredColumnReplayCrashTest extends AbstractAdaptiveCrashT
     }
 
     /**
+     * Under SYNC, a sync of the move that DROP INDEX on s or RENAME COLUMN s TO s2 makes of the attached parquet
+     * partition fails, see {@link #createAttachedParquetPartition}: {@code ff} fails the barrier of the new
+     * directory, or the sync of an index rebuilt there. The engine is poisoned and refuses the next write, the DDL
+     * fails with the data-sync CairoError when it runs outside the WAL, and nothing is committed: the partition keeps
+     * its directory, and s its column version 31.
+     */
+    private void assertSyncDdlMoveSyncFailureIsFailStop(FsyncFailureFacade ff) throws Exception {
+        assertMemoryLeak(ff, () -> {
+            execute("DROP TABLE IF EXISTS src");
+            createAttachedPartitionSource();
+            for (boolean isDropIndex : new boolean[]{true, false}) {
+                for (boolean isWal : new boolean[]{true, false}) {
+                    final String context = (isDropIndex ? "DROP INDEX" : "RENAME") + (isWal ? ", WAL" : ", non-WAL");
+                    execute("DROP TABLE IF EXISTS x");
+                    createAttachedParquetPartition(isWal);
+                    final long ddlTxn = getTableTxn("x");
+                    final long oldPartitionNameTxn = firstPartitionNameTxn();
+                    Assert.assertTrue(context, partitionColumnNameTxn("x", "s") >= ddlTxn);
+
+                    Throwable failure = null;
+                    ff.isArmed = true;
+                    try {
+                        execute(isDropIndex ? "ALTER TABLE x ALTER COLUMN s DROP INDEX" : "ALTER TABLE x RENAME COLUMN s TO s2");
+                        drainWalQueue();
+                    } catch (Throwable th) {
+                        failure = th;
+                    } finally {
+                        ff.isArmed = false;
+                    }
+                    final boolean isPoisoned = engine.isDurabilityFailed();
+                    Throwable nextWriteFailure = null;
+                    try {
+                        execute("INSERT INTO x (ts) VALUES ('2024-01-03T00:00:00.000000Z')");
+                    } catch (Throwable th) {
+                        nextWriteFailure = th;
+                    }
+                    engine.resetDurabilityFailure();
+                    releaseEngineHandles();
+                    Assert.assertEquals(context + ": the injected failure must have been reached", 1, ff.failureCount);
+                    ff.failureCount = 0;
+                    Assert.assertTrue(context + ": a failed data sync must poison the engine, failure: " + failure, isPoisoned);
+                    Assert.assertTrue(
+                            context + ": a poisoned engine must refuse the next write, failure: " + nextWriteFailure,
+                            nextWriteFailure instanceof CairoError
+                                    && nextWriteFailure.getMessage().contains("engine is poisoned by a failed durability barrier")
+                    );
+                    if (!isWal) {
+                        Assert.assertTrue(
+                                context + ": the statement must fail with a data-sync CairoError, failure: " + failure,
+                                failure instanceof CairoError && CairoException.isDataSyncFailure(failure)
+                        );
+                    }
+                    // the next writer brings back the state of before the DDL, the name of s too
+                    try (TableWriter writer = getWriter("x")) {
+                        Assert.assertEquals(context, ddlTxn, writer.getTxn());
+                    }
+                    Assert.assertEquals(context + ": the DDL must not commit", ddlTxn, getTableTxn("x"));
+                    Assert.assertEquals(context, oldPartitionNameTxn, firstPartitionNameTxn());
+                    Assert.assertTrue(context, partitionDirExists(oldPartitionNameTxn));
+                    Assert.assertFalse(context, partitionDirExists(ddlTxn));
+                    Assert.assertEquals(context, 31, partitionColumnNameTxn("x", "s"));
+                    assertQuery("SELECT s, v, ts FROM x WHERE s = 'a'")
+                            .timestamp("ts")
+                            .withPlanContaining("Index forward scan on: s")
+                            .returns("""
+                                    s\tv\tts
+                                    a\t1.0\t2024-01-01T00:00:00.000000Z
+                                    a\t3.0\t2024-01-01T02:00:00.000000Z
+                                    a\t4.0\t2024-01-02T00:00:00.000000Z
+                                    """);
+                    releaseEngineHandles();
+                }
+            }
+        });
+    }
+
+    /**
      * @param powerLoss         whether the process dies by a power loss, which loses the names the change added,
      *                          or by a kill, which keeps every file it wrote
      * @param sql               the change
@@ -286,6 +408,64 @@ public class AdaptiveCoveredColumnReplayCrashTest extends AbstractAdaptiveCrashT
             assertAfterReplay.run();
             releaseEngineHandles();
         });
+    }
+
+    /**
+     * Table x of {@link #ATTACHED_TABLE_COLUMNS}, a WAL table when {@code isWal}. Its parquet partition 2024-01-01 is
+     * attached from a copy of the partition of table src, see {@link #createAttachedPartitionSource()}, where s
+     * carries the column version 31. Partition 2024-01-02 holds ('a', 4.0) at 00:00 and ('b', 5.0) at 01:00. t takes
+     * the symbol of s in every row.
+     */
+    private void createAttachedParquetPartition(boolean isWal) throws Exception {
+        execute("CREATE TABLE x " + ATTACHED_TABLE_COLUMNS + (isWal ? "WAL" : "BYPASS WAL"));
+        // the symbols in the order src uses them first, so that they take the keys of the copied column files
+        execute("""
+                INSERT INTO x VALUES
+                    ('2024-01-02T00:00:00.000000Z', 'a', 'a', 4.0),
+                    ('2024-01-02T01:00:00.000000Z', 'b', 'b', 5.0)
+                """);
+        drainWalQueue();
+        final TableToken token = engine.verifyTableName("x");
+        try (Path from = new Path(); Path to = new Path(); TableReader reader = engine.getReader(engine.verifyTableName("src"))) {
+            from.of(root).concat(reader.getTableToken().getDirName());
+            TableUtils.setPathForNativePartition(
+                    from,
+                    reader.getMetadata().getTimestampType(),
+                    reader.getPartitionedBy(),
+                    reader.getPartitionTimestampByIndex(0),
+                    reader.getPartitionNameTxnByIndex(0)
+            );
+            from.slash$();
+            to.of(root).concat(token.getDirName()).concat("2024-01-01").put(engine.getConfiguration().getAttachPartitionSuffix()).slash$();
+            TestUtils.copyDirectory(from, to, engine.getConfiguration().getMkDirMode());
+        }
+        execute("ALTER TABLE x ATTACH PARTITION LIST '2024-01-01'");
+        drainWalQueue();
+        execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+        drainWalQueue();
+    }
+
+    /**
+     * Table src of {@link #ATTACHED_TABLE_COLUMNS}, at txn 31. Its partition 2024-01-01 holds ('a', 1.0) at 00:00,
+     * ('b', 2.0) at 01:00 and ('a', 3.0) at 02:00, t taking the symbol of s. s carries the column version 31 there,
+     * and so does t, which INCLUDEs s: the UPDATE of s rebuilds its index.
+     */
+    private void createAttachedPartitionSource() throws Exception {
+        execute("CREATE TABLE src " + ATTACHED_TABLE_COLUMNS + "BYPASS WAL");
+        execute("""
+                INSERT INTO src VALUES
+                    ('2024-01-01T00:00:00.000000Z', 'a', 'a', 1.0),
+                    ('2024-01-01T01:00:00.000000Z', 'b', 'b', 2.0),
+                    ('2024-01-01T02:00:00.000000Z', 'a', 'a', 3.0)
+                """);
+        // src moves to txn 31, then s of 2024-01-01 takes column version 31 under a pinned reader
+        while (getTableTxn("src") < 31) {
+            execute("INSERT INTO src (ts) VALUES ('2024-01-09T00:00:00.000000Z')");
+        }
+        try (TableReader ignore = engine.getReader(engine.verifyTableName("src"))) {
+            execute("UPDATE src SET s = s WHERE ts IN '2024-01-01'");
+        }
+        Assert.assertEquals(31, partitionColumnNameTxn("src", "s"));
     }
 
     /**
@@ -398,6 +578,23 @@ public class AdaptiveCoveredColumnReplayCrashTest extends AbstractAdaptiveCrashT
             final int writerIndex = reader.getMetadata().getWriterIndex(reader.getMetadata().getColumnIndex(column));
             return reader.getColumnVersionReader().getColumnNameTxn(reader.getPartitionTimestampByIndex(0), writerIndex);
         }
+    }
+
+    // whether the key file of the index on the column, under the column name txn, is in the directory of partition
+    // 2024-01-01 of x under the name txn
+    private boolean indexKeyFileExists(long partitionNameTxn, byte indexType, String columnName, long columnNameTxn) {
+        try (Path path = new Path()) {
+            path.of(root).concat(engine.verifyTableName("x").getDirName()).concat("2024-01-01").put('.').put(partitionNameTxn);
+            return Files.exists(IndexFactory.keyFileName(indexType, path, columnName, columnNameTxn));
+        }
+    }
+
+    // the names of the files in the directory of partition 2024-01-01 of x under the name txn, sorted
+    private List<String> partitionDirFiles(long partitionNameTxn) {
+        final String[] names = new File(new File(root, engine.verifyTableName("x").getDirName()), "2024-01-01." + partitionNameTxn).list();
+        Assert.assertNotNull("the directory of the partition must exist", names);
+        Arrays.sort(names);
+        return Arrays.asList(names);
     }
 
     // whether the directory of partition 2024-01-01 of x under the name txn exists
