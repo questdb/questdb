@@ -127,6 +127,12 @@ public final class EquiJoinClause {
     // selective key or a narrowed dimension. The fuzz tables hold up to about 150 rows, so a query
     // returns a few thousand rows at most, which every axis materializes several times.
     private static final double FAN_OUT_BUDGET = 24;
+    // A fault query's test_fault() goes into the WHERE clause of a join's input, into the ON residual
+    // of a join, or at the head of the query's WHERE clause; see generate().
+    private static final int FAULT_SITE_BUILD = 1;
+    private static final int FAULT_SITE_RESIDUAL = 2;
+    private static final int FAULT_SITE_WHERE = 0;
+    private static final int FAULT_SITES = 3;
     private static final String INT_KEY = "k";
     // Interval widths in hours. The fuzz tables start at FuzzConfig's 2024-01-01 and span 30 to
     // 75 hours, so an interval selects anything from no row to every row of a table.
@@ -171,8 +177,8 @@ public final class EquiJoinClause {
             BindContext ctx,
             boolean injectFaultFn
     ) {
-        // The draws below depend neither on ctx nor on injectFaultFn, so the bind variant
-        // regenerates the same tree.
+        // The draws below depend neither on ctx nor on injectFaultFn, but for the fault's site, so
+        // the bind variant, which a fault query never runs, regenerates the same tree.
         final boolean isStar = tables != null;
         final boolean isFirstLeftJoin = rnd.nextBoolean();
         // A third of a star's INNER first joins read two unfiltered tables, which the joins' order
@@ -209,6 +215,11 @@ public final class EquiJoinClause {
         }
         // True when the left input may run a filter, which a bare LIMIT would be pushed into.
         boolean isLeftFiltered = l.isFiltered;
+        // Where a fault query's test_fault() goes: at the head of the WHERE clause, into the ON
+        // residual of a join, which a LEFT join runs for each pair, or into the WHERE clause of a
+        // join's input, which the build runs for each of its rows. Draws nothing without a fault.
+        final int faultSite = injectFaultFn ? rnd.nextInt(FAULT_SITES) : FAULT_SITE_WHERE;
+        final int faultJoin = faultSite != FAULT_SITE_WHERE ? rnd.nextInt(joins.size()) : -1;
 
         final StringSink sql = new StringSink();
         sql.put("SELECT ");
@@ -239,7 +250,13 @@ public final class EquiJoinClause {
         sql.put(" FROM ").put(l.fromSql).put(' ').put(LEFT_ALIAS);
         for (int j = 0, n = joins.size(); j < n; j++) {
             final Join join = joins.getQuick(j);
-            sql.put(join.isLeftJoin ? " LEFT JOIN " : " JOIN ").put(join.input.fromSql).put(' ').put(join.alias);
+            sql.put(join.isLeftJoin ? " LEFT JOIN " : " JOIN ");
+            if (j == faultJoin && faultSite == FAULT_SITE_BUILD) {
+                sql.put("(SELECT * FROM ").put(join.input.fromSql).put(" WHERE ").put(TestFaultFunctionFactory.CALL).put(')');
+            } else {
+                sql.put(join.input.fromSql);
+            }
+            sql.put(' ').put(join.alias);
             sql.put(" ON ");
             final boolean isSnowflake = join.keySource >= 0;
             appendKey(
@@ -277,6 +294,12 @@ public final class EquiJoinClause {
                     }
                 }
                 sql.put(')');
+            }
+            if (j == faultJoin && faultSite == FAULT_SITE_RESIDUAL) {
+                // test_fault() comes first and returns true until it throws; the other operand
+                // reads both inputs, so the conjunct stays a residual over the pair.
+                sql.put(" AND (").put(TestFaultFunctionFactory.CALL).put(" OR ")
+                        .put(crossPredicate(rnd, l, LEFT_ALIAS, join.input, join.alias)).put(')');
             }
         }
 
@@ -319,13 +342,14 @@ public final class EquiJoinClause {
         if (rnd.nextInt(16) == 0) {
             conjuncts.add(CONSTANT_PREDICATES[rnd.nextInt(CONSTANT_PREDICATES.length)]);
         }
-        if (injectFaultFn || conjuncts.size() > 0) {
+        final boolean isFaultInWhere = injectFaultFn && faultSite == FAULT_SITE_WHERE;
+        if (isFaultInWhere || conjuncts.size() > 0) {
             sql.put(" WHERE ");
-            if (injectFaultFn) {
+            if (isFaultInWhere) {
                 sql.put(TestFaultFunctionFactory.CALL);
             }
             for (int i = 0, n = conjuncts.size(); i < n; i++) {
-                if (i > 0 || injectFaultFn) {
+                if (i > 0 || isFaultInWhere) {
                     sql.put(" AND ");
                 }
                 sql.put('(').put(conjuncts.getQuick(i)).put(')');

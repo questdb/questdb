@@ -48,6 +48,7 @@ import io.questdb.griffin.engine.table.AsyncGroupByNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHashJoinGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHashJoinRecordCursorFactory;
+import io.questdb.griffin.engine.table.HashJoinTupleRing;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
@@ -158,7 +159,11 @@ import java.util.regex.Pattern;
  * access path -- a violation is always a real bug, never a benign artifact,
  * so unlike the diff axes this check has no skip valves. It runs on every
  * pass (primary, shadow, JIT-on/off, bind), so each distinct factory shape
- * gets exercised.
+ * gets exercised. A plan that runs the parallel hash join is also read part
+ * of the way: {@code calculateSize()} after k rows must count the rest, and a
+ * {@code toTop()} taken j rows in must read the first pass again, in order,
+ * since the operator's order is deterministic (see
+ * {@link #checkParallelJoinPartialReads}).
  * <p>
  * Two storage-diff escape valves keep the oracle focused on data
  * correctness rather than planner artifacts:
@@ -235,6 +240,9 @@ public final class QueryRunner {
     private final int[] faultsFiredByType = new int[FaultType.values().length];
     // Null disables the map page axis.
     private final Overrides mapPageOverrides;
+    // The engine's configuration overrides, which the QUERY_MEMORY_LIMIT fault sets the per-query
+    // memory limit through; null leaves the fault type out.
+    private final Overrides queryMemoryLimitOverrides;
     // Comparisons the map page axis ran: one per page size it tried on a differential query, and
     // as many again on a query whose pivot used the fused hash join GROUP BY.
     private int mapPageAxisRuns;
@@ -255,6 +263,21 @@ public final class QueryRunner {
     // candidate, and those whose execution swapped the first join's inputs.
     private int parallelJoinAxisStacked;
     private int parallelJoinAxisMaxStages;
+    // Executions of the parallel hash join, on any axis, whose probe had more frames than the tuple
+    // ring has entries, more than one, so that frames share entries.
+    private int parallelJoinAliasedRuns;
+    // Executions of the parallel hash join, on any axis, that ended with a window of one frame.
+    private int parallelJoinSingleFrameWindowRuns;
+    // Executions of the parallel hash join, on any axis, whose window ended narrower than it was when
+    // the cursor returned its first row.
+    private int parallelJoinNarrowedWindowRuns;
+    // Partial reads of a parallel hash join's cursor (see checkParallelJoinPartialReads), in all,
+    // and those of a stacked operator, of a swapped execution and of an execution that joined frames
+    // in continuations.
+    private int parallelJoinPartialReadChecks;
+    private int parallelJoinPartialReadContinued;
+    private int parallelJoinPartialReadStacked;
+    private int parallelJoinPartialReadSwapped;
     private int parallelJoinAxisSwapCandidates;
     private int parallelJoinAxisSwapped;
     private final TextPlanSink planSink = new TextPlanSink();
@@ -292,19 +315,46 @@ public final class QueryRunner {
             ObjList<FuzzTable> tables,
             String queryWorkerNamePrefix
     ) {
+        this(engine, executionContext, diffJit, diffShadow, diffFused, diffParallelJoin, mapPageOverrides, null, verifyCursor, tables, queryWorkerNamePrefix);
+    }
+
+    public QueryRunner(
+            CairoEngine engine,
+            SqlExecutionContext executionContext,
+            boolean diffJit,
+            boolean diffShadow,
+            boolean diffFused,
+            boolean diffParallelJoin,
+            Overrides mapPageOverrides,
+            Overrides queryMemoryLimitOverrides,
+            boolean verifyCursor,
+            ObjList<FuzzTable> tables,
+            String queryWorkerNamePrefix
+    ) {
         this.engine = engine;
         this.executionContext = executionContext;
         this.diffFused = diffFused;
         this.diffParallelJoin = diffParallelJoin;
         this.mapPageOverrides = mapPageOverrides;
+        this.queryMemoryLimitOverrides = queryMemoryLimitOverrides;
         this.diffJit = diffJit;
         this.diffShadow = diffShadow;
         this.verifyCursor = verifyCursor;
         this.queryWorkerNamePrefix = queryWorkerNamePrefix;
         this.failureFf = engine.getConfiguration().getFilesFacade() instanceof FailureFileFacade ff ? ff : null;
-        this.faultTypes = failureFf != null
-                ? new FaultType[]{FaultType.FILE, FaultType.FUNCTION, FaultType.MALLOC}
-                : new FaultType[]{FaultType.FUNCTION, FaultType.MALLOC};
+        final ObjList<FaultType> offered = new ObjList<>();
+        if (failureFf != null) {
+            offered.add(FaultType.FILE);
+        }
+        offered.add(FaultType.FUNCTION);
+        offered.add(FaultType.MALLOC);
+        if (queryMemoryLimitOverrides != null) {
+            offered.add(FaultType.QUERY_MEMORY_LIMIT);
+        }
+        this.faultTypes = new FaultType[offered.size()];
+        for (int i = 0, n = offered.size(); i < n; i++) {
+            faultTypes[i] = offered.getQuick(i);
+        }
         if (diffShadow) {
             int n = tables.size();
             primaryPatterns = new Pattern[n];
@@ -452,6 +502,59 @@ public final class QueryRunner {
     }
 
     /**
+     * Executions of the parallel hash join whose probe had more frames than the tuple ring has
+     * entries, more than one: frame f writes entry f % entries, so frames share entries.
+     */
+    public int getParallelJoinAliasedRuns() {
+        return parallelJoinAliasedRuns;
+    }
+
+    /**
+     * Executions of the parallel hash join whose ring window ended narrower than it was when the
+     * cursor returned its first row: the entries the cursor read grew past their share of the ring
+     * budget.
+     */
+    public int getParallelJoinNarrowedWindowRuns() {
+        return parallelJoinNarrowedWindowRuns;
+    }
+
+    /**
+     * Partial reads of the parallel hash join's cursor that {@link #checkParallelJoinPartialReads}
+     * checked.
+     */
+    public int getParallelJoinPartialReadChecks() {
+        return parallelJoinPartialReadChecks;
+    }
+
+    /**
+     * Partial reads checked over an execution that joined some of its frames in continuations.
+     */
+    public int getParallelJoinPartialReadContinued() {
+        return parallelJoinPartialReadContinued;
+    }
+
+    /**
+     * Partial reads checked over a parallel hash join that stacks two joins or more.
+     */
+    public int getParallelJoinPartialReadStacked() {
+        return parallelJoinPartialReadStacked;
+    }
+
+    /**
+     * Partial reads checked over an execution that swapped its first join's inputs.
+     */
+    public int getParallelJoinPartialReadSwapped() {
+        return parallelJoinPartialReadSwapped;
+    }
+
+    /**
+     * Executions of the parallel hash join whose ring window ended at one frame.
+     */
+    public int getParallelJoinSingleFrameWindowRuns() {
+        return parallelJoinSingleFrameWindowRuns;
+    }
+
+    /**
      * Comparisons the reference axis ran: queries with a reference rewrite whose pivot and
      * rewrite both ran to completion.
      */
@@ -550,6 +653,10 @@ public final class QueryRunner {
         // exactly one rnd op whether or not it compiles, matching the FILE /
         // FUNCTION arming draws and keeping the seeded stream replay-stable.
         long mallocSlack = 0;
+        // The per-query memory limit of a QUERY_MEMORY_LIMIT fault: from 512 bytes to 4 MiB,
+        // spread evenly over the powers of two, so that the limit lands on the first tracked
+        // allocations of a query as often as on its later ones.
+        long queryMemoryLimit = 0;
         switch (type) {
             // One rnd draw whether serial or parallel, keeping the seeded stream
             // replay-stable. Parallel scopes the fault to the query execution so it
@@ -564,6 +671,10 @@ public final class QueryRunner {
             }
             case MALLOC -> mallocSlack = FAULT_MALLOC_SLACK_MIN + rnd.nextInt(FAULT_MALLOC_SLACK_RANGE);
             case FUNCTION -> TestFaultFunctionFactory.armToFailAfter(rnd.nextInt(FAULT_MAX_FN_CALLS));
+            case QUERY_MEMORY_LIMIT -> {
+                queryMemoryLimit = (512L << rnd.nextInt(14)) + rnd.nextInt(512);
+                queryMemoryLimitOverrides.setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, queryMemoryLimit);
+            }
         }
         Outcome outcome;
         // Read the file-failure count and contamination before disarming:
@@ -581,12 +692,16 @@ public final class QueryRunner {
                 case FILE -> failureFf.clearFailures();
                 case MALLOC -> Unsafe.setRssMemLimit(savedRssLimit);
                 case FUNCTION -> TestFaultFunctionFactory.disarm();
+                case QUERY_MEMORY_LIMIT -> queryMemoryLimitOverrides.setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, (String) null);
             }
         }
         boolean faultFired = switch (type) {
             case FILE -> fileFiredAfter > fileFailBaseline;
             case MALLOC -> outcome.failure instanceof CairoException ce && ce.isOutOfMemory();
             case FUNCTION -> TestFaultFunctionFactory.faultsTriggered() > 0;
+            // The query's tracked memory breached the limit.
+            case QUERY_MEMORY_LIMIT -> outcome.failure instanceof CairoException ce && ce.isOutOfMemory()
+                    && Chars.contains(ce.getFlyweightMessage(), "query memory limit exceeded");
         };
         if (faultFired) {
             faultsFired++;
@@ -1020,6 +1135,48 @@ public final class QueryRunner {
     }
 
     /**
+     * {@link #materialize} for a plan whose base factories reach a parallel hash join: also counts
+     * how the execution used the operator's tuple ring, while the cursor still holds it.
+     */
+    private int materializeParallelJoin(RecordCursor cursor, RecordMetadata metadata, int columnCount, StringSink rows,
+                                        AsyncHashJoinRecordCursorFactory join) {
+        final HashJoinTupleRing ring = join.getAtom().getRing();
+        Record record = cursor.getRecord();
+        final StringSink cell = new StringSink();
+        int rowsRead = 0;
+        int firstWindow = 0;
+        while (cursor.hasNext()) {
+            if (rowsRead == 0) {
+                firstWindow = ring.getDispatchLimit();
+            }
+            for (int i = 0; i < columnCount; i++) {
+                cell.clear();
+                CursorPrinter.printColumn(record, metadata, i, cell, false);
+                appendCell(rows, cell);
+                rows.put('\t');
+            }
+            rows.put('\n');
+            rowsRead++;
+        }
+        // An operator under a parent that closed it, or one whose INNER join met an empty build,
+        // holds no ring.
+        final int entryCount = ring.getEntryCount();
+        if (entryCount > 0) {
+            final int window = ring.getDispatchLimit();
+            if (entryCount > 1 && join.getProbeFrameCount() > entryCount) {
+                parallelJoinAliasedRuns++;
+            }
+            if (window == 1) {
+                parallelJoinSingleFrameWindowRuns++;
+            }
+            if (rowsRead > 0 && window < firstWindow) {
+                parallelJoinNarrowedWindowRuns++;
+            }
+        }
+        return rowsRead;
+    }
+
+    /**
      * Detects whether a rendered plan uses an index-driven access path.
      * Markers come from the {@code sink.type(...)} calls in QuestDB's
      * cursor factories: "Index forward scan" / "Index backward scan",
@@ -1405,6 +1562,93 @@ public final class QueryRunner {
         } else if (firstRowsRead != secondRowsRead) {
             throw new CursorCheckException(cursorFailureMessage(
                     "toTop re-iteration changed the row count", sql, firstPass, firstRowsRead, rowsToTop, secondRowsRead), null);
+        }
+    }
+
+    /**
+     * Reads a parallel hash join's cursor, which the first pass exhausted, part of the way, in three
+     * pairs of positions that the SQL text picks, so that a replayed seed reads the same ones:
+     * {@code calculateSize()} after k rows must count the rows the first pass read after them and
+     * leave {@link RecordCursor#hasNext()} false, the way HTTP's {@code count=true} counts after a
+     * page, and a {@code toTop()} taken j rows in must read the first pass again, in order. The
+     * operator's order is deterministic, so the rows must come back in the first pass's order, unless
+     * the query is not deterministic, whose row count alone must match. The count meets the rest of
+     * a held frame, a consumer's pending chains, a continuation that it counts rather than joins and
+     * tasks that the cursor dispatched before the count began. A violation is a real bug and throws
+     * {@link CursorCheckException}; a per-row runtime error that the first pass did not raise is
+     * tolerated, as the other cursor checks tolerate it. Leaves the cursor exhausted.
+     */
+    private void checkParallelJoinPartialReads(String sql, RecordCursor cursor, RecordMetadata metadata, int columnCount,
+                                               StringSink firstPass, int firstRowsRead, boolean deterministic,
+                                               AsyncHashJoinRecordCursorFactory join) {
+        final boolean isStacked = join.getSpec().getStageCount() > 1;
+        final boolean isSwapped = join.getAtom().isSwapped();
+        final boolean isContinued = join.getAtom().getContinuationCount() > 0;
+        final long hash = sql.hashCode() & 0x7fff_ffffL;
+        for (int salt = 0; salt < 3; salt++) {
+            final int k = (int) ((hash * (salt * 2L + 1) + salt) % (firstRowsRead + 1));
+            final RecordCursor.Counter counter = new RecordCursor.Counter();
+            try {
+                cursor.toTop();
+                for (int i = 0; i < k; i++) {
+                    if (!cursor.hasNext()) {
+                        throw new CursorCheckException(cursorFailureMessage(
+                                "hasNext() returned false at row " + i + " of a re-read up to row " + k,
+                                sql, firstPass, firstRowsRead, null, -1), null);
+                    }
+                }
+                cursor.calculateSize(executionContext.getCircuitBreaker(), counter);
+            } catch (CursorCheckException e) {
+                throw e;
+            } catch (Exception e) {
+                if (isPerRowRuntimeError(e)) {
+                    throw new CursorCheckException("calculateSize() after " + k + " rows surfaced " + e.getClass().getSimpleName()
+                            + " absent on the first pass (parallel-filter LIMIT non-determinism)", e, true);
+                }
+                throw new CursorCheckException("calculateSize() after " + k + " rows threw after a clean first pass:\n  sql: " + sql, e);
+            }
+            if (k + counter.get() != firstRowsRead) {
+                throw new CursorCheckException(cursorFailureMessage(
+                        "calculateSize() after " + k + " rows counted " + counter.get() + " but the cursor materialized "
+                                + firstRowsRead + " rows", sql, firstPass, firstRowsRead, null, -1), null);
+            }
+            if (cursor.hasNext()) {
+                throw new CursorCheckException(cursorFailureMessage(
+                        "hasNext() returned true after calculateSize() past row " + k,
+                        sql, firstPass, firstRowsRead, null, -1), null);
+            }
+            final int j = (int) ((hash * 31 + salt * 7L) % (firstRowsRead + 1));
+            rowsToTop.clear();
+            final int secondRowsRead;
+            try {
+                cursor.toTop();
+                for (int i = 0; i < j && cursor.hasNext(); i++) {
+                    cursor.getRecord();
+                }
+                cursor.toTop();
+                secondRowsRead = materialize(cursor, metadata, columnCount, rowsToTop);
+            } catch (Exception e) {
+                if (isPerRowRuntimeError(e)) {
+                    throw new CursorCheckException("re-read after toTop() at row " + j + " surfaced " + e.getClass().getSimpleName()
+                            + " absent on the first pass (parallel-filter LIMIT non-determinism)", e, true);
+                }
+                throw new CursorCheckException("re-read after toTop() at row " + j + " threw after a clean first pass:\n  sql: " + sql, e);
+            }
+            if (deterministic ? !Chars.equals(firstPass, rowsToTop) : secondRowsRead != firstRowsRead) {
+                throw new CursorCheckException(cursorFailureMessage(
+                        "re-read after toTop() at row " + j + " differs from the first pass, in order",
+                        sql, firstPass, firstRowsRead, rowsToTop, secondRowsRead), null);
+            }
+        }
+        parallelJoinPartialReadChecks++;
+        if (isStacked) {
+            parallelJoinPartialReadStacked++;
+        }
+        if (isSwapped) {
+            parallelJoinPartialReadSwapped++;
+        }
+        if (isContinued) {
+            parallelJoinPartialReadContinued++;
         }
     }
 
@@ -1906,7 +2150,10 @@ public final class QueryRunner {
                 // to a column the other side typed as an integer -- silently absorbing
                 // a genuine one-unit integer divergence.
                 fpColumnMask = buildFpColumnMask(metadata, columnCount);
-                rowsRead = materialize(cursor, metadata, columnCount, rows);
+                final AsyncHashJoinRecordCursorFactory join = ParallelHashJoinTestUtils.find(factory);
+                rowsRead = join != null
+                        ? materializeParallelJoin(cursor, metadata, columnCount, rows, join)
+                        : materialize(cursor, metadata, columnCount, rows);
                 // toTop() must rewind without re-executing, and size() /
                 // calculateSize() must agree with the materialized row count.
                 // These hold for every cursor, so a violation is a real bug;
@@ -1915,6 +2162,9 @@ public final class QueryRunner {
                 if (verifyCursor) {
                     checkToTop(sql, cursor, metadata, columnCount, rows, rowsRead, deterministic);
                     checkCalculateSize(sql, cursor, rows, rowsRead);
+                    if (join != null && rowsRead > 0) {
+                        checkParallelJoinPartialReads(sql, cursor, metadata, columnCount, rows, rowsRead, deterministic, join);
+                    }
                 }
             }
             planSink.of(factory, executionContext);

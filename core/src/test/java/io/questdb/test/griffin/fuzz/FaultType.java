@@ -36,8 +36,13 @@ package io.questdb.test.griffin.fuzz;
  *       once mid-evaluation.</li>
  *   <li>{@link #MALLOC} &mdash; a native allocation fails once, via the RSS
  *       memory limit (the same out-of-memory path production hits).</li>
+ *   <li>{@link #QUERY_MEMORY_LIMIT} &mdash; the query runs under a per-query
+ *       memory limit, {@code cairo.query.memory.limit.bytes}, which a tracked
+ *       allocation of the query breaches: the limit whose breach the operators
+ *       that charge the query's memory tracker, such as the parallel hash
+ *       join's builds and tuple ring, report.</li>
  * </ul>
  */
 public enum FaultType {
-    FILE, FUNCTION, MALLOC
+    FILE, FUNCTION, MALLOC, QUERY_MEMORY_LIMIT
 }

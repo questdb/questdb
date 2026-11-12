@@ -32,6 +32,7 @@ import io.questdb.griffin.engine.table.AsyncHashJoinRecordCursorFactory;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.griffin.ParallelHashJoinTestUtils;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -113,6 +114,49 @@ public class MatViewAsyncHashJoinTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testRefreshOfStackedJoinViews() throws Exception {
+        assertMemoryLeak(() -> {
+            for (boolean isParallelSql : new boolean[]{true, false}) {
+                setProperty(PropertyKey.CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED, Boolean.toString(isParallelSql));
+                // Views whose SAMPLE BY runs over a stack of two joins, a LEFT and an INNER one, with an
+                // ON residual on the second.
+                for (String view : new String[]{
+                        "SELECT t.ts, p.country, o.owner, first(t.qty) fq, last(p.kwp) lk, count() n FROM trades t"
+                                + " LEFT JOIN plants p ON t.plant_id = p.plant_id LEFT JOIN owners o ON t.plant_id = o.plant_id SAMPLE BY 1h",
+                        "SELECT t.ts, o.owner, first(p.kwp) fk, last(t.qty) lq, count() n FROM trades t"
+                                + " JOIN plants p ON t.plant_id = p.plant_id LEFT JOIN owners o ON t.plant_id = o.plant_id AND o.share > t.qty / 100 SAMPLE BY 30m",
+                }) {
+                    final String expected = refreshes(view, false, false);
+                    Assert.assertEquals(view, expected, refreshes(view, true, isParallelSql));
+                    // The refreshes ran a stack of both joins.
+                    if (isParallelSql) {
+                        sqlExecutionContext.setParallelHashJoinEnabled(true);
+                        execute("CREATE TABLE trades (plant_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                        createDimensions();
+                        try (RecordCursorFactory factory = select(view)) {
+                            TestUtils.assertContains(ParallelHashJoinTestUtils.plan(factory, sqlExecutionContext), "stages: 2");
+                        }
+                        execute("DROP TABLE trades");
+                        dropDimensions();
+                    }
+                }
+            }
+        });
+    }
+
+    private static void createDimensions() throws Exception {
+        execute("CREATE TABLE plants (plant_id INT, country SYMBOL, kwp DOUBLE)");
+        execute("INSERT INTO plants VALUES (1, 'ES', 5), (2, 'IT', 7), (2, 'FR', 8), (3, 'ES', null), (null, 'FR', 9)");
+        execute("CREATE TABLE owners (plant_id INT, owner SYMBOL, share DOUBLE)");
+        execute("INSERT INTO owners VALUES (1, 'a', 0.5), (1, 'b', 0.5), (2, 'c', 1), (4, 'd', 0.25), (null, 'e', 1)");
+    }
+
+    private static void dropDimensions() throws Exception {
+        execute("DROP TABLE plants");
+        execute("DROP TABLE owners");
+    }
+
     // The factory the last refresh cached in the view state, described by whether it runs the
     // operator.
     private static String cachedFactory() {
@@ -155,8 +199,7 @@ public class MatViewAsyncHashJoinTest extends AbstractCairoTest {
     private String refreshes(String view, boolean isOperatorEnabled, boolean isParallelSql) throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_ENABLED, Boolean.toString(isOperatorEnabled));
         execute("CREATE TABLE trades (plant_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-        execute("CREATE TABLE plants (plant_id INT, country SYMBOL, kwp DOUBLE)");
-        execute("INSERT INTO plants VALUES (1, 'ES', 5), (2, 'IT', 7), (2, 'FR', 8), (3, 'ES', null), (null, 'FR', 9)");
+        createDimensions();
         execute("CREATE MATERIALIZED VIEW mv WITH BASE trades AS (" + view + ") PARTITION BY DAY");
         final StringBuilder snapshot = new StringBuilder();
         final String expectedFactory = isOperatorEnabled && isParallelSql ? OPERATOR : ORDINARY;
@@ -178,7 +221,7 @@ public class MatViewAsyncHashJoinTest extends AbstractCairoTest {
         Assert.assertEquals(expectedFactory, cachedFactory());
         execute("DROP MATERIALIZED VIEW mv");
         execute("DROP TABLE trades");
-        execute("DROP TABLE plants");
+        dropDimensions();
         drainWalAndMatViewQueues();
         return snapshot.toString();
     }

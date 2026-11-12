@@ -46,7 +46,9 @@ import static io.questdb.test.griffin.ParallelHashJoinTestUtils.*;
  * Deterministic performance properties of the parallel hash join. The probe reducer and the
  * consumer allocate nothing on the heap once an execution's first row is out, whatever the rows
  * that follow: the probe tasks, which the owner runs here, as no worker serves the test's context,
- * and the consumer that reads their tuples. And an execution builds each stage once, in a known
+ * and the consumer that reads their tuples, over one stage and over stacks, swapped stacks, the
+ * odometer of several stages' chains, native var-size and Parquet payloads, Parquet probes and a
+ * moving ring window; and so does a count of the rows. And an execution builds each stage once, in a known
  * number of rounds of tasks, however often its cursor goes back to the top or counts its rows.
  */
 public class AsyncHashJoinPerformancePropertiesTest extends AbstractCairoTest {
@@ -182,6 +184,156 @@ public class AsyncHashJoinPerformancePropertiesTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testNoHeapAllocationPerRowOverLateMaterializedParquetProbe() throws Exception {
+        // Parquet row groups of 1_000 rows, as many as a frame.
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1_000);
+        assertMemoryLeak(() -> {
+            createTables();
+            // A probe of Parquet partitions, which the probe tasks decode late, past the probe filter.
+            execute("CREATE TABLE tp AS (SELECT * FROM t) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("ALTER TABLE tp CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            assertNoHeapAllocationPerRow("SELECT tp.v, tp.s, d.w FROM tp JOIN d ON tp.k = d.k WHERE tp.v % 3 = 0");
+        });
+    }
+
+    @Test
+    public void testNoHeapAllocationPerRowOverParquetBuildPayload() throws Exception {
+        // Parquet row groups of 1_000 rows, as many as a frame.
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1_000);
+        assertMemoryLeak(() -> {
+            createTables();
+            createVarSizeBuild("dvp");
+            execute("ALTER TABLE dvp CONVERT PARTITION TO PARQUET WHERE dts >= 0");
+            // The consumer's output reader decodes the build's var-size payload from its Parquet row
+            // groups, which no copy holds, and keeps the row groups it decoded within its budget.
+            assertNoHeapAllocationPerRow("SELECT t.v, dvp.w, dvp.str, dvp.vc FROM t LEFT JOIN dvp ON t.k = dvp.k");
+        });
+    }
+
+    @Test
+    public void testNoHeapAllocationPerRowOverStacks() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            createVarSizeBuild("dv");
+            assertNoHeapAllocationPerRow(
+                    // Two stages of several matches per key, whose chains the consumer expands,
+                    // odometer-style.
+                    "SELECT t.v, d.w, e.w ew FROM t LEFT JOIN d ON t.k = d.k LEFT JOIN d e ON t.l = e.l",
+                    // A swapped stack: the first stage enumerates d, the build, on the workers, and the
+                    // later key reads d's column through the first stage's payload.
+                    "SELECT d.w, t.v, u.w uw FROM d JOIN t ON d.k = t.k LEFT JOIN u ON d.k = u.k",
+                    // A record over five sources, of a star of four joins.
+                    "SELECT t.v, d.w, u.w uw, e.w ew, f.w fw FROM t LEFT JOIN d ON t.k = d.k LEFT JOIN u ON t.k = u.k"
+                            + " JOIN d e ON t.l = e.l LEFT JOIN u f ON t.k = f.k",
+                    // The native var-size payload, which the readers read through the address table.
+                    "SELECT t.v, dv.str, dv.vc, dv.bin, dv.arr FROM t LEFT JOIN dv ON t.k = dv.k"
+            );
+        });
+    }
+
+    @Test
+    public void testNoHeapAllocationPerRowWithMovingRingWindow() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // A ring budget of two frames of tuples: the entries that fan-out grows give their memory
+            // back, and the window narrows.
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TUPLE_RING_MAX_SIZE, 2 * 1_000 * 2 * 8);
+            assertNoHeapAllocationPerRow("SELECT t.k, t.v, d.w FROM t LEFT JOIN d ON t.k = d.k AND d.w > t.v % 100");
+        });
+    }
+
+    @Test
+    public void testNoHeapAllocationPerRowInCount() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            sqlExecutionContext.changePageFrameSizes(1_000, 1_000);
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 1);
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 4);
+            for (String sql : new String[]{
+                    "SELECT t.v, d.w, e.w ew FROM t LEFT JOIN d ON t.k = d.k LEFT JOIN d e ON t.l = e.l",
+                    "SELECT t.k, t.v, d.w FROM t LEFT JOIN d ON t.k = d.k AND d.w > t.v % 100",
+                    "SELECT d.w, t.v, u.w uw FROM d JOIN t ON d.k = t.k LEFT JOIN u ON d.k = u.k",
+            }) {
+                try (
+                        RecordCursorFactory factory = select(sql);
+                        TestUtils.ThreadMetricsScope<com.sun.management.ThreadMXBean> scope = TestUtils.threadAllocationScope()
+                ) {
+                    final AsyncHashJoinRecordCursorFactory join = find(factory);
+                    Assert.assertNotNull(sql, join);
+                    long minAllocated = Long.MAX_VALUE;
+                    long rows = 0;
+                    for (int attempt = 0; attempt < 12 && minAllocated > 0; attempt++) {
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            // The first row builds and dispatches the first frames; the count then
+                            // meets the rest of the held frame, its chains, its continuation and the
+                            // tasks dispatched before it, and counts the later frames' rows.
+                            Assert.assertTrue(sql, cursor.hasNext());
+                            final RecordCursor.Counter counter = new RecordCursor.Counter();
+                            final long before = scope.getBean().getCurrentThreadAllocatedBytes();
+                            cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
+                            final long allocated = scope.getBean().getCurrentThreadAllocatedBytes() - before;
+                            rows = counter.get() + 1;
+                            minAllocated = Math.min(minAllocated, allocated);
+                            Assert.assertTrue(sql, join.getCountOnlyFrameCount() > 0);
+                        }
+                    }
+                    Assert.assertTrue(sql + ": " + rows, rows > 10_000);
+                    Assert.assertEquals(sql, 0, minAllocated);
+                }
+            }
+        });
+    }
+
+    // The rows of d, with var-size payload columns.
+    private static void createVarSizeBuild(String name) throws Exception {
+        execute("CREATE TABLE " + name + " AS (" +
+                "SELECT (x % 1_800)::INT k, x w, 's' || (x % 7) str, ('v' || (x % 11))::VARCHAR vc, " +
+                "rnd_bin(1, 8, 0) bin, ARRAY[x::DOUBLE, (x % 5)::DOUBLE] arr, " +
+                "timestamp_sequence('2024-01-01', 20_000_000) dts FROM long_sequence(5_000)" +
+                ") TIMESTAMP(dts) PARTITION BY DAY");
+    }
+
+    // Frames of 1_000 rows, a cap of one tuple per task and a dispatch limit of four, as
+    // testNoHeapAllocationPerRowInProbeReducerAndConsumer runs.
+    private static void assertNoHeapAllocationPerRow(String... queries) throws Exception {
+        sqlExecutionContext.changePageFrameSizes(1_000, 1_000);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 4);
+        for (String sql : queries) {
+            try (
+                    RecordCursorFactory factory = select(sql);
+                    TestUtils.ThreadMetricsScope<com.sun.management.ThreadMXBean> scope = TestUtils.threadAllocationScope()
+            ) {
+                Assert.assertNotNull(sql, find(factory));
+                final RecordMetadata metadata = factory.getMetadata();
+                long minAllocated = Long.MAX_VALUE;
+                long rows = 0;
+                for (int attempt = 0; attempt < 12 && minAllocated > 0; attempt++) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        Assert.assertTrue(sql, cursor.hasNext());
+                        final Record record = cursor.getRecord();
+                        // The first row's reads take the symbol tables that the record creates on
+                        // first use.
+                        long checksum = readRow(record, metadata);
+                        final long before = scope.getBean().getCurrentThreadAllocatedBytes();
+                        long count = 1;
+                        while (cursor.hasNext()) {
+                            count++;
+                            checksum += readRow(record, metadata);
+                        }
+                        final long allocated = scope.getBean().getCurrentThreadAllocatedBytes() - before;
+                        Assert.assertTrue(checksum != 0);
+                        rows = count;
+                        minAllocated = Math.min(minAllocated, allocated);
+                    }
+                }
+                Assert.assertTrue(sql + ": " + rows, rows > 10_000);
+                Assert.assertEquals(sql, 0, minAllocated);
+            }
+        }
+    }
+
     private static void assertCounts(String sql, int buildsPerExecution, int roundsPerExecution) throws Exception {
         try (RecordCursorFactory factory = select(sql)) {
             final AsyncHashJoinRecordCursorFactory join = find(factory);
@@ -249,7 +401,23 @@ public class AsyncHashJoinPerformancePropertiesTest extends AbstractCairoTest {
                     final CharSequence value = record.getSymA(i);
                     checksum += value != null ? value.length() : 0;
                 }
-                default -> checksum++;
+                case io.questdb.cairo.ColumnType.STRING -> {
+                    final CharSequence value = record.getStrA(i);
+                    checksum += value != null ? value.length() : 0;
+                }
+                case io.questdb.cairo.ColumnType.VARCHAR -> {
+                    final io.questdb.std.str.Utf8Sequence value = record.getVarcharA(i);
+                    checksum += value != null ? value.size() : 0;
+                }
+                case io.questdb.cairo.ColumnType.BINARY -> checksum += record.getBinLen(i);
+                default -> {
+                    final int type = metadata.getColumnType(i);
+                    if (io.questdb.cairo.ColumnType.isArray(type)) {
+                        checksum += record.getArray(i, type).getCardinality();
+                    } else {
+                        checksum++;
+                    }
+                }
             }
         }
         return checksum;

@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
@@ -49,6 +50,8 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -58,12 +61,26 @@ import static io.questdb.test.griffin.ParallelHashJoinTestUtils.*;
  * The parallel hash join's failure paths, each followed by a check that the failure released
  * everything it held and that the same factory, and the tables, still work: cancellation inside
  * each round of a parallel build, inside a probe task and inside a continuation chunk; per-query
- * memory limit breaches in the build, the symbol key translator, the payload copy, a probe task
- * and a continuation; and failing file operations on the build input's native and Parquet frames.
+ * memory limit breaches in the build, the symbol key translator, the payload copy, a probe task,
+ * a continuation and the consumer's Parquet output reader; failing file operations on the build
+ * input's, the probe input's and a later stage's build input's native and Parquet frames; and a
+ * later stage's table dropped and created again under a cached stacked factory.
  */
 public class AsyncHashJoinFailureTest extends AbstractCairoTest {
     private static final String STAGE = HashJoinBuildStage.class.getName();
     private static final String ATOM = AsyncHashJoinAtom.class.getName();
+    // A single stage, a stack, a stack whose first join runs an ON residual on the workers, and a
+    // stack whose first join swaps its inputs: build_tab, the smaller one, is its left input, so the
+    // execution hashes it and streams probe_tab, and the later stage's key reads build_tab's column
+    // through the first stage's payload. Every query probes probe_tab, and every stack's later stage
+    // hashes later_tab.
+    private static final String[] PROBE_AND_LATER_STAGE_QUERIES = {
+            "SELECT t.v, b.w FROM probe_tab t LEFT JOIN build_tab b ON t.k = b.k",
+            "SELECT t.v, b.w, l.w2 FROM probe_tab t LEFT JOIN build_tab b ON t.k = b.k JOIN later_tab l ON t.l = l.l",
+            "SELECT t.v, b.w, l.w2 FROM probe_tab t LEFT JOIN build_tab b ON t.k = b.k AND b.w > t.v % 9 LEFT JOIN later_tab l ON t.l = l.l",
+            "SELECT b.w, t.v, l.w2 FROM build_tab b JOIN probe_tab t ON b.k = t.k LEFT JOIN later_tab l ON b.l = l.l",
+    };
+    private static final String READER = "io.questdb.griffin.engine.table.HashJoinBuildFrames$Reader";
     private static final StackWalker STACK_WALKER = StackWalker.getInstance();
 
     @Override
@@ -250,6 +267,135 @@ public class AsyncHashJoinFailureTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFileFailuresOnProbeAndLaterStageInputs() throws Exception {
+        final TableFilesFacade ff = new TableFilesFacade();
+        assertMemoryLeak(ff, () -> {
+            createFileTables();
+            execute("CREATE TABLE later_tab AS (SELECT (x % 5)::LONG l, x w2, timestamp_sequence('2024-01-01', 1_800_000_000) ts FROM long_sequence(100)) TIMESTAMP(ts) PARTITION BY DAY");
+            sqlExecutionContext.changePageFrameSizes(16, 16);
+            for (boolean isParquet : new boolean[]{false, true}) {
+                if (isParquet) {
+                    execute("ALTER TABLE probe_tab CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+                    execute("ALTER TABLE later_tab CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+                }
+                // The probe's partitions open once every build is done, and a later stage's build
+                // input opens once stage 0 holds its build cursor and the probe's scan.
+                for (String[] target : new String[][]{{"probe_tab", isParquet ? ".parquet" : "v.d"}, {"later_tab", isParquet ? ".parquet" : "w2.d"}}) {
+                    for (boolean isMmap : new boolean[]{false, true}) {
+                        for (String sql : PROBE_AND_LATER_STAGE_QUERIES) {
+                            if (target[0].equals("later_tab") && !sql.contains("later_tab")) {
+                                continue;
+                            }
+                            ff.target(target[0], target[1], isMmap);
+                            assertTableFileFailure(sql, ff, target[0], isMmap);
+                        }
+                    }
+                }
+            }
+            // The swapped stack swapped, so its probe was probe_tab.
+            try (RecordCursorFactory factory = select(PROBE_AND_LATER_STAGE_QUERIES[3])) {
+                final AsyncHashJoinRecordCursorFactory join = find(factory);
+                Assert.assertNotNull(join);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertTrue(join.getAtom().isSwapped());
+                }
+            }
+            // The tables still work on their own.
+            assertQuery("SELECT count() FROM probe_tab").noLeakCheck().noRandomAccess().expectSize().returns("count\n400\n");
+            assertQuery("SELECT count() FROM later_tab").noLeakCheck().noRandomAccess().expectSize().returns("count\n100\n");
+        });
+    }
+
+    @Test
+    public void testLaterStageTableRecreatedUnderCachedStack() throws Exception {
+        assertMemoryLeak(() -> {
+            createFileTables();
+            execute("CREATE TABLE later_tab AS (SELECT (x % 5)::LONG l, x w2 FROM long_sequence(100))");
+            final String sql = PROBE_AND_LATER_STAGE_QUERIES[1];
+            try (RecordCursorFactory factory = select(sql)) {
+                final AsyncHashJoinRecordCursorFactory join = find(factory);
+                Assert.assertNotNull(join);
+                Assert.assertEquals(2, join.getSpec().getStageCount());
+                Assert.assertEquals(ordinary(sql, sqlExecutionContext), result(factory, sqlExecutionContext));
+                execute("DROP TABLE later_tab");
+                execute("CREATE TABLE later_tab AS (SELECT (x % 5)::LONG l, -x w2 FROM long_sequence(10))");
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    cursor.hasNext();
+                    Assert.fail("expected a stale table reference");
+                } catch (TableReferenceOutOfDateException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "later_tab");
+                }
+                // Stage 0 had adopted its build scan, and the probe's sequence its scan, when the
+                // later stage's scan failed to open; the failure released them with the rest.
+                assertReleased(join);
+            }
+            // A new compilation reads the new table.
+            final String expected = ordinary(sql, sqlExecutionContext);
+            TestUtils.assertContains(expected, "-1");
+            try (RecordCursorFactory factory = select(sql)) {
+                Assert.assertNotNull(find(factory));
+                Assert.assertEquals(expected, result(factory, sqlExecutionContext));
+            }
+        });
+    }
+
+    @Test
+    public void testMemoryLimitInParquetOutputReader() throws Exception {
+        // Row groups of 20 rows, whose VARCHAR payload, of 250 characters a row, the consumer's output
+        // reader decodes, with the whole Parquet decode budget, as it returns the rows; the payload
+        // copy is off, and no probe task reads the VARCHAR.
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 20);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MAX_SIZE, 0);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT ((x * 53) % 200 + 1)::INT k, x v, timestamp_sequence('2024-01-01', 60_000_000) ts " +
+                    "FROM long_sequence(400)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE d AS (SELECT x::INT k, x w, (rpad('v' || x, 250, 'x'))::VARCHAR vc, " +
+                    "timestamp_sequence('2024-01-01', 432_000_000) dts FROM long_sequence(200)) TIMESTAMP(dts) PARTITION BY DAY");
+            execute("INSERT INTO d VALUES (-1, -1, 'last', '2024-02-01')");
+            execute("ALTER TABLE d CONVERT PARTITION TO PARQUET WHERE dts < '2024-02-01'");
+            sqlExecutionContext.changePageFrameSizes(64, 64);
+            final String sql = "SELECT t.v, d.w, d.vc FROM t LEFT JOIN d ON t.k = d.k";
+            final String expected = ordinary(sql, sqlExecutionContext);
+            try (RecordCursorFactory factory = select(sql)) {
+                final AsyncHashJoinRecordCursorFactory join = find(factory);
+                Assert.assertNotNull(join);
+                final HashJoinBuildStage stage = join.getAtom().getStage(0);
+                long fitting = 1024;
+                while (!isFitting(factory, join, fitting, expected)) {
+                    fitting *= 2;
+                }
+                final long step = Math.max(64, fitting / 1_000);
+                int outputReader = 0;
+                int other = 0;
+                for (long limit = step; ; limit += step) {
+                    setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, limit);
+                    try {
+                        Assert.assertEquals(expected, result(factory, sqlExecutionContext));
+                        Assert.assertFalse(stage.isPayloadCopied());
+                        break;
+                    } catch (CairoException e) {
+                        Assert.assertTrue(e.getMessage(), e.isOutOfMemory());
+                        TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                        if (isOutputReaderDecode(e)) {
+                            outputReader++;
+                        } else {
+                            other++;
+                        }
+                    } finally {
+                        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
+                    }
+                    // Each failure released everything the execution held.
+                    assertReleased(join);
+                }
+                Assert.assertTrue("output reader " + outputReader + ", other " + other, outputReader > 0);
+                Assert.assertEquals(expected, result(factory, sqlExecutionContext));
+            }
+            assertQuery("SELECT count() FROM d").noLeakCheck().noRandomAccess().expectSize().returns("count\n201\n");
+        });
+    }
+
+    @Test
     public void testMemoryLimitInEachPhaseInRounds() throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 0);
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_ROWS_PER_PARTITION, 256);
@@ -279,6 +425,70 @@ public class AsyncHashJoinFailureTest extends AbstractCairoTest {
             ((SqlExecutionContextImpl) sqlExecutionContext).with(previous);
         }
         Assert.assertEquals(label, 0, engine.getBusyReaderCount());
+    }
+
+    // A breach of the consumer's output reader: its decode of a Parquet row group of the build, on
+    // the consumer's thread, outside every probe task, build and payload copy.
+    private static boolean isOutputReaderDecode(Throwable e) {
+        boolean isReader = false;
+        for (StackTraceElement frame : e.getStackTrace()) {
+            final String className = frame.getClassName();
+            if (className.equals(ATOM) || className.equals(STAGE)) {
+                return false;
+            }
+            if (className.equals(READER) && frame.getMethodName().equals("record")) {
+                isReader = true;
+            }
+        }
+        return isReader;
+    }
+
+    // Nothing of the failed execution stays behind: no build of any stage, no slot, no ring byte and
+    // no busy reader.
+    private static void assertReleased(AsyncHashJoinRecordCursorFactory join) {
+        for (int k = 0, n = join.getSpec().getStageCount(); k < n; k++) {
+            Assert.assertNull("stage " + k, join.getAtom().getStage(k).getFrozenBuild());
+        }
+        Assert.assertEquals(0, join.getAtom().getRing().getAllocatedBytes());
+        Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+        Assert.assertEquals(0, join.getBuildRoundAtom().getPerWorkerLocks().getAcquiredSlotCount());
+        Assert.assertEquals(0, engine.getBusyReaderCount());
+    }
+
+    private void assertTableFileFailure(String sql, TableFilesFacade ff, String table, boolean isMmap) throws Exception {
+        final String label = sql + ", " + table + (isMmap ? ", mmap" : ", open");
+        final String expected = ordinary(sql, sqlExecutionContext);
+        try (RecordCursorFactory factory = select(sql)) {
+            final AsyncHashJoinRecordCursorFactory join = find(factory);
+            Assert.assertNotNull(label, join);
+            for (int run = 0; run < 2; run++) {
+                // The readers open the partitions anew, through the failing facade.
+                engine.releaseAllReaders();
+                ff.arm();
+                final RecordCursor cursor = factory.getCursor(sqlExecutionContext);
+                try {
+                    //noinspection StatementWithEmptyBody
+                    while (cursor.hasNext()) {
+                    }
+                    Assert.fail("expected the table's files to fail: " + label);
+                } catch (CairoException e) {
+                    if (isMmap) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "could not mmap");
+                    } else {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "could not open");
+                        TestUtils.assertContains(e.getFlyweightMessage(), table);
+                    }
+                    // The failure released everything before the caller closes the cursor.
+                    assertReleased(join);
+                } finally {
+                    ff.disarm();
+                    cursor.close();
+                }
+                Assert.assertTrue(label, ff.getFailures() > 0);
+                assertReleased(join);
+                Assert.assertEquals(label, expected, result(factory, sqlExecutionContext));
+            }
+        }
     }
 
     private void assertFileFailure(String sql, AtomicBoolean isArmed, String error) throws Exception {
@@ -343,8 +553,8 @@ public class AsyncHashJoinFailureTest extends AbstractCairoTest {
     }
 
     private static void createFileTables() throws Exception {
-        execute("CREATE TABLE probe_tab AS (SELECT (x % 9)::INT k, x v, timestamp_sequence('2024-01-01', 600_000_000) ts FROM long_sequence(400)) TIMESTAMP(ts) PARTITION BY DAY");
-        execute("CREATE TABLE build_tab AS (SELECT (x % 7)::INT k, x w, timestamp_sequence('2024-01-01', 1_800_000_000) ts FROM long_sequence(200)) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE probe_tab AS (SELECT (x % 9)::INT k, (x % 5)::LONG l, x v, timestamp_sequence('2024-01-01', 600_000_000) ts FROM long_sequence(400)) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE build_tab AS (SELECT (x % 7)::INT k, (x % 6)::LONG l, x w, timestamp_sequence('2024-01-01', 1_800_000_000) ts FROM long_sequence(200)) TIMESTAMP(ts) PARTITION BY DAY");
     }
 
     private static void createTables() throws Exception {
@@ -469,6 +679,63 @@ public class AsyncHashJoinFailureTest extends AbstractCairoTest {
             return false;
         } finally {
             setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
+        }
+    }
+
+    /**
+     * Fails, while armed, the opening, or the mapping, of the files of one table whose names end
+     * with the target suffix; a mapping fails for files that it opened while armed.
+     */
+    private static class TableFilesFacade extends TestFilesFacadeImpl {
+        private final AtomicInteger failures = new AtomicInteger();
+        private final Set<Long> targetFds = ConcurrentHashMap.newKeySet();
+        private volatile boolean isArmed;
+        private volatile boolean isMmap;
+        private volatile String suffix;
+        private volatile String table;
+
+        @Override
+        public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+            if (isArmed && isMmap && targetFds.contains(fd)) {
+                failures.incrementAndGet();
+                return FilesFacade.MAP_FAILED;
+            }
+            return super.mmap(fd, len, offset, flags, memoryTag);
+        }
+
+        @Override
+        public long openRO(LPSZ name) {
+            final boolean isTarget = isArmed && Utf8s.containsAscii(name, table) && Utf8s.endsWithAscii(name, suffix);
+            if (isTarget && !isMmap) {
+                failures.incrementAndGet();
+                return -1;
+            }
+            final long fd = super.openRO(name);
+            if (isTarget && fd > -1) {
+                targetFds.add(fd);
+            }
+            return fd;
+        }
+
+        void arm() {
+            failures.set(0);
+            targetFds.clear();
+            isArmed = true;
+        }
+
+        void disarm() {
+            isArmed = false;
+            targetFds.clear();
+        }
+
+        int getFailures() {
+            return failures.get();
+        }
+
+        void target(String table, String suffix, boolean isMmap) {
+            this.table = table;
+            this.suffix = suffix;
+            this.isMmap = isMmap;
         }
     }
 

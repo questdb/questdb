@@ -242,6 +242,56 @@ public class EquiJoinShapeCoverageTest {
     }
 
     @Test
+    public void testFaultFunctionReachesEverySite() {
+        // A fault query carries test_fault() at the head of its WHERE clause, in a join's ON
+        // residual, which a LEFT join runs for each pair on the workers, or in the WHERE clause of a
+        // join's input, which the build runs for each of its rows; a query without a fault carries
+        // none.
+        final Rnd rnd = new Rnd(0x5eed, 0xfa17);
+        final FuzzTable left = table("t0");
+        final FuzzTable right = table("t1");
+        final ObjList<FuzzTable> tables = new ObjList<>();
+        tables.add(left);
+        tables.add(right);
+        int where = 0;
+        int residual = 0;
+        int leftJoinResidual = 0;
+        int build = 0;
+        int laterBuild = 0;
+        for (int i = 0; i < CORPUS_SIZE; i++) {
+            final boolean isFault = i % 2 == 0;
+            final String sql = EquiJoinClause.generate(rnd, left, right, i % 4 < 2 ? null : tables, null, isFault).sql();
+            final int calls = sql.split("test_fault\\(\\)", -1).length - 1;
+            Assert.assertEquals(sql, isFault ? 1 : 0, calls);
+            if (!isFault) {
+                continue;
+            }
+            if (indexAtDepthZero(sql, " WHERE test_fault()", 0) > 0) {
+                where++;
+            } else if (sql.contains(" AND (test_fault() OR ")) {
+                residual++;
+                final int at = sql.indexOf(" AND (test_fault() OR ");
+                final int join = sql.lastIndexOf(" JOIN ", at);
+                leftJoinResidual += sql.startsWith(" LEFT", join - 5) ? 1 : 0;
+            } else {
+                final int at = sql.indexOf(" WHERE test_fault())");
+                Assert.assertTrue(sql, at > 0);
+                final int input = sql.lastIndexOf("JOIN (SELECT * FROM ", at);
+                Assert.assertTrue(sql, input > 0);
+                build++;
+                // An input of a later join of a star.
+                laterBuild += sql.indexOf(" JOIN ") < sql.lastIndexOf(" JOIN ", input - 1) ? 1 : 0;
+            }
+        }
+        final String counts = "where " + where + ", residual " + residual + " (left " + leftJoinResidual + "), build " + build + " (later " + laterBuild + ")";
+        Assert.assertTrue(counts, where > CORPUS_SIZE / 2 / 5);
+        Assert.assertTrue(counts, residual > CORPUS_SIZE / 2 / 5);
+        Assert.assertTrue(counts, leftJoinResidual > 0);
+        Assert.assertTrue(counts, build > CORPUS_SIZE / 2 / 5);
+        Assert.assertTrue(counts, laterBuild > 0);
+    }
+
+    @Test
     public void testLimitMakesQueryNonDeterministicForMultisetAxes() {
         // A LIMIT without a total order may keep other rows on the storage shadow, which scans an
         // indexed input in another order, so only the parallel join axis compares its rows.

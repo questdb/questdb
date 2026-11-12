@@ -51,6 +51,10 @@ public final class FuzzConfig {
     public static final String HORIZON_JOIN_PROP = "questdb.fuzz.horizonjoin";
     public static final String LATEST_ON_PROP = "questdb.fuzz.lateston";
     public static final String PARALLEL_JOIN_CAP_PROP = "questdb.fuzz.parallel.join.cap";
+    public static final String PARALLEL_JOIN_DISPATCH_PROP = "questdb.fuzz.parallel.join.dispatch";
+    public static final String PARALLEL_JOIN_FRAMES_PROP = "questdb.fuzz.parallel.join.frames";
+    public static final String PARALLEL_JOIN_RING_PROP = "questdb.fuzz.parallel.join.ring";
+    public static final String PARQUET_ROW_GROUP_PROP = "questdb.fuzz.parquet.row.group";
     public static final String QUERIES_PROP = "questdb.fuzz.queries";
     public static final String VERIFY_CURSOR_PROP = "questdb.fuzz.verify.cursor";
     public static final String WINDOW_JOIN_PROP = "questdb.fuzz.windowjoin";
@@ -104,6 +108,14 @@ public final class FuzzConfig {
     private final int numTables;
     // The parallel hash join's cap of tuples per probe task, or 0 to leave it at its default.
     private final long parallelJoinTaskOutputMaxRows;
+    // The dispatch limit that the equi-join queries run with, or -1 to leave it at its default.
+    private final int parallelJoinDispatchLimit;
+    // The most rows of a page frame that the equi-join queries run with, or 0 to leave the default.
+    private final int parallelJoinFrameMaxRows;
+    // The parallel hash join's tuple ring budget, in bytes, or 0 to leave it at its default.
+    private final long parallelJoinRingMaxSize;
+    // The rows of a Parquet row group of the run's tables, or 0 to leave the default.
+    private final int parquetRowGroupSize;
     private final int rowsPerTable;
     private final long stepMicros;
     private final String tsStart;
@@ -202,6 +214,33 @@ public final class FuzzConfig {
         this.parallelJoinTaskOutputMaxRows = cap != null
                 ? Long.parseLong(cap)
                 : (((rnd.getSeed0() ^ rnd.getSeed1()) >>> 1) & 1) == 0 ? 0 : 1;
+        // The fuzz tables hold 60 to 150 rows over 2 to 4 partitions, so with the default frame size a
+        // probe has fewer frames than the parallel hash join's tuple ring has entries, its window never
+        // moves, and no frame shares an entry. A run therefore puts the equi-join queries under frame
+        // pressure, or not, with three knobs that the seed picks without drawing from it, as it picks
+        // the cap, and that -D properties set:
+        // - frames of 1 to 8 rows, -Dquestdb.fuzz.parallel.join.frames=N, 0 for the default, which
+        //   the run's equi-join queries, and every axis that compares them, run with;
+        // - a tuple ring budget, -Dquestdb.fuzz.parallel.join.ring=BYTES, 0 for the default: 1 byte,
+        //   below one frame's tuples, leaves one entry, and 192 bytes, four frames of two rows of a
+        //   single join, leaves a window that a frame of duplicate matches narrows;
+        // - a dispatch limit of 0 to 2, -Dquestdb.fuzz.parallel.join.dispatch=N, -1 for the default,
+        //   which the run's equi-join queries compile with.
+        // Every axis compares runs under the same knobs, so the in-order oracle holds. A Parquet row
+        // group of a few rows, -Dquestdb.fuzz.parquet.row.group=N, makes the Parquet partitions of the
+        // run's tables hold many row groups. It applies to every shape, and the seed does not pick it:
+        // over a WAL table whose partitions all converted to row groups of four rows, the vectorized
+        // GROUP BY's avg() of a NULL key differs from sum() / count() on the base this axis came
+        // with, so a seed-picked row group would fail runs over a defect outside the equi-join shapes.
+        final long seedBits = rnd.getSeed0() ^ rnd.getSeed1();
+        this.parallelJoinFrameMaxRows = Integer.getInteger(
+                PARALLEL_JOIN_FRAMES_PROP,
+                ((seedBits >>> 2) & 1) == 0 ? 0 : 1 + (int) ((seedBits >>> 3) & 7)
+        );
+        final int ringPick = (int) ((seedBits >>> 6) & 3);
+        this.parallelJoinRingMaxSize = Long.getLong(PARALLEL_JOIN_RING_PROP, ringPick == 1 ? 1 : ringPick == 2 ? 192 : 0);
+        this.parallelJoinDispatchLimit = Integer.getInteger(PARALLEL_JOIN_DISPATCH_PROP, (int) ((seedBits >>> 8) & 3) - 1);
+        this.parquetRowGroupSize = Integer.getInteger(PARQUET_ROW_GROUP_PROP, 0);
         // LATEST ON shapes (latest row per PARTITION BY key) carve a band out of
         // the SIMPLE range (see QueryGenerator). On by default, like window. Pass
         // -Dquestdb.fuzz.lateston=false to drop them and give the band back to
@@ -246,6 +285,35 @@ public final class FuzzConfig {
      */
     public long getParallelJoinTaskOutputMaxRows() {
         return parallelJoinTaskOutputMaxRows;
+    }
+
+    /**
+     * The dispatch limit that the run's equi-join queries compile with, or -1 to leave the default.
+     */
+    public int getParallelJoinDispatchLimit() {
+        return parallelJoinDispatchLimit;
+    }
+
+    /**
+     * The most rows of a page frame that the run's equi-join queries run with, or 0 to leave the
+     * default.
+     */
+    public int getParallelJoinFrameMaxRows() {
+        return parallelJoinFrameMaxRows;
+    }
+
+    /**
+     * The parallel hash join's tuple ring budget for the run, in bytes, or 0 to leave the default.
+     */
+    public long getParallelJoinRingMaxSize() {
+        return parallelJoinRingMaxSize;
+    }
+
+    /**
+     * The rows of a Parquet row group of the run's tables, or 0 to leave the default.
+     */
+    public int getParquetRowGroupSize() {
+        return parquetRowGroupSize;
     }
 
     public int getRowsPerTable() {
