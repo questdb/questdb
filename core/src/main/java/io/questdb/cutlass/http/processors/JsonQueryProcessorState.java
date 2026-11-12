@@ -499,17 +499,12 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     public void storeError(int errorPosition, CharSequence errorMessage) {
-        this.queryState = QUERY_ERROR;
-        this.errorPosition = errorPosition;
-        this.errorMessage.clear();
-        this.errorMessage.put(errorMessage);
+        queryState = QUERY_ERROR;
+        setError(errorPosition, errorMessage);
     }
 
     public void storeError(CharSequence errorMessage) {
-        this.queryState = QUERY_ERROR;
-        this.errorPosition = Numbers.INT_NULL;
-        this.errorMessage.clear();
-        this.errorMessage.put(errorMessage);
+        storeError(Numbers.INT_NULL, errorMessage);
     }
 
     public void storeInsertConfirmation() {
@@ -1269,6 +1264,12 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         response.done();
     }
 
+    private void setError(int errorPosition, CharSequence errorMessage) {
+        this.errorPosition = errorPosition;
+        this.errorMessage.clear();
+        this.errorMessage.put(errorMessage);
+    }
+
     private void setupFirstRecord() {
         if (skip > 0) {
             final RecordCursor cursor = this.cursor;
@@ -1420,9 +1421,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             case QUERY_RECORD, QUERY_RECORD_SUFFIX, QUERY_RECORD_ERROR_SUFFIX -> QUERY_RECORD_ERROR_SUFFIX;
             default -> QUERY_ERROR_SUFFIX;
         };
-        this.errorPosition = errorPosition;
-        this.errorMessage.clear();
-        this.errorMessage.put(errorMessage);
+        setError(errorPosition, errorMessage);
     }
 
     @FunctionalInterface

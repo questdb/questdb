@@ -352,7 +352,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
                 doResumeSend(state, context);
             } catch (CairoException e) {
                 internalError(
-                        HTTP_BAD_REQUEST,
+                        getStatusCode(e),
                         e,
                         state,
                         context.getMetrics()
