@@ -76,6 +76,14 @@ public class QwpSenderTransactionE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testNoAutoFlushTriggerCommitsOnlyOnFlush() throws Exception {
+        // auto_flush_rows=off with auto_flush_interval=off is auto_flush=off. It used to
+        // send each flush as one frame, which the client refused past the server's frame
+        // cap, and to commit on close().
+        assertCommitsOnlyOnFlush("auto_flush_rows=off;auto_flush_interval=off;");
+    }
+
+    @Test
     public void testResetDuringServerOutageDiscardsTransaction() throws Exception {
         // reset() used to wait 30 s for the server to ack the rollback, then abort the
         // transaction, so every later row and flush threw even after the server came back.
@@ -119,23 +127,7 @@ public class QwpSenderTransactionE2ETest extends AbstractQwpWebSocketTest {
 
     @Test
     public void testStrictTransactionCommitsOnceAcrossFrames() throws Exception {
-        runInContext(port -> {
-            try (Sender sender = Sender.fromConfig(conf(port) + "auto_flush=off;")) {
-                writeRows(sender, 0, 5_000);
-                // The deferred frames reached the server and created the table, yet
-                // nothing is committed before flush().
-                TableToken token = awaitTable();
-                drainWalQueue();
-                assertQuery("SELECT count() FROM t").noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
-                long txnBefore = engine.getTableSequencerAPI().lastTxn(token);
-                sender.flush();
-                Assert.assertTrue(sender.drain(60_000));
-                Assert.assertEquals("one transaction", txnBefore + 1, engine.getTableSequencerAPI().lastTxn(token));
-            }
-            drainWalQueue();
-            assertQuery("SELECT count(), count_distinct(v) FROM t").noLeakCheck().noRandomAccess().expectSize()
-                    .returns("count\tcount_distinct\n5000\t5000\n");
-        });
+        assertCommitsOnlyOnFlush("auto_flush=off;");
     }
 
     @Test
@@ -182,6 +174,30 @@ public class QwpSenderTransactionE2ETest extends AbstractQwpWebSocketTest {
 
     private static String conf(int port) {
         return "ws::addr=localhost:" + port + ";close_flush_timeout_millis=300000;";
+    }
+
+    // A sender with no auto-flush trigger sends a transaction of any size in deferred
+    // frames, commits it once on flush(), and closing it discards a transaction that
+    // was never flushed, frames already sent included.
+    private void assertCommitsOnlyOnFlush(String mode) throws Exception {
+        runInContext(port -> {
+            try (Sender sender = Sender.fromConfig(conf(port) + mode)) {
+                writeRows(sender, 0, 5_000);
+                // The deferred frames reached the server and created the table, yet
+                // nothing is committed before flush().
+                TableToken token = awaitTable();
+                drainWalQueue();
+                assertQuery("SELECT count() FROM t").noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
+                long txnBefore = engine.getTableSequencerAPI().lastTxn(token);
+                sender.flush();
+                Assert.assertTrue(sender.drain(60_000));
+                Assert.assertEquals("one transaction", txnBefore + 1, engine.getTableSequencerAPI().lastTxn(token));
+                writeRows(sender, 10_000, 3_000);
+            }
+            drainWalQueue();
+            assertQuery("SELECT count(), count_distinct(v), max(v) FROM t").noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\tcount_distinct\tmax\n5000\t5000\t4999\n");
+        });
     }
 
     // The server goes down after the first frames of a transaction reached it, the
