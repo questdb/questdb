@@ -1219,6 +1219,37 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
     }
 
     /**
+     * A Delta switch freezes the base, so {@link TableWriter#installGeneratedParquet} refuses a copy staged before it.
+     */
+    @Test
+    public void testPurgeReclaimsParquetCopyStagingDirectoryOfDeltaActivePartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE cd (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO cd VALUES (1, '2020-01-01T00:00:00'), (2, '2020-01-02T00:00:00')");
+
+            final TableToken token = engine.verifyTableName("cd");
+            final String stagedDir;
+            try (TableWriter writer = engine.getWriter(token, "test")) {
+                final TxWriter txWriter = writer.getTxWriter();
+                final long partitionTimestamp = txWriter.getPartitionTimestampByIndex(0);
+                stagedDir = generatingDir(token, writer.getMetadata().getTimestampType(), writer.getPartitionBy(), partitionTimestamp, txWriter.getPartitionNameTxn(0));
+                txWriter.setPartitionDeltaActiveByTimestamp(partitionTimestamp);
+                writer.bumpPartitionTableVersion();
+                writer.commit();
+            }
+            final FilesFacade ff = configuration.getFilesFacade();
+            stageWithContent(ff, stagedDir);
+
+            engine.releaseInactive();
+            try (TableWriter ignore = engine.getWriter(token, "test")) {
+                Assert.assertNotNull(ignore);
+            }
+
+            Assert.assertFalse("a copy of a Delta base can never install", dirExists(ff, stagedDir));
+        });
+    }
+
+    /**
      * A composite partition REWRITE stages its copy in a {@code .compacting<writerTxn>} directory that
      * {@link TableWriter#swapCompactedCompositePartition} either renames in or deletes. A crash between
      * the two leaves a full copy of the partition on disk that nothing ever adopts: its name carries a

@@ -252,6 +252,7 @@ impl From<parquet::errors::ParquetError> for ParquetError {
 pub type ParquetResult<T> = Result<T, ParquetError>;
 
 pub trait ParquetErrorExt<T> {
+    #[cfg(feature = "jni-exports")]
     fn context(self, context: &str) -> ParquetResult<T>;
     fn with_context<F>(self, context: F) -> ParquetResult<T>
     where
@@ -265,6 +266,7 @@ where
     /// Add a layer of context to the error.
     /// The `context: &str` is copied into a `String` iff the error is an `Err`.
     /// Use the `with_context` method if you need to compute the context lazily.
+    #[cfg(feature = "jni-exports")]
     fn context(self, context: &str) -> ParquetResult<T> {
         match self {
             Ok(val) => Ok(val),

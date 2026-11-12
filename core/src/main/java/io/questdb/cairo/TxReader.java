@@ -61,6 +61,8 @@ public class TxReader implements Closeable, Mutable {
     // partition's parquet data exists. Set on parquet partitions and on native partitions
     // uploaded while native (upload-while-native keeps the format bit 0).
     public static final long PARTITION_REMOTE_BIT = 1L << 63;
+    // Bit 58: a PARTITION_SEAL stamped the partition, so it holds exactly the rows at its stamp.
+    public static final long PARTITION_SEAL_STAMP_BIT = 1L << 58;
     // Flag in the high byte of the offset-3 word: the value was written as a native seqTxn
     // stamp by a stamp-aware binary. Released binaries stored a parquet file size in this slot
     // for parquet_generated native partitions; without this bit such a legacy word is
@@ -104,9 +106,9 @@ public class TxReader implements Closeable, Mutable {
     // the last long (PARTITION_VERSION_OFFSET) holds, for a parquet partition the parquet file
     // size, for a native one its last-modifying seqTxn:
     //
-    // | remote | valid | composite | delta-write | has_delta | reserved | parquet size / native seqTxn |
-    // +--------+-------+-----------+-------------+-----------+----------+------------------------------+
-    // | 1 bit  | 1 bit |   1 bit   |    1 bit    |   1 bit   |  3 bits  |           56 bits            |
+    // | remote | valid | composite | delta-write | has_delta | seal stamp | reserved | parquet size / native seqTxn |
+    // +--------+-------+-----------+-------------+-----------+------------+----------+------------------------------+
+    // | 1 bit  | 1 bit |   1 bit   |    1 bit    |   1 bit   |   1 bit    |  2 bits  |           56 bits            |
     //
     // remote is cleared by the value writes that supersede the bytes (setPartitionParquetFileSize, setPartitionSeqTxn),
     // so it can't outlive them; setPartitionFormat preserves it, leaving REMOTE to caller discipline on a format flip.
@@ -117,6 +119,8 @@ public class TxReader implements Closeable, Mutable {
     // has_delta (PARTITION_HAS_DELTA_BIT, bit 59) selects the initialized catalog, which may contain no Delta rows.
     // delta-write (PARTITION_DELTA_WRITE_BIT, bit 60) is the replicated mode gate, set before any Delta data exists.
     // Value writes preserve both flags across file-size/seqTxn rewrites.
+    // seal stamp (PARTITION_SEAL_STAMP_BIT, bit 58) marks a stamp a PARTITION_SEAL wrote: the copy holds exactly the
+    // rows at that seqTxn. A seqTxn stamp, a flip to native and a new record clear it; file-size writes keep it.
     // legacy: a cleared slot reads as 0L (written today) or -1L (older binaries), both folded by isPartitionOffset3Cleared().
     protected static final int PARTITION_TS_OFFSET = 0;
     protected static final int PARTITION_VERSION_OFFSET = 3;
@@ -640,6 +644,19 @@ public class TxReader implements Closeable, Mutable {
         return false;
     }
 
+    /**
+     * Whether a partition carries a remote copy or a seal stamp: local evidence that cold storage
+     * holds objects keyed by this table's seqTxns.
+     */
+    public boolean hasUploadedPartitions() {
+        for (int i = 0, n = getPartitionCount(); i < n; i++) {
+            if ((getPartitionOffset3(i * LONGS_PER_TX_ATTACHED_PARTITION) & (PARTITION_REMOTE_BIT | PARTITION_SEAL_STAMP_BIT)) != 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public void initPartitionBy(int timestampType, int partitionBy) {
         this.timestampType = timestampType;
         this.partitionBy = partitionBy;
@@ -830,6 +847,15 @@ public class TxReader implements Closeable, Mutable {
 
     public boolean isPartitionRemotelyServed(int i) {
         return isPartitionParquet(i) && !isPartitionParquetGenerated(i) && isPartitionRemote(i);
+    }
+
+    /**
+     * Whether a PARTITION_SEAL stamped the partition, so that it holds exactly the rows at its stamp:
+     * the native seqTxn, or for a parquet partition the {@code _pm} base seqTxn.
+     */
+    public boolean isPartitionSealStamped(int i) {
+        // getPartitionOffset3 folds the legacy all-ones word, which has bit 58 set, to 0.
+        return (getPartitionOffset3(i * LONGS_PER_TX_ATTACHED_PARTITION) & PARTITION_SEAL_STAMP_BIT) != 0;
     }
 
     /**

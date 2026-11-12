@@ -30,6 +30,7 @@ import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexFwdNullReader;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.PartitionFormat;
+import io.questdb.cairo.sql.PartitionFrameSource;
 import io.questdb.cairo.sql.PartitionFrameState;
 import io.questdb.cairo.sql.PartitionFrameStateFactory;
 import io.questdb.cairo.sql.StaticSymbolTable;
@@ -78,6 +79,9 @@ public class TableReader implements Closeable, SymbolTableSource {
     private static final int PARTITIONS_SLOT_OFFSET_INDEX_CHECK_PARQUET_SIZE = PARTITIONS_SLOT_OFFSET_INDEX_CHECK_CV + 1;
     private static final int PARTITIONS_SLOT_SIZE = 8; // must be power of 2
     private static final int PARTITIONS_SLOT_SIZE_MSB = Numbers.msb(PARTITIONS_SLOT_SIZE);
+    // Catalog id of the Delta base an open partition reads, 0 when it was opened without one. It outlives the state.
+    private static final int PARTITION_STATES_SLOT_OFFSET_BASE_ID = 1;
+    private static final int PARTITION_STATES_SLOT_SIZE = 2;
     // Retries that must pass with no version change before a torn live area counts as terminal rather
     // than contention. A power of 2. Far longer than any commit's publish window, yet still a short wait.
     private static final int TORN_DIAGNOSIS_WINDOW = 1 << 16;
@@ -114,7 +118,9 @@ public class TableReader implements Closeable, SymbolTableSource {
     private ObjList<MemoryCMR> parquetMetadataPartitions;
     private ObjList<MemoryCMR> parquetPartitions;
     private int partitionCount;
+    private PartitionFrameSource partitionFrameSource;
     private PartitionFrameStateFactory partitionFrameStateFactory;
+    // A reader without Delta partitions holds no list, and all its base ids are 0.
     private LongList partitionFrameStates;
     // The lowest partition with a state, so that destroyPartitionFrameStates() walks from it only,
     // e.g. on each pool return. Integer.MAX_VALUE when no state opened since the last walk.
@@ -343,6 +349,7 @@ public class TableReader implements Closeable, SymbolTableSource {
      * @return the initialized ParquetPartitionDecoder
      */
     public ParquetPartitionDecoder getAndInitParquetPartitionDecoder(int partitionIndex) {
+        openPartition(partitionIndex);
         final ParquetPartitionDecoder decoder = getOrCreatePartitionDecoder(partitionIndex);
         long parquetMetaAddr = getParquetMetadataAddr(partitionIndex);
         long parquetMetaSize = getParquetMetadataSize(partitionIndex);
@@ -350,9 +357,20 @@ public class TableReader implements Closeable, SymbolTableSource {
         long parquetSize = getParquetFileSize(partitionIndex);
         if (decoder.getParquetMetaAddr() != parquetMetaAddr || decoder.getParquetMetaSize() != parquetMetaSize) {
             final long timestamp = getPartitionTimestamp(partitionIndex);
-            decoder.of(parquetMetaAddr, parquetMetaSize, parquetAddr, parquetSize,
-                    tableToken, partitionBy, timestampType, timestamp,
-                    MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+            final long state = getOpenPartitionState(partitionIndex);
+            if (state != 0 && parquetAddr != 0) {
+                parquetMetaReader.of(parquetMetaAddr, parquetMetaSize);
+                try {
+                    parquetMetaReader.resolveLastFooter(false);
+                    decoder.of(parquetMetaReader, parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                } finally {
+                    parquetMetaReader.clear();
+                }
+            } else {
+                decoder.of(parquetMetaAddr, parquetMetaSize, parquetAddr, parquetSize,
+                        tableToken, partitionBy, timestampType, timestamp,
+                        MemoryTag.NATIVE_PARQUET_PARTITION_DECODER, state);
+            }
         }
         return decoder;
     }
@@ -388,7 +406,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     public IndexReader getIndexReader(int partitionIndex, int columnIndex, int direction) {
         if (txFile.getPartitionHasDelta(partitionIndex)) {
             openPartition(partitionIndex);
-            if (getPartitionFormat(partitionIndex) == PartitionFormat.PARQUET) {
+            if (isDeltaBaseTxnParquet(partitionIndex)) {
                 checkParquetIndexes(partitionIndex, columnIndex);
             }
             final long state = getOrOpenPartitionState(partitionIndex);
@@ -494,7 +512,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             for (int i = partitionCount - 1, deltaCount = txFile.getPartitionDeltaCount(); i > -1 && deltaCount > 0; i--) {
                 if (txFile.getPartitionHasDelta(i)) {
                     deltaCount--;
-                    final long baseRows = getPartitionRowCountFromMetadata(i);
+                    final long baseRows = txFile.getPartitionSize(i);
                     rows = Math.addExact(rows, getLogicalPartitionRowCount(i, baseRows) - baseRows);
                 }
             }
@@ -549,29 +567,36 @@ public class TableReader implements Closeable, SymbolTableSource {
      * Returns previously open Parquet partition's mmapped address or 0 in case of a native partition.
      */
     public long getParquetAddr(int partitionIndex) {
-        return parquetPartitions.getQuick(partitionIndex).addressOf(0);
+        final long state = getOpenPartitionState(partitionIndex);
+        return state != 0 ? PartitionFrameState.getParquetAddr(state) : parquetPartitions.getQuick(partitionIndex).addressOf(0);
     }
 
     /**
-     * Returns the parquet file size recorded in {@code _txn} for this
-     * partition, which must be parquet-format: the format bit is the source
-     * of truth and {@link TxReader#getPartitionParquetFileSize(int)} asserts
-     * it. Reading from {@link TxReader} keeps the size authoritative when the
-     * local {@code data.parquet} mapping is a {@link NullMemoryCMR} (e.g. the
-     * file has been removed under the reader): {@code _txn} still records
-     * the size the file had at commit time, which is what callers like the
-     * parquet decoder's footer resolver need.
+     * Returns the extent of the selected Parquet source, including remote sources without a local mapping.
      */
     public long getParquetFileSize(int partitionIndex) {
+        final long state = getOrOpenPartitionState(partitionIndex);
+        if (state != 0) {
+            openPartition(partitionIndex);
+            return PartitionFrameState.getParquetFileSize(state);
+        }
         return txFile.getPartitionParquetFileSize(partitionIndex);
     }
 
     public long getParquetMetadataAddr(int partitionIndex) {
+        final long state = getOpenPartitionState(partitionIndex);
+        if (state != 0) {
+            return PartitionFrameState.getParquetMetadataAddr(state);
+        }
         MemoryCMR mem = parquetMetadataPartitions.getQuick(partitionIndex);
         return mem != null && mem.isOpen() ? mem.addressOf(0) : 0;
     }
 
     public long getParquetMetadataSize(int partitionIndex) {
+        final long state = getOpenPartitionState(partitionIndex);
+        if (state != 0) {
+            return PartitionFrameState.getParquetMetadataSize(state);
+        }
         MemoryCMR mem = parquetMetadataPartitions.getQuick(partitionIndex);
         return mem != null && mem.isOpen() ? mem.size() : 0;
     }
@@ -585,6 +610,9 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     public byte getPartitionFormatFromMetadata(int partitionIndex) {
+        if (getOrOpenPartitionState(partitionIndex) != 0) {
+            return getPartitionFormat(partitionIndex);
+        }
         if (txFile.isPartitionParquet(partitionIndex)) {
             return PartitionFormat.PARQUET;
         }
@@ -648,7 +676,8 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     public long getPartitionRowCountFromMetadata(int partitionIndex) {
-        return txFile.getPartitionSize(partitionIndex);
+        final long state = getOrOpenPartitionState(partitionIndex);
+        return state == 0 ? txFile.getPartitionSize(partitionIndex) : PartitionFrameState.getBasePartitionRowCount(state);
     }
 
     /**
@@ -741,6 +770,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     public void goActiveAtTxn(TableReader srcReader) {
         assert srcReader.isOpen() && srcReader.isActive();
         assert tableToken.equals(srcReader.getTableToken());
+        destroyPartitionFrameStates();
 
         // We may need to downgrade from newer txn to an older one.
         final boolean needsDowngrade = txn > srcReader.txn;
@@ -817,8 +847,12 @@ public class TableReader implements Closeable, SymbolTableSource {
         return txFile.hasAnyDelta();
     }
 
+    /**
+     * Returns whether any partition may be Parquet. A Delta partition counts as possibly
+     * Parquet, because resolving its base format needs catalog I/O that a compile must not pay.
+     */
     public boolean hasParquetPartitions() {
-        return hasParquetPartitions;
+        return hasParquetPartitions || hasAnyDelta();
     }
 
     @TestOnly
@@ -896,6 +930,7 @@ public class TableReader implements Closeable, SymbolTableSource {
      * @return partition size in rows
      */
     public long openPartition(int partitionIndex) {
+        getOrOpenPartitionState(partitionIndex);
         final long size = getPartitionRowCount(partitionIndex);
         if (size != -1) {
             final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
@@ -911,8 +946,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         final long state = getOrOpenPartitionState(partitionIndex);
         if (state == 0) {
             target.of(getPartitionRowCountFromMetadata(partitionIndex), Long.MAX_VALUE, Long.MIN_VALUE);
+            target.getBaseSource().clear();
         } else {
             partitionFrameStateFactory.readStats(state, target);
+            partitionFrameStateFactory.readSource(state, target.getBaseSource());
         }
     }
 
@@ -1190,7 +1227,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         Misc.free(parquetPartitions.get(partitionIndex));
         parquetMetaDecoders.remove(partitionIndex);
         if (partitionFrameStates != null) {
-            partitionFrameStates.removeIndexBlock(partitionIndex, 1);
+            partitionFrameStates.removeIndexBlock(partitionIndex * PARTITION_STATES_SLOT_SIZE, PARTITION_STATES_SLOT_SIZE);
         }
         parquetMetadataPartitions.remove(partitionIndex);
         parquetPartitions.remove(partitionIndex);
@@ -1277,6 +1314,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, -1);
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 0);
+        setPartitionBaseId(partitionIndex, 0);
     }
 
     /**
@@ -1465,11 +1503,11 @@ public class TableReader implements Closeable, SymbolTableSource {
         if (partitionFrameStates == null) {
             return;
         }
-        final long state = partitionFrameStates.getQuick(partitionIndex);
+        final long state = getOpenPartitionState(partitionIndex);
         if (state != 0 && partitionFrameStateFactory != null) {
             partitionFrameStateFactory.destroy(state);
         }
-        partitionFrameStates.setQuick(partitionIndex, 0);
+        partitionFrameStates.setQuick(partitionIndex * PARTITION_STATES_SLOT_SIZE, 0);
     }
 
     private void destroyPartitionFrameStates() {
@@ -1478,7 +1516,21 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
         for (int i = partitionFrameStatesLo, n = partitionCount; i < n; i++) {
             // Stores only to the slots that hold a state, so the walk reads the other slots only.
-            if (partitionFrameStates.getQuick(i) != 0) {
+            if (getOpenPartitionState(i) != 0) {
+                if (getPartitionRowCount(i) >= 0) {
+                    if (getPartitionFormat(i) == PartitionFormat.PARQUET) {
+                        // The partition's shared base mapping outlives this snapshot. The decoder's
+                        // native reader must not, so it rebinds from the next snapshot's header.
+                        final ParquetPartitionDecoder decoder = parquetMetaDecoders.getQuick(i);
+                        if (decoder != null) {
+                            decoder.close();
+                        }
+                    } else {
+                        // Native base columns are mapped by this reader, so they close with the pin.
+                        closePartitionResources(i, i * PARTITIONS_SLOT_SIZE);
+                        openPartitionCount--;
+                    }
+                }
                 destroyPartitionFrameState(i);
             }
         }
@@ -1507,16 +1559,6 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private void formatParquetPartitionFileName(int partitionIndex, Path sink, long nameTxn) {
         TableUtils.setPathForParquetPartition(
-                sink,
-                timestampType,
-                partitionBy,
-                openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE),
-                nameTxn
-        );
-    }
-
-    private void formatParquetPartitionMetadataFileName(int partitionIndex, Path sink, long nameTxn) {
-        TableUtils.setPathForParquetPartitionMetadata(
                 sink,
                 timestampType,
                 partitionBy,
@@ -1573,6 +1615,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         return -1;
     }
 
+    private long getOpenPartitionState(int partitionIndex) {
+        return partitionFrameStates != null ? partitionFrameStates.getQuick(partitionIndex * PARTITION_STATES_SLOT_SIZE) : 0;
+    }
+
     private ParquetPartitionDecoder getOrCreatePartitionDecoder(int partitionIndex) {
         ParquetPartitionDecoder decoder = parquetMetaDecoders.getQuick(partitionIndex);
         if (decoder == null) {
@@ -1586,11 +1632,9 @@ public class TableReader implements Closeable, SymbolTableSource {
      * Shares one pinned snapshot between index readers and lazy data-frame binding.
      */
     private long getOrOpenPartitionState(int partitionIndex) {
-        if (partitionFrameStates != null) {
-            final long existing = partitionFrameStates.getQuick(partitionIndex);
-            if (existing != 0) {
-                return existing;
-            }
+        final long existing = getOpenPartitionState(partitionIndex);
+        if (existing != 0) {
+            return existing;
         }
         if (!txFile.getPartitionHasDelta(partitionIndex)) {
             return 0;
@@ -1602,18 +1646,52 @@ public class TableReader implements Closeable, SymbolTableSource {
             }
         }
         final long state = partitionFrameStateFactory.open(this, partitionIndex, getSeqTxn());
-        // A reader without Delta partitions holds no list.
-        if (partitionFrameStates == null) {
-            partitionFrameStates = new LongList(partitionCount, 0);
-            partitionFrameStates.setAll(partitionCount, 0);
+        try {
+            if (partitionFrameSource == null) {
+                partitionFrameSource = new PartitionFrameSource();
+            }
+            partitionFrameStateFactory.readSource(state, partitionFrameSource);
+            final boolean isNative = partitionFrameSource.getKind() == PartitionFrameSource.NATIVE;
+            if (!isNative && ((partitionFrameSource.getKind() != PartitionFrameSource.PARQUET
+                    && partitionFrameSource.getKind() != PartitionFrameSource.REMOTE_PARQUET)
+                    || partitionFrameSource.getMetadataCommittedBytes() <= 0)) {
+                throw CairoException.critical(0).put("invalid catalog physical source [partitionIndex=").put(partitionIndex)
+                        .put(", kind=").put(partitionFrameSource.getKind())
+                        .put(", metadataBytes=").put(partitionFrameSource.getMetadataCommittedBytes()).put(']');
+            }
+            final byte format = isNative ? PartitionFormat.NATIVE : PartitionFormat.PARQUET;
+            if (isNative && columnVersionReader.getVersion() < partitionFrameSource.getColumnVersion()) {
+                throw CairoException.critical(0)
+                        .put("native base column version is newer than reader [partitionIndex=").put(partitionIndex)
+                        .put(", sourceVersion=").put(partitionFrameSource.getColumnVersion())
+                        .put(", readerVersion=").put(columnVersionReader.getVersion()).put(']');
+            }
+            // A partition kept open from an earlier snapshot reopens when its base or folder changed.
+            final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
+            if (openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE) > -1
+                    && (getPartitionBaseId(partitionIndex) != PartitionFrameState.getBaseId(state)
+                    || openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN) != partitionFrameSource.getPartitionNameTxn())) {
+                closePartition(partitionIndex);
+            }
+            openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT, format);
+            // A reader without Delta partitions holds no list.
+            if (partitionFrameStates == null) {
+                partitionFrameStates = new LongList(partitionCount * PARTITION_STATES_SLOT_SIZE, 0);
+                partitionFrameStates.setAll(partitionCount * PARTITION_STATES_SLOT_SIZE, 0);
+            }
+        } catch (Throwable th) {
+            partitionFrameStateFactory.destroy(state);
+            throw th;
         }
-        partitionFrameStates.setQuick(partitionIndex, state);
+        partitionFrameStates.setQuick(partitionIndex * PARTITION_STATES_SLOT_SIZE, state);
         partitionFrameStatesLo = Math.min(partitionFrameStatesLo, partitionIndex);
         return state;
     }
 
-    private long getPartitionNameTxn(int partitionIndex) {
-        return txFile.getPartitionNameTxn(partitionIndex);
+    private long getPartitionBaseId(int partitionIndex) {
+        return partitionFrameStates != null
+                ? partitionFrameStates.getQuick(partitionIndex * PARTITION_STATES_SLOT_SIZE + PARTITION_STATES_SLOT_OFFSET_BASE_ID)
+                : 0;
     }
 
     private long getPartitionTimestamp(int partitionIndex) {
@@ -1640,6 +1718,25 @@ public class TableReader implements Closeable, SymbolTableSource {
     private boolean hasDelta(long partitionTimestamp) {
         final int partitionIndex = txFile.getPartitionIndex(partitionTimestamp);
         return partitionIndex > -1 && txFile.getPartitionHasDelta(partitionIndex);
+    }
+
+    /**
+     * Whether a Delta partition reads the parquet base its {@code _txn} entry names, with the {@code _pm} footer
+     * {@link #checkParquetIndexes} resolves. A base evicted or adopted through the catalog is not that one: its
+     * index files were built from its own rows, and {@code _txn} still describes the partition it replaced.
+     */
+    private boolean isDeltaBaseTxnParquet(int partitionIndex) {
+        if (!txFile.isPartitionParquet(partitionIndex) || getPartitionFormat(partitionIndex) != PartitionFormat.PARQUET) {
+            return false;
+        }
+        final long state = getOrOpenPartitionState(partitionIndex);
+        if (state == 0) {
+            return false;
+        }
+        partitionFrameStateFactory.readSource(state, partitionFrameSource);
+        return partitionFrameSource.getMetadataSlot() == 0
+                && partitionFrameSource.getPartitionNameTxn() == txFile.getPartitionNameTxn(partitionIndex)
+                && PartitionFrameState.getParquetFileSize(state) == txFile.getPartitionParquetFileSize(partitionIndex);
     }
 
     private void init() {
@@ -1715,8 +1812,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         parquetPartitions.insert(partitionIndex, 1, NullMemoryCMR.INSTANCE);
         parquetMetaDecoders.insert(partitionIndex, 1, null);
         if (partitionFrameStates != null) {
-            partitionFrameStates.insert(partitionIndex, 1);
-            partitionFrameStates.setQuick(partitionIndex, 0);
+            final int statesOffset = partitionIndex * PARTITION_STATES_SLOT_SIZE;
+            partitionFrameStates.insert(statesOffset, PARTITION_STATES_SLOT_SIZE);
+            partitionFrameStates.setQuick(statesOffset, 0);
+            partitionFrameStates.setQuick(statesOffset + PARTITION_STATES_SLOT_OFFSET_BASE_ID, 0);
         }
 
         final int topBase = columnBase / 2;
@@ -1841,9 +1940,6 @@ public class TableReader implements Closeable, SymbolTableSource {
      * returns the parquet file size derived from its footer metadata.
      */
     private long openParquetMetadata(int partitionIndex) {
-        final long parquetFileSize = txFile.getPartitionParquetFileSize(partitionIndex);
-        assert parquetFileSize > 0;
-
         MemoryCMRDetachedImpl parquetMetaMem;
         final MemoryCMR existing = parquetMetadataPartitions.getQuick(partitionIndex);
         if (existing != null && existing != NullMemoryCMR.INSTANCE) {
@@ -1856,7 +1952,7 @@ public class TableReader implements Closeable, SymbolTableSource {
 
         try {
             parquetMetaReader.of(parquetMetaMem.addressOf(0), parquetMetaMem.size());
-            if (!parquetMetaReader.resolveFooter(parquetFileSize)) {
+            if (!parquetMetaReader.resolveFooter(txFile.getPartitionParquetFileSize(partitionIndex))) {
                 throw CairoException.critical(0).put("invalid _pm file: failed to resolve footer [path=").put(path).put(']');
             }
             return parquetMetaReader.getParquetFileSize();
@@ -1868,19 +1964,30 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
-
     private long openPartition0(int partitionIndex) {
         final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
-        if (txFile.getPartitionCount() < 2 && txFile.getTransientRowCount() == 0) {
+        final long state = getOrOpenPartitionState(partitionIndex);
+        if (state == 0 && txFile.getPartitionCount() < 2 && txFile.getTransientRowCount() == 0) {
             return -1;
         }
 
+        if (state != 0) {
+            partitionFrameStateFactory.readSource(state, partitionFrameSource);
+        }
+        final long partitionNameTxn = state == 0 ? txFile.getPartitionNameTxn(partitionIndex) : partitionFrameSource.getPartitionNameTxn();
+        final boolean isRemoteBase = state != 0 && partitionFrameSource.getKind() == PartitionFrameSource.REMOTE_PARQUET;
+        final boolean isParquet = state == 0 ? txFile.isPartitionParquet(partitionIndex)
+                : isRemoteBase || partitionFrameSource.getKind() == PartitionFrameSource.PARQUET;
+        final int metadataSlot = state != 0 && isParquet ? partitionFrameSource.getMetadataSlot() : 0;
+        final long columnVersion = state == 0 || isParquet
+                ? columnVersionReader.getMaxPartitionVersion(getPartitionTimestamp(partitionIndex)) : partitionFrameSource.getColumnVersion();
+
         try {
             path.trimTo(rootLen);
-            final long partitionNameTxn = getPartitionNameTxn(partitionIndex);
-            if (txFile.isPartitionParquet(partitionIndex)) {
-                Path path = pathGenParquetPartitionMetadata(partitionIndex, partitionNameTxn);
-                if (ff.exists(path.$())) {
+            if (isParquet) {
+                Path path = pathGenNativePartition(partitionIndex, partitionNameTxn).concat(metadataSlot == 0 ? TableUtils.PARQUET_METADATA_FILE_NAME : TableUtils.PARQUET_METADATA_B_FILE_NAME);
+                // A Delta state without a base mapping found no _pm; it can count rows but not read them.
+                if (state != 0 ? PartitionFrameState.getParquetMetadataAddr(state) != 0 : ff.exists(path.$())) {
                     final long partitionSize = getPartitionRowCountFromMetadata(partitionIndex);
                     if (partitionSize > -1) {
                         LOG.info()
@@ -1891,15 +1998,19 @@ public class TableReader implements Closeable, SymbolTableSource {
                                 .$(", format=parquet")
                                 .I$();
 
-                        final long partitionTimestamp = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN, partitionNameTxn);
-                        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getMaxPartitionVersion(partitionTimestamp));
+                        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersion);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT, PartitionFormat.PARQUET);
+                        setPartitionBaseId(partitionIndex, state != 0 ? PartitionFrameState.getBaseId(state) : 0);
 
-                        final long parquetFileSize = openParquetMetadata(partitionIndex);
+                        // A Delta base is mapped once per partition in Rust and read through the state header.
+                        final long parquetFileSize = state != 0 ? PartitionFrameState.getParquetFileSize(state) : openParquetMetadata(partitionIndex);
+                        final boolean isRemoteSource = isRemoteBase || (txFile.isPartitionRemote(partitionIndex)
+                                && (state == 0 || (partitionNameTxn == txFile.getPartitionNameTxn(partitionIndex)
+                                && metadataSlot == 0 && parquetFileSize == txFile.getPartitionParquetFileSize(partitionIndex))));
                         path.trimTo(rootLen);
                         pathGenParquetPartition(partitionIndex, partitionNameTxn);
-                        final long parquetActualLength = ff.length(path.$());
+                        final long parquetActualLength = state != 0 ? -1 : ff.length(path.$());
                         if (parquetActualLength >= 0) {
                             // A remote partition may legitimately have no local data file. For a
                             // present file, reject a torn extent before mapping the size from _pm.
@@ -1918,14 +2029,14 @@ public class TableReader implements Closeable, SymbolTableSource {
                                     parquetPartitions.setQuick(partitionIndex, parquetMem);
                                 }
                             } catch (CairoException e) {
-                                if (!txFile.isPartitionRemote(partitionIndex)) {
+                                if (!isRemoteSource) {
                                     throw e;
                                 }
                                 LOG.error().$("could not open parquet partition [path=").$(path).$(", err=").$safe(e.getFlyweightMessage()).I$();
                                 Misc.free(parquetPartitions.getQuick(partitionIndex));
                                 parquetPartitions.setQuick(partitionIndex, NullMemoryCMR.INSTANCE);
                             }
-                        } else if (txFile.isPartitionRemote(partitionIndex)) {
+                        } else if (isRemoteSource || (state != 0 && PartitionFrameState.getParquetAddr(state) != 0)) {
                             Misc.free(parquetPartitions.getQuick(partitionIndex));
                             parquetPartitions.setQuick(partitionIndex, NullMemoryCMR.INSTANCE);
                         } else {
@@ -1971,9 +2082,8 @@ public class TableReader implements Closeable, SymbolTableSource {
                                 .$(", format=native")
                                 .I$();
 
-                        final long partitionTimestamp = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN, partitionNameTxn);
-                        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getMaxPartitionVersion(partitionTimestamp));
+                        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersion);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT, PartitionFormat.NATIVE);
                         // MAP as far as the highest live piece reaches, not the live row count - see mappedRowCount.
                         openPartitionColumns(partitionIndex, path, getColumnBase(partitionIndex), mappedRowCount(partitionIndex, partitionSize));
@@ -1986,6 +2096,11 @@ public class TableReader implements Closeable, SymbolTableSource {
                 }
             }
             LOG.error().$("open partition failed, partition does not exist on the disk [path=").$(path).I$();
+
+            if (state != 0) {
+                throw CairoException.critical(ff.errno()).put("catalog physical source does not exist [path=").put(path)
+                        .put(", partitionIndex=").put(partitionIndex).put(']');
+            }
 
             if (PartitionBy.isPartitioned(getPartitionedBy())) {
                 CairoException exception = CairoException.critical(0).put("Partition '");
@@ -2002,6 +2117,9 @@ public class TableReader implements Closeable, SymbolTableSource {
                         .put(path)
                         .put(". Restore data on disk or drop the table.");
             }
+        } catch (Throwable th) {
+            closePartition(partitionIndex);
+            throw th;
         } finally {
             path.trimTo(rootLen);
         }
@@ -2050,11 +2168,6 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private Path pathGenParquetPartition(int partitionIndex, long nameTxn) {
         formatParquetPartitionFileName(partitionIndex, path.slash(), nameTxn);
-        return path;
-    }
-
-    private Path pathGenParquetPartitionMetadata(int partitionIndex, long nameTxn) {
-        formatParquetPartitionMetadataFileName(partitionIndex, path.slash(), nameTxn);
         return path;
     }
 
@@ -2129,9 +2242,9 @@ public class TableReader implements Closeable, SymbolTableSource {
                     final long openPartitionSize = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE);
                     // we check that open partition size is non-negative to avoid loading
                     // partition that is not yet in memory
-                    if (openPartitionSize > -1) {
+                    if (openPartitionSize > -1 && !txFile.getPartitionHasDelta(partitionIndex)) {
                         final long openPartitionNameTxn = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN);
-                        final long txPartitionSize = getPartitionRowCountFromMetadata(partitionIndex);
+                        final long txPartitionSize = txFile.getPartitionSize(partitionIndex);
                         final long txPartitionNameTxn = txFile.getPartitionNameTxn(partitionIndex);
                         if (openPartitionNameTxn == txPartitionNameTxn) {
                             // We used to skip reloading partition size if the row count is the same and name txn is the same.
@@ -2202,7 +2315,11 @@ public class TableReader implements Closeable, SymbolTableSource {
                 final long openPartitionNameTxn = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN);
                 final long openPartitionColumnVersion = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION);
 
-                if (!forceTruncate) {
+                // Delta mappings are reconciled against the next pinned catalog source,
+                // whose format and incarnation can differ from this _txn partition.
+                // Every refreshed partition counts as changed so symbol counts reload.
+                changed = true;
+                if (!forceTruncate && !txFile.getPartitionHasDelta(partitionIndex)) {
                     if (openPartitionNameTxn == txPartitionNameTxn && openPartitionColumnVersion == columnVersionReader.getMaxPartitionVersion(txPartTs)) {
                         // We used to skip reloading partition size if the row count is the same and name txn is the same.
                         // But in case of dedup, the row count can be same, but the data can be overwritten by splitting and squashing the partition back
@@ -2236,8 +2353,13 @@ public class TableReader implements Closeable, SymbolTableSource {
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT,
                                 txFile.isPartitionParquet(partitionIndex) ? PartitionFormat.PARQUET : PartitionFormat.NATIVE);
                     }
-                    changed = true;
-                } else if (openPartitionSize > -1 && txPartitionSize > -1) { // Don't force re-open if not yet opened
+                } else if (forceTruncate) {
+                    if (openPartitionSize > -1 && txPartitionSize > -1) { // Don't force re-open if not yet opened
+                        closePartition(partitionIndex);
+                    }
+                } else if (openPartitionSize > -1 && getPartitionBaseId(partitionIndex) == 0) {
+                    // This one was mapped before its Delta catalog existed and must reopen through the
+                    // catalog's base. A kept-open base is checked against the next snapshot's base.
                     closePartition(partitionIndex);
                 }
                 txPartitionIndex++;
@@ -2720,6 +2842,12 @@ public class TableReader implements Closeable, SymbolTableSource {
                 // new instance
                 renewSymbolMapReader(null, i);
             }
+        }
+    }
+
+    private void setPartitionBaseId(int partitionIndex, long baseId) {
+        if (partitionFrameStates != null) {
+            partitionFrameStates.setQuick(partitionIndex * PARTITION_STATES_SLOT_SIZE + PARTITION_STATES_SLOT_OFFSET_BASE_ID, baseId);
         }
     }
 }

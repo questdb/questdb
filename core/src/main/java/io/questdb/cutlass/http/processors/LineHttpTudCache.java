@@ -155,9 +155,10 @@ public class LineHttpTudCache implements QuietCloseable {
         int key = tableUpdateDetails.keyIndex(parser.getMeasurementName());
         if (key < 0) {
             WalTableUpdateDetails tud = tableUpdateDetails.valueAt(key);
-            // We only need to check for rename if there are no uncommitted rows
-            // it's too taxing to check for renames for every row
-            if (!tud.isFirstRow() || !tud.isTableRenamed()) {
+            // We only need to check for rename or drop if there are no uncommitted rows
+            // it's too taxing to check for them for every row. A dropped WAL table keeps
+            // its token under its directory name until purge, so the rename check misses it.
+            if (!tud.isFirstRow() || !(tud.isTableRenamed() || engine.isTableDropped(tud.getTableToken()))) {
                 // The cache lives as long as the TCP connection, but every HTTP request on that
                 // connection authenticates separately, so the identity that created this entry is
                 // not necessarily the identity writing now. Rebind it, otherwise the commit would
