@@ -1544,6 +1544,31 @@ public class WriterPoolTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReaperRemovesFailedOpenEntryBeforeTtl() throws Exception {
+        // A failed writer open leaves its pool entry without a writer. The reaper removes that entry at its next pass,
+        // long before the production TTL would expire it, and the next get() opens a writer in a new entry.
+        final WriterOpenFailingFacade ff = new WriterOpenFailingFacade(zTableToken);
+        final CairoConfiguration configuration = productionTtlConfiguration(ff);
+        assertWithPool(pool -> {
+            failWriterOpen(pool, ff);
+            Assert.assertTrue("the reaper must remove the entry of the failed open", pool.releaseInactive());
+            Assert.assertEquals(0, pool.size());
+            try (TableWriter writer = pool.get(zTableToken, "testing")) {
+                Assert.assertEquals(1, pool.size());
+                Assert.assertEquals(1, pool.getBusyCount());
+                appendRow(writer, 1);
+            }
+            Assert.assertEquals(0, pool.getBusyCount());
+            Assert.assertEquals(1, ff.getFailedOpenCount());
+            pool.releaseAll();
+            Assert.assertEquals(0, pool.size());
+            try (TableReader reader = newOffPoolReader(configuration, "z")) {
+                Assert.assertEquals(1, reader.size());
+            }
+        }, configuration);
+    }
+
+    @Test
     public void testReplaceWriterAfterUnlock() throws Exception {
         assertWithPool(pool -> {
             String x = "x";

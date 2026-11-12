@@ -46,6 +46,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.log.Log;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
@@ -66,6 +67,7 @@ import java.io.UncheckedIOException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 
@@ -422,6 +424,30 @@ public class TruncateRepairTest extends AbstractAdaptiveCrashTest {
     }
 
     @Test
+    public void testNonPartitionedRepairByStatementReadingSameTable() throws Exception {
+        // INSERT AS SELECT and UPDATE read the table they write, and take its writer before their own reader. As the
+        // first write after an interrupted TRUNCATE of a non-partitioned table, with no other query open, each gets the
+        // reader lock, completes the TRUNCATE and reads the empty table.
+        assertMemoryLeak(() -> {
+            for (String statement : new String[]{"INSERT INTO t SELECT * FROM t", "UPDATE t SET x = 0 WHERE s = 'a'"}) {
+                createNonPartitioned("t");
+                armInterruptedTruncate(engine, "t", true);
+                execute(statement);
+                Assert.assertEquals(
+                        "count of the _todo_ entry after " + statement,
+                        0,
+                        readTodoLong("t", TODO_COUNT_OFFSET)
+                );
+                assertQuery("SELECT * FROM t")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("s\tsi\tsp\tv\tstr\tx\tarr\ty\n");
+                execute("DROP TABLE t");
+            }
+        });
+    }
+
+    @Test
     public void testNonPartitionedRepairReleasesReaderLockOnFailure() throws Exception {
         // The writer open that completes an interrupted TRUNCATE of a non-partitioned table fails while it holds the
         // reader lock: at every durability op of the open, with sync commits, and at a failure right after it took the
@@ -688,6 +714,46 @@ public class TruncateRepairTest extends AbstractAdaptiveCrashTest {
     }
 
     @Test
+    public void testRepairLocksQueriesOutAfterPublishing() throws Exception {
+        // The writer open that completes the TRUNCATE of a non-partitioned table holds the reader lock after it has
+        // published the empty table, up to its last step, the removal of default/: a query that starts then fails as
+        // a query of a locked table does, and a query after the open reads the empty table.
+        final DefaultRemovalHookFacade ff = new DefaultRemovalHookFacade();
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE t (x LONG)");
+            execute("INSERT INTO t VALUES (1), (2), (3)");
+            armInterruptedTruncate(engine, "t", false);
+            final long txn = readTxn("t", PartitionBy.NONE);
+            final AtomicReference<Throwable> hookStack = new AtomicReference<>();
+            final AtomicLong txnAtHook = new AtomicLong();
+            final AtomicReference<Throwable> queryError = new AtomicReference<>();
+            ff.defaultDirSuffix = Files.SEPARATOR + engine.verifyTableName("t").getDirName()
+                    + Files.SEPARATOR + TableUtils.DEFAULT_PARTITION_NAME;
+            ff.hook = () -> {
+                hookStack.set(new Throwable());
+                txnAtHook.set(readTxn("t", PartitionBy.NONE));
+                queryError.set(queryOnOtherThread("SELECT * FROM t", "x\n"));
+            };
+            try {
+                getWriter("t").close();
+            } finally {
+                ff.hook = null;
+            }
+            Assert.assertNotNull("the writer open did not remove default/", hookStack.get());
+            Assert.assertTrue("default/ is removed outside the repair", isThrownBy(hookStack.get(), "repairTruncate"));
+            Assert.assertEquals("txn of the table when the repair removes default/", txn + 1, txnAtHook.get());
+            Assert.assertTrue("the query must fail on the locked table", queryError.get() instanceof SqlException);
+            final SqlException e = (SqlException) queryError.get();
+            Assert.assertEquals(14, e.getPosition());
+            TestUtils.assertEquals("table is locked: t", e.getFlyweightMessage());
+            assertQuery("SELECT * FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("x\n");
+        });
+    }
+
+    @Test
     public void testRepairLocksQueriesOutUntilPublished() throws Exception {
         // A query that starts while the writer open completes the TRUNCATE of a non-partitioned table must neither read
         // the rows the repair removes nor map the files it rewrites: it fails as a query of a locked table does during
@@ -700,25 +766,7 @@ public class TruncateRepairTest extends AbstractAdaptiveCrashTest {
             final AtomicReference<Throwable> queryError = new AtomicReference<>();
             TableWriter.setTruncateRepairLockedBarrier(() -> {
                 barrierCalls.incrementAndGet();
-                final Thread query = new Thread(() -> {
-                    try (
-                            SqlExecutionContext context = TestUtils.createSqlExecutionCtx(engine);
-                            RecordCursorFactory factory = engine.select("SELECT * FROM t", context);
-                            RecordCursor cursor = factory.getCursor(context)
-                    ) {
-                        TestUtils.assertCursor("x\n", cursor, factory.getMetadata(), true, new StringSink());
-                    } catch (Throwable th) {
-                        queryError.set(th);
-                    } finally {
-                        Path.clearThreadLocals();
-                    }
-                });
-                query.start();
-                try {
-                    query.join();
-                } catch (InterruptedException e) {
-                    throw new RuntimeException(e);
-                }
+                queryError.set(queryOnOtherThread("SELECT * FROM t", "x\n"));
             });
             try {
                 getWriter("t").close();
@@ -1117,6 +1165,31 @@ public class TruncateRepairTest extends AbstractAdaptiveCrashTest {
             }
         }
         return false;
+    }
+
+    // runs a query to its end on a thread of its own and checks its rows against expected; returns its error, or null
+    private static Throwable queryOnOtherThread(String sql, String expected) {
+        final AtomicReference<Throwable> queryError = new AtomicReference<>();
+        final Thread query = new Thread(() -> {
+            try (
+                    SqlExecutionContext context = TestUtils.createSqlExecutionCtx(engine);
+                    RecordCursorFactory factory = engine.select(sql, context);
+                    RecordCursor cursor = factory.getCursor(context)
+            ) {
+                TestUtils.assertCursor(expected, cursor, factory.getMetadata(), true, new StringSink());
+            } catch (Throwable th) {
+                queryError.set(th);
+            } finally {
+                Path.clearThreadLocals();
+            }
+        });
+        query.start();
+        try {
+            query.join();
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
+        }
+        return queryError.get();
     }
 
     // a long of the _todo_ file as the page cache holds it, with the stores of a writer that maps the file
@@ -1572,6 +1645,25 @@ public class TruncateRepairTest extends AbstractAdaptiveCrashTest {
         crashFf.crash(tableDir(table));
         // a fresh process starts with an empty scoreboard, whose max txn may be past the restored _txn
         engine.getTxnScoreboardPool().remove(engine.verifyTableName(table));
+    }
+
+    /**
+     * Runs a hook once, when the writer removes the default/ directory whose path ends with the suffix: the last step
+     * of the repair of an interrupted TRUNCATE of a non-partitioned table, which no query holds.
+     */
+    private static class DefaultRemovalHookFacade extends TestFilesFacadeImpl {
+        volatile String defaultDirSuffix;
+        volatile Runnable hook;
+
+        @Override
+        public boolean unlinkOrRemove(Path path, Log LOG) {
+            final Runnable hook = this.hook;
+            if (hook != null && Utf8s.endsWithAscii(path, defaultDirSuffix)) {
+                this.hook = null;
+                hook.run();
+            }
+            return super.unlinkOrRemove(path, LOG);
+        }
     }
 
     /**
