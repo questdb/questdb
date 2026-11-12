@@ -75,8 +75,8 @@ public class RecordToRowCopierUtils {
      * arm would read or write the value as the namesake's (an unsigned INT sign-extended into
      * LONG), so the pair has no arm until the type adds its own, and INSERT refuses it
      * ({@link #hasCopierArm}); a copier built for it anyway raises the family-arm guard's refusal.
-     * A NULL source into such a type takes it too, since the family's getter would read the
-     * namesake's NULL. Every existing type is its own namesake.
+     * A NULL source into such a type takes it too (see {@link #copyOpcode}). Every existing type
+     * is its own namesake.
      */
     static final int COPY_UNLIKE = -2;
     // [source tag][target tag] -> the pair has a copier arm; filled from rule K (RelationRules.copier) at class init
@@ -113,8 +113,10 @@ public class RecordToRowCopierUtils {
      * The arm the three copiers (single-method, chunked, looping) take for a column, chosen once
      * when the copier is built: the source tag in the high byte and the target tag in the low byte,
      * or {@link #COPY_NONE} for a pair without an arm. VARCHAR_SLICE (the transient read_parquet
-     * type) reads through VARCHAR's getter, and NULL through the target's getter, which returns the
-     * target's NULL, or, for a target unlike its family's namesake, {@link #COPY_UNLIKE}. A same-tag
+     * type) reads through VARCHAR's getter. A NULL source takes the target's own arm, or, for a
+     * target unlike its family's namesake, {@link #COPY_UNLIKE}; that decides only whether INSERT
+     * admits the pair, since the copiers leave a NULL-typed column out of the row: records that
+     * materialize rows keep no bytes for it, and the writer fills the column with NULL. A same-tag
      * pair takes {@link #sameTypeOpcode}; any other pair needs an arm in {@link RelationRules#copier}
      * (rule K) and takes the opcodes of the two {@link
      * PhysicalDescriptor.Accessor accessor families}. {@code TypeRelationGoldenTest.testCopierArms}
@@ -511,6 +513,10 @@ public class RecordToRowCopierUtils {
      * This should be kept in sync with the actual bytecode generation in generateSingleMethodCopier.
      */
     private static int estimateColumnBytecodeSize(int fromType, int toType) {
+        if (ColumnType.isNull(fromType)) {
+            // the generators copy nothing for a NULL-typed column
+            return 0;
+        }
         int fromTag = ColumnType.tagOf(fromType);
         int toTag = ColumnType.tagOf(toType);
 
@@ -844,8 +850,12 @@ public class RecordToRowCopierUtils {
                     continue;
                 }
 
-                final int toColumnType = toMetadata.getColumnType(toColumnIndex);
                 final int fromColumnType = fromTypes.getColumnType(i);
+                if (ColumnType.isNull(fromColumnType)) {
+                    // the writer stores NULL, see generateSingleMethodCopier()
+                    continue;
+                }
+                final int toColumnType = toMetadata.getColumnType(toColumnIndex);
                 final int opcode = copyOpcode(fromColumnType, toColumnType);
                 if (opcode == COPY_UNLIKE) {
                     throw noFamilyArmForColumn(fromColumnType, toColumnType);
@@ -858,8 +868,6 @@ public class RecordToRowCopierUtils {
                 final int toColumnWriterIndex = toMetadata.getWriterIndex(toColumnIndex);
 
                 int timestampTypeRef = 0;
-                // a NULL source reads through the target's own getter, so its value needs no
-                // timestamp-unit conversion
                 if (toColumnTypeTag == ColumnType.DATE && fromColumnTypeTag == ColumnType.TIMESTAMP) {
                     timestampTypeRef = fromColumnType_0 + 2 * i;
                 } else if (toColumnTypeTag == ColumnType.TIMESTAMP && fromColumnType != ColumnType.NULL && (fromColumnTypeTag == ColumnType.DATE ||
@@ -2014,8 +2022,15 @@ public class RecordToRowCopierUtils {
                 continue;
             }
 
-            final int toColumnType = toMetadata.getColumnType(toColumnIndex);
             final int fromColumnType = fromTypes.getColumnType(i);
+            if (ColumnType.isNull(fromColumnType)) {
+                // A NULL-typed column holds no value, and records that materialize rows, such as
+                // map records and sort chains, keep no bytes for it: a typed getter would read the
+                // next column. Leave the column out of the row, and TableWriter and WalWriter fill
+                // it with NULL.
+                continue;
+            }
+            final int toColumnType = toMetadata.getColumnType(toColumnIndex);
             final int opcode = copyOpcode(fromColumnType, toColumnType);
             if (opcode == COPY_UNLIKE) {
                 throw noFamilyArmForColumn(fromColumnType, toColumnType);
@@ -2030,8 +2045,6 @@ public class RecordToRowCopierUtils {
             int timestampTypeRef = 0;
             // determine the `TimestampDriver` during bytecode generation to avoid
             // calling `ColumnType.getTimestampDriver()` at runtime much times.
-            // A NULL source reads through the target's own getter, so its value needs no
-            // timestamp-unit conversion.
             if (toColumnTypeTag == ColumnType.DATE && fromColumnTypeTag == ColumnType.TIMESTAMP) { // Timestamp -> Date
                 timestampTypeRef = fromColumnType_0 + 2 * i;
             } else if (toColumnTypeTag == ColumnType.TIMESTAMP && fromColumnType != ColumnType.NULL && (fromColumnTypeTag == ColumnType.DATE || // Date -> Timestamp

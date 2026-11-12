@@ -53,6 +53,7 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
     private final DoubleArrayParser arrayParser; // null if not needed
     private final ColumnTypes fromTypes;
     // RecordToRowCopierUtils.copyOpcode() per filtered column; COPY_NONE for the timestamp column
+    // and for a NULL-typed source column
     private final IntList opcodes = new IntList();
     private final ColumnFilter toColumnFilter;
     private final RecordMetadata toMetadata;
@@ -71,13 +72,18 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
         boolean isArrayParserRequired = false;
         for (int i = 0, n = this.toColumnFilter.getColumnCount(); i < n; i++) {
             final int toColumnIndex = this.toColumnFilter.getColumnIndexFactored(i);
-            final int toColumnType = this.toMetadata.getColumnType(toColumnIndex);
             final int fromColumnType = this.fromTypes.getColumnType(i);
-            // the timestamp column is copied externally
-            final int opcode = toColumnIndex == timestampIndex
-                    ? RecordToRowCopierUtils.COPY_NONE
-                    : RecordToRowCopierUtils.copyOpcode(fromColumnType, toColumnType);
-            if (opcode == RecordToRowCopierUtils.COPY_NONE && toColumnIndex != timestampIndex) {
+            // The timestamp column is copied externally. A NULL-typed column holds no value, and
+            // records that materialize rows, such as map records and sort chains, keep no bytes
+            // for it: a typed getter would read the next column. Leave the column out of the row,
+            // and TableWriter and WalWriter fill it with NULL.
+            if (toColumnIndex == timestampIndex || ColumnType.isNull(fromColumnType)) {
+                opcodes.add(RecordToRowCopierUtils.COPY_NONE);
+                continue;
+            }
+            final int toColumnType = this.toMetadata.getColumnType(toColumnIndex);
+            final int opcode = RecordToRowCopierUtils.copyOpcode(fromColumnType, toColumnType);
+            if (opcode == RecordToRowCopierUtils.COPY_NONE) {
                 throw RecordToRowCopierUtils.noCopierArmForColumn(fromColumnType, toColumnType, this.toMetadata.getColumnName(toColumnIndex));
             }
             if (opcode == RecordToRowCopierUtils.COPY_UNLIKE) {
@@ -100,7 +106,8 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
         for (int i = 0; i < n; i++) {
             final int opcode = opcodes.getQuick(i);
             if (opcode == RecordToRowCopierUtils.COPY_NONE) {
-                // the timestamp column, copied apart from the copier
+                // the timestamp column, copied apart from the copier, or a NULL-typed source
+                // column, which the writer fills with NULL
                 continue;
             }
             final int toColumnIndex = toColumnFilter.getColumnIndexFactored(i);

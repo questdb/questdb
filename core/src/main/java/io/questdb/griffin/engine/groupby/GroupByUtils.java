@@ -49,6 +49,7 @@ import io.questdb.griffin.engine.functions.columns.BinColumn;
 import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.griffin.engine.functions.columns.LongColumn;
 import io.questdb.griffin.engine.functions.columns.StrColumn;
+import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.griffin.engine.functions.groupby.GroupingFunction;
 import io.questdb.griffin.engine.functions.groupby.SparklineGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.TwapGroupByFunction;
@@ -489,9 +490,13 @@ public class GroupByUtils {
                     // must be a function key, so we treat symbols as strings
                     : new StrColumn(keyColumnIndex - 1);
         }
+        // a NULL key holds no bytes in the map; the pseudo type has no type driver
+        if (ColumnTypeTag.of(type) == ColumnTypeTag.NULL) {
+            return NullConstant.NULL;
+        }
         final TypeDriver driver = PhysicalDescriptor.storedTypeDriverOf(type);
-        // no key function has a pseudo type or VARCHAR_SLICE, so the BinColumn fallback is not
-        // expected to run
+        // no other key function has a pseudo type or VARCHAR_SLICE, so the BinColumn fallback is
+        // not expected to run
         return driver != null
                 ? driver.newColumnFunction(keyColumnIndex - 1, type)
                 : BinColumn.newInstance(keyColumnIndex - 1);
