@@ -81,18 +81,17 @@ public class AdaptiveMultiTableLazyGapCrashSweepTest extends AbstractAdaptiveCra
     private static final int ROWS = LAZY_K + LAZY_M; // 9
 
     /**
-     * The full sweep (N=60 crash points) needs more than the 20-minute test timeout, so it runs in two parts of
-     * about 30 points each; see {@link #assertSweepPartRecoversCleanly}. If N grows well past 60, the last part
-     * needs a further split.
+     * The full sweep needs more than the 20-minute test timeout, so it runs in two halves; see
+     * {@link #assertSweepPartRecoversCleanly}.
      */
     @Test
-    public void testMultiTableLazyGapSweepRecoversCleanlyAtCrashPoints1To30() throws Exception {
-        assertSweepPartRecoversCleanly(1, 30);
+    public void testMultiTableLazyGapSweepRecoversCleanlyInFirstHalf() throws Exception {
+        assertSweepPartRecoversCleanly(1, 2);
     }
 
     @Test
-    public void testMultiTableLazyGapSweepRecoversCleanlyAtCrashPoints31ToLast() throws Exception {
-        assertSweepPartRecoversCleanly(31, Integer.MAX_VALUE);
+    public void testMultiTableLazyGapSweepRecoversCleanlyInSecondHalf() throws Exception {
+        assertSweepPartRecoversCleanly(2, 2);
     }
 
     /**
@@ -184,9 +183,10 @@ public class AdaptiveMultiTableLazyGapCrashSweepTest extends AbstractAdaptiveCra
 
     /**
      * Each table builds its own durable epoch at seqTxn=LAZY_K, both epochs are then disabled, and the
-     * driver sweeps a crash across durability ops {@code firstK..min(lastK, N)} of the interleaved
-     * LAZY_M-per-table commit phase, running the full recovery triple (one {@code recover()} call for both
-     * tables) and the per-table oracle at each. The three parts together sweep every point 1..N in order.
+     * driver sweeps a crash across the durability ops in part {@code part} of {@code partCount} near-equal ranges
+     * of 1..N of the interleaved LAZY_M-per-table commit phase, running the full recovery triple (one
+     * {@code recover()} call for both tables) and the per-table oracle at each. The parts together sweep every point
+     * 1..N in order.
      * Asserts, at every crash point k of the part:
      * <ol>
      *   <li>neither table is suspended after recovery;</li>
@@ -199,12 +199,17 @@ public class AdaptiveMultiTableLazyGapCrashSweepTest extends AbstractAdaptiveCra
      *       and at k=N both tables recover all {@code ROWS}.</li>
      * </ol>
      */
-    private void assertSweepPartRecoversCleanly(int firstK, int lastK) throws Exception {
+    private void assertSweepPartRecoversCleanly(int part, int partCount) throws Exception {
         withAdaptiveLazyGap(() -> runWithCrashFacade(() -> {
             crashFf.modelSharedJournal = false; // per-inode strictness (ext4 fast_commit)
 
             final LazyGapMultiTableWorkload workload = new LazyGapMultiTableWorkload();
-            final SweepResult r = forEachAdaptiveCrashPoint(workload, DEFAULT_ADAPTIVE_CRASH_POINT_CAP, firstK, lastK);
+            final SweepResult r = forEachAdaptiveCrashPointInPart(
+                    workload,
+                    DEFAULT_ADAPTIVE_CRASH_POINT_CAP,
+                    part,
+                    partCount
+            );
             final int first = r.firstSweptK;
             final int last = r.lastSweptK;
 
@@ -214,7 +219,7 @@ public class AdaptiveMultiTableLazyGapCrashSweepTest extends AbstractAdaptiveCra
                     .$(", t1RecoveredByK=").$(workload.t1RecoveredByK)
                     .$(", t2RecoveredByK=").$(workload.t2RecoveredByK).$();
 
-            Assert.assertTrue("N must be > 0", r.n > 0);
+            assertCommitDurabilityOps(r, 60, 100);
             Assert.assertEquals("default cap must not truncate this small workload", r.n, r.sweptPoints);
             Assert.assertFalse("small workload must not be truncated", r.truncated);
             Assert.assertEquals(
