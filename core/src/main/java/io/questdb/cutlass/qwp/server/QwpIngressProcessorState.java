@@ -2271,7 +2271,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     // A refusal that holds then holds again at every replay: a refused table that joined
     // would let the batch commit the tables before it and the replay duplicate their rows,
     // retry after retry. Reads the cache's last lookup and the table's tracker instead of
-    // the sequencer; TableSequencerImpl.nextTxn() refuses the same states, with the same
+    // the sequencer; TableSequencerImpl's nextTxn() refuses the same states, with the same
     // exceptions. A refusal that lands while the table waits in the batch fails its commit.
     private void throwIfJoinRefused(WalTableUpdateDetails tud) {
         final TableToken tableToken = tud.getTableToken();

@@ -226,7 +226,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         assertGateRefusalWithBatchPending(false);
     }
 
-    /** Frames a, b, a, then one needing a new column of a; b's commit fails after a's: frame 1 is NACKed. */
+    /**
+     * Frames a, b, a, then one needing a new column of a; b's commit fails after a's: frame 1 is NACKed.
+     */
     @Test
     public void testBoundaryCommitFailureOnLaterTableNacksItsFirstFrame() throws Exception {
         assertLaterTableCommitFailureNacksItsFirstFrame(true);
@@ -369,7 +371,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
-    /** From fixed seeds, the fuzz generator produces every shape that ends a batch at a failed frame. */
+    /**
+     * From fixed seeds, the fuzz generator produces every shape that ends a batch at a failed frame.
+     */
     @Test
     public void testCommitBatchFuzzGeneratesRewindShapes() {
         final Rnd rnd = new Rnd(FUZZ_SHAPES_SEED0, FUZZ_SHAPES_SEED1);
@@ -399,7 +403,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         Assert.assertTrue("the pinned rewind shape", pinnedRewindShapes > 0);
     }
 
-    /** A fuzz seed whose first bad frame fails on its second block after the first appended: guards I2 and I4. */
+    /**
+     * A fuzz seed whose first bad frame fails on its second block after the first appended: guards I2 and I4.
+     */
     @Test
     public void testCommitBatchFuzzPinnedRewindSeed() throws Exception {
         assertMemoryLeak(() -> {
@@ -411,7 +417,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
-    /** Each table commits once, and one ack covers every frame. */
+    /**
+     * Each table commits once, and one ack covers every frame.
+     */
     @Test
     public void testCommitBatchSpansInterleavedTables() throws Exception {
         assertMemoryLeak(() -> {
@@ -455,7 +463,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         assertCommitFailureAtTable(1, "100\n400\n", "", "");
     }
 
-    /** b's commit fails after a's: frame 0 is acked, frame 1 NACKed, and the replay sends frame 2's row of a again. */
+    /**
+     * b's commit fails after a's: frame 0 is acked, frame 1 NACKed, and the replay sends frame 2's row of a again.
+     */
     @Test
     public void testCommitFailureOnLaterTableAcksFramesBeforeItsFirstFrame() throws Exception {
         assertLaterTableCommitFailureNacksItsFirstFrame(false);
@@ -485,7 +495,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
-    /** The batch reads the role once, before any table commits: nothing commits or is acked, and the CLOSE follows. */
+    /**
+     * The batch reads the role once, before any table commits: nothing commits or is acked, and the CLOSE follows.
+     */
     @Test
     public void testDemoteAtBatchCommitCommitsNoTable() throws Exception {
         assertMemoryLeak(() -> {
@@ -518,7 +530,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
-    /** A frame appends to a and fails on b, and a demote refuses the boundary commit: only the CLOSE goes out. */
+    /**
+     * A frame appends to a and fails on b, and a demote refuses the boundary commit: only the CLOSE goes out.
+     */
     @Test
     public void testDemoteAtBoundaryCommitAfterRewindCommitsNothing() throws Exception {
         assertMemoryLeak(() -> {
@@ -549,7 +563,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
-    /** Another session drops b while it waits in the batch: a commits, c does not, and b's first frame is NACKed. */
+    /**
+     * Another session drops b while it waits in the batch: a commits, c does not, and b's first frame is NACKed.
+     */
     @Test
     public void testDroppedTableInBatchCommitsTablesBeforeIt() throws Exception {
         assertMemoryLeak(() -> {
@@ -704,7 +720,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                 clientEncodedFrame(1, "a"), clientEncodedFrame(0), clientEncodedFrame(1, "a"));
     }
 
-    /** Frames that name no table commit nothing, take no lock, and are all acked. */
+    /**
+     * Frames that name no table commit nothing, take no lock, and are all acked.
+     */
     @Test
     public void testEmptyFramesAloneAreAcked() throws Exception {
         assertMemoryLeak(() -> {
@@ -747,13 +765,17 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
-    /** A failed block of VARCHAR, STRING, BINARY and DOUBLE[] values rewinds each column to the batch's rows. */
+    /**
+     * A failed block of VARCHAR, STRING, BINARY and DOUBLE[] values rewinds each column to the batch's rows.
+     */
     @Test
     public void testFailedFirstBlockAppendRewindsEveryColumnType() throws Exception {
         assertFailedFrameRewindsEveryColumnType(false);
     }
 
-    /** A two-block frame fails after appending next to batch rows that follow an earlier commit in the segment. */
+    /**
+     * A two-block frame fails after appending next to batch rows that follow an earlier commit in the segment.
+     */
     @Test
     public void testFailedFrameAfterCommitInSegmentDropsOnlyItsOwnRows() throws Exception {
         assertMemoryLeak(() -> {
@@ -817,7 +839,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
-    /** The pass's first frame appends to a and then fails on b: its row goes back out and nothing commits. */
+    /**
+     * The pass's first frame appends to a and then fails on b: its row goes back out and nothing commits.
+     */
     @Test
     public void testFailedFrameOpeningBatchCommitsNothing() throws Exception {
         assertMemoryLeak(() -> {
@@ -840,7 +864,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
-    /** Like the client's flush, a frame appends to the batch's table and then fails on another table's block. */
+    /**
+     * Like the client's flush, a frame appends to the batch's table and then fails on another table's block.
+     */
     @Test
     public void testFailedMultiTableFrameDropsItsBlockFromBatchTable() throws Exception {
         assertMemoryLeak(() -> {
@@ -867,7 +893,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
-    /** Frame [n, bad n]: n's writer returns to its empty savepoint, n leaves the batch, and a commits once. */
+    /**
+     * Frame [n, bad n]: n's writer returns to its empty savepoint, n leaves the batch, and a commits once.
+     */
     @Test
     public void testFailedSecondBlockOfNewTableRewindsItsFirstBlock() throws Exception {
         assertMemoryLeak(() -> {
@@ -899,7 +927,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
-    /** The failing frame's first block appends every column type to the batch's table, and its second block fails. */
+    /**
+     * The failing frame's first block appends every column type to the batch's table, and its second block fails.
+     */
     @Test
     public void testFailedSecondBlockRewindsEveryColumnType() throws Exception {
         assertFailedFrameRewindsEveryColumnType(true);
@@ -915,7 +945,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         assertThirdBlockFailureRewindsBothTables(true);
     }
 
-    /** The failed block's cancel cannot remap the column's first page: the batch is lost, the frame NACKed. */
+    /**
+     * The failed block's cancel cannot remap the column's first page: the batch is lost, the frame NACKed.
+     */
     @Test
     public void testFirstBlockCancelFailureLosesBatch() throws Exception {
         assertMemoryLeak(() -> {
@@ -1031,7 +1063,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
-    /** With column auto-creation off, a block naming a missing column is refused before any row appends. */
+    /**
+     * With column auto-creation off, a block naming a missing column is refused before any row appends.
+     */
     @Test
     public void testFirstBlockColumnRefusalCommitsBatchOnce() throws Exception {
         assertMemoryLeak(() -> {
@@ -1059,7 +1093,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
-    /** The failed block's new symbol stays in the writer's symbol table and reads back on a fresh connection. */
+    /**
+     * The failed block's new symbol stays in the writer's symbol table and reads back on a fresh connection.
+     */
     @Test
     public void testFirstBlockFailureAfterNewSymbolKeepsBatchAndSymbol() throws Exception {
         assertMemoryLeak(() -> {
@@ -1093,7 +1129,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
-    /** A VARCHAR that is not a number fails the block; its cancel leaves the writer with the batch's rows. */
+    /**
+     * A VARCHAR that is not a number fails the block; its cancel leaves the writer with the batch's rows.
+     */
     @Test
     public void testFirstBlockFailureOfBatchTableCommitsBatchOnce() throws Exception {
         assertMemoryLeak(() -> {
@@ -1118,7 +1156,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
-    /** b refuses a VARCHAR value for its LONG column; the batch is acked before the frame's NACK. */
+    /**
+     * b refuses a VARCHAR value for its LONG column; the batch is acked before the frame's NACK.
+     */
     @Test
     public void testFirstBlockFailureOfTableNewToBatchCommitsBatchOnce() throws Exception {
         assertMemoryLeak(() -> {
@@ -1149,7 +1189,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
-    /** With no batch pending, a frame failing on its only block is NACKed and nothing commits. */
+    /**
+     * With no batch pending, a frame failing on its only block is NACKed and nothing commits.
+     */
     @Test
     public void testFirstBlockFailureOpeningBatch() throws Exception {
         assertMemoryLeak(() -> {
@@ -1166,7 +1208,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
-    /** An unexpected permission failure for a new column distresses the cache: nothing commits. */
+    /**
+     * An unexpected permission failure for a new column distresses the cache: nothing commits.
+     */
     @Test
     public void testFirstBlockUnexpectedErrorLosesBatch() throws Exception {
         assertMemoryLeak(() -> {
@@ -1222,7 +1266,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         assertBatchCommittedBeforeFatalClose(createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(300L, 3_000_000L), false));
     }
 
-    /** A frame's second block needs a new column: its first goes back out, the batch commits, then the frame. */
+    /**
+     * A frame's second block needs a new column: its first goes back out, the batch commits, then the frame.
+     */
     @Test
     public void testFrameThatOnlyCouldNotJoinCommitsAfterBatch() throws Exception {
         assertMemoryLeak(() -> {
@@ -1253,7 +1299,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
-    /** Over 1 MiB of one-row frames alternating a and b, then a frame that appends to a and fails on b. */
+    /**
+     * Over 1 MiB of one-row frames alternating a and b, then a frame that appends to a and fails on b.
+     */
     @Test
     public void testFullReceivePassRewindCommitsEachTableOnce() throws Exception {
         // Without fsync, so that a regression to one commit per frame stays fast to detect.
@@ -1301,7 +1349,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
-    /** A demote at the gate's second check, before the pass's first frame opens a batch: CLOSE, nothing commits. */
+    /**
+     * A demote at the gate's second check, before the pass's first frame opens a batch: CLOSE, nothing commits.
+     */
     @Test
     public void testGateRefusalBeforeOpeningBatchClosesWithoutCommit() throws Exception {
         assertMemoryLeak(() -> {
@@ -1336,7 +1386,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
-    /** After b's column is renamed, b's frames resolve again, auto-creating v, while a's keep their resolution. */
+    /**
+     * After b's column is renamed, b's frames resolve again, auto-creating v, while a's keep their resolution.
+     */
     @Test
     public void testInterleavedTablesFollowColumnRenameBetweenPasses() throws Exception {
         assertMemoryLeak(() -> {
@@ -1371,7 +1423,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
-    /** A table re-created with another column order between passes: its frames resolve against the new table. */
+    /**
+     * A table re-created with another column order between passes: its frames resolve against the new table.
+     */
     @Test
     public void testInterleavedTablesFollowRecreatedTableBetweenPasses() throws Exception {
         assertMemoryLeak(() -> {
@@ -1400,7 +1454,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
-    /** Cap 4: [a], [b], [a], then [a, 3 rows of b] would reach it; the frame rewinds and opens a new batch. */
+    /**
+     * Cap 4: [a], [b], [a], then [a, 3 rows of b] would reach it; the frame rewinds and opens a new batch.
+     */
     @Test
     public void testLaterBlockReachingCapRewindsBatchTable() throws Exception {
         assertMemoryLeak(() -> {
@@ -1440,7 +1496,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         assertMalformedPreparationSalvagesPrefix(true);
     }
 
-    /** The connection drops without a CLOSE, so no ack can reach the client and the batch must not commit. */
+    /**
+     * The connection drops without a CLOSE, so no ack can reach the client and the batch must not commit.
+     */
     @Test
     public void testMalformedWebSocketFrameRollsBackMultiTableBatch() throws Exception {
         assertMemoryLeak(() -> {
@@ -1497,7 +1555,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                 clientEncodedFrame(1, "b"));
     }
 
-    /** b, new to the batch, fails a block whose cancel cannot remap its column: a commits without b. */
+    /**
+     * b, new to the batch, fails a block whose cancel cannot remap its column: a commits without b.
+     */
     @Test
     public void testNewTableCancelFailureCommitsBatchWithoutIt() throws Exception {
         assertMemoryLeak(() -> {
@@ -1701,7 +1761,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
-    /** Frames a0 b1 c2 a3 b4 c5: the refused table's first frame ends the batch, and the frames before it commit. */
+    /**
+     * Frames a0 b1 c2 a3 b4 c5: the refused table's first frame ends the batch, and the frames before it commit.
+     */
     @Test
     public void testPermissionRefusalNacksRefusedTablesFirstFrame() throws Exception {
         assertMemoryLeak(() -> {
@@ -1746,7 +1808,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
-    /** The refused table's first rows come in a second block, after the first appended to a batch table. */
+    /**
+     * The refused table's first rows come in a second block, after the first appended to a batch table.
+     */
     @Test
     public void testPermissionRefusalOfSecondBlockCommitsFramesBefore() throws Exception {
         assertMemoryLeak(() -> {
@@ -1779,7 +1843,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
-    /** A read-only refusal of a new column, as in a demote: the batch is acked before the role-change CLOSE. */
+    /**
+     * A read-only refusal of a new column, as in a demote: the batch is acked before the role-change CLOSE.
+     */
     @Test
     public void testPhaseOneRoleChangeRefusalCommitsBatchBeforeClose() throws Exception {
         assertMemoryLeak(() -> {
@@ -1952,7 +2018,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
-    /** The batch commits at the group's first deferred frame, and the frame after the group opens a new batch. */
+    /**
+     * The batch commits at the group's first deferred frame, and the frame after the group opens a new batch.
+     */
     @Test
     public void testPlainFrameClosingDeferredGroupCommitsAlone() throws Exception {
         assertMemoryLeak(() -> {
@@ -1974,7 +2042,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
-    /** A frame appends to a, then its lookup of a new table meets a demote: the batch is acked before the CLOSE. */
+    /**
+     * A frame appends to a, then its lookup of a new table meets a demote: the batch is acked before the CLOSE.
+     */
     @Test
     public void testReadOnlyRefusalAfterAppendCommitsBatchBeforeClose() throws Exception {
         assertMemoryLeak(() -> {
@@ -2018,7 +2088,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
-    /** Closing the evicted stale entry's writer fails; the re-created table's frames still share one batch. */
+    /**
+     * Closing the evicted stale entry's writer fails; the re-created table's frames still share one batch.
+     */
     @Test
     public void testRecreatedTableAfterFailedEvictionSharesOneBatch() throws Exception {
         // Closing a WAL writer msyncs its files only when the commit mode is not NOSYNC.
@@ -2067,19 +2139,25 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
-    /** Pass 2's first frame redefines dictionary id 0 as y and opens the batch; its last frame fails. */
+    /**
+     * Pass 2's first frame redefines dictionary id 0 as y and opens the batch; its last frame fails.
+     */
     @Test
     public void testRedefiningFrameOpeningBatchKeepsItsSymbols() throws Exception {
         assertSymbolRedefinitionCommitsOnce(true);
     }
 
-    /** Frame 2 redefines dictionary id 0 as y and joins: frame 1 keeps x, as writers hold table symbol keys. */
+    /**
+     * Frame 2 redefines dictionary id 0 as y and joins: frame 1 keeps x, as writers hold table symbol keys.
+     */
     @Test
     public void testRedefiningSymbolDictionaryJoinsCommitBatch() throws Exception {
         assertSymbolRedefinitionCommitsOnce(false);
     }
 
-    /** The batch commit owed before a failed frame's answer is refused: the NACK names the batch's first frame. */
+    /**
+     * The batch commit owed before a failed frame's answer is refused: the NACK names the batch's first frame.
+     */
     @Test
     public void testRefusedBoundaryCommitAfterFailedFirstBlockNacksBatch() throws Exception {
         assertMemoryLeak(() -> {
@@ -2104,7 +2182,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
-    /** A frame appends to b and fails on c, and the boundary commit is refused at the batch's first table. */
+    /**
+     * A frame appends to b and fails on c, and the boundary commit is refused at the batch's first table.
+     */
     @Test
     public void testRefusedBoundaryCommitAfterRewindNacksBatch() throws Exception {
         assertMemoryLeak(() -> {
@@ -2160,7 +2240,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         assertRenameWindowMidBatchAcksNothing(true);
     }
 
-    /** A RENAME of b reaches b's sequencer mid-batch: a commits, b's commit fails, and b's first frame is NACKed. */
+    /**
+     * A RENAME of b reaches b's sequencer mid-batch: a commits, b's commit fails, and b's first frame is NACKed.
+     */
     @Test
     public void testRenameWindowOfLaterTableCommitsTablesBeforeIt() throws Exception {
         assertMemoryLeak(() -> {
@@ -2233,7 +2315,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                 clientEncodedFrame(1, "a"), clientEncodedFrame(1, "a", "a"), clientEncodedFrame(1, "a"));
     }
 
-    /** Cap 4: three frames of a, then [b, a], whose block of a would reach the cap: b's row goes back out. */
+    /**
+     * Cap 4: three frames of a, then [b, a], whose block of a would reach the cap: b's row goes back out.
+     */
     @Test
     public void testRewindAtCapBoundary() throws Exception {
         assertMemoryLeak(() -> {
@@ -2263,7 +2347,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
-    /** Behind three frames each of a and b, a frame appends to a and then fails on b. */
+    /**
+     * Behind three frames each of a and b, a frame appends to a and then fails on b.
+     */
     @Test
     public void testRewindCommitsEachTableOnce() throws Exception {
         assertMemoryLeak(() -> {
@@ -2294,7 +2380,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
-    /** Rewinding 2,049 rows of a cannot remap a's first page: the batch is lost, and the replay commits once. */
+    /**
+     * Rewinding 2,049 rows of a cannot remap a's first page: the batch is lost, and the replay commits once.
+     */
     @Test
     public void testRewindFailureLosesBatchAndReplayCommitsItOnce() throws Exception {
         assertMemoryLeak(() -> {
@@ -2405,7 +2493,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
-    /** As {@link #testRewindFailureLosesBatchAndReplayCommitsItOnce}, for a frame that only cannot join. */
+    /**
+     * As {@link #testRewindFailureLosesBatchAndReplayCommitsItOnce}, for a frame that only cannot join.
+     */
     @Test
     public void testRewindFailureOfFrameThatCannotJoinLosesBatch() throws Exception {
         assertMemoryLeak(() -> {
@@ -2499,7 +2589,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
-    /** The last frame fails after appending to s: each batch row keeps the symbol its frame named. */
+    /**
+     * The last frame fails after appending to s: each batch row keeps the symbol its frame named.
+     */
     @Test
     public void testRewindKeepsSymbolsOfBatchFrames() throws Exception {
         assertMemoryLeak(() -> {
@@ -2522,7 +2614,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
-    /** A frame appends to a and fails on a new table: it gets its status without being processed again. */
+    /**
+     * A frame appends to a and fails on a new table: it gets its status without being processed again.
+     */
     @Test
     public void testRewoundFrameGetsTheStatusItFailedWith() throws Exception {
         assertMemoryLeak(() -> {
@@ -2550,19 +2644,25 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
-    /** A switch that leaves the node writable gets the lock after the batch, and the next frame commits. */
+    /**
+     * A switch that leaves the node writable gets the lock after the batch, and the next frame commits.
+     */
     @Test
     public void testRoleSwitchDuringBatchCommitLetsNextFrameCommit() throws Exception {
         assertRoleSwitchDuringBatchCommit(false, false);
     }
 
-    /** A demote queued while frames alternating a and b commit lands after b: the replay stores no row twice. */
+    /**
+     * A demote queued while frames alternating a and b commit lands after b: the replay stores no row twice.
+     */
     @Test
     public void testRoleSwitchDuringBatchCommitOfInterleavedFramesDemotesAfterLastTable() throws Exception {
         assertRoleSwitchDuringBatchCommit(true, false);
     }
 
-    /** As the interleaved case, with frames that each carry a row of a and of b. */
+    /**
+     * As the interleaved case, with frames that each carry a row of a and of b.
+     */
     @Test
     public void testRoleSwitchDuringBatchCommitOfMultiTableFramesDemotesAfterLastTable() throws Exception {
         assertRoleSwitchDuringBatchCommit(true, true);
@@ -2613,7 +2713,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         assertBlocksWithDifferentColumnsJoinCommitBatch("weather");
     }
 
-    /** Frame [n, n with a new column]: n's row goes back out, a commits, and the frame then goes the normal way. */
+    /**
+     * Frame [n, n with a new column]: n's row goes back out, a commits, and the frame then goes the normal way.
+     */
     @Test
     public void testSecondBlockOfNewTableThatCannotJoinCommitsFrameOnce() throws Exception {
         assertMemoryLeak(() -> {
@@ -2651,7 +2753,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         assertStandaloneFrameCapFailure(false);
     }
 
-    /** b's sequencer records a DROP right after the lookup: b is refused as it joins, and a's batch commits. */
+    /**
+     * b's sequencer records a DROP right after the lookup: b is refused as it joins, and a's batch commits.
+     */
     @Test
     public void testSequencerDroppedTableIsRefusedAsItJoins() throws Exception {
         assertMemoryLeak(() -> {
@@ -2715,13 +2819,17 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         assertTableChangeBetweenPassesJoinsBatch("ALTER TABLE b RESUME WAL", "ALTER TABLE b SUSPEND WAL");
     }
 
-    /** b renamed and renamed back between passes is the same table: its frames join and pass 2 is acked whole. */
+    /**
+     * b renamed and renamed back between passes is the same table: its frames join and pass 2 is acked whole.
+     */
     @Test
     public void testTableRenamedBackJoinsCommitBatch() throws Exception {
         assertTableChangeBetweenPassesJoinsBatch(null, "RENAME TABLE b TO b2", "RENAME TABLE b2 TO b");
     }
 
-    /** A table's stale batch slot, from an earlier pass or a rowless block, must not match the new batch. */
+    /**
+     * A table's stale batch slot, from an earlier pass or a rowless block, must not match the new batch.
+     */
     @Test
     public void testTablesOfEarlierPassRejoinLaterBatch() throws Exception {
         assertMemoryLeak(() -> {
@@ -2769,7 +2877,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
-    /** A frame past the connection's table limit fails its lookup before appending: the batch commits first. */
+    /**
+     * A frame past the connection's table limit fails its lookup before appending: the batch commits first.
+     */
     @Test
     public void testTooManyTablesFrameIsNackedAfterBatchCommits() throws Exception {
         assertMemoryLeak(() -> {
@@ -2792,7 +2902,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
-    /** An unexpected lookup failure distresses the cache: nothing commits, and the NACK names this frame. */
+    /**
+     * An unexpected lookup failure distresses the cache: nothing commits, and the NACK names this frame.
+     */
     @Test
     public void testUnexpectedLookupErrorLosesBatch() throws Exception {
         assertMemoryLeak(() -> {
@@ -2831,7 +2943,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
-    /** An unexpected failure at the read-only gate distresses the cache: nothing commits, the NACK names the frame. */
+    /**
+     * An unexpected failure at the read-only gate distresses the cache: nothing commits, the NACK names the frame.
+     */
     @Test
     public void testUnexpectedPreparationErrorLosesBatch() throws Exception {
         assertMemoryLeak(() -> {
@@ -2895,7 +3009,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         assertWriterAcquisitionFailureAfterAppend(true, false);
     }
 
-    /** A data frame without a payload commits the batch before it and is acked on its own. */
+    /**
+     * A data frame without a payload commits the batch before it and is acked on its own.
+     */
     @Test
     public void testZeroLengthFrameEndsCommitBatch() throws Exception {
         assertMemoryLeak(() -> {
@@ -3119,7 +3235,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         return engine.getTableSequencerAPI().lastTxn(engine.verifyTableName(table));
     }
 
-    /** {@code count} one-row frames of {@code table}, v = 100, 101, ... at 1s, 2s, ..., then {@code tail}. */
+    /**
+     * {@code count} one-row frames of {@code table}, v = 100, 101, ... at 1s, 2s, ..., then {@code tail}.
+     */
     private static byte[][] oneRowFramesThen(String table, int count, byte[]... tail) {
         final byte[][] frames = new byte[count + tail.length][];
         for (int i = 0; i < count; i++) {
@@ -3157,7 +3275,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         };
     }
 
-    /** A one-row delta-dictionary frame of s, v and ts; {@code badTable} adds a block with v as a VARCHAR. */
+    /**
+     * A one-row delta-dictionary frame of s, v and ts; {@code badTable} adds a block with v as a VARCHAR.
+     */
     private static byte[] symbolFrame(
             GlobalSymbolDictionary dict,
             int confirmedMaxId,
@@ -3196,7 +3316,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         }
     }
 
-    /** As {@link #symbolFrame}, writing s and then v as a VARCHAR, which the LONG column parses. */
+    /**
+     * As {@link #symbolFrame}, writing s and then v as a VARCHAR, which the LONG column parses.
+     */
     private static byte[] symbolVarcharFrame(
             GlobalSymbolDictionary dict,
             int confirmedMaxId,
@@ -3240,7 +3362,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         return array;
     }
 
-    /** A one-row frame of t(x VARCHAR, s STRING, bin BINARY, arr DOUBLE[], v LONG, ts), with v sent as a VARCHAR. */
+    /**
+     * A one-row frame of t(x VARCHAR, s STRING, bin BINARY, arr DOUBLE[], v LONG, ts), with v sent as a VARCHAR.
+     */
     private static byte[] typedFrame(int i, String v) {
         try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder(); QwpTableBuffer table = new QwpTableBuffer("t")) {
             addTypedRow(table, i, v);
@@ -3282,7 +3406,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         }
     }
 
-    /** Frames a0 b1 a2 b3, then [a, bad b]: each table commits once, frames 0-3 are acked, and frame 4 is NACKed. */
+    /**
+     * Frames a0 b1 a2 b3, then [a, bad b]: each table commits once, frames 0-3 are acked, and frame 4 is NACKed.
+     */
     private void assertBatchCommitsBeforeFrameFailingAfterAppend(boolean isDurableAck) throws Exception {
         assertMemoryLeak(() -> {
             createTables("a", "b");
@@ -3391,7 +3517,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
-    /** Frames of a weather block with v and a {@code secondName} block with v and h join one batch. */
+    /**
+     * Frames of a weather block with v and a {@code secondName} block with v and h join one batch.
+     */
     private void assertBlocksWithDifferentColumnsJoinCommitBatch(String secondName) throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE weather (v LONG, h LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -3425,7 +3553,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
-    /** Frames of a, b and c in one pass commit once per table and get one ack. */
+    /**
+     * Frames of a, b and c in one pass commit once per table and get one ack.
+     */
     private void assertCommitsPerTable(long expectedTransactions, long expectedRows, byte[]... frames) throws Exception {
         assertMemoryLeak(() -> {
             createTables("a", "b", "c");
@@ -3446,7 +3576,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
-    /** Frames a0 b1 c2 a3 b4 c5; {@code deniedTable}'s commit fails: tables before it commit, it is NACKed. */
+    /**
+     * Frames a0 b1 c2 a3 b4 c5; {@code deniedTable}'s commit fails: tables before it commit, it is NACKed.
+     */
     private void assertCommitFailureAtTable(int deniedTable, String... expectedValues) throws Exception {
         assertMemoryLeak(() -> {
             for (int durable = 0; durable < 2; durable++) {
@@ -3692,7 +3824,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
-    /** With auto-creation off, a frame names a missing table, as its first block or behind one it appended. */
+    /**
+     * With auto-creation off, a frame names a missing table, as its first block or behind one it appended.
+     */
     private void assertMissingTableWithoutAutoCreate(boolean isAfterAppend) throws Exception {
         assertMemoryLeak(() -> {
             final LineHttpProcessorConfiguration lineConfig = new DefaultLineHttpProcessorConfiguration(configuration) {
@@ -3787,7 +3921,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
-    /** a's commit, the batch's first, is refused: nothing is acked, and the later tables commit nothing. */
+    /**
+     * a's commit, the batch's first, is refused: nothing is acked, and the later tables commit nothing.
+     */
     private void assertRefusedFirstTableRollsBackLaterTables(String... tables) throws Exception {
         assertMemoryLeak(() -> {
             createTables("a", "b", "c");
@@ -4084,7 +4220,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
-    /** {@code ddl} changes b between passes: b's first frame is NACKed, and the replay stores a's rows once. */
+    /**
+     * {@code ddl} changes b between passes: b's first frame is NACKed, and the replay stores a's rows once.
+     */
     private void assertTableChangeBetweenPassesNacksItsFirstFrame(
             String ddl,
             String ddlBeforeReplay,
@@ -4132,7 +4270,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
-    /** A frame of a and n, in the given order, then a failing block: a keeps its batch rows, n leaves the batch. */
+    /**
+     * A frame of a and n, in the given order, then a failing block: a keeps its batch rows, n leaves the batch.
+     */
     private void assertThirdBlockFailureRewindsBothTables(boolean isNewTableFirst) throws Exception {
         assertMemoryLeak(() -> {
             createTables("a", "n", "b");
@@ -4168,7 +4308,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
-    /** Frames [a], [c], [a], [a], [a, d], where d's writer acquisition fails with a CairoException or unexpectedly. */
+    /**
+     * Frames [a], [c], [a], [a], [a, d], where d's writer acquisition fails with a CairoException or unexpectedly.
+     */
     private void assertWriterAcquisitionFailureAfterAppend(boolean isUnexpected, boolean isDurableAck) throws Exception {
         assertMemoryLeak(() -> {
             createTables("a", "c", "d");
@@ -4313,7 +4455,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         ingestInOnePass(stateEngine, processor, httpConfig, securityContext, isDurableAckEnabled, RECV_BUFFER_SIZE, sent, frames);
     }
 
-    /** As above, through a receive buffer of {@code recvBufferSize} bytes, which must hold every frame. */
+    /**
+     * As above, through a receive buffer of {@code recvBufferSize} bytes, which must hold every frame.
+     */
     private void ingestInOnePass(
             CairoEngine stateEngine,
             QwpIngressUpgradeProcessor processor,
@@ -4368,7 +4512,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         }
     }
 
-    /** One fuzz iteration's faults and frames, over tables fa, fb and fc suffixed with {@code iteration}. */
+    /**
+     * One fuzz iteration's faults and frames, over tables fa, fb and fc suffixed with {@code iteration}.
+     */
     private static FuzzIteration generateCommitBatchFuzzIteration(Rnd rnd, int iteration) {
         final FuzzIteration it = new FuzzIteration();
         it.iteration = iteration;
@@ -4498,7 +4644,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         return tableBlock(it.tables[tableIndex], value, tsMicros);
     }
 
-    /** Runs the fuzz iterations through an engine whose read-only checks and writer acquisitions fail as scripted. */
+    /**
+     * Runs the fuzz iterations through an engine whose read-only checks and writer acquisitions fail as scripted.
+     */
     private void runCommitBatchFuzz(ObjList<FuzzIteration> iterations) throws Exception {
         // The hook engine below shares the root but cannot create tables: create them first.
         for (int i = 0, n = iterations.size(); i < n; i++) {
@@ -4761,7 +4909,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         }
     }
 
-    /** Demotes when the commit after {@link #demoteAtNextCommit()} takes the lock; durable uploads never catch up. */
+    /**
+     * Demotes when the commit after {@link #demoteAtNextCommit()} takes the lock; durable uploads never catch up.
+     */
     private static final class DemotableEngine extends CairoEngine {
         // Commits left before the one the demote lands at; 0 when no demote is armed.
         private final AtomicInteger commitsUntilDemote = new AtomicInteger();
@@ -4878,7 +5028,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         }
     }
 
-    /** One fuzz iteration: its faults, frames and expected outcome. A value is its frame's sequence * 10 + its row. */
+    /**
+     * One fuzz iteration: its faults, frames and expected outcome. A value is its frame's sequence * 10 + its row.
+     */
     private static final class FuzzIteration {
         // Per frame with a sequence, its blocks as (table index, FUZZ_BLOCK_*) pairs.
         final ObjList<IntList> frameBlocks = new ObjList<>();
@@ -5096,7 +5248,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         }
     }
 
-    /** When a batch reads the role under the read lock, queues a real role switch on the write lock. */
+    /**
+     * When a batch reads the role under the read lock, queues a real role switch on the write lock.
+     */
     private static final class RoleSwitchingEngine extends CairoEngine {
         private final boolean isDemote;
         private final AtomicBoolean isReadOnly = new AtomicBoolean();

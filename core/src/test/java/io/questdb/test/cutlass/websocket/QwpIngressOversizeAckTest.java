@@ -67,7 +67,9 @@ public class QwpIngressOversizeAckTest extends AbstractQwpBootstrapTest {
         dbPath.parent().$();
     }
 
-    /** Both acks must arrive; at 3 times the send buffer, the durable ack, 8 bytes shorter, still outgrows it. */
+    /**
+     * Both acks must arrive; at 3 times the send buffer, the durable ack, 8 bytes shorter, still outgrows it.
+     */
     @Test
     public void testLocalDurableAckLargerThanSendBufferReachesClient() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
@@ -89,7 +91,9 @@ public class QwpIngressOversizeAckTest extends AbstractQwpBootstrapTest {
         });
     }
 
-    /** A few tables per frame and many frames; how they share receive passes depends on timing. */
+    /**
+     * A few tables per frame and many frames; how they share receive passes depends on timing.
+     */
     @Test
     public void testOkAckForManyFramesLargerThanSendBufferReachesClient() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
@@ -115,7 +119,9 @@ public class QwpIngressOversizeAckTest extends AbstractQwpBootstrapTest {
         });
     }
 
-    /** Acks of exactly the buffer, one byte more and several times the buffer, each for a frame of its own. */
+    /**
+     * Acks of exactly the buffer, one byte more and several times the buffer, each for a frame of its own.
+     */
     @Test
     public void testOkAckForOneFrameLargerThanSendBufferReachesClient() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
@@ -175,7 +181,9 @@ public class QwpIngressOversizeAckTest extends AbstractQwpBootstrapTest {
         return sb.toString();
     }
 
-    /** New tables whose OK ack takes exactly {@code frameSize} bytes, with names of {@code nameLength} characters. */
+    /**
+     * New tables whose OK ack takes exactly {@code frameSize} bytes, with names of {@code nameLength} characters.
+     */
     private ObjList<String> tablesForOkAckFrame(int frameSize, int nameLength) {
         final int entries = frameSize - FRAME_HEADER_SIZE - OK_ACK_FIXED_SIZE;
         final int entrySize = TABLE_ENTRY_OVERHEAD + nameLength;

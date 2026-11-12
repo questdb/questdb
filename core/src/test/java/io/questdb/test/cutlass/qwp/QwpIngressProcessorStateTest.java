@@ -193,7 +193,9 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         });
     }
 
-    /** A row added to a batch table's writer behind the batch's back stops the commit at that table. */
+    /**
+     * A row added to a batch table's writer behind the batch's back stops the commit at that table.
+     */
     @Test
     public void testCommitBatchStopsAtTableWhoseRowsChanged() throws Exception {
         assertMemoryLeak(() -> {
@@ -226,7 +228,9 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         });
     }
 
-    /** A frame that fails before or after appending leaves the batch rows as they were, so the batch commits. */
+    /**
+     * A frame that fails before or after appending leaves the batch rows as they were, so the batch commits.
+     */
     @Test
     public void testFailedFrameLeavesCommitBatchAsItStood() throws Exception {
         assertMemoryLeak(() -> {
@@ -296,7 +300,9 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         });
     }
 
-    /** A failure that distresses the cache loses the batch; one that touched no writer keeps it. */
+    /**
+     * A failure that distresses the cache loses the batch; one that touched no writer keeps it.
+     */
     @Test
     public void testFailedFrameInDistressedCacheLosesCommitBatch() throws Exception {
         assertMemoryLeak(() -> {
@@ -513,7 +519,9 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         });
     }
 
-    /** Frames without tables or rows, of several tables, or of new tables join; each table commits once. */
+    /**
+     * Frames without tables or rows, of several tables, or of new tables join; each table commits once.
+     */
     @Test
     public void testPreparedMessageJoinsWhateverItsTables() throws Exception {
         assertMemoryLeak(() -> {
@@ -839,7 +847,9 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         });
     }
 
-    /** Every path that frees an entry drops its QWP caches, also when closing its writer throws. */
+    /**
+     * Every path that frees an entry drops its QWP caches, also when closing its writer throws.
+     */
     @Test
     public void testEntryFreedByFailingWriterCloseKeepsNoQwpCache() throws Exception {
         // Closing a WAL writer msyncs its column files only when the commit mode is not NOSYNC,
@@ -920,7 +930,8 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                             case "stale lookup", "failed lookup" ->
                                     found = cache.getTableUpdateDetails(AllowAllSecurityContext.INSTANCE, gone, null, null, 10);
                             case "commitAll" -> cache.commitAll(consumer);
-                            case "commitIfMaxUncommittedRowsReached" -> cache.commitIfMaxUncommittedRowsReached(consumer);
+                            case "commitIfMaxUncommittedRowsReached" ->
+                                    cache.commitIfMaxUncommittedRowsReached(consumer);
                             case "commitAllBestEffort" -> cache.commitAllBestEffort();
                             case "commitWalTables" -> cache.commitWalTables(0);
                             default -> throw new AssertionError(removal);
@@ -984,7 +995,9 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         });
     }
 
-    /** Outside the role-switch read lock the fenced commit trips its assert; under it, the commit goes through. */
+    /**
+     * Outside the role-switch read lock the fenced commit trips its assert; under it, the commit goes through.
+     */
     @Test
     public void testFencedCommitRequiresRoleSwitchReadLock() throws Exception {
         assertMemoryLeak(() -> {
@@ -1035,7 +1048,9 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         });
     }
 
-    /** No path that removes an entry leaves the lookup shortcut, the entry found last, serving it. */
+    /**
+     * No path that removes an entry leaves the lookup shortcut, the entry found last, serving it.
+     */
     @Test
     public void testRemovedEntryIsNotServedAgain() throws Exception {
         final AtomicBoolean isChangeLogOpenFailing = new AtomicBoolean();
@@ -1130,7 +1145,9 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         });
     }
 
-    /** Not even the writer of an entry whose writer close threw stays reachable. */
+    /**
+     * Not even the writer of an entry whose writer close threw stays reachable.
+     */
     @Test
     public void testResetAndDistressedClearReleaseFreedEntries() throws Exception {
         // Closing a WAL writer msyncs its column files only when the commit mode is not NOSYNC,
@@ -1187,7 +1204,9 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         });
     }
 
-    /** A table's schema parse lives on its cache entry, shared by every spelling of its name, until it is freed. */
+    /**
+     * A table's schema parse lives on its cache entry, shared by every spelling of its name, until it is freed.
+     */
     @Test
     public void testSchemaParseLivesWithItsTableEntry() throws Exception {
         assertMemoryLeak(() -> {
@@ -1240,7 +1259,9 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         });
     }
 
-    /** Successive connections on one pooled state write more and more tables; no parse survives a disconnect. */
+    /**
+     * Successive connections on one pooled state write more and more tables; no parse survives a disconnect.
+     */
     @Test
     public void testSchemaParsesGoWithTheConnection() throws Exception {
         assertMemoryLeak(() -> {
@@ -1287,7 +1308,9 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         });
     }
 
-    /** A schema stays settled for its table while other tables resolve theirs, until its own metadata changes. */
+    /**
+     * A schema stays settled for its table while other tables resolve theirs, until its own metadata changes.
+     */
     @Test
     public void testSchemaSettledFollowsEachTablesOwnResolution() throws Exception {
         assertMemoryLeak(() -> {
@@ -1510,7 +1533,9 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         });
     }
 
-    /** Two tables of 20 columns, past the initial mapping and schema-cache capacity, alternate in one batch. */
+    /**
+     * Two tables of 20 columns, past the initial mapping and schema-cache capacity, alternate in one batch.
+     */
     @Test
     public void testWideSchemaFramesJoinCommitBatch() throws Exception {
         assertMemoryLeak(() -> {

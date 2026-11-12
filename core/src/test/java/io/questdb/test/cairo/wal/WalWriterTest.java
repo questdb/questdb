@@ -1543,7 +1543,9 @@ public class WalWriterTest extends AbstractCairoTest {
         });
     }
 
-    /** A cancel that cannot rewind its columns distresses the writer; the table takes rows through a fresh one. */
+    /**
+     * A cancel that cannot rewind its columns distresses the writer; the table takes rows through a fresh one.
+     */
     @Test
     public void testCancelColumnarWriteFailureDistressesWriter() throws Exception {
         final long pageSize = 16_384;
@@ -4668,7 +4670,9 @@ public class WalWriterTest extends AbstractCairoTest {
         });
     }
 
-    /** The rollback keeps the rows appended between the two marks. */
+    /**
+     * The rollback keeps the rows appended between the two marks.
+     */
     @Test
     public void testSavepointMarkedAgainReplacesEarlierMark() throws Exception {
         setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
@@ -4701,7 +4705,9 @@ public class WalWriterTest extends AbstractCairoTest {
         });
     }
 
-    /** A started, unappended row's timestamp and value go too: the next row takes its own slot, with nulls. */
+    /**
+     * A started, unappended row's timestamp and value go too: the next row takes its own slot, with nulls.
+     */
     @Test
     public void testSavepointRollbackDropsStartedRow() throws Exception {
         assertMemoryLeak(() -> {
@@ -4724,7 +4730,9 @@ public class WalWriterTest extends AbstractCairoTest {
         });
     }
 
-    /** The rollback cannot remap an earlier page: the writer refuses a second rollback and commits nothing. */
+    /**
+     * The rollback cannot remap an earlier page: the writer refuses a second rollback and commits nothing.
+     */
     @Test
     public void testSavepointRollbackFailureDistressesWriter() throws Exception {
         final long pageSize = 16_384;
@@ -4781,7 +4789,9 @@ public class WalWriterTest extends AbstractCairoTest {
         });
     }
 
-    /** The writer stays as it was: the columnar write completes and its rows commit. */
+    /**
+     * The writer stays as it was: the columnar write completes and its rows commit.
+     */
     @Test
     public void testSavepointRollbackRefusedDuringColumnarWrite() throws Exception {
         assertMemoryLeak(() -> {
@@ -4814,7 +4824,9 @@ public class WalWriterTest extends AbstractCairoTest {
         });
     }
 
-    /** Rows before the mark are out of order and the rolled back row is not: the flag stays, the table reads sorted. */
+    /**
+     * Rows before the mark are out of order and the rolled back row is not: the flag stays, the table reads sorted.
+     */
     @Test
     public void testSavepointRollbackRestoresOutOfOrderOfRowsBeforeMark() throws Exception {
         setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
@@ -4851,7 +4863,9 @@ public class WalWriterTest extends AbstractCairoTest {
         });
     }
 
-    /** Rows after the mark widen the bounds and break the order; the rollback restores both, or does nothing. */
+    /**
+     * Rows after the mark widen the bounds and break the order; the rollback restores both, or does nothing.
+     */
     @Test
     public void testSavepointRollbackRestoresTransactionBounds() throws Exception {
         setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
@@ -4893,7 +4907,9 @@ public class WalWriterTest extends AbstractCairoTest {
         });
     }
 
-    /** Fixed, timestamp, var-size and symbol columns, with rolled back values longer than the rows around them. */
+    /**
+     * Fixed, timestamp, var-size and symbol columns, with rolled back values longer than the rows around them.
+     */
     @Test
     public void testSavepointRollbackRewindsEveryColumnType() throws Exception {
         assertMemoryLeak(() -> {
@@ -4928,7 +4944,9 @@ public class WalWriterTest extends AbstractCairoTest {
         });
     }
 
-    /** A mark of no rows with a segment roll pending: the savepoint counts from the transaction's start. */
+    /**
+     * A mark of no rows with a segment roll pending: the savepoint counts from the transaction's start.
+     */
     @Test
     public void testSavepointWithoutRowsSurvivesSegmentRoll() throws Exception {
         setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);

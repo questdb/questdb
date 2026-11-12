@@ -286,7 +286,9 @@ public class QwpIngressUpgradeProcessorResumeRecvTest extends AbstractCairoTest 
         });
     }
 
-    /** Also when the send buffer is smaller than the ack's fixed fields. */
+    /**
+     * Also when the send buffer is smaller than the ack's fixed fields.
+     */
     @Test
     public void testAckLargerThanSendBufferLeavesInPieces() throws Exception {
         assertMemoryLeak(() -> {
@@ -1808,7 +1810,9 @@ public class QwpIngressUpgradeProcessorResumeRecvTest extends AbstractCairoTest 
         });
     }
 
-    /** A rewound frame's NACK queues behind the batch's blocked ack; resuming sends both in order. */
+    /**
+     * A rewound frame's NACK queues behind the batch's blocked ack; resuming sends both in order.
+     */
     @Test
     public void testRewoundFrameNackBehindBlockedAckResumesInOrder() throws Exception {
         assertMemoryLeak(() -> {

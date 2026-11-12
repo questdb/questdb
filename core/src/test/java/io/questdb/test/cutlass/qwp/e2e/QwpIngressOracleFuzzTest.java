@@ -445,7 +445,9 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
         });
     }
 
-    /** Producers interleave 3-26 DEDUP tables, some add a column, the server bounces, and half the runs stage acks. */
+    /**
+     * Producers interleave 3-26 DEDUP tables, some add a column, the server bounces, and half the runs stage acks.
+     */
     @Test
     public void testOracleMultiTableTortureUnderServerBounces() throws Exception {
         // Without fsync: the tiny frames make many tiny commits, and syncing each one

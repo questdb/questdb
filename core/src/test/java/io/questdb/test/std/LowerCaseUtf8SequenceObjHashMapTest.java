@@ -44,7 +44,9 @@ import java.util.HashMap;
 
 public class LowerCaseUtf8SequenceObjHashMapTest {
 
-    /** Also on a map that grew large: the HTTP server clears its header maps for every request. */
+    /**
+     * Also on a map that grew large: the HTTP server clears its header maps for every request.
+     */
     @Test
     public void testClearAllocatesNothing() {
         // The default QWP limit of tables per connection, which bounds how far a table
@@ -78,7 +80,9 @@ public class LowerCaseUtf8SequenceObjHashMapTest {
         }
     }
 
-    /** Also after the map grew and after removals; the map then takes the keys again. */
+    /**
+     * Also after the map grew and after removals; the map then takes the keys again.
+     */
     @Test
     public void testClearReleasesValues() {
         // 15 and 16 keys: one below and at the first growth. 10_000 keys: the default QWP
