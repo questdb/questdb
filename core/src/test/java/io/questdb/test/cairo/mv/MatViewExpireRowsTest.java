@@ -51,6 +51,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.SqlUtil;
+import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.mp.Job;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
@@ -1612,6 +1613,91 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("expire_clause\nts < '2024'\n");
+        });
+    }
+
+    @Test
+    public void testPolicyEveryReadOfWhichFailsRejected() throws Exception {
+        // A read binds the keep filter with temporal checks that a bind of the bare predicate does not run: timestamp
+        // text outside the TIMESTAMP_NS range, and text no timestamp reads. DDL compiles that read, so it refuses such
+        // a policy at CREATE and at ALTER, with the error the read would raise.
+        assertMemoryLeak(() -> {
+            execute("create table base (v double, ts2 timestamp, tsn timestamp_ns, ts timestamp_ns) timestamp(ts) partition by day wal");
+            final String[][] policies = {
+                    {"ts > '2300-01-01'", "inconvertible value: 10413792000000000 [TIMESTAMP -> TIMESTAMP_NS]"},
+                    {"ts < '1600-01-01'", "inconvertible value: -11676096000000000 [TIMESTAMP -> TIMESTAMP_NS]"},
+                    {"tsn > '2300-01-01'", "inconvertible value: 10413792000000000 [TIMESTAMP -> TIMESTAMP_NS]"},
+                    {"ts2 in '1583077401000000'", "Invalid date: 1583077401000000"},
+                    {"tsn in '1583077401000000'", "Invalid date: 1583077401000000"},
+                    {"ts2 < '5'", "Invalid date [str='5']"},
+                    {"'5' > ts2", "Invalid date [str='5']"},
+                    {"v > 0 and ts < '5'", "Invalid date [str='5']"},
+                    {"ts != 'a'", "invalid timestamp"},
+                    {"ts = 'a'", "invalid timestamp"},
+                    {"ts2 = 'a'", "invalid timestamp"}
+            };
+            for (String[] policy : policies) {
+                assertExceptionNoLeakCheck(
+                        "create materialized view mv as (select * from base) expire rows when " + policy[0],
+                        25,
+                        "invalid EXPIRE ROWS predicate: " + policy[1]
+                );
+            }
+            execute("create materialized view mv as (select * from base) expire rows when ts < '2200-01-01'");
+            drainWalAndMatViewQueues();
+            for (String[] policy : policies) {
+                assertExceptionNoLeakCheck(
+                        "alter materialized view mv set expire rows when " + policy[0],
+                        48,
+                        "invalid EXPIRE ROWS predicate: " + policy[1]
+                );
+            }
+            assertQuery("select expire_clause from materialized_views() where view_name = 'mv'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("expire_clause\nts < '2200-01-01'\n");
+        });
+    }
+
+    @Test
+    public void testReadNamesStoredPolicyThatFailsToBind() throws Exception {
+        // WAL apply replays a SET EXPIRE without compiling a read of the view, so a policy an older version accepted
+        // reaches the reads as it was stored. The test replays it as the apply job does: it compiles the statement in
+        // a WAL apply context and applies the operation to the view's writer. A read reports the policy as the view's,
+        // at the view's name in the statement, and DROP EXPIRE makes the view readable again.
+        assertMemoryLeak(() -> {
+            execute("create table base (v double, ts timestamp_ns) timestamp(ts) partition by day wal");
+            execute("insert into base values (1, '2024-01-01'), (2, '2024-01-02')");
+            execute("create materialized view mv as (select * from base)");
+            drainWalAndMatViewQueues();
+            try (
+                    SqlExecutionContextImpl walApplyContext = new SqlExecutionContextImpl(engine, 1) {
+                        @Override
+                        public boolean isWalApplication() {
+                            return true;
+                        }
+                    }.with(AllowAllSecurityContext.INSTANCE);
+                    SqlCompiler compiler = engine.getSqlCompiler();
+                    AlterOperation alter = compiler.compile("alter materialized view mv set expire rows when ts > '2300-01-01'", walApplyContext)
+                            .getAlterOperation();
+                    TableWriter writer = getWriter("mv")
+            ) {
+                alter.withContext(walApplyContext);
+                writer.apply(alter, true);
+            }
+            assertQuery("select expire_clause from materialized_views() where view_name = 'mv'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("expire_clause\nts > '2300-01-01'\n");
+            final String error = "invalid EXPIRE ROWS policy of 'mv': inconvertible value: 10413792000000000 [TIMESTAMP -> TIMESTAMP_NS]";
+            assertExceptionNoLeakCheck("select * from mv", 14, error);
+            assertExceptionNoLeakCheck("select count() from base join mv on base.v = mv.v", 30, error);
+            execute("alter materialized view mv drop expire");
+            drainWalAndMatViewQueues();
+            assertQuery("select v from mv")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\n1.0\n2.0\n");
         });
     }
 

@@ -44,10 +44,6 @@ public class EmptyTableRecordCursorFactory extends AbstractRecordCursorFactory {
         this(metadata, null, null);
     }
 
-    public EmptyTableRecordCursorFactory(RecordMetadata metadata, TableToken tableToken) {
-        this(metadata, tableToken, null);
-    }
-
     /**
      * Rows the generator proved empty in place of reads of tables: each cursor it opens checks, through the frames of
      * each read, that the context may read what the read references. Takes ownership of the frames, which may be null.
@@ -56,7 +52,11 @@ public class EmptyTableRecordCursorFactory extends AbstractRecordCursorFactory {
         this(metadata, null, frames);
     }
 
-    private EmptyTableRecordCursorFactory(RecordMetadata metadata, TableToken tableToken, ObjList<PartitionFrameCursorFactory> frames) {
+    /**
+     * The scan of the target of a sequenced UPDATE, which reads no rows: the apply job reads them. Each cursor it opens
+     * checks the read through the frames, as {@link #EmptyTableRecordCursorFactory(RecordMetadata, ObjList)} does.
+     */
+    public EmptyTableRecordCursorFactory(RecordMetadata metadata, TableToken tableToken, @Nullable ObjList<PartitionFrameCursorFactory> frames) {
         super(metadata);
         this.tableToken = tableToken;
         this.frames = frames;

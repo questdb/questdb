@@ -676,7 +676,9 @@ final class ScanFactoryGenerator {
     /**
      * Builds the scan of a sequenced UPDATE, which reads no rows and takes no reader. The UPDATE target's columns carry
      * the sequencer metadata the statement validates against, which the table's reader may not have caught up with;
-     * the columns of any other scan carry its table's metadata.
+     * the columns of any other scan carry its table's metadata. The apply job runs the UPDATE under the root context,
+     * so the scan keeps the frames of the read: each execution of the statement opens it, and the frames check that
+     * the context may read what the read references, as they do for a scan that reads rows.
      */
     private RecordCursorFactory generateUpdateStub(ScanPlan scan, SqlExecutionContext executionContext) {
         final OutputSchema output = scan.getOutput();
@@ -688,18 +690,31 @@ final class ScanFactoryGenerator {
                 metadata.add(table.newColumnMetadata(index, table.getColumnName(index)));
             }
             metadata.setTimestampIndex(PhysicalProperties.timestampIndex(scan));
-            return new EmptyTableRecordCursorFactory(metadata);
+            final ObjList<PartitionFrameCursorFactory> frames = new ObjList<>(1);
+            frames.add(newFrames(scan, null, table, PartitionFrameCursorFactory.ORDER_ASC));
+            return new EmptyTableRecordCursorFactory(metadata, frames);
         }
         final TableRecordMetadata tableMetadata = executionContext.getMetadataForWrite(scan.getTableToken(), scan.getMetadataVersion());
+        ObjList<PartitionFrameCursorFactory> frames = null;
         final RecordCursorFactory factory;
         try {
+            final int columnCount = tableMetadata.getColumnCount();
+            final ObjList<String> columnNames = new ObjList<>(columnCount);
+            for (int i = 0; i < columnCount; i++) {
+                columnNames.add(tableMetadata.getColumnName(i));
+            }
             for (int i = 0, n = output.getColumnCount(); i < n; i++) {
                 final int index = tableMetadata.getColumnIndex(output.getColumnName(i));
-                metadata.add(TableColumnMetadata.copyOf(tableMetadata, index, tableMetadata.getColumnName(index)));
+                metadata.add(TableColumnMetadata.copyOf(tableMetadata, index, columnNames.getQuick(index)));
             }
             metadata.setTimestampIndex(PhysicalProperties.timestampIndex(scan));
-            factory = new EmptyTableRecordCursorFactory(metadata, tableMetadata.getTableToken());
+            // the binder binds the target's source columns from the same write metadata, see UpdateBinder.bindTarget
+            final TableDescriptor descriptor = new TableDescriptor(columnNames, tableMetadata.getTimestampIndex(), tableMetadata.getTimestampType(), false);
+            frames = new ObjList<>(1);
+            frames.add(newFrames(scan, null, descriptor, PartitionFrameCursorFactory.ORDER_ASC));
+            factory = new EmptyTableRecordCursorFactory(metadata, tableMetadata.getTableToken(), frames);
         } catch (Throwable th) {
+            Misc.freeObjList(frames, th);
             Misc.free(tableMetadata, th);
             throw th;
         }
@@ -729,7 +744,11 @@ final class ScanFactoryGenerator {
 
     static PartitionFrameCursorFactory newFrames(ScanPlan scan, RuntimeIntrinsicIntervalModel intervalModel,
                                                  PlanTable table, int order) {
-        final TableDescriptor descriptor = table.getTableDescriptor();
+        return newFrames(scan, intervalModel, table.getTableDescriptor(), order);
+    }
+
+    static PartitionFrameCursorFactory newFrames(ScanPlan scan, RuntimeIntrinsicIntervalModel intervalModel,
+                                                 TableDescriptor descriptor, int order) {
         final PartitionFrameCursorFactory frames = intervalModel == null
                 ? new FullPartitionFrameCursorFactory(scan.getTableToken(), scan.getMetadataVersion(), descriptor, order,
                 scan.getViewName(), scan.getViewPosition(), scan.isUpdate())

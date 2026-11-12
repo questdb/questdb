@@ -27,13 +27,16 @@ package io.questdb.test.griffin;
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.security.PrincipalContext;
 import io.questdb.cairo.security.SecurityContextFactory;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerFactory;
 import io.questdb.griffin.SqlCompilerImpl;
@@ -44,6 +47,8 @@ import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.griffin.plan.logical.Subquery;
 import io.questdb.griffin.plan.logical.TreeWalk;
+import io.questdb.std.Chars;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -60,6 +65,11 @@ public class WalUpdateTest extends AbstractCairoTest {
     @Test
     public void testNativeUpdateAuthorizesColumnsAfterDroppedColumn() throws Exception {
         assertUpdateAuthorizesColumnsAfterDroppedColumn(false);
+    }
+
+    @Test
+    public void testNativeUpdateChecksSelectOnEveryExecution() throws Exception {
+        assertUpdateChecksSelectOnEveryExecution(false);
     }
 
     @Test
@@ -155,6 +165,11 @@ public class WalUpdateTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testWalUpdateChecksSelectOnEveryExecution() throws Exception {
+        assertUpdateChecksSelectOnEveryExecution(true);
+    }
+
     private static SecurityContext newRecordingSecurityContext(StringSink authorized) {
         return new AllowAllSecurityContext() {
             @Override
@@ -178,6 +193,56 @@ public class WalUpdateTest extends AbstractCairoTest {
         ) {
             assertFactory(factory).withContext(executionContext).inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
         }
+    }
+
+    private void assertUpdateChecksSelectOnEveryExecution(boolean isWal) throws Exception {
+        // A compiled UPDATE that runs again, as a prepared statement does, checks SELECT on the columns it reads at
+        // each run, also on a WAL table, whose apply job runs it under the root context.
+        assertMemoryLeak(() -> {
+            final boolean[] isSourceRevoked = {false};
+            final SecurityContext securityContext = new AllowAllSecurityContext() {
+                @Override
+                public void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
+                    for (int i = 0, n = columnNames.size(); i < n; i++) {
+                        if (isSourceRevoked[0] && Chars.equals(columnNames.getQuick(i), "source")) {
+                            throw CairoException.authorization().put("Access denied [SELECT on lp_update(source)]");
+                        }
+                    }
+                }
+            };
+            execute("CREATE TABLE lp_update (source INT, copied INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY "
+                    + (isWal ? "WAL" : "BYPASS WAL"));
+            execute("INSERT INTO lp_update VALUES (10, 0, '2020-01-01T00:00:00.000000Z')");
+            drainWalQueue();
+            try (
+                    SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1).with(securityContext);
+                    SqlCompiler compiler = engine.getSqlCompiler()
+            ) {
+                final CompiledQuery update = compiler.compile("UPDATE lp_update SET copied = source", executionContext);
+                try {
+                    try (OperationFuture future = update.execute(executionContext, null, false)) {
+                        future.await();
+                    }
+                    drainWalQueue();
+                    execute("UPDATE lp_update SET source = 20");
+                    drainWalQueue();
+                    isSourceRevoked[0] = true;
+                    try {
+                        update.execute(executionContext, null, false).close();
+                        Assert.fail("SELECT on source was revoked");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "Access denied [SELECT on lp_update(source)]");
+                    }
+                    drainWalQueue();
+                } finally {
+                    Misc.free(update.getUpdateOperation());
+                }
+            }
+            assertQuery("SELECT source, copied FROM lp_update")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("source\tcopied\n20\t10\n");
+        });
     }
 
     private void assertUpdateAuthorizesColumnsAfterDroppedColumn(boolean isWal) throws Exception {
@@ -228,7 +293,7 @@ public class WalUpdateTest extends AbstractCairoTest {
                 statementEngine.execute("UPDATE lp_update SET copied = source WHERE ts > '2020-01-01T00:00:00.000000Z'", executionContext);
                 drainWalQueue(statementEngine);
 
-                TestUtils.assertEquals(isWal ? "" : "source,ts,", statementAuthorized);
+                TestUtils.assertEquals("source,ts,", statementAuthorized);
                 TestUtils.assertEquals(isWal ? "source,ts," : "", applyAuthorized);
                 Assert.assertFalse(statementEngine.getTableSequencerAPI().isSuspended(statementEngine.verifyTableName("lp_update")));
                 assertRows(statementEngine, executionContext, "SELECT id,source,copied FROM lp_update ORDER BY id", """

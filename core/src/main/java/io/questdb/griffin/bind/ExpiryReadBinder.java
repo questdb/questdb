@@ -45,6 +45,7 @@ import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.griffin.plan.logical.TreeWalk;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.Mutable;
+import io.questdb.std.str.StringSink;
 
 /**
  * Binds the read of a materialized view under an EXPIRE ROWS policy, so that expired rows are invisible to every read
@@ -65,6 +66,7 @@ final class ExpiryReadBinder implements Mutable {
     };
     private final SqlBinder binder;
     private final BindContext ctx;
+    private final StringSink failure = new StringSink();
     private final ExpiryPolicyParser policyParser;
     // The tables whose policy is being bound: what the policy itself reads, its keep query or a sub-query of its
     // predicate, reads the table without the policy rather than applying the policy a second time. Lookups ignore
@@ -83,6 +85,16 @@ final class ExpiryReadBinder implements Mutable {
         final BoundExpression bound = binder.bindPredicate(keepFilter, scan, token.getTableName(), executionContext);
         bound.walk(POLICY_CALLS);
         return ctx.planNodes.filters.next().of(scan, bound, scan.getPosition());
+    }
+
+    /**
+     * The error of a read whose policy fails to bind, which DDL refuses but WAL apply replays as an older version
+     * stored it: it names the policy of the table, at the read's position, since the cause sits in the policy text.
+     */
+    private SqlException policyError(SqlException e, TableToken token, int position) {
+        failure.clear();
+        failure.put(e.getFlyweightMessage());
+        return SqlException.$(position, "invalid EXPIRE ROWS policy of '").put(token.getTableName()).put("': ").put(failure);
     }
 
     /**
@@ -108,6 +120,8 @@ final class ExpiryReadBinder implements Mutable {
             final QueryModel query = policyParser.parseKeepQuery(token, policy, binder.getParserCallback());
             query.setViewNameExpr(viewName);
             keepQuery = binder.bindQuery(query, executionContext);
+        } catch (SqlException e) {
+            throw policyError(e, token, position);
         } finally {
             tablesBound.remove(token.getTableName());
         }
@@ -131,6 +145,8 @@ final class ExpiryReadBinder implements Mutable {
                 return binder.bindLatestBy(scan, policyParser.parseKeepLatest(policy, position));
             }
             return bindKeepFilter(scan, token, predicate, executionContext);
+        } catch (SqlException e) {
+            throw policyError(e, token, position);
         } finally {
             tablesBound.remove(token.getTableName());
         }

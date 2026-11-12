@@ -1015,9 +1015,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * "invalid EXPIRE ROWS predicate" positioned at {@code position}. Runs on a freshly-borrowed
      * compiler (its own lexer/parser/functionParser).
      * <p>
-     * The last thing it does is bind the predicate a second time, wrapped exactly as a read wraps it,
+     * The last things it does are binding the predicate again, wrapped as the cleanup sweep and a read wrap it,
      * because binding the bare predicate does not answer the question the DDL is being asked. See
-     * {@link #validateExpiryKeepFilterBinds}.
+     * {@link #validateExpiryKeepFilterBinds} and {@link #validateExpiryKeepFilterReads}.
      */
     @Override
     public ExpiryValidationResult validateExpiryPredicateOnMetadata(
@@ -1101,6 +1101,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             validateExpiryKeepFilterBinds(executionContext, metadata, predicate, position);
             // Also re-lexes, so it has to follow everything that reads `node`.
             rejectUnusableConstantExpiryThreshold(executionContext, metadata, predicate, timestampColumn, position);
+            // After the threshold check, whose message names the cause of a CHAR threshold this bind also refuses.
+            validateExpiryKeepFilterReads(executionContext, metadata, predicate, position);
             return result;
         } finally {
             Misc.free(f);
@@ -7786,6 +7788,40 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         } finally {
             executionContext.setExpiryRawReadTable(previousExpiryRawReadTable);
+        }
+    }
+
+    /**
+     * Binds {@link RowExpiryUtil#appendKeepFilter} as a read of the policied view binds it, with the planner's binder,
+     * and refuses the policy when that fails. The binder runs temporal checks that the function parser does not:
+     * it refuses timestamp text outside the range of the compared column, or text no timestamp reads, such as
+     * {@code ts > '2300-01-01'} on a {@code TIMESTAMP_NS} column, which would fail every read of the view.
+     * <p>
+     * Like the read probe of a structural policy, it runs when the user submits the statement, and not when WAL
+     * apply replays the stored SET EXPIRE: a replay that refused a policy an older version accepted would suspend
+     * the view, while a read reports such a policy by name and {@code DROP EXPIRE} removes it.
+     */
+    private void validateExpiryKeepFilterReads(
+            SqlExecutionContext executionContext,
+            RecordMetadata metadata,
+            CharSequence predicate,
+            int position
+    ) throws SqlException {
+        if (executionContext.isWalApplication()) {
+            return;
+        }
+        Function f = null;
+        try {
+            clear();
+            expiryPolicySql.clear();
+            RowExpiryUtil.appendKeepFilter(expiryPolicySql, predicate);
+            lexer.of(expiryPolicySql);
+            final ExpressionNode keepFilter = SqlUtil.optimiseBooleanNot(parser.expr(lexer, (QueryModel) null, this), sqlNodePool);
+            f = bindStatementExpression(keepFilter, metadata, ColumnType.BOOLEAN, executionContext);
+        } catch (SqlException | CairoException | ImplicitCastException e) {
+            throw SqlException.$(position, "invalid EXPIRE ROWS predicate: ").put(reasonOf(e));
+        } finally {
+            Misc.free(f);
         }
     }
 

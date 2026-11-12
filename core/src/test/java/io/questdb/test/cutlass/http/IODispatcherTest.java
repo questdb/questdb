@@ -63,6 +63,7 @@ import io.questdb.cutlass.http.HttpRequestProcessorSelector;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.http.RescheduleContext;
 import io.questdb.cutlass.http.client.HttpClient;
+import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
 import io.questdb.cutlass.http.processors.StaticContentProcessorFactory;
@@ -5586,6 +5587,81 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testQueryImplicitCastExceptionAfterHeaderClosesConnectionOnExport() throws Exception {
+        getSimpleTester().withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withSendBufferSize(1024)).run((engine, _) -> {
+            createCastOverflowTable(engine);
+            final HttpClient client = testHttpClient.getHttpClient();
+            for (String sql : new String[]{
+                    "SELECT t::timestamp_ns v FROM x",
+                    "SELECT d::timestamp_ns v FROM x",
+                    "SELECT t::timestamp_ns v FROM x WHERE t > '2200-01-01'",
+                    "SELECT d::timestamp_ns v FROM x WHERE d > '2200-01-01'"
+            }) {
+                final HttpClient.Request request = client.newRequest("localhost", 9001);
+                request.GET().url("/exp").query("query", sql);
+                try (HttpClient.ResponseHeaders response = request.send()) {
+                    response.await();
+                    response.getResponse().copyTextTo(new StringSink());
+                    Assert.fail("expected the server to close the connection: " + sql);
+                } catch (HttpClientException e) {
+                    TestUtils.assertContains(e.getMessage(), "peer disconnect");
+                } finally {
+                    client.disconnect();
+                }
+            }
+            testHttpClient.assertGet("/exp", "\"count\"\r\n101\r\n", "SELECT count() FROM x");
+        });
+    }
+
+    @Test
+    public void testQueryImplicitCastExceptionAfterHeaderReportsErrorInJson() throws Exception {
+        getSimpleTester().withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withSendBufferSize(1024)).run((engine, _) -> {
+            createCastOverflowTable(engine);
+            final StringSink rows = new StringSink();
+            for (int i = 0; i < 100; i++) {
+                rows.put("[\"2024-01-01T00:00:00.000000000Z\"],");
+            }
+            rows.put("[]");
+            final HttpClient client = testHttpClient.getHttpClient();
+            try {
+                // the cast fails on the last row, after earlier rows went out in full chunks
+                assertExecResponse(
+                        client,
+                        "SELECT t::timestamp_ns v FROM x",
+                        "{\"query\":\"SELECT t::timestamp_ns v FROM x\",\"columns\":[{\"name\":\"v\",\"type\":\"TIMESTAMP_NS\"}],\"timestamp\":-1,\"dataset\":[" + rows
+                                + "],\"count\":101,\"error\":\"inconvertible value: 10413792000000000 [TIMESTAMP -> TIMESTAMP_NS]\", \"errorPos\":0}"
+                );
+                assertExecResponse(
+                        client,
+                        "SELECT d::timestamp_ns v FROM x",
+                        "{\"query\":\"SELECT d::timestamp_ns v FROM x\",\"columns\":[{\"name\":\"v\",\"type\":\"TIMESTAMP_NS\"}],\"timestamp\":-1,\"dataset\":[" + rows
+                                + "],\"count\":101,\"error\":\"inconvertible value: 10413792000000 [DATE -> TIMESTAMP_NS]\", \"errorPos\":0}"
+                );
+                // the cast fails on the first row, right after the response header went out
+                assertExecResponse(
+                        client,
+                        "SELECT t::timestamp_ns v FROM x WHERE t > '2200-01-01'",
+                        "{\"query\":\"SELECT t::timestamp_ns v FROM x WHERE t > '2200-01-01'\",\"columns\":[{\"name\":\"v\",\"type\":\"TIMESTAMP_NS\"}],\"timestamp\":-1,\"dataset\":[[]],"
+                                + "\"count\":1,\"error\":\"inconvertible value: 10413792000000000 [TIMESTAMP -> TIMESTAMP_NS]\", \"errorPos\":0}"
+                );
+                assertExecResponse(
+                        client,
+                        "SELECT d::timestamp_ns v FROM x WHERE d > '2200-01-01'",
+                        "{\"query\":\"SELECT d::timestamp_ns v FROM x WHERE d > '2200-01-01'\",\"columns\":[{\"name\":\"v\",\"type\":\"TIMESTAMP_NS\"}],\"timestamp\":-1,\"dataset\":[[]],"
+                                + "\"count\":1,\"error\":\"inconvertible value: 10413792000000 [DATE -> TIMESTAMP_NS]\", \"errorPos\":0}"
+                );
+                assertExecResponse(
+                        client,
+                        "SELECT count() FROM x",
+                        "{\"query\":\"SELECT count() FROM x\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"timestamp\":-1,\"dataset\":[[101]],\"count\":1}"
+                );
+            } finally {
+                client.disconnect();
+            }
+        });
+    }
+
+    @Test
     public void testQueryImplicitCastExceptionInWindowFunctionFirstRecord() throws Exception {
         getSimpleTester().run((engine, _) -> {
             try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
@@ -7828,6 +7904,20 @@ public class IODispatcherTest extends AbstractTest {
                 downloadedSoFar += n;
             }
         }
+    }
+
+    private static void assertExecResponse(HttpClient client, String sql, String expectedBody) {
+        final HttpClient.Request request = client.newRequest("localhost", 9001);
+        request.GET().url("/exec").query("query", sql);
+        try (HttpClient.ResponseHeaders response = request.send()) {
+            HttpUtils.awaitStatusCode(response, "200");
+            HttpUtils.assertChunkedBody(response, expectedBody);
+        }
+    }
+
+    private static void createCastOverflowTable(CairoEngine engine) throws SqlException {
+        engine.execute("CREATE TABLE x AS (SELECT '2024-01-01'::TIMESTAMP t, '2024-01-01'::DATE d FROM long_sequence(100))");
+        engine.execute("INSERT INTO x VALUES ('2300-01-01', '2300-01-01')");
     }
 
     private static HttpServer createHttpServer(ServerConfiguration serverConfiguration, CairoEngine cairoEngine, WorkerPool workerPool) {
