@@ -68,7 +68,8 @@ import org.junit.Test;
  * unchecked while the fuzz run stays green. The generator produces no set operation and the fuzz run keeps
  * function memoization off, so it reaches neither a UNION nor a memoizer; CopyExportTest covers both.
  * {@link #testKeyCheckResolvesKeysThroughExportedMaps} pins that the check resolves the keys of each path through
- * the table symbol map the export hands to the encoder, so that a wrong map fails it.
+ * the table symbol map the export hands to the encoder, so that a wrong map fails it, and
+ * {@link #testKeyCheckFailsQueryOnWrongMap} that a wrong map fails the fuzz query.
  * <p>
  * The generator is random, so the assertions run over a corpus; the seed is fixed so a failure is
  * reproducible.
@@ -149,6 +150,36 @@ public class ExportSymbolShapeCoverageTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKeyCheckFailsQueryOnWrongMap() throws Exception {
+        assertMemoryLeak(() -> {
+            createKeyCheckTable();
+            final GeneratedQuery query = new GeneratedQuery("SELECT a, b FROM t WHERE v = 2", true);
+            final QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, false, false, null, true, new ObjList<>(), null);
+            final QueryRunner.Result result = runner.run(query);
+            Assert.assertFalse("must not fail: " + (result.getFailure() != null ? result.getFailure().getMessage() : ""), result.isFailed());
+            Assert.assertFalse("must not be skipped: " + result.getSkipReason(), result.isSkipped());
+
+            // The check resolves a through b's map, which holds no key past b0's 0, so a1's key 1 resolves to NULL.
+            final QueryRunner runnerWithWrongMap = new QueryRunner(engine, sqlExecutionContext, false, false, false, null, true, new ObjList<>(), null) {
+                @Override
+                void onExportedSymbolMapsCollected(IntList columns, ObjList<SymbolMapReader> symbolMaps) {
+                    Assert.assertEquals("[0,1]", columns.toString());
+                    symbolMaps.setQuick(0, symbolMaps.getQuick(1));
+                }
+            };
+            final QueryRunner.Result wrongMapResult = runnerWithWrongMap.run(query);
+            Assert.assertTrue("must fail: " + wrongMapResult.getSkipReason(), wrongMapResult.isFailed());
+            Assert.assertFalse(wrongMapResult.isSkipped());
+            Assert.assertEquals(query.sql(), wrongMapResult.getSql());
+            Assert.assertEquals(
+                    "the key of an exported SYMBOL column does not resolve to its symbol [column=a, row=0, key=1, symbol=a1, resolved=null]\n"
+                            + "  sql: SELECT a, b FROM t WHERE v = 2",
+                    wrongMapResult.getFailure().getMessage()
+            );
+        });
+    }
+
+    @Test
     public void testKeyCheckReportsSymbolWithNullKey() throws Exception {
         assertMemoryLeak(() -> {
             // No real cursor returns a symbol with the NULL key, so a cursor of one such row stands in for a broken one.
@@ -224,10 +255,7 @@ public class ExportSymbolShapeCoverageTest extends AbstractCairoTest {
     @Test
     public void testKeyCheckResolvesKeysThroughExportedMaps() throws Exception {
         assertMemoryLeak(() -> {
-            // A symbol map numbers its symbols densely in the order they first appear, and a NULL takes the NULL key:
-            // a holds a0 as 0, a1 as 1, a2 as 2 and '' as 3, and b holds b0 alone, as 0.
-            execute("CREATE TABLE t (a SYMBOL, b SYMBOL, v INT)");
-            execute("INSERT INTO t VALUES ('a0', 'b0', 1), ('a1', 'b0', 2), ('a2', NULL, 3), ('', 'b0', 4)");
+            createKeyCheckTable();
             // For a and b, the cursors of these queries serve the table's symbol maps, a SymbolColumn over each map, and
             // a MapSymbolColumn over each map.
             final String[] queries = {
@@ -334,6 +362,13 @@ public class ExportSymbolShapeCoverageTest extends AbstractCairoTest {
         for (int k = 0, n = columns.size(); k < n; k++) {
             Assert.assertEquals(sql, symbolMaps.getQuick(k).getSymbolValuesColumn().addressOf(0), columnData.get(columns.getQuick(k) * 7L + 3));
         }
+    }
+
+    // A symbol map numbers its symbols densely in the order they first appear, and a NULL takes the NULL key:
+    // a holds a0 as 0, a1 as 1, a2 as 2 and '' as 3, and b holds b0 alone, as 0.
+    private static void createKeyCheckTable() throws SqlException {
+        execute("CREATE TABLE t (a SYMBOL, b SYMBOL, v INT)");
+        execute("INSERT INTO t VALUES ('a0', 'b0', 1), ('a1', 'b0', 2), ('a2', NULL, 3), ('', 'b0', 4)");
     }
 
     private static SymbolTable symbolTableOf(RecordCursor cursor, int columnIndex) {

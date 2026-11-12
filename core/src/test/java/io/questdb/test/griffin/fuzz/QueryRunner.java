@@ -176,7 +176,7 @@ import java.util.regex.Pattern;
  *       TS-ASC) and a full scan (preserves it).</li>
  * </ul>
  */
-public final class QueryRunner {
+public class QueryRunner {
     // FP-column mask of an Outcome that never produced a projection (it threw).
     // reconcilePair only consults the masks when both sides succeeded, so this
     // is never read; it keeps the record's accessor total.
@@ -595,6 +595,14 @@ public final class QueryRunner {
                             + recovery.exceptionClass + ": " + recovery.exceptionMessage, recovery.failure));
         }
         return Result.ok();
+    }
+
+    /**
+     * Test hook: {@link #setUpExportedSymbolKeyCheck} calls it with the SYMBOL columns that a query's export keeps and
+     * the maps through which {@link #checkExportedSymbolKeys} resolves their keys. Does nothing; a test overrides it to
+     * replace a map, so that the check meets a wrong map, which only a broken export picks.
+     */
+    void onExportedSymbolMapsCollected(IntList columns, ObjList<SymbolMapReader> symbolMaps) {
     }
 
     /**
@@ -2156,6 +2164,7 @@ public final class QueryRunner {
         } catch (Exception e) {
             throw new CursorCheckException("the export's materializer set-up threw on a fresh cursor:\n  sql: " + sql, e);
         }
+        onExportedSymbolMapsCollected(exportedSymbolColumns, exportedSymbolMaps);
     }
 
     private static final class CursorCheckException extends RuntimeException {
