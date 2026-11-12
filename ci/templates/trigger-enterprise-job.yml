@@ -27,9 +27,10 @@ jobs:
     # enterprise-ci (reported by the full run) is a required check, so GitHub blocks a PR that
     # never reports it from merging, and ejects a queue entry that never reports it.
     condition: >-
+      and(succeeded(),
       or(eq(variables['SOURCE_CODE_CHANGED'], 'true'),
       eq(variables['Build.Reason'], 'PullRequest'),
-      startsWith(variables['Build.SourceBranch'], 'refs/heads/gh-readonly-queue/'))
+      startsWith(variables['Build.SourceBranch'], 'refs/heads/gh-readonly-queue/')))
     steps:
       - checkout: none
       - bash: |
