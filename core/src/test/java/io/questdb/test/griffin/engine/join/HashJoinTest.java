@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.join;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.RecordCursor;
@@ -34,10 +35,20 @@ import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 
 public class HashJoinTest extends AbstractCairoTest {
+
+    @Override
+    @Before
+    public void setUp() {
+        // The tests cover the serial hash join factories. The parallel hash join, on by default,
+        // would run their INNER and LEFT joins.
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_ENABLED, "false");
+        super.setUp();
+    }
 
     @Test
     public void testHashFullJoinSymbolAndStringKeyIndexCollision() throws Exception {

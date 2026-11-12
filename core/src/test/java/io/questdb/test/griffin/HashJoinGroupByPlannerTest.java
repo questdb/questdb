@@ -2972,7 +2972,9 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                 // The plans below name the filter factory that runs without JIT.
                 context.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
                 // Each spelling keeps its ordinary plan, with the folded filter above the join and
-                // the cast in b's scan, below it. The RIGHT spelling hashes b.
+                // the cast in b's scan, below it. The RIGHT spelling hashes b. The parallel hash join
+                // runs the LEFT and INNER spellings, with the cast as its probe filter and the folded
+                // filter as its post-join filter.
                 final String constFalseWhere = " WHERE " + cast + " AND " + constFalse;
                 assertQuery("SELECT count(*), count(a.v)" + froms[0] + constFalseWhere)
                         .withContext(context)
@@ -2999,29 +3001,33 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                         GroupBy vectorized: false
                           values: [count(*),count(v)]
                             SelectedRecord
-                                Filter filter: false
-                                    %s
+                                Async Hash Join workers: 4
+                                  stages: 1
+                                  filter: 0.62>=c0::DECIMAL(4,2)
+                                    Probe
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: b
+                                    Build
+                                      joinType: %s
                                       condition: a.k=b.k
                                       symbolKeyJoin: true
-                                        Async Filter workers: 4
-                                          filter: 0.62>=c0::DECIMAL(4,2)
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: b
-                                        Hash
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: a
+                                      buildPayload: copied when the probe is large enough
+                                      postJoinFilter: false
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
                         """;
                 assertQuery("SELECT count(*), count(a.v)" + froms[1] + constFalseWhere)
                         .withContext(context)
                         .noLeakCheck()
-                        .assertsPlan(pushedPlan.formatted("Hash Left Outer Join Light"));
+                        .assertsPlan(pushedPlan.formatted("left outer"));
                 assertQuery("SELECT count(*), count(a.v)" + froms[2] + constFalseWhere)
                         .withContext(context)
                         .noLeakCheck()
-                        .assertsPlan(pushedPlan.formatted("Hash Join Light"));
-                // A runtime-constant filter gates the ordinary join, over b's scan with the cast.
+                        .assertsPlan(pushedPlan.formatted("inner"));
+                // A runtime-constant filter gates the ordinary join, which the parallel hash join runs
+                // with the cast as its probe filter.
                 assertQuery(select + froms[1] + " WHERE " + cast + " AND $1 = 1")
                         .withContext(context)
                         .noLeakCheck()
@@ -3030,15 +3036,18 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                                   values: [count(*),count(v)]
                                     SelectedRecord
                                         Filter filter: $0::int=1
-                                            Hash Left Outer Join Light
-                                              condition: a.k=b.k
-                                              symbolKeyJoin: true
-                                                Async Filter workers: 4
-                                                  filter: 0.62>=c0::DECIMAL(4,2)
+                                            Async Hash Join workers: 4
+                                              stages: 1
+                                              filter: 0.62>=c0::DECIMAL(4,2)
+                                                Probe
                                                     PageFrame
                                                         Row forward scan
                                                         Frame forward scan on: b
-                                                Hash
+                                                Build
+                                                  joinType: left outer
+                                                  condition: a.k=b.k
+                                                  symbolKeyJoin: true
+                                                  buildPayload: copied when the probe is large enough
                                                     PageFrame
                                                         Row forward scan
                                                         Frame forward scan on: a

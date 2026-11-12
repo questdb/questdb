@@ -783,8 +783,8 @@ public class QueryFuzzTest extends AbstractCairoTest {
                             .with(securityContext, bindVariableService, null, -1, circuitBreaker)
             ) {
                 parallelCtx.initNow();
-                // The parallel hash join is off by default; the run turns it on for every query, so
-                // that every axis and the fault injection run it, and the parallel join axis
+                // The run turns the parallel hash join on for every query, whatever the configuration
+                // says, so that every axis and the fault injection run it, and the parallel join axis
                 // compares it with the ordinary plan.
                 parallelCtx.setParallelHashJoinEnabled(true);
                 runFuzz(parallelCtx, writerPool, QUERY_POOL_NAME + '_');

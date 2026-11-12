@@ -333,7 +333,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(128 * Numbers.SIZE_1MB, configuration.getCairoConfiguration().getSqlParallelHashJoinGroupByPayloadCopyMaxSize());
         Assert.assertEquals(0.4, configuration.getCairoConfiguration().getSqlParallelHashJoinGroupByPayloadCopyMinProbeRatio(), 0.000001);
         Assert.assertEquals(0.125, configuration.getCairoConfiguration().getSqlParallelHashJoinGroupByPayloadCopyParallelMinProbeRatio(), 0.000001);
-        Assert.assertFalse(configuration.getCairoConfiguration().isSqlParallelHashJoinEnabled());
+        Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelHashJoinEnabled());
         Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getSqlParallelHashJoinTaskOutputMaxRows());
         // The query worker count, and with it the dispatch limit and the queue capacity, depends on
         // the host's CPUs: min(dispatch limit, queue capacity) frames of 1,000,000 rows at 48 bytes.
@@ -2507,16 +2507,26 @@ public class PropServerConfigurationTest {
     @Test
     public void testParallelHashJoinEnabledPropertyAndEnvironment() throws Exception {
         Properties properties = new Properties();
+        // On by default with shared query workers, as the other parallel SQL switches are.
+        properties.setProperty("shared.query.worker.count", "4");
+        Assert.assertTrue(newPropServerConfiguration(properties).getCairoConfiguration().isSqlParallelHashJoinEnabled());
+        // Off by default without them.
+        properties.setProperty("shared.query.worker.count", "0");
         Assert.assertFalse(newPropServerConfiguration(properties).getCairoConfiguration().isSqlParallelHashJoinEnabled());
+        // The property wins over the default either way.
         properties.setProperty("cairo.sql.parallel.hash.join.enabled", "true");
         Assert.assertTrue(newPropServerConfiguration(properties).getCairoConfiguration().isSqlParallelHashJoinEnabled());
+        properties.setProperty("shared.query.worker.count", "4");
+        properties.setProperty("cairo.sql.parallel.hash.join.enabled", "false");
+        Assert.assertFalse(newPropServerConfiguration(properties).getCairoConfiguration().isSqlParallelHashJoinEnabled());
+        // The environment wins over the property.
         Map<String, String> env = new HashMap<>();
-        env.put("QDB_CAIRO_SQL_PARALLEL_HASH_JOIN_ENABLED", "false");
-        Assert.assertFalse(newPropServerConfiguration(root, properties, env, new BuildInformationHolder())
-                .getCairoConfiguration().isSqlParallelHashJoinEnabled());
-        properties.clear();
         env.put("QDB_CAIRO_SQL_PARALLEL_HASH_JOIN_ENABLED", "true");
         Assert.assertTrue(newPropServerConfiguration(root, properties, env, new BuildInformationHolder())
+                .getCairoConfiguration().isSqlParallelHashJoinEnabled());
+        properties.remove("cairo.sql.parallel.hash.join.enabled");
+        env.put("QDB_CAIRO_SQL_PARALLEL_HASH_JOIN_ENABLED", "false");
+        Assert.assertFalse(newPropServerConfiguration(root, properties, env, new BuildInformationHolder())
                 .getCairoConfiguration().isSqlParallelHashJoinEnabled());
     }
 
@@ -3945,7 +3955,7 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(configuration.isSqlParallelTopKEnabled());
         Assert.assertFalse(configuration.isSqlParallelWindowJoinEnabled());
         Assert.assertFalse(configuration.isSqlParallelGroupByEnabled());
-        Assert.assertTrue(configuration.isSqlParallelHashJoinEnabled());
+        Assert.assertFalse(configuration.isSqlParallelHashJoinEnabled());
         Assert.assertEquals(5_000, configuration.getSqlParallelHashJoinTaskOutputMaxRows());
         Assert.assertEquals(64 * Numbers.SIZE_1MB, configuration.getSqlParallelHashJoinTupleRingMaxSize());
         Assert.assertFalse(configuration.isSqlParallelReadParquetEnabled());

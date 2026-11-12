@@ -490,19 +490,22 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                                     VirtualRecord
                                       functions: [timestamp_floor('minute',ts),ts1,concat([address,workspace]),ts]
                                         SelectedRecord
-                                            Hash Join Light
-                                              condition: t2.method_id=t1.method_id and t2.workspace=t1.workspace
-                                                Async JIT Filter workers: 1
-                                                  filter: (workspace='a' and method_id='d')
+                                            Async JIT Hash Join workers: 1
+                                              stages: 1
+                                              filter: (workspace='a' and method_id='d')
+                                                Probe
                                                     PageFrame
                                                         Row forward scan
                                                         Frame forward scan on: tab
-                                                Hash
-                                                    Async JIT Filter workers: 1
-                                                      filter: (method_id='d' and workspace='a')
-                                                        PageFrame
-                                                            Row forward scan
-                                                            Frame forward scan on: tab
+                                                Build
+                                                  joinType: inner
+                                                  condition: t2.method_id=t1.method_id and t2.workspace=t1.workspace
+                                                  symbolKeyJoin: true
+                                                  buildPayload: copied when the probe is large enough
+                                                  buildJitFilter: (method_id='d' and workspace='a')
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: tab
                             """)
                     .returns("""
                             month\tts1\tuid
@@ -595,19 +598,22 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                                 Encode sort
                                   keys: [mta_tax]
                                     SelectedRecord
-                                        Hash Join Light
-                                          condition: b.vendor_id=a.vendor_id
-                                          symbolKeyJoin: true
-                                            PageFrame
-                                                Row forward scan
-                                                Interval forward scan on: t1
-                                                  intervals: [("2019-06-30T00:00:00.000000Z","MAX")]
-                                            Hash
-                                                Async JIT Filter workers: 1
-                                                  filter: vendor_id in [A1,A2]
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: t2
+                                        Async Hash Join workers: 1
+                                          stages: 1
+                                            Probe
+                                                PageFrame
+                                                    Row forward scan
+                                                    Interval forward scan on: t1
+                                                      intervals: [("2019-06-30T00:00:00.000000Z","MAX")]
+                                            Build
+                                              joinType: inner
+                                              condition: b.vendor_id=a.vendor_id
+                                              symbolKeyJoin: true
+                                              buildPayload: copied when the probe is large enough
+                                              buildJitFilter: vendor_id in [A1,A2]
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: t2
                             """)
                     .returns("""
                             vendor_id

@@ -2058,7 +2058,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isSqlParallelHashJoinEnabled() {
-        return false;
+        return true;
     }
 
     @Override

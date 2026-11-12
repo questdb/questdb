@@ -763,15 +763,33 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                         .assertsPlan("SelectedRecord\n" +
                                 "    Hash Join Light\n" +
                                 "      condition: y2.LAST=y1.ts\n" +
-                                "        Hash #JOIN_TYPE Outer Join Light\n".replaceAll("#JOIN_TYPE", Character.toUpperCase(joinType.charAt(0)) + joinType.substring(1)) +
-                                "          condition: y1.x=y.x\n" +
-                                "            PageFrame\n" +
-                                "                Row forward scan\n" +
-                                "                Frame forward scan on: y\n" +
-                                "            Hash\n" +
-                                "                PageFrame\n" +
-                                "                    Row forward scan\n" +
-                                "                    Frame forward scan on: y1\n" +
+                                // The parallel hash join runs the LEFT join; the join to y2, keyed on y1,
+                                // stays serial over it.
+                                ("left".equals(joinType)
+                                        ? """
+                                                Async Hash Join workers: 1
+                                                  stages: 1
+                                                    Probe
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: y
+                                                    Build
+                                                      joinType: left outer
+                                                      condition: y1.x=y.x
+                                                      buildPayload: copied when the probe is large enough
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: y1
+                                                """.indent(8)
+                                        : "        Hash #JOIN_TYPE Outer Join Light\n".replaceAll("#JOIN_TYPE", Character.toUpperCase(joinType.charAt(0)) + joinType.substring(1)) +
+                                        "          condition: y1.x=y.x\n" +
+                                        "            PageFrame\n" +
+                                        "                Row forward scan\n" +
+                                        "                Frame forward scan on: y\n" +
+                                        "            Hash\n" +
+                                        "                PageFrame\n" +
+                                        "                    Row forward scan\n" +
+                                        "                    Frame forward scan on: y1\n") +
                                 "        Hash\n" +
                                 "            SelectedRecord\n" +
                                 "                Async Top K lo: 1 workers: 1\n" +
@@ -1181,12 +1199,17 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             Encode sort
                               keys: [a, b]
                                 SelectedRecord
-                                    Hash Join Light
-                                      condition: tab2.id=tab1.id
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: tab1
-                                        Hash
+                                    Async Hash Join workers: 1
+                                      stages: 1
+                                        Probe
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: tab1
+                                        Build
+                                          joinType: inner
+                                          condition: tab2.id=tab1.id
+                                          inputSwap: when the left input is smaller
+                                          buildPayload: copied when the probe is large enough
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: tab2
@@ -1220,12 +1243,16 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Hash Join Light
-                                  condition: tab2.id=tab1.id
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tab1
-                                    Hash
+                                Async Hash Join workers: 1
+                                  stages: 1
+                                    Probe
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab1
+                                    Build
+                                      joinType: inner
+                                      condition: tab2.id=tab1.id
+                                      buildPayload: copied when the probe is large enough
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: tab2
@@ -1259,12 +1286,16 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Hash Join Light
-                                  condition: tab2.id=tab1.id
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tab1
-                                    Hash
+                                Async Hash Join workers: 1
+                                  stages: 1
+                                    Probe
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab1
+                                    Build
+                                      joinType: inner
+                                      condition: tab2.id=tab1.id
+                                      buildPayload: copied when the probe is large enough
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: tab2
@@ -1299,12 +1330,17 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                 Encode sort
                                   keys: [a desc]
                                     SelectedRecord
-                                        Hash Join Light
-                                          condition: tab2.id=tab1.id
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: tab1
-                                            Hash
+                                        Async Hash Join workers: 1
+                                          stages: 1
+                                            Probe
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: tab1
+                                            Build
+                                              joinType: inner
+                                              condition: tab2.id=tab1.id
+                                              inputSwap: when the left input is smaller
+                                              buildPayload: copied when the probe is large enough
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: tab2
@@ -1341,12 +1377,17 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                     Encode sort
                                       keys: [a desc, ts]
                                         SelectedRecord
-                                            Hash Join Light
-                                              condition: tab2.id=tab1.id
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: tab1
-                                                Hash
+                                            Async Hash Join workers: 1
+                                              stages: 1
+                                                Probe
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: tab1
+                                                Build
+                                                  joinType: inner
+                                                  condition: tab2.id=tab1.id
+                                                  inputSwap: when the left input is smaller
+                                                  buildPayload: copied when the probe is large enough
                                                     PageFrame
                                                         Row forward scan
                                                         Frame forward scan on: tab2
@@ -1403,23 +1444,28 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     .assertsPlan("""
                             VirtualRecord
                               functions: [1]
-                                Hash Left Outer Join Light
-                                  condition: ep.WorkflowEventId=el.Id and ep.CreateDate=el.CreateDate
-                                  filter: ep.ActionTypeId=8
-                                    Hash Left Outer Join Light
+                                Async JIT Hash Join workers: 1
+                                  stages: 2
+                                  filter: (UserId=19 and TenantId=24024 and EventTypeId=1)
+                                    Probe
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: WorkflowEvent
+                                              intervals: [("2016-01-01T00:00:00.000000Z","2016-01-01T10:00:00.000000Z")]
+                                    Build
+                                      joinType: left outer
                                       condition: ep0.WorkflowEventId=el.Id and ep0.CreateDate=el.CreateDate
-                                      filter: (ep0.ActionTypeId=13 and ep0.Message='2')
-                                        Async JIT Filter workers: 1
-                                          filter: (UserId=19 and TenantId=24024 and EventTypeId=1)
-                                            PageFrame
-                                                Row forward scan
-                                                Interval forward scan on: WorkflowEvent
-                                                  intervals: [("2016-01-01T00:00:00.000000Z","2016-01-01T10:00:00.000000Z")]
-                                        Hash
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: WorkflowEventAction
-                                    Hash
+                                      onFilter: (ep0.ActionTypeId=13 and ep0.Message='2')
+                                      buildOnFilter: (ActionTypeId=13 and Message='2')
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: WorkflowEventAction
+                                    Build
+                                      joinType: left outer
+                                      condition: ep.WorkflowEventId=el.Id and ep.CreateDate=el.CreateDate
+                                      buildPayload: copied when the probe is large enough
+                                      onFilter: ep.ActionTypeId=8
+                                      buildOnFilter: ActionTypeId=8
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: WorkflowEventAction
@@ -2521,14 +2567,18 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                 Encode sort
                                   keys: [s, ts, ts1]
                                     SelectedRecord
-                                        Hash Join Light
-                                          condition: t2.s=t1.s
-                                          symbolKeyJoin: true
-                                            PageFrame
-                                                Row forward scan
-                                                Interval forward scan on: t1
-                                                  intervals: [("2023-09-01T00:00:00.000000Z","2023-09-01T01:00:00.000000Z")]
-                                            Hash
+                                        Async Hash Join workers: 1
+                                          stages: 1
+                                            Probe
+                                                PageFrame
+                                                    Row forward scan
+                                                    Interval forward scan on: t1
+                                                      intervals: [("2023-09-01T00:00:00.000000Z","2023-09-01T01:00:00.000000Z")]
+                                            Build
+                                              joinType: inner
+                                              condition: t2.s=t1.s
+                                              symbolKeyJoin: true
+                                              buildPayload: copied when the probe is large enough
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: t2
@@ -2876,12 +2926,16 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             SelectedRecord
                                 Hash Join Light
                                   condition: y2.LAST=y1.ts
-                                    Hash Left Outer Join Light
-                                      condition: y1.x=y.x
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: y
-                                        Hash
+                                    Async Hash Join workers: 1
+                                      stages: 1
+                                        Probe
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: y
+                                        Build
+                                          joinType: left outer
+                                          condition: y1.x=y.x
+                                          buildPayload: copied when the probe is large enough
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: y1

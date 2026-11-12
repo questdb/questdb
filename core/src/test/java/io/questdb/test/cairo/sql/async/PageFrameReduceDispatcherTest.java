@@ -1095,22 +1095,26 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                 "SELECT t.k FROM t JOIN s ON s.k = t.k WHERE t.vt IS NULL AND s.ct = 'u'",
                 """
                         SelectedRecord
-                            Hash Join Light
-                              condition: s.k=t.k
-                                Async Filter workers: 1
-                                  filter: null=vt
+                            Async Hash Join workers: 1
+                              stages: 1
+                              filter: null=vt
+                                Probe
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: t
-                                Hash
-                                    Async Filter workers: 1
-                                      filter: ct=u
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: s
+                                Build
+                                  joinType: inner
+                                  condition: s.k=t.k
+                                  buildPayload: copied when the probe is large enough
+                                  buildFilter: ct=u
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: s
                         """,
                 "[2,5]",
-                7
+                // One probe task for each of t's six partitions. The parallel hash join filters and
+                // builds s's two rows on the query's own thread, so the build publishes no frame.
+                6
         );
     }
 

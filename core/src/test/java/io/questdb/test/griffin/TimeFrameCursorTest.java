@@ -1094,6 +1094,9 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
 
     @Test
     public void testHashJoinFactoryPushesScatteredHint() throws Exception {
+        // The test targets the serial join, which the parallel hash join would replace. setUp()
+        // copies the configuration's flag into the context, and the next setUp() restores it.
+        sqlExecutionContext.setParallelHashJoinEnabled(false);
         // A keyed inner join builds a hash map over the slave then probes it at scattered row
         // ids, so the factory pushes SCATTERED to the slave's base pool. Walk every base cursor
         // under the join and assert at least one runs at the full (SCATTERED) budget, proving the

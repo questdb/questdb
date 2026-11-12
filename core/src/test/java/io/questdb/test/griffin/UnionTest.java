@@ -2359,12 +2359,17 @@ public class UnionTest extends AbstractCairoTest {
                             SelectedRecord
                                 Hash Join Light
                                   condition: t3.v=t1.v
-                                    Hash Join Light
-                                      condition: t2.v=t1.v
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: t
-                                        Hash
+                                    Async Hash Join workers: 1
+                                      stages: 1
+                                        Probe
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t
+                                        Build
+                                          joinType: inner
+                                          condition: t2.v=t1.v
+                                          inputSwap: when the left input is smaller
+                                          buildPayload: copied when the probe is large enough
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: t

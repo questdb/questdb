@@ -74,10 +74,10 @@ public class ParallelHashJoinConfigurationTest extends AbstractCairoTest {
     @Override
     @Before
     public void setUp() {
-        // The shared test context was built while the operator was off. Turning it on before
+        // The operator is on by default. Turning the shared test context's flag off before
         // AbstractCairoTest.setUp() lets testSharedTestContextFollowsConfiguration() see that setUp()
         // resets the context's flag from the configuration.
-        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_ENABLED, "true");
+        sqlExecutionContext.setParallelHashJoinEnabled(false);
         super.setUp();
     }
 
@@ -183,7 +183,7 @@ public class ParallelHashJoinConfigurationTest extends AbstractCairoTest {
     }
 
     private static void assertDefaults(CairoConfiguration configuration) {
-        Assert.assertFalse(configuration.isSqlParallelHashJoinEnabled());
+        Assert.assertTrue(configuration.isSqlParallelHashJoinEnabled());
         Assert.assertEquals(1_000_000, configuration.getSqlParallelHashJoinTaskOutputMaxRows());
         // The dispatch limit is Integer.MAX_VALUE, so the queue capacity of 32 frames bounds the
         // ring: 32 frames of 1,000,000 rows at 48 bytes per row.

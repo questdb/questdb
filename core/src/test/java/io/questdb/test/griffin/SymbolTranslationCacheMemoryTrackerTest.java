@@ -249,6 +249,9 @@ public class SymbolTranslationCacheMemoryTrackerTest extends AbstractCairoTest {
 
     @Test
     public void testHashJoinOpenFailuresFreeChildCursorsOnce() throws Exception {
+        // The test targets the serial join, which the parallel hash join would replace. setUp()
+        // copies the configuration's flag into the context, and the next setUp() restores it.
+        sqlExecutionContext.setParallelHashJoinEnabled(false);
         assertMemoryLeak(() -> {
             createOpenFailureTables(engine, sqlExecutionContext);
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
@@ -265,6 +268,9 @@ public class SymbolTranslationCacheMemoryTrackerTest extends AbstractCairoTest {
 
     @Test
     public void testHashJoinsChargeTranslationCaches() throws Exception {
+        // The test targets the serial join, which the parallel hash join would replace. setUp()
+        // copies the configuration's flag into the context, and the next setUp() restores it.
+        sqlExecutionContext.setParallelHashJoinEnabled(false);
         assertMemoryLeak(() -> {
             createHashJoinTables(engine, sqlExecutionContext);
             try (SqlCompiler compiler = engine.getSqlCompiler()) {

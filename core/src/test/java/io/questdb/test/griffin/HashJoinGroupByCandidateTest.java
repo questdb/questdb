@@ -239,10 +239,11 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
             assertReturns("count\n0\n", "select count(*)" + outer + " where p.installed_kwp = 42", false);
             assertReturns("count\n5\n", "select count(*) from r left join p on r.plant_id=p.plant_id and p.country in ('ES','IT')", false);
             assertReturns("country\tfirst\tlast\n\t40.0\t40.0\nDE\t20.0\t20.0\nES\t10.0\t10.0\nIT\t10.0\t10.0\n", "select p.country, first(r.energy_kwh), last(r.energy_kwh)" + JOIN + " order by p.country", true);
-            // Eligible shapes select the fused operator by default; order-sensitive aggregates keep the ordinary join.
+            // Eligible shapes select the fused operator by default; order-sensitive aggregates keep the ordinary join,
+            // which the parallel hash join runs in the serial join's row order.
             assertPlanContains("select p.country, sum(r.energy_kwh)" + JOIN, "physicalJoinType: inner", true);
             assertPlanContains("select p.country, sum(r.energy_kwh)" + outer, "physicalJoinType: left outer", true);
-            assertPlanContains("select p.country, first(r.energy_kwh)" + JOIN, "Hash Join Light", false);
+            assertPlanContains("select p.country, first(r.energy_kwh)" + JOIN, "Async Hash Join", false);
         });
     }
 
