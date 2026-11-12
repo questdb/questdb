@@ -236,7 +236,7 @@ public class TypeRelationGoldenTest {
                          1 BOOLEAN         !  1  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  1  !  !  !  !  !  !  !  !  !  !  !
                          2 BYTE            !  !  2  3  !  5  6  !  !  9 10  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  #  #  #  #  #  #  #  !  !  !  !  !  !  2  !  !  !  !  ! 47 48  !  !  !  !
                          3 SHORT           !  !  3  3  !  5  6  !  !  9 10  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  #  #  #  #  #  #  #  !  !  !  !  !  !  3  !  !  !  !  !  # 48  !  !  !  !
-                         4 CHAR            !  !  !  !  4  !  !  !  !  !  ! 11 12  !  !  !  !  !  !  !  !  !  !  !  !  ! 26  !  !  !  !  !  !  !  !  !  !  !  !  !  !  4  !  !  !  !  !  !  !  !  !  !  !
+                         4 CHAR            !  !  !  !  4  !  !  !  !  !  ! 11 11  !  !  !  !  !  !  !  !  !  !  !  !  ! 26  !  !  !  !  !  !  !  !  !  !  !  !  !  !  4  !  !  !  !  !  !  !  !  !  !  !
                          5 INT             !  !  5  5  !  5  6  !  !  9 10  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  #  #  #  #  #  #  #  !  !  !  !  !  !  5  !  !  !  !  !  # 48  !  !  !  !
                          6 LONG            !  !  6  6  !  6  6  !  !  9 10  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  #  #  #  #  #  #  #  !  !  !  !  !  !  6  !  !  !  !  !  #  #  !  !  !  !
                          7 DATE            !  !  !  !  !  !  !  7  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  7  !  !  !  !  !  !  !  !  !  !  !
@@ -1192,7 +1192,7 @@ public class TypeRelationGoldenTest {
                             10 DOUBLE        sink=X vsink=X cmp=X key=double/8 mat=X agg=X upd=X map=.
                             11 STRING        sink=X vsink=. cmp=X key=variable/-1 mat=! agg=none upd=X map=.
                             12 SYMBOL        sink=X vsink=X cmp=X key=symbol/-1 mat=! agg=none upd=X map=4
-                            13 LONG256       sink=X vsink=X cmp=X key=wide/32 mat=! agg=none upd=none map=.
+                            13 LONG256       sink=X vsink=X cmp=X key=wide/32 mat=! agg=X upd=none map=.
                             14 GEOBYTE       sink=X vsink=X cmp=X key=signed/1 mat=X agg=X upd=X map=.
                             15 GEOSHORT      sink=X vsink=X cmp=X key=signed/2 mat=X agg=X upd=X map=.
                             16 GEOINT        sink=X vsink=X cmp=X key=signed/4 mat=X agg=X upd=X map=.

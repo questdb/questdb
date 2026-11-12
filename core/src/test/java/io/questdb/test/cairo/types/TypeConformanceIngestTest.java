@@ -3463,7 +3463,10 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
                 max\t9.9
                 null\t
                 ## qwp-egress
-                error: status=6 QWP egress: unsupported column type DECIMAL(2,1)
+                min\twire=19 -9.9
+                max\twire=19 9.9
+                null\twire=19 null
+                end rows=3
                 ## ilp-udp
                 min\tclient error: current protocol version does not support decimal; row sent without v
                 max\tclient error: current protocol version does not support decimal; row sent without v
@@ -3515,7 +3518,10 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
                 max\t
                 null\t
                 ## qwp-egress
-                error: status=6 QWP egress: unsupported column type DECIMAL(4,2)
+                min\twire=19 -99.99
+                max\twire=19 99.99
+                null\twire=19 null
+                end rows=3
                 ## qwp-nonwal
                 min\tdecimal -99.99\terror: server rejected batch: SCHEMA_MISMATCH (status=0x3) fsn=[0,0] seq=0 - cannot insert into non-WAL table: dst
                 max\tdecimal 99.99\terror: server rejected batch: SCHEMA_MISMATCH (status=0x3) fsn=[0,0] seq=0 - cannot insert into non-WAL table: dst
@@ -3595,7 +3601,10 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
                 max\t999999999
                 null\t
                 ## qwp-egress
-                error: status=6 QWP egress: unsupported column type DECIMAL(9,0)
+                min\twire=19 -999999999
+                max\twire=19 999999999
+                null\twire=19 null
+                end rows=3
                 ## qwp-nonwal
                 min\tdecimal -999999999\terror: server rejected batch: SCHEMA_MISMATCH (status=0x3) fsn=[0,0] seq=0 - cannot insert into non-WAL table: dst
                 max\tdecimal 999999999\terror: server rejected batch: SCHEMA_MISMATCH (status=0x3) fsn=[0,0] seq=0 - cannot insert into non-WAL table: dst
@@ -4294,7 +4303,10 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
                 """);
         rec("DECIMAL(5,2)", """
                 ## qwp-egress
-                error: status=6 QWP egress: unsupported column type DECIMAL(5,2)
+                min\twire=19 -999.99
+                max\twire=19 999.99
+                null\twire=19 null
+                end rows=3
                 ## ilp-http-nonwal
                 min\tdecimal -999.99\terror: Could not flush buffer: failed to parse line protocol:errors encountered on line(s):\\u000aerror in line 1: table: dst; cannot insert in non-WAL table [http-status=400, id: <id>, code: invalid, line: 1]
                 max\tdecimal 999.99\terror: Could not flush buffer: failed to parse line protocol:errors encountered on line(s):\\u000aerror in line 1: table: dst; cannot insert in non-WAL table [http-status=400, id: <id>, code: invalid, line: 1]

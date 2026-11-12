@@ -654,7 +654,9 @@ public class CaseCommonTest extends BaseFunctionFactoryTest {
             case ColumnType.DATE:
                 return parseFunction("rnd_date()", null, functionParser);
             case ColumnType.TIMESTAMP:
-                return parseFunction("rnd_long()::timestamp", null, functionParser);
+                // within the TIMESTAMP_NS range: a TIMESTAMP branch cast to TIMESTAMP_NS converts
+                // micros to nanos and fails, as ::timestamp_ns does, on a value outside it
+                return parseFunction("rnd_long(-9_223_372_036_854_775, 9_223_372_036_854_775, 0)::timestamp", null, functionParser);
             case ColumnType.TIMESTAMP_NANO:
                 return parseFunction("rnd_long()::timestamp_ns", null, functionParser);
             case ColumnType.FLOAT:
