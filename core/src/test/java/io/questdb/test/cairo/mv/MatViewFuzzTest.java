@@ -27,12 +27,14 @@ package io.questdb.test.cairo.mv;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewTimerJob;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -44,6 +46,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.cairo.fuzz.AbstractFuzzTest;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -52,8 +55,28 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class MatViewFuzzTest extends AbstractFuzzTest {
+    // Two hours of fuzz data that NOT BETWEEN reads and view queries exclude.
+    private static final String NOT_BETWEEN_HI = "'2022-02-24T20:00:00.000000Z'";
+    private static final String NOT_BETWEEN_LO = "'2022-02-24T18:00:00.000000Z'";
     private static final long SPIN_LOCK_TIMEOUT = 100_000_000;
+    // Month starts that follow the end of a year, of February in a common and a leap year, and of a 30-day month.
+    private static final ObjList<String> monthStarts = new ObjList<>(
+            "2022-01-01T00:00:00.000000Z",
+            "2022-03-01T00:00:00.000000Z",
+            "2024-03-01T00:00:00.000000Z",
+            "2022-05-01T00:00:00.000000Z"
+    );
+    // Daylight saving time changes, in UTC, of the time zones in periodTimeZones: the clock moves forward at the first
+    // of each pair and back at the second. Australia/Lord_Howe moves its clock by half an hour.
+    private static final ObjList<String> periodDstChanges = new ObjList<>(
+            "2022-03-13T07:00:00.000000Z", "2022-11-06T06:00:00.000000Z",
+            "2022-03-27T01:00:00.000000Z", "2022-10-30T01:00:00.000000Z",
+            "2022-10-01T15:30:00.000000Z", "2022-04-02T15:00:00.000000Z"
+    );
+    private static final ObjList<String> periodTimeZones = new ObjList<>("America/New_York", "Europe/Berlin", "Australia/Lord_Howe");
     private static final String[] timestampTypes = new String[]{"timestamp", "timestamp_ns"};
+    // None of these time zones changes its UTC offset within two weeks of the monthStarts.
+    private static final ObjList<String> timeZones = new ObjList<>("Europe/Berlin", "Asia/Kolkata", "America/Sao_Paulo");
 
     @Override
     public void setUp() {
@@ -323,8 +346,12 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         final char[] units = {'y', 'M', 'w', 'd', 'h', 'm'};
         final char unit = units[rnd.nextInt(units.length)];
         final int interval = 1 + rnd.nextInt(3);
-        final String viewSql = "select min(c3), max(c3), ts from " + tableName + " sample by " + interval + unit;
-        testMvFuzz(rnd, tableName, mvName, viewSql);
+        final String viewSql = "select min(c3), max(c3), ts from " + tableName + " sample by " + interval + unit + randomAlignment(rnd);
+        // The first batch of rows crosses monthStart, and later batches start near it, where the offset or
+        // the time zone moves the start of a month or year bucket away from midnight on the 1st.
+        final long monthStart = MicrosFormatUtils.parseUTCTimestamp(monthStarts.getQuick(rnd.nextInt(monthStarts.size())));
+        final long start = monthStart - 4 * Micros.DAY_MICROS - 7 * Micros.HOUR_MICROS;
+        testMvFuzz(rnd, tableName, start, monthStart, mvName, viewSql);
     }
 
     @Test
@@ -370,6 +397,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                     errorCounter.incrementAndGet();
                 } finally {
                     Path.clearThreadLocals();
+                    Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
                     writesFinished.set(true);
                 }
             });
@@ -501,6 +529,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                     errorCounter.incrementAndGet();
                 } finally {
                     Path.clearThreadLocals();
+                    Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
                     writesFinished.set(true);
                 }
             });
@@ -518,6 +547,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                     errorCounter.incrementAndGet();
                 } finally {
                     Path.clearThreadLocals();
+                    Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
                 }
             });
             refresher.start();
@@ -543,18 +573,100 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         });
     }
 
+    @Test
+    public void testViewSqlGeneratorEmitsBothShapes() {
+        // runMvFuzz must keep generating views with and without their own NOT BETWEEN on the
+        // designated timestamp. The seed is fixed, so a failure reproduces.
+        final Rnd rnd = new Rnd(42, 42);
+        final String plainSql = "select min(c3), max(c3), ts from t sample by 1h";
+        final String notBetweenSql = "select min(c3), max(c3), ts from t " +
+                "where ts not between '2022-02-24T18:00:00.000000Z' and '2022-02-24T20:00:00.000000Z' sample by 1h";
+        int plainCount = 0;
+        int notBetweenCount = 0;
+        for (int i = 0; i < 100; i++) {
+            final String viewSql = generateViewSql(rnd, "t");
+            if (plainSql.equals(viewSql)) {
+                plainCount++;
+            } else if (notBetweenSql.equals(viewSql)) {
+                notBetweenCount++;
+            } else {
+                Assert.fail("unexpected view SQL: " + viewSql);
+            }
+        }
+        Assert.assertTrue("no view without NOT BETWEEN in 100 draws", plainCount > 0);
+        Assert.assertTrue("no view with NOT BETWEEN in 100 draws", notBetweenCount > 0);
+    }
+
     private static void createMatView(String viewSql, String mvName, boolean deferred) throws SqlException {
         execute("create materialized view " + mvName + " refresh immediate " + (deferred ? "deferred" : "") + " as (" + viewSql + ") partition by DAY");
     }
 
-    private static void createPeriodMatView(String viewSql, String mvName, int interval, char intervalUnit, boolean deferred) throws SqlException {
-        execute("create materialized view " + mvName + " refresh immediate " + (deferred ? "deferred" : "") + " period (length " + interval + intervalUnit + ") as (" + viewSql + ") partition by DAY");
+    private static void createPeriodMatView(
+            String viewSql,
+            String mvName,
+            int interval,
+            char intervalUnit,
+            @Nullable String timeZone,
+            boolean deferred
+    ) throws SqlException {
+        execute(
+                "create materialized view " + mvName + " refresh immediate " + (deferred ? "deferred" : "") +
+                        " period (length " + interval + intervalUnit + (timeZone != null ? " time zone '" + timeZone + "'" : "") +
+                        ") as (" + viewSql + ") partition by DAY"
+        );
     }
 
     private static void createTimerMatView(String viewSql, String mvName, long start, int interval, char intervalUnit, boolean deferred) throws SqlException {
         sink.clear();
         MicrosFormatUtils.appendDateTimeUSec(sink, start);
         execute("create materialized view " + mvName + " refresh every " + interval + intervalUnit + " " + (deferred ? "deferred" : "") + " start '" + sink + "' as (" + viewSql + ") partition by DAY");
+    }
+
+    // Half of the views exclude two hours of base data with their own NOT BETWEEN on the designated
+    // timestamp. Each refresh adds its refresh range to the same where-clause model.
+    private static String generateViewSql(Rnd rnd, String tableName) {
+        return "select min(c3), max(c3), ts from " + tableName +
+                (rnd.nextBoolean() ? " where ts not between " + NOT_BETWEEN_LO + " and " + NOT_BETWEEN_HI : "") +
+                " sample by 1h";
+    }
+
+    // Returns an empty string, i.e. the default calendar alignment, or ALIGN TO CALENDAR with an optional
+    // time zone and an optional offset. With a month or year stride, a positive offset moves the bucket
+    // start past midnight on the 1st, and a negative offset moves it to the last day of the previous month,
+    // which is shorter than 31 days at the end of February or of a 30-day month.
+    private static String randomAlignment(Rnd rnd) {
+        if (rnd.nextInt(4) == 0) {
+            return "";
+        }
+        final StringBuilder sb = new StringBuilder(" align to calendar");
+        if (rnd.nextInt(3) == 0) {
+            sb.append(" time zone '").append(timeZones.getQuick(rnd.nextInt(timeZones.size()))).append('\'');
+        }
+        if (rnd.nextInt(4) > 0) {
+            final int hours = rnd.nextInt(24);
+            final int minutes = rnd.nextInt(60);
+            sb.append(" with offset '").append(rnd.nextBoolean() ? "-" : "")
+                    .append(hours < 10 ? "0" : "").append(hours).append(':')
+                    .append(minutes < 10 ? "0" : "").append(minutes).append('\'');
+        }
+        return sb.toString();
+    }
+
+    // NOT BETWEEN reads on the designated timestamp, each on a compiler drawn from the pool that the
+    // refresh jobs share, so the refresh compiles land on compilers that have analyzed a negated
+    // BETWEEN. An equivalent OR filter checks the count of each read.
+    private static void runNotBetweenReads(String tableName) throws SqlException {
+        for (int i = 0; i < 30; i++) {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                TestUtils.assertSqlCursors(
+                        compiler,
+                        sqlExecutionContext,
+                        "select count() from " + tableName + " where ts < " + NOT_BETWEEN_LO + " or ts > " + NOT_BETWEEN_HI,
+                        "select count() from " + tableName + " where ts not between " + NOT_BETWEEN_LO + " and " + NOT_BETWEEN_HI,
+                        LOG
+                );
+            }
+        }
     }
 
     private ObjList<FuzzTransaction> createTransactionsAndMv(
@@ -564,6 +676,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             String viewSql
     ) throws SqlException, NumericException {
         fuzzer.createInitialTableWal(tableNameBase, timestampTypes[rnd.nextInt(10) % 2]);
+        runNotBetweenReads(tableNameBase);
         final boolean deferred = rnd.nextBoolean();
         createMatView(viewSql, matViewName, deferred);
 
@@ -582,12 +695,13 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             long start,
             long end,
             int interval,
-            char intervalUnit
+            char intervalUnit,
+            @Nullable String timeZone
     ) throws SqlException {
         // create empty initial table as we want the timestamps to be in the [start, end] interval
         fuzzer.createInitialTableWal(tableNameBase, 0);
         final boolean deferred = rnd.nextBoolean();
-        createPeriodMatView(viewSql, matViewName, interval, intervalUnit, deferred);
+        createPeriodMatView(viewSql, matViewName, interval, intervalUnit, timeZone, deferred);
 
         ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableNameBase, rnd, start, end);
 
@@ -632,7 +746,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             for (int i = 0; i < tableCount; i++) {
                 String tableNameBase = testTableName + "_" + i;
                 String tableNameMv = tableNameBase + "_mv";
-                String viewSql = "select min(c3), max(c3), ts from " + tableNameBase + " sample by 1h";
+                String viewSql = generateViewSql(rnd, tableNameBase);
                 ObjList<FuzzTransaction> transactions = createTransactionsAndMv(rnd, tableNameBase, tableNameMv, viewSql);
                 fuzzTransactions.add(transactions);
                 viewSqls.add(viewSql);
@@ -704,8 +818,24 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             default -> throw new IllegalStateException("unexpected unit: " + lengthUnit);
         };
 
-        final long start = MicrosTimestampDriver.floor("2022-01-02T03");
-        final long end = start + (1 + rnd.nextInt(10)) * periodLengthMicros;
+        final long dataLength = (1 + rnd.nextInt(10)) * periodLengthMicros;
+        // Half of the runs put the periods in a time zone, and the base rows around one of its daylight saving time
+        // changes.
+        final String timeZone;
+        final long start;
+        if (rnd.nextBoolean()) {
+            final int change = rnd.nextInt(periodDstChanges.size());
+            timeZone = periodTimeZones.getQuick(change / 2);
+            start = MicrosTimestampDriver.floor(periodDstChanges.getQuick(change)) - rnd.nextLong(dataLength);
+        } else {
+            timeZone = null;
+            start = MicrosTimestampDriver.floor("2022-01-02T03");
+        }
+        LOG.info().$("period view fuzz [length=").$(length).$(lengthUnit)
+                .$(", timeZone=").$(timeZone)
+                .$(", start=").$ts(MicrosTimestampDriver.INSTANCE, start)
+                .I$();
+        final long end = start + dataLength;
         final long clockJumpLimit = Math.min(end, start + SPIN_LOCK_TIMEOUT);
         currentMicros = start;
 
@@ -726,7 +856,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 String tableNameBase = testTableName + "_" + i;
                 String tableNameMv = tableNameBase + "_mv";
                 String viewSql = "select min(c3), max(c3), ts from " + tableNameBase + " sample by " + sampleByInterval + lengthUnit;
-                ObjList<FuzzTransaction> transactions = createTransactionsAndPeriodMv(rnd, tableNameBase, tableNameMv, viewSql, start, end, length, lengthUnit);
+                ObjList<FuzzTransaction> transactions = createTransactionsAndPeriodMv(rnd, tableNameBase, tableNameMv, viewSql, start, end, length, lengthUnit, timeZone);
                 fuzzTransactions.add(transactions);
                 viewSqls.add(viewSql);
             }
@@ -741,7 +871,8 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         drainWalQueue();
         fuzzer.checkNoSuspendedTables();
 
-        currentMicros = Math.max(end, currentMicros) + periodLengthMicros;
+        // Where the clock moves back, a period in a time zone lasts up to an hour longer.
+        currentMicros = Math.max(end, currentMicros) + periodLengthMicros + (timeZone != null ? Micros.HOUR_MICROS : 0);
         drainMatViewTimerQueue(timerJob);
         drainWalAndMatViewQueues();
         fuzzer.checkNoSuspendedTables();
@@ -910,6 +1041,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                         LOG.error().$("Refresh job failed: ").$(throwable).$();
                     } finally {
                         Path.clearThreadLocals();
+                        Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
                         LOG.info().$("Refresh job stopped").$();
                     }
                 }, "refresh-job" + workerId
@@ -958,6 +1090,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                         LOG.error().$("Refresh job failed: ").$(throwable).$();
                     } finally {
                         Path.clearThreadLocals();
+                        Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
                         LOG.info().$("Refresh job stopped").$();
                     }
                 }, "refresh-interval-job" + workerId
@@ -972,10 +1105,17 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     }
 
     private void testMvFuzz(Rnd rnd, String baseTableName, long start, String... mvNamesAndSqls) throws Exception {
+        testMvFuzz(rnd, baseTableName, start, start, mvNamesAndSqls);
+    }
+
+    // The first batch of transactions writes rows over 5 to 14 days from start. Later batches write rows
+    // over up to 2 days starting within a day of hotTs, so their incremental refreshes start at various
+    // points around hotTs and revisit buckets that an earlier refresh has already written.
+    private void testMvFuzz(Rnd rnd, String baseTableName, long start, long hotTs, String... mvNamesAndSqls) throws Exception {
         assertMemoryLeak(() -> {
             fuzzer.createInitialTableWal(baseTableName, timestampTypes[rnd.nextInt(10) % 2]);
 
-            for (int i = 0, n = mvNamesAndSqls.length / 2; i < n; i += 2) {
+            for (int i = 0, n = mvNamesAndSqls.length; i < n; i += 2) {
                 final String mvName = mvNamesAndSqls[i];
                 final String mvSql = mvNamesAndSqls[i + 1];
                 final boolean deferred = rnd.nextBoolean();
@@ -990,16 +1130,28 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
 
                 setFuzzParams(rnd, 0, 0);
 
-                ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(baseTableName, rnd, start);
-                ObjList<ObjList<FuzzTransaction>> fuzzTransactions = new ObjList<>();
-                fuzzTransactions.add(transactions);
-                fuzzer.applyManyWalParallel(
-                        fuzzTransactions,
-                        rnd,
-                        baseTableName,
-                        false,
-                        true
-                );
+                final int batchCount = 2 + rnd.nextInt(4);
+                for (int b = 0; b < batchCount; b++) {
+                    final ObjList<FuzzTransaction> transactions;
+                    if (b == 0) {
+                        transactions = fuzzer.generateTransactions(baseTableName, rnd, start);
+                    } else {
+                        // Let the refresh job catch up, so that the next batch gets refreshes of its own.
+                        drainWalAndMatViewQueues();
+                        final long lo = hotTs - Micros.DAY_MICROS + rnd.nextLong(2 * Micros.DAY_MICROS);
+                        final long hi = lo + Micros.HOUR_MICROS + rnd.nextLong(2 * Micros.DAY_MICROS);
+                        transactions = fuzzer.generateTransactions(baseTableName, rnd, lo, hi);
+                    }
+                    ObjList<ObjList<FuzzTransaction>> fuzzTransactions = new ObjList<>();
+                    fuzzTransactions.add(transactions);
+                    fuzzer.applyManyWalParallel(
+                            fuzzTransactions,
+                            rnd,
+                            baseTableName,
+                            false,
+                            true
+                    );
+                }
             } finally {
                 stopAndJoinJobs(stop, refreshJobs);
             }
@@ -1007,9 +1159,15 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             drainWalQueue();
 
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                for (int i = 0, n = mvNamesAndSqls.length / 2; i < n; i += 2) {
+                for (int i = 0, n = mvNamesAndSqls.length; i < n; i += 2) {
                     final String mvName = mvNamesAndSqls[i];
                     final String mvSql = mvNamesAndSqls[i + 1];
+                    LOG.info().$("asserting view ").$(mvName).$(" against ").$(mvSql).$();
+                    // A failed incremental refresh invalidates the view, e.g. on a row outside the replace range.
+                    assertQuery("select view_name, invalidation_reason from materialized_views where view_name = '" + mvName + "' and view_status = 'invalid';")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .returns("view_name\tinvalidation_reason\n");
                     TestUtils.assertSqlCursors(
                             compiler,
                             sqlExecutionContext,

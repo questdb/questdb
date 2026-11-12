@@ -6,7 +6,7 @@ jobs:
     pool:
       name: "hetzner-incus-arm"
     timeoutInMinutes: 60
-    condition: ne(variables['System.PullRequest.IsFork'], 'true')
+    condition: and(succeeded(), ne(variables['System.PullRequest.IsFork'], 'true'))
     variables:
       SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.SOURCE_CODE_CHANGED']]
       RUST_SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.RUST_SOURCE_CODE_CHANGED']]
@@ -23,6 +23,10 @@ jobs:
       poolName: "hetzner-incus-arm"
     steps:
       - template: steps.yml
+        parameters:
+          prebuiltRustArtifact: qdbr-native-linux-aarch64
+          testCommitModeGroup: "linux_arm64_jdk25 linux_x64_zfs_jdk25 linux_x64_graal"
+          testCommitModeMember: linux_arm64_jdk25
 
   - job: linux_x64_zfs_jdk25
     workspace:
@@ -31,7 +35,7 @@ jobs:
     pool:
       name: "hetzner-incus-zfs"
     timeoutInMinutes: 60
-    condition: ne(variables['System.PullRequest.IsFork'], 'true')
+    condition: and(succeeded(), ne(variables['System.PullRequest.IsFork'], 'true'))
     variables:
       SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.SOURCE_CODE_CHANGED']]
       RUST_SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.RUST_SOURCE_CODE_CHANGED']]
@@ -48,6 +52,10 @@ jobs:
       poolName: "hetzner-incus-zfs"
     steps:
       - template: steps.yml
+        parameters:
+          prebuiltRustArtifact: qdbr-native-linux-x86-64
+          testCommitModeGroup: "linux_arm64_jdk25 linux_x64_zfs_jdk25 linux_x64_graal"
+          testCommitModeMember: linux_x64_zfs_jdk25
 
   - job: linux_x64_graal
     workspace:
@@ -56,7 +64,7 @@ jobs:
     pool:
       name: "hetzner-incus"
     timeoutInMinutes: 60
-    condition: ne(variables['System.PullRequest.IsFork'], 'true')
+    condition: and(succeeded(), ne(variables['System.PullRequest.IsFork'], 'true'))
     variables:
       SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.SOURCE_CODE_CHANGED']]
       RUST_SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.RUST_SOURCE_CODE_CHANGED']]
@@ -73,3 +81,7 @@ jobs:
       poolName: "hetzner-incus"
     steps:
       - template: steps.yml
+        parameters:
+          prebuiltRustArtifact: qdbr-native-linux-x86-64
+          testCommitModeGroup: "linux_arm64_jdk25 linux_x64_zfs_jdk25 linux_x64_graal"
+          testCommitModeMember: linux_x64_graal

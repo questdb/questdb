@@ -49,6 +49,7 @@ final class ParquetRowGroupMaterializer {
             PartitionUpdater partitionUpdater,
             int sourceRowGroupIndex,
             int targetRowGroupIndex,
+            long targetRowOffset,
             TableRecordMetadata metadata,
             IntList tableToParquetIndex,
             SymbolTableProvider symbolTableProvider
@@ -59,6 +60,7 @@ final class ParquetRowGroupMaterializer {
                 partitionUpdater,
                 sourceRowGroupIndex,
                 targetRowGroupIndex,
+                targetRowOffset,
                 metadata,
                 tableToParquetIndex,
                 symbolTableProvider,
@@ -85,6 +87,8 @@ final class ParquetRowGroupMaterializer {
                 partitionUpdater,
                 sourceRowGroupIndex,
                 sourceRowGroupIndex,
+                // unused: rewriteRowGroupColumns() moves no row, the updater takes the offset of the source
+                0,
                 metadata,
                 tableToParquetIndex,
                 symbolTableProvider,
@@ -100,6 +104,7 @@ final class ParquetRowGroupMaterializer {
             PartitionUpdater partitionUpdater,
             int sourceRowGroupIndex,
             int targetRowGroupIndex,
+            long targetRowOffset,
             TableRecordMetadata metadata,
             IntList tableToParquetIndex,
             SymbolTableProvider symbolTableProvider,
@@ -159,7 +164,7 @@ final class ParquetRowGroupMaterializer {
         descriptor.of(
                 metadata.getTableToken().getTableName(),
                 rowGroupSize,
-                changedColumnsOnly ? -1 : metadata.getTimestampIndex()
+                changedColumnsOnly ? -1 : designatedTimestampColumnId(metadata)
         );
         final LongList ownedBuffers = context.getTmpBufs(activeColumnCount);
         final LongList targetPointers = context.getConvertedPtrs(activeColumnCount);
@@ -247,12 +252,24 @@ final class ParquetRowGroupMaterializer {
             if (changedColumnsOnly) {
                 partitionUpdater.rewriteRowGroupColumns(sourceRowGroupIndex, descriptor);
             } else {
-                partitionUpdater.addRowGroup(targetRowGroupIndex, descriptor);
+                partitionUpdater.addRowGroup(targetRowGroupIndex, targetRowOffset, descriptor);
             }
         } finally {
             descriptor.clear();
             context.freeNativePairs(ownedBuffers);
         }
+    }
+
+    /**
+     * The designated timestamp in the id space {@link PartitionDescriptor#addColumn} stamps into the file -
+     * the column's ORIGINAL writer index - not its dense metadata index. The two agree only until a column
+     * before the timestamp is dropped, after which the dense index points at a different column and the
+     * encoder rejects the schema ("only timestamp columns can be marked as designated") or, for another
+     * timestamp column, silently marks the wrong one.
+     */
+    private static int designatedTimestampColumnId(TableRecordMetadata metadata) {
+        final int timestampIndex = metadata.getTimestampIndex();
+        return timestampIndex >= 0 ? metadata.getColumnMetadata(timestampIndex).getOriginalWriterIndex() : -1;
     }
 
     private static boolean requiresMaterialization(
@@ -284,7 +301,7 @@ final class ParquetRowGroupMaterializer {
             SymbolTableProvider symbolTableProvider
     ) {
         final PartitionDescriptor descriptor = context.getChunkDescriptor();
-        descriptor.of(metadata.getTableToken().getTableName(), 0, metadata.getTimestampIndex());
+        descriptor.of(metadata.getTableToken().getTableName(), 0, designatedTimestampColumnId(metadata));
         try {
             for (int columnIndex = 0, columnCount = metadata.getColumnCount(); columnIndex < columnCount; columnIndex++) {
                 int columnType = metadata.getColumnType(columnIndex);

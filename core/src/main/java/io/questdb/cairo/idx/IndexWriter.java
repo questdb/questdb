@@ -48,6 +48,15 @@ import java.io.Closeable;
 public interface IndexWriter extends Closeable, Mutable {
 
     /**
+     * Releases this writer's resources because the files it has open were rewritten, out from under it, by a different
+     * writer instance - this writer's own view of them (cached sizes, pending generations, anything still unsealed) is
+     * entirely superseded and must not be persisted in any form: no truncate, and - unlike {@link #closeNoTruncate()}.
+     */
+    default void abandon() {
+        closeNoTruncate();
+    }
+
+    /**
      * Adds a key-value pair to the index.
      *
      * @param key   the symbol key (must be >= 0)
@@ -65,12 +74,24 @@ public interface IndexWriter extends Closeable, Mutable {
     void closeNoTruncate();
 
     /**
-     * Commits the index to disk based on the configuration's commit mode.
+     * Publishes buffered index writes and flushes them according to the owning writer's commit mode
+     * (see {@link #setCommitMode(int)}).
      */
     void commit();
 
     default void commitDense() {
         commit();
+    }
+
+    /**
+     * Passes the owning writer's commit mode to this indexer, so {@link #commit()} flushes at the grade that
+     * writer commits under: a table not yet enrolled in adaptive runs at SYNC while the instance runs
+     * ADAPTIVE. Under {@link io.questdb.cairo.CommitMode#ADAPTIVE}, {@link #commit()} publishes buffered
+     * writes but does not flush, same as {@code CommitMode.appliesColumnSync} for columns.
+     *
+     * @param commitMode the mode the owning writer commits under
+     */
+    default void setCommitMode(int commitMode) {
     }
 
     default void configureCovering(
@@ -208,6 +229,18 @@ public interface IndexWriter extends Closeable, Mutable {
 
     default void of(Path path, CharSequence name, long columnNameTxn, long partitionTimestamp, long partitionNameTxn) {
         of(path, name, columnNameTxn);
+    }
+
+    /**
+     * Same as {@link #of(Path, CharSequence, long, long, long)}, but for a caller that has already established the
+     * column had no data before the writer session now reopening it began - so any file really sitting under this path
+     * is that same session's own earlier, already-committed-to-disk write, not something an older commit left behind.
+     *
+     * @param allowFreshIfMissing true to skip the key-file existence probe in favor of a weaker validity check when
+     *                            reopening; false preserves {@link #of(Path, CharSequence, long, long, long)}
+     */
+    default void of(Path path, CharSequence name, long columnNameTxn, long partitionTimestamp, long partitionNameTxn, boolean allowFreshIfMissing) {
+        of(path, name, columnNameTxn, partitionTimestamp, partitionNameTxn);
     }
 
     /**

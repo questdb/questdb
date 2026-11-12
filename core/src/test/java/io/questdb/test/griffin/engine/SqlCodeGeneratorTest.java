@@ -26,9 +26,15 @@ package io.questdb.test.griffin.engine;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -49,13 +55,16 @@ import io.questdb.griffin.model.IQueryModel;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.BindVarTuple;
+import io.questdb.test.tools.BindVariableTestSetter;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -215,8 +224,255 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBindVariableInListCharBind() throws Exception {
+        // pgwire binds a bpchar parameter as CHAR; a CHAR key selects the symbol spelled by that char
+        for (boolean isIndexed : new boolean[]{false, true}) {
+            assertMemoryLeak(() -> {
+                execute("CREATE TABLE t (s SYMBOL" + (isIndexed ? " INDEX" : "") + ", v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                execute("""
+                        INSERT INTO t VALUES
+                            ('A', 1, '2026-01-01T00:00:00.000000Z'),
+                            ('B', 2, '2026-01-01T00:00:01.000000Z'),
+                            ('C', 3, '2026-01-01T00:00:02.000000Z'),
+                            ('D', 4, '2026-01-01T00:00:03.000000Z'),
+                            ('A', 5, '2026-01-01T00:00:04.000000Z')
+                        """);
+                final String rowsABC = """
+                        s\tv
+                        A\t1
+                        B\t2
+                        C\t3
+                        A\t5
+                        """;
+                final ObjList<BindVarTuple> inCases = new ObjList<>();
+                inCases.add(BindVarTuple.ok("B,C,'A'", rowsABC, binds -> {
+                    binds.setStr(0, "B");
+                    binds.setStr(1, "C");
+                    binds.setChar(2, 'A');
+                }));
+                inCases.add(BindVarTuple.ok("B,C,'C'", """
+                        s\tv
+                        B\t2
+                        C\t3
+                        """, binds -> {
+                    binds.setStr(0, "B");
+                    binds.setStr(1, "C");
+                    binds.setChar(2, 'C');
+                }));
+                inCases.add(BindVarTuple.ok("B,C,'X'", """
+                        s\tv
+                        B\t2
+                        C\t3
+                        """, binds -> {
+                    binds.setStr(0, "B");
+                    binds.setStr(1, "C");
+                    binds.setChar(2, 'X');
+                }));
+                assertQuery("SELECT s, v FROM t WHERE s IN ($1, $2, $3)").noLeakCheck().assertBinds(inCases);
+                assertQuery("SELECT s, v FROM t WHERE s IN ($1, $2, $3) AND v > 0").noLeakCheck().assertBinds(inCases);
+
+                final ObjList<BindVarTuple> notInCases = new ObjList<>();
+                notInCases.add(BindVarTuple.ok("B,C,'A'", """
+                        s\tv
+                        D\t4
+                        """, binds -> {
+                    binds.setStr(0, "B");
+                    binds.setStr(1, "C");
+                    binds.setChar(2, 'A');
+                }));
+                assertQuery("SELECT s, v FROM t WHERE s NOT IN ($1, $2, $3)").noLeakCheck().assertBinds(notInCases);
+
+                final ObjList<BindVarTuple> eqCases = new ObjList<>();
+                eqCases.add(BindVarTuple.ok("'A'", """
+                        s\tv
+                        A\t1
+                        A\t5
+                        """, binds -> binds.setChar(0, 'A')));
+                assertQuery("SELECT s, v FROM t WHERE s = $1").noLeakCheck().assertBinds(eqCases);
+                assertQuery("SELECT s, v FROM t WHERE s = $1 AND v > 0").noLeakCheck().assertBinds(eqCases);
+
+                final ObjList<BindVarTuple> latestCases = new ObjList<>();
+                latestCases.add(BindVarTuple.ok("B,'A'", """
+                        s\tv
+                        B\t2
+                        A\t5
+                        """, binds -> {
+                    binds.setStr(0, "B");
+                    binds.setChar(1, 'A');
+                }));
+                assertQuery("SELECT s, v FROM (t WHERE s IN ($1, $2) LATEST ON ts PARTITION BY s) ORDER BY v")
+                        .expectSize()
+                        .noLeakCheck()
+                        .assertBinds(latestCases);
+                execute("DROP TABLE t");
+            });
+        }
+    }
+
+    @Test
     public void testBindVariableInListIndexedLookup() throws Exception {
         testBindVariableInLookupList(true);
+    }
+
+    @Test
+    public void testBindVariableInListIndexedLookupRepeatedValues() throws Exception {
+        // IN tests membership, so a key bound more than once still selects its rows once
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL INDEX, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('A', '2026-01-01T00:00:00.000000Z'),
+                        ('B', '2026-01-01T00:00:01.000000Z'),
+                        ('C', '2026-01-01T00:00:02.000000Z'),
+                        ('D', '2026-01-01T00:00:03.000000Z'),
+                        ('E', '2026-01-01T00:00:04.000000Z')
+                    """);
+            final String allRows = """
+                    s
+                    A
+                    B
+                    C
+                    D
+                    E
+                    """;
+            final String rowsABCD = """
+                    s
+                    A
+                    B
+                    C
+                    D
+                    """;
+            final String rowsABC = """
+                    s
+                    A
+                    B
+                    C
+                    """;
+            final String rowsAC = """
+                    s
+                    A
+                    C
+                    """;
+            final String rowsE = """
+                    s
+                    E
+                    """;
+            final ObjList<BindVarTuple> cases = new ObjList<>();
+            cases.add(BindVarTuple.ok("A,B,C,D,E,E,E,E", allRows, binds -> setStrBinds(binds, "A", "B", "C", "D", "E", "E", "E", "E")));
+            cases.add(BindVarTuple.ok("A,B,C,D,E,X,X,X", allRows, binds -> setStrBinds(binds, "A", "B", "C", "D", "E", "X", "X", "X")));
+            cases.add(BindVarTuple.ok("A,B,C,D,E,E,E,E again", allRows, binds -> setStrBinds(binds, "A", "B", "C", "D", "E", "E", "E", "E")));
+            cases.add(BindVarTuple.ok("E,E,E,E,E,E,E,E", rowsE, binds -> setStrBinds(binds, "E", "E", "E", "E", "E", "E", "E", "E")));
+            cases.add(BindVarTuple.ok("A,A,A,B,B,B,C,C", rowsABC, binds -> setStrBinds(binds, "A", "A", "A", "B", "B", "B", "C", "C")));
+            cases.add(BindVarTuple.ok("C,A,C,A,C,A,C,A", rowsAC, binds -> setStrBinds(binds, "C", "A", "C", "A", "C", "A", "C", "A")));
+            // keys sort descending, so the pair A,A ends the sorted list
+            cases.add(BindVarTuple.ok("A,A,B,B,C,C,D,D", rowsABCD, binds -> setStrBinds(binds, "A", "A", "B", "B", "C", "C", "D", "D")));
+            assertQuery("SELECT s FROM t WHERE s IN ($1,$2,$3,$4,$5,$6,$7,$8)")
+                    .noLeakCheck()
+                    .assertBinds(cases);
+        });
+    }
+
+    @Test
+    public void testBindVariableInListLiteralSpelledAsBindVariable() throws Exception {
+        // the literal '$1' and the bind variable $1 are different keys, even when one IN list holds both
+        for (boolean isIndexed : new boolean[]{false, true}) {
+            assertMemoryLeak(() -> {
+                execute("CREATE TABLE t (s SYMBOL" + (isIndexed ? " INDEX" : "") + ", v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                execute("""
+                        INSERT INTO t VALUES
+                            ('$1', 1, '2026-01-01T00:00:00.000000Z'),
+                            ('B', 2, '2026-01-01T00:00:01.000000Z'),
+                            ('C', 3, '2026-01-01T00:00:02.000000Z'),
+                            (':b', 4, '2026-01-01T00:00:03.000000Z'),
+                            ('$1', 5, '2026-01-01T00:00:04.000000Z'),
+                            ('B', 6, '2026-01-01T00:00:05.000000Z'),
+                            (NULL, 7, '2026-01-01T00:00:06.000000Z')
+                        """);
+                final String literalAndBind = """
+                        s\tv
+                        $1\t1
+                        B\t2
+                        $1\t5
+                        B\t6
+                        """;
+                final String literalOnly = """
+                        s\tv
+                        $1\t1
+                        $1\t5
+                        """;
+                final ObjList<BindVarTuple> cases = new ObjList<>();
+                cases.add(BindVarTuple.ok("B", literalAndBind, binds -> binds.setStr(0, "B")));
+                cases.add(BindVarTuple.ok("$1", literalOnly, binds -> binds.setStr(0, "$1")));
+                assertQuery("SELECT s, v FROM t WHERE s IN ('$1', $1)").noLeakCheck().assertBinds(cases);
+                assertQuery("SELECT s, v FROM t WHERE s IN ($1, '$1')").noLeakCheck().assertBinds(cases);
+                assertQuery("SELECT s, v FROM t WHERE s IN ('$' || '1', $1)").noLeakCheck().assertBinds(cases);
+                // the repeated $1 merges before '$1' clashes with it
+                assertQuery("SELECT s, v FROM t WHERE s IN ($1, $1, '$1')").noLeakCheck().assertBinds(cases);
+                final ObjList<BindVarTuple> nullCases = new ObjList<>();
+                nullCases.add(BindVarTuple.ok("B", """
+                        s\tv
+                        $1\t1
+                        B\t2
+                        $1\t5
+                        B\t6
+                        \t7
+                        """, binds -> binds.setStr(0, "B")));
+                nullCases.add(BindVarTuple.ok("$1", """
+                        s\tv
+                        $1\t1
+                        $1\t5
+                        \t7
+                        """, binds -> binds.setStr(0, "$1")));
+                assertQuery("SELECT s, v FROM t WHERE s IN (NULL, nullif('a', 'a'), '$1', $1)")
+                        .noLeakCheck()
+                        .assertBinds(nullCases);
+
+                final ObjList<BindVarTuple> notInCases = new ObjList<>();
+                notInCases.add(BindVarTuple.ok("B", """
+                        s\tv
+                        C\t3
+                        :b\t4
+                        """, binds -> binds.setStr(0, "B")));
+                notInCases.add(BindVarTuple.ok("$1", """
+                        s\tv
+                        B\t2
+                        C\t3
+                        :b\t4
+                        B\t6
+                        """, binds -> binds.setStr(0, "$1")));
+                assertQuery("SELECT s, v FROM t WHERE s NOT IN ('$1', $1, NULL)").noLeakCheck().assertBinds(notInCases);
+                assertQuery("SELECT s, v FROM t WHERE s NOT IN ($1, '$1', NULL)").noLeakCheck().assertBinds(notInCases);
+
+                final ObjList<BindVarTuple> latestCases = new ObjList<>();
+                latestCases.add(BindVarTuple.ok("B", """
+                        s\tv
+                        $1\t5
+                        B\t6
+                        """, binds -> binds.setStr(0, "B")));
+                latestCases.add(BindVarTuple.ok("$1", """
+                        s\tv
+                        $1\t5
+                        """, binds -> binds.setStr(0, "$1")));
+                assertQuery("SELECT s, v FROM (t WHERE s IN ('$1', $1) LATEST ON ts PARTITION BY s) ORDER BY v")
+                        .expectSize()
+                        .noLeakCheck()
+                        .assertBinds(latestCases);
+                assertQuery("SELECT s, v FROM (t WHERE s IN ($1, '$1') LATEST ON ts PARTITION BY s) ORDER BY v")
+                        .expectSize()
+                        .noLeakCheck()
+                        .assertBinds(latestCases);
+
+                final ObjList<BindVarTuple> namedCases = new ObjList<>();
+                namedCases.add(BindVarTuple.ok(":b = C", """
+                        s\tv
+                        C\t3
+                        :b\t4
+                        """, binds -> binds.setStr("b", "C")));
+                assertQuery("SELECT s, v FROM t WHERE s IN (':b', :b)").noLeakCheck().assertBinds(namedCases);
+                assertQuery("SELECT s, v FROM t WHERE s IN (:b, ':b')").noLeakCheck().assertBinds(namedCases);
+                execute("DROP TABLE t");
+            });
+        }
     }
 
     @Test
@@ -292,6 +548,130 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             x
                             10
                             """);
+        });
+    }
+
+    @Test
+    public void testBindVariableTypesOnIndexedSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tn (s SYMBOL, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO tn VALUES
+                        ('1', 1, '2026-01-01T00:00:00.000000Z'),
+                        ('2', 2, '2026-01-01T00:00:01.000000Z'),
+                        ('3', 3, '2026-01-01T00:00:02.000000Z'),
+                        (NULL, 4, '2026-01-01T00:00:03.000000Z'),
+                        ('1', 5, '2026-01-01T00:00:04.000000Z')
+                    """);
+            execute("CREATE TABLE ti AS (SELECT * FROM tn), INDEX(s) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+
+            // the unindexed table filters every row, so it gives the reference result or error
+            final ObjList<BindVariableTestSetter> binds = new ObjList<>();
+            binds.add(b -> b.setStr(0, "1"));
+            binds.add(b -> b.setStr(0, null));
+            binds.add(b -> b.setVarchar(0, new Utf8String("1")));
+            binds.add(b -> b.setChar(0, '1'));
+            binds.add(b -> b.setBoolean(0, true));
+            binds.add(b -> b.setByte(0, (byte) 1));
+            binds.add(b -> b.setShort(0, (short) 1));
+            binds.add(b -> b.setInt(0, 1));
+            binds.add(b -> b.setInt(0, Numbers.INT_NULL));
+            binds.add(b -> b.setLong(0, 1));
+            binds.add(b -> b.setFloat(0, 1));
+            binds.add(b -> b.setDouble(0, 1));
+            binds.add(b -> b.setDate(0, 1));
+            binds.add(b -> b.setTimestamp(0, 1));
+            binds.add(b -> b.setIPv4(0, 1));
+            binds.add(b -> b.setUuid(0, 1, 0));
+            binds.add(b -> b.setLong256(0, 1, 0, 0, 0));
+            final ObjList<String> predicates = new ObjList<>(
+                    "s = $1",
+                    "$1 = s",
+                    "s != $1",
+                    "s IN ($1)",
+                    "s IN ($1, '2')",
+                    "s NOT IN ($1)",
+                    "s NOT IN ($1, '2')",
+                    "s NOT IN ($1, concat('2', ''))",
+                    "s NOT IN ('2') AND s = $1",
+                    "s = $1 AND s NOT IN ('2')",
+                    "s IN ('1', '2') AND s != $1",
+                    "s != $1 AND s IN ('1', '2')",
+                    "s NOT IN ('2') AND s != $1",
+                    "s != $1 AND s NOT IN ('2')",
+                    "s NOT IN ('2') AND s IN ($1)",
+                    "s IN ($1) AND s NOT IN ('2')",
+                    "s NOT IN ('2') AND s IN ($1, '1')",
+                    "s IN ($1, '1') AND s NOT IN ('2')",
+                    "s IN ('1', '2') AND s IN ($1)",
+                    "s IN ($1) AND s IN ('1', '2')",
+                    "s IN ('1', '2') AND s IN ($1, '3')",
+                    "s IN ($1, '3') AND s IN ('1', '2')",
+                    "s IN ('1', '2') AND s NOT IN ($1)",
+                    "s NOT IN ($1) AND s IN ('1', '2')"
+            );
+            for (int i = 0, n = binds.size(); i < n; i++) {
+                for (int j = 0, m = predicates.size(); j < m; j++) {
+                    final String predicate = predicates.getQuick(j);
+                    bindVariableService.clear();
+                    binds.getQuick(i).assignBindVariables(bindVariableService);
+                    final String expected = printSqlOrError("SELECT s, v FROM tn WHERE " + predicate);
+                    bindVariableService.clear();
+                    binds.getQuick(i).assignBindVariables(bindVariableService);
+                    final String message = "bind #" + i + " " + ColumnType.nameOf(bindVariableService.getFunction(0).getType()) + ", " + predicate;
+                    TestUtils.assertEquals(message, expected, printSqlOrError("SELECT s, v FROM ti WHERE " + predicate));
+                }
+            }
+
+            // a bind without a type, as pgwire sends it, or a text bind keeps the index; other types filter
+            final ObjList<String> keyPredicates = new ObjList<>("s = $1", "s IN ($1, $2)", "s != $1");
+            for (int i = 0, n = keyPredicates.size(); i < n; i++) {
+                final String sql = "SELECT s, v FROM ti WHERE " + keyPredicates.getQuick(i);
+                bindVariableService.clear();
+                assertQuery(sql).noLeakCheck().assertsPlanContaining("Index forward scan on: s");
+                bindVariableService.setStr(0, "1");
+                bindVariableService.setStr(1, "2");
+                assertQuery(sql).noLeakCheck().assertsPlanContaining("Index forward scan on: s");
+            }
+            for (String predicate : new String[]{"s = $1", "s != $1"}) {
+                bindVariableService.clear();
+                bindVariableService.setInt(0, 1);
+                assertQuery("SELECT s, v FROM ti WHERE " + predicate).noLeakCheck().assertsPlanNotContaining("Index forward scan on: s");
+            }
+            for (String table : new String[]{"tn", "ti"}) {
+                assertExceptionNoLeakCheck("SELECT s, v FROM " + table + " WHERE s = $0", 30, "invalid bind variable index [value=0]");
+                assertExceptionNoLeakCheck("SELECT s, v FROM " + table + " WHERE s = $99999999999", 30, "invalid bind variable index [value=$99999999999]");
+            }
+
+            final String rowsOf1 = """
+                    s\tv
+                    1\t1
+                    1\t5
+                    """;
+            final ObjList<BindVarTuple> intCases = new ObjList<>();
+            intCases.add(BindVarTuple.ok("1", rowsOf1, b -> b.setInt(0, 1)));
+            assertQuery("SELECT s, v FROM ti WHERE s = $1").noLeakCheck().assertBinds(intCases);
+            final ObjList<BindVarTuple> namedCases = new ObjList<>();
+            namedCases.add(BindVarTuple.ok(":b = 1", rowsOf1, b -> b.setInt("b", 1)));
+            assertQuery("SELECT s, v FROM ti WHERE s = :b").noLeakCheck().assertBinds(namedCases);
+
+            final ObjList<BindVarTuple> latestCases = new ObjList<>();
+            latestCases.add(BindVarTuple.ok("1", """
+                    s\tv
+                    1\t5
+                    """, b -> b.setInt(0, 1)));
+            for (String table : new String[]{"tn", "ti"}) {
+                assertQuery("SELECT s, v FROM (" + table + " WHERE s = $1 LATEST ON ts PARTITION BY s) ORDER BY v")
+                        .expectSize()
+                        .noLeakCheck()
+                        .assertBinds(latestCases);
+                bindVariableService.clear();
+                bindVariableService.setInt(0, 1);
+                assertExceptionNoLeakCheck("SELECT s, v FROM " + table + " WHERE s IN ($1, '2') LATEST ON ts PARTITION BY s", 32, "STRING constant expected");
+                bindVariableService.clear();
+                bindVariableService.setDouble(0, 1);
+                assertExceptionNoLeakCheck("SELECT s, v FROM " + table + " WHERE s = $1 LATEST ON ts PARTITION BY s", 28, "no matching operator `=` with the argument types: SYMBOL = DOUBLE");
+            }
         });
     }
 
@@ -735,19 +1115,19 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testCursorForLatestByOnSubQueryOutputNotOrderedByTimestamp() throws Exception {
-        // Companion to testCursorForLatestByOnSubQueryWithRandomAccessSupport. That test's random
-        // dataset happens to land in ascending timestamp order, which hides the fact that
-        // LatestByLightRecordCursorFactory does NOT emit rows in designated-timestamp order. The
-        // cursor iterates its latest-by map in partition-key INSERTION order -- the order each key
-        // first appears in the ascending base scan -- while the row it emits for a key carries that
-        // key's MAX timestamp. Those two orderings are unrelated.
+        // LatestByLightRecordCursorFactory does NOT emit rows in designated-timestamp order. The cursor
+        // iterates its latest-by map in partition-key INSERTION order -- the order each key first
+        // appears in the ascending base scan -- while the row it emits for a key carries that key's MAX
+        // timestamp. Those two orderings are unrelated, so the factory advertises no designated
+        // timestamp.
         //
-        // The dataset below makes the gap visible. Scanning x ascending by k, the keys first appear
-        // in the order CC (day 1), BB (day 2), so the map emits CC then BB. But CC's latest k is
-        // day 4 and BB's latest k is day 3, so the emitted timestamps come out DESCENDING. The
-        // factory therefore advertises no designated timestamp. Adding ORDER BY k re-sorts the very
-        // same two rows into ascending order, proving the raw output was not timestamp-sorted to
-        // begin with.
+        // Reaching that factory takes a sub-query SqlOptimiser.pushLatestByToTableModel refuses to
+        // hoist. The sub-query below projects a subset of the table's columns, which fails the
+        // full-identity-projection test, so LATEST ON really does read a derived cursor. Scanning x
+        // ascending by k, the keys first appear in the order CC (day 1), BB (day 2), so the map emits
+        // CC then BB. But CC's latest k is day 4 and BB's latest k is day 3, so the emitted timestamps
+        // come out DESCENDING. Adding ORDER BY k re-sorts the very same two rows into ascending order,
+        // proving the raw output was not timestamp-sorted to begin with.
         assertMemoryLeak(() -> {
             execute("create table x (a double, b symbol, k timestamp) timestamp(k) partition by DAY");
             execute(
@@ -762,17 +1142,41 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             // Raw latest-by output, no ORDER BY: map order is CC, BB and their latest k descends.
             // The unordered output advertises no designated timestamp -- returns() without timestamp()
             // asserts exactly that (timestampIndex == -1).
+            assertQuery("(select b, k from x where b in ('BB','CC') and a > 0) latest on k partition by b")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            b\tk
+                            CC\t1970-01-04T00:00:00.000000Z
+                            BB\t1970-01-03T00:00:00.000000Z
+                            """);
+
+            // The same two rows, this time actually sorted: ORDER BY k yields ascending timestamps.
+            assertQuery("(select b, k from x where b in ('BB','CC') and a > 0) latest on k partition by b order by k")
+                    .noLeakCheck()
+                    .timestamp("k")
+                    .expectSize()
+                    .returns("""
+                            b\tk
+                            BB\t1970-01-03T00:00:00.000000Z
+                            CC\t1970-01-04T00:00:00.000000Z
+                            """);
+
+            // An identity projection also keeps map order: an ordinary sub-query must not use the
+            // scalar-expiry-only hoist, even when the filters span both query levels.
             assertQuery("(x where b in ('BB','CC')) where a > 0 latest on k partition by b")
                     .noLeakCheck()
                     .expectSize()
+                    .withPlanContaining("LatestBy light")
                     .returns("""
                             a\tb\tk
                             40.0\tCC\t1970-01-04T00:00:00.000000Z
                             30.0\tBB\t1970-01-03T00:00:00.000000Z
                             """);
 
-            // The same two rows, this time actually sorted: ORDER BY k yields ascending timestamps.
-            assertQuery("(x where b in ('BB','CC')) where a > 0 latest on k partition by b order by k")
+            // The direct-table path keeps its designated timestamp and emits the same winners in
+            // timestamp order. Ordinary sub-queries no longer use the scalar-expiry-only hoist.
+            assertQuery("x where b in ('BB','CC') and a > 0 latest on k partition by b")
                     .noLeakCheck()
                     .timestamp("k")
                     .expectSize()
@@ -786,10 +1190,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testCursorForLatestByOnSubQueryWithRandomAccessSupport() throws Exception {
-        // LATEST ON over a random-access sub-query compiles to LatestByLightRecordCursorFactory, which
-        // emits rows in partition-key (map) order rather than designated-timestamp order. It therefore
-        // advertises no designated timestamp (expectedTimestamp == null). This data happens to come out
-        // ascending by k, but that is not guaranteed -- see testCursorForLatestByOnSubQueryOutputNotOrderedByTimestamp.
+        // Ordinary sub-queries keep LatestBy light, which emits in partition-key (map) order and
+        // advertises no designated timestamp, even when these particular winners happen to ascend.
         assertQuery("(x where b in ('BB','CC')) where a > 0 latest on k partition by b")
                 .ddl("create table x as " +
                         "(" +
@@ -800,6 +1202,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from long_sequence(20)" +
                         ") timestamp(k) partition by DAY")
                 .expectSize()
+                .withPlanContaining("LatestBy light")
                 .returns("""
                         a\tb\tk
                         81.0161274171258\tCC\t1970-01-21T20:00:00.000000Z
@@ -4987,17 +5390,19 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             execute("insert into tab values ('d2', 'c2', 221, 5, 4)");
             execute("insert into tab values ('d2', 'c2', 222, 6, 5)");
 
-            // latest by designated timestamp, no order by, select all columns
+            // LatestBy light emits ordinary sub-query winners in map order without a designated
+            // timestamp. Only scalar-expiry expansion can opt into the direct-table hoist.
             assertQuery("(tab where name in ('c1')) latest on ts partition by id")
                     .noLeakCheck()
                     .expectSize()
+                    .withPlanContaining("LatestBy light")
                     .returns("""
                             id\tname\tvalue\tts\tother_ts
                             d1\tc1\t113\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000001Z
                             d2\tc1\t212\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000003Z
                             """);
 
-            // latest by designated timestamp, ordered by another timestamp, select all columns
+            // Ordering the input by another timestamp still leaves the latest-by output in map order.
             assertQuery("(tab where name in ('c1') order by other_ts) latest on ts partition by id")
                     .noLeakCheck()
                     .expectSize()
@@ -5007,10 +5412,11 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             d2\tc1\t212\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000003Z
                             """);
 
-            // latest by designated timestamp, select subset of columns
+            // Projecting a subset of the winners does not restore timestamp ordering.
             assertQuery("select value, ts from (tab where name in ('c1')) latest on ts partition by id")
                     .noLeakCheck()
                     .expectSize()
+                    .withPlanContaining("LatestBy light")
                     .returns("""
                             value\tts
                             113\t1970-01-01T00:00:00.000003Z
@@ -5021,6 +5427,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             assertQuery("(tab where name in ('c1','c2')) latest on ts partition by id, name")
                     .noLeakCheck()
                     .expectSize()
+                    .withPlanContaining("LatestBy light")
                     .returns("""
                             id\tname\tvalue\tts\tother_ts
                             d1\tc1\t113\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000001Z
@@ -5029,7 +5436,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             d2\tc2\t222\t1970-01-01T00:00:00.000006Z\t1970-01-01T00:00:00.000005Z
                             """);
 
-            // latest by non-designated timestamp, ordered
+            // Choosing winners by a non-designated timestamp also keeps LatestBy light without
+            // advertising timestamp ordering.
             assertQuery("(tab where name in ('c1') order by other_ts) latest on other_ts partition by id")
                     .noLeakCheck()
                     .expectSize()
@@ -5055,6 +5463,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             assertQuery("(tab where name in ('c3')) latest on ts partition by id")
                     .noLeakCheck()
                     .expectSize()
+                    .withPlanContaining("LatestBy light")
                     .returns("id\tname\tvalue\tts\tother_ts\n");
         });
     }
@@ -5964,6 +6373,37 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             day\tisin\tlast
                             1\tcc\t0.7544827361952741
                             """);
+        });
+    }
+
+    @Test
+    public void testNotBetweenOnSymbolFails() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tn (s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO tn VALUES
+                        ('A', '2026-01-01T00:00:00.000000Z'),
+                        ('B', '2026-01-01T00:00:01.000000Z'),
+                        ('C', '2026-01-01T00:00:02.000000Z'),
+                        ('D', '2026-01-01T00:00:03.000000Z')
+                    """);
+            execute("CREATE TABLE ti AS (SELECT * FROM tn), INDEX(s) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            final String message = "there is no matching operator `between` with the argument type: SYMBOL";
+            for (String table : new String[]{"tn", "ti"}) {
+                assertExceptionNoLeakCheck("SELECT s FROM " + table + " WHERE s NOT BETWEEN 'A' AND 'C'", 29, message);
+                assertExceptionNoLeakCheck("SELECT s FROM " + table + " WHERE s NOT BETWEEN 'A' AND 'C' AND s = 'B'", 29, message);
+                assertExceptionNoLeakCheck("SELECT s FROM " + table + " WHERE s NOT BETWEEN 'A' AND 'C' LATEST ON ts PARTITION BY s", 29, message);
+            }
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "A");
+            bindVariableService.setStr(1, "C");
+            TestUtils.assertEquals(
+                    printSqlOrError("SELECT s FROM tn WHERE s NOT BETWEEN $1 AND $2"),
+                    printSqlOrError("SELECT s FROM ti WHERE s NOT BETWEEN $1 AND $2")
+            );
+            // more distinct values than cairo.sql.max.symbol.not.equals.count
+            execute("INSERT INTO ti SELECT 'k' || x, '2026-01-02'::TIMESTAMP FROM long_sequence(100)");
+            assertExceptionNoLeakCheck("SELECT s FROM ti WHERE s NOT BETWEEN 'A' AND 'C'", 29, message);
         });
     }
 
@@ -9344,26 +9784,78 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testVirtualColumnRejectsNonTimestampModelTimestampIndex() throws Exception {
+    public void testVirtualColumnIgnoresModelTimestampIndexNotOverBaseTimestamp() throws Exception {
+        // The optimizer tags a dateadd() over the base timestamp as the projection's designated
+        // timestamp. Code generation keeps the tag only on such a dateadd(), so a tag on any other
+        // column, set by hand here, is dropped, and a projected base timestamp takes its place.
         assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO trades VALUES (1.5, '2024-01-01T00:00:00.000000Z')");
+            final String[] queries = {
+                    "SELECT x + 1 AS ts FROM long_sequence(1)",
+                    "SELECT price + 1 AS p, ts FROM trades",
+            };
+            // an empty name makes the assertion check that the factory has no designated timestamp
+            final String[] expectedTimestamps = {"", "ts"};
+            final String[] expectedRows = {
+                    """
+                    ts
+                    2
+                    """,
+                    """
+                    p\tts
+                    2.5\t2024-01-01T00:00:00.000000Z
+                    """,
+            };
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                final String query = "SELECT x + 1 AS ts FROM long_sequence(1)";
-                final ExecutionModel executionModel = compiler.generateExecutionModel(query, sqlExecutionContext);
-                Assert.assertEquals(ExecutionModel.QUERY, executionModel.getModelType());
-
-                final IQueryModel model = (IQueryModel) executionModel;
-                model.setTimestampColumnIndex(0);
-
-                RecordCursorFactory factory = null;
-                try {
-                    factory = compiler.generateSelectWithRetries(model, null, sqlExecutionContext, false);
-                    Assert.fail("expected timestamp validation to reject non-TIMESTAMP column");
-                } catch (SqlException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "TIMESTAMP column is required but not provided");
-                    Assert.assertEquals(9, e.getPosition());
-                } finally {
-                    Misc.free(factory);
+                for (int i = 0; i < queries.length; i++) {
+                    final ExecutionModel executionModel = compiler.generateExecutionModel(queries[i], sqlExecutionContext);
+                    Assert.assertEquals(ExecutionModel.QUERY, executionModel.getModelType());
+                    final IQueryModel model = (IQueryModel) executionModel;
+                    Assert.assertEquals(IQueryModel.SELECT_MODEL_VIRTUAL, model.getSelectModelType());
+                    model.setTimestampColumnIndex(0);
+                    // assertFactory() leaves the factory to its caller, so try-with-resources frees it
+                    try (RecordCursorFactory factory = compiler.generateSelectWithRetries(model, null, sqlExecutionContext, false)) {
+                        assertFactory(factory)
+                                .withContext(sqlExecutionContext)
+                                .timestamp(expectedTimestamps[i])
+                                .expectSize()
+                                .returns(expectedRows[i]);
+                    }
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testVirtualColumnKeepsDateaddTimestampOnlyForFixedDurationUnits() throws Exception {
+        // Months and years clamp the day of month, so a dateadd() over the base timestamp follows the
+        // base row order only for the units that add a fixed duration. The loop takes the units from
+        // the timestamp drivers, so a unit added to getAddMethod() fails here until the code generator
+        // classifies it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE micros (ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE nanos (ts TIMESTAMP_NS) TIMESTAMP(ts)");
+            final TimestampDriver[] drivers = {MicrosTimestampDriver.INSTANCE, NanosTimestampDriver.INSTANCE};
+            final String[] tables = {"micros", "nanos"};
+            for (int i = 0; i < tables.length; i++) {
+                int unitCount = 0;
+                for (char unit = 0; unit < 128; unit++) {
+                    if (drivers[i].getAddMethod(unit) == null) {
+                        continue;
+                    }
+                    unitCount++;
+                    final boolean isCalendarUnit = unit == 'M' || unit == 'y';
+                    try (RecordCursorFactory factory = select("SELECT dateadd('" + unit + "', 1, ts) x FROM " + tables[i])) {
+                        Assert.assertEquals(
+                                "unit=" + unit + ", table=" + tables[i],
+                                isCalendarUnit ? -1 : 0,
+                                factory.getMetadata().getTimestampIndex()
+                        );
+                    }
+                }
+                // n, u, U, T, s, m, h, H, d, w, M, y
+                Assert.assertEquals(12, unitCount);
             }
         });
     }
@@ -9702,6 +10194,21 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             System.err.printf("// %2d = %s\n", i, ColumnType.nameOf(i));
         }
         System.err.println("    };");
+    }
+
+    private static String printSqlOrError(CharSequence sql) {
+        try {
+            printSql(sql);
+            return sink.toString();
+        } catch (SqlException | CairoException | ImplicitCastException e) {
+            return "[" + e.getPosition() + "] " + e.getFlyweightMessage();
+        }
+    }
+
+    private static void setStrBinds(BindVariableService binds, String... values) throws SqlException {
+        for (int i = 0; i < values.length; i++) {
+            binds.setStr(i, values[i]);
+        }
     }
 
     private void createGeoHashTable(int chars) throws SqlException {

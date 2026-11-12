@@ -26,9 +26,12 @@ package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableFlagResolver;
@@ -44,6 +47,9 @@ import io.questdb.mp.Job;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
@@ -56,11 +62,14 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.AfterClass;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import java.io.File;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
@@ -84,6 +93,72 @@ public class CairoEngineTest extends AbstractCairoTest {
         otherPath = Misc.free(otherPath);
         path = Misc.free(path);
         AbstractCairoTest.tearDownStatic();
+    }
+
+    @Test
+    public void testDataSyncFailurePoisonsEngineAndFirstFailureWins() throws Exception {
+        // The engine stops on a failed flush only in a mode that promises durability.
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
+        assertMemoryLeak(() -> {
+            final AtomicReference<CairoEngine.DurabilityFailure> observed = new AtomicReference<>();
+            try (CairoEngine testEngine = new CairoEngine(configuration)) {
+                testEngine.setDurabilityFailureHandler(observed::set);
+
+                CairoException first = CairoException.dataSyncFailureCarry(5, "fdatasync").put("injected data sync failure");
+                try {
+                    testEngine.handleDataSyncFailure(first);
+                    Assert.fail();
+                } catch (CairoError expected) {
+                    Assert.assertSame(first, expected.getCause());
+                }
+
+                Assert.assertTrue(testEngine.isDurabilityFailed());
+                Assert.assertEquals("fdatasync", observed.get().getOperation());
+                Assert.assertEquals(5, observed.get().getErrno());
+                Assert.assertFalse(testEngine.getDurableAckRegistry().isEnabled());
+
+                try {
+                    testEngine.handleDataSyncFailure(CairoException.dataSyncFailureCarry(28, "fsync"));
+                    Assert.fail();
+                } catch (CairoError expected) {
+                    // first failure remains authoritative and callback is not invoked again
+                }
+                Assert.assertEquals(5, testEngine.getDurabilityFailure().getErrno());
+                Assert.assertEquals("fdatasync", observed.get().getOperation());
+
+                try {
+                    testEngine.getWriterUnsafe(null, "poisoned-test");
+                    Assert.fail();
+                } catch (CairoError expected) {
+                    TestUtils.assertContains(expected.getMessage(), "engine is poisoned");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDataSyncFailureStopsOnlyTheEngineWhoseRootHoldsTheFile() throws Exception {
+        // Two engines on one facade object: the path the OS gives for the failed file picks the engine whose root
+        // holds it. A failure of no file stops every engine on the facade, so that no stop is lost.
+        Assume.assumeTrue(Files.isPathLookupSupported());
+        assertMemoryLeak(() -> {
+            final FilesFacade ff = new FilesFacadeImpl();
+            final File rootA = new File(temp.newFolder(), "db");
+            final File rootB = new File(temp.newFolder(), "db");
+            Assert.assertTrue(rootA.mkdir());
+            Assert.assertTrue(rootB.mkdir());
+            try (
+                    CairoEngine engineA = new CairoEngine(syncConfiguration(rootA, ff));
+                    CairoEngine engineB = new CairoEngine(syncConfiguration(rootB, ff))
+            ) {
+                assertFailedFlushOfFileStopsOnly(ff, rootA, engineA, engineB);
+                assertFailedFlushOfFileStopsOnly(ff, rootB, engineB, engineA);
+
+                CairoException.dataSyncFailureOfFd(ff, -1, 5, "fdatasync", "injected");
+                Assert.assertTrue(engineA.isDurabilityFailed());
+                Assert.assertTrue(engineB.isDurabilityFailed());
+            }
+        });
     }
 
     @Test
@@ -580,6 +655,48 @@ public class CairoEngineTest extends AbstractCairoTest {
                 Assert.assertTrue(engine.clear());
             }
         });
+    }
+
+    // A failed flush of a file under root, by its descriptor and by its mapping, stops owner and not bystander
+    private static void assertFailedFlushOfFileStopsOnly(FilesFacade ff, File root, CairoEngine owner, CairoEngine bystander) {
+        final long size = Files.PAGE_SIZE;
+        try (Path path = new Path().of(root.getAbsolutePath()).concat("a.d")) {
+            final long fd = Files.openRW(path.$());
+            Assert.assertTrue(fd > -1);
+            try {
+                Assert.assertTrue(Files.allocate(fd, size));
+                final long address = Files.mmap(fd, size, 0, Files.MAP_RW, MemoryTag.MMAP_DEFAULT);
+                try {
+                    CairoException.dataSyncFailureOfMapping(ff, address, 5, "msync", "injected");
+                    Assert.assertTrue(owner.isDurabilityFailed());
+                    Assert.assertFalse("[failure=" + bystander.getDurabilityFailure() + ']', bystander.isDurabilityFailed());
+                    owner.resetDurabilityFailure();
+
+                    CairoException.dataSyncFailureOfFd(ff, fd, 5, "fdatasync", "injected");
+                    Assert.assertTrue(owner.isDurabilityFailed());
+                    Assert.assertFalse("[failure=" + bystander.getDurabilityFailure() + ']', bystander.isDurabilityFailed());
+                    owner.resetDurabilityFailure();
+                } finally {
+                    Files.munmap(address, size, MemoryTag.MMAP_DEFAULT);
+                }
+            } finally {
+                Files.close(fd);
+            }
+        }
+    }
+
+    private static CairoConfiguration syncConfiguration(File root, FilesFacade ff) {
+        return new DefaultTestCairoConfiguration(root.getAbsolutePath()) {
+            @Override
+            public int getCommitMode() {
+                return CommitMode.SYNC;
+            }
+
+            @Override
+            public @NotNull FilesFacade getFilesFacade() {
+                return ff;
+            }
+        };
     }
 
     private static void waitForTableStatus(int status) {

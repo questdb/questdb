@@ -64,7 +64,10 @@ public class SampleByFillNullNotKeyedRecordCursorFactory extends AbstractSampleB
             Function sampleFromFunc,
             int sampleFromFuncPos,
             Function sampleToFunc,
-            int sampleToFuncPos
+            int sampleToFuncPos,
+            boolean isFromToUtc,
+            boolean isSubDayUnit,
+            boolean isRuntimeBoundUtc
     ) throws SqlException {
         super(base, groupByMetadata, recordFunctions, timezoneNameFunc, offsetFunc, sampleFromFunc, sampleToFunc);
         try {
@@ -90,8 +93,11 @@ public class SampleByFillNullNotKeyedRecordCursorFactory extends AbstractSampleB
                     sampleFromFunc,
                     sampleFromFuncPos,
                     sampleToFunc,
-                    sampleToFuncPos
+                    sampleToFuncPos,
+                    isFromToUtc,
+                    isSubDayUnit
             );
+            cursor.setRuntimeBoundUtc(isRuntimeBoundUtc);
             peeker.setCursor(cursor);
         } catch (Throwable th) {
             Misc.free(this, th);

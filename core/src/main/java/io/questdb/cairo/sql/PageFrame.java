@@ -66,15 +66,6 @@ public interface PageFrame {
     int getColumnCount();
 
     /**
-     * Returns page frame format.
-     * <p>
-     * Possible values: {@link PartitionFormat#NATIVE} and {@link PartitionFormat#PARQUET}.
-     */
-    byte getFormat();
-
-    IndexReader getIndexReader(int columnIndex, int direction);
-
-    /**
      * Per-column runtime source tag.
      *
      * @param columnIndex index of the column
@@ -144,6 +135,26 @@ public interface PageFrame {
     }
 
     /**
+     * Returns page frame format.
+     * <p>
+     * Possible values: {@link PartitionFormat#NATIVE} and {@link PartitionFormat#PARQUET}.
+     */
+    byte getFormat();
+
+    IndexReader getIndexReader(int columnIndex, int direction);
+
+    /**
+     * Returns the high row, exclusive, to ask this frame's INDEX for. See {@link #getIndexRowLo()}.
+     */
+    default long getIndexRowHi() {
+        return getPartitionHi();
+    }
+
+    default long getIndexRowLo() {
+        return getPartitionLo();
+    }
+
+    /**
      * Return the address of the start of the page frame or if this page represents
      * a column top (a column that was added to the table when other columns already
      * had data) then return 0.
@@ -200,4 +211,15 @@ public interface PageFrame {
      * Return low row index within the frame's partition, inclusive.
      */
     long getPartitionLo();
+
+    /**
+     * Tells whether this frame is one of the skip-only skeletons {@link PageFrameCursor#next(long)} hands back for a span the
+     * caller has already decided to discard. A skeleton carries a row span and nothing else: no page addresses,
+     * and a span cut wherever the skip landed rather than where a readable scan would cut a frame. It therefore
+     * neither reads nor occupies a page-frame slot - {@code PageFrameRecordCursorImpl.skipRows()} keeps it out of
+     * {@link PageFrameAddressCache}, which indexes frames by their position in the scan.
+     */
+    default boolean isSkipSkeleton() {
+        return false;
+    }
 }

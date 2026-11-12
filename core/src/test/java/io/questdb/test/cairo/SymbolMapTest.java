@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo;
 
+import com.sun.management.ThreadMXBean;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SymbolMapReaderImpl;
@@ -39,10 +40,12 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Hash;
 import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
@@ -112,7 +115,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 0,
                                 -1,
                                 NOOP_COLLECTOR,
-                                -1
+                                -1,
+                                false
                         )
                 ) {
                     int prev = -1;
@@ -134,7 +138,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 N,
                                 -1,
                                 NOOP_COLLECTOR,
-                                -1
+                                -1,
+                                false
                         )
                 ) {
                     int prev = N - 1;
@@ -321,7 +326,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                         0,
                         -1,
                         NOOP_COLLECTOR,
-                        -1
+                        -1,
+                        false
                 )) {
                     int prev = -1;
                     for (int i = 0; i < keys; i++) {
@@ -395,7 +401,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 0,
                                 -1,
                                 NOOP_COLLECTOR,
-                                -1
+                                -1,
+                                false
                         )
                 ) {
                     Assert.assertEquals(0, writer.put("A1"));
@@ -433,7 +440,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 symbolCount,
                                 -1,
                                 NOOP_COLLECTOR,
-                                -1
+                                -1,
+                                false
                         )
                 ) {
                     Assert.fail("expected corrupt exception");
@@ -457,7 +465,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 symbolCount,
                                 -1,
                                 NOOP_COLLECTOR,
-                                -1
+                                -1,
+                                false
                         )
                 ) {
                     Assert.assertEquals(5, writer.put("A6"));
@@ -548,6 +557,70 @@ public class SymbolMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKeyOfPastIndexKeyCountAllocatesNothing() throws Exception {
+        // A value whose bounded hash falls at or past the index's key count gets the shared empty
+        // row cursor. Neither the reader's pooled cursor nor a view's reused one may be lost to it,
+        // or the next in-range lookup allocates a replacement cursor.
+        TestUtils.assertMemoryLeak(() -> {
+            final int symbolCapacity = 1024;
+            // SymbolMapReaderImpl bounds value hashes with this mask
+            final int maxHash = Numbers.ceilPow2(symbolCapacity / 2) - 1;
+            // The only stored value hashes to bucket 0, so the index's key count is 1 and every
+            // other bucket lies past it.
+            String stored = null;
+            for (int i = 0; stored == null; i++) {
+                final String candidate = "stored" + i;
+                if (Hash.boundedHash(candidate, maxHash) == 0) {
+                    stored = candidate;
+                }
+            }
+            String missing = null;
+            for (int i = 0; missing == null; i++) {
+                final String candidate = "missing" + i;
+                if (Hash.boundedHash(candidate, maxHash) > 0) {
+                    missing = candidate;
+                }
+            }
+
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                create(path, "x", symbolCapacity, false);
+                try (
+                        SymbolMapWriter writer = new SymbolMapWriter(
+                                configuration,
+                                path,
+                                "x",
+                                COLUMN_NAME_TXN_NONE,
+                                0,
+                                -1,
+                                NOOP_COLLECTOR,
+                                -1
+                        )
+                ) {
+                    Assert.assertEquals(0, writer.put(stored));
+                }
+                try (
+                        SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, 1);
+                        TestUtils.ThreadMetricsScope<ThreadMXBean> scope = TestUtils.threadAllocationScope()
+                ) {
+                    final StaticSymbolTable view = reader.newSymbolTableView();
+                    // the first round fills the reader's cursor pool and the view's cursor
+                    assertAlternatingLookups(reader, view, stored, missing, 100);
+
+                    final ThreadMXBean threadMXBean = scope.getBean();
+                    final long threadId = Thread.currentThread().threadId();
+                    final long before = threadMXBean.getThreadAllocatedBytes(threadId);
+                    assertAlternatingLookups(reader, view, stored, missing, 10_000);
+                    final long allocated = threadMXBean.getThreadAllocatedBytes(threadId) - before;
+                    Assert.assertTrue(
+                            "10,000 rounds of lookups allocated " + allocated + " bytes",
+                            allocated < 64 * 1024
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
     public void testLookupPerformance() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int N = 10000000;
@@ -564,7 +637,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 0,
                                 -1,
                                 NOOP_COLLECTOR,
-                                -1
+                                -1,
+                                false
                         )
                 ) {
                     Rnd rnd = new Rnd();
@@ -601,7 +675,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                             0,
                             -1,
                             NOOP_COLLECTOR,
-                            -1
+                            -1,
+                            false
                     );
                     Assert.fail();
                 } catch (CairoException e) {
@@ -626,7 +701,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 0,
                                 -1,
                                 NOOP_COLLECTOR,
-                                -1
+                                -1,
+                                false
                         )
                 ) {
                     int prev = -1;
@@ -649,7 +725,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 0,
                                 -1,
                                 NOOP_COLLECTOR,
-                                -1
+                                -1,
+                                false
                         )
                 ) {
                     int prev = -1;
@@ -672,7 +749,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 0,
                                 -1,
                                 NOOP_COLLECTOR,
-                                -1
+                                -1,
+                                false
                         )
                 ) {
                     try (SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, N)) {
@@ -718,7 +796,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 0,
                                 -1,
                                 NOOP_COLLECTOR,
-                                -1
+                                -1,
+                                false
                         )
                 ) {
                     int prev = -1;
@@ -741,7 +820,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 0,
                                 -1,
                                 NOOP_COLLECTOR,
-                                -1
+                                -1,
+                                false
                         )
                 ) {
                     try (SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, N)) {
@@ -780,7 +860,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 0,
                                 -1,
                                 NOOP_COLLECTOR,
-                                -1
+                                -1,
+                                false
                         )
                 ) {
                     int prev = -1;
@@ -803,7 +884,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 0,
                                 -1,
                                 NOOP_COLLECTOR,
-                                -1
+                                -1,
+                                false
                         )
                 ) {
                     int prev = -1;
@@ -827,7 +909,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 0,
                                 -1,
                                 NOOP_COLLECTOR,
-                                -1
+                                -1,
+                                false
                         )
                 ) {
                     try (SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, N)) {
@@ -899,7 +982,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 0,
                                 -1,
                                 NOOP_COLLECTOR,
-                                -1
+                                -1,
+                                false
                         )
                 ) {
                     int prev = -1;
@@ -962,7 +1046,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                         0,
                         -1,
                         NOOP_COLLECTOR,
-                        -1
+                        -1,
+                        false
                 )) {
                     for (int i = 0; i < keys.length; i++) {
                         keys[i] = writer.put("key" + i);
@@ -1026,7 +1111,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 0,
                                 -1,
                                 NOOP_COLLECTOR,
-                                -1
+                                -1,
+                                false
                         )
                 ) {
                     Rnd rnd = new Rnd();
@@ -1069,7 +1155,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 0,
                                 -1,
                                 NOOP_COLLECTOR,
-                                -1
+                                -1,
+                                false
                         )
                 ) {
                     Assert.assertEquals(0, writer.put("A1"));
@@ -1128,7 +1215,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                         0,
                         -1,
                         NOOP_COLLECTOR,
-                        -1
+                        -1,
+                        false
                 );
                 int hi = rnd.nextInt(symbols);
                 hi = addRange(w, 0, hi, rnd, symbolList, indexList, prefix);
@@ -1148,7 +1236,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                             resetTo,
                             -1,
                             NOOP_COLLECTOR,
-                            -1
+                            -1,
+                            false
                     );
 
                     hi = resetTo + rnd.nextInt(symbols - resetTo);
@@ -1174,7 +1263,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                             0,
                             -1,
                             NOOP_COLLECTOR,
-                            -1
+                            -1,
+                            false
                     );
                     Assert.fail();
                 } catch (CairoException e) {
@@ -1198,7 +1288,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                         0,
                         -1,
                         NOOP_COLLECTOR,
-                        -1
+                        -1,
+                        false
                 )
                 ) {
                     Rnd rnd = new Rnd();
@@ -1231,7 +1322,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 0,
                                 -1,
                                 NOOP_COLLECTOR,
-                                -1
+                                -1,
+                                false
                         )
                 ) {
                     int prev = -1;
@@ -1371,7 +1463,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 0,
                                 -1,
                                 NOOP_COLLECTOR,
-                                -1
+                                -1,
+                                false
                         )
                 ) {
                     int prev = -1;
@@ -1422,7 +1515,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 0,
                                 -1,
                                 NOOP_COLLECTOR,
-                                -1
+                                -1,
+                                false
                         )
                 ) {
                     Rnd rnd = new Rnd();
@@ -1708,6 +1802,15 @@ public class SymbolMapTest extends AbstractCairoTest {
      * facade fails releases everything it owns and still raises, and every resource
      * this test can leak belongs to the writer rather than to the injection.
      */
+    private void assertAlternatingLookups(SymbolMapReaderImpl reader, StaticSymbolTable view, String stored, String missing, int rounds) {
+        for (int i = 0; i < rounds; i++) {
+            Assert.assertEquals(0, reader.keyOf(stored));
+            Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, reader.keyOf(missing));
+            Assert.assertEquals(0, view.keyOf(stored));
+            Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, view.keyOf(missing));
+        }
+    }
+
     private void assertCloseReleasesCacheWhenReleaseFails(String failingFileSuffix) throws Exception {
         final AtomicLong failingFd = new AtomicLong(-1);
         final AtomicBoolean isArmed = new AtomicBoolean();

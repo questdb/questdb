@@ -41,6 +41,7 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
     private static final int EXCEPTION_MAT_VIEW_DOES_NOT_EXIST = EXCEPTION_VIEW_DOES_NOT_EXIST - 1;
     private static final int EXCEPTION_WAL_RECOVERABLE = EXCEPTION_MAT_VIEW_DOES_NOT_EXIST - 1;
     private static final int EXCEPTION_FUNCTION_NOT_ALLOWED = EXCEPTION_WAL_RECOVERABLE - 1;
+    private static final int EXCEPTION_MATERIALIZATION_EXPIRY_CONFLICT = EXCEPTION_FUNCTION_NOT_ALLOWED - 1;
     private static final FiberLocal<SqlException> tlException = new FiberLocal<>(SqlException::new);
     private final StringSink message = new StringSink();
     private final StringSink tableName = new StringSink();
@@ -130,6 +131,18 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
         return position(position).errorCode(EXCEPTION_MAT_VIEW_DOES_NOT_EXIST).put("materialized view does not exist [view=").put(tableName).put(']');
     }
 
+    public static SqlException materializationExpiryConflict(
+            int position,
+            CharSequence dependentName,
+            CharSequence sourceName
+    ) {
+        return position(position)
+                .errorCode(EXCEPTION_MATERIALIZATION_EXPIRY_CONFLICT)
+                .put("cannot materialize view '").put(dependentName)
+                .put("': source materialized view '").put(sourceName)
+                .put("' has an active EXPIRE ROWS policy");
+    }
+
     public static SqlException nonDeterministicColumn(int position, CharSequence column, CharSequence objectKind) {
         return position(position).put("non-deterministic function cannot be used in ").put(objectKind).put(": ").put(column);
     }
@@ -150,11 +163,7 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
         SqlException ex = tlException.get();
         // This is to have correct stack trace in local debugging with -ea option
         assert (ex = new SqlException()) != null;
-        ex.message.clear();
-        ex.position = position;
-        ex.error = 0;
-        ex.isTableBusy = false;
-        return ex;
+        return ex.reset(position);
     }
 
     public static SqlException tableDoesNotExist(int position, CharSequence tableName) {
@@ -249,6 +258,10 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
         return error == EXCEPTION_TABLE_DOES_NOT_EXIST;
     }
 
+    public boolean isMaterializationExpiryConflict() {
+        return error == EXCEPTION_MATERIALIZATION_EXPIRY_CONFLICT;
+    }
+
     public boolean isWalRecoverable() {
         return error == EXCEPTION_WAL_RECOVERABLE;
     }
@@ -316,6 +329,14 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
         sink.putAscii('[').put(position).putAscii("]: ").put(message);
+    }
+
+    SqlException reset(int position) {
+        message.clear();
+        this.position = position;
+        error = 0;
+        isTableBusy = false;
+        return this;
     }
 
     private SqlException errorCode(int errorCode) {

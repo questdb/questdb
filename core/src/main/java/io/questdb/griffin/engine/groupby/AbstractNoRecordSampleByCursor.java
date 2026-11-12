@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -37,8 +38,11 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
+import io.questdb.std.Chars;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.TimeZoneRules;
 import org.jetbrains.annotations.Nullable;
 
 public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCursor {
@@ -46,10 +50,26 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
     protected final GroupByFunctionsUpdater groupByFunctionsUpdater;
     protected final int timestampIndex;
     private final GroupByAllocator allocator;
+    // the time zone that code generation converted FROM with, when the time zone is not a constant, see of();
+    // null otherwise
+    private final String conversionTimezone;
+    // true when code generation converted FROM to UTC, see of()
+    private final boolean isFromUtc;
+    // true when code generation converted FROM to UTC but left TO in local time, see getUpperBound()
+    private final boolean isToLocal;
+    // true only for a cursor that reads TO, the FILL(NULL) and FILL(value) cursor, when code generation
+    // converted TO to UTC, but not FROM. The FILL(PREV) and FILL(NONE) factories pass only the FROM
+    // conversion as isFromToUtc, so this stays false for their cursors even when code generation converted
+    // TO alone.
+    private final boolean isToOnlyUtc;
     private final ObjList<Function> recordFunctions;
     protected RecordCursor baseCursor;
     protected Record baseRecord;
     protected SqlExecutionCircuitBreaker circuitBreaker;
+    // true for an execution that samples in the time zone although code generation converted a bound that the
+    // cursor reads to UTC: TO alone (isToOnlyUtc), or FROM, when a bound that the cursor reads is a runtime
+    // constant or the execution reads another time zone, see of()
+    protected boolean isUtcBoundOnLocalGrid;
     // this epoch is generally the same as `sampleLocalEpoch` except for cases where
     // sampler passed thru Daytime Savings Transition date
     // diverging values tell `filling` implementations not to fill this gap
@@ -58,9 +78,19 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
     protected long topTzOffset;
     private boolean areTimestampsInitialized;
     private boolean isNotKeyedLoopInitialized;
+    // true when code generation converted to UTC a bound that this cursor reads and that is a runtime constant, such
+    // as an expression over now() or current_user(): FROM, or TO for the FILL(NULL) and FILL(value) cursor, see of()
+    private boolean isRuntimeBoundUtc;
+    // true for an execution that samples in UTC, see of()
+    private boolean isUtcGrid;
+    // the amount that nextSamplePeriod() added to localEpoch to label the bucket, see getGridLocalEpoch()
+    private long localEpochShift;
     private long rowId;
     private long topLocalEpoch;
     private long topNextDst;
+    // the time zone that parseParams() derived, see getUpperBound(): the fixed offset applies when there are no rules
+    private long zoneOffset;
+    private TimeZoneRules zoneRules;
 
     public AbstractNoRecordSampleByCursor(
             CairoConfiguration configuration,
@@ -77,7 +107,8 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
             Function sampleFromFunc,
             int sampleFromFuncPos,
             Function sampleToFunc,
-            int sampleToFuncPos
+            int sampleToFuncPos,
+            boolean isFromToUtc
     ) {
         super(
                 timestampSampler,
@@ -95,6 +126,27 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         this.recordFunctions = recordFunctions;
         this.groupByFunctions = groupByFunctions;
         this.groupByFunctionsUpdater = groupByFunctionsUpdater;
+        // Whenever code generation converts a bound to UTC, it reads FROM as well, and it replaces a FROM that reads
+        // non-NULL with a constant in UTC. A FROM that it leaves alone is a constant that reads NULL, or a runtime
+        // constant that read NULL before its init(). now() reads 0 until its init(), so code generation converts
+        // FROM now() and FROM dateadd(..., now()), and leaves alone a shape that reads NULL at 0, such as a CASE
+        // WHEN now() > ... END without ELSE. Such a runtime constant can read non-NULL once an execution initializes
+        // it, so the cursor takes the decision here, once per factory, from a non-NULL constant, and not from a value
+        // that of() reads on every execution.
+        isFromUtc = isFromToUtc && sampleFromFunc.isConstant() && sampleFromFunc.getTimestamp(null) != Numbers.LONG_NULL;
+        isToOnlyUtc = isFromToUtc && !isFromUtc;
+        // Code generation reads TO in the same pass and replaces a TO that reads non-NULL with a constant in UTC too.
+        // With FROM converted, a TO that is not a constant read NULL then, before an execution initialized it, and
+        // stays in local time. A constant TO is in UTC, or reads NULL and sets no upper bound.
+        isToLocal = isFromUtc && !sampleToFunc.isConstant();
+        // Code generation converts the bounds with the time zone that it reads before an execution initializes it.
+        // A time zone that is not a constant can read another zone at execution. Until then, now() reads 0, and
+        // current_user() and session_user() read NULL, so CASE WHEN now() > ... THEN 'Asia/Kolkata' ELSE 'UTC'
+        // END reads 'UTC'. The constructor runs before any execution as well, and saves the zone that code
+        // generation read, see of().
+        conversionTimezone = isFromUtc && !timezoneNameFunc.isConstant()
+                ? Chars.toString(timezoneNameFunc.getStrA(null))
+                : null;
         // Lazy variant: the allocator's chunk index is not allocated until the
         // first cursor's of() binds a MemoryTracker and calls reopen(), keeping
         // per-query alloc/free accounting symmetric from the very first cursor.
@@ -125,6 +177,53 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         baseRecord = baseCursor.getRecord();
         prevDst = Long.MIN_VALUE;
         parseParams(baseCursor, executionContext);
+        // getUpperBound() reads the time zone that parseParams() derived, which the switch to UTC below clears
+        zoneRules = rules;
+        zoneOffset = tzOffset;
+        // For a stride in hours, minutes, seconds or a smaller unit, code generation converts FROM and TO from
+        // the time zone to UTC, each bound only when it reads non-NULL, and the GROUP BY path samples on a UTC grid
+        // anchored at the converted FROM plus WITH OFFSET. This cursor samples on that grid as well, see
+        // initTimestamps(), and converts a TO that code generation left in local time when it reads it,
+        // see getUpperBound(). Adding the time zone offset on top of the converted bounds anchored the
+        // local grid at the wrong instant (GitHub issue #7743), and the DST handling of that grid could
+        // label a bucket earlier than the bucket before it. The constructor derives isFromUtc and
+        // isToLocal from what code generation did. Code generation reads the bounds and the time zone before an
+        // execution initializes them, and a runtime constant, such as an expression over now() or current_user(),
+        // can read another value at execution. The WHERE clause that bounds the rows reads FROM and TO at
+        // execution: on the UTC grid, the rows before a FROM that read a later instant during code generation
+        // would go into the first bucket, and the end fill would run on to a TO that read a later instant. So the
+        // cursor keeps the converted FROM, and samples on the UTC grid, only when no bound that it reads is a
+        // runtime constant that code generation converted (isRuntimeBoundUtc), and the execution reads the time
+        // zone string that code generation converted the bounds with: always for a constant time zone, and for
+        // any other time zone only when the execution reads the string that the constructor saved. Otherwise,
+        // also for another name or spelling of the same zone, the cursor samples in the time zone of the
+        // execution, as it did before it sampled on the UTC grid: it anchors the grid at the converted FROM, adds
+        // the offset of the execution on top of it for the first bucket, see initTimestamps(), and reads TO as it
+        // is.
+        isUtcGrid = isFromUtc
+                && !isRuntimeBoundUtc
+                && (conversionTimezone == null || Chars.equalsNc(conversionTimezone, timezoneNameFunc.getStrA(null)));
+        isUtcBoundOnLocalGrid = (isFromUtc || isToOnlyUtc) && !isUtcGrid;
+        if (isUtcGrid) {
+            tzOffset = 0;
+            rules = null;
+            nextDstUtc = Long.MAX_VALUE;
+            // The calendar grid reads a NULL WITH OFFSET as zero. With a zero time zone offset, a NULL one
+            // would make initTimestamps() align to the first row instead of FROM.
+            if (fixedOffset == Long.MIN_VALUE) {
+                fixedOffset = 0;
+            }
+        }
+        // toTop() restores tzOffset from topTzOffset. initTimestamps() saves it on the first read,
+        // but a caller such as LIMIT rewinds the cursor before that, and only a time zone name has
+        // rules to recompute the offset from. A cursor that samples in the time zone with no bound that it
+        // reads converted to UTC saves the numeric offset that parseParams() derived. A cursor that samples
+        // in UTC, see above, saves a zero offset. A cursor that samples in the time zone with a bound that
+        // it reads converted to UTC (isUtcBoundOnLocalGrid) saves a zero offset too, as it did before it
+        // sampled on the UTC grid. Such a cursor mixes the UTC of the converted bound with the local time of
+        // its grid, and neither offset gives the right rows for every such statement; GitHub issue #7743
+        // tracks that case.
+        topTzOffset = isUtcBoundOnLocalGrid ? 0 : tzOffset;
         topNextDst = nextDstUtc;
         circuitBreaker = executionContext.getCircuitBreaker();
         // Consult the breaker at open, so an empty base scan (whose row loops never run) stays cancellable.
@@ -171,6 +270,13 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         tzOffset = newTzOffset;
     }
 
+    // Makes TimestampFunc return NULL for the bucket that goes out next. The function subtracts tzOffset from
+    // sampleLocalEpoch, and long arithmetic wraps, so the difference is Long.MIN_VALUE whatever the offset. The
+    // bucket after it assigns sampleLocalEpoch from localEpoch before it emits a row.
+    private void setNullBucketLabel() {
+        sampleLocalEpoch = Numbers.LONG_NULL + tzOffset;
+    }
+
     protected long adjustDst(long timestamp, @Nullable MapValue mapValue, long nextSampleTimestamp) {
         final long utcTimestamp = timestamp - tzOffset;
         if (utcTimestamp < nextDstUtc) {
@@ -206,21 +312,78 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         kludge(daylightSavings);
     }
 
+    // Aggregates the rows at the head of the base cursor that have a NULL designated timestamp into a bucket of their
+    // own, starting with the current row. Returns true when it stopped at the first row that has a timestamp, which
+    // is then the current row of the base cursor, and false when the base cursor ran out. Only the cursors without
+    // FILL override it: a grid that a cursor fills has no place for these rows, so the cursors with FILL fail.
+    protected boolean aggregateNullTimestampRows() {
+        throw CairoException.nonCritical().put("SAMPLE BY designated timestamp cannot be NULL");
+    }
+
     protected long getBaseRecordTimestamp() {
         return baseRecord.getTimestamp(timestampIndex) + tzOffset;
     }
 
-    protected void initTimestamps() {
+    // Returns the start of the current bucket on the sampler grid, in the local time of the current
+    // offset. It differs from localEpoch only after nextSamplePeriod() shifted localEpoch to label a
+    // bucket that starts before the DST transition just crossed. The end of the bucket, and the bucket
+    // that the gap check expects after it, derive from the grid start. Derived from the shifted start,
+    // they moved by the offset delta: after a fall-back, the bucket ended before rows that belong to it,
+    // and such a row rounded back to the same bucket without end (GitHub issue #7752); after a
+    // spring-forward, the bucket took in rows of the next one.
+    protected long getGridLocalEpoch() {
+        return localEpoch - localEpochShift;
+    }
+
+    // Returns TO, in the unit of the timestamp, for the end fill. A cursor that samples in UTC converts a TO that
+    // code generation left in local time (isToLocal) with the time zone that parseParams() read, as to_utc() does on
+    // the GROUP BY path: the offset in force at TO applies, also when a DST transition falls between FROM and TO. Any
+    // other TO is in the time coordinate that the cursor samples in, except that a cursor that samples in the time
+    // zone reads a TO that code generation converted to UTC (isUtcBoundOnLocalGrid) in UTC.
+    protected long getUpperBound(long to) {
+        if (isToLocal && isUtcGrid) {
+            return to - (zoneRules != null ? zoneRules.getLocalOffset(to) : zoneOffset);
+        }
+        return to;
+    }
+
+    // Reads the first row of the base cursor and starts the sampler grid, the time zone offset and the first bucket
+    // from its timestamp. Returns true when the call also aggregated the NULL bucket, which the caller emits before
+    // it reads on, see aggregateNullTimestampRows(). Returns false in every other case, and always for the cursors
+    // with FILL.
+    protected boolean initTimestamps() {
         if (areTimestampsInitialized) {
-            return;
+            return false;
         }
 
         if (!baseCursor.hasNext()) {
             baseRecord = null;
-            return;
+            return false;
         }
 
-        final long timestamp = baseRecord.getTimestamp(timestampIndex);
+        long timestamp = baseRecord.getTimestamp(timestampIndex);
+        // TIMESTAMP(col) can designate a column that holds NULL, and an ascending base puts the rows with the NULL
+        // first. No bucket of the grid can hold them. With ALIGN TO FIRST OBSERVATION, the grid would start at
+        // Long.MIN_VALUE, and the fill cursors would walk it one stride at a time towards the next row. On a calendar
+        // grid that starts at 0 with no time zone offset, the week samplers, and SimpleTimestampSampler unless the
+        // stride is a power of two in the unit of the timestamp (microseconds or nanoseconds), would round
+        // Long.MIN_VALUE down past the range of a long and wrap around into a bucket near Long.MAX_VALUE, which takes
+        // in every row. So these rows never reach the sampler or the time zone rules. The cursors with FILL fail. The
+        // cursors without FILL aggregate the rows into a bucket of their own and emit it first under a NULL label, as
+        // the GROUP BY path does. The grid, the time zone offset and the DST state then start from the first row that
+        // has a timestamp, exactly as they would without the NULL rows.
+        final boolean hasNullBucket = timestamp == Numbers.LONG_NULL;
+        if (hasNullBucket) {
+            if (!aggregateNullTimestampRows()) {
+                // Every row is in the NULL bucket, so there is no grid to start. A rewind or the next execution
+                // clears the flag, as for any other source.
+                baseRecord = null;
+                setNullBucketLabel();
+                areTimestampsInitialized = true;
+                return true;
+            }
+            timestamp = baseRecord.getTimestamp(timestampIndex);
+        }
 
         if (rules != null) {
             tzOffset = rules.getOffset(timestamp);
@@ -228,6 +391,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         }
 
         long from = Long.MIN_VALUE;
+        long fromGridStart = 0;
         if (tzOffset == 0 && fixedOffset == Long.MIN_VALUE) {
             // this is the default path, we align time intervals to the first observation
             timestampSampler.setStart(timestamp);
@@ -235,7 +399,16 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
             // FROM-TO may apply to align to calendar queries, fixing the lower bound.
             if (sampleFromFunc != timestampDriver.getTimestampConstantNull()) {
                 from = sampleFromFunc.getTimestamp(null);
-                timestampSampler.setStart(from != Long.MIN_VALUE ? timestampDriver.from(from, sampleFromFuncType) : 0);
+                if (from != Long.MIN_VALUE) {
+                    fromGridStart = timestampDriver.from(from, sampleFromFuncType);
+                    // With FROM converted to UTC, the GROUP BY path anchors its UTC grid at FROM plus WITH OFFSET,
+                    // and so does this cursor when it samples on that grid. of() reads a NULL WITH OFFSET as zero
+                    // then.
+                    if (isUtcGrid) {
+                        fromGridStart += fixedOffset;
+                    }
+                }
+                timestampSampler.setStart(fromGridStart);
             } else {
                 timestampSampler.setOffset(fixedOffset != Long.MIN_VALUE ? fixedOffset : 0);
             }
@@ -244,15 +417,50 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         topTzOffset = tzOffset;
         topNextDst = nextDstUtc;
         if (from != Long.MIN_VALUE) {
-            // set the top epoch to be the lower limit
-            topLocalEpoch = timestampSampler.round(timestampDriver.from(from, sampleFromFuncType) + tzOffset);
+            // Set the top epoch to the first bucket: the bucket that holds FROM or, when a positive WITH
+            // OFFSET starts a UTC grid after FROM, the bucket at that start, see below. For a stride in
+            // days, weeks, months or years, code generation leaves FROM in local time, and the grid starts at
+            // FROM in local time, so FROM takes no time zone offset: read as a UTC instant, a local FROM in a
+            // zone behind UTC falls into the bucket before FROM, and the month and year samplers, which floor,
+            // emit that extra bucket (GitHub issue #7763). For a stride in hours, minutes, seconds or a smaller
+            // unit, such as 24h, code generation converts FROM to UTC when it reads FROM as non-NULL, and of()
+            // decides whether the cursor samples in UTC. FROM takes no offset on the UTC grid. Any other FROM
+            // of such a stride takes the time zone offset of the first row: a converted FROM that the cursor
+            // samples in the time zone, see of(), and a FROM that code generation read as NULL, such as a CASE
+            // WHEN now() > ... END without ELSE. GitHub issue #7743 tracks the time coordinate of such a FROM.
+            final long fromTimestamp = timestampDriver.from(from, sampleFromFuncType);
+            final boolean isFromOffset = isFromUtc ? !isUtcGrid : isSubDayUnit();
+            topLocalEpoch = timestampSampler.round(isFromOffset ? fromTimestamp + tzOffset : fromTimestamp);
             // set current epoch to be the floor of the starting timestamp
             localEpoch = timestampSampler.round(timestamp + tzOffset);
+            if (isUtcGrid) {
+                // timestamp_floor_utc() on the GROUP BY path puts a timestamp before the anchor of the grid into
+                // the bucket at the anchor, and the fill of that path starts no earlier than the anchor. A positive
+                // WITH OFFSET moves the anchor after FROM: the first bucket then starts at the anchor, and takes
+                // the rows between FROM and the anchor. round() can return a grid point before the anchor for them.
+                topLocalEpoch = Math.max(fromGridStart, topLocalEpoch);
+                localEpoch = Math.max(fromGridStart, localEpoch);
+            }
         } else {
             topLocalEpoch = localEpoch = timestampSampler.round(timestamp + tzOffset);
         }
+        localEpochShift = 0;
         sampleLocalEpoch = nextSampleLocalEpoch = topLocalEpoch;
+        if (hasNullBucket) {
+            // The NULL bucket ends as nextSamplePeriod() ends a bucket of the grid. The label goes in last, after
+            // the offset of the first row with a timestamp replaced the offset that of() left.
+            GroupByUtils.toTop(groupByFunctions);
+            setNullBucketLabel();
+        }
         areTimestampsInitialized = true;
+        return hasNullBucket;
+    }
+
+    // Returns true when the stride is in hours, minutes, seconds or a smaller unit, also when it spans a day or
+    // more, such as 24h, see initTimestamps(). Only the not-keyed FILL(PREV), FILL(NULL) and FILL(value) cursors
+    // read FROM to start their fill, so only they report the unit.
+    protected boolean isSubDayUnit() {
+        return false;
     }
 
     protected void nextSamplePeriod(long timestamp) {
@@ -263,10 +471,23 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         // localEpoch as-is, we'd back-convert with the post-transition offset even though the
         // bucket start belongs to the pre-transition offset. Shift localEpoch by the delta
         // between the current offset and the one valid at the bucket boundary so the emitted
-        // UTC timestamp lands on the correct side of the transition.
+        // UTC timestamp lands on the correct side of the transition. The bucket end derives from the
+        // unshifted start, see getGridLocalEpoch().
+        localEpochShift = 0;
         if (rules != null && localEpoch - tzOffset < prevDst) {
             final long boundaryTzOffset = rules.getOffset(localEpoch - tzOffset);
-            localEpoch += (tzOffset - boundaryTzOffset);
+            localEpochShift = tzOffset - boundaryTzOffset;
+            // A spring-forward can skip the local start of the bucket. The shift then labels the bucket with
+            // that start read in the offset before the change, which falls inside the bucket only when the
+            // stride is longer than the change. Otherwise, the label lands at or after the end of the bucket,
+            // and so at or after the label of the next bucket, and the bucket takes the first instant that it
+            // covers, the change itself. The not-keyed FILL(NULL) and FILL(value) cursor also calls this method
+            // with the TO bound once the rows run out (baseRecord is null), to find where its end fill stops. That
+            // call labels no bucket and keeps the shifted bound.
+            if (baseRecord != null && localEpoch + localEpochShift >= timestampSampler.nextTimestamp(localEpoch)) {
+                localEpochShift = prevDst + tzOffset - localEpoch;
+            }
+            localEpoch += localEpochShift;
         }
         GroupByUtils.toTop(groupByFunctions);
     }
@@ -274,7 +495,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
     protected boolean notKeyedLoop(MapValue mapValue) {
         if (!isNotKeyedLoopInitialized) {
             sampleLocalEpoch = localEpoch;
-            nextSampleLocalEpoch = localEpoch;
+            nextSampleLocalEpoch = getGridLocalEpoch();
             // looks like we need to populate key map
             // at the start of this loop 'lastTimestamp' will be set to timestamp
             // of first record in base cursor
@@ -282,7 +503,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
             isNotKeyedLoopInitialized = true;
         }
 
-        long next = timestampSampler.nextTimestamp(localEpoch);
+        long next = timestampSampler.nextTimestamp(getGridLocalEpoch());
         long timestamp;
         while (baseCursor.hasNext()) {
             timestamp = getBaseRecordTimestamp();
@@ -309,8 +530,27 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         return true;
     }
 
+    // The not-keyed form of aggregateNullTimestampRows(): aggregates the rows into mapValue, as notKeyedLoop()
+    // aggregates the rows of a bucket of the grid.
+    protected boolean notKeyedNullLoop(MapValue mapValue) {
+        groupByFunctionsUpdater.updateNew(mapValue, baseRecord, rowId++);
+        while (baseCursor.hasNext()) {
+            if (baseRecord.getTimestamp(timestampIndex) != Numbers.LONG_NULL) {
+                return true;
+            }
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+            groupByFunctionsUpdater.updateExisting(mapValue, baseRecord, rowId++);
+        }
+        return false;
+    }
+
+    // The factory calls it once, after it constructs the cursor, see of()
+    void setRuntimeBoundUtc(boolean isRuntimeBoundUtc) {
+        this.isRuntimeBoundUtc = isRuntimeBoundUtc;
+    }
+
     protected void updateValueWhenClockMovesBack(MapValue value) {
-        groupByFunctionsUpdater.updateExisting(value, baseRecord, rowId);
+        groupByFunctionsUpdater.updateExisting(value, baseRecord, rowId++);
     }
 
     protected class TimestampFunc extends TimestampFunction implements Function {

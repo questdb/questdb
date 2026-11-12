@@ -232,9 +232,11 @@ public class CachedWindowMemoryCapTest extends AbstractCairoTest {
         // whose limit message names the owning feature. RankFunctionFactory threads that name in;
         // the message used to be hard-coded to "ASOF join", so RANK reported an ASOF join error.
         //
-        // Reaching the sink's budget needs a key wider than its 8-byte initial capacity. Following
-        // order-by advice on an indexed SYMBOL admits a two-column (SYMBOL, TIMESTAMP) window
-        // ORDER BY, which serializes to 12 bytes and therefore enters resize().
+        // Reaching the sink's budget needs a key wider than its 8-byte initial capacity. A single
+        // indexed-SYMBOL key scan over an interval claims "ORDER BY sym, ts ASC" advice - the key
+        // is constant across the result and a forward index walk inside ascending frames is
+        // globally ascending - so the window ORDER BY stays two-column (SYMBOL, TIMESTAMP), which
+        // serializes to 12 bytes and therefore enters resize().
         setUpStreamingSinkCap();
 
         assertMemoryLeak(() -> {
@@ -353,7 +355,7 @@ public class CachedWindowMemoryCapTest extends AbstractCairoTest {
     private void assertSinkCapMessage(String function, String owner) throws Exception {
         try {
             printSql("SELECT sym, ts, " + function + "() OVER (ORDER BY sym, ts) FROM tab" +
-                    " WHERE ts IN '2024-01-01' ORDER BY sym, ts");
+                    " WHERE sym = 'a' AND ts IN '2024-01-01' ORDER BY sym, ts");
             Assert.fail("expected LimitOverflowException");
         } catch (LimitOverflowException e) {
             TestUtils.assertContains(e.getFlyweightMessage(),

@@ -28,6 +28,8 @@ import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
 import io.questdb.ServerMain;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
@@ -47,6 +49,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.WriterInvariantChecker;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.BindVariableService;
@@ -1071,6 +1074,66 @@ public final class TestUtils {
         Assert.fail(formatted + "Expected sequence <" + sequence + "> to NOT contain term <" + term + "> but it did.");
     }
 
+    /**
+     * Cross-checks every WAL table's reported physical row count against its designated timestamp
+     * column's actual on-disk file length. {@link TableReader#getPartitionPhysicalRowCount} is pure
+     * {@code _geometry}/{@code _txn} bookkeeping - never itself read back from the files a commit wrote -
+     * so a bug that mis-publishes it (an undergrown commit, a stale carry-forward after a rewrite) leaves
+     * the file the writer actually produced as the only independent witness. The timestamp column is
+     * fixed-width and always present, so its file length in rows is an exact floor: a shorter file than
+     * the row count claims means the claim is wrong. Skips non-WAL and non-partitioned tables, and any
+     * partition already converted to parquet - this bookkeeping only exists on the native, composite
+     * write path, and a parquet partition's native column files are gone by design.
+     */
+    public static void assertPhysicalRowCountsMatchFiles(CairoEngine engine) {
+        final ObjHashSet<TableToken> tableTokens = new ObjHashSet<>();
+        engine.getTableTokens(tableTokens, false);
+        final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        for (int i = 0, n = tableTokens.size(); i < n; i++) {
+            final TableToken tableToken = tableTokens.get(i);
+            if (!tableToken.isWal()) {
+                continue;
+            }
+            try (TableReader reader = engine.getReader(tableToken)) {
+                if (!PartitionBy.isPartitioned(reader.getPartitionedBy())) {
+                    continue;
+                }
+                final TableReaderMetadata metadata = reader.getMetadata();
+                final int timestampIndex = metadata.getTimestampIndex();
+                if (timestampIndex < 0) {
+                    continue;
+                }
+                final CharSequence columnName = metadata.getColumnName(timestampIndex);
+                final int writerIndex = metadata.getWriterIndex(timestampIndex);
+                for (int p = 0, partitionCount = reader.getPartitionCount(); p < partitionCount; p++) {
+                    if (reader.getTxFile().isPartitionParquet(p)) {
+                        continue;
+                    }
+                    final long physicalRowCount = reader.getPartitionPhysicalRowCount(p);
+                    if (physicalRowCount <= 0) {
+                        continue;
+                    }
+                    final long partitionTimestamp = reader.getTxFile().getPartitionTimestampByIndex(p);
+                    final long partitionNameTxn = reader.getTxFile().getPartitionNameTxn(p);
+                    final long columnNameTxn = reader.getColumnVersionReader().getColumnNameTxn(partitionTimestamp, writerIndex);
+                    final Path path = Path.getThreadLocal(engine.getConfiguration().getDbRoot()).concat(tableToken);
+                    TableUtils.setPathForNativePartition(
+                            path, metadata.getTimestampType(), reader.getPartitionedBy(), partitionTimestamp, partitionNameTxn
+                    );
+                    final long fileSize = ff.length(TableUtils.dFile(path, columnName, columnNameTxn));
+                    final long minBytes = physicalRowCount * Long.BYTES;
+                    Assert.assertTrue(
+                            "physical row count exceeds ts column file size [table=" + tableToken.getTableName() +
+                                    ", partitionIndex=" + p + ", partitionTimestamp=" + partitionTimestamp +
+                                    ", physicalRowCount=" + physicalRowCount + ", minBytes=" + minBytes +
+                                    ", fileSize=" + fileSize + ']',
+                            fileSize >= minBytes
+                    );
+                }
+            }
+        }
+    }
+
     public static void assertReader(CharSequence expected, TableReader reader, MutableUtf16Sink sink) {
         try (TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)) {
             assertCursor(expected, cursor, reader.getMetadata(), true, sink);
@@ -1392,6 +1455,26 @@ public final class TestUtils {
         }
     }
 
+    /**
+     * Copies the section of {@code fileName} ({@code _txn}, {@code _cv} or {@code _meta}) saved in a table's
+     * save point generation into the file {@code dst}, which the file readers can load.
+     */
+    public static void copySavePointSection(FilesFacade ff, CharSequence dbRoot, TableToken tt, int generation, String fileName, LPSZ dst) {
+        try (Path p = new Path()) {
+            final long[] section = savePointSection(ff, p, dbRoot, tt, generation, fileName);
+            final long srcFd = ff.openRO(p.$());
+            final long dstFd = ff.openRW(dst, CairoConfiguration.O_NONE);
+            try {
+                Assert.assertTrue("must open " + p + " and " + dst, srcFd > -1 && dstFd > -1);
+                Assert.assertTrue(ff.truncate(dstFd, 0));
+                Assert.assertEquals(section[1], ff.copyData(srcFd, dstFd, section[0], 0, section[1]));
+            } finally {
+                ff.close(dstFd);
+                ff.close(srcFd);
+            }
+        }
+    }
+
     public static void createPopulateTable(
             SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, TableModel tableModel,
             int totalRows, String startDate, int partitionCount
@@ -1606,6 +1689,23 @@ public final class TestUtils {
         path.of(engine.getConfiguration().getDbRoot()).concat(token);
         TableUtils.createTable(engine.getConfiguration(), memory, engine.getTelemetry(), path, structure, ColumnType.VERSION, tableId, token.getDirName());
         engine.registerTableToken(token);
+        // Publish the generation-zero epoch anchor, as CairoEngine's create path does before it registers
+        // the sequencer. Otherwise only TableWriter writes the anchor, so a table built here and never written
+        // to has none, and RecoveryCoordinator refuses to fall back to live state for an adaptive table without
+        // a save point: the whole engine fails on the next startup, not just that table.
+        if (structure.isWalEnabled() && !structure.isView()) {
+            final CairoConfiguration configuration = engine.getConfiguration();
+            if (configuration.getCommitMode() == CommitMode.ADAPTIVE) {
+                final int timestampIndex = structure.getTimestampIndex();
+                final int timestampType = timestampIndex < 0 ? ColumnType.TIMESTAMP : structure.getColumnType(timestampIndex);
+                DurableEpochManifest.publishInitial(
+                        configuration,
+                        token,
+                        timestampType,
+                        structure.getPartitionBy()
+                );
+            }
+        }
         if (structure.isWalEnabled()) {
             engine.getTableSequencerAPI().registerTable(tableId, structure, token);
         }
@@ -1656,9 +1756,12 @@ public final class TestUtils {
     }
 
     public static void drainWalQueue(CairoEngine engine) {
-        try (final ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 0)) {
+        try (
+                final ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 0);
+                final CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine)
+        ) {
             walApplyJob.drain(0);
-            new CheckWalTransactionsJob(engine).run();
+            checkWalTransactionsJob.run();
             // run once again as there might be notifications to handle now
             walApplyJob.drain(0);
         }
@@ -2462,6 +2565,28 @@ public final class TestUtils {
         final long timeoutMillis = TimeUnit.NANOSECONDS.toMillis(timeoutNanos);
         final int remainderNanos = (int) (timeoutNanos - TimeUnit.MILLISECONDS.toNanos(timeoutMillis));
         thread.join(timeoutMillis, remainderNanos);
+    }
+
+    /**
+     * Points {@code p} at a table's save point file for {@code generation} and returns the offset and length of
+     * the section that holds {@code fileName} ({@code _txn}, {@code _cv} or {@code _meta}): the sections follow
+     * the header in that order, and the header records their sizes at 48, 64 and 80.
+     */
+    public static long[] savePointSection(FilesFacade ff, Path p, CharSequence dbRoot, TableToken tt, int generation, String fileName) {
+        p.of(dbRoot).concat(tt).concat(DurableEpochManifest.FILE_NAME).put('.').put(generation);
+        final long fd = ff.openRO(p.$());
+        Assert.assertTrue("must open " + p, fd > -1);
+        final long txnSize = ff.readNonNegativeLong(fd, 48);
+        final long cvSize = ff.readNonNegativeLong(fd, 64);
+        final long metaSize = ff.readNonNegativeLong(fd, 80);
+        ff.close(fd);
+        final long header = DurableEpochManifest.FILE_SIZE;
+        return switch (fileName) {
+            case TableUtils.TXN_FILE_NAME -> new long[]{header, txnSize};
+            case TableUtils.COLUMN_VERSION_FILE_NAME -> new long[]{header + txnSize, cvSize};
+            case TableUtils.META_FILE_NAME -> new long[]{header + txnSize + cvSize, metaSize};
+            default -> throw new IllegalArgumentException(fileName);
+        };
     }
 
     public static void setupWorkerPool(WorkerPool workerPool, CairoEngine cairoEngine) throws SqlException {
@@ -3282,8 +3407,10 @@ public final class TestUtils {
         private final long mem;
         private final long[] memoryUsageByTag = new long[MemoryTag.SIZE];
         private final int sockAddrCount;
+        private final long writerInvariantViolationCount;
 
         public LeakCheck() {
+            writerInvariantViolationCount = WriterInvariantChecker.getViolationCount();
             Files.getMmapCache().asyncMunmap();
             Path.clearThreadLocals();
             Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
@@ -3311,6 +3438,11 @@ public final class TestUtils {
             Path.clearThreadLocals();
             Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
             CLOSEABLE.forEach(Misc::free);
+            final long writerInvariantViolations = WriterInvariantChecker.getViolationCount() - writerInvariantViolationCount;
+            if (writerInvariantViolations > 0) {
+                Assert.fail("writer invariant violated " + writerInvariantViolations + " time(s), last: "
+                        + WriterInvariantChecker.getLastViolation());
+            }
             if (cachedFileCount != Files.getOpenCachedFileCount() || fileCount != Files.getOpenFileCount()) {
                 Assert.fail(
                         "expected: cached file descriptors: " + cachedFileCount +

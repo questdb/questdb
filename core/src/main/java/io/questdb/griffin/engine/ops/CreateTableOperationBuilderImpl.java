@@ -56,7 +56,10 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     private final ObjList<CharSequence> columnNames = new ObjList<>();
     private long batchO3MaxLag = -1;
     private long batchSize = -1;
+    private int dedupMode = TableUtils.DEDUP_MODE_UPSERT;
     private int defaultSymbolCapacity;
+    private long expiryCleanupIntervalMicros;
+    private String expiryPredicate;
     private boolean ignoreIfExists = false;
     private ExpressionNode likeTableNameExpr;
     private int maxUncommittedRows;
@@ -95,7 +98,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     ) throws SqlException {
         boolean autoIncludeTs = compiler.getEngine().getConfiguration().isPostingIndexAutoIncludeTimestamp();
         if (selectText != null) {
-            return new CreateTableOperationImpl(
+            CreateTableOperationImpl op = new CreateTableOperationImpl(
                     Chars.toString(sqlText),
                     Chars.toString(tableNameExpr.token),
                     tableNameExpr.position,
@@ -110,7 +113,10 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                     volumePosition,
                     ttlHoursOrMonths,
                     ttlPosition,
+                    expiryPredicate,
+                    expiryCleanupIntervalMicros,
                     tableFormat,
+                    dedupMode,
                     walEnabled,
                     defaultSymbolCapacity,
                     maxUncommittedRows,
@@ -121,6 +127,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                     tableKind,
                     autoIncludeTs
             );
+            return op;
         }
 
         if (likeTableNameExpr != null) {
@@ -130,7 +137,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
             if (likeTableNameToken == null) {
                 throw SqlException.tableDoesNotExist(likeTableNameExpr.position, likeTableNameExpr.token);
             }
-            return new CreateTableOperationImpl(
+            final CreateTableOperationImpl op = new CreateTableOperationImpl(
                     Chars.toString(sqlText),
                     Chars.toString(tableNameExpr.token),
                     tableNameExpr.position,
@@ -142,9 +149,10 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                     likeTableNameExpr.position,
                     ignoreIfExists
             );
+            return op;
         }
 
-        return new CreateTableOperationImpl(
+        CreateTableOperationImpl op = new CreateTableOperationImpl(
                 Chars.toString(sqlText),
                 Chars.toString(tableNameExpr.token),
                 tableNameExpr.position,
@@ -160,10 +168,14 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                 maxUncommittedRows,
                 ttlHoursOrMonths,
                 ttlPosition,
+                expiryPredicate,
+                expiryCleanupIntervalMicros,
                 tableFormat,
+                dedupMode,
                 walEnabled,
                 autoIncludeTs
         );
+        return op;
     }
 
     @Override
@@ -173,6 +185,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         columnModels.clear();
         batchO3MaxLag = -1;
         batchSize = -1;
+        dedupMode = TableUtils.DEDUP_MODE_UPSERT;
         tableFormat = TableUtils.TABLE_FORMAT_NATIVE;
         tableFormatPosition = 0;
         defaultSymbolCapacity = 0;
@@ -191,6 +204,8 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         volumePosition = 0;
         ttlHoursOrMonths = 0;
         ttlPosition = 0;
+        expiryPredicate = null;
+        expiryCleanupIntervalMicros = 0;
         walEnabled = false;
         tableKind = TableUtils.TABLE_KIND_REGULAR_TABLE;
     }
@@ -282,6 +297,10 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         this.batchSize = batchSize;
     }
 
+    public void setDedupMode(int dedupMode) {
+        this.dedupMode = dedupMode;
+    }
+
     public void setDefaultSymbolCapacity(int defaultSymbolCapacity) {
         this.defaultSymbolCapacity = defaultSymbolCapacity;
     }
@@ -338,6 +357,14 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
 
     public void setTtlPosition(int ttlPosition) {
         this.ttlPosition = ttlPosition;
+    }
+
+    public void setExpiryPredicate(String expiryPredicate) {
+        this.expiryPredicate = expiryPredicate;
+    }
+
+    public void setExpiryCleanupIntervalMicros(long expiryCleanupIntervalMicros) {
+        this.expiryCleanupIntervalMicros = expiryCleanupIntervalMicros;
     }
 
     public void setTtlToSinkOverride(Sinkable ttlToSinkOverride) {
@@ -499,8 +526,8 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         if (!hasCastGroup(from) || !hasCastGroup(to)) {
             // The group table stops at VARCHAR, so the decimal, array and NULL tags have no entry,
             // and no single group could express a decimal's precision and scale or an array's
-            // dimensionality. INSERT ... SELECT gates the very same record copier on
-            // isConvertibleFrom, so deferring to it admits exactly the pairs the copier implements.
+            // dimensionality. Defer to isConvertibleFrom, the rule INSERT ... SELECT applies before it
+            // runs the same record copier.
             return ColumnType.isConvertibleFrom(from, to);
         }
         return castGroups.getQuick(ColumnType.tagOf(from)) == castGroups.getQuick(ColumnType.tagOf(to));

@@ -31,6 +31,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
@@ -38,6 +39,8 @@ import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
@@ -49,6 +52,7 @@ import org.junit.Before;
 import org.junit.BeforeClass;
 
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.ObjLongConsumer;
 
 import static io.questdb.test.cairo.fuzz.FuzzRunner.MAX_WAL_APPLY_TIME_PER_TABLE_CEIL;
 
@@ -80,6 +84,89 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         // 50..10000 rows: small enough that fuzz partitions routinely span
         // multiple row groups, exercising the per-row-group write/read paths.
         return 50 + rnd.nextInt(9951);
+    }
+
+    /**
+     * Small enough that fuzz parquet partitions span several row groups; with one row group every
+     * O3 merge rewrites the file and the in-place update path is never fuzzed.
+     */
+    public static int getRndSmallParquetRowGroupSize(Rnd rnd) {
+        return 4 + rnd.nextInt(29);
+    }
+
+    public static long getRndPartitionCompactionCheckInterval(Rnd rnd) {
+        // 70% of runs: near-zero, so PartitionCompactionScanJob's cool-off is bypassed and it
+        // sweeps on effectively every drain() call - the interesting, bug-finding regime that
+        // maximizes interaction between the job and concurrent O3/WAL writes.
+        // 30% of runs: a more realistic interval (1s..2min, up to the production default), so
+        // the job mostly stays quiet, covering the "normal" regime too.
+        return rnd.nextInt(10) < 7 ? rnd.nextInt(5) : 1_000 + rnd.nextInt(119_000);
+    }
+
+    public static long getRndPartitionCompactionIdleTimeout(Rnd rnd) {
+        // 70% of runs: near-zero (sub-millisecond), so a composite/Parquet partition becomes a
+        // compaction candidate almost immediately after its last write.
+        // 30% of runs: a realistic timeout (1..180s), so the job mostly leaves partitions alone.
+        return rnd.nextInt(10) < 7 ? rnd.nextLong(1_000) : Micros.SECOND_MICROS * (1 + rnd.nextInt(180));
+    }
+
+    public static int getRndPartitionCompactionHotCommits(Rnd rnd) {
+        // 0 to 3, well under the shipped default of 10. A fuzz run applies its whole workload in a few
+        // dozen commits, so at the default EVERY partition it writes stays hot for the rest of the run,
+        // and the table-pressure rule - the one rule whose pick the hot window filters - would never fire
+        // again, taking the REWRITE, MOVE-TAIL and MAKE-PLAIN coverage that rule drives with it. 0 turns
+        // the window off outright; 1 to 3 leave it narrow enough that a partition the workload has moved
+        // on from cools within a few commits, which is the regime this filter has to get right.
+        return rnd.nextInt(4);
+    }
+
+    /**
+     * The server.conf line of {@link #setRndSmallWalApplyBlock(Rnd, ObjLongConsumer)}, empty when it keeps the
+     * defaults.
+     */
+    public static String getRndSmallWalApplyBlockConfig(Rnd rnd) {
+        final StringSink sink = new StringSink();
+        setRndSmallWalApplyBlock(rnd, (key, value) -> sink.put(key.getPropertyPath()).put('=').put(value));
+        return sink.toString();
+    }
+
+    public static long getRndSmallWalApplyBlockSize(Rnd rnd) {
+        // Down to a single row per block
+        return 1 + rnd.nextLong(rnd.nextBoolean() ? 64 * 1024 : 10 * Numbers.SIZE_1MB);
+    }
+
+    public static long getRndWalApplyBlockMaxRows(Rnd rnd) {
+        // cairo.wal.apply.block.max.rows: the hard row cap of an adaptive WAL apply block. Under an RSS limit the
+        // block's row limit doubles after every block it cuts, so without a small cap a long fuzz backlog grows its
+        // blocks past the drawn block size and back to one big block.
+        return switch (rnd.nextInt(3)) {
+            case 0 -> 1 + rnd.nextInt(100);
+            case 1 -> 1 + rnd.nextInt(10_000);
+            default -> 1 + rnd.nextInt(1_000_000);
+        };
+    }
+
+    public static long getRndWalApplyBlockSize(Rnd rnd) {
+        // cairo.wal.apply.block.size: 0 sizes WAL apply blocks from the lag settings, a positive size switches
+        // to the adaptive block. The 75 MiB default would apply a whole fuzz backlog as one block, so draw sizes
+        // small enough to split it - down to a few rows - and cover the block boundaries in both modes.
+        return rnd.nextInt(3) == 0 ? 0 : getRndSmallWalApplyBlockSize(rnd);
+    }
+
+    /**
+     * Half the time shrinks WAL apply blocks far below the 75 MiB default, by a small block size or a small row cap
+     * picked at random, so a fuzz backlog applies across many block boundaries. Hands the property it overrides to
+     * the setter; the other half of the time it sets nothing and the defaults apply.
+     */
+    public static void setRndSmallWalApplyBlock(Rnd rnd, ObjLongConsumer<PropertyKey> setter) {
+        if (rnd.nextBoolean()) {
+            return;
+        }
+        if (rnd.nextBoolean()) {
+            setter.accept(PropertyKey.CAIRO_WAL_APPLY_BLOCK_SIZE, getRndSmallWalApplyBlockSize(rnd));
+        } else {
+            setter.accept(PropertyKey.CAIRO_WAL_APPLY_BLOCK_MAX_ROWS, getRndWalApplyBlockMaxRows(rnd));
+        }
     }
 
     @BeforeClass
@@ -115,7 +202,6 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, TestUtils.randomSymbolIndexTypeName(setUpRnd));
         super.setUp();
         fuzzer.withDb(engine, sqlExecutionContext);
-        fuzzer.clearSeeds();
     }
 
     @After
@@ -214,10 +300,15 @@ public class AbstractFuzzTest extends AbstractCairoTest {
                 .replace('=', '_');
     }
 
+    protected void haltWorkerPool() {
+        sharedWorkerPool.halt();
+        fuzzer.setHasPoolColumnPurgeJob(false);
+    }
+
     protected void runFuzz(Rnd rnd) throws Exception {
         assertMemoryLeak(fuzzer.getFileFacade(), () -> {
             try {
-                WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
+                setupWriterJobs();
                 WorkerPoolUtils.setupAsyncMunmapJob(sharedWorkerPool, engine);
                 sharedWorkerPool.start(LOG);
 
@@ -226,7 +317,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
                 setZeroWalPurgeInterval();
                 fuzzer.runFuzz(getTestName(), rnd);
             } finally {
-                sharedWorkerPool.halt();
+                haltWorkerPool();
             }
         });
     }
@@ -234,14 +325,14 @@ public class AbstractFuzzTest extends AbstractCairoTest {
     protected void runFuzz(Rnd rnd, String tableNameBase, int tableCount) throws Exception {
         assertMemoryLeak(fuzzer.getFileFacade(), () -> {
             try {
-                WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
+                setupWriterJobs();
                 WorkerPoolUtils.setupAsyncMunmapJob(sharedWorkerPool, engine);
                 sharedWorkerPool.start(LOG);
 
                 setZeroWalPurgeInterval();
                 fuzzer.runFuzz(rnd, tableNameBase, tableCount, false, false);
             } finally {
-                sharedWorkerPool.halt();
+                haltWorkerPool();
             }
         });
     }
@@ -392,12 +483,16 @@ public class AbstractFuzzTest extends AbstractCairoTest {
             long splitPartitionThreshold,
             int o3PartitionSplitMaxCount,
             long walMaxLagSize,
-            int maxWalFdCache
+            int maxWalFdCache,
+            long walApplyBlockMaxRows
     ) {
         node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, maxApplyTimePerTable);
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, splitPartitionThreshold);
         node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, o3PartitionSplitMaxCount);
         node1.setProperty(PropertyKey.CAIRO_WAL_MAX_LAG_SIZE, walMaxLagSize);
+        // The lag size bounds WAL apply blocks only at block size 0; size the adaptive block the same
+        node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_BLOCK_SIZE, walMaxLagSize);
+        node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_BLOCK_MAX_ROWS, walApplyBlockMaxRows);
         node1.setProperty(PropertyKey.CAIRO_WAL_MAX_SEGMENT_FILE_DESCRIPTORS_CACHE, maxWalFdCache);
     }
 
@@ -410,7 +505,12 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_WAL_MAX_LAG_SIZE, getMaxWalSize(rnd));
         node1.setProperty(PropertyKey.CAIRO_WAL_MAX_SEGMENT_FILE_DESCRIPTORS_CACHE, getMaxWalFdCache(rnd));
         node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 1 + rnd.nextInt(200));
+        node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_BLOCK_SIZE, getRndWalApplyBlockSize(rnd));
+        node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_BLOCK_MAX_ROWS, getRndWalApplyBlockMaxRows(rnd));
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, getRndParquetRowGroupSize(rnd));
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, getRndPartitionCompactionCheckInterval(rnd));
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, getRndPartitionCompactionIdleTimeout(rnd));
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_COMMITS, getRndPartitionCompactionHotCommits(rnd));
 
         int txnCount = Math.max(10, fuzzer.getTransactionCount());
         long walChunk = Math.max(0, rnd.nextInt((int) (3.5 * txnCount)) - txnCount);
@@ -430,6 +530,11 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, 1L << (minPage + rnd.nextInt(22 - minPage))); // MAX page size 4Mb
         long dataAppendPageSize = configuration.getDataAppendPageSize();
         LOG.info().$("dataAppendPageSize=").$(dataAppendPageSize).$();
+    }
+
+    protected void setupWriterJobs() throws SqlException {
+        WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
+        fuzzer.setHasPoolColumnPurgeJob(!engine.getConfiguration().disableColumnPurgeJob());
     }
 
     // Joins every job the caller started, including a partially started batch, so a failure mid-run

@@ -29,12 +29,15 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -51,6 +54,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.QueryAssertion;
+import io.questdb.test.griffin.CustomisableRunnable;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -62,8 +66,10 @@ import org.junit.Test;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
+import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
 import static org.junit.Assert.fail;
 
 // This is not a fuzz test in traditional sense, but it's multithreaded, and we want to run it
@@ -72,11 +78,14 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     private static final int MIN_PAGE_FRAME_MAX_ROWS = 100;
     private static final int PAGE_FRAME_COUNT = 4; // also used to set queue size, so must be a power of 2
     private static final int ROW_COUNT = 10 * PAGE_FRAME_COUNT * MIN_PAGE_FRAME_MAX_ROWS;
+    private final boolean compositePartition;
     private final boolean convertToParquet;
     private final boolean enableJitCompiler;
     private final boolean enableParallelGroupBy;
     private final int parallelGroupByBatchSize;
     private final Rnd rnd;
+    // Distinguishes stash tables across repeated makeComposite() calls within one test.
+    private final AtomicInteger stashCounter = new AtomicInteger();
 
     public ParallelGroupByFuzzTest() {
         this.rnd = TestUtils.generateRandom(LOG);
@@ -85,6 +94,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         this.enableParallelGroupBy = rnd.nextInt(5) != 0; // 80%
         this.enableJitCompiler = rnd.nextInt(5) != 0;     // 80%
         this.convertToParquet = rnd.nextInt(3) != 0;      // 66%
+        this.compositePartition = rnd.nextBoolean();      // 50%
         // Pick a batch size from buckets that span the boundaries of the batched non-sharded
         // reducer relative to the page frame size (~MIN_PAGE_FRAME_MAX_ROWS rows):
         // 1 row (degenerate), well below a frame, around a frame boundary, and larger than
@@ -122,13 +132,23 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1 + rnd.nextInt(16));
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, String.valueOf(enableParallelGroupBy));
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_BATCH_SIZE, parallelGroupByBatchSize);
+        // makeComposite() needs merge-append ON, but composite partitions ship OFF, so pinning ON
+        // every run would never exercise the shipped default here. Tie the flag to the same per-run
+        // compositePartition coin instead: when it draws true the composite path runs ON as before;
+        // when it draws false makeComposite() is already a no-op and the suite exercises the OFF
+        // default write path. The coin comes from the seed logged in the constructor, so it replays.
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, String.valueOf(compositePartition));
+        LOG.info().$("merge-append coin [mergeAppendEnabled=").$(compositePartition).I$();
         super.setUp();
     }
 
     @Test
     public void testGroupByOverJoin() throws Exception {
-        // Parallel GROUP BY shouldn't kick in on this query, yet we want
-        // to validate the result correctness.
+        // The aggregation reads a join, so the single-table parallel GROUP BY
+        // (Async Group By) can't run this query. The planner either fuses the
+        // hash join into a parallel aggregation (Async Hash Join Group By) or
+        // aggregates the join's output on a single thread. We want to validate
+        // the result correctness whichever plan runs.
         Assume.assumeTrue(enableParallelGroupBy);
         assertMemoryLeak(() -> {
             execute(
@@ -137,11 +157,18 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                               created timestamp,
                               event short,
                               origin short
-                            ) TIMESTAMP(created) PARTITION BY DAY;"""
+                            ) TIMESTAMP(created) PARTITION BY DAY WAL;"""
             );
             execute("INSERT INTO t VALUES ('2023-09-21T10:00:00.000000Z', 1, 1);");
             execute("INSERT INTO t VALUES ('2023-09-22T11:00:00.000000Z', 1, 1);");
+            drainWalQueue();
 
+            if (compositePartition) {
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                    makeComposite(engine, compiler, sqlExecutionContext, "t", "created",
+                            "2023-09-21T00:00:00.000000Z", "2023-09-22T00:00:00.000000Z");
+                }
+            }
             if (convertToParquet) {
                 execute("alter table t convert partition to parquet where created >= 0");
             }
@@ -172,14 +199,21 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                               created timestamp,
                               event symbol,
                               origin symbol
-                            ) TIMESTAMP(created) PARTITION BY DAY;"""
+                            ) TIMESTAMP(created) PARTITION BY DAY WAL;"""
             );
             execute("INSERT INTO t VALUES ('2023-09-21T10:00:00.000000Z', 'a', 'c');");
             execute("INSERT INTO t VALUES ('2023-09-21T10:00:01.000000Z', 'a', 'c');");
             execute("INSERT INTO t VALUES ('2023-09-22T10:00:02.000000Z', 'a', 'd');");
             execute("INSERT INTO t VALUES ('2023-09-22T10:00:00.000000Z', 'b', 'c');");
             execute("INSERT INTO t VALUES ('2023-09-23T10:00:01.000000Z', 'b', 'c');");
+            drainWalQueue();
 
+            if (compositePartition) {
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                    makeComposite(engine, compiler, sqlExecutionContext, "t", "created",
+                            "2023-09-21T00:00:00.000000Z", "2023-09-22T00:00:00.000000Z");
+                }
+            }
             if (convertToParquet) {
                 execute("alter table t convert partition to parquet where created >= 0");
             }
@@ -211,7 +245,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                               created timestamp,
                               event short,
                               origin short
-                            ) TIMESTAMP(created) PARTITION BY DAY;"""
+                            ) TIMESTAMP(created) PARTITION BY DAY WAL;"""
             );
             execute("INSERT INTO t1 VALUES ('2023-09-21T10:00:00.000000Z', 1, 1);");
             execute("INSERT INTO t1 VALUES ('2023-09-22T10:00:01.000000Z', 2, 2);");
@@ -222,11 +256,20 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                               created timestamp,
                               event short,
                               origin short
-                            ) TIMESTAMP(created) PARTITION BY DAY;"""
+                            ) TIMESTAMP(created) PARTITION BY DAY WAL;"""
             );
             execute("INSERT INTO t2 VALUES ('2023-09-21T10:00:02.000000Z', 3, 1);");
             execute("INSERT INTO t2 VALUES ('2023-09-22T10:00:00.000000Z', 4, 2);");
+            drainWalQueue();
 
+            if (compositePartition) {
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                    makeComposite(engine, compiler, sqlExecutionContext, "t1", "created",
+                            "2023-09-21T00:00:00.000000Z", "2023-09-22T00:00:00.000000Z");
+                    makeComposite(engine, compiler, sqlExecutionContext, "t2", "created",
+                            "2023-09-21T00:00:00.000000Z", "2023-09-22T00:00:00.000000Z");
+                }
+            }
             if (convertToParquet) {
                 execute("alter table t1 convert partition to parquet where created >= 0");
                 execute("alter table t2 convert partition to parquet where created >= 0");
@@ -446,7 +489,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         "    rnd_long(0, 1_000_000_000, 2) along," +
                         "    timestamp_sequence(0, 86400000000) ts" +
                         "  from long_sequence(1)" +
-                        ") timestamp(ts) partition by day",
+                        ") timestamp(ts) partition by day WAL",
                 "rnd_int(0, 1_000_000, 2), rnd_long(0, 1_000_000_000, 2)",
                 "SELECT round(avg(anint), 6) avg_int, round(avg(along), 6) avg_long FROM tab"
         );
@@ -562,7 +605,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final Rnd rnd = TestUtils.generateRandom(LOG);
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
-            TestUtils.execute(
+            executeWithPool(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
                         sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
@@ -579,7 +622,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                         "    rnd_long256() along256," +
                                         "    timestamp_sequence(0, 86400000000) ts" +  // 1 day per row
                                         "  from long_sequence(1)" +
-                                        ") timestamp(ts) partition by day",
+                                        ") timestamp(ts) partition by day WAL",
                                 sqlExecutionContext
                         );
 
@@ -630,7 +673,14 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                             }
                             timestamp += 86400000000L; // next day
                         }
+                        TestUtils.drainWalQueue(engine);
 
+                        if (compositePartition) {
+                            // Day 0 (the initial single-row CREATE TABLE AS SELECT) is always
+                            // non-active - 50 more days were appended after it above.
+                            makeComposite(engine, compiler, sqlExecutionContext, "tab", "ts",
+                                    "1970-01-01T00:00:00.000000Z", "1970-01-02T00:00:00.000000Z");
+                        }
                         if (convertToParquet) {
                             execute(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
                         }
@@ -673,9 +723,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
                         // Compare the results.
                         TestUtils.assertEquals(sink, sinkB);
-                    },
-                    configuration,
-                    LOG
+                    }
             );
         });
     }
@@ -1857,6 +1905,45 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelGroupByNullKey() throws Exception {
+        // A NULL key takes no bytes in the map key: the per-worker maps of an all-NULL key merge into
+        // one group, and a string key after a NULL one reads its own value once the maps are sharded.
+        // Expected values come from x = 1..ROW_COUNT: x % 1000 = 0 holds 1000, 2000, ... and
+        // x % 1000 = 1 holds 1, 1001, ...
+        Assume.assumeTrue(enableParallelGroupBy);
+        final long perClass = ROW_COUNT / 1000;
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
+            executeWithPool(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+                        execute(
+                                compiler,
+                                "CREATE TABLE tab AS (SELECT x, timestamp_sequence(0, 864_000_000) ts FROM long_sequence(" + ROW_COUNT + ")) TIMESTAMP(ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        if (convertToParquet) {
+                            execute(compiler, "ALTER TABLE tab CONVERT PARTITION TO PARQUET WHERE ts >= 0", sqlExecutionContext);
+                        }
+                        assertQueriesAndPlans(
+                                engine,
+                                sqlExecutionContext,
+                                "SELECT null AS k, count() AS c, sum(x) AS s FROM tab GROUP BY 1",
+                                "k\tc\ts\n" + "null\t" + ROW_COUNT + "\t" + ((long) ROW_COUNT * (ROW_COUNT + 1) / 2) + "\n",
+                                "Async Group By",
+                                "SELECT CASE WHEN x > 0 THEN NULL END AS k, concat('v', x % 1000) AS b, count() AS c, sum(x) AS s FROM tab GROUP BY 1, 2 ORDER BY 2 LIMIT 2",
+                                "k\tb\tc\ts\n"
+                                        + "null\tv0\t" + perClass + "\t" + (1000 * perClass * (perClass + 1) / 2) + "\n"
+                                        + "null\tv1\t" + perClass + "\t" + (perClass + 1000 * perClass * (perClass - 1) / 2) + "\n",
+                                "Async Group By"
+                        );
+                    }
+            );
+        });
+    }
+
+    @Test
     public void testParallelGroupByRegrIntercept() throws Exception {
         Assume.assumeTrue(enableParallelGroupBy);
         testParallelGroupByAllTypes("SELECT round(regr_intercept(adouble, along), 14) FROM tab", """
@@ -1933,25 +2020,31 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         final int oomRowCount = 100_000;
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
-            TestUtils.execute(
+            executeWithPool(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
                         // Create a table with high-cardinality VARCHAR keys to force map growth during reduce.
-                        engine.execute(
+                        execute(compiler,
                                 "CREATE TABLE tab (" +
                                         "  ts TIMESTAMP," +
                                         "  price DOUBLE," +
                                         "  quantity DOUBLE," +
                                         "  key VARCHAR" +
-                                        ") TIMESTAMP(ts) PARTITION BY DAY;",
+                                        ") TIMESTAMP(ts) PARTITION BY DAY WAL;",
                                 sqlExecutionContext
                         );
-                        engine.execute(
+                        execute(compiler,
                                 "insert into tab select (x * 864000000)::timestamp, x, x % 100, x::varchar from long_sequence(" + oomRowCount + ")",
                                 sqlExecutionContext
                         );
+                        TestUtils.drainWalQueue(engine);
+                        if (compositePartition) {
+                            // Day 1 (rows x=101..200) is always non-active - 998 more days follow it.
+                            makeComposite(engine, compiler, sqlExecutionContext, "tab", "ts",
+                                    "1970-01-02T00:00:00.000000Z", "1970-01-03T00:00:00.000000Z");
+                        }
                         if (convertToParquet) {
-                            engine.execute("alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
+                            execute(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
                         }
 
                         // Set RSS limit relative to current usage. The small headroom
@@ -1989,9 +2082,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 throw ex;
                             }
                         }
-                    },
-                    configuration,
-                    LOG
+                    }
             );
         });
     }
@@ -2102,7 +2193,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         "    rnd_double(2) adouble," +
                         "    timestamp_sequence(0, 86400000000) ts" +
                         "  from long_sequence(1)" +
-                        ") timestamp(ts) partition by day",
+                        ") timestamp(ts) partition by day WAL",
                 "rnd_double(2)",
                 "SELECT round(ksum(adouble), 6) ksum_d, round(nsum(adouble), 6) nsum_d FROM tab"
         );
@@ -2264,7 +2355,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         "    rnd_short(-30000, 30000) ashort," +
                         "    timestamp_sequence(0, 86400000000) ts" +
                         "  from long_sequence(1)" +
-                        ") timestamp(ts) partition by day",
+                        ") timestamp(ts) partition by day WAL",
                 "rnd_short(-30000, 30000)",
                 "SELECT min(ashort) min_short, max(ashort) max_short FROM tab"
         );
@@ -2675,26 +2766,34 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
         final ConcurrentHashMap<Integer, Throwable> errors = new ConcurrentHashMap<>();
         final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
-        TestUtils.execute(
+        executeWithPool(
                 pool,
                 (engine, compiler, sqlExecutionContext) -> {
-                    engine.execute(
+                    execute(compiler,
                             "CREATE TABLE tab (" +
                                     "  ts TIMESTAMP," +
-                                    "  value DOUBLE) timestamp (ts) PARTITION BY DAY",
+                                    "  value DOUBLE) timestamp (ts) PARTITION BY DAY WAL",
                             sqlExecutionContext
                     );
-                    engine.execute(
+                    execute(compiler,
                             "insert into tab select (x * 864000000)::timestamp, x from long_sequence(" + ROW_COUNT + ")",
                             sqlExecutionContext
                     );
-                    engine.execute("ALTER TABLE tab ADD COLUMN colTop DOUBLE", sqlExecutionContext);
-                    engine.execute(
+                    TestUtils.drainWalQueue(engine);
+                    execute(compiler, "ALTER TABLE tab ADD COLUMN colTop DOUBLE", sqlExecutionContext);
+                    execute(compiler,
                             "insert into tab " +
                                     "select ((50 + x) * 864000000)::timestamp, 50 + x, 50 + x " +
                                     "from long_sequence(" + ROW_COUNT + ")",
                             sqlExecutionContext
                     );
+                    TestUtils.drainWalQueue(engine);
+                    if (compositePartition) {
+                        // Day 1 is entirely pre-colTop, pre-overlap data from the first insert,
+                        // and always non-active - the table's data runs to ~day 40.
+                        makeComposite(engine, compiler, sqlExecutionContext, "tab", "ts",
+                                "1970-01-02T00:00:00.000000Z", "1970-01-03T00:00:00.000000Z");
+                    }
                     if (convertToParquet) {
                         execute(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
                     }
@@ -2726,9 +2825,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         }).start();
                     }
                     haltLatch.await();
-                },
-                configuration,
-                LOG
+                }
         );
 
         if (!errors.isEmpty()) {
@@ -3798,27 +3895,33 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
         final ConcurrentHashMap<Integer, Throwable> errors = new ConcurrentHashMap<>();
         final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
-        TestUtils.execute(
+        executeWithPool(
                 pool,
                 (engine, compiler, sqlExecutionContext) -> {
-                    engine.execute(
+                    execute(compiler,
                             "CREATE TABLE tab (" +
                                     "  ts TIMESTAMP," +
                                     "  key STRING," +
-                                    "  value DOUBLE) timestamp (ts) PARTITION BY DAY",
+                                    "  value DOUBLE) timestamp (ts) PARTITION BY DAY WAL",
                             sqlExecutionContext
                     );
-                    engine.execute(
+                    execute(compiler,
                             "insert into tab select (x * 864000000)::timestamp, 'k' || (x % 5), x from long_sequence(" + ROW_COUNT + ")",
                             sqlExecutionContext
                     );
-                    engine.execute("ALTER TABLE tab ADD COLUMN colTop DOUBLE", sqlExecutionContext);
-                    engine.execute(
+                    TestUtils.drainWalQueue(engine);
+                    execute(compiler, "ALTER TABLE tab ADD COLUMN colTop DOUBLE", sqlExecutionContext);
+                    execute(compiler,
                             "insert into tab " +
                                     "select ((50 + x) * 864000000)::timestamp, 'k' || ((50 + x) % 5), 50 + x, 50 + x " +
                                     "from long_sequence(" + ROW_COUNT + ")",
                             sqlExecutionContext
                     );
+                    TestUtils.drainWalQueue(engine);
+                    if (compositePartition) {
+                        makeComposite(engine, compiler, sqlExecutionContext, "tab", "ts",
+                                "1970-01-02T00:00:00.000000Z", "1970-01-03T00:00:00.000000Z");
+                    }
                     if (convertToParquet) {
                         execute(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
                     }
@@ -3850,9 +3953,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         }).start();
                     }
                     haltLatch.await();
-                },
-                configuration,
-                LOG
+                }
         );
 
         if (!errors.isEmpty()) {
@@ -3875,20 +3976,25 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         final int numOfIterations = 50;
         final ConcurrentHashMap<Integer, Throwable> errors = new ConcurrentHashMap<>();
         final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
-        TestUtils.execute(
+        executeWithPool(
                 pool,
                 (engine, compiler, sqlExecutionContext) -> {
-                    engine.execute(
+                    execute(compiler,
                             "CREATE TABLE tab (" +
                                     "  ts TIMESTAMP," +
                                     "  key STRING," +
-                                    "  value DOUBLE) timestamp (ts) PARTITION BY DAY",
+                                    "  value DOUBLE) timestamp (ts) PARTITION BY DAY WAL",
                             sqlExecutionContext
                     );
-                    engine.execute(
+                    execute(compiler,
                             "insert into tab select (x * 864000000)::timestamp, 'k' || (x % 5), x from long_sequence(" + ROW_COUNT + ")",
                             sqlExecutionContext
                     );
+                    TestUtils.drainWalQueue(engine);
+                    if (compositePartition) {
+                        makeComposite(engine, compiler, sqlExecutionContext, "tab", "ts",
+                                "1970-01-02T00:00:00.000000Z", "1970-01-03T00:00:00.000000Z");
+                    }
                     if (convertToParquet) {
                         execute(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
                     }
@@ -3921,9 +4027,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         }).start();
                     }
                     haltLatch.await();
-                },
-                configuration,
-                LOG
+                }
         );
 
         if (!errors.isEmpty()) {
@@ -4114,7 +4218,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         Assume.assumeTrue(enableParallelGroupBy);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
-            TestUtils.execute(
+            executeWithPool(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
                         sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
@@ -4123,9 +4227,16 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                         " rnd_byte()::string key," +
                                         " length(rnd_str(3, 8, 0))::char achar," +
                                         " timestamp_sequence(to_timestamp('2024-01-01', 'yyyy-MM-dd'), 1800000000L) ts" +
-                                        " FROM long_sequence(91)) TIMESTAMP(ts) PARTITION BY DAY",
+                                        " FROM long_sequence(91)) TIMESTAMP(ts) PARTITION BY DAY WAL",
                                 sqlExecutionContext
                         );
+                        TestUtils.drainWalQueue(engine);
+                        if (compositePartition) {
+                            // 2024-01-01 (the first 48 rows) is always non-active - 91 rows at
+                            // 30 min apart run into 2024-01-02.
+                            makeComposite(engine, compiler, sqlExecutionContext, "tab", "ts",
+                                    "2024-01-01T00:00:00.000000Z", "2024-01-02T00:00:00.000000Z");
+                        }
                         if (convertToParquet) {
                             execute(compiler, "ALTER TABLE tab CONVERT PARTITION TO PARQUET WHERE ts >= 0", sqlExecutionContext);
                         }
@@ -4138,9 +4249,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 .expectSize()
                                 .noLeakCheck()
                                 .returns("key\tmin\n99\t\n");
-                    },
-                    configuration,
-                    LOG
+                    }
             );
         });
     }
@@ -4509,7 +4618,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         "    rnd_long256() along256," +
                         "    timestamp_sequence(0, 86400000000) ts" +
                         "  from long_sequence(1)" +
-                        ") timestamp(ts) partition by day",
+                        ") timestamp(ts) partition by day WAL",
                 "rnd_long256()",
                 "SELECT sum(along256) sum_long256 FROM tab"
         );
@@ -4523,7 +4632,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         "    rnd_short(-30_000, 30_000) ashort," +
                         "    timestamp_sequence(0, 86400000000) ts" +
                         "  from long_sequence(1)" +
-                        ") timestamp(ts) partition by day",
+                        ") timestamp(ts) partition by day WAL",
                 "rnd_short(-30_000, 30_000)",
                 "SELECT sum(ashort) sum_short FROM tab"
         );
@@ -4865,6 +4974,47 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         }
     }
 
+    /**
+     * With {@code compositePartition} set, makes {@code tableName}'s rows in
+     * [{@code rangeLoIso}, {@code rangeHiIso}) - a range that must fall inside a non-active
+     * partition - a genuine merge-append composite partition, with no change to the table's
+     * logical content: stashes that range into a scratch table, cuts it out via a REPLACE RANGE
+     * commit carrying zero new rows, then inserts the stash straight back. The cut alone already
+     * leaves the range composite (a relocated front/back pair with dead space where the cut range
+     * used to be); the reinsert is what makes the whole round-trip content-neutral, so every
+     * caller's existing, hardcoded expected results still hold. {@code tableName} must be a WAL
+     * table - the REPLACE RANGE commit only exists on that path. No-op otherwise.
+     */
+    private void makeComposite(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            String tableName,
+            String tsColumn,
+            String rangeLoIso,
+            String rangeHiIso
+    ) throws Exception {
+        if (!compositePartition) {
+            return;
+        }
+        // Uniquely named per call so a table composited more than once in the same test (or by
+        // more than one caller sharing a table name) never collides with a stash left behind by
+        // an earlier call.
+        String stashTable = tableName + "_stash_" + stashCounter.incrementAndGet();
+        execute(compiler, "CREATE TABLE " + stashTable + " AS (SELECT * FROM " + tableName +
+                " WHERE " + tsColumn + " >= '" + rangeLoIso + "' AND " + tsColumn + " < '" + rangeHiIso + "')", sqlExecutionContext);
+        long rangeLo = MicrosTimestampDriver.floor(rangeLoIso);
+        long rangeHi = MicrosTimestampDriver.floor(rangeHiIso);
+        TableToken tt = engine.verifyTableName(tableName);
+        try (WalWriter ww = engine.getWalWriter(tt)) {
+            ww.commitWithParams(rangeLo, rangeHi, WAL_DEDUP_MODE_REPLACE_RANGE);
+        }
+        TestUtils.drainWalQueue(engine);
+        execute(compiler, "INSERT INTO " + tableName + " SELECT * FROM " + stashTable, sqlExecutionContext);
+        TestUtils.drainWalQueue(engine);
+        execute(compiler, "DROP TABLE " + stashTable, sqlExecutionContext);
+    }
+
     private void testFirstLastFunctionFuzz(String query) throws Exception {
         // With this test, we aim to verify correctness of merge() method
         // implementation in first/last functions.
@@ -4874,7 +5024,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final Rnd rnd = TestUtils.generateRandom(LOG);
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
-            TestUtils.execute(
+            executeWithPool(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
                         sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
@@ -4902,9 +5052,16 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                         " rnd_str(5,16,3) astring," +
                                         " rnd_uuid4() auuid," +
                                         " timestamp_sequence(400000000000, 500000000) ts" +
-                                        " from long_sequence(10000)) timestamp(ts) partition by day",
+                                        " from long_sequence(10000)) timestamp(ts) partition by day WAL",
                                 sqlExecutionContext
                         );
+                        TestUtils.drainWalQueue(engine);
+                        if (compositePartition) {
+                            // Rows ~500-599 (of 10000): well inside the data, well before the
+                            // active tail.
+                            makeComposite(engine, compiler, sqlExecutionContext, "tab", "ts",
+                                    "1970-01-08T12:25:00.000000Z", "1970-01-09T02:18:20.000000Z");
+                        }
                         if (convertToParquet) {
                             execute(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
                         }
@@ -4938,9 +5095,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
                         // Compare the results.
                         TestUtils.assertEquals(sink, sinkB);
-                    },
-                    configuration,
-                    LOG
+                    }
             );
         });
     }
@@ -4989,7 +5144,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     private void testParallelGroupByAllTypes(BindVariablesInitializer initializer, String... queriesAndExpectedResults) throws Exception {
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
-            TestUtils.execute(
+            executeWithPool(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
                         sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
@@ -5019,16 +5174,19 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                         " rnd_str(5,16,2) astring," +
                                         " rnd_uuid4() auuid," +
                                         " timestamp_sequence(400000000000, 500000000) ts" +
-                                        " from long_sequence(" + ROW_COUNT + ")) timestamp(ts) partition by day",
+                                        " from long_sequence(" + ROW_COUNT + ")) timestamp(ts) partition by day WAL",
                                 sqlExecutionContext
                         );
+                        TestUtils.drainWalQueue(engine);
+                        if (compositePartition) {
+                            makeComposite(engine, compiler, sqlExecutionContext, "tab", "ts",
+                                    "1970-01-08T12:25:00.000000Z", "1970-01-09T02:18:20.000000Z");
+                        }
                         if (convertToParquet) {
                             execute(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
                         }
                         assertQueries(engine, sqlExecutionContext, queriesAndExpectedResults);
-                    },
-                    configuration,
-                    LOG
+                    }
             );
         });
     }
@@ -5040,7 +5198,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     private void testParallelGroupByArray(String... queriesAndExpectedResults) throws Exception {
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
-            TestUtils.execute(
+            executeWithPool(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
                         sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
@@ -5050,16 +5208,19 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                         " 'k' || ((50 + x) % 5) key," +
                                         " rnd_double_array(2, 2, 3) darr," +
                                         " timestamp_sequence(400000000000, 500000000) ts" +
-                                        " from long_sequence(" + ROW_COUNT + ")) timestamp(ts) partition by day",
+                                        " from long_sequence(" + ROW_COUNT + ")) timestamp(ts) partition by day WAL",
                                 sqlExecutionContext
                         );
+                        TestUtils.drainWalQueue(engine);
+                        if (compositePartition) {
+                            makeComposite(engine, compiler, sqlExecutionContext, "tab", "ts",
+                                    "1970-01-08T12:25:00.000000Z", "1970-01-09T02:18:20.000000Z");
+                        }
                         if (convertToParquet) {
                             execute(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
                         }
                         assertQueries(engine, sqlExecutionContext, queriesAndExpectedResults);
-                    },
-                    configuration,
-                    LOG
+                    }
             );
         });
     }
@@ -5069,22 +5230,27 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
-            TestUtils.execute(
+            executeWithPool(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
                         sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
 
-                        engine.execute(
+                        execute(compiler,
                                 "CREATE TABLE tab (" +
                                         "  ts TIMESTAMP," +
                                         "  price DOUBLE," +
-                                        "  quantity DOUBLE) timestamp (ts) PARTITION BY DAY",
+                                        "  quantity DOUBLE) timestamp (ts) PARTITION BY DAY WAL",
                                 sqlExecutionContext
                         );
-                        engine.execute(
+                        execute(compiler,
                                 "insert into tab select (x * 864000000)::timestamp, x, x % 100 from long_sequence(" + ROW_COUNT + ")",
                                 sqlExecutionContext
                         );
+                        TestUtils.drainWalQueue(engine);
+                        if (compositePartition) {
+                            makeComposite(engine, compiler, sqlExecutionContext, "tab", "ts",
+                                    "1970-01-02T00:00:00.000000Z", "1970-01-03T00:00:00.000000Z");
+                        }
                         if (convertToParquet) {
                             execute(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
                         }
@@ -5101,9 +5267,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         } catch (Throwable th) {
                             TestUtils.assertContains(th.getMessage(), "unexpected reduce error");
                         }
-                    },
-                    configuration,
-                    LOG
+                    }
             );
         });
     }
@@ -5136,28 +5300,33 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
             };
 
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
-            TestUtils.execute(
+            executeWithPool(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
                         final SqlExecutionContextImpl context = (SqlExecutionContextImpl) sqlExecutionContext;
                         final NetworkSqlExecutionCircuitBreaker circuitBreaker =
                                 new NetworkSqlExecutionCircuitBreaker(engine, circuitBreakerConfiguration);
                         try {
-                            engine.execute(
+                            execute(compiler,
                                     "CREATE TABLE tab ( " +
                                             "  ts TIMESTAMP, " +
                                             "  price DOUBLE, " +
                                             "  quantity DOUBLE, " +
                                             "  id INT " +
-                                            ") TIMESTAMP(ts) PARTITION BY DAY;",
+                                            ") TIMESTAMP(ts) PARTITION BY DAY WAL;",
                                     sqlExecutionContext
                             );
-                            engine.execute(
+                            execute(compiler,
                                     "insert into tab select (x * 864000000)::timestamp, x, x % 100, x % 10 from long_sequence(" + ROW_COUNT + ")",
                                     sqlExecutionContext
                             );
+                            TestUtils.drainWalQueue(engine);
+                            if (compositePartition) {
+                                makeComposite(engine, compiler, sqlExecutionContext, "tab", "ts",
+                                        "1970-01-02T00:00:00.000000Z", "1970-01-03T00:00:00.000000Z");
+                            }
                             if (convertToParquet) {
-                                engine.execute("alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
+                                execute(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
                             }
 
                             context.with(
@@ -5177,9 +5346,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         } finally {
                             Misc.free(circuitBreaker);
                         }
-                    },
-                    configuration,
-                    LOG
+                    }
             );
         });
     }
@@ -5187,30 +5354,33 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     private void testParallelIPv4KeyGroupBy(String... queriesAndExpectedResults) throws Exception {
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
-            TestUtils.execute(
+            executeWithPool(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
                         sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
 
-                        engine.execute(
+                        execute(compiler,
                                 "CREATE TABLE tab (" +
                                         "  ts TIMESTAMP," +
                                         "  key IPv4," +
                                         "  value DOUBLE" +
-                                        ") TIMESTAMP (ts) PARTITION BY DAY",
+                                        ") TIMESTAMP (ts) PARTITION BY DAY WAL",
                                 sqlExecutionContext
                         );
-                        engine.execute(
+                        execute(compiler,
                                 "insert into tab select (x * 864000000)::timestamp, ((x % 200)::int)::ipv4, x from long_sequence(" + ROW_COUNT + ")",
                                 sqlExecutionContext
                         );
+                        TestUtils.drainWalQueue(engine);
+                        if (compositePartition) {
+                            makeComposite(engine, compiler, sqlExecutionContext, "tab", "ts",
+                                    "1970-01-02T00:00:00.000000Z", "1970-01-03T00:00:00.000000Z");
+                        }
                         if (convertToParquet) {
                             execute(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
                         }
                         assertQueries(engine, sqlExecutionContext, queriesAndExpectedResults);
-                    },
-                    configuration,
-                    LOG
+                    }
             );
         });
     }
@@ -5218,30 +5388,33 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     private void testParallelJsonKeyGroupBy(String... queriesAndExpectedResults) throws Exception {
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
-            TestUtils.execute(
+            executeWithPool(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
                         sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
 
-                        engine.execute(
+                        execute(compiler,
                                 "CREATE TABLE tab (" +
                                         "  ts TIMESTAMP," +
                                         "  key VARCHAR," +
                                         "  price DOUBLE," +
-                                        "  quantity LONG) timestamp (ts) PARTITION BY DAY",
+                                        "  quantity LONG) timestamp (ts) PARTITION BY DAY WAL",
                                 sqlExecutionContext
                         );
-                        engine.execute(
+                        execute(compiler,
                                 "insert into tab select (x * 864000000)::timestamp, '{\"key\": \"k' || (x % 5) || '\", \"foo\": \"bar\"}', x, x from long_sequence(" + ROW_COUNT + ")",
                                 sqlExecutionContext
                         );
+                        TestUtils.drainWalQueue(engine);
+                        if (compositePartition) {
+                            makeComposite(engine, compiler, sqlExecutionContext, "tab", "ts",
+                                    "1970-01-02T00:00:00.000000Z", "1970-01-03T00:00:00.000000Z");
+                        }
                         if (convertToParquet) {
                             execute(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
                         }
                         assertQueries(engine, sqlExecutionContext, queriesAndExpectedResults);
-                    },
-                    configuration,
-                    LOG
+                    }
             );
         });
     }
@@ -5283,38 +5456,42 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     private void testParallelMultiSymbolKeyGroupBy(String... queriesAndExpectedResults) throws Exception {
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
-            TestUtils.execute(
+            executeWithPool(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
                         sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
 
-                        engine.execute(
+                        execute(compiler,
                                 "CREATE TABLE tab (\n" +
                                         "  ts TIMESTAMP," +
                                         "  key1 SYMBOL," +
                                         "  key2 SYMBOL," +
                                         "  key3 SYMBOL," +
-                                        "  value DOUBLE) timestamp (ts) PARTITION BY DAY",
+                                        "  value DOUBLE) timestamp (ts) PARTITION BY DAY WAL",
                                 sqlExecutionContext
                         );
-                        engine.execute(
+                        execute(compiler,
                                 "insert into tab select (x * 864000000)::timestamp, 'k' || (x % 5), 'k' || (x % 4), 'k' || (x % 3), x from long_sequence(" + ROW_COUNT + ")",
                                 sqlExecutionContext
                         );
+                        TestUtils.drainWalQueue(engine);
                         execute(compiler, "ALTER TABLE tab ADD COLUMN colTop DOUBLE", sqlExecutionContext);
-                        engine.execute(
+                        execute(compiler,
                                 "insert into tab " +
                                         "select ((50 + x) * 864000000)::timestamp, 'k' || ((50 + x) % 5), 'k' || ((50 + x) % 4), 'k' || ((50 + x) % 3), 50 + x, 50 + x " +
                                         "from long_sequence(" + ROW_COUNT + ")",
                                 sqlExecutionContext
                         );
+                        TestUtils.drainWalQueue(engine);
+                        if (compositePartition) {
+                            makeComposite(engine, compiler, sqlExecutionContext, "tab", "ts",
+                                    "1970-01-02T00:00:00.000000Z", "1970-01-03T00:00:00.000000Z");
+                        }
                         if (convertToParquet) {
                             execute(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
                         }
                         assertQueries(engine, sqlExecutionContext, queriesAndExpectedResults);
-                    },
-                    configuration,
-                    LOG
+                    }
             );
         });
     }
@@ -5322,36 +5499,40 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     private void testParallelNonKeyedGroupBy(String... queriesAndExpectedResults) throws Exception {
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
-            TestUtils.execute(
+            executeWithPool(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
                         sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
 
-                        engine.execute(
+                        execute(compiler,
                                 "CREATE TABLE tab (" +
                                         "  ts TIMESTAMP," +
                                         "  price DOUBLE," +
-                                        "  quantity DOUBLE) timestamp (ts) PARTITION BY DAY",
+                                        "  quantity DOUBLE) timestamp (ts) PARTITION BY DAY WAL",
                                 sqlExecutionContext
                         );
-                        engine.execute(
+                        execute(compiler,
                                 "insert into tab select (x * 864000000)::timestamp, x, x % 100 from long_sequence(" + ROW_COUNT + ")",
                                 sqlExecutionContext
                         );
-                        engine.execute("ALTER TABLE tab ADD COLUMN colTop DOUBLE", sqlExecutionContext);
-                        engine.execute(
+                        TestUtils.drainWalQueue(engine);
+                        execute(compiler, "ALTER TABLE tab ADD COLUMN colTop DOUBLE", sqlExecutionContext);
+                        execute(compiler,
                                 "insert into tab " +
                                         "select ((50 + x) * 864000000)::timestamp, 50 + x, 50 + x, 50 + x " +
                                         "from long_sequence(" + ROW_COUNT + ")",
                                 sqlExecutionContext
                         );
+                        TestUtils.drainWalQueue(engine);
+                        if (compositePartition) {
+                            makeComposite(engine, compiler, sqlExecutionContext, "tab", "ts",
+                                    "1970-01-02T00:00:00.000000Z", "1970-01-03T00:00:00.000000Z");
+                        }
                         if (convertToParquet) {
                             execute(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
                         }
                         assertQueries(engine, sqlExecutionContext, queriesAndExpectedResults);
-                    },
-                    configuration,
-                    LOG
+                    }
             );
         });
     }
@@ -5365,7 +5546,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final Rnd rnd = TestUtils.generateRandom(LOG);
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
-            TestUtils.execute(
+            executeWithPool(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
                         sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
@@ -5390,7 +5571,14 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                             }
                             timestamp += 86400000000L;
                         }
+                        TestUtils.drainWalQueue(engine);
 
+                        if (compositePartition) {
+                            // Day 1 (the fixture's first day) is always non-active - 49 more
+                            // days follow it.
+                            makeComposite(engine, compiler, sqlExecutionContext, "tab", "ts",
+                                    "1970-01-02T00:00:00.000000Z", "1970-01-03T00:00:00.000000Z");
+                        }
                         if (convertToParquet) {
                             execute(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
                         }
@@ -5413,9 +5601,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         }
 
                         TestUtils.assertEquals(sink, sinkB);
-                    },
-                    configuration,
-                    LOG
+                    }
             );
         });
     }
@@ -5423,7 +5609,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     private void testParallelRostiGroupBy(String query, String expected) throws Exception {
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
-            TestUtils.execute(
+            executeWithPool(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
                         // We want each row to be in its own partition
@@ -5439,9 +5625,10 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                         "rnd_timestamp(to_date('1980', 'yyyy'), to_date('1990', 'yyyy'), 2) t, " +
                                         "rnd_date(to_date('1980', 'yyyy'), to_date('1990', 'yyyy'), 2) dd, " +
                                         "(x * 864000000)::timestamp ts " +
-                                        "from long_sequence(500)) timestamp (ts) PARTITION BY DAY",
+                                        "from long_sequence(500)) timestamp (ts) PARTITION BY DAY WAL",
                                 sqlExecutionContext
                         );
+                        TestUtils.drainWalQueue(engine);
                         execute(
                                 compiler,
                                 "insert into tab values (null, 1, 2, 3, 4::long256, 5.0, '1991-01-01', '1992-01-01', 0::timestamp)," +
@@ -5449,6 +5636,11 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                         "(null, 21, 22, 23, 24::long256, 25.0, '2101-01-01', '2102-01-01', (500L*864000000)::timestamp)",
                                 sqlExecutionContext
                         );
+                        TestUtils.drainWalQueue(engine);
+                        if (compositePartition) {
+                            makeComposite(engine, compiler, sqlExecutionContext, "tab", "ts",
+                                    "1970-01-02T00:00:00.000000Z", "1970-01-03T00:00:00.000000Z");
+                        }
                         if (convertToParquet) {
                             execute(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
                         }
@@ -5473,9 +5665,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 Assert.assertNotNull("parallel GROUP BY doesn't use vect.GroupByRecordCursorFactory", nestedFactory);
                             }
                         }
-                    },
-                    configuration,
-                    LOG
+                    }
             );
         });
     }
@@ -5483,7 +5673,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     private void testParallelStringAndVarcharKeyGroupBy(String... queriesAndExpectedResults) throws Exception {
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
-            TestUtils.execute(
+            executeWithPool(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
                         sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
@@ -5492,56 +5682,68 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         final int rowCount = ROW_COUNT / 2;
 
                         // try with a String table first
-                        engine.execute(
+                        execute(compiler,
                                 "CREATE TABLE tab (" +
                                         "  ts TIMESTAMP," +
                                         "  key STRING," +
-                                        "  value DOUBLE) timestamp (ts) PARTITION BY DAY",
+                                        "  value DOUBLE) timestamp (ts) PARTITION BY DAY WAL",
                                 sqlExecutionContext
                         );
-                        engine.execute(
+                        execute(compiler,
                                 "insert into tab select (x * 864000000)::timestamp, 'k' || (x % 5), x from long_sequence(" + rowCount + ")",
                                 sqlExecutionContext
                         );
-                        engine.execute("ALTER TABLE tab ADD COLUMN colTop DOUBLE", sqlExecutionContext);
-                        engine.execute(
+                        TestUtils.drainWalQueue(engine);
+                        execute(compiler, "ALTER TABLE tab ADD COLUMN colTop DOUBLE", sqlExecutionContext);
+                        execute(compiler,
                                 "insert into tab " +
                                         "select ((50 + x) * 8640000000)::timestamp, 'k' || ((50 + x) % 5), 50 + x, 50 + x " +
                                         "from long_sequence(" + rowCount + ")",
                                 sqlExecutionContext
                         );
+                        TestUtils.drainWalQueue(engine);
+                        if (compositePartition) {
+                            // Day 1 only ever holds first-insert rows (the second insert's much
+                            // bigger step starts around day 5) - always non-active.
+                            makeComposite(engine, compiler, sqlExecutionContext, "tab", "ts",
+                                    "1970-01-02T00:00:00.000000Z", "1970-01-03T00:00:00.000000Z");
+                        }
                         if (convertToParquet) {
                             execute(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
                         }
                         assertQueries(engine, sqlExecutionContext, queriesAndExpectedResults);
 
                         // now drop the String table and recreate it with a Varchar key
-                        engine.execute("DROP TABLE tab", sqlExecutionContext);
-                        engine.execute(
+                        execute(compiler, "DROP TABLE tab", sqlExecutionContext);
+                        execute(compiler,
                                 "CREATE TABLE tab (" +
                                         "  ts TIMESTAMP," +
                                         "  key VARCHAR," +
-                                        "  value DOUBLE) timestamp (ts) PARTITION BY DAY",
+                                        "  value DOUBLE) timestamp (ts) PARTITION BY DAY WAL",
                                 sqlExecutionContext
                         );
-                        engine.execute(
+                        execute(compiler,
                                 "insert into tab select (x * 864000000)::timestamp, 'k' || (x % 5), x from long_sequence(" + rowCount + ")",
                                 sqlExecutionContext
                         );
-                        engine.execute("ALTER TABLE tab ADD COLUMN colTop DOUBLE", sqlExecutionContext);
-                        engine.execute(
+                        TestUtils.drainWalQueue(engine);
+                        execute(compiler, "ALTER TABLE tab ADD COLUMN colTop DOUBLE", sqlExecutionContext);
+                        execute(compiler,
                                 "insert into tab " +
                                         "select ((50 + x) * 8640000000)::timestamp, 'k' || ((50 + x) % 5), 50 + x, 50 + x " +
                                         "from long_sequence(" + rowCount + ")",
                                 sqlExecutionContext
                         );
+                        TestUtils.drainWalQueue(engine);
+                        if (compositePartition) {
+                            makeComposite(engine, compiler, sqlExecutionContext, "tab", "ts",
+                                    "1970-01-02T00:00:00.000000Z", "1970-01-03T00:00:00.000000Z");
+                        }
                         if (convertToParquet) {
                             execute(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
                         }
                         assertQueries(engine, sqlExecutionContext, queriesAndExpectedResults);
-                    },
-                    configuration,
-                    LOG
+                    }
             );
         });
     }
@@ -5551,38 +5753,42 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     private void testParallelSymbolKeyGroupBy(String... queriesExpectedResultsAndPlans) throws Exception {
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
-            TestUtils.execute(
+            executeWithPool(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
                         sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
 
-                        engine.execute(
+                        execute(compiler,
                                 "CREATE TABLE tab (" +
                                         "  ts TIMESTAMP," +
                                         "  key SYMBOL," +
                                         "  price DOUBLE," +
-                                        "  quantity LONG) timestamp (ts) PARTITION BY DAY",
+                                        "  quantity LONG) timestamp (ts) PARTITION BY DAY WAL",
                                 sqlExecutionContext
                         );
-                        engine.execute(
+                        execute(compiler,
                                 "insert into tab select (x * 864000000)::timestamp, 'k' || (x % 5), x, x from long_sequence(" + ROW_COUNT + ")",
                                 sqlExecutionContext
                         );
-                        engine.execute("ALTER TABLE tab ADD COLUMN colTop DOUBLE", sqlExecutionContext);
-                        engine.execute(
+                        TestUtils.drainWalQueue(engine);
+                        execute(compiler, "ALTER TABLE tab ADD COLUMN colTop DOUBLE", sqlExecutionContext);
+                        execute(compiler,
                                 "insert into tab " +
                                         "select ((50 + x) * 864000000)::timestamp, " +
                                         "  'k' || ((50 + x) % 5), 50 + x, 50 + x, 50 + x " +
                                         "from long_sequence(" + ROW_COUNT + ")",
                                 sqlExecutionContext
                         );
+                        TestUtils.drainWalQueue(engine);
+                        if (compositePartition) {
+                            makeComposite(engine, compiler, sqlExecutionContext, "tab", "ts",
+                                    "1970-01-02T00:00:00.000000Z", "1970-01-03T00:00:00.000000Z");
+                        }
                         if (convertToParquet) {
                             execute(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
                         }
                         assertQueriesAndPlans(engine, sqlExecutionContext, queriesExpectedResultsAndPlans);
-                    },
-                    configuration,
-                    LOG
+                    }
             );
         });
     }
@@ -5590,21 +5796,21 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     private void testParallelTimestampAndDateKeyGroupBy(String... queriesAndExpectedResults) throws Exception {
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
-            TestUtils.execute(
+            executeWithPool(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
                         sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
 
-                        engine.execute(
+                        execute(compiler,
                                 "CREATE TABLE tab (" +
                                         "  ts TIMESTAMP," +
                                         "  ts_key TIMESTAMP," +
                                         "  date_key DATE," +
                                         "  value LONG" +
-                                        ") TIMESTAMP (ts) PARTITION BY DAY",
+                                        ") TIMESTAMP (ts) PARTITION BY DAY WAL",
                                 sqlExecutionContext
                         );
-                        engine.execute(
+                        execute(compiler,
                                 "insert into tab select " +
                                         "(x * 864000000)::timestamp, " +
                                         "((x % 5) * 1000000)::timestamp, " +
@@ -5613,13 +5819,16 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                         "from long_sequence(" + ROW_COUNT + ")",
                                 sqlExecutionContext
                         );
+                        TestUtils.drainWalQueue(engine);
+                        if (compositePartition) {
+                            makeComposite(engine, compiler, sqlExecutionContext, "tab", "ts",
+                                    "1970-01-02T00:00:00.000000Z", "1970-01-03T00:00:00.000000Z");
+                        }
                         if (convertToParquet) {
                             execute(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
                         }
                         assertQueries(engine, sqlExecutionContext, queriesAndExpectedResults);
-                    },
-                    configuration,
-                    LOG
+                    }
             );
         });
     }
