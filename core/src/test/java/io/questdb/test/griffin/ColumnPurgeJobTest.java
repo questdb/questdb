@@ -31,6 +31,7 @@ import io.questdb.cairo.ColumnPurgeJob;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -51,6 +52,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.ColumnPurgeTask;
 import io.questdb.test.AbstractCairoTest;
@@ -59,6 +61,7 @@ import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -78,6 +81,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.LongFunction;
 import java.util.function.ObjIntConsumer;
 import java.util.regex.Pattern;
 
@@ -96,6 +100,49 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
             1970-01-01T02:00:00.000000Z\t1
             1970-01-04T02:00:00.000000Z\t4
             """;
+    // the columns of the purge log as the versions before partition_timestamp_raw created it
+    private static final String LEGACY_PURGE_LOG_COLUMNS = """
+            ts timestamp, table_name symbol, column_name symbol, table_id int, truncate_version long, columnType int, \
+            table_partition_by int, updated_txn long, column_version long, partition_timestamp timestamp, \
+            partition_name_txn long, completed timestamp""";
+    // the columns of the purge log, as table_columns() lists them
+    private static final String PURGE_LOG_COLUMNS = """
+            column\ttype
+            ts\tTIMESTAMP
+            table_name\tSYMBOL
+            column_name\tSYMBOL
+            table_id\tINT
+            truncate_version\tLONG
+            columnType\tINT
+            table_partition_by\tINT
+            updated_txn\tLONG
+            column_version\tLONG
+            partition_timestamp\tTIMESTAMP
+            partition_name_txn\tLONG
+            completed\tTIMESTAMP
+            partition_timestamp_raw\tLONG
+            """;
+    // the rows of t_split that createSplitTable() writes, as ts, x
+    private static final String ROWS_OF_SPLIT_TABLE = """
+            ts\tx
+            1970-01-01T02:00:00.000000Z\t1
+            1970-01-02T02:00:00.000000Z\t2
+            1970-01-03T01:00:00.000000Z\t3
+            1970-01-03T02:00:00.000000Z\t4
+            1970-01-03T03:00:00.000000Z\t5
+            1970-01-03T04:00:00.000000Z\t6
+            1970-01-03T05:00:00.000000Z\t7
+            1970-01-03T06:00:00.000000Z\t8
+            1970-01-03T07:00:00.000000Z\t9
+            1970-01-03T08:00:00.000000Z\t10
+            1970-01-03T09:00:00.000000Z\t11
+            1970-01-03T09:30:00.000000Z\t15
+            1970-01-03T10:00:00.000000Z\t12
+            1970-01-04T02:00:00.000000Z\t13
+            1970-01-05T02:00:00.000000Z\t14
+            """;
+    // the partition of t_split that the O3 row of createSplitTable() splits off 1970-01-03
+    private static final int SPLIT_PARTITION_INDEX = 3;
     private final TestTimestampType timestampType;
     // the entries that the purge job reported as refused because the truncate version changed, see
     // listenToTruncateRefusals()
@@ -368,7 +415,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                         .noLeakCheck()
                         .expectSize()
                         .timestamp("ts")
-                        .returns("""
+                        .returns(withRawPartitionTimestamps("""
                                 ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted
                                 1970-01-01T00:00:00.000010Z\tup_part_o3_many~\tx\t2\t0\t6\t0\t3\t-1\t1970-01-03T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000151Z
                                 1970-01-01T00:00:00.000010Z\tup_part_o3_many~\tx\t2\t0\t6\t0\t3\t-1\t1970-01-04T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000151Z
@@ -388,7 +435,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                                 1970-01-01T00:00:00.000063Z\tup_part_o3_many~\tsym2\t2\t0\t12\t0\t4\t2\t1970-01-03T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000151Z
                                 1970-01-01T00:00:00.000063Z\tup_part_o3_many~\tsym2\t2\t0\t12\t0\t4\t2\t1970-01-04T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000151Z
                                 1970-01-01T00:00:00.000063Z\tup_part_o3_many~\tsym2\t2\t0\t12\t0\t4\t2\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000151Z
-                                """);
+                                """));
                 Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
             }
         });
@@ -413,24 +460,24 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                         .noLeakCheck()
                         .expectSize()
                         .timestamp("ts")
-                        .returns("""
+                        .returns(withRawPartitionTimestamps("""
                                 ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted
                                 1970-01-01T00:00:00.000000Z\ttbl_name\tcol\t1\t0\t5\t3\t43\t11\t2022-03-29T00:00:00.000000Z\t-1\t
                                 1970-01-01T00:00:00.000000Z\ttbl_name\tcol\t1\t0\t5\t3\t43\t-1\t2022-04-05T00:00:00.000000Z\t2\t
                                 1970-01-01T00:00:00.000001Z\ttbl_name2\tcol2\t2\t0\t12\t3\t33\t-1\t2022-02-13T00:00:00.000000Z\t3\t
-                                """);
+                                """));
 
                 runPurgeJob(purgeJob);
                 assertQuery(purgeJob.getLogTableName())
                         .noLeakCheck()
                         .expectSize()
                         .timestamp("ts")
-                        .returns("""
+                        .returns(withRawPartitionTimestamps("""
                                 ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted
                                 1970-01-01T00:00:00.000000Z\ttbl_name\tcol\t1\t0\t5\t3\t43\t11\t2022-03-29T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000010Z
                                 1970-01-01T00:00:00.000000Z\ttbl_name\tcol\t1\t0\t5\t3\t43\t-1\t2022-04-05T00:00:00.000000Z\t2\t1970-01-01T00:00:00.000010Z
                                 1970-01-01T00:00:00.000001Z\ttbl_name2\tcol2\t2\t0\t12\t3\t33\t-1\t2022-02-13T00:00:00.000000Z\t3\t1970-01-01T00:00:00.000010Z
-                                """);
+                                """));
                 Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
             }
         });
@@ -499,7 +546,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                 assertQuery(purgeJob.getLogTableName())
                         .noLeakCheck()
                         .timestamp("ts")
-                        .returns("ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n");
+                        .returns(withRawPartitionTimestamps("ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n"));
                 Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
             }
         });
@@ -569,7 +616,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                 assertQuery(purgeLogTableName)
                         .noLeakCheck()
                         .timestamp("ts")
-                        .returns("ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n");
+                        .returns(withRawPartitionTimestamps("ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n"));
             }
         });
     }
@@ -641,7 +688,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                             .noLeakCheck()
                             .expectSize()
                             .timestamp("ts")
-                            .returns("""
+                            .returns(withRawPartitionTimestamps("""
                                     ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted
                                     1970-02-02T00:00:00.000030Z\tup_part_o3~\tx\t2\t0\t6\t0\t4\t2\t1970-01-03T00:00:00.000000Z\t1\t1970-02-02T00:00:00.000070Z
                                     1970-02-02T00:00:00.000030Z\tup_part_o3~\tx\t2\t0\t6\t0\t4\t2\t1970-01-04T00:00:00.000000Z\t1\t1970-02-02T00:00:00.000070Z
@@ -652,7 +699,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                                     1970-02-02T00:00:00.000032Z\tup_part_o3~\tsym2\t2\t0\t12\t0\t4\t2\t1970-01-03T00:00:00.000000Z\t1\t1970-02-02T00:00:00.000070Z
                                     1970-02-02T00:00:00.000032Z\tup_part_o3~\tsym2\t2\t0\t12\t0\t4\t2\t1970-01-04T00:00:00.000000Z\t1\t1970-02-02T00:00:00.000070Z
                                     1970-02-02T00:00:00.000032Z\tup_part_o3~\tsym2\t2\t0\t12\t0\t4\t2\t1970-01-05T00:00:00.000000Z\t-1\t1970-02-02T00:00:00.000070Z
-                                    """);
+                                    """));
                     Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
                 }
             }
@@ -726,7 +773,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                         .noLeakCheck()
                         .expectSize()
                         .timestamp("ts")
-                        .returns("""
+                        .returns(withRawPartitionTimestamps("""
                                 ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted
                                 1970-01-01T00:00:00.000010Z\tup_part~\tx\t2\t0\t6\t0\t2\t-1\t1970-01-02T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z
                                 1970-01-01T00:00:00.000010Z\tup_part~\tx\t2\t0\t6\t0\t2\t-1\t1970-01-03T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z
@@ -740,7 +787,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                                 1970-01-01T00:00:00.000012Z\tup_part~\tsym2\t2\t0\t12\t0\t2\t-1\t1970-01-03T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z
                                 1970-01-01T00:00:00.000012Z\tup_part~\tsym2\t2\t0\t12\t0\t2\t-1\t1970-01-04T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z
                                 1970-01-01T00:00:00.000012Z\tup_part~\tsym2\t2\t0\t12\t0\t2\t-1\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z
-                                """);
+                                """));
 
                 Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
             }
@@ -802,7 +849,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                     assertQuery(purgeJob.getLogTableName())
                             .noLeakCheck()
                             .timestamp("ts")
-                            .returns("ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n");
+                            .returns(withRawPartitionTimestamps("ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n"));
                     Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
                 }
             }
@@ -855,7 +902,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                         .noLeakCheck()
                         .expectSize()
                         .timestamp("ts")
-                        .returns("""
+                        .returns(withRawPartitionTimestamps("""
                                 ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted
                                 1970-01-01T00:00:00.000010Z\tup_part~\tx\t2\t0\t6\t0\t2\t-1\t1970-01-02T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z
                                 1970-01-01T00:00:00.000010Z\tup_part~\tx\t2\t0\t6\t0\t2\t-1\t1970-01-03T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z
@@ -869,7 +916,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                                 1970-01-01T00:00:00.000012Z\tup_part~\tsym2\t2\t0\t12\t0\t2\t-1\t1970-01-03T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z
                                 1970-01-01T00:00:00.000012Z\tup_part~\tsym2\t2\t0\t12\t0\t2\t-1\t1970-01-04T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z
                                 1970-01-01T00:00:00.000012Z\tup_part~\tsym2\t2\t0\t12\t0\t2\t-1\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z
-                                """);
+                                """));
                 Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
             }
         });
@@ -918,12 +965,12 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                         .noLeakCheck()
                         .expectSize()
                         .timestamp("ts")
-                        .returns("""
+                        .returns(withRawPartitionTimestamps("""
                                 ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted
                                 1970-01-01T00:00:00.000010Z\tup~\tx\t2\t0\t6\t3\t2\t-1\t1970-01-01T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z
                                 1970-01-01T00:00:00.000011Z\tup~\tstr\t2\t0\t11\t3\t2\t-1\t1970-01-01T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z
                                 1970-01-01T00:00:00.000012Z\tup~\tsym2\t2\t0\t12\t3\t2\t-1\t1970-01-01T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z
-                                """);
+                                """));
                 Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
             }
         });
@@ -1611,7 +1658,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                 assertQuery(purgeLogTableName)
                         .noLeakCheck()
                         .timestamp("ts")
-                        .returns("ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n");
+                        .returns(withRawPartitionTimestamps("ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n"));
             }
         });
     }
@@ -1712,7 +1759,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                         .noLeakCheck()
                         .expectSize()
                         .timestamp("ts")
-                        .returns("""
+                        .returns(withRawPartitionTimestamps("""
                                 ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted
                                 1970-01-01T00:00:00.000030Z\tup_part_o3~\tx\t2\t0\t6\t0\t3\t-1\t1970-01-03T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000070Z
                                 1970-01-01T00:00:00.000030Z\tup_part_o3~\tx\t2\t0\t6\t0\t3\t-1\t1970-01-04T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000070Z
@@ -1723,7 +1770,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                                 1970-01-01T00:00:00.000032Z\tup_part_o3~\tsym2\t2\t0\t12\t0\t3\t-1\t1970-01-03T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000070Z
                                 1970-01-01T00:00:00.000032Z\tup_part_o3~\tsym2\t2\t0\t12\t0\t3\t-1\t1970-01-04T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000070Z
                                 1970-01-01T00:00:00.000032Z\tup_part_o3~\tsym2\t2\t0\t12\t0\t3\t-1\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000070Z
-                                """);
+                                """));
                 Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
             }
         });
@@ -1749,24 +1796,24 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                         .noLeakCheck()
                         .expectSize()
                         .timestamp("ts")
-                        .returns("""
+                        .returns(withRawPartitionTimestamps("""
                                 ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted
                                 1970-01-01T00:00:00.000000Z\ttbl_name\tcol\t1\t0\t5\t3\t43\t11\t2022-03-29T00:00:00.000000Z\t-1\t
                                 1970-01-01T00:00:00.000000Z\ttbl_name\tcol\t1\t0\t5\t3\t43\t-1\t2022-04-05T00:00:00.000000Z\t2\t
                                 1970-01-01T00:00:00.000001Z\ttbl_name2\tcol2\t2\t0\t12\t3\t33\t-1\t2022-02-13T00:00:00.000000Z\t3\t
-                                """);
+                                """));
 
                 runPurgeJob(purgeJob);
                 assertQuery(purgeJob.getLogTableName())
                         .noLeakCheck()
                         .expectSize()
                         .timestamp("ts")
-                        .returns("""
+                        .returns(withRawPartitionTimestamps("""
                                 ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted
                                 1970-01-01T00:00:00.000000Z\ttbl_name\tcol\t1\t0\t5\t3\t43\t11\t2022-03-29T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000010Z
                                 1970-01-01T00:00:00.000000Z\ttbl_name\tcol\t1\t0\t5\t3\t43\t-1\t2022-04-05T00:00:00.000000Z\t2\t1970-01-01T00:00:00.000010Z
                                 1970-01-01T00:00:00.000001Z\ttbl_name2\tcol2\t2\t0\t12\t3\t33\t-1\t2022-02-13T00:00:00.000000Z\t3\t1970-01-01T00:00:00.000010Z
-                                """);
+                                """));
             }
         });
     }
@@ -3614,7 +3661,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                 assertQuery(purgeJob.getLogTableName())
                         .noLeakCheck()
                         .timestamp("ts")
-                        .returns("ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n");
+                        .returns(withRawPartitionTimestamps("ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n"));
             }
         });
     }
@@ -3895,6 +3942,767 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testPurgeLogGainsRawPartitionTimestampColumn() throws Exception {
+        // A log that a version before partition_timestamp_raw created gets the column when the purge job starts,
+        // and from then on the job saves there the partition timestamps as _txn has them.
+        setSplitProperties();
+        assertMemoryLeak(() -> {
+            createLegacyPurgeLog();
+            createSplitTable("BYPASS WAL", "c LONG, s SYMBOL", ColumnPurgeJobTest::longAndSymbolValues);
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                assertPurgeLogColumns(PURGE_LOG_COLUMNS);
+                dropColumnsWithReader(purgeJob, "c", "s");
+                assertRawPartitionTimestamps(purgeJob, "c", false);
+                assertRawPartitionTimestamps(purgeJob, "s", true);
+            }
+            replayPurgeLog("t_split");
+            Assert.assertEquals("", filesOfColumns("t_split", "c", "s"));
+            assertRowsOfSplitTable();
+        });
+    }
+
+    @Test
+    public void testPurgeLogIgnoresRawPartitionTimestampColumnOfAnotherType() throws Exception {
+        // The job did not write a partition_timestamp_raw of another type than LONG: it logs and replays without
+        // the column, as the versions before it did.
+        setSplitProperties();
+        assertMemoryLeak(() -> {
+            createLegacyPurgeLog();
+            execute("ALTER TABLE '" + purgeLogTableName() + "' ADD COLUMN partition_timestamp_raw INT");
+            createSplitTable("BYPASS WAL", "c LONG, s SYMBOL", ColumnPurgeJobTest::longAndSymbolValues);
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                dropColumnsWithReader(purgeJob, "c", "s");
+                // six partitions of c, six of s and the symbol map of s
+                assertQuery("SELECT count(), count(partition_timestamp_raw) FROM '" + purgeJob.getLogTableName() + "'")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                count\tcount1
+                                13\t0
+                                """);
+            }
+            replayPurgeLog("t_split");
+            assertReplayOfRowsWithoutRawPartitionTimestamp();
+        });
+    }
+
+    @Test
+    public void testPurgeLogWithoutRawPartitionTimestampWhenColumnAddDistressesWriter() throws Exception {
+        // The file of the new column fails to open, and so does the rollback of the metadata: the column add throws
+        // CairoError. The job takes a new writer, which restores the metadata of the log from _meta.prev.
+        final AtomicBoolean isColumnFileFailureArmed = new AtomicBoolean(true);
+        final AtomicBoolean isMetaFailureArmed = new AtomicBoolean();
+        final AtomicInteger failureCount = new AtomicInteger();
+        setSplitProperties();
+        assertMemoryLeak(() -> assertPurgeLogWithoutRawPartitionTimestamp(new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (isRawColumnDataFile(name) && isColumnFileFailureArmed.compareAndSet(true, false)) {
+                    failureCount.incrementAndGet();
+                    isMetaFailureArmed.set(true);
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+
+            @Override
+            public boolean removeQuiet(LPSZ name) {
+                if (isMetaFailureArmed.get() && TableUtils.META_FILE_NAME.equals(purgeLogFileName(name))) {
+                    failureCount.incrementAndGet();
+                    return false;
+                }
+                return super.removeQuiet(name);
+            }
+
+            @Override
+            public int rename(LPSZ from, LPSZ to) {
+                if (TableUtils.META_FILE_NAME.equals(purgeLogFileName(from)) && isMetaFailureArmed.compareAndSet(true, false)) {
+                    failureCount.incrementAndGet();
+                    return Files.FILES_RENAME_ERR_OTHER;
+                }
+                return super.rename(from, to);
+            }
+        }, () -> Assert.assertEquals(3, failureCount.get())));
+    }
+
+    @Test
+    public void testPurgeLogWithoutRawPartitionTimestampWhenColumnFileFailsToOpen() throws Exception {
+        // The file of the new column fails to open: TableWriter rolls the metadata of the log back and asks for a
+        // new writer, which the job takes.
+        final AtomicBoolean isFailureArmed = new AtomicBoolean(true);
+        final AtomicInteger failureCount = new AtomicInteger();
+        setSplitProperties();
+        assertMemoryLeak(() -> assertPurgeLogWithoutRawPartitionTimestamp(new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (isRawColumnDataFile(name) && isFailureArmed.compareAndSet(true, false)) {
+                    failureCount.incrementAndGet();
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        }, () -> Assert.assertEquals(1, failureCount.get())));
+    }
+
+    @Test
+    public void testPurgeLogWithoutRawPartitionTimestampWhenMetadataSwapFails() throws Exception {
+        // The column add fails before it changes the log: the writer stays usable.
+        final AtomicBoolean isFailureArmed = new AtomicBoolean(true);
+        final AtomicInteger failureCount = new AtomicInteger();
+        setSplitProperties();
+        assertMemoryLeak(() -> assertPurgeLogWithoutRawPartitionTimestamp(new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                // every swap file the writer tries: _meta.swp, _meta.swp.1 and on
+                final String fileName = purgeLogFileName(name);
+                if (isFailureArmed.get() && fileName != null && fileName.startsWith(TableUtils.META_SWAP_FILE_NAME)) {
+                    failureCount.incrementAndGet();
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        }, () -> {
+            Assert.assertTrue(failureCount.get() > 0);
+            isFailureArmed.set(false);
+        }));
+    }
+
+    @Test
+    public void testReplayedLegacyPurgeHeldBySavePointWaitsForSnapshotTxn() throws Exception {
+        // Under ADAPTIVE a save point holds the replayed purge, and the job writes it back to the log for the running
+        // job, with the partitions the replay located and the snapshot txn it waits for. The first partition's own
+        // version died after the update that logged the row, at the second update: the save point between the two
+        // updates still names it, so the purge has to wait for it.
+        Assume.assumeTrue("a TIMESTAMP partition starts on a whole microsecond", timestampType == TestTimestampType.NANO);
+        setSplitProperties();
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        assertMemoryLeak(() -> {
+            createSameMicrosecondTable("WAL");
+            final String firstDir = partitionDir("t_same_us", 1);
+            final String secondDir = partitionDir("t_same_us", 2);
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                updateSecondPartitionWithReader(purgeJob, "c2 = 0");
+                Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+            }
+            final long firstUpdateTxn;
+            try (TableReader reader = getReader("t_same_us")) {
+                firstUpdateTxn = reader.getTxn();
+            }
+            // the save point names the txn of the first update, at which the first partition reads c2.d
+            releaseSavePointHolds("t_same_us");
+            update("UPDATE t_same_us SET c2 = 1 WHERE ts >= '2022-02-27T01:00:00.000000000Z' AND ts < '2022-02-27T01:00:00.000000201Z'");
+            drainWalQueue();
+            final long snapshotTxn;
+            final long firstTimestamp;
+            final long secondTimestamp;
+            try (TableReader reader = getReader("t_same_us")) {
+                snapshotTxn = reader.getTxn();
+                firstTimestamp = reader.getTxFile().getPartitionTimestampByIndex(1);
+                secondTimestamp = reader.getTxFile().getPartitionTimestampByIndex(2);
+            }
+            Assert.assertTrue(snapshotTxn > firstUpdateTxn);
+            final long firstTxn = getColumnNameTxn("t_same_us", "c2", 1);
+            final long secondTxn = getColumnNameTxn("t_same_us", "c2", 2);
+            Assert.assertEquals("c2.d c2.d." + firstTxn, String.join(" ", filesWithPrefix(listFiles(firstDir), "c2.")));
+            Assert.assertEquals("c2.d c2.d." + secondTxn, String.join(" ", filesWithPrefix(listFiles(secondDir), "c2.")));
+            eraseRawPartitionTimestamps();
+            engine.releaseInactive();
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                // c2.d is dead in both partitions, and the save point holds both
+                Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+                Assert.assertEquals("c2.d c2.d." + firstTxn, String.join(" ", filesWithPrefix(listFiles(firstDir), "c2.")));
+                Assert.assertEquals("c2.d c2.d." + secondTxn, String.join(" ", filesWithPrefix(listFiles(secondDir), "c2.")));
+                assertQuery("SELECT column_version, partition_timestamp_raw, updated_txn, completed FROM '" + purgeJob.getLogTableName() + "'")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("column_version\tpartition_timestamp_raw\tupdated_txn\tcompleted\n"
+                                + "-1\t" + firstTimestamp + "\t" + snapshotTxn + "\t\n"
+                                + "-1\t" + secondTimestamp + "\t" + snapshotTxn + "\t\n");
+                releaseSavePointHolds("t_same_us");
+                runPurgeJob(purgeJob);
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+            }
+            Assert.assertEquals("c2.d." + firstTxn, String.join(" ", filesWithPrefix(listFiles(firstDir), "c2.")));
+            Assert.assertEquals("c2.d." + secondTxn, String.join(" ", filesWithPrefix(listFiles(secondDir), "c2.")));
+            // c2 is x before 01:00 and 1 in the 22 rows of the first partition at 01:00
+            assertQuery("SELECT count(), sum(c2) FROM t_same_us WHERE ts < '2022-02-27T01:00:00.000000201Z'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count\tsum
+                            122\t5072
+                            """);
+        });
+    }
+
+    @Test
+    public void testReplayedLegacyPurgeKeepsFilesOfDayPartitionInSameMicrosecond() throws Exception {
+        // The layout the server default split size gives a table whose day partition holds more rows in its first
+        // microsecond than that size, at a split size of 1 byte: an O3 row splits the day after those rows, and the
+        // split partition starts in the microsecond of the day partition. One commit rewrites both.
+        Assume.assumeTrue("a TIMESTAMP partition starts on a whole microsecond", timestampType == TestTimestampType.NANO);
+        setSplitProperties();
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_day_us (ts TIMESTAMP_NS, v LONG, c2 LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t_day_us VALUES ('2022-02-27T00:00:00.000000000Z'::TIMESTAMP_NS, 1, 1)");
+            execute("INSERT INTO t_day_us SELECT '2022-02-27T00:00:00.000000500Z'::TIMESTAMP_NS, x + 1, x + 1 FROM long_sequence(10)");
+            execute("INSERT INTO t_day_us VALUES ('2022-02-27T02:00:00.000000000Z'::TIMESTAMP_NS, 100, 100)");
+            // splits the day after its rows at 00:00:00.000000500, so the new partition starts at 00:00:00.000000501
+            execute("INSERT INTO t_day_us VALUES ('2022-02-27T01:00:00.000000000Z'::TIMESTAMP_NS, 200, 200)");
+            // rows after 02:00 in the new partition, so that the next commit rewrites it rather than splits it
+            execute("INSERT INTO t_day_us SELECT ('2022-02-27T02:00:00.000000000Z'::TIMESTAMP_NS + x * 1_000_000_000L)::TIMESTAMP_NS, 100 + x, 100 + x FROM long_sequence(10)");
+            // one commit rewrites both, which then share their name txn
+            execute("INSERT INTO t_day_us VALUES ('2022-02-27T00:00:00.000000001Z'::TIMESTAMP_NS, 300, 300), ('2022-02-27T01:30:00.000000000Z'::TIMESTAMP_NS, 301, 301)");
+            try (TableReader reader = getReader("t_day_us")) {
+                final TimestampDriver driver = timestampType.getDriver();
+                Assert.assertEquals(2, reader.getPartitionCount());
+                Assert.assertEquals(driver.parseFloorLiteral("2022-02-27"), reader.getTxFile().getPartitionTimestampByIndex(0));
+                Assert.assertEquals(driver.parseFloorLiteral("2022-02-27") + 501, reader.getTxFile().getPartitionTimestampByIndex(1));
+                Assert.assertEquals(reader.getTxFile().getPartitionNameTxn(0), reader.getTxFile().getPartitionNameTxn(1));
+            }
+            final String dayDir = partitionDir("t_day_us", 0);
+            final String splitDir = partitionDir("t_day_us", 1);
+            final String dayFiles = listFiles(dayDir);
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                try (TableReader ignore = getReader("t_day_us")) {
+                    update("UPDATE t_day_us SET c2 = 0 WHERE ts >= '2022-02-27T00:00:00.000000501Z'");
+                    runPurgeJob(purgeJob);
+                }
+                Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+            }
+            eraseRawPartitionTimestamps();
+            replayPurgeLog("t_day_us");
+            Assert.assertEquals(dayFiles, listFiles(dayDir));
+            Assert.assertEquals("c2.d." + getColumnNameTxn("t_day_us", "c2", 1), String.join(" ", filesWithPrefix(listFiles(splitDir), "c2.")));
+            // c2 is x in the day partition: 1, 2..11 and 300
+            assertQuery("SELECT count(), sum(c2) FROM t_day_us WHERE ts < '2022-02-27T00:00:00.000000501Z'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count\tsum
+                            12\t366
+                            """);
+            assertQuery("SELECT count(), sum(c2) FROM t_day_us WHERE ts >= '2022-02-27T00:00:00.000000501Z'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count\tsum
+                            13\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testReplayedLegacyPurgeKeepsFilesOfPartitionInSameMicrosecond() throws Exception {
+        // A version before partition_timestamp_raw logged the partition timestamp in microseconds only. A replay that
+        // took the logged microsecond for the timestamp of the partition built the directory of the first partition of
+        // the microsecond, which has the same name txn, and removed the column versions that partition still reads.
+        // The replay locates the partitions of such a row in a snapshot of the table, and purges a version only where
+        // it is not live: here the second partition, the one the row was written for. s has a POSTING index.
+        Assume.assumeTrue("a TIMESTAMP partition starts on a whole microsecond", timestampType == TestTimestampType.NANO);
+        setSplitProperties();
+        assertMemoryLeak(() -> {
+            for (String walMode : new String[]{"BYPASS WAL", "WAL"}) {
+                createSameMicrosecondTable(walMode);
+                final String firstDir = partitionDir("t_same_us", 1);
+                final String secondDir = partitionDir("t_same_us", 2);
+                final String firstFiles = listFiles(firstDir);
+                try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                    updateSecondPartitionWithReader(purgeJob, "c2 = 0, s = 'b'");
+                    Assert.assertEquals(walMode, 2, purgeJob.getOutstandingPurgeTasks());
+                }
+                eraseRawPartitionTimestamps();
+                replayPurgeLog("t_same_us");
+                Assert.assertEquals(walMode, firstFiles, listFiles(firstDir));
+                final String secondFiles = listFiles(secondDir);
+                Assert.assertEquals(walMode, "c2.d." + getColumnNameTxn("t_same_us", "c2", 2), String.join(" ", filesWithPrefix(secondFiles, "c2.")));
+                Assert.assertEquals(walMode, "[]", filesOfInstance(secondFiles, "s", TableUtils.COLUMN_NAME_TXN_NONE).toString());
+                Assert.assertFalse(walMode, filesOfInstance(secondFiles, "s", getColumnNameTxn("t_same_us", "s", 2)).isEmpty());
+                assertRowsOfSameMicrosecondTable();
+                execute("DROP TABLE t_same_us");
+            }
+        });
+    }
+
+    @Test
+    public void testReplayedLegacyPurgeKeepsFilesOfPartitionRewrittenAfterUpdate() throws Exception {
+        // An O3 commit rewrote the second partition after the update, under another name txn, into a directory without
+        // the replaced versions. The first partition, which kept the name txn of the log row, reads its versions: the
+        // replay keeps its files.
+        Assume.assumeTrue("a TIMESTAMP partition starts on a whole microsecond", timestampType == TestTimestampType.NANO);
+        setSplitProperties();
+        assertMemoryLeak(() -> {
+            createSameMicrosecondTable("BYPASS WAL");
+            final String firstDir = partitionDir("t_same_us", 1);
+            final String firstFiles = listFiles(firstDir);
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                updateSecondPartitionWithReader(purgeJob, "c2 = 0, s = 'b'");
+                Assert.assertEquals(2, purgeJob.getOutstandingPurgeTasks());
+            }
+            execute("INSERT INTO t_same_us VALUES ('2022-02-27T01:00:00.000000400Z'::TIMESTAMP_NS, 700, 0, 'b')");
+            Assert.assertNotEquals(getPartitionNameTxn("t_same_us", 1), getPartitionNameTxn("t_same_us", 2));
+            eraseRawPartitionTimestamps();
+            replayPurgeLog("t_same_us");
+            Assert.assertEquals(firstFiles, listFiles(firstDir));
+            assertQuery("SELECT s, count(), sum(c2) FROM t_same_us ORDER BY s")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s\tcount\tsum
+                            a\t122\t10260
+                            b\t4\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testReplayedLegacyPurgeKeepsFilesOfPartitionSquashedIntoSibling() throws Exception {
+        // The squash folded the second partition into the first, in place, after the update: the first keeps its name
+        // txn and is the only partition of the microsecond the log row names, and its column files hold the rows of
+        // both. The replay keeps them, as the versions are live.
+        Assume.assumeTrue("a TIMESTAMP partition starts on a whole microsecond", timestampType == TestTimestampType.NANO);
+        setSplitProperties();
+        // a save point would make the squash copy the partition under a new name txn
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        assertMemoryLeak(() -> {
+            createSameMicrosecondTable("WAL");
+            final String firstDir = partitionDir("t_same_us", 1);
+            final long firstNameTxn = getPartitionNameTxn("t_same_us", 1);
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                updateSecondPartitionWithReader(purgeJob, "c2 = 0, s = 'b'");
+                Assert.assertEquals(2, purgeJob.getOutstandingPurgeTasks());
+            }
+            // the next commit squashes the smallest pair of partitions of the day, as the day may have one split
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MAX_SPLITS, 2);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_COMMITS, 0);
+            engine.releaseInactive();
+            execute("INSERT INTO t_same_us VALUES ('2022-02-28T00:00:00.000000000Z'::TIMESTAMP_NS, 900, 900, 'a')");
+            drainWalQueue();
+            try (TableReader reader = getReader("t_same_us")) {
+                final TimestampDriver driver = timestampType.getDriver();
+                Assert.assertEquals(3, reader.getPartitionCount());
+                Assert.assertEquals(driver.parseFloorLiteral("2022-02-27T01:00:00.000000Z"), reader.getTxFile().getPartitionTimestampByIndex(1));
+                Assert.assertEquals(firstNameTxn, reader.getTxFile().getPartitionNameTxn(1));
+                Assert.assertEquals(25, reader.getTxFile().getPartitionSize(1));
+            }
+            final String firstFiles = listFiles(firstDir);
+            eraseRawPartitionTimestamps();
+            replayPurgeLog("t_same_us");
+            Assert.assertEquals(firstFiles, listFiles(firstDir));
+            assertQuery("SELECT s, count(), sum(c2) FROM t_same_us ORDER BY s")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s\tcount\tsum
+                            a\t123\t11160
+                            b\t3\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testReplayedLegacyPurgeKeepsVersionAtOrPastSnapshotTxn() throws Exception {
+        // A column version at or past the txn of the snapshot may belong to a transaction in flight, as VACUUM TABLE
+        // assumes, so the replay leaves it, in every partition of the microsecond the row names.
+        Assume.assumeTrue("a TIMESTAMP partition starts on a whole microsecond", timestampType == TestTimestampType.NANO);
+        setSplitProperties();
+        assertMemoryLeak(() -> {
+            createSameMicrosecondTable("BYPASS WAL");
+            createPurgeJob().close();
+            final TableToken tableToken = engine.verifyTableName("t_same_us");
+            final long tableTxn;
+            final long partitionTimestamp;
+            try (TableReader reader = getReader("t_same_us")) {
+                tableTxn = reader.getTxn();
+                partitionTimestamp = reader.getTxFile().getPartitionTimestampByIndex(1);
+            }
+            final long futureTxn = tableTxn + 100;
+            final String firstDir = partitionDir("t_same_us", 1);
+            final String secondDir = partitionDir("t_same_us", 2);
+            Assert.assertTrue(new File(firstDir, "c2.d." + futureTxn).createNewFile());
+            Assert.assertTrue(new File(secondDir, "c2.d." + futureTxn).createNewFile());
+            execute("INSERT INTO '" + purgeLogTableName() + "' (ts, table_name, column_name, table_id, truncate_version, columnType, table_partition_by, updated_txn, column_version, partition_timestamp, partition_name_txn) VALUES ("
+                    + "0, '" + tableToken.getDirName() + "', 'c2', " + tableToken.getTableId() + ", 0, " + ColumnType.LONG + ", " + PartitionBy.DAY + ", " + tableTxn + ", "
+                    + futureTxn + ", " + timestampType.getDriver().toMicros(partitionTimestamp) + ", " + getPartitionNameTxn("t_same_us", 1) + ")");
+            replayPurgeLog("t_same_us");
+            Assert.assertEquals("c2.d c2.d." + futureTxn, String.join(" ", filesWithPrefix(listFiles(firstDir), "c2.")));
+            Assert.assertEquals("c2.d c2.d." + futureTxn, String.join(" ", filesWithPrefix(listFiles(secondDir), "c2.")));
+        });
+    }
+
+    @Test
+    public void testReplayedLegacyPurgeLeavesGeometryGeneration() throws Exception {
+        // The purge of a retired _geometry generation tells a newer incarnation of the file by the txn of the change
+        // that logged it, which the replay would have to raise, and a sibling's live generation can have the same
+        // number. The replay leaves the file of a generation that the log names in microseconds only.
+        Assume.assumeTrue("a TIMESTAMP partition starts on a whole microsecond", timestampType == TestTimestampType.NANO);
+        setSplitProperties();
+        assertMemoryLeak(() -> {
+            createSameMicrosecondTable("BYPASS WAL");
+            createPurgeJob().close();
+            final TableToken tableToken = engine.verifyTableName("t_same_us");
+            final long tableTxn;
+            final long partitionTimestamp;
+            try (TableReader reader = getReader("t_same_us")) {
+                tableTxn = reader.getTxn();
+                partitionTimestamp = reader.getTxFile().getPartitionTimestampByIndex(1);
+            }
+            // a file that the purge of a generation would remove: its record at offset 0 does not verify
+            final File geometryFile = new File(partitionDir("t_same_us", 1), "_geometry.0");
+            Assert.assertTrue(geometryFile.createNewFile());
+            execute("INSERT INTO '" + purgeLogTableName() + "' (ts, table_name, column_name, table_id, truncate_version, columnType, table_partition_by, updated_txn, column_version, partition_timestamp, partition_name_txn) VALUES ("
+                    + "0, '" + tableToken.getDirName() + "', '" + TableUtils.PARTITION_GEOMETRY_FILE_NAME + "', " + tableToken.getTableId() + ", 0, " + ColumnType.NULL + ", " + PartitionBy.DAY + ", " + tableTxn + ", "
+                    + "0, " + timestampType.getDriver().toMicros(partitionTimestamp) + ", " + getPartitionNameTxn("t_same_us", 1) + ")");
+            replayPurgeLog("t_same_us");
+            Assert.assertTrue(geometryFile.exists());
+        });
+    }
+
+    @Test
+    public void testReplayedLegacyPurgeOfExactEntriesWaitsForUpdateTxnOnly() throws Exception {
+        // The rows of a TIMESTAMP table name their partitions exactly in microseconds, and the rows of the table root
+        // name it with the root marker: the replay purges them as logged, so they wait only for the readers and save
+        // points before the change that logged them. Here a save point names the txn of the change, when the purged
+        // versions were already dead, and a later commit moves the table on.
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_exact (ts " + timestampType.getTypeName() + ", x LONG, s SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t_exact VALUES ('1970-01-01T02:00:00.000000Z', 1, 'a'), ('1970-01-02T02:00:00.000000Z', 2, 'b')");
+            drainWalQueue();
+            // a TIMESTAMP table updates x in every partition, a TIMESTAMP_NS table rebuilds the symbol map of s
+            final boolean isMicros = timestampType == TestTimestampType.MICRO;
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                try (TableReader ignore = getReader("t_exact")) {
+                    execute(isMicros ? "UPDATE t_exact SET x = 0" : "ALTER TABLE t_exact ALTER COLUMN s SYMBOL CAPACITY 1024");
+                    drainWalQueue();
+                    runPurgeJob(purgeJob);
+                }
+                Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+            }
+            releaseSavePointHolds("t_exact");
+            execute("INSERT INTO t_exact VALUES ('1970-01-03T02:00:00.000000Z', 3, 'c')");
+            drainWalQueue();
+            final String column = isMicros ? "x" : "s";
+            final String before = filesOfColumns("t_exact", column);
+            Assert.assertTrue(before, isMicros ? before.contains("/x.d ") : before.contains(" s.c "));
+            eraseRawPartitionTimestamps();
+            engine.releaseInactive();
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                assertPurgeLogRows(purgeJob, 0, 0);
+            }
+            final String after = filesOfColumns("t_exact", column);
+            // the versions of the column that the change replaced, txn NONE, are gone
+            Assert.assertFalse(after, isMicros ? after.contains("/x.d ") : after.contains(" s.c ") || after.contains(" s.o "));
+            assertQuery("SELECT x, s FROM t_exact")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(isMicros ? """
+                            x\ts
+                            0\ta
+                            0\tb
+                            3\tc
+                            """ : """
+                            x\ts
+                            1\ta
+                            2\tb
+                            3\tc
+                            """);
+        });
+    }
+
+    @Test
+    public void testReplayedLegacyPurgeOfNonPartitionedTable() throws Exception {
+        // A non-partitioned table has one directory, whatever the logged timestamp: the replay takes the row as it is,
+        // without a snapshot of the table, so a table it cannot read still loses the dropped column.
+        final AtomicBoolean isFailureArmed = new AtomicBoolean();
+        final AtomicInteger failureCount = new AtomicInteger();
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_none (ts " + timestampType.getTypeName() + ", x LONG, c LONG) TIMESTAMP(ts) PARTITION BY NONE BYPASS WAL");
+            execute("INSERT INTO t_none VALUES ('1970-01-01T02:00:00.000000Z', 1, 10), ('1970-01-02T02:00:00.000000Z', 2, 20)");
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                try (TableReader ignore = getReader("t_none")) {
+                    execute("ALTER TABLE t_none DROP COLUMN c");
+                    runPurgeJob(purgeJob);
+                }
+                Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+            }
+            final String tableDir = engine.verifyTableName("t_none").getDirName();
+            final String defaultDir = new File(new File(configuration.getDbRoot().toString(), tableDir), TableUtils.DEFAULT_PARTITION_NAME).getPath();
+            Assert.assertEquals("c.d", String.join(" ", filesWithPrefix(listFiles(defaultDir), "c.")));
+            eraseRawPartitionTimestamps();
+            engine.releaseInactive();
+            ff = new TestFilesFacadeImpl() {
+                @Override
+                public long openRO(LPSZ name) {
+                    if (isFailureArmed.get() && Utf8s.endsWithAscii(name, tableDir + Files.SEPARATOR + TableUtils.COLUMN_VERSION_FILE_NAME)) {
+                        failureCount.incrementAndGet();
+                        return -1;
+                    }
+                    return super.openRO(name);
+                }
+            };
+            isFailureArmed.set(true);
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                assertPurgeLogRows(purgeJob, 0, 0);
+            }
+            isFailureArmed.set(false);
+            Assert.assertEquals(0, failureCount.get());
+            Assert.assertEquals("", String.join(" ", filesWithPrefix(listFiles(defaultDir), "c.")));
+            assertQuery("SELECT * FROM t_none")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(replaceTimestampSuffix("""
+                            ts\tx
+                            1970-01-01T02:00:00.000000Z\t1
+                            1970-01-02T02:00:00.000000Z\t2
+                            """, timestampType.getTypeName()));
+        });
+    }
+
+    @Test
+    public void testReplayedLegacyPurgeOfTableThatCannotBeRead() throws Exception {
+        // The replay cannot open a reader of the table, so it cannot tell which partitions the rows that the log keeps
+        // in microseconds name, nor whether their versions are live there. It leaves their files to VACUUM TABLE, and
+        // purges the symbol map, which the log names with the table root marker.
+        Assume.assumeTrue("a TIMESTAMP partition starts on a whole microsecond", timestampType == TestTimestampType.NANO);
+        final AtomicBoolean isFailureArmed = new AtomicBoolean();
+        final AtomicInteger failureCount = new AtomicInteger();
+        setSplitProperties();
+        assertMemoryLeak(() -> {
+            createSplitTable("BYPASS WAL", "c LONG, s SYMBOL", ColumnPurgeJobTest::longAndSymbolValues);
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                dropColumnsWithReader(purgeJob, "c", "s");
+            }
+            final String tableDir = engine.verifyTableName("t_split").getDirName();
+            final String files = filesOfColumns("t_split", "c", "s");
+            final StringSink partitionFiles = new StringSink();
+            for (String file : files.split(" ")) {
+                if (file.contains("/")) {
+                    partitionFiles.put(partitionFiles.length() > 0 ? " " : "").put(file);
+                }
+            }
+            // the symbol map of s in the table directory, and c.d and s.d in each of the six partitions
+            Assert.assertEquals(files, 16, files.split(" ").length);
+            Assert.assertEquals(files, 12, partitionFiles.toString().split(" ").length);
+            eraseRawPartitionTimestamps();
+            engine.releaseInactive();
+            ff = new TestFilesFacadeImpl() {
+                @Override
+                public long openRO(LPSZ name) {
+                    if (isFailureArmed.get() && Utf8s.endsWithAscii(name, tableDir + Files.SEPARATOR + TableUtils.COLUMN_VERSION_FILE_NAME)) {
+                        failureCount.incrementAndGet();
+                        return -1;
+                    }
+                    return super.openRO(name);
+                }
+            };
+            isFailureArmed.set(true);
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                assertPurgeLogRows(purgeJob, 0, 0);
+            }
+            isFailureArmed.set(false);
+            Assert.assertTrue(failureCount.get() > 0);
+            // the symbol map of s went, and the files of c and s in every partition stayed
+            Assert.assertEquals(partitionFiles.toString(), filesOfColumns("t_split", "c", "s"));
+            execute("VACUUM TABLE t_split");
+            Assert.assertEquals("", filesOfColumns("t_split", "c", "s"));
+            assertRowsOfSplitTable();
+        });
+    }
+
+    @Test
+    public void testReplayedLegacyPurgeOfTableWithChangedTruncateVersion() throws Exception {
+        // DROP PARTITION changed the truncate version after the update, so the purge refuses the entries the replay
+        // located, and every file stays.
+        Assume.assumeTrue("a TIMESTAMP partition starts on a whole microsecond", timestampType == TestTimestampType.NANO);
+        setSplitProperties();
+        listenToTruncateRefusals();
+        assertMemoryLeak(() -> {
+            createSameMicrosecondTable("BYPASS WAL");
+            execute("INSERT INTO t_same_us VALUES ('2022-02-28T00:00:00.000000000Z'::TIMESTAMP_NS, 900, 900, 'a')");
+            final String firstDir = partitionDir("t_same_us", 1);
+            final String secondDir = partitionDir("t_same_us", 2);
+            final String firstFiles = listFiles(firstDir);
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                updateSecondPartitionWithReader(purgeJob, "c2 = 0");
+                Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+            }
+            execute("ALTER TABLE t_same_us DROP PARTITION LIST '2022-02-28'");
+            eraseRawPartitionTimestamps();
+            replayPurgeLog("t_same_us");
+            Assert.assertEquals(
+                    "[" + truncateRefusalKey("c2", partitionTimestampOf("t_same_us", 2), getPartitionNameTxn("t_same_us", 2), TableUtils.COLUMN_NAME_TXN_NONE) + "]",
+                    truncateRefusedEntries.toString()
+            );
+            Assert.assertEquals(firstFiles, listFiles(firstDir));
+            Assert.assertEquals("c2.d c2.d." + getColumnNameTxn("t_same_us", "c2", 2), String.join(" ", filesWithPrefix(listFiles(secondDir), "c2.")));
+        });
+    }
+
+    @Test
+    public void testReplayedLegacyPurgeRemovesFilesOfBothPartitionsInSameMicrosecond() throws Exception {
+        // One update rewrote c2 in both partitions of the microsecond, so the log holds the same row for each. The
+        // replay locates both partitions for each row, where the version is dead, and removes the files of both.
+        Assume.assumeTrue("a TIMESTAMP partition starts on a whole microsecond", timestampType == TestTimestampType.NANO);
+        setSplitProperties();
+        assertMemoryLeak(() -> {
+            createSameMicrosecondTable("BYPASS WAL");
+            final String firstDir = partitionDir("t_same_us", 1);
+            final String secondDir = partitionDir("t_same_us", 2);
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                try (TableReader ignore = getReader("t_same_us")) {
+                    update("UPDATE t_same_us SET c2 = 0 WHERE ts >= '2022-02-27T01:00:00.000000000Z' AND ts < '2022-02-27T02:00:00.000000000Z'");
+                    runPurgeJob(purgeJob);
+                }
+                Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+            }
+            eraseRawPartitionTimestamps();
+            replayPurgeLog("t_same_us");
+            Assert.assertEquals("c2.d." + getColumnNameTxn("t_same_us", "c2", 1), String.join(" ", filesWithPrefix(listFiles(firstDir), "c2.")));
+            Assert.assertEquals("c2.d." + getColumnNameTxn("t_same_us", "c2", 2), String.join(" ", filesWithPrefix(listFiles(secondDir), "c2.")));
+            // c2 is x before 01:00, and 300 in the row at 02:00
+            assertQuery("SELECT count(), sum(c2) FROM t_same_us")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count\tsum
+                            125\t5350
+                            """);
+        });
+    }
+
+    @Test
+    public void testReplayedLegacyPurgeRemovesFilesOfSplitPartition() throws Exception {
+        // As testReplayedPurgeRemovesFilesOfSplitPartition(), with rows that keep the partition timestamp in
+        // microseconds only: the replay locates the split partition in a snapshot of the table.
+        assertReplayedPurgeRemovesFilesOfSplitPartition(true);
+    }
+
+    @Test
+    public void testReplayedPurgeKeepsFilesOfPartitionInSameMicrosecond() throws Exception {
+        // Two split partitions of a TIMESTAMP_NS table can start in the same microsecond and carry the same name
+        // txn. A replay that read the timestamp of the second in microseconds built the directory of the first, and
+        // removed the column version that the first still reads.
+        Assume.assumeTrue("a TIMESTAMP partition starts on a whole microsecond", timestampType == TestTimestampType.NANO);
+        setSplitProperties();
+        assertMemoryLeak(() -> {
+            createSameMicrosecondTable("BYPASS WAL");
+            final String firstDir = partitionDir("t_same_us", 1);
+            final String secondDir = partitionDir("t_same_us", 2);
+            Assert.assertEquals("c2.d", String.join(" ", filesWithPrefix(listFiles(firstDir), "c2.")));
+            Assert.assertEquals("c2.d", String.join(" ", filesWithPrefix(listFiles(secondDir), "c2.")));
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                // rewrites c2 in the second partition only
+                updateSecondPartitionWithReader(purgeJob, "c2 = 0");
+                Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+            }
+            final long updateTxn = getColumnNameTxn("t_same_us", "c2", 2);
+            Assert.assertTrue(updateTxn > 0);
+            Assert.assertEquals(TableUtils.COLUMN_NAME_TXN_NONE, getColumnNameTxn("t_same_us", "c2", 1));
+            replayPurgeLog("t_same_us");
+            Assert.assertEquals("c2.d", String.join(" ", filesWithPrefix(listFiles(firstDir), "c2.")));
+            Assert.assertEquals("c2.d." + updateTxn, String.join(" ", filesWithPrefix(listFiles(secondDir), "c2.")));
+            // c2 is x in the rows before the second partition: 1..100 in the day partition, 201..220, 400 and 600
+            assertQuery("SELECT count(), sum(c2) FROM t_same_us WHERE ts < '2022-02-27T01:00:00.000000201Z'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count\tsum
+                            122\t10260
+                            """);
+            assertQuery("SELECT count(), sum(c2) FROM t_same_us WHERE ts >= '2022-02-27T01:00:00.000000201Z'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count\tsum
+                            3\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testReplayedPurgeOfRowsWithoutRawPartitionTimestamp() throws Exception {
+        // Rows that a version before partition_timestamp_raw wrote hold the partition timestamp in microseconds,
+        // see assertReplayOfRowsWithoutRawPartitionTimestamp().
+        setSplitProperties();
+        assertMemoryLeak(() -> {
+            createSplitTable("BYPASS WAL", "c LONG, s SYMBOL", ColumnPurgeJobTest::longAndSymbolValues);
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                dropColumnsWithReader(purgeJob, "c", "s");
+            }
+            eraseRawPartitionTimestamps();
+            replayPurgeLog("t_split");
+            assertReplayOfRowsWithoutRawPartitionTimestamp();
+        });
+    }
+
+    @Test
+    public void testReplayedPurgeRemovesFilesOfSplitPartition() throws Exception {
+        // An O3 split names the new partition after the last row it leaves behind plus one tick, which in a
+        // TIMESTAMP_NS table is a timestamp with a sub-microsecond part. The purge log keeps the timestamp whole in
+        // partition_timestamp_raw, so the replayed purge finds the split partition. A SYMBOL also has its symbol map
+        // in the table directory, which the log names with the root partition marker.
+        assertReplayedPurgeRemovesFilesOfSplitPartition(false);
+    }
+
+    /**
+     * Drops a column of each kind, LONG, VARCHAR, SYMBOL and SYMBOL with each index type, from t_split on WAL and
+     * non-WAL tables while a reader holds it, and asserts that the replay of the purge log removes every file of the
+     * column. With {@code isLegacy}, the rows of the log lack partition_timestamp_raw, as a version before the column
+     * wrote them.
+     */
+    private void assertReplayedPurgeRemovesFilesOfSplitPartition(boolean isLegacy) throws Exception {
+        setSplitProperties();
+        assertMemoryLeak(() -> {
+            final String[] columns = {
+                    "c LONG",
+                    "c VARCHAR",
+                    "c SYMBOL",
+                    "c SYMBOL INDEX TYPE BITMAP",
+                    "c SYMBOL INDEX TYPE POSTING INCLUDE (x)"
+            };
+            for (String walMode : new String[]{"BYPASS WAL", "WAL"}) {
+                for (String column : columns) {
+                    final String context = walMode + ", " + column;
+                    final boolean isSymbol = column.contains("SYMBOL");
+                    final boolean isVarchar = column.contains("VARCHAR");
+                    createSplitTable(
+                            walMode,
+                            column,
+                            x -> isSymbol ? "'s" + (x % 3) + "'" : isVarchar ? "'v" + x + "'" : String.valueOf(x * 10)
+                    );
+                    final String splitDir = new File(partitionDir("t_split", SPLIT_PARTITION_INDEX)).getName();
+                    final String files = " " + filesOfColumns("t_split", "c") + " ";
+                    Assert.assertTrue(context + ", " + files, files.contains(" " + splitDir + "/c.d "));
+                    Assert.assertEquals(context + ", " + files, isSymbol, files.contains(" c.c "));
+                    try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                        dropColumnsWithReader(purgeJob, "c");
+                        assertRawPartitionTimestamps(purgeJob, "c", isSymbol);
+                    }
+                    if (isLegacy) {
+                        eraseRawPartitionTimestamps();
+                    }
+                    replayPurgeLog("t_split");
+                    Assert.assertEquals(context, "", filesOfColumns("t_split", "c"));
+                    assertRowsOfSplitTable();
+                    execute("DROP TABLE t_split");
+                }
+            }
+        });
+    }
+
     /**
      * {@link #assertReplayedPurgeOfChangedIndex(String, String, String[], boolean)}, then drops t_replay.
      */
@@ -4029,6 +4837,331 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                     .returns(expectedRows);
         }
         return oldFiles;
+    }
+
+    /**
+     * Appends partition_timestamp_raw to the purge log rows of {@code expected}, which lists the other columns: the
+     * partition_timestamp of each row in the unit of the table timestamp. The partitions of those rows start on
+     * whole microseconds, which partition_timestamp holds exactly.
+     */
+    private String withRawPartitionTimestamps(String expected) throws NumericException {
+        final StringSink sink = new StringSink();
+        final String[] lines = expected.split("\n");
+        sink.put(lines[0]).put("\tpartition_timestamp_raw\n");
+        for (int i = 1; i < lines.length; i++) {
+            final String partitionTimestamp = lines[i].split("\t", -1)[9];
+            sink.put(lines[i]).put('\t').put(timestampType.getDriver().fromMicros(MicrosTimestampDriver.floor(partitionTimestamp))).put('\n');
+        }
+        return sink.toString();
+    }
+
+    private static void addFilesOfColumns(TreeSet<String> files, File dir, String prefix, String[] columns) {
+        final String[] names = dir.list();
+        Assert.assertNotNull(dir.toString(), names);
+        for (String name : names) {
+            for (String column : columns) {
+                if (name.startsWith(column + '.')) {
+                    files.add(prefix + name);
+                }
+            }
+        }
+    }
+
+    private void assertPurgeLogColumns(String expected) throws Exception {
+        assertQuery("SELECT \"column\", type FROM table_columns('" + purgeLogTableName() + "')")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns(expected);
+    }
+
+    /**
+     * Starts the purge job with {@code facade} on a log that a version before partition_timestamp_raw created, so
+     * that the job fails to add the column, and runs {@code afterJobStart}. Asserts that the job logs the purges of
+     * t_split as that version did, and that the next job adds the column and replays them, see
+     * {@link #assertReplayOfRowsWithoutRawPartitionTimestamp()}.
+     */
+    private void assertPurgeLogWithoutRawPartitionTimestamp(TestFilesFacadeImpl facade, Runnable afterJobStart) throws Exception {
+        createLegacyPurgeLog();
+        // a completed row in the last partition of the log, where the column add creates the file of the column
+        execute("INSERT INTO '" + purgeLogTableName() + "' (ts, table_name, column_name, completed) VALUES (0, 'gone~', 'c', 1)");
+        createSplitTable("BYPASS WAL", "c LONG, s SYMBOL", ColumnPurgeJobTest::longAndSymbolValues);
+        // the job opens a new writer of the log, which reaches the files through the facade
+        engine.releaseInactive();
+        ff = facade;
+        try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+            afterJobStart.run();
+            assertPurgeLogColumns(PURGE_LOG_COLUMNS.replace("partition_timestamp_raw\tLONG\n", ""));
+            // the reader keeps both purges in the log
+            try (TableReader ignore = getReader("t_split")) {
+                execute("ALTER TABLE t_split DROP COLUMN c");
+                runPurgeJob(purgeJob);
+                // the purge of s goes to the next partition of the log: the column add of the next job creates the
+                // file of the column there, and none in the partition of the purge of c
+                setCurrentMicros(currentMicros + 31 * Micros.DAY_MICROS);
+                execute("ALTER TABLE t_split DROP COLUMN s");
+                runPurgeJob(purgeJob);
+            }
+            Assert.assertEquals(2, purgeJob.getOutstandingPurgeTasks());
+            // six partitions of c, six of s and the symbol map of s, the completed row went with the startup truncate
+            assertPurgeLogRows(purgeJob, 13, 0);
+            assertQuery("SELECT name FROM table_partitions('" + purgeJob.getLogTableName() + "')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            name
+                            1970-01
+                            1970-02
+                            """);
+        }
+        replayPurgeLog("t_split");
+        assertPurgeLogColumns(PURGE_LOG_COLUMNS);
+        assertReplayOfRowsWithoutRawPartitionTimestamp();
+    }
+
+    // partition_timestamp_raw of the logged purge of column of t_split: the timestamp of each partition as _txn has
+    // it, and the root partition marker for the symbol map of a SYMBOL
+    private void assertRawPartitionTimestamps(ColumnPurgeJob purgeJob, String column, boolean isSymbol) throws Exception {
+        final StringSink expected = new StringSink();
+        expected.put("partition_timestamp_raw\n");
+        if (isSymbol) {
+            expected.put(PurgingOperator.TABLE_ROOT_PARTITION).put('\n');
+        }
+        try (TableReader reader = getReader("t_split")) {
+            for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
+                expected.put(reader.getTxFile().getPartitionTimestampByIndex(i)).put('\n');
+            }
+        }
+        assertQuery("SELECT partition_timestamp_raw FROM '" + purgeJob.getLogTableName() + "' WHERE column_name = '" + column + "' ORDER BY partition_timestamp_raw")
+                .noLeakCheck()
+                .returns(expected);
+    }
+
+    /**
+     * Asserts that the replay of rows without partition_timestamp_raw removed every file of c and s in t_split. Such
+     * a row holds the partition timestamp in microseconds, in partition_timestamp. The replay restores every timestamp
+     * of a TIMESTAMP table, and the root partition marker, which the conversion to microseconds moved in a
+     * TIMESTAMP_NS table. It locates the partitions of a TIMESTAMP_NS table in a snapshot of the table: the split
+     * partition starts one nanosecond after a whole microsecond.
+     */
+    private void assertReplayOfRowsWithoutRawPartitionTimestamp() throws Exception {
+        Assert.assertEquals("", filesOfColumns("t_split", "c", "s"));
+        assertRowsOfSplitTable();
+    }
+
+    private void assertRowsOfSplitTable() throws Exception {
+        assertQuery("SELECT ts, x FROM t_split")
+                .noLeakCheck()
+                .timestamp("ts")
+                .expectSize()
+                .returns(replaceTimestampSuffix(ROWS_OF_SPLIT_TABLE, timestampType.getTypeName()));
+    }
+
+    private static void createLegacyPurgeLog() throws SqlException {
+        execute("CREATE TABLE '" + purgeLogTableName() + "' (" + LEGACY_PURGE_LOG_COLUMNS + ") timestamp(ts) partition by MONTH BYPASS WAL");
+    }
+
+    /**
+     * Creates t_split with ts, x and {@code columns}, which hold {@code values} of x in the row x: one row in each of
+     * 1970-01-01, 1970-01-02, 1970-01-04 and 1970-01-05, and one each hour from 01:00 to 10:00 in 1970-01-03. Then a
+     * row at 09:30 splits 1970-01-03 after its 09:00 row, see {@link #ROWS_OF_SPLIT_TABLE}. The new partition, the
+     * fourth of six, starts one tick after that row: at 1970-01-03T09:00:00.000001 in a TIMESTAMP table and at
+     * 1970-01-03T09:00:00.000000001 in a TIMESTAMP_NS one.
+     */
+    private void createSplitTable(String walMode, String columns, LongFunction<String> values) throws Exception {
+        execute("CREATE TABLE t_split (ts " + timestampType.getTypeName() + ", x LONG, " + columns + ") TIMESTAMP(ts) PARTITION BY DAY " + walMode);
+        final String[] hours = {
+                "1970-01-01T02", "1970-01-02T02", "1970-01-03T01", "1970-01-03T02", "1970-01-03T03", "1970-01-03T04", "1970-01-03T05",
+                "1970-01-03T06", "1970-01-03T07", "1970-01-03T08", "1970-01-03T09", "1970-01-03T10", "1970-01-04T02", "1970-01-05T02"
+        };
+        final StringSink sql = new StringSink();
+        sql.put("INSERT INTO t_split VALUES ");
+        for (int i = 0; i < hours.length; i++) {
+            sql.put(i > 0 ? ", " : "").put("('").put(hours[i]).put(":00:00.000000Z', ").put(i + 1).put(", ").put(values.apply(i + 1)).put(')');
+        }
+        execute(sql);
+        drainWalQueue();
+        execute("INSERT INTO t_split VALUES ('1970-01-03T09:30:00.000000Z', 15, " + values.apply(15) + ")");
+        drainWalQueue();
+        try (TableReader reader = getReader("t_split")) {
+            Assert.assertEquals(6, reader.getPartitionCount());
+            Assert.assertEquals(
+                    timestampType.getDriver().parseFloorLiteral("1970-01-03T09:00:00.000000Z") + 1,
+                    reader.getTxFile().getPartitionTimestampByIndex(SPLIT_PARTITION_INDEX)
+            );
+        }
+    }
+
+    /**
+     * Creates t_same_us, a TIMESTAMP_NS table with a POSTING index on s, whose 2022-02-27 has three partitions: the
+     * day, 01:00 exactly and 01:00:00.000000201. The last two start in the same microsecond and carry the same name
+     * txn, as one commit rewrote both. c2 is x and s is 'a' in each row, see
+     * {@link #assertRowsOfSameMicrosecondTable()}.
+     */
+    private void createSameMicrosecondTable(String walMode) throws Exception {
+        execute("CREATE TABLE t_same_us (ts TIMESTAMP_NS, v LONG, c2 LONG, s SYMBOL INDEX TYPE POSTING) TIMESTAMP(ts) PARTITION BY DAY " + walMode);
+        final String[] inserts = {
+                // 100 rows before 01:00, the last at 00:59:59.999999999
+                "INSERT INTO t_same_us SELECT ('2022-02-27T00:00:00.000000000Z'::TIMESTAMP_NS + (x - 1) * 1_000_000_000L)::TIMESTAMP_NS, x, x, 'a' FROM long_sequence(99)",
+                "INSERT INTO t_same_us VALUES ('2022-02-27T00:59:59.999999999Z'::TIMESTAMP_NS, 100, 100, 'a')",
+                // 20 rows in the microsecond after 01:00, and one at 02:00
+                "INSERT INTO t_same_us SELECT ('2022-02-27T01:00:00.000000000Z'::TIMESTAMP_NS + x * 10)::TIMESTAMP_NS, 200 + x, 200 + x, 'a' FROM long_sequence(20)",
+                "INSERT INTO t_same_us VALUES ('2022-02-27T02:00:00.000000000Z'::TIMESTAMP_NS, 300, 300, 'a')",
+                // splits the day after 00:59:59.999999999, so the new partition starts at 01:00 exactly
+                "INSERT INTO t_same_us VALUES ('2022-02-27T01:00:00.000000000Z'::TIMESTAMP_NS, 400, 400, 'a')",
+                // splits that partition after 01:00:00.000000200, so the next one starts at 01:00:00.000000201
+                "INSERT INTO t_same_us VALUES ('2022-02-27T01:00:00.000000500Z'::TIMESTAMP_NS, 500, 500, 'a')",
+                // one commit rewrites both, which then share their name txn
+                "INSERT INTO t_same_us VALUES ('2022-02-27T01:00:00.000000005Z'::TIMESTAMP_NS, 600, 600, 'a'), ('2022-02-27T01:00:00.000000300Z'::TIMESTAMP_NS, 601, 601, 'a')"
+        };
+        for (String insert : inserts) {
+            execute(insert);
+            drainWalQueue();
+        }
+        try (TableReader reader = getReader("t_same_us")) {
+            final TimestampDriver driver = timestampType.getDriver();
+            Assert.assertEquals(3, reader.getPartitionCount());
+            Assert.assertEquals(driver.parseFloorLiteral("2022-02-27T01:00:00.000000Z"), reader.getTxFile().getPartitionTimestampByIndex(1));
+            Assert.assertEquals(driver.parseFloorLiteral("2022-02-27T01:00:00.000000Z") + 201, reader.getTxFile().getPartitionTimestampByIndex(2));
+            Assert.assertEquals(reader.getTxFile().getPartitionNameTxn(1), reader.getTxFile().getPartitionNameTxn(2));
+        }
+    }
+
+    /**
+     * Asserts the rows of t_same_us after the update of the partition at 01:00:00.000000201: before it c2 is x and s
+     * is 'a', 1..100 in the day partition, and 201..220, 400 and 600 at 01:00; in it c2 is 0 and s is 'b'. The
+     * filters on s read its POSTING index.
+     */
+    private void assertRowsOfSameMicrosecondTable() throws Exception {
+        assertQuery("SELECT count(), sum(c2) FROM t_same_us WHERE s = 'a'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .withPlanContaining("Index")
+                .returns("""
+                        count\tsum
+                        122\t10260
+                        """);
+        assertQuery("SELECT count(), sum(c2) FROM t_same_us WHERE s = 'b'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .withPlanContaining("Index")
+                .returns("""
+                        count\tsum
+                        3\t0
+                        """);
+        assertQuery("SELECT count(), sum(c2) FROM t_same_us WHERE ts < '2022-02-27T01:00:00.000000201Z'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        count\tsum
+                        122\t10260
+                        """);
+    }
+
+    // Erases partition_timestamp_raw of every row of the purge log, as a version before the column wrote the rows: the
+    // rows keep the partition timestamp in microseconds only, in partition_timestamp
+    private void eraseRawPartitionTimestamps() throws SqlException {
+        update("UPDATE '" + purgeLogTableName() + "' SET partition_timestamp_raw = NULL");
+    }
+
+    // the timestamp of the partition of tableName at partitionIndex, as _txn has it
+    private static long partitionTimestampOf(String tableName, int partitionIndex) {
+        try (TableReader reader = getReader(tableName)) {
+            return reader.getTxFile().getPartitionTimestampByIndex(partitionIndex);
+        }
+    }
+
+    // Updates the partition of t_same_us at 01:00:00.000000201 while a reader holds the table, so the purge job only
+    // logs the purges of the versions the update replaced, one task per column
+    private void updateSecondPartitionWithReader(ColumnPurgeJob purgeJob, String setClause) throws Exception {
+        try (TableReader ignore = getReader("t_same_us")) {
+            update("UPDATE t_same_us SET " + setClause + " WHERE ts >= '2022-02-27T01:00:00.000000201Z'");
+            drainWalQueue();
+            runPurgeJob(purgeJob);
+        }
+    }
+
+    // drops columns of t_split while a reader holds the table, so the purge job only logs their purges, one task each
+    private void dropColumnsWithReader(ColumnPurgeJob purgeJob, String... columns) throws Exception {
+        final int outstandingPurgeTasks = purgeJob.getOutstandingPurgeTasks();
+        try (TableReader ignore = getReader("t_split")) {
+            for (String column : columns) {
+                execute("ALTER TABLE t_split DROP COLUMN " + column);
+            }
+            drainWalQueue();
+            runPurgeJob(purgeJob);
+        }
+        Assert.assertEquals(outstandingPurgeTasks + columns.length, purgeJob.getOutstandingPurgeTasks());
+    }
+
+    /**
+     * The files of {@code columns} in the table directory and in the partition directories of {@code tableName}, as
+     * paths within the table directory, sorted and space-separated.
+     */
+    private String filesOfColumns(String tableName, String... columns) {
+        final TreeSet<String> files = new TreeSet<>();
+        addFilesOfColumns(files, new File(configuration.getDbRoot().toString(), engine.verifyTableName(tableName).getDirName()), "", columns);
+        final int partitionCount;
+        try (TableReader reader = getReader(tableName)) {
+            partitionCount = reader.getPartitionCount();
+        }
+        for (int i = 0; i < partitionCount; i++) {
+            final File dir = new File(partitionDir(tableName, i));
+            addFilesOfColumns(files, dir, dir.getName() + "/", columns);
+        }
+        return String.join(" ", files);
+    }
+
+    // the values of c LONG and s SYMBOL in the row x of t_split
+    private static String longAndSymbolValues(long x) {
+        return x * 10 + ", 's" + x % 3 + "'";
+    }
+
+    // the name of the file at path when it is in the directory of the purge log or in one of its partitions, or null
+    private static String purgeLogFileName(LPSZ path) {
+        final File file = new File(Utf8s.stringFromUtf8Bytes(path));
+        final File dir = file.getParentFile();
+        if (dir != null && (isPurgeLogDir(dir) || (dir.getParentFile() != null && isPurgeLogDir(dir.getParentFile())))) {
+            return file.getName();
+        }
+        return null;
+    }
+
+    // whether name is the data file of partition_timestamp_raw in a partition of the purge log, named with the txn
+    // of the column add
+    private static boolean isRawColumnDataFile(LPSZ name) {
+        final String fileName = purgeLogFileName(name);
+        return fileName != null && fileName.startsWith("partition_timestamp_raw.d");
+    }
+
+    private static boolean isPurgeLogDir(File dir) {
+        return dir.getName().startsWith(purgeLogTableName() + TableUtils.SYSTEM_TABLE_NAME_SUFFIX);
+    }
+
+    private static String purgeLogTableName() {
+        return configuration.getSystemTableNamePrefix() + "column_versions_purge_log";
+    }
+
+    // A new purge job, as after a restart, replays the purge log, truncates it, and keeps no task for a retry
+    private void replayPurgeLog(String tableName) throws Exception {
+        engine.releaseInactive();
+        // under ADAPTIVE the save points still name the versions that the change replaced, and the replay keeps them
+        releaseSavePointHolds(tableName);
+        try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+            Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+            assertPurgeLogRows(purgeJob, 0, 0);
+        }
+    }
+
+    private static void setSplitProperties() {
+        // an O3 row splits a partition whatever the size of the rows before it, rather than adding a piece to it
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, false);
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MAX_SPLITS, 20);
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 20);
     }
 
     /**
