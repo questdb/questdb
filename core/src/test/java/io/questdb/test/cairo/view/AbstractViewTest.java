@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.view;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.file.BlockFileReader;
@@ -85,6 +86,19 @@ class AbstractViewTest extends AbstractCairoTest {
             }
         }
         assertEquals(0, expectedRefViews.size());
+    }
+
+    static void assertViewColumns(String viewName, String expectedColumns) {
+        final StringSink sink = new StringSink();
+        try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName(viewName))) {
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                if (i > 0) {
+                    sink.put(", ");
+                }
+                sink.put(metadata.getColumnName(i)).put(':').put(ColumnType.nameOf(metadata.getColumnType(i)));
+            }
+        }
+        Assert.assertEquals(expectedColumns, sink.toString());
     }
 
     static void assertViewDefinition(String name, String query, String... expectedDependencies) {

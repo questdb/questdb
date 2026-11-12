@@ -7930,7 +7930,7 @@ public class IODispatcherTest extends AbstractTest {
         engine.setPoolListener(run);
         try {
             run.start();
-            run.releaseAfterLogged(capture, "waiting for view compilation to release table [table=t]", () -> {
+            run.releaseAfterLogged(capture, ViewCompileParker.ddlWaitLine("t"), () -> {
                 query.close();
                 try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                     engine.execute("DROP TABLE t", executionContext);
@@ -7991,7 +7991,7 @@ public class IODispatcherTest extends AbstractTest {
         engine.setPoolListener(run);
         try {
             run.start();
-            run.releaseAfterLogged(capture, "waiting for view compilation to release table [table=t]", null);
+            run.releaseAfterLogged(capture, ViewCompileParker.ddlWaitLine("t"), null);
             testHttpClient.assertGet("/exec", "{\"ddl\":\"OK\"}", ddl);
         } finally {
             run.join();

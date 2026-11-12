@@ -72,6 +72,8 @@ import io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFac
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
+import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
+import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
@@ -919,6 +921,24 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static void enableCompositePartitionRandomisation(Rnd rnd) {
         if (rnd.nextBoolean()) {
             enableCompositePartitionRandomisation();
+        }
+    }
+
+    /**
+     * Encodes the first partition of the table into the Parquet file {@code fileName} in the db root, replacing a
+     * file of that name. {@code read_parquet()} finds the file when the test sets {@code inputRoot} to {@code root}.
+     */
+    protected static void encodeTable(CharSequence tableName, CharSequence fileName) {
+        try (
+                Path path = new Path();
+                PartitionDescriptor descriptor = new PartitionDescriptor();
+                TableReader reader = engine.getReader(tableName)
+        ) {
+            path.of(root).concat(fileName);
+            engine.getConfiguration().getFilesFacade().remove(path.$());
+            PartitionEncoder.populateFromTableReader(reader, descriptor, 0);
+            PartitionEncoder.encode(descriptor, path);
+            Assert.assertTrue(Files.exists(path.$()));
         }
     }
 

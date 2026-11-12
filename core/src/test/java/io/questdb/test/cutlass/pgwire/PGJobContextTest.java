@@ -13312,7 +13312,7 @@ create table tab as (
         });
         try {
             run.start();
-            run.releaseAfterLogged(capture, "waiting for view compilation to release table [table=t]", onWait);
+            run.releaseAfterLogged(capture, ViewCompileParker.ddlWaitLine("t"), onWait);
             ddl.execute();
         } finally {
             run.join();
@@ -13381,7 +13381,7 @@ create table tab as (
         engine.setPoolListener(run);
         try (PreparedStatement statement = connection.prepareStatement(ddl)) {
             run.start();
-            run.releaseAfterLogged(capture, "waiting for view compilation to release table [table=t]", () -> {
+            run.releaseAfterLogged(capture, ViewCompileParker.ddlWaitLine("t"), () -> {
                 query.close();
                 try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                     engine.execute("DROP TABLE t", executionContext);

@@ -33,7 +33,6 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ResourcePoolSupervisor;
 import io.questdb.cairo.security.AllowAllSecurityContext;
-import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.view.NoOpViewStateStore;
 import io.questdb.cairo.view.ViewCompilerJob;
 import io.questdb.cairo.view.ViewState;
@@ -62,7 +61,7 @@ import static org.junit.Assert.assertEquals;
 
 public class ViewCompilerJobTest extends AbstractViewTest {
     // DROP, RENAME or TRUNCATE of t logs this line when it waits for a view compile run
-    private static final String DDL_WAIT_LINE = "waiting for view compilation to release table [table=t]";
+    private static final String DDL_WAIT_LINE = ViewCompileParker.ddlWaitLine("t");
     private static final String PIVOT_RACE_SQL = """
             SELECT * FROM data
             PIVOT (
@@ -208,7 +207,7 @@ public class ViewCompilerJobTest extends AbstractViewTest {
             engine.enqueueCompileView(engine.verifyTableName("pv"));
             drainViewQueue();
             assertViewState("pv");
-            assertViewColumns("pv", "grp, X, Y");
+            assertViewColumns("pv", "grp:SYMBOL, X:LONG, Y:LONG");
             assertNothingBusy();
         });
     }
@@ -223,7 +222,7 @@ public class ViewCompilerJobTest extends AbstractViewTest {
             createPivotRaceTables();
             createView("pv", PIVOT_RACE_SQL);
             createView("pv_dep", "SELECT grp, X FROM pv");
-            assertViewColumns("pv", "grp, X, Y");
+            assertViewColumns("pv", "grp:SYMBOL, X:LONG, Y:LONG");
 
             // a category that the view's stored metadata does not have yet
             execute("INSERT INTO cats VALUES ('Z')");
@@ -241,8 +240,8 @@ public class ViewCompilerJobTest extends AbstractViewTest {
             Assert.assertEquals("", raceInvalidViews.toString());
             assertViewState("pv");
             assertViewState("pv_dep");
-            assertViewColumns("pv", "grp, X, Y, Z");
-            assertViewColumns("pv_dep", "grp, X");
+            assertViewColumns("pv", "grp:SYMBOL, X:LONG, Y:LONG, Z:LONG");
+            assertViewColumns("pv_dep", "grp:SYMBOL, X:LONG");
             assertNothingBusy();
         });
     }
@@ -257,7 +256,7 @@ public class ViewCompilerJobTest extends AbstractViewTest {
             execute("CREATE TABLE race_t (a INT)");
             execute("INSERT INTO race_t VALUES (1)");
             createView("race_v", "SELECT * FROM race_t");
-            assertViewColumns("race_v", "a");
+            assertViewColumns("race_v", "a:INT");
 
             raceWatchedViews.add("race_v");
             raceRecreateTableSql.set("CREATE TABLE race_t (a INT, b INT)");
@@ -268,7 +267,7 @@ public class ViewCompilerJobTest extends AbstractViewTest {
             Assert.assertNull(raceRecreateTableSql.get());
             Assert.assertEquals("", raceInvalidViews.toString());
             assertViewState("race_v");
-            assertViewColumns("race_v", "a, b");
+            assertViewColumns("race_v", "a:INT, b:INT");
             assertNothingBusy();
         });
     }
@@ -284,7 +283,7 @@ public class ViewCompilerJobTest extends AbstractViewTest {
             execute("CREATE TABLE race_t (a INT)");
             execute("INSERT INTO race_t VALUES (1)");
             createView("race_v", "SELECT * FROM race_t");
-            assertViewColumns("race_v", "a");
+            assertViewColumns("race_v", "a:INT");
 
             raceWatchedViews.add("race_v");
             raceAddColumnThenRecreateSql.set("CREATE TABLE race_t (a INT, b INT, c INT)");
@@ -297,7 +296,7 @@ public class ViewCompilerJobTest extends AbstractViewTest {
             Assert.assertNull(raceRecreateTableSql.get());
             Assert.assertEquals("", raceInvalidViews.toString());
             assertViewState("race_v");
-            assertViewColumns("race_v", "a, b, c");
+            assertViewColumns("race_v", "a:INT, b:INT, c:INT");
             assertNothingBusy();
         });
     }
@@ -398,7 +397,7 @@ public class ViewCompilerJobTest extends AbstractViewTest {
                         .returns("a\n");
                 drainViewQueue();
                 assertViewState("v");
-                assertViewColumns("v", "a");
+                assertViewColumns("v", "a:INT");
                 execute("DROP VIEW v");
                 execute("DROP TABLE t");
                 drainWalAndViewQueues();
@@ -528,19 +527,6 @@ public class ViewCompilerJobTest extends AbstractViewTest {
 
     private static void assertTableAbsent(String tableName) {
         Assert.assertNull(engine.getTableTokenIfExists(tableName));
-    }
-
-    private static void assertViewColumns(String viewName, String expectedColumns) {
-        final StringSink sink = new StringSink();
-        try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName(viewName))) {
-            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                if (i > 0) {
-                    sink.put(", ");
-                }
-                sink.put(metadata.getColumnName(i));
-            }
-        }
-        Assert.assertEquals(expectedColumns, sink.toString());
     }
 
     private static void assertViewInvalid(String viewName, String expectedReasonFragment) {

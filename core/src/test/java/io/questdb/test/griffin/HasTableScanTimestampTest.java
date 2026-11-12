@@ -26,18 +26,14 @@ package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.SqlJitMode;
-import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.parquet.ParquetExportMode;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.StaleViewCheckFactory;
-import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
-import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
-import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -376,15 +372,7 @@ public class HasTableScanTimestampTest extends AbstractCairoTest {
         execute("CREATE VIEW vrv AS (SELECT * FROM vr)");
         drainWalAndViewQueues();
         drainWalAndMatViewQueues();
-        try (
-                Path path = new Path();
-                PartitionDescriptor descriptor = new PartitionDescriptor();
-                TableReader reader = engine.getReader("t")
-        ) {
-            path.of(root).concat("ht.parquet");
-            PartitionEncoder.populateFromTableReader(reader, descriptor, 0);
-            PartitionEncoder.encode(descriptor, path);
-        }
+        encodeTable("t", "ht.parquet");
     }
 
     // The export mode of a plan that reads the retyped column x of r.

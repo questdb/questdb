@@ -35,7 +35,6 @@ import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.view.ViewStateStore;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
@@ -48,7 +47,6 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
@@ -81,7 +79,7 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
     // 2025-06-19T12:00:00.000000Z
     private static final long TRUNCATE_MICROS = 1_750_334_400_000_000L;
     // a DROP, RENAME or TRUNCATE of t logs this line when it waits for a view compile run
-    private static final String WAIT_LINE = "waiting for view compilation to release table [table=t]";
+    private static final String WAIT_LINE = ViewCompileParker.ddlWaitLine("t");
     private static final LogCapture capture = new LogCapture();
     private int addedColumnCount;
 
@@ -1574,7 +1572,7 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
             }
             drainWalQueue();
             capture.drain();
-            capture.assertNotLogged("waiting for view compilation to release table");
+            capture.assertNotLogged(ViewCompileParker.DDL_WAIT_LINE_PREFIX);
             assertTableListed("w", false);
             assertTableListed("w2", false);
         });
@@ -1605,19 +1603,6 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
         assertDdlFails(ddl, expectedError);
         final long elapsedMillis = configuration.getMillisecondClock().getTicks() - startMillis;
         Assert.assertTrue(ddl + " failed after " + elapsedMillis + "ms", elapsedMillis >= timeoutMillis);
-    }
-
-    private static void assertViewColumns(String viewName, String expectedColumns) {
-        final StringSink sink = new StringSink();
-        try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName(viewName))) {
-            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                if (i > 0) {
-                    sink.put(", ");
-                }
-                sink.put(metadata.getColumnName(i)).put(':').put(ColumnType.nameOf(metadata.getColumnType(i)));
-            }
-        }
-        Assert.assertEquals(expectedColumns, sink.toString());
     }
 
     private static void closeQuery(ReaderHoldingThread query) {

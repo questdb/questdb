@@ -2596,9 +2596,7 @@ public class CopyExportTest extends AbstractCairoTest {
             // composite.
             runAndFetchCopyExportID("COPY \"src ct\" TO 'turned_composite_settings' WITH FORMAT PARQUET", sqlExecutionContext);
             makeFirstPartitionComposite();
-            try (CopyExportRequestJob job = new CopyExportRequestJob(engine)) {
-                Assert.assertTrue("the queued export must be picked up", job.run());
-            }
+            runExportJob();
             assertExportFinished();
             assertCompositeExportKeepsParquetSetting("turned_composite_settings");
         });
@@ -8775,9 +8773,7 @@ public class CopyExportTest extends AbstractCairoTest {
     // Runs the COPY on this thread to its end.
     private void copyToParquet(String copySql) throws Exception {
         runAndFetchCopyExportID(copySql, sqlExecutionContext);
-        try (CopyExportRequestJob job = new CopyExportRequestJob(engine)) {
-            Assert.assertTrue("the queued export must be picked up", job.run());
-        }
+        runExportJob();
         assertExportFinished();
     }
 

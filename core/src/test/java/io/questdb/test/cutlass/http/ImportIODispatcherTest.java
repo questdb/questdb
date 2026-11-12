@@ -729,7 +729,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                     engine.setPoolListener(run);
                     try {
                         run.start();
-                        run.releaseAfterLogged(capture, "waiting for view compilation to release table [table=trips]", null);
+                        run.releaseAfterLogged(capture, ViewCompileParker.ddlWaitLine("trips"), null);
                         new SendAndReceiveRequestBuilder().execute(
                                 ValidImportRequest1.replace("POST /upload?name=trips HTTP", "POST /upload?name=trips&overwrite=true HTTP"),
                                 ValidImportResponse1

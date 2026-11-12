@@ -25,15 +25,9 @@
 package io.questdb.test.cairo.mv;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.TableReader;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
-import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
-import io.questdb.std.Files;
-import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -128,20 +122,6 @@ public class MatViewExternalSourceRejectionGapTest extends AbstractCairoTest {
                 "v > (SELECT max(w) FROM (SELECT sum(p.price) w FROM ((SELECT * FROM read_parquet('x.parquet') LIMIT 10) TIMESTAMP(ts)) "
                         + "WINDOW JOIN prices p RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING))"
         );
-    }
-
-    private static void encodeTable(CharSequence tableName, CharSequence fileName) {
-        try (
-                Path path = new Path();
-                PartitionDescriptor descriptor = new PartitionDescriptor();
-                TableReader reader = engine.getReader(tableName)
-        ) {
-            path.of(root).concat(fileName);
-            engine.getConfiguration().getFilesFacade().remove(path.$());
-            PartitionEncoder.populateFromTableReader(reader, descriptor, 0);
-            PartitionEncoder.encode(descriptor, path);
-            Assert.assertTrue(Files.exists(path.$()));
-        }
     }
 
     private void assertRejected(SqlExecutionContext ctx, String... predicates) throws Exception {

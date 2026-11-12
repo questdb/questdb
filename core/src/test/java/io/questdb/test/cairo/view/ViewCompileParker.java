@@ -49,6 +49,9 @@ import java.util.concurrent.atomic.AtomicReference;
  * calls it, with {@link CairoEngine#setPoolListener}.
  */
 public class ViewCompileParker implements PoolListener {
+    // the start of the line that DROP, RENAME or TRUNCATE of a non-WAL table logs when it waits for
+    // a view compile run to let go of the table
+    public static final String DDL_WAIT_LINE_PREFIX = "waiting for view compilation to release table [table=";
     private static final long HOLDING_TIMEOUT_SECONDS = 30;
     private final Thread compileThread;
     private final AtomicReference<Throwable> error = new AtomicReference<>();
@@ -71,6 +74,11 @@ public class ViewCompileParker implements PoolListener {
                 Path.clearThreadLocals();
             }
         }, "parked-view-compiler");
+    }
+
+    // the line that DROP, RENAME or TRUNCATE of the table logs when it waits for a view compile run
+    public static String ddlWaitLine(String tableName) {
+        return DDL_WAIT_LINE_PREFIX + tableName + ']';
     }
 
     /**

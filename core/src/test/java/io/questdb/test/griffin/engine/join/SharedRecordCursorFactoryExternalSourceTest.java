@@ -25,13 +25,8 @@
 package io.questdb.test.griffin.engine.join;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.join.SharedRecordCursorFactory;
-import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
-import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
-import io.questdb.std.Files;
-import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Before;
@@ -101,20 +96,6 @@ public class SharedRecordCursorFactoryExternalSourceTest extends AbstractCairoTe
                     expected,
                     shared.usesExternalDataSource()
             );
-        }
-    }
-
-    private static void encodeTable(CharSequence tableName, CharSequence fileName) {
-        try (
-                Path path = new Path();
-                PartitionDescriptor descriptor = new PartitionDescriptor();
-                TableReader reader = engine.getReader(tableName)
-        ) {
-            path.of(root).concat(fileName);
-            engine.getConfiguration().getFilesFacade().remove(path.$());
-            PartitionEncoder.populateFromTableReader(reader, descriptor, 0);
-            PartitionEncoder.encode(descriptor, path);
-            Assert.assertTrue(Files.exists(path.$()));
         }
     }
 }
