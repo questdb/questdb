@@ -41,13 +41,10 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Drives the real client against a real QWP ingress and pins how long a sender
- * converts values against a cached table schema after
- * {@code ALTER TABLE ... ALTER COLUMN ... TYPE} widens a column. A schema the
- * server has not confirmed for {@link QwpWebSocketSender#SCHEMA_MAX_AGE_MILLIS}
- * is looked up again before the next batch; a successful reply to a batch that
- * writes the table confirms it. The sender's clock is frozen and moved by hand,
- * so no test depends on how long the ALTER takes.
+ * Drives the real client against a real QWP ingress and pins when a sender
+ * looks a cached table schema up again after
+ * {@code ALTER TABLE ... ALTER COLUMN ... TYPE} widens a column. The tests move
+ * the sender's clock by hand, so none depends on how long the ALTER takes.
  * <p>
  * The expected values come from Java arithmetic: a FLOAT column holds
  * {@code (float) 0.1}, which reads back as {@code (double) 0.1f =

@@ -139,8 +139,8 @@ public class QwpSchemaFeedbackEvolutionE2ETest extends AbstractQwpWebSocketTest 
         runInContext(port -> {
             try (Sender sender = Sender.fromConfig(autoSenderConfig(port))) {
                 QwpWebSocketSender ws = (QwpWebSocketSender) sender;
-                // A frozen clock keeps the snapshot younger than the schema age limit
-                // however long the ALTER takes, so the sender does not look it up again.
+                // The frozen clock keeps the snapshot within the age limit however long
+                // the ALTER takes.
                 ws.setNanoClockForTesting(() -> 0L);
                 sender.table("stale_conversion").boolColumn("v", true).atNow();
                 Assert.assertTrue(sender.drain(10_000));
@@ -176,8 +176,8 @@ public class QwpSchemaFeedbackEvolutionE2ETest extends AbstractQwpWebSocketTest 
         runInContext(port -> {
             try (Sender sender = Sender.fromConfig(autoSenderConfig(port))) {
                 QwpWebSocketSender ws = (QwpWebSocketSender) sender;
-                // A frozen clock keeps the snapshot younger than the schema age limit
-                // however long the ALTER takes, so the sender does not look it up again.
+                // The frozen clock keeps the snapshot within the age limit however long
+                // the ALTER takes.
                 ws.setNanoClockForTesting(() -> 0L);
                 sender.table("stale_range").longColumn("v", 1).atNow();
                 Assert.assertTrue(sender.drain(10_000));
