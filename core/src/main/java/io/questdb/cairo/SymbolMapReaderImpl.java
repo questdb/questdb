@@ -38,31 +38,39 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.Hash;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.NativeMemoryBudget;
 import io.questdb.std.Numbers;
-import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.str.DirectString;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
+import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.cairo.TableUtils.charFileName;
 import static io.questdb.cairo.TableUtils.offsetFileName;
 
 public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     private static final Log LOG = LogFactory.getLog(SymbolMapReaderImpl.class);
-    private final ObjList<String> cache = new ObjList<>();
+    private static final VarHandle VALUE_HASH = MethodHandles.arrayElementVarHandle(long[].class);
+    private static final int VALUE_HASHES_SIZE = 1024;
+    private final AtomicReference<SymbolMapCachePool> cachePool = new AtomicReference<>();
     private final MemoryCMR charMem = Vm.getCMRInstance();
     private final StringSink columnNameSink = new StringSink();
     private final ConcurrentBitmapIndexFwdReader indexReader = new ConcurrentBitmapIndexFwdReader();
-    // keyOf() scans candidates through its own view: the caller may pass in the flyweight that
-    // valueOf() returned, and a hash collision would otherwise overwrite that input mid-scan
+    // keyOf() must not rebind the valueOf() flyweight supplied by its caller.
     private final DirectString keyOfView = new DirectString();
     private final MemoryCMR offsetMem = Vm.getCMRInstance();
+    private final SymbolTableView ownView = new SymbolTableView();
     private final Path path = new Path();
+    private SymbolMapCachePool.Entry cacheEntry;
     private boolean cached;
     private long columnNameTxn;
     private CairoConfiguration configuration;
@@ -72,6 +80,12 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     private int symbolCapacity;
     private int symbolCount;
     private long symbolTableGeneration;
+    private long truncateVersion;
+    // Hashes of cached values, one (key + 1) << 32 | hash entry per slot, which every view of this reader
+    // shares across queries. of() clears them on a generation change, while no query uses the reader. A slot
+    // keeps the first key that fills it, so workers write each slot once rather than rewrite cache lines that
+    // other workers read.
+    private long[] valueHashes;
 
     public SymbolMapReaderImpl() {
     }
@@ -86,11 +100,23 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         of(configuration, pathToTableDir, columnName, columnNameTxn, symbolCount);
     }
 
+    public SymbolMapReaderImpl(
+            CairoConfiguration configuration,
+            @Transient Utf8Sequence pathToTableDir,
+            @Transient CharSequence columnName,
+            long columnNameTxn,
+            int symbolCount,
+            @Nullable SymbolMapCachePool cachePool,
+            long truncateVersion
+    ) {
+        of(configuration, pathToTableDir, columnName, columnNameTxn, symbolCount, cachePool, truncateVersion);
+    }
+
     @Override
     public void close() {
         Misc.free(indexReader);
         Misc.free(charMem);
-        cache.clear();
+        releaseCache();
         long fd = offsetMem.getFd();
         Misc.free(offsetMem);
         Misc.free(path);
@@ -103,8 +129,13 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     }
 
     @TestOnly
+    public long getCacheAllocatedBytes() {
+        return cacheEntry == null ? 0 : cacheEntry.getSegments().allocatedBytes();
+    }
+
+    @TestOnly
     public int getCacheSize() {
-        return cache.size();
+        return cacheEntry == null ? 0 : cacheEntry.getSegments().size();
     }
 
     @Override
@@ -130,6 +161,12 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     @Override
     public MemoryR getSymbolValuesColumn() {
         return charMem;
+    }
+
+    @TestOnly
+    public boolean hasValueHash(int key) {
+        final long[] hashes = valueHashes;
+        return hashes != null && (int) (hashes[key & (VALUE_HASHES_SIZE - 1)] >>> 32) == key + 1;
     }
 
     @Override
@@ -174,6 +211,12 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         return this.columnNameTxn != columnNameTxn;
     }
 
+    public boolean needsReopen(long columnNameTxn, long truncateVersion) {
+        return this.columnNameTxn != columnNameTxn
+                || this.truncateVersion != truncateVersion
+                || cached != offsetMem.getBool(SymbolMapWriter.HEADER_CACHE_ENABLED);
+    }
+
     public StaticSymbolTable newSymbolTableView() {
         return new SymbolTableView();
     }
@@ -185,6 +228,19 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             long columnNameTxn,
             int symbolCount
     ) {
+        of(configuration, pathToTableDir, columnName, columnNameTxn, symbolCount, null, 0);
+    }
+
+    public void of(
+            CairoConfiguration configuration,
+            @Transient Utf8Sequence pathToTableDir,
+            @Transient CharSequence columnName,
+            long columnNameTxn,
+            int symbolCount,
+            @Nullable SymbolMapCachePool cachePool,
+            long truncateVersion
+    ) {
+        releaseCache();
         final FilesFacade ff = configuration.getFilesFacade();
         this.configuration = configuration;
         this.path.of(pathToTableDir);
@@ -192,6 +248,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         this.columnNameSink.put(columnName);
         this.columnNameTxn = columnNameTxn;
         this.symbolCount = symbolCount;
+        this.truncateVersion = truncateVersion;
         this.maxOffset = SymbolMapWriter.keyToOffset(symbolCount);
         final int plen = path.size();
         try {
@@ -242,16 +299,13 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             // theoretically should require 2 value cells in index per hash
             // we use 4 cells to compensate for occasionally unlucky hash distribution
             this.maxHash = Math.max(Numbers.ceilPow2(symbolCapacity / 2) - 1, 1);
-            // The cache grows on demand in fetchAndCache, which is why it is not
-            // pre-sized here. Pre-sizing allocated and zero-filled an Object[] of
-            // the column's DECLARED capacity on every open - 16 MB for a column
-            // declared CAPACITY 2097152, retained for the reader's life, whether or
-            // not a single value was ever resolved through it. It bought nothing
-            // even then: the clear() below immediately reset the position to zero,
-            // so only the backing array survived, and extendAndSet grows that
-            // geometrically anyway.
-            cache.clear();
+            if (cached) {
+                this.cachePool.set(cachePool);
+            }
             symbolTableGeneration = symbolTableGeneration == Long.MAX_VALUE ? 0 : symbolTableGeneration + 1;
+            if (valueHashes != null) {
+                Arrays.fill(valueHashes, 0);
+            }
             LOG.debug().$("open [columnName=").$(path.trimTo(plen).concat(columnName).$())
                     .$(", fd=").$(offsetMem.getFd())
                     .$(", capacity=").$(symbolCapacity)
@@ -262,6 +316,11 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         } finally {
             path.trimTo(plen);
         }
+    }
+
+    @TestOnly
+    public void putValueHash(int key, int hash) {
+        getValueHashes()[key & (VALUE_HASHES_SIZE - 1)] = valueHashEntry(key, hash);
     }
 
     @Override
@@ -279,7 +338,6 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             assert charSize > 0 || symbolCount == 0;
             charMem.extend(charSize);
         } else if (symbolCount < this.symbolCount) {
-            cache.remove(symbolCount, this.symbolCount - 1);
             this.symbolCount = symbolCount;
             this.maxOffset = SymbolMapWriter.keyToOffset(symbolCount);
         }
@@ -292,24 +350,34 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
 
     @Override
     public CharSequence valueBOf(int key) {
+        if (cached) {
+            return ownView.cachedValueOf(key, ownView.csviewB);
+        }
         if (key > -1 && key < symbolCount) {
-            if (cached) {
-                return cachedValue(key);
-            }
-            return uncachedValue2(key);
+            return charMem.getStrB(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)));
+        }
+        return null;
+    }
+
+    /**
+     * Returns the reader's A view of the value. The next valueOf() call rebinds it, so a caller
+     * that needs two values at once reads the second through {@link #valueBOf(int)} or a view
+     * of its own.
+     */
+    @Override
+    public CharSequence valueOf(int key) {
+        if (cached) {
+            return ownView.cachedValueOf(key, ownView.csviewA);
+        }
+        if (key > -1 && key < symbolCount) {
+            return charMem.getStrA(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)));
         }
         return null;
     }
 
     @Override
-    public CharSequence valueOf(int key) {
-        if (key > -1 && key < symbolCount) {
-            if (cached) {
-                return cachedValue(key);
-            }
-            return uncachedValue(key);
-        }
-        return null;
+    public CharSequence valueOfOnce(int key) {
+        return ownView.valueOfOnce(key);
     }
 
     /**
@@ -317,9 +385,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
      * mapped char file directly. Two differences from {@link #valueOf(int)} make this the
      * accessor a bulk consumer wants: the caller owns the view, so two live values can be
      * held at once without the A/B pair this class keeps for itself, and the read always
-     * goes to the mapping rather than the heap cache - a cached column would otherwise
-     * retain a {@code String} per resolved key, which is precisely the footprint a reader
-     * that resolves millions of keys must not build.
+     * goes to the mapping without admitting bulk reads into the shared cache.
      * <p>
      * The view stays valid until this reader is rebound by {@link #of} or closed, or until
      * the caller rebinds it.
@@ -331,31 +397,43 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         return null;
     }
 
-    private CharSequence cachedValue(int key) {
-        final String symbol = cache.getQuiet(key);
-        return symbol != null ? symbol : fetchAndCache(key);
+    private static long valueHashEntry(int key, int hash) {
+        return ((long) (key + 1) << 32) | (hash & 0xFFFFFFFFL);
     }
 
-    private CharSequence fetchAndCache(int key) {
-        final CharSequence cs = uncachedValue(key);
-        assert cs != null;
-        final String symbol = Chars.toString(cs);
-        cache.extendAndSet(key, symbol);
-        return symbol;
+    private void acquireCache(SymbolMapCachePool pool) {
+        cacheEntry = pool.acquire(path, columnNameSink, columnNameTxn, truncateVersion);
     }
 
-    private CharSequence uncachedValue(int key) {
-        return charMem.getStrA(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)));
+    private long[] getValueHashes() {
+        long[] hashes = valueHashes;
+        if (hashes == null) {
+            // Threads that race here each keep their own array for the call; the last assignment stays.
+            valueHashes = hashes = new long[VALUE_HASHES_SIZE];
+        }
+        return hashes;
     }
 
-    private CharSequence uncachedValue2(int key) {
-        return charMem.getStrB(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)));
+    private void logCacheStopped(SymbolMapCachePool.Entry entry) {
+        final NativeMemoryBudget budget = entry.getBudget();
+        final SymbolMapSegments segments = entry.getSegments();
+        final String reason = segments.getStopReason() == SymbolMapSegments.STOP_OOM ? "oom" : "budget";
+        LOG.info().$("symbol cache stopped admitting new values [table=").$(path)
+                .$(", column=").$safe(columnNameSink).$(", reason=").$(reason)
+                .$(", cachedKeys=").$(segments.size()).$(", cacheBytes=").$(segments.allocatedBytes())
+                .$(", budgetUsed=").$(budget.getUsedBytes()).$(", budgetLimit=").$(budget.getLimit()).I$();
+    }
+
+    private void releaseCache() {
+        cachePool.set(null);
+        cacheEntry = Misc.free(cacheEntry);
     }
 
     private class SymbolTableView implements StaticSymbolTable {
-        private final DirectString csviewA = new DirectString();
-        private final DirectString csviewB = new DirectString();
+        private final CachedHashView csviewA = new CachedHashView();
+        private final CachedHashView csviewB = new CachedHashView();
         private final DirectString csviewInternal = new DirectString();
+        private final DirectString csviewOnce = new DirectString();
         private RowCursor rowCursor;
 
         @Override
@@ -401,26 +479,88 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
 
         @Override
         public CharSequence valueBOf(int key) {
-            if (key > -1 && key < symbolCount) {
-                return uncachedValue2(key);
-            }
-            return null;
+            return cached ? cachedValueOf(key, csviewB) : SymbolMapReaderImpl.this.valueOf(key, csviewB);
         }
 
         @Override
         public CharSequence valueOf(int key) {
-            if (key > -1 && key < symbolCount) {
-                return uncachedValue(key);
+            return cached ? cachedValueOf(key, csviewA) : SymbolMapReaderImpl.this.valueOf(key, csviewA);
+        }
+
+        @Override
+        public CharSequence valueOfOnce(int key) {
+            return SymbolMapReaderImpl.this.valueOf(key, csviewOnce);
+        }
+
+        private CharSequence bindValueOf(int key, CachedHashView view) {
+            // Entry's final fields make this racy read safe.
+            final SymbolMapCachePool.Entry entry = cacheEntry;
+            if (entry == null) {
+                final SymbolMapCachePool pool = cachePool.getPlain();
+                if (pool != null && key > -1 && key < symbolCount && cachePool.compareAndSet(pool, null)) {
+                    acquireCache(pool);
+                    return bindValueOf(key, view);
+                }
+                return SymbolMapReaderImpl.this.valueOf(key, view);
             }
-            return null;
+            // Shared entries may contain keys committed after this reader's transaction.
+            if (key < 0 || key >= symbolCount) {
+                return null;
+            }
+            final SymbolMapSegments segments = entry.getSegments();
+            if (segments.get(key, view) != null) {
+                return view;
+            }
+            final int result = segments.load(key, symbolCount, offsetMem, charMem);
+            if (result == SymbolMapSegments.LOADED) {
+                return segments.get(key, view);
+            }
+            if (result == SymbolMapSegments.STOPPED) {
+                logCacheStopped(entry);
+            }
+            return charMem.getStr(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)), view);
         }
 
-        private CharSequence uncachedValue(int key) {
-            return charMem.getStr(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)), csviewA);
+        private CharSequence cachedValueOf(int key, CachedHashView view) {
+            final CharSequence value = bindValueOf(key, view);
+            if (value != null) {
+                view.key = key;
+            }
+            return value;
         }
 
-        private CharSequence uncachedValue2(int key) {
-            return charMem.getStr(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)), csviewB);
+        /**
+         * The A and B value flyweights. On a cached column the view sets the key on every bind, so the
+         * key names the bound value, and hashCode() reuses the hash that the reader's valueHashes holds
+         * for that key.
+         */
+        private final class CachedHashView extends DirectString {
+            private int key = -1;
+
+            @Override
+            public int hashCode() {
+                final int k = cached ? key : -1;
+                if (k < 0) {
+                    return super.hashCode();
+                }
+                final long[] hashes = getValueHashes();
+                final int slot = k & (VALUE_HASHES_SIZE - 1);
+                // Opaque access keeps each 64-bit entry whole when threads share the array.
+                final long entry = (long) VALUE_HASH.getOpaque(hashes, slot);
+                if ((int) (entry >>> 32) == k + 1) {
+                    return (int) entry;
+                }
+                final int h = super.hashCode();
+                if (entry == 0) {
+                    VALUE_HASH.setOpaque(hashes, slot, valueHashEntry(k, h));
+                }
+                return h;
+            }
+
+            @Override
+            protected boolean isRaw() {
+                return true;
+            }
         }
     }
 }

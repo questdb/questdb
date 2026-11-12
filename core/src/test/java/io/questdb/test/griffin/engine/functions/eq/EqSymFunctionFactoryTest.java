@@ -24,12 +24,37 @@
 
 package io.questdb.test.griffin.engine.functions.eq;
 
-
+import com.sun.management.ThreadMXBean;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.QueryAssertion;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class EqSymFunctionFactoryTest extends AbstractCairoTest {
+
+    @Test
+    public void testCachedColumnsAllocateLittleHeapPerExecution() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (a SYMBOL CACHE, b SYMBOL CACHE)");
+            execute("INSERT INTO x VALUES ('k1', 'k1'), ('k2', 'k3'), ('k3', 'k3')");
+            try (
+                    RecordCursorFactory factory = select("SELECT count() FROM x WHERE a = b");
+                    TestUtils.ThreadMetricsScope<ThreadMXBean> scope = TestUtils.threadAllocationScope()
+            ) {
+                // the first round fills the pools the query reuses
+                assertCount(factory, 100);
+                final ThreadMXBean threadMXBean = scope.getBean();
+                final long threadId = Thread.currentThread().threadId();
+                final long before = threadMXBean.getThreadAllocatedBytes(threadId);
+                assertCount(factory, 1_000);
+                final long allocated = threadMXBean.getThreadAllocatedBytes(threadId) - before;
+                Assert.assertTrue("1,000 executions allocated " + allocated + " bytes", allocated < 4_000_000);
+            }
+        });
+    }
 
     @Test
     public void testLargeSymbolTable() throws Exception {
@@ -42,6 +67,35 @@ public class EqSymFunctionFactoryTest extends AbstractCairoTest {
                             count
                             288
                             """);
+        });
+    }
+
+    @Test
+    public void testLookupDoesNotRebindValueOfOtherCaller() throws Exception {
+        assertMemoryLeak(() -> {
+            for (String cacheFlag : new String[]{"CACHE", "NOCACHE"}) {
+                execute("CREATE TABLE fw (id INT, s SYMBOL " + cacheFlag + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+                execute("""
+                        INSERT INTO fw VALUES
+                        (1, 'alpha', '2024-01-01T00:00:00.000000Z'),
+                        (2, 'bravo', '2024-01-01T01:00:00.000000Z'),
+                        (3, 'charlie', '2024-01-01T02:00:00.000000Z')
+                        """);
+                assertQuery("""
+                        SELECT id, nullif(s, CASE WHEN p = s THEN 'same' ELSE 'different' END) result
+                        FROM (SELECT id, s, lag(s) OVER (ORDER BY ts) p FROM fw)
+                        """)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                id\tresult
+                                1\talpha
+                                2\tbravo
+                                3\tcharlie
+                                """);
+                execute("DROP TABLE fw");
+            }
         });
     }
 
@@ -226,5 +280,14 @@ public class EqSymFunctionFactoryTest extends AbstractCairoTest {
                             1\t1
                             """);
         });
+    }
+
+    private static void assertCount(RecordCursorFactory factory, int executions) throws Exception {
+        for (int i = 0; i < executions; i++) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                Assert.assertTrue(cursor.hasNext());
+                Assert.assertEquals(2, cursor.getRecord().getLong(0));
+            }
+        }
     }
 }

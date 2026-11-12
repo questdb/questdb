@@ -24,10 +24,19 @@
 
 package io.questdb.test.griffin.engine.functions;
 
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.bool.StaticSymbolKeys;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.BindVarTuple;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class InStrTest extends AbstractCairoTest {
@@ -210,6 +219,262 @@ public class InStrTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCastNonStaticSymbolComparesText() throws Exception {
+        // 'a' has two rnd_symbol keys.
+        assertQuery("SELECT count() FROM long_sequence(100) WHERE rnd_symbol('a', 'a')::STRING IN ('a')")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        count
+                        100
+                        """);
+        assertQuery("SELECT count() FROM long_sequence(100) WHERE rnd_symbol('a', 'a')::STRING <> ALL('{a}'::text[])")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        count
+                        0
+                        """);
+    }
+
+    @Test
+    public void testCastSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            for (String cacheFlag : new String[]{"CACHE", "NOCACHE"}) {
+                execute("CREATE TABLE x (s SYMBOL " + cacheFlag + ", str STRING, v INT)");
+                execute("""
+                        INSERT INTO x VALUES
+                            ('abc', 'abc', 1),
+                            ('b', 'b', 2),
+                            (NULL, NULL, 3),
+                            ('', '', 4),
+                            ('é€😀', 'é€😀', 5),
+                            ('abc', 'abc', 6)
+                        """);
+                assertCastSymbolIn("s::STRING IN ('abc', 'zz')", "1\n6\n");
+                assertCastSymbolIn("s::STRING IN ('abc', NULL)", "1\n3\n6\n");
+                assertCastSymbolIn("s::STRING IN (NULL)", "3\n");
+                assertCastSymbolIn("s::STRING IN ('')", "4\n");
+                assertCastSymbolIn("s::STRING IN ('é€😀')", "5\n");
+                assertCastSymbolIn("s::STRING IN ('zz')", "");
+                assertCastSymbolIn("s::STRING IN ('b')", "2\n");
+                assertCastSymbolIn("s::STRING IN ('b'::VARCHAR, 'abc'::SYMBOL)", "1\n2\n6\n");
+                assertCastSymbolIn("CAST(s AS STRING) IN ('b')", "2\n");
+                assertCastSymbolIn("NOT s::STRING IN ('abc', NULL)", "2\n4\n5\n");
+                assertCastSymbolIn("str::SYMBOL::STRING IN ('abc', NULL)", "1\n3\n6\n");
+                assertQuery("SELECT v, s::STRING IN ('b') m FROM x WHERE v < 3")
+                        .noLeakCheck()
+                        .returns("""
+                                v\tm
+                                1\tfalse
+                                2\ttrue
+                                """);
+                execute("DROP TABLE x");
+            }
+        });
+    }
+
+    @Test
+    public void testCastSymbolAddedAfterData() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v INT)");
+            execute("INSERT INTO x VALUES (1), (2)");
+            execute("ALTER TABLE x ADD COLUMN s SYMBOL");
+            execute("INSERT INTO x VALUES (3, 'abc')");
+            assertCastSymbolIn("s::STRING IN (NULL)", "1\n2\n");
+            assertCastSymbolIn("s::STRING IN ('abc')", "3\n");
+        });
+    }
+
+    @Test
+    public void testCastSymbolBindVariableOfWrongType() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s SYMBOL, v INT)");
+            execute("INSERT INTO x VALUES ('abc', 1)");
+            assertWrongBindVariableType("s::VARCHAR::STRING", 45, "cannot compare STRING with type INT");
+            assertWrongBindVariableType("s::STRING", 36, "inconvertible types: INT -> SYMBOL");
+        });
+    }
+
+    @Test
+    public void testCastSymbolBindVariables() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s SYMBOL, v INT)");
+            execute("INSERT INTO x VALUES ('abc', 1), ('b', 2), (NULL, 3)");
+            execute("ALTER TABLE x ADD COLUMN str STRING");
+            execute("UPDATE x SET str = s");
+            for (String lhs : new String[]{"s::STRING", "str::SYMBOL::STRING"}) {
+                final String sql = "SELECT v FROM x WHERE " + lhs + " IN ('b', :p1)";
+                sqlExecutionContext.getBindVariableService().setStr("p1", "abc");
+                assertQuery(sql).noLeakCheck().returns("v\n1\n2\n");
+                sqlExecutionContext.getBindVariableService().setStr("p1", null);
+                assertQuery(sql).noLeakCheck().returns("v\n2\n3\n");
+                sqlExecutionContext.getBindVariableService().setStr("p1", "zz");
+                assertQuery(sql).noLeakCheck().returns("v\n2\n");
+                sqlExecutionContext.getBindVariableService().setVarchar("p1", new Utf8String("abc"));
+                assertQuery(sql).noLeakCheck().returns("v\n1\n2\n");
+            }
+        });
+    }
+
+    @Test
+    public void testCastSymbolComparesKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s SYMBOL, v INT)");
+            execute("INSERT INTO x VALUES ('abc', 1), ('b', 2)");
+            assertQuery("SELECT v FROM x WHERE s::STRING IN ('b')")
+                    .noLeakCheck()
+                    .assertsPlanContaining("filter: s in [b]");
+        });
+    }
+
+    @Test
+    public void testCastSymbolKeptForFunctionsWithoutKeys() throws Exception {
+        assertQuery("SELECT length(s::STRING) l FROM x")
+                .ddl("CREATE TABLE x AS (SELECT 'abc'::SYMBOL s FROM long_sequence(1))")
+                .expectSize()
+                .withPlanContaining("length(s::string)")
+                .returns("""
+                        l
+                        3
+                        """);
+    }
+
+    @Test
+    public void testCastSymbolInCursor() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s SYMBOL, str STRING, v INT)");
+            execute("CREATE TABLE y (s SYMBOL)");
+            execute("INSERT INTO x VALUES ('abc', 'abc', 1), ('b', 'b', 2), (NULL, NULL, 3)");
+            execute("INSERT INTO y VALUES ('zz'), ('b'), (NULL)");
+            assertCastSymbolIn("s::STRING IN (SELECT s FROM y)", "2\n3\n");
+            assertCastSymbolIn("s::STRING IN (SELECT s FROM y WHERE s = 'b')", "2\n");
+            assertCastSymbolIn("s::STRING IN (SELECT s FROM y WHERE s = 'none')", "");
+            assertCastSymbolIn("s::STRING IN (SELECT NULL)", "3\n");
+            assertCastSymbolIn("str::SYMBOL::STRING IN (SELECT s FROM y)", "2\n3\n");
+        });
+    }
+
+    @Test
+    public void testCastSymbolMatchesTextComparison() throws Exception {
+        assertMemoryLeak(() -> assertCastSymbolMatchesTextComparison(engine, sqlExecutionContext));
+    }
+
+    @Test
+    public void testCastSymbolMatchesTextComparisonWithWorkers() throws Exception {
+        TestUtils.execute(
+                new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG))),
+                (engine, _, context) -> assertCastSymbolMatchesTextComparison(engine, context),
+                configuration,
+                LOG
+        );
+    }
+
+    @Test
+    public void testCastSymbolRejectsBadConstant() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s SYMBOL)");
+            assertException("SELECT * FROM x WHERE s::STRING IN ('a', 10)", 41, "STRING constant expected");
+        });
+    }
+
+    @Test
+    public void testCastSymbolResolvesKeysOncePerDictionary() throws Exception {
+        assertMemoryLeak(() -> {
+            final String[][] cases = {
+                    {"s::STRING IN ('b', 'd', 'e')", "v\n2\n4\n", "v\n5\n7\n", "v\n5\n7\n9\n", "v\n5\n7\n9\n"},
+                    {"s::STRING <> ALL ('{b,d,e}'::text[])", "v\n1\n3\n", "v\n6\n8\n", "v\n6\n8\n10\n", "v\n6\n8\n10\n11\n12\n13\n"}
+            };
+            StaticSymbolKeys.isResolutionCounterEnabled = true;
+            try {
+                // A WAL TRUNCATE reopens the pooled reader in place, so only the generation tells the dictionaries apart.
+                for (String walMode : new String[]{"BYPASS WAL", "WAL"}) {
+                    for (boolean isParallel : new boolean[]{true, false}) {
+                        sqlExecutionContext.setParallelFilterEnabled(isParallel);
+                        for (String[] c : cases) {
+                            execute("DROP TABLE IF EXISTS x");
+                            execute("CREATE TABLE x (s SYMBOL, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY " + walMode);
+                            executeAndApply("INSERT INTO x VALUES ('a', 1, 1), ('b', 2, 2), ('c', 3, 3), ('d', 4, 4)");
+                            try (RecordCursorFactory factory = select("SELECT v FROM x WHERE " + c[0])) {
+                                StaticSymbolKeys.testResolutions.set(0);
+                                assertFactoryRows(c[1], factory);
+                                assertFactoryRows(c[1], factory);
+                                Assert.assertEquals(walMode + ", parallel=" + isParallel + ": " + c[0], 1, StaticSymbolKeys.testResolutions.get());
+
+                                executeAndApply("TRUNCATE TABLE x");
+                                executeAndApply("INSERT INTO x VALUES ('d', 5, 5), ('c', 6, 6), ('b', 7, 7), ('a', 8, 8)");
+                                assertFactoryRows(c[2], factory);
+                                assertFactoryRows(c[2], factory);
+                                Assert.assertEquals(walMode + ", parallel=" + isParallel + ": " + c[0], 2, StaticSymbolKeys.testResolutions.get());
+
+                                // Fewer new symbols than listed values: only the new keys are looked up.
+                                executeAndApply("INSERT INTO x VALUES ('e', 9, 9), ('z', 10, 10)");
+                                assertFactoryRows(c[3], factory);
+                                assertFactoryRows(c[3], factory);
+                                Assert.assertEquals(walMode + ", parallel=" + isParallel + ": " + c[0], 2, StaticSymbolKeys.testResolutions.get());
+
+                                executeAndApply("INSERT INTO x VALUES ('f', 11, 11), ('g', 12, 12), ('h', 13, 13)");
+                                assertFactoryRows(c[4], factory);
+                                assertFactoryRows(c[4], factory);
+                                Assert.assertEquals(walMode + ", parallel=" + isParallel + ": " + c[0], 3, StaticSymbolKeys.testResolutions.get());
+                            }
+                        }
+                        bindVariableService.clear();
+                        bindVariableService.setStr("p", "d");
+                        try (RecordCursorFactory factory = select("SELECT v FROM x WHERE s::STRING IN ('b', :p)")) {
+                            assertFactoryRows("v\n5\n7\n", factory);
+                            bindVariableService.setStr("p", "c");
+                            assertFactoryRows("v\n6\n7\n", factory);
+                        }
+                    }
+                }
+            } finally {
+                StaticSymbolKeys.isResolutionCounterEnabled = false;
+                sqlExecutionContext.setParallelFilterEnabled(true);
+            }
+        });
+    }
+
+    @Test
+    public void testCastSymbolReusedFactoryResolvesKeysPerExecution() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s SYMBOL, v INT)");
+            execute("INSERT INTO x VALUES ('a', 1)");
+            try (RecordCursorFactory factory = select("SELECT v FROM x WHERE s::STRING IN ('b', NULL)")) {
+                assertFactoryRows("v\n", factory);
+                execute("INSERT INTO x VALUES ('b', 2), (NULL, 3)");
+                assertFactoryRows("v\n2\n3\n", factory);
+                execute("TRUNCATE TABLE x");
+                assertFactoryRows("v\n", factory);
+                execute("INSERT INTO x VALUES ('c', 4), ('b', 5)");
+                assertFactoryRows("v\n5\n", factory);
+            }
+        });
+    }
+
+    @Test
+    public void testCastSymbolRuntimeConstantArgument() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v INT)");
+            execute("INSERT INTO x VALUES (1), (2)");
+            for (String lhs : new String[]{":p1::SYMBOL::VARCHAR::STRING", ":p1::SYMBOL::STRING"}) {
+                final String sql = "SELECT v FROM x WHERE " + lhs + " IN ('a', :p2)";
+                bindVariableService.setStr("p1", "a");
+                bindVariableService.setStr("p2", "b");
+                assertQuery(sql).noLeakCheck().expectSize().returns("v\n1\n2\n");
+                bindVariableService.setStr("p1", "c");
+                assertQuery(sql).noLeakCheck().expectSize().returns("v\n");
+                bindVariableService.setStr("p2", "c");
+                assertQuery(sql).noLeakCheck().expectSize().returns("v\n1\n2\n");
+                bindVariableService.setStr("p1", null);
+                assertQuery(sql).noLeakCheck().expectSize().returns("v\n");
+                bindVariableService.setStr("p2", null);
+                assertQuery(sql).noLeakCheck().expectSize().returns("v\n1\n2\n");
+            }
+        });
+    }
+
+    @Test
     public void testConstAndBindVarMixed() throws Exception {
         final ObjList<BindVarTuple> cases = new ObjList<>();
         cases.add(BindVarTuple.ok(
@@ -263,5 +528,143 @@ public class InStrTest extends AbstractCairoTest {
                             5\t1970-01-01T00:00:04.000000Z
                             """);
         });
+    }
+
+    private void assertCastSymbolIn(String predicate, String expectedRows) throws Exception {
+        assertQuery("SELECT v FROM x WHERE " + predicate)
+                .noLeakCheck()
+                .returns("v\n" + expectedRows);
+    }
+
+    private void assertFactoryRows(String expected, RecordCursorFactory factory) throws SqlException {
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            assertCursor(expected, cursor, factory.getMetadata(), true);
+        }
+    }
+
+    private void assertWrongBindVariableType(String lhs, int position, String message) throws SqlException {
+        bindVariableService.clear();
+        try (RecordCursorFactory factory = select("SELECT v FROM x WHERE " + lhs + " IN ($1, $2)")) {
+            bindVariableService.clear();
+            bindVariableService.setInt(0, 1);
+            bindVariableService.setStr(1, "abc");
+            try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(position, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), message);
+            }
+        }
+    }
+
+    private void executeAndApply(String sql) throws SqlException {
+        execute(sql);
+        drainWalQueue();
+    }
+
+    private static void assertCastSymbolMatchesTextComparison(CairoEngine engine, SqlExecutionContext context) throws SqlException {
+        engine.execute("CREATE TABLE t (k INT, s SYMBOL, n SYMBOL NOCACHE, ix SYMBOL INDEX, str STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", context);
+        engine.execute("""
+                INSERT INTO t
+                SELECT x::INT, v, v, v, v, (x * 3_600_000_000)::TIMESTAMP
+                FROM (
+                    SELECT x, CASE x % 6 WHEN 1 THEN 'a' WHEN 2 THEN 'b' WHEN 3 THEN NULL WHEN 4 THEN '' WHEN 5 THEN 'é€😀' ELSE 'c' END v
+                    FROM long_sequence(2_000)
+                )
+                """, context);
+        engine.execute("ALTER TABLE t ADD COLUMN late SYMBOL", context);
+        engine.execute("""
+                INSERT INTO t (k, s, late, ts)
+                SELECT (x + 2_000)::INT, 'a', CASE x % 2 WHEN 0 THEN 'b' ELSE 'a' END, ((x + 2_000) * 3_600_000_000)::TIMESTAMP
+                FROM long_sequence(100)
+                """, context);
+        // First-seen order differs from t, so the same text has different keys in each table.
+        engine.execute("CREATE TABLE u (k INT, s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", context);
+        engine.execute("""
+                INSERT INTO u
+                SELECT (x * 2)::INT, CASE x % 5 WHEN 1 THEN 'é€😀' WHEN 2 THEN 'b' WHEN 3 THEN 'a' WHEN 4 THEN NULL ELSE 'z' END, (x * 7_200_000_000)::TIMESTAMP
+                FROM long_sequence(500)
+                """, context);
+
+        final String[] queries = {
+                "SELECT k FROM t WHERE s::STRING IN ('a', 'é€😀', NULL)",
+                "SELECT k FROM t WHERE n::STRING IN ('a', 'é€😀', NULL)",
+                "SELECT k FROM t WHERE ix::STRING IN ('a', 'é€😀', NULL)",
+                "SELECT k FROM t WHERE late::STRING IN ('a', NULL)",
+                "SELECT k FROM t WHERE s::STRING IN ('', 'missing')",
+                "SELECT k FROM t WHERE s::STRING IN ('a'::CHAR, 'b'::SYMBOL, 'c'::VARCHAR)",
+                "SELECT k FROM t WHERE NOT s::STRING IN ('a', '')",
+                "SELECT k, s::STRING IN ('b') m FROM t",
+                "SELECT k FROM t WHERE str::SYMBOL::STRING IN ('a', NULL)",
+                "SELECT k FROM t WHERE s::STRING IN ('a', 'b') AND k % 2 = 0 ORDER BY k DESC LIMIT 3",
+                "SELECT k FROM t WHERE s::STRING IN ('a', 'b') ORDER BY k LIMIT -3",
+                "SELECT k, s FROM t WHERE s::STRING IN ('a', 'b') LATEST ON ts PARTITION BY s",
+                "SELECT t.k, u.k uk FROM t LEFT JOIN u ON t.k = u.k WHERE u.s::STRING IN ('a', NULL) ORDER BY t.k",
+                "SELECT t.k, u.k uk FROM t JOIN u ON t.k = u.k WHERE t.s::STRING IN ('a', 'b') AND u.s::STRING IN ('b', 'a') ORDER BY t.k",
+                "SELECT t.k, u.k uk, t.s::STRING IN ('a') ml, u.s::STRING IN ('a') mr FROM t LEFT JOIN u ON t.k = u.k ORDER BY t.k",
+                "SELECT t.k, u.k uk FROM t ASOF JOIN u WHERE u.s::STRING IN ('a', NULL)",
+                "SELECT k FROM (SELECT k, s FROM t UNION ALL SELECT k, s FROM u) WHERE s::STRING IN ('a', NULL) ORDER BY k",
+                "SELECT s::STRING IN ('a') m, count() c FROM t ORDER BY m",
+                "SELECT s, c FROM (SELECT s, count() c FROM t) WHERE s::STRING IN ('a', NULL) ORDER BY s",
+                "SELECT d, f, l FROM (SELECT k % 2 d, first(s) f, last(s) l FROM t) WHERE f::STRING IN ('a', NULL) OR l::STRING IN ('a') ORDER BY d",
+                "SELECT k, m FROM (SELECT k, mode(s) m FROM t) WHERE m::STRING IN ('a', NULL) ORDER BY k",
+                "SELECT ts, f FROM (SELECT ts, first(s) f FROM t SAMPLE BY 30m FILL(NULL)) WHERE f::STRING IN (NULL, 'a')",
+                "SELECT ts, f FROM (SELECT ts, first(s) f FROM t SAMPLE BY 30m FILL(PREV)) WHERE f::STRING IN ('a', 'b')",
+                "SELECT k, l FROM (SELECT k, lag(s) OVER (ORDER BY ts) l FROM t) WHERE l::STRING IN ('a', NULL)",
+                "SELECT k, l::STRING IN ('a', NULL) m FROM (SELECT k, lead(s) OVER (ORDER BY ts) l FROM t)",
+                "SELECT k FROM (SELECT k, s FROM t ORDER BY s, k) WHERE s::STRING IN ('a', 'b')",
+                "SELECT k, m FROM (SELECT k, s x, s::STRING IN ('a') m FROM t) WHERE x::STRING IN ('a', 'b')",
+                "SELECT k FROM t WHERE nullif(s, 'a')::STRING IN ('b', NULL)",
+                "SELECT k FROM t WHERE coalesce(s, 'x')::STRING IN ('x', 'b')",
+                "SELECT k FROM t WHERE (CASE WHEN k > 3 THEN s ELSE n END)::STRING IN ('a', NULL)",
+                "SELECT d, v FROM (SELECT k % 2 d, nullif(first(s), last(s)) v FROM t) WHERE v::STRING IN ('a', NULL) ORDER BY d",
+                "SELECT k FROM t WHERE s::STRING <> ALL('{a,é€😀}'::text[])",
+                "SELECT k FROM t WHERE n::STRING <> ALL('{a,missing}'::text[])",
+                "SELECT k FROM t WHERE ix::STRING <> ALL('{a}'::text[])",
+                "SELECT k FROM t WHERE late::STRING <> ALL('{a}'::text[])",
+                "SELECT k FROM t WHERE s::STRING <> ALL('{}'::text[])",
+                "SELECT k FROM t WHERE s::STRING != ALL('{a}'::text[])",
+                "SELECT k FROM t WHERE NOT s::STRING <> ALL('{a,b}'::text[])",
+                "SELECT k, s::STRING <> ALL('{b}'::text[]) m FROM t",
+                "SELECT k FROM t WHERE str::SYMBOL::STRING <> ALL('{a}'::text[])",
+                "SELECT k FROM t WHERE coalesce(s, 'x')::STRING <> ALL('{x}'::text[])",
+                "SELECT k FROM (SELECT k, s FROM t UNION ALL SELECT k, s FROM u) WHERE s::STRING <> ALL('{a}'::text[]) ORDER BY k",
+                "SELECT t.k, u.k uk FROM t LEFT JOIN u ON t.k = u.k WHERE u.s::STRING <> ALL('{a}'::text[]) ORDER BY t.k",
+                "SELECT string_distinct_agg(s::STRING, ',') v FROM t",
+                "SELECT string_distinct_agg(n::STRING, ',') v FROM t",
+                "SELECT string_distinct_agg(ix::STRING, ',') v FROM t",
+                "SELECT string_distinct_agg(late::STRING, ',') v FROM t",
+                "SELECT string_agg(DISTINCT s::STRING, ',') v FROM t",
+                "SELECT k % 3 d, string_distinct_agg(s::STRING, ',') v FROM t ORDER BY d",
+                "SELECT string_distinct_agg(s::STRING, ',') v FROM (SELECT k, s FROM t UNION ALL SELECT k, s FROM u)",
+                "SELECT t.k % 2 d, string_distinct_agg(u.s::STRING, ',') v FROM t JOIN u ON t.k = u.k ORDER BY d",
+                "SELECT ts, string_distinct_agg(s::STRING, ',') v FROM t SAMPLE BY 1d",
+                "SELECT string_distinct_agg(coalesce(s, 'x')::STRING, ',') v FROM t",
+                "SELECT string_distinct_agg(nullif(s, 'a')::STRING, ',') v FROM t",
+                "SELECT count_distinct(s::STRING) c FROM t",
+                "SELECT count_distinct(n::STRING) c FROM t",
+                "SELECT count_distinct(ix::STRING) c FROM t",
+                "SELECT count_distinct(late::STRING) c FROM t",
+                "SELECT count(DISTINCT s::STRING) c FROM t",
+                "SELECT COUNT_DISTINCT(s::STRING) c FROM t",
+                "SELECT k % 3 d, count_distinct(s::STRING) c FROM t ORDER BY d",
+                "SELECT count_distinct(s::STRING) c FROM (SELECT k, s FROM t UNION ALL SELECT k, s FROM u)",
+                "SELECT t.k % 2 d, count_distinct(u.s::STRING) c FROM t JOIN u ON t.k = u.k ORDER BY d",
+                "SELECT ts, count_distinct(s::STRING) c FROM t SAMPLE BY 1d",
+                "SELECT count_distinct(coalesce(s, 'x')::STRING) c FROM t",
+                "SELECT count_distinct(nullif(s, 'a')::STRING) c FROM t",
+                "SELECT t.k, count_distinct(u.s::STRING) c FROM t WINDOW JOIN u RANGE BETWEEN 2 HOUR PRECEDING AND 2 HOUR FOLLOWING",
+                "SELECT t.k, string_distinct_agg(u.s::STRING, ',') v FROM t WINDOW JOIN u RANGE BETWEEN 2 HOUR PRECEDING AND 2 HOUR FOLLOWING",
+                "SELECT t.k, count_distinct(u.s::STRING) c FROM t WINDOW JOIN u ON (t.s = u.s) RANGE BETWEEN 4 HOUR PRECEDING AND 4 HOUR FOLLOWING",
+        };
+        for (int run = 0; run < 2; run++) {
+            for (String query : queries) {
+                TestUtils.assertSqlCursors(engine, context, query.replace("::STRING", "::VARCHAR::STRING"), query, LOG);
+            }
+            if (run == 0) {
+                engine.execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts < '1970-02-01'", context);
+                engine.execute("ALTER TABLE u CONVERT PARTITION TO PARQUET WHERE ts < '1970-02-01'", context);
+            }
+        }
     }
 }

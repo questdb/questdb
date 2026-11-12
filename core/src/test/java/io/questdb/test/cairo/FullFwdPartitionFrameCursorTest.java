@@ -1027,14 +1027,14 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
             int keyCount = indexReader.getKeyCount();
             for (int i = 0; i < keyCount; i++) {
-                RowCursor ic = indexReader.getCursor(i, 0, limit - 1);
-                CharSequence expected = symbolTable.valueOf(i - 1);
-                while (ic.hasNext()) {
-                    record.setRecordIndex(ic.next());
-                    TestUtils.assertEquals(expected, record.getSymA(columnIndex));
-                    rowCount++;
+                try (RowCursor ic = indexReader.getCursor(i, 0, limit - 1)) {
+                    CharSequence expected = Chars.toString(symbolTable.valueOf(i - 1));
+                    while (ic.hasNext()) {
+                        record.setRecordIndex(ic.next());
+                        TestUtils.assertEquals(expected, record.getSymA(columnIndex));
+                        rowCount++;
+                    }
                 }
-                Misc.free(ic);
             }
         }
         Assert.assertEquals(expectedRowCount, rowCount);
