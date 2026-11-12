@@ -1377,12 +1377,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     req.query("fmt", "parquet");
                     req.query("row_group_size", "500");
                     try (var ignore = req.send()) {
-                        for (int i = 0; i < 50; i++) {
-                            if (engine.getCopyExportContext().getActiveExportId() != -1) {
-                                break;
-                            }
-                            Os.sleep(100);
-                        }
+                        ParquetTestUtils.awaitExportStreamedRows(engine);
                     }
                     client.disconnect();
                     for (int i = 0; i < 100; i++) {
@@ -1835,12 +1830,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     req.query("fmt", "parquet");
                     req.query("row_group_size", "100");
                     try (var ignore = req.send()) {
-                        for (int i = 0; i < 50; i++) {
-                            if (engine.getCopyExportContext().getActiveExportId() != -1) {
-                                break;
-                            }
-                            Os.sleep(100);
-                        }
+                        ParquetTestUtils.awaitExportStreamedRows(engine);
                     }
                     client.disconnect();
                     for (int i = 0; i < 100; i++) {

@@ -30,6 +30,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.MemoryCARWImpl;
+import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
@@ -192,6 +193,27 @@ public final class ParquetTestUtils {
         // bf names no encoding, so it keeps the INT default, PLAIN
         assertColumnsDoNotUseEncoding(parquetFilePath, ff, ParquetEncoding.ENCODING_RLE_DICTIONARY, 29 - shift);
         assertColumnsDoNotUseEncoding(parquetFilePath, ff, ParquetEncoding.ENCODING_DELTA_BINARY_PACKED, 29 - shift);
+    }
+
+    /**
+     * Waits until the active export has streamed rows to its file or client and returns its id, so that a test that
+     * cancels the export or drops its connection afterwards stops it while it streams. Fails when the export streams
+     * no rows.
+     */
+    public static long awaitExportStreamedRows(CairoEngine engine) throws Exception {
+        final CopyExportContext copyExportContext = engine.getCopyExportContext();
+        final CopyExportContext.ExportTaskData progress = new CopyExportContext.ExportTaskData();
+        final long[] exportId = new long[1];
+        TestUtils.assertEventually(() -> {
+            exportId[0] = copyExportContext.getActiveExportId();
+            Assert.assertTrue(
+                    "the export must stream rows",
+                    exportId[0] != CopyExportContext.INACTIVE_COPY_ID
+                            && copyExportContext.getAndCopyEntry(exportId[0], progress)
+                            && progress.getStreamingSendRowCount() > 0
+            );
+        });
+        return exportId[0];
     }
 
     /**

@@ -814,38 +814,43 @@ public class CopyExportTest extends AbstractCairoTest {
 
     @Test
     public void testCopyCursorExportSymbolCancel() throws Exception {
-        // A cancelled export of a kept SYMBOL column stops between row groups, and the next export of the column runs.
+        // A user cancels the export of a kept SYMBOL column once it has streamed rows: the export stops in the phase
+        // that streams its file, leaves neither a file nor a temp directory behind, and the next export of the
+        // column runs.
         assertMemoryLeak(() -> {
             createSymbolExportTables("BYPASS WAL");
             CopyExportRunnable stmt = () -> runAndFetchCopyExportID(
                     "COPY (SELECT t.sym, t.k, x.x FROM sym_src t CROSS JOIN long_sequence(1_000_000_000) x) TO 'cancelled' WITH FORMAT PARQUET ROW_GROUP_SIZE 1000",
                     sqlExecutionContext
             );
+            final AtomicReference<String> cancelledExportId = new AtomicReference<>();
             CopyExportRunnable test = () -> {
                 try {
-                    long copyID;
-                    do {
-                        copyID = engine.getCopyExportContext().getActiveExportId();
-                    } while (copyID == -1);
+                    final long copyID = ParquetTestUtils.awaitExportStreamedRows(engine);
                     final StringSink sink = new StringSink();
                     Numbers.appendHex(sink, copyID, true);
                     final String copyIDStr = sink.toString();
+                    cancelledExportId.set(copyIDStr);
                     assertQuery("COPY '" + copyIDStr + "' CANCEL")
                             .noLeakCheck()
                             .returnsOnce("id\tstatus\n" + copyIDStr + "\tcancelled\n");
-                    do {
-                        copyID = engine.getCopyExportContext().getActiveExportId();
-                    } while (copyID != -1);
+                    awaitExportsDrained();
                 } finally {
                     Path.clearThreadLocals();
                 }
             };
             testCopyExport(stmt, test, false, 1);
-            assertQuery("SELECT status FROM \"" + configuration.getSystemTableNamePrefix() + "copy_export_log\" LIMIT -1")
-                    .noLeakCheck()
-                    .expectSize()
-                    .returns("status\ncancelled\n");
+            final String exportId = cancelledExportId.get();
+            assertExportLog(exportId, """
+                    phase\tstatus
+                    wait_to_run\tstarted
+                    wait_to_run\tfinished
+                    stream_sending_data\tstarted
+                    stream_sending_data\tcancelled
+                    """);
+            assertExportFailure(exportId, "cancelled", "cancelled by user");
             Assert.assertFalse(exportFileExists("cancelled"));
+            assertNoTempDirOf(exportId);
 
             assertCursorExportOfSymbols("SELECT t.sym, t.k, x.x FROM sym_src t CROSS JOIN long_sequence(3) x", "after_cancel", new int[]{0, 1}, new int[]{});
         });
