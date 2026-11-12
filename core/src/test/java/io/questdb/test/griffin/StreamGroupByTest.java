@@ -86,6 +86,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 @RunWith(Parameterized.class)
 public class StreamGroupByTest extends AbstractCairoTest {
@@ -618,41 +619,52 @@ public class StreamGroupByTest extends AbstractCairoTest {
 
     @Test
     public void testSpanMapsMergeInParallel() throws Exception {
-        Assume.assumeTrue(parallel && workers > 1);
-        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 64);
+        Assume.assumeTrue(parallel && workers > 3);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 16);
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 1_000);
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS, 1_000);
         run((engine, compiler, context) -> {
-            engine.execute("CREATE TABLE trades AS (SELECT timestamp_sequence('2024-01-01', 1_000_000L) ts, ('k' || (x % 60))::VARCHAR s, x v "
-                    + "FROM long_sequence(10_800)) TIMESTAMP(ts) PARTITION BY DAY", context);
+            engine.execute("CREATE TABLE trades (ts TIMESTAMP, s VARCHAR, v LONG) TIMESTAMP(ts) PARTITION BY HOUR", context);
+            engine.execute("""
+                    INSERT INTO trades
+                    SELECT '2024-01-01T00'::TIMESTAMP + x * 1_000_000, 'k' || x, x FROM long_sequence(10)
+                    UNION ALL SELECT '2024-01-01T01'::TIMESTAMP + x * 1_000_000, 'k' || (x + 10), x + 100 FROM long_sequence(9)
+                    UNION ALL SELECT '2024-01-01T02'::TIMESTAMP + x * 1_000_000, 'k' || x, x + 200 FROM long_sequence(8)
+                    UNION ALL SELECT '2024-01-01T03'::TIMESTAMP + x * 1_000_000, 'k' || (x + 19), x + 300 FROM long_sequence(7)
+                    UNION ALL SELECT '2024-01-02T00'::TIMESTAMP + x * 1_000_000, 'k' || x, x + 400 FROM long_sequence(2)
+                    UNION ALL SELECT '2024-01-02T01'::TIMESTAMP + x * 1_000_000, 'k' || (x + 2), x + 500 FROM long_sequence(2)
+                    UNION ALL SELECT '2024-01-02T02'::TIMESTAMP + x * 1_000_000, 'k' || (x + 4), x + 600 FROM long_sequence(2)
+                    """, context);
             engine.execute("CREATE TABLE hash_input AS (SELECT * FROM trades)", context);
-            final String sql = "SELECT timestamp_floor('1h', ts) bucket, s, count(*), sum(v), first(v), last(v) FROM $table WHERE test_latched_counter() ORDER BY bucket, s";
+            final String sql = "SELECT timestamp_floor('1d', ts) bucket, s, count(*), sum(v), first(v), last(v) FROM $table WHERE test_latched_counter() ORDER BY bucket, s";
             final String expected = compileAndRead(compiler, context, sql.replace("$table", "hash_input"));
+            final AtomicReference<CountDownLatch> threads = new AtomicReference<>();
+            final Set<Long> arrived = ConcurrentHashMap.newKeySet();
+            TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
+                @Override
+                public boolean onGet(Record rec, int count) {
+                    if (rec.getLong(2) < 400 && arrived.add(Thread.currentThread().threadId())) {
+                        threads.get().countDown();
+                        try {
+                            Assert.assertTrue("four threads did not read a partition each", threads.get().await(30, TimeUnit.SECONDS));
+                        } catch (InterruptedException e) {
+                            throw new RuntimeException(e);
+                        }
+                    }
+                    return true;
+                }
+            });
             try (RecordCursorFactory factory = compiler.compile(sql.replace("$table", "trades"), context).getRecordCursorFactory()) {
                 final AsyncStreamGroupByAtom atom = ((AsyncStreamGroupByRecordCursorFactory) getGroupBy(factory)).getAtom();
-                for (int run = 0; run < 2; run++) {
-                    final CountDownLatch threads = new CountDownLatch(3);
-                    final Set<Long> arrived = ConcurrentHashMap.newKeySet();
-                    TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
-                        @Override
-                        public boolean onGet(Record rec, int count) {
-                            if (arrived.add(Thread.currentThread().threadId())) {
-                                threads.countDown();
-                                try {
-                                    Assert.assertTrue("three threads did not read the first bucket", threads.await(30, TimeUnit.SECONDS));
-                                } catch (InterruptedException e) {
-                                    throw new RuntimeException(e);
-                                }
-                            }
-                            return true;
-                        }
-                    });
-                    try {
-                        Assert.assertEquals(expected, read(factory, context));
-                    } finally {
-                        TestLatchedCounterFunctionFactory.reset(null);
-                    }
-                    Assert.assertTrue(atom.getSpanMapMergeCount() > run);
+                for (int run = 1; run < 3; run++) {
+                    threads.set(new CountDownLatch(4));
+                    arrived.clear();
+                    Assert.assertEquals(expected, read(factory, context));
+                    Assert.assertEquals(2 * run, atom.getSpanMapMergeCount());
                     Assert.assertEquals(0, atom.getShardMergeCount());
                 }
+            } finally {
+                TestLatchedCounterFunctionFactory.reset(null);
             }
         });
     }
