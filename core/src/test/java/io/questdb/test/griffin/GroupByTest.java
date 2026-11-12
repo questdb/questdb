@@ -2170,6 +2170,55 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupByNullKeyBeforeOtherKeys() throws Exception {
+        // A NULL key takes no bytes in the map key, so the keys after it read their own values, in
+        // the fixed-size key layout and in the var-size one. The NULL key is a subquery column, or
+        // a CASE without a non-NULL branch, which the optimizer keeps as a key, unlike a bare NULL.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT, s STRING)");
+            execute("INSERT INTO t VALUES (1, 'a'), (1, 'a'), (2, ''), (3, 'ccc')");
+            assertQuery("SELECT k, x, count() c FROM (SELECT null AS k, x FROM t) GROUP BY k, x ORDER BY x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            k\tx\tc
+                            null\t1\t2
+                            null\t2\t1
+                            null\t3\t1
+                            """);
+            assertQuery("SELECT k, s, x, count() c FROM (SELECT null AS k, s, x FROM t) GROUP BY k, s, x ORDER BY x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            k\ts\tx\tc
+                            null\ta\t1\t2
+                            null\t\t2\t1
+                            null\tccc\t3\t1
+                            """);
+            assertQuery("SELECT CASE WHEN x > 1 THEN NULL END AS k, x + 1 AS b, count() c FROM t GROUP BY 1, 2 ORDER BY 2")
+                    .noLeakCheck()
+                    .withPlanContaining("keys: [k,b]")
+                    .expectSize()
+                    .returns("""
+                            k\tb\tc
+                            null\t2\t2
+                            null\t3\t1
+                            null\t4\t1
+                            """);
+            assertQuery("SELECT x * 2 AS d, CASE WHEN x > 1 THEN NULL END AS k, concat(s, '!') AS b, count() c FROM t GROUP BY 1, 2, 3 ORDER BY 1")
+                    .noLeakCheck()
+                    .withPlanContaining("keys: [d,k,b]")
+                    .expectSize()
+                    .returns("""
+                            d\tk\tb\tc
+                            2\tnull\ta!\t2
+                            4\tnull\t!\t1
+                            6\tnull\tccc!\t1
+                            """);
+        });
+    }
+
+    @Test
     public void testGroupByNullLiteralKey() throws Exception {
         // Regression: a bare `null` literal in the SELECT list referenced from GROUP BY
         // used to blow up the map key sink codegen with
@@ -2196,6 +2245,37 @@ public class GroupByTest extends AbstractCairoTest {
                             e0\tk\ta
                             null\t1\t15.0
                             null\t2\t30.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testGroupByNullLiteralKeyWithTightMapPage() throws Exception {
+        // A 17-byte map page fits the 16-byte value of count_distinct() or avg() but not a key
+        // length header in front of it, on the single-threaded and on the parallel factory.
+        setProperty(PropertyKey.CAIRO_SQL_SMALL_MAP_PAGE_SIZE, 17);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE null_key_t (v INT)");
+            execute("INSERT INTO null_key_t VALUES (1), (1), (2)");
+            assertQuery("""
+                    SELECT null AS e0, count_distinct(cnt) AS a0
+                    FROM (SELECT v AS k, count() AS cnt FROM null_key_t)
+                    GROUP BY 1
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("GroupBy vectorized: false")
+                    .expectSize()
+                    .returns("""
+                            e0\ta0
+                            null\t2
+                            """);
+            assertQuery("SELECT null AS e0, avg(v) AS a0 FROM null_key_t GROUP BY 1")
+                    .noLeakCheck()
+                    .withPlanContaining("Async Group By")
+                    .expectSize()
+                    .returns("""
+                            e0\ta0
+                            null\t1.3333333333333333
                             """);
         });
     }
