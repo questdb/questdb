@@ -407,7 +407,6 @@ import io.questdb.std.Transient;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
-import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
@@ -1618,12 +1617,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     // The microsecond sampler steps through whole microseconds, so the buckets of an uneven stride above one fall between its steps.
-    private static void checkSamplerStride(int timestampType, long interval, char unit, int position) throws SqlException {
-        if (unit == 'n' && ColumnType.isTimestampMicro(timestampType) && interval > Micros.MICRO_NANOS && interval % Micros.MICRO_NANOS != 0) {
-            throw SqlException.$(position, "SAMPLE BY does not support this stride on a microsecond timestamp, use a whole number of microseconds");
-        }
-    }
-
     private static void coerceRuntimeConstantType(Function func, int type, SqlExecutionContext context, CharSequence message, int pos) throws SqlException {
         if (isUndefined(func.getType())) {
             func.assignType(type, context.getBindVariableService());
@@ -4936,7 +4929,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             assert samplingInterval > 0;
             assert samplingIntervalEnd < fillStride.token.length();
             char samplingIntervalUnit = fillStride.token.charAt(samplingIntervalEnd);
-            checkSamplerStride(timestampType, samplingInterval, samplingIntervalUnit, fillStride.position);
+            TimestampSamplerFactory.validateStride(timestampType, samplingInterval, samplingIntervalUnit, fillStride.position);
             TimestampSampler timestampSampler = TimestampSamplerFactory.getInstance(driver, samplingInterval, samplingIntervalUnit, fillStride.position);
             // For day-or-larger stride with non-UTC TIME ZONE, the cursor wraps the
             // uniform-UTC sampler with a TimezoneFloorTimestampSampler at of() time
@@ -10511,7 +10504,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 final CharSequence stride = sampleByNode.token;
                 final int unitIndex = CommonUtils.findPositiveIntervalEndIndex(stride, sampleByNode.position, "sample");
                 final long interval = CommonUtils.parsePositiveInterval(stride, unitIndex, sampleByNode.position, "sample", Numbers.INT_NULL, '?');
-                checkSamplerStride(timestampType, interval, stride.charAt(unitIndex), sampleByNode.position);
+                TimestampSamplerFactory.validateStride(timestampType, interval, stride.charAt(unitIndex), sampleByNode.position);
                 timestampSampler = TimestampSamplerFactory.getInstance(timestampDriver, interval, stride.charAt(unitIndex), sampleByNode.position + unitIndex);
             } else {
                 Function sampleByPeriod = functionParser.parseFunction(
@@ -10526,7 +10519,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 long period = sampleByPeriod.getLong(null);
                 sampleByPeriod.close();
                 timestampSampler = TimestampSamplerFactory.getInstance(timestampDriver, period, sampleByUnits.token, sampleByUnits.position);
-                checkSamplerStride(timestampType, period, sampleByUnits.token.charAt(0), sampleByNode.position);
+                TimestampSamplerFactory.validateStride(timestampType, period, sampleByUnits.token.charAt(0), sampleByNode.position);
             }
 
             keyTypes.clear();

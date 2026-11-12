@@ -126,7 +126,7 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
                 assertSqlCursors("SELECT ts, k, avg(v) a FROM fu SAMPLE BY 2U" + mode, "SELECT ts, k, avg(v) a FROM fu SAMPLE BY 2000n" + mode);
             }
             final String message = "SAMPLE BY does not support this stride on a microsecond timestamp, use a whole number of microseconds";
-            for (String stride : new String[]{"1001n", "1500n", "1999n", "2001n", "2500n", "7999n"}) {
+            for (String stride : new String[]{"3n", "999n", "1001n", "1500n", "1999n", "2001n", "2500n", "7999n"}) {
                 for (String mode : new String[]{" FILL(NULL)", " FILL(PREV)", " FILL(0)", " FILL(LINEAR)", " ALIGN TO FIRST OBSERVATION", " FILL(NULL) ALIGN TO FIRST OBSERVATION"}) {
                     final String keyless = "SELECT ts, count() c FROM fu SAMPLE BY " + stride + mode;
                     assertExceptionNoLeakCheck(keyless, keyless.indexOf(stride), message);
@@ -141,6 +141,11 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
             }
             final String expressionStride = "SELECT ts, count() c FROM fu SAMPLE BY (1499 + 1) n FILL(LINEAR)";
             assertExceptionNoLeakCheck(expressionStride, expressionStride.indexOf("+"), message);
+            bindVariableService.setTimestamp(0, 1);
+            for (String stride : new String[]{"999n", "1500n"}) {
+                final String boundFrom = "SELECT ts, count() c FROM fu SAMPLE BY " + stride + " FROM $1";
+                assertExceptionNoLeakCheck(boundFrom, boundFrom.indexOf(stride), message);
+            }
             // The table still works after the errors.
             assertQuery("SELECT count() c FROM fu")
                     .noLeakCheck()
