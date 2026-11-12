@@ -335,10 +335,19 @@ public class MatViewTimerJob extends SynchronizedJob {
                                 }
                                 break;
                             case Timer.PERIOD_REFRESH_TYPE:
-                                // range hi boundary is inclusive
                                 final MatViewDefinition viewDefinition = state.getViewDefinition();
-                                final long periodHi = viewDefinition.getBaseTableTimestampDriver().fromMicros(timer.getPeriodHiUs()) - 1;
-                                matViewStateStore.enqueueRangeRefresh(viewToken, Numbers.LONG_NULL, periodHi);
+                                if (viewDefinition.getRefreshType() == MatViewDefinition.REFRESH_TYPE_IMMEDIATE) {
+                                    // An incremental refresh of a period view also refreshes the periods that
+                                    // completed since the last refresh, and it consumes the base table
+                                    // transactions it reads. A range refresh would leave those transactions to
+                                    // the refresh their commit enqueued, which would compute their buckets in
+                                    // the completed period again.
+                                    matViewStateStore.enqueueIncrementalRefresh(viewToken);
+                                } else {
+                                    // range hi boundary is inclusive
+                                    final long periodHi = viewDefinition.getBaseTableTimestampDriver().fromMicros(timer.getPeriodHiUs()) - 1;
+                                    matViewStateStore.enqueueRangeRefresh(viewToken, Numbers.LONG_NULL, periodHi);
+                                }
                                 reportFiring(timer, viewToken);
                                 break;
                             case Timer.UPDATE_REFRESH_INTERVALS_TYPE:
@@ -625,7 +634,7 @@ public class MatViewTimerJob extends SynchronizedJob {
         private final TimestampSampler sampler;
         private final byte type;
         private final TimeZoneRules tzRules;
-        private long deadlineLocalUs; // used for sampler interaction only
+        private long deadlineLocalUs; // used for sampler interaction in incremental and update timers only
         private long deadlineUtcUs;
         // Holds refresh sequence number for "normal" timers
         // or caching sequence for refresh intervals update timers.
@@ -651,22 +660,18 @@ public class MatViewTimerJob extends SynchronizedJob {
             this.tzRules = tzRules;
             this.delayUs = delayUs;
             sampler.setStart(startUs);
-            final long nowLocalUs = toLocal(nowUs, tzRules);
             switch (type) {
-                case INCREMENTAL_REFRESH_TYPE:
-                case UPDATE_REFRESH_INTERVALS_TYPE:
+                case INCREMENTAL_REFRESH_TYPE, UPDATE_REFRESH_INTERVALS_TYPE -> {
                     // It's fine if the timer triggers immediately.
+                    final long nowLocalUs = toLocal(nowUs, tzRules);
                     deadlineLocalUs = nowLocalUs > startUs ? sampler.nextTimestamp(sampler.round(nowLocalUs - 1)) : startUs;
-                    break;
-                case PERIOD_REFRESH_TYPE:
-                    // Unlike with incremental timer views, we want to trigger the timer
-                    // for all complete periods, if they exist.
-                    deadlineLocalUs = nowLocalUs > startUs ? sampler.round(nowLocalUs) : startUs;
-                    break;
-                default:
-                    throw new IllegalStateException("unexpected timer type: " + type);
+                    deadlineUtcUs = toUtc(deadlineLocalUs, tzRules);
+                }
+                // Unlike with incremental timer views, we want to trigger the timer
+                // for all complete periods, if they exist.
+                case PERIOD_REFRESH_TYPE -> deadlineUtcUs = MatViewPeriods.periodStart(sampler, tzRules, nowUs);
+                default -> throw new IllegalStateException("unexpected timer type: " + type);
             }
-            deadlineUtcUs = toUtc(deadlineLocalUs, tzRules);
         }
 
         public long getDeadlineMicros() {
@@ -713,8 +718,12 @@ public class MatViewTimerJob extends SynchronizedJob {
         }
 
         private void nextDeadline() {
-            deadlineLocalUs = sampler.nextTimestamp(deadlineLocalUs);
-            deadlineUtcUs = toUtc(deadlineLocalUs, tzRules);
+            if (type == PERIOD_REFRESH_TYPE) {
+                deadlineUtcUs = MatViewPeriods.nextPeriodStart(sampler, tzRules, deadlineUtcUs);
+            } else {
+                deadlineLocalUs = sampler.nextTimestamp(deadlineLocalUs);
+                deadlineUtcUs = toUtc(deadlineLocalUs, tzRules);
+            }
         }
     }
 }

@@ -160,8 +160,9 @@ public class MatViewState implements QuietCloseable {
     // independent of lastRefreshBaseTxn: incremental and range refreshes cannot repair arbitrary
     // UPDATE, TRUNCATE, or schema invalidations even when they advance another watermark.
     private volatile FullRefreshCoverage lastFullRefreshCoverage;
-    // Stands for last successful period (range) refresh high boundary.
-    // Increases monotonically as long as mat view stays valid.
+    // Stands for the end of the last refreshed period of a period mat view, exclusive. Refreshes move it forward
+    // as periods complete. An incremental refresh moves it back when the last complete period ends earlier, e.g.
+    // after ALTER MATERIALIZED VIEW ... PERIOD or a clock step back.
     private volatile long lastPeriodHi = Numbers.LONG_NULL;
     // Stands for last successful incremental refresh base table reader txn.
     // Increases monotonically as long as mat view stays valid.
@@ -625,6 +626,11 @@ public class MatViewState implements QuietCloseable {
      * on the period mat view (unless it has manual refresh type). This range refresh
      * runs for the [lastPeriodHi, completePeriodHi) interval. If the refresh is successful,
      * completePeriodHi is stored as the new lastPeriodHi value.
+     * <p>
+     * An incremental refresh stores the end of the last complete period too. When that end
+     * moves earlier, e.g. after ALTER MATERIALIZED VIEW ... PERIOD or a clock step back, the
+     * incremental refresh moves lastPeriodHi back to it, so that the next range refresh covers
+     * the rows in between.
      */
     public long getLastPeriodHi() {
         return lastPeriodHi;

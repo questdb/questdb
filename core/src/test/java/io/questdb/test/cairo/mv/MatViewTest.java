@@ -6964,12 +6964,13 @@ public class MatViewTest extends AbstractCairoTest {
                     "view_sql, view_status, " + txnColumns() + ", refresh_period_hi, timer_time_zone, timer_start, " +
                     "timer_interval, timer_interval_unit, period_length, period_length_unit, period_delay, period_delay_unit " +
                     "from materialized_views";
+            // no base row lies before 00:00, but the refresh still records the end of the last complete period
             assertQuery(matViewsSql)
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn\trefresh_period_hi\ttimer_time_zone\ttimer_start\ttimer_interval\ttimer_interval_unit\tperiod_length\tperiod_length_unit\tperiod_delay\tperiod_delay_unit
-                            price_1h\timmediate\tbase_price\t2000-01-01T00:00:00.000000Z\t2000-01-01T00:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tvalid\t1\t1\t\t\t2000-01-01T00:00:00.000000Z\t0\t\t4\tHOUR\t0\t
+                            price_1h\timmediate\tbase_price\t2000-01-01T00:00:00.000000Z\t2000-01-01T00:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tvalid\t1\t1\t2000-01-01T00:00:00.000000Z\t\t2000-01-01T00:00:00.000000Z\t0\t\t4\tHOUR\t0\t
                             """);
 
             // the first period still hasn't finished
@@ -8225,93 +8226,15 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testRefreshIntervalsO3PeriodMatView() throws Exception {
-        // Verify clustering + step-cap also fire correctly on the period mat
-        // view code path, which has its own union/intersect of the cached
-        // refresh-intervals list (period extension + refresh limit clipping).
-        // The clustering happens BEFORE those period mutations, but the
-        // step-cap operates on the post-mutation list. This test checks the
-        // combined behaviour: an O3 write into an already-refreshed period
-        // gets only its own buckets recomputed.
-        setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, 1_000_000);
-        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_PERIOD, "5s");
-        assertMemoryLeak(() -> {
-            TestTimestampCounterFactory.COUNTER.set(0);
+        assertRefreshIntervalsO3PeriodMatView(false);
+    }
 
-            executeWithRewriteTimestamp(
-                    "create table base_price (" +
-                            "  price double, ts #TIMESTAMP" +
-                            ") timestamp(ts) partition by DAY WAL"
-            );
-            execute(
-                    "create materialized view price_1h refresh immediate period (length 1h) as " +
-                            "select ts, test_timestamp_counter(ts) ts0, last(price) as price " +
-                            "from base_price sample by 1h"
-            );
-
-            // First period of data; let the period refresh complete.
-            execute("insert into base_price(price, ts) values (1.0, '2024-09-10T10:01')");
-            currentMicros = parseFloorPartialTimestamp("2024-09-10T11:30:00.000000Z");
-            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
-            drainMatViewTimerQueue(timerJob);
-            drainQueues();
-
-            final long counterAfterInitial = TestTimestampCounterFactory.COUNTER.get();
-            Assert.assertEquals("Initial period refresh should emit 1 bucket", 1, counterAfterInitial);
-
-            // Seed the EMA so the cost model has a known threshold, as
-            // testRefreshIntervalsO3MergesNarrowGap does for the merge case.
-            // Otherwise the threshold is commit * range / sample taken from the
-            // warmup refresh, a wall-clock property of the machine: under the
-            // suite's ADAPTIVE commit mode every commit fsyncs, and on a slow
-            // machine avgCommitNanos can grow until the threshold exceeds the
-            // 30h gap below, merging the two intervals and sweeping the untouched
-            // 10:00 bucket back in (3 buckets, not 2). With sample = range = 1 the
-            // threshold equals the commit cost; 5s is far below the 30h gap, so
-            // the test stays in the split regime.
-            final TableToken viewToken = engine.getTableTokenIfExists("price_1h");
-            final MatViewState viewState = engine.getMatViewStateStore().getViewState(viewToken);
-            final long fiveSecondsInTsUnits = timestampType.getDriver().fromMicros(5_000_000L);
-            Assert.assertNotNull(viewState);
-            Assert.assertTrue(viewState.tryLock());
-            try {
-                viewState.setRefreshMetricsForTesting(fiveSecondsInTsUnits, 1L, 1L);
-            } finally {
-                viewState.unlock();
-            }
-
-            // O3 write 24h back, plus a current write -- arrived as 2 separate
-            // WAL txns. With a 30h gap and the threshold pinned to 5s above,
-            // clustering splits them regardless of machine speed.
-            execute("insert into base_price(price, ts) values (2.0, '2024-09-09T05:01')");
-            execute("insert into base_price(price, ts) values (3.0, '2024-09-10T11:01')");
-
-            currentMicros = parseFloorPartialTimestamp("2024-09-10T12:30:00.000000Z");
-            drainMatViewTimerQueue(timerJob);
-            drainQueues();
-
-            final long bucketsEmittedByO3Refresh =
-                    TestTimestampCounterFactory.COUNTER.get() - counterAfterInitial;
-
-            // Only the two newly-dirty buckets (09-09T05:00 and 09-10T11:00)
-            // should be recomputed -- not the 09-10T10:00 bucket from the
-            // initial period that sits between them.
-            Assert.assertEquals(
-                    "Period mat view should only recompute the 2 dirty buckets, got: " + bucketsEmittedByO3Refresh,
-                    2, bucketsEmittedByO3Refresh
-            );
-
-            assertQuery("price_1h order by ts")
-                    .timestamp("ts")
-                    .expectSize()
-                    .noLeakCheck()
-                    .returns(replaceExpectedTimestamp(
-                            """
-                                    ts\tts0\tprice
-                                    2024-09-09T05:00:00.000000Z\t2024-09-09T05:00:00.000000Z\t2.0
-                                    2024-09-10T10:00:00.000000Z\t2024-09-10T10:00:00.000000Z\t1.0
-                                    2024-09-10T11:00:00.000000Z\t2024-09-10T11:00:00.000000Z\t3.0
-                                    """));
-        });
+    @Test
+    public void testRefreshIntervalsO3PeriodMatViewCreatedBeforeRefreshes() throws Exception {
+        // The period timer starts at the clock of CREATE. With that clock before the refreshes, as in production,
+        // the period that holds the current write completes while its transaction is still pending, and the
+        // refresh at its end consumes that transaction rather than leaving its bucket to be computed again.
+        assertRefreshIntervalsO3PeriodMatView(true);
     }
 
     @Test
@@ -13519,6 +13442,99 @@ public class MatViewTest extends AbstractCairoTest {
                             60\t60\t2020-02-03T00:00:00.000000Z
                             42\t40\t2020-02-03T01:00:00.000000Z
                             """);
+        });
+    }
+
+    private void assertRefreshIntervalsO3PeriodMatView(boolean isClockSetBeforeCreate) throws Exception {
+        // Verify clustering + step-cap also fire correctly on the period mat
+        // view code path, which has its own union/intersect of the cached
+        // refresh-intervals list (period extension + refresh limit clipping).
+        // The clustering happens BEFORE those period mutations, but the
+        // step-cap operates on the post-mutation list. This test checks the
+        // combined behaviour: an O3 write into an already-refreshed period
+        // gets only its own buckets recomputed.
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, 1_000_000);
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_PERIOD, "5s");
+        assertMemoryLeak(() -> {
+            TestTimestampCounterFactory.COUNTER.set(0);
+
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            if (isClockSetBeforeCreate) {
+                currentMicros = parseFloorPartialTimestamp("2024-09-10T10:00:00.000000Z");
+            }
+            execute(
+                    "create materialized view price_1h refresh immediate period (length 1h) as " +
+                            "select ts, test_timestamp_counter(ts) ts0, last(price) as price " +
+                            "from base_price sample by 1h"
+            );
+
+            // First period of data; let the period refresh complete.
+            execute("insert into base_price(price, ts) values (1.0, '2024-09-10T10:01')");
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T11:30:00.000000Z");
+            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            final long counterAfterInitial = TestTimestampCounterFactory.COUNTER.get();
+            Assert.assertEquals("Initial period refresh should emit 1 bucket", 1, counterAfterInitial);
+
+            // Seed the EMA so the cost model has a known threshold, as
+            // testRefreshIntervalsO3MergesNarrowGap does for the merge case.
+            // Otherwise the threshold is commit * range / sample taken from the
+            // warmup refresh, a wall-clock property of the machine: under the
+            // suite's ADAPTIVE commit mode every commit fsyncs, and on a slow
+            // machine avgCommitNanos can grow until the threshold exceeds the
+            // 30h gap below, merging the two intervals and sweeping the untouched
+            // 10:00 bucket back in (3 buckets, not 2). With sample = range = 1 the
+            // threshold equals the commit cost; 5s is far below the 30h gap, so
+            // the test stays in the split regime.
+            final TableToken viewToken = engine.getTableTokenIfExists("price_1h");
+            final MatViewState viewState = engine.getMatViewStateStore().getViewState(viewToken);
+            final long fiveSecondsInTsUnits = timestampType.getDriver().fromMicros(5_000_000L);
+            Assert.assertNotNull(viewState);
+            Assert.assertTrue(viewState.tryLock());
+            try {
+                viewState.setRefreshMetricsForTesting(fiveSecondsInTsUnits, 1L, 1L);
+            } finally {
+                viewState.unlock();
+            }
+
+            // O3 write 24h back, plus a current write -- arrived as 2 separate
+            // WAL txns. With a 30h gap and the threshold pinned to 5s above,
+            // clustering splits them regardless of machine speed.
+            execute("insert into base_price(price, ts) values (2.0, '2024-09-09T05:01')");
+            execute("insert into base_price(price, ts) values (3.0, '2024-09-10T11:01')");
+
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T12:30:00.000000Z");
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            final long bucketsEmittedByO3Refresh =
+                    TestTimestampCounterFactory.COUNTER.get() - counterAfterInitial;
+
+            // Only the two newly-dirty buckets (09-09T05:00 and 09-10T11:00)
+            // should be recomputed -- not the 09-10T10:00 bucket from the
+            // initial period that sits between them.
+            Assert.assertEquals(
+                    "Period mat view should only recompute the 2 dirty buckets, got: " + bucketsEmittedByO3Refresh,
+                    2, bucketsEmittedByO3Refresh
+            );
+
+            assertQuery("price_1h order by ts")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp(
+                            """
+                                    ts\tts0\tprice
+                                    2024-09-09T05:00:00.000000Z\t2024-09-09T05:00:00.000000Z\t2.0
+                                    2024-09-10T10:00:00.000000Z\t2024-09-10T10:00:00.000000Z\t1.0
+                                    2024-09-10T11:00:00.000000Z\t2024-09-10T11:00:00.000000Z\t3.0
+                                    """));
         });
     }
 
