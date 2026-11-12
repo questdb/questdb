@@ -345,6 +345,13 @@ public class MatViewConcurrentOperationsFuzzTest extends AbstractCairoTest {
     private void runRound(Rnd rnd, int statementCount) throws Exception {
         timestampType = rnd.nextBoolean() ? "TIMESTAMP" : "TIMESTAMP_NS";
         LOG.info().$("fuzz: timestamp type ").$(timestampType).$();
+        // The record copier the refreshes write rows with: picked by the schema's size (0), or forced to the
+        // single-method or the chunked flavour. The looping copier joins the draw with the fix of the "duplicate
+        // column" failure it hits once the view adds back a column it dropped, which this round's statements do;
+        // MatViewRefreshCopierTypesTest#testRefreshAfterViewColumnReAddedWithSameType pins it.
+        final int copierType = rnd.nextInt(3);
+        LOG.info().$("fuzz: copier type ").$(copierType).$();
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, copierType);
         try (SqlExecutionContextImpl context = TestUtils.createSqlExecutionCtx(engine, 1)) {
             createBase("base", rnd, context);
             createBase("base2", rnd, context);
