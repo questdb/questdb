@@ -588,6 +588,59 @@ public class MatViewResumeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInvalidationKeptByFailedFullDoesNotInvalidateResumedView() throws Exception {
+        // A FULL refresh recovers an invalid view, so an invalidation that reaches the view while the FULL holds the
+        // latch stays pending. Here the base table's drop sends it, and the FULL then fails on the missing base, which
+        // leaves the view invalid. RESUME, once the base is re-created, resolves the new base after that drop and
+        // writes the view's state from it, so the drop's invalidation predates everything RESUME read, as an
+        // invalidation published before a FULL fixes its base reader predates the rebuild, which consumes it. The
+        // resumed view stays valid and follows the new base.
+        assertMemoryLeak(() -> {
+            createBaseWithRefreshedView("IMMEDIATE");
+            invalidate("test invalidation");
+            execute("REFRESH MATERIALIZED VIEW price_1h FULL");
+            execute("DROP TABLE base");
+            final AtomicBoolean isPublishedUnderFull = new AtomicBoolean();
+            final AtomicBoolean hasFullFailed = new AtomicBoolean();
+            try (
+                    MatViewRefreshJob fullJob = new MatViewRefreshJob(0, engine, 0);
+                    MatViewRefreshJob invalidationJob = new MatViewRefreshJob(1, engine, 0)
+            ) {
+                invalidationJob.setOnInvalidationPublishedForTesting(() -> isPublishedUnderFull.set(viewState().isLocked()));
+                // the FULL found the base missing and holds the latch: the drop's invalidation arrives now
+                fullJob.setOnFullRefreshTerminalFailureForTesting(() -> {
+                    hasFullFailed.set(true);
+                    drainMatViewQueue(invalidationJob);
+                });
+                drainWalQueue();
+                drainMatViewQueue(fullJob);
+            }
+            Assert.assertTrue("the FULL must fail on the missing base", hasFullFailed.get());
+            Assert.assertTrue("the drop's invalidation must reach the view while the FULL holds the latch", isPublishedUnderFull.get());
+            Assert.assertFalse(viewState().isLocked());
+            drainWalAndMatViewQueues();
+            assertViewStatus("invalid", "[-105]: table does not exist [table=base]");
+            assertViewRows(VIEW_ROWS);
+
+            createBase();
+            execute("INSERT INTO base VALUES ('c', 3.0, 3.0, '2024-01-01T02:10:00.000000Z')");
+            drainWalAndMatViewQueues();
+            assertViewStatus("invalid", "[-105]: table does not exist [table=base]");
+
+            assertResumeSucceeds();
+            drainWalAndMatViewQueues();
+            assertViewStatus("valid", "");
+            Assert.assertFalse(viewState().hasPendingInvalidationReason());
+            Assert.assertEquals(engine.verifyTableName("base").getTableId(), viewState().getBaseTableId());
+            // RESUME SKIP BACKLOG jumped past c's row; the next base row reaches the view
+            execute("INSERT INTO base VALUES ('d', 4.0, 4.0, '2024-01-01T03:10:00.000000Z')");
+            drainWalAndMatViewQueues();
+            assertViewStatus("valid", "");
+            assertViewRows(VIEW_ROWS + "2024-01-01T03:00:00.000000Z\td\t4.0\n");
+        });
+    }
+
+    @Test
     public void testBareNameGuardWhileResumeHoldsLatchInvalidatesAgain() throws Exception {
         // The bare-name guard's invalidation counts too: a base ADD COLUMN count that applies while RESUME holds the
         // latch switches the bare count of the view's SQL from a call to a column. The guard keeps its invalidation,
