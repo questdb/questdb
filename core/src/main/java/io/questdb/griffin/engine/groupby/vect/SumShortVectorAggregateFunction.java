@@ -79,6 +79,15 @@ public class SumShortVectorAggregateFunction extends LongFunction implements Vec
     }
 
     @Override
+    public boolean aggregateNullKeys(long pRosti, long pNullKeys, long valueAddress, long frameRowCount) {
+        if (valueAddress == 0) {
+            return Rosti.keyedIntDistinct(pRosti, pNullKeys, frameRowCount);
+        } else {
+            return Rosti.keyedIntSumShort(pRosti, pNullKeys, valueAddress, frameRowCount, valueOffset);
+        }
+    }
+
+    @Override
     public void clear() {
         sum.reset();
         count.reset();

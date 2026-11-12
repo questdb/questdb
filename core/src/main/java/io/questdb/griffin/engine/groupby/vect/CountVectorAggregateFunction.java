@@ -63,6 +63,11 @@ public class CountVectorAggregateFunction extends LongFunction implements Vector
     }
 
     @Override
+    public boolean aggregateNullKeys(long pRosti, long pNullKeys, long valueAddress, long frameRowCount) {
+        return Rosti.keyedIntCount(pRosti, pNullKeys, frameRowCount, valueOffset);
+    }
+
+    @Override
     public void clear() {
         count.reset();
     }

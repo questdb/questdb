@@ -46,6 +46,12 @@ import org.jetbrains.annotations.Nullable;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class VectorAggregateEntry implements Mutable {
+    /**
+     * The number of NULL keys in the buffer that a keyed aggregation passes to
+     * {@link VectorAggregateFunction#aggregateNullKeys}: it aggregates a frame whose key column holds no
+     * data in chunks of at most this many rows.
+     */
+    public static final int NULL_KEY_CHUNK_SIZE = 1024;
     private AsyncQueryErrorState aggregateError;
     private SqlExecutionCircuitBreaker circuitBreaker;
     private CountDownLatchSPI doneLatch;
@@ -55,13 +61,22 @@ public class VectorAggregateEntry implements Mutable {
     private VectorAggregateFunction func;
     private int keyColIndex;
     private AtomicInteger oomCounter;
+    private long pNullKeys;
     private long[] pRosti;
     private PerWorkerLocks perWorkerLocks;
     private AsyncQueryProgressState progressState;
     private RostiAllocFacade raf;
     private AtomicInteger startedCounter;
     private int valueColIndex;
+    private int valueSize;
 
+    /**
+     * Aggregates one frame for one function.
+     *
+     * @param valueSize the bytes of a value of the function's column, 0 for a function without one
+     * @param pNullKeys {@link #NULL_KEY_CHUNK_SIZE} INT keys, each the NULL key, for a keyed aggregation;
+     *                  see {@link VectorAggregateFunction#aggregateNullKeys}
+     */
     public static void aggregateUnsafe(
             int workerId,
             @Nullable AtomicInteger oomCounter,
@@ -69,6 +84,8 @@ public class VectorAggregateEntry implements Mutable {
             long frameRowCount,
             int keyColIndex,
             int valueColIndex,
+            int valueSize,
+            long pNullKeys,
             long @Nullable [] pRosti,
             @NotNull ObjList<PageFrameMemoryPool> frameMemoryPools,
             @Nullable RostiAllocFacade raf,
@@ -91,11 +108,16 @@ public class VectorAggregateEntry implements Mutable {
             // 0 and working out size differently or finding any fixed-size column and using that.
             final long valueAddress = valueColIndex > -1 ? frameMemory.getPageAddress(valueColIndex) : 0;
 
-            // Zero keyAddress means non-keyed aggregation or column top.
+            // In a keyed aggregation, a zero keyAddress means that the key column holds no data in the
+            // frame, a column top or a Parquet row group whose key column is all NULL: every row of
+            // the frame has the NULL key.
             final long keyAddress = keyColIndex > -1 ? frameMemory.getPageAddress(keyColIndex) : 0;
-            if (pRosti != null && keyAddress != 0) {
+            if (pRosti != null) {
                 final long oldSize = Rosti.getAllocMemory(pRosti[slot]);
-                if (!func.aggregate(pRosti[slot], keyAddress, valueAddress, frameRowCount)) {
+                final boolean isAggregated = keyAddress != 0
+                        ? func.aggregate(pRosti[slot], keyAddress, valueAddress, frameRowCount)
+                        : aggregateNullKeys(func, pRosti[slot], pNullKeys, valueAddress, valueSize, frameRowCount);
+                if (!isAggregated) {
                     if (oomCounter != null) {
                         oomCounter.incrementAndGet();
                     }
@@ -127,6 +149,8 @@ public class VectorAggregateEntry implements Mutable {
         this.frameRowCount = 0;
         this.keyColIndex = -1;
         this.valueColIndex = -1;
+        this.valueSize = 0;
+        this.pNullKeys = 0;
     }
 
     public void abort(boolean started) {
@@ -190,6 +214,8 @@ public class VectorAggregateEntry implements Mutable {
         long frameRowCount = this.frameRowCount;
         int keyColIndex = this.keyColIndex;
         int valueColIndex = this.valueColIndex;
+        int valueSize = this.valueSize;
+        long pNullKeys = this.pNullKeys;
         long[] pRosti = this.pRosti;
         ObjList<PageFrameMemoryPool> frameMemoryPools = this.frameMemoryPools;
         RostiAllocFacade raf = this.raf;
@@ -207,6 +233,8 @@ public class VectorAggregateEntry implements Mutable {
                 frameRowCount,
                 keyColIndex,
                 valueColIndex,
+                valueSize,
+                pNullKeys,
                 pRosti,
                 frameMemoryPools,
                 raf,
@@ -226,6 +254,8 @@ public class VectorAggregateEntry implements Mutable {
             long frameRowCount,
             int keyColIndex,
             int valueColIndex,
+            int valueSize,
+            long pNullKeys,
             long[] pRosti,
             ObjList<PageFrameMemoryPool> frameMemoryPools,
             RostiAllocFacade raf,
@@ -248,6 +278,8 @@ public class VectorAggregateEntry implements Mutable {
                         frameRowCount,
                         keyColIndex,
                         valueColIndex,
+                        valueSize,
+                        pNullKeys,
                         pRosti,
                         frameMemoryPools,
                         raf,
@@ -279,11 +311,34 @@ public class VectorAggregateEntry implements Mutable {
         doneLatch.detachResourceMemoryAndCountDown();
     }
 
+    // Every row of the frame has the NULL key: the function aggregates them under the NULL key in
+    // the map, as it does rows whose key is NULL, a chunk of NULL keys at a time.
+    private static boolean aggregateNullKeys(
+            VectorAggregateFunction func,
+            long pRosti,
+            long pNullKeys,
+            long valueAddress,
+            int valueSize,
+            long frameRowCount
+    ) {
+        for (long lo = 0; lo < frameRowCount; lo += NULL_KEY_CHUNK_SIZE) {
+            final long count = Math.min(NULL_KEY_CHUNK_SIZE, frameRowCount - lo);
+            // A zero value address stays zero: the value column holds no data in the frame either.
+            final long chunkValueAddress = valueAddress != 0 ? valueAddress + lo * valueSize : 0;
+            if (!func.aggregateNullKeys(pRosti, pNullKeys, chunkValueAddress, count)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     void of(
             int frameIndex,
             long frameRowCount,
             int keyColIndex,
             int valueColIndex,
+            int valueSize,
+            long pNullKeys,
             @NotNull VectorAggregateFunction vaf,
             long @Nullable [] pRosti,
             @NotNull ObjList<PageFrameMemoryPool> frameMemoryPools,
@@ -301,6 +356,8 @@ public class VectorAggregateEntry implements Mutable {
         this.frameRowCount = frameRowCount;
         this.keyColIndex = keyColIndex;
         this.valueColIndex = valueColIndex;
+        this.valueSize = valueSize;
+        this.pNullKeys = pNullKeys;
         this.pRosti = pRosti;
         this.frameMemoryPools = frameMemoryPools;
         this.func = vaf;

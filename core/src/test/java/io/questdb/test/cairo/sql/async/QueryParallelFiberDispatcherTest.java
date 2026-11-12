@@ -4865,13 +4865,13 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                 // The initializer is package-private in a different Java module. Reflect only
                 // to supply fixture-owned collaborators, never to inspect or repair internals.
                 final Method of = VectorAggregateEntry.class.getDeclaredMethod(
-                        "of", int.class, long.class, int.class, int.class, VectorAggregateFunction.class,
+                        "of", int.class, long.class, int.class, int.class, int.class, long.class, VectorAggregateFunction.class,
                         long[].class, ObjList.class, AtomicInteger.class, CountDownLatchSPI.class,
                         AtomicInteger.class, AsyncQueryErrorState.class, RostiAllocFacade.class,
                         PerWorkerLocks.class, SqlExecutionCircuitBreaker.class, AsyncQueryProgressState.class
                 );
                 of.setAccessible(true);
-                of.invoke(entry, 0, 42L, -1, -1, function, null, pools, started, latch, oomCounter,
+                of.invoke(entry, 0, 42L, -1, -1, 0, 0L, function, null, pools, started, latch, oomCounter,
                         error, null, locks, breaker, new AsyncQueryProgressState());
             } catch (Throwable th) {
                 pool.close();

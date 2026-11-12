@@ -82,6 +82,15 @@ public class SumIntVectorAggregateFunction extends LongFunction implements Vecto
     }
 
     @Override
+    public boolean aggregateNullKeys(long pRosti, long pNullKeys, long valueAddress, long frameRowCount) {
+        if (valueAddress == 0) {
+            return Rosti.keyedIntDistinct(pRosti, pNullKeys, frameRowCount);
+        } else {
+            return Rosti.keyedIntSumInt(pRosti, pNullKeys, valueAddress, frameRowCount, valueOffset);
+        }
+    }
+
+    @Override
     public void clear() {
         this.sum.reset();
         this.count.reset();

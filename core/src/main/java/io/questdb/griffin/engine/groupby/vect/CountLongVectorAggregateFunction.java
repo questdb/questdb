@@ -63,4 +63,13 @@ public class CountLongVectorAggregateFunction extends AbstractCountVectorAggrega
             return keyValueFunc.run(pRosti, keyAddress, valueAddress, frameRowCount, valueOffset);
         }
     }
+
+    @Override
+    public boolean aggregateNullKeys(long pRosti, long pNullKeys, long valueAddress, long frameRowCount) {
+        if (valueAddress == 0) {
+            return Rosti.keyedIntDistinct(pRosti, pNullKeys, frameRowCount);
+        } else {
+            return Rosti.keyedIntCountLong(pRosti, pNullKeys, valueAddress, frameRowCount, valueOffset);
+        }
+    }
 }

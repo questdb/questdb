@@ -95,6 +95,15 @@ public class SumLong256VectorAggregateFunction extends Long256Function implement
     }
 
     @Override
+    public boolean aggregateNullKeys(long pRosti, long pNullKeys, long valueAddress, long frameRowCount) {
+        if (valueAddress == 0) {
+            return Rosti.keyedIntDistinct(pRosti, pNullKeys, frameRowCount);
+        } else {
+            return Rosti.keyedIntSumLong256(pRosti, pNullKeys, valueAddress, frameRowCount, valueOffset);
+        }
+    }
+
+    @Override
     public void clear() {
         sumA.setAll(0, 0, 0, 0);
         sumB.setAll(0, 0, 0, 0);

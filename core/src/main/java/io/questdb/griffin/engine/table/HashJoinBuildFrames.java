@@ -800,8 +800,11 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
             recordFrameIndex = -1;
             isDirect = false;
             record.of(null);
-            // A closed pool releases its buffers and takes the next execution's address cache in reopen().
-            Misc.free(pool);
+            // The pool frees its decoded buffers and the rest of its native memory, and takes the next
+            // execution's address cache in reopen(). clear() rather than close(): it keeps the closed
+            // buffer shells, which hold no native memory, so that the next execution decodes into
+            // them rather than allocating new ones on the heap for every row group.
+            pool.clear();
         }
 
         @Override

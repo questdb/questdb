@@ -63,6 +63,7 @@ import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -73,6 +74,7 @@ import io.questdb.std.Rosti;
 import io.questdb.std.RostiAllocFacade;
 import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.CharSink;
 import io.questdb.tasks.VectorAggregateTask;
 import org.jetbrains.annotations.Nullable;
@@ -83,6 +85,7 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 
 public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private final static Log LOG = LogFactory.getLog(GroupByRecordCursorFactory.class);
+    private final static long NULL_KEYS_SIZE = (long) VectorAggregateEntry.NULL_KEY_CHUNK_SIZE * Integer.BYTES;
     private final static int ROSTI_MINIMIZED_SIZE = 16; // 16 is the minimum size usable on arm
 
     private final AsyncQueryErrorState aggregateError = new AsyncQueryErrorState();
@@ -98,10 +101,15 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RostiAllocFacade raf;
     private final AtomicBooleanCircuitBreaker sharedCircuitBreaker; // used to signal cancellation to workers
     private final AtomicInteger startedCounter = new AtomicInteger();
+    // The bytes of a value of each function's column, by function, 0 for a function without one.
+    private final IntList valueSizes;
     private final WorkStealingStrategy workStealingStrategy;
     private final int workerCount;
     private RecordCursorFactory base;
     private ObjList<PageFrameMemoryPool> frameMemoryPools; // per worker pools
+    // NULL_KEY_CHUNK_SIZE INT keys, each the NULL key, that every worker reads to aggregate the rows
+    // of a frame whose key column holds no data; see VectorAggregateFunction.aggregateNullKeys().
+    private long pNullKeys;
     private long[] pRosti;
     private ObjList<RostiSharedCursor> sharedCursors;
     private ObjList<VectorAggregateFunction> vafList;
@@ -140,6 +148,14 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             final int vafCount = vafList.size();
             this.vafList = new ObjList<>(vafCount);
             this.vafList.addAll(vafList);
+            final RecordMetadata baseMetadata = base.getMetadata();
+            valueSizes = new IntList(vafCount);
+            for (int i = 0; i < vafCount; i++) {
+                final int valueColumnIndex = vafList.getQuick(i).getColumnIndex();
+                valueSizes.add(valueColumnIndex > -1 ? ColumnType.sizeOf(baseMetadata.getColumnType(valueColumnIndex)) : 0);
+            }
+            pNullKeys = Unsafe.malloc(NULL_KEYS_SIZE, MemoryTag.NATIVE_FUNC_RSS);
+            Vect.setMemoryInt(pNullKeys, Numbers.INT_NULL, VectorAggregateEntry.NULL_KEY_CHUNK_SIZE);
             raf = configuration.getRostiAllocFacade();
             for (int i = 0; i < workerCount; i++) {
                 long ptr = raf.alloc(columnTypes, configuration.getGroupByMapCapacity());
@@ -410,6 +426,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 }
             }
         }
+        pNullKeys = Unsafe.free(pNullKeys, NULL_KEYS_SIZE, MemoryTag.NATIVE_FUNC_RSS);
         failure = Misc.freeBestEffort(failure, base);
         // Shared cursors hold no native memory; primary state freed above covers it.
         Misc.clear(sharedCursors);
@@ -619,6 +636,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                         // when column index = -1 we assume that vector function does not have value
                         // argument, and it can only derive count via memory size
                         final int valueColumnIndex = vaf.getColumnIndex();
+                        final int valueSize = valueSizes.getQuick(vafIndex);
 
                         if (!ownerLoop.hasPublication()) {
                             ownerLoop.checkBeforeHelping();
@@ -629,6 +647,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                                     frameRowCount,
                                     keyColumnIndex,
                                     valueColumnIndex,
+                                    valueSize,
+                                    pNullKeys,
                                     pRosti,
                                     frameMemoryPools,
                                     raf,
@@ -657,6 +677,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                                             frameRowCount,
                                             keyColumnIndex,
                                             valueColumnIndex,
+                                            valueSize,
+                                            pNullKeys,
                                             pRosti,
                                             frameMemoryPools,
                                             raf,
@@ -680,6 +702,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                                         frameRowCount,
                                         keyColumnIndex,
                                         valueColumnIndex,
+                                        valueSize,
+                                        pNullKeys,
                                         vaf,
                                         pRosti,
                                         frameMemoryPools,

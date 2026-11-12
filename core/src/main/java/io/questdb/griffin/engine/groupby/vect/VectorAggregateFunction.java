@@ -32,8 +32,8 @@ import io.questdb.std.Mutable;
 public interface VectorAggregateFunction extends Function, Mutable {
 
     /**
-     * Non-keyed aggregation that doesn't use rosti.
-     * Used either for truly non-keyed aggregation or when key is null in page frame due to column tops.
+     * Non-keyed aggregation that doesn't use rosti. A keyed aggregation does not use it: it aggregates
+     * a page frame whose key column holds no data with {@link #aggregateNullKeys}.
      *
      * @param address       address
      * @param frameRowCount row count int the frame; this is provided to "count" functions
@@ -54,6 +54,26 @@ public interface VectorAggregateFunction extends Function, Mutable {
      * @return true if processing went fine and false if it failed on memory allocation
      */
     boolean aggregate(long pRosti, long keyAddress, long valueAddress, long frameRowCount);
+
+    /**
+     * Keyed aggregation of rows that all have the NULL key, the rows of a page frame whose key column
+     * holds no data: a column top, or a Parquet row group whose key column is all NULL. Aggregates them
+     * under the NULL key of the map as {@link #aggregate(long, long, long, long)} aggregates rows whose
+     * key is NULL.
+     * <p>
+     * The keys are INT keys, each {@link io.questdb.std.Numbers#INT_NULL}, the NULL key of the map
+     * whatever the key column: INT, SYMBOL, or a TIMESTAMP that the key takes hour() of. The
+     * implementation therefore reads them with the INT key natives, also when it reads its keys with
+     * the hour() natives, which take the key column's timestamps.
+     *
+     * @param pRosti        pointer to rosti
+     * @param pNullKeys     address of frameRowCount INT keys, each the NULL key
+     * @param valueAddress  value address; 0 when the value column holds no data either, so that only
+     *                      the NULL key should be processed
+     * @param frameRowCount row count
+     * @return true if processing went fine and false if it failed on memory allocation
+     */
+    boolean aggregateNullKeys(long pRosti, long pNullKeys, long valueAddress, long frameRowCount);
 
     /**
      * Returns the column index for this aggregate function.
@@ -99,7 +119,8 @@ public interface VectorAggregateFunction extends Function, Mutable {
 
     /**
      * Used for keyed aggregates only.
-     * Merges value for null key (empty/null key page frames with rosti) and (optionally) replaces null values with constant in rosti.
+     * Merges the value that {@link #aggregate(long, long, int)} accumulated into the null key, and
+     * (optionally) replaces null values with constant in rosti.
      *
      * @param pRosti pointer to rosti
      * @return true if wrapUp was fine and false if it failed on memory allocation

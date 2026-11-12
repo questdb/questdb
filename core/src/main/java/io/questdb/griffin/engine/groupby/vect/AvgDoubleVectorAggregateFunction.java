@@ -91,6 +91,15 @@ public class AvgDoubleVectorAggregateFunction extends DoubleFunction implements 
     }
 
     @Override
+    public boolean aggregateNullKeys(long pRosti, long pNullKeys, long valueAddress, long frameRowCount) {
+        if (valueAddress == 0) {
+            return Rosti.keyedIntDistinct(pRosti, pNullKeys, frameRowCount);
+        } else {
+            return Rosti.keyedIntSumDouble(pRosti, pNullKeys, valueAddress, frameRowCount, valueOffset);
+        }
+    }
+
+    @Override
     public void clear() {
         sum.reset();
         count.reset();
