@@ -26,10 +26,12 @@ jobs:
     # A PR or merge-queue build triggers enterprise CI even when no source path changed:
     # enterprise-ci (reported by the full run) is a required check, so GitHub blocks a PR that
     # never reports it from merging, and ejects a queue entry that never reports it.
+    # succeeded(): a canceled run whose trigger job is still queued must not post an enterprise run.
     condition: >-
+      and(succeeded(),
       or(eq(variables['SOURCE_CODE_CHANGED'], 'true'),
       eq(variables['Build.Reason'], 'PullRequest'),
-      startsWith(variables['Build.SourceBranch'], 'refs/heads/gh-readonly-queue/'))
+      startsWith(variables['Build.SourceBranch'], 'refs/heads/gh-readonly-queue/')))
     steps:
       - checkout: none
       - bash: |
