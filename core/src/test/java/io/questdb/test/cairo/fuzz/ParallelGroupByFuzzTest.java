@@ -1905,6 +1905,45 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelGroupByNullKey() throws Exception {
+        // A NULL key takes no bytes in the map key: the per-worker maps of an all-NULL key merge into
+        // one group, and a string key after a NULL one reads its own value once the maps are sharded.
+        // Expected values come from x = 1..ROW_COUNT: x % 1000 = 0 holds 1000, 2000, ... and
+        // x % 1000 = 1 holds 1, 1001, ...
+        Assume.assumeTrue(enableParallelGroupBy);
+        final long perClass = ROW_COUNT / 1000;
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
+            executeWithPool(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+                        execute(
+                                compiler,
+                                "CREATE TABLE tab AS (SELECT x, timestamp_sequence(0, 864_000_000) ts FROM long_sequence(" + ROW_COUNT + ")) TIMESTAMP(ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        if (convertToParquet) {
+                            execute(compiler, "ALTER TABLE tab CONVERT PARTITION TO PARQUET WHERE ts >= 0", sqlExecutionContext);
+                        }
+                        assertQueriesAndPlans(
+                                engine,
+                                sqlExecutionContext,
+                                "SELECT null AS k, count() AS c, sum(x) AS s FROM tab GROUP BY 1",
+                                "k\tc\ts\n" + "null\t" + ROW_COUNT + "\t" + ((long) ROW_COUNT * (ROW_COUNT + 1) / 2) + "\n",
+                                "Async Group By",
+                                "SELECT CASE WHEN x > 0 THEN NULL END AS k, concat('v', x % 1000) AS b, count() AS c, sum(x) AS s FROM tab GROUP BY 1, 2 ORDER BY 2 LIMIT 2",
+                                "k\tb\tc\ts\n"
+                                        + "null\tv0\t" + perClass + "\t" + (1000 * perClass * (perClass + 1) / 2) + "\n"
+                                        + "null\tv1\t" + perClass + "\t" + (perClass + 1000 * perClass * (perClass - 1) / 2) + "\n",
+                                "Async Group By"
+                        );
+                    }
+            );
+        });
+    }
+
+    @Test
     public void testParallelGroupByRegrIntercept() throws Exception {
         Assume.assumeTrue(enableParallelGroupBy);
         testParallelGroupByAllTypes("SELECT round(regr_intercept(adouble, along), 14) FROM tab", """
