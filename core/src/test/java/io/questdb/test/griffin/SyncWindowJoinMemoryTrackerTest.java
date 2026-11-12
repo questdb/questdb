@@ -199,7 +199,6 @@ public class SyncWindowJoinMemoryTrackerTest extends AbstractCairoTest {
         // A tiny limit breaches on the keyed cursor's first tracked allocation, which is the symbol
         // lookup map of() builds at open; the loop verifies each breach releases allocations and
         // leaves the factory reusable.
-        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
@@ -207,6 +206,8 @@ public class SyncWindowJoinMemoryTrackerTest extends AbstractCairoTest {
                     (engine, compiler, sqlExecutionContext) -> {
                         createTrades(engine, sqlExecutionContext, 100, 8);
                         createPrices(engine, sqlExecutionContext, 1_000, 8);
+                        // Tiny limit set after table creation so the populating INSERT does not breach it.
+                        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
                         final String query = "SELECT t.ts, array_agg(p.price) " +
                                 "FROM trades t WINDOW JOIN prices p ON t.sym = p.sym " +
                                 "RANGE BETWEEN 2 seconds PRECEDING AND 2 seconds FOLLOWING";
@@ -347,7 +348,6 @@ public class SyncWindowJoinMemoryTrackerTest extends AbstractCairoTest {
     @Test
     public void testNotKeyedWindowJoinOpenFailureReleasesAllocations() throws Exception {
         // Non-symbol variant of testKeyedWindowJoinOpenFailureReleasesAllocations.
-        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
@@ -355,6 +355,8 @@ public class SyncWindowJoinMemoryTrackerTest extends AbstractCairoTest {
                     (engine, compiler, sqlExecutionContext) -> {
                         createTrades(engine, sqlExecutionContext, 100, 8);
                         createPrices(engine, sqlExecutionContext, 1_000, 8);
+                        // Tiny limit set after table creation so the populating INSERT does not breach it.
+                        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
                         final String query = "SELECT t.ts, array_agg(p.price) " +
                                 "FROM trades t WINDOW JOIN prices p " +
                                 "RANGE BETWEEN 2 seconds PRECEDING AND 2 seconds FOLLOWING";
@@ -443,7 +445,6 @@ public class SyncWindowJoinMemoryTrackerTest extends AbstractCairoTest {
         // WindowJoinFastVectRecordCursor, which carries its own allocator + slaveAllocator on top of
         // the two symbol maps. A tiny limit breaches on the first of those to allocate - the lookup
         // map of() builds at open - well before the slave data the drain would charge.
-        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
@@ -451,6 +452,8 @@ public class SyncWindowJoinMemoryTrackerTest extends AbstractCairoTest {
                     (engine, compiler, sqlExecutionContext) -> {
                         createTrades(engine, sqlExecutionContext, 100, 8);
                         createPrices(engine, sqlExecutionContext, 1_000, 8);
+                        // Tiny limit set after table creation so the populating INSERT does not breach it.
+                        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
                         final String query = "SELECT t.ts, sum(p.price) " +
                                 "FROM trades t WINDOW JOIN prices p ON t.sym = p.sym " +
                                 "RANGE BETWEEN 2 seconds PRECEDING AND 2 seconds FOLLOWING";

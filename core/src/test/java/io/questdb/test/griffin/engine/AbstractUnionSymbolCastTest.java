@@ -41,16 +41,17 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.union.UnionSymbolCastRecordCursorFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTracker;
-import io.questdb.std.MemoryTrackerWorkload;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
 
 /**
  * Shared scaffolding for the {@link UnionSymbolCastRecordCursorFactory} unit tests: a query memory
- * tracker helper, the projection builder, and a configurable STRING cursor double backed by a
+ * tracker/execution helper, the projection builder, and a configurable STRING cursor double backed by a
  * caller-supplied {@link StaticSymbolTable}.
  */
 abstract class AbstractUnionSymbolCastTest extends AbstractCairoTest {
+    private long executionId = -1;
 
     protected static ObjList<Function> functions(Function... functions) {
         final ObjList<Function> result = new ObjList<>(functions.length);
@@ -92,18 +93,21 @@ abstract class AbstractUnionSymbolCastTest extends AbstractCairoTest {
 
     protected MemoryTracker acquireTracker(long limitBytes) {
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, limitBytes);
-        final MemoryTracker tracker = engine.getMemoryTrackerProvider().acquire(
-                sqlExecutionContext.getSecurityContext(),
-                1L,
-                MemoryTrackerWorkload.QUERY
-        );
-        sqlExecutionContext.setMemoryTracker(tracker);
-        return tracker;
+        Assert.assertEquals(-1, executionId);
+        // These tests open the operator directly, without QueryProgress to register its execution.
+        executionId = engine.getQueryRegistry().register("union symbol projection", sqlExecutionContext);
+        return sqlExecutionContext.getMemoryTracker();
+    }
+
+    protected void endExecution() {
+        final long id = executionId;
+        executionId = -1;
+        engine.getQueryRegistry().unregister(id, sqlExecutionContext);
     }
 
     protected void releaseTracker(MemoryTracker tracker) {
-        sqlExecutionContext.setMemoryTracker(null);
-        tracker.close();
+        endExecution();
+        Assert.assertEquals("execution close must release all tracked state", 0, tracker.getUsed());
     }
 
     /**

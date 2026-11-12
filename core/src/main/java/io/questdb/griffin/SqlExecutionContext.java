@@ -152,6 +152,13 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     Decimal64 getDecimal64();
 
+    /**
+     * Returns the resources of the execution that runs on this context, or null when none runs.
+     */
+    default @Nullable SqlExecutionResources getExecutionResources() {
+        return null;
+    }
+
     default @Nullable ExecutionState getExecutionState() {
         return null;
     }
@@ -598,6 +605,9 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     void setJitMode(int jitMode);
 
     default void setLiveViewCompile(boolean value) {
+    }
+
+    default void setExecutionResources(@Nullable SqlExecutionResources resources) {
     }
 
     /**

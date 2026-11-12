@@ -237,6 +237,38 @@ public class CastToSymbolTableTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testViewTakenBeforeTheScanFollowsTheLiveDictionary() throws Exception {
+        // lag()/lead() take the view at init, before the scan mints any key, and resolve every key
+        // through it. A key minted after the hand-out resolves through the cast's live native
+        // dictionary; once QueryProgress ends the execution and frees that dictionary, it must read
+        // as null rather than as freed memory.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT ('v' || (x % 7))::varchar v, x % 7 l, (x % 7)::int i, (x % 7) / 2.0 d FROM long_sequence(50))");
+            for (String column : new String[]{"v", "l", "i", "d"}) {
+                try (RecordCursorFactory factory = select("SELECT " + column + "::symbol sy FROM t")) {
+                    final SymbolTable table;
+                    int maxKey = -1;
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        table = cursor.newSymbolTable(0);
+                        final Record record = cursor.getRecord();
+                        while (cursor.hasNext()) {
+                            final int key = record.getInt(0);
+                            maxKey = Math.max(maxKey, key);
+                            TestUtils.assertEquals(column, record.getSymA(0), table.valueOf(key));
+                            TestUtils.assertEquals(column, record.getSymB(0), table.valueBOf(key));
+                        }
+                    }
+                    Assert.assertEquals(column, 6, maxKey);
+                    for (int key = 0; key <= maxKey; key++) {
+                        Assert.assertNull(column, table.valueOf(key));
+                        Assert.assertNull(column, table.valueBOf(key));
+                    }
+                }
+            }
+        });
+    }
+
     private static String scan(RecordCursor cursor) {
         final Record record = cursor.getRecord();
         final StringBuilder sink = new StringBuilder();

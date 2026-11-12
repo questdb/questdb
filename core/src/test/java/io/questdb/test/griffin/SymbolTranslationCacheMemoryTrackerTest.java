@@ -867,9 +867,10 @@ public class SymbolTranslationCacheMemoryTrackerTest extends AbstractCairoTest {
                 "CREATE TABLE ks (k1 SYMBOL CAPACITY 524_288, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
                 sqlExecutionContext
         );
-        engine.execute(
-                "INSERT INTO ks SELECT x::SYMBOL k1, (x * 1_000_000)::TIMESTAMP ts FROM long_sequence(400_000)",
-                sqlExecutionContext
+        executeWithoutQueryMemoryLimit(
+                engine,
+                sqlExecutionContext,
+                "INSERT INTO ks SELECT x::SYMBOL k1, (x * 1_000_000)::TIMESTAMP ts FROM long_sequence(400_000)"
         );
         engine.execute("TRUNCATE TABLE ks KEEP SYMBOL MAPS", sqlExecutionContext);
         engine.execute(
@@ -889,9 +890,9 @@ public class SymbolTranslationCacheMemoryTrackerTest extends AbstractCairoTest {
             String selectTemplate
     ) throws Exception {
         engine.execute(createTable, sqlExecutionContext);
-        engine.execute("INSERT INTO " + tableName + " " + selectTemplate.formatted("x", 400_000), sqlExecutionContext);
+        executeWithoutQueryMemoryLimit(engine, sqlExecutionContext, "INSERT INTO " + tableName + " " + selectTemplate.formatted("x", 400_000));
         engine.execute("TRUNCATE TABLE " + tableName + " KEEP SYMBOL MAPS", sqlExecutionContext);
-        engine.execute("INSERT INTO " + tableName + " " + selectTemplate.formatted("x * 10", 40_000), sqlExecutionContext);
+        executeWithoutQueryMemoryLimit(engine, sqlExecutionContext, "INSERT INTO " + tableName + " " + selectTemplate.formatted("x * 10", 40_000));
     }
 
     private static void createTimeSeriesTables(CairoEngine engine, SqlExecutionContext sqlExecutionContext) throws Exception {
@@ -913,6 +914,22 @@ public class SymbolTranslationCacheMemoryTrackerTest extends AbstractCairoTest {
                         """,
                 sqlExecutionContext
         );
+    }
+
+    // The ::SYMBOL casts that fill the tables charge their dictionaries to the query, and 400,000
+    // symbols take more than QUERY_MEMORY_LIMIT. The limit applies to the joins under test, not to
+    // the statements that set up their data.
+    private static void executeWithoutQueryMemoryLimit(
+            CairoEngine engine,
+            SqlExecutionContext sqlExecutionContext,
+            String sql
+    ) throws Exception {
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
+        try {
+            engine.execute(sql, sqlExecutionContext);
+        } finally {
+            setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, QUERY_MEMORY_LIMIT);
+        }
     }
 
     private static RecordCursorFactory findFactory(

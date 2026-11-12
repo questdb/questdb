@@ -182,7 +182,8 @@ public class UnionSymbolCastSparseKeyTest extends AbstractUnionSymbolCastTest {
                     Assert.assertEquals("the cached translation must not allocate", used, tracker.getUsed());
                     Assert.assertFalse(cursor.hasNext());
                 }
-                Assert.assertEquals("cursor close must release the tracked cache", 0, tracker.getUsed());
+                endExecution();
+                Assert.assertEquals("execution close must release the dictionary and cache", 0, tracker.getUsed());
             } finally {
                 releaseTracker(tracker);
             }
@@ -197,6 +198,7 @@ public class UnionSymbolCastSparseKeyTest extends AbstractUnionSymbolCastTest {
     @Test
     public void testKeyAboveCardinalityBelowDenseFloorStaysCached() throws Exception {
         assertMemoryLeak(() -> {
+            final MemoryTracker tracker = acquireTracker();
             final String[][] rows = {{"dense0"}, {"gap5"}, {"gap5"}, {"gap5"}, {"gap5"}};
             final InternCountingFunc function = new InternCountingFunc(new StrColumn(0));
             final ObjList<Function> functions = functions(function);
@@ -218,6 +220,8 @@ public class UnionSymbolCastSparseKeyTest extends AbstractUnionSymbolCastTest {
                     Assert.assertEquals(keys[1], keys[4]);
                     Assert.assertNotEquals(keys[0], keys[1]);
                 }
+            } finally {
+                releaseTracker(tracker);
             }
             Assert.assertEquals(
                     "each distinct source text must be interned once; a key stranded between the dense"
@@ -235,6 +239,7 @@ public class UnionSymbolCastSparseKeyTest extends AbstractUnionSymbolCastTest {
     @Test
     public void testKeysAcrossDenseAndMapRegionsTranslateCorrectly() throws Exception {
         assertMemoryLeak(() -> {
+            final MemoryTracker tracker = acquireTracker();
             final String[] texts = {"dense0", "beyond500", "dense2", "beyond501", "dense0", "beyond500"};
             final String[][] rows = new String[texts.length][];
             for (int i = 0; i < texts.length; i++) {
@@ -259,6 +264,8 @@ public class UnionSymbolCastSparseKeyTest extends AbstractUnionSymbolCastTest {
                     Assert.assertNotEquals(keys[0], keys[2]);
                     Assert.assertNotEquals(keys[1], keys[3]);
                 }
+            } finally {
+                releaseTracker(tracker);
             }
         });
     }
@@ -291,7 +298,8 @@ public class UnionSymbolCastSparseKeyTest extends AbstractUnionSymbolCastTest {
                     Assert.assertEquals("the cached translation must not allocate", used, tracker.getUsed());
                     Assert.assertFalse(cursor.hasNext());
                 }
-                Assert.assertEquals("cursor close must release the tracked cache", 0, tracker.getUsed());
+                endExecution();
+                Assert.assertEquals("execution close must release the dictionary and cache", 0, tracker.getUsed());
             } finally {
                 releaseTracker(tracker);
             }
@@ -301,6 +309,7 @@ public class UnionSymbolCastSparseKeyTest extends AbstractUnionSymbolCastTest {
     @Test
     public void testStringAccessDoesNotInitializeSourceSymbolState() throws Exception {
         assertMemoryLeak(() -> {
+            final MemoryTracker tracker = acquireTracker();
             final StaticSymbolCursorFactory base = newSourceFactory();
             try (RecordCursorFactory factory = newFactory(base)) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -309,6 +318,8 @@ public class UnionSymbolCastSparseKeyTest extends AbstractUnionSymbolCastTest {
                     Assert.assertEquals(0, base.getSymbolTableLookupCount());
                     Assert.assertFalse(cursor.hasNext());
                 }
+            } finally {
+                releaseTracker(tracker);
             }
         });
     }
