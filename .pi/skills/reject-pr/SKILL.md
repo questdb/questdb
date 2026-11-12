@@ -21,8 +21,7 @@ Actions performed, in order:
 
 ## Step 0: Locate the review to post
 
-The body you post is **the most recent `review-pr` report in this conversation**
-(its Blocking / Moderate / Minor / Coverage map / Summary output).
+The body you post is **the most recent `review-pr` report in this conversation**.
 
 - If no review report exists in this conversation, STOP and tell the user to run
   `/skill:review-pr` first — do not fabricate a review.
@@ -34,28 +33,39 @@ The body you post is **the most recent `review-pr` report in this conversation**
   section lists for a failure the hostile-input rule covers. Tell the user what
   you left out.
 
-## Step 1: Detect the PR
+## Step 1: Detect the PR and match the reviewed revision
 
-Auto-detect the PR from the checked-out branch. An explicit PR number/URL in the
-arguments overrides detection.
+The review's opening line names the PR it reviewed, if any, and the revision.
+Use that PR. An explicit PR number or URL in the arguments overrides it, and
+without either, take the PR of the checked-out branch. `$PR` holds its URL, which
+every later `gh pr` command takes, and `$NUM` its number, which names the files.
 
 ```bash
-PR='<explicit PR number/URL from arguments, else empty>'
-[ -z "$PR" ] && PR=$(gh pr view --json number -q .number 2>/dev/null)
+PR='<PR from the arguments, else the PR the review names, else empty>'
+PR=$(gh pr view ${PR:+"$PR"} --json url -q .url 2>/dev/null)
 if [ -z "$PR" ]; then
   echo "No PR found for the current branch. Run 'gh pr checkout <n>' or pass a PR number."; exit 1
 fi
-gh pr view "$PR" --json number,title,author,headRefName,url,state,labels
+NUM=$(gh pr view "$PR" --json number -q .number)
+gh pr view "$PR" --json number,title,author,headRefName,headRefOid,url,state,labels
 AUTHOR=$(gh pr view "$PR" --json author -q .author.login)
-echo "Rejecting PR #$PR by @$AUTHOR"
+echo "Rejecting PR #$NUM by @$AUTHOR"
 ```
+
+STOP unless `state` is `OPEN`.
+
+When the PR's `headRefOid` doesn't start with the commit hash the review's
+opening line names, or the line names uncommitted changes, the review covered
+other code than the PR's head. STOP, tell the user both commits, and post only if
+the user confirms.
 
 State one line to the user: which PR (`#number — title`) and author you are about
 to reject, then proceed.
 
 ## Step 2: Write the review body to a file
 
-Write the review body to `/tmp/reject-pr-$PR.md` using the `write` tool (never
+Write the review body to `/tmp/reject-pr-$NUM-<revision>.md`, where `<revision>`
+is the reviewed commit's first 12 characters, using the `write` tool (never
 inline it into a shell command — reviews contain backticks, quotes, and `$` that
 break shell quoting). The first line must mention the author:
 
@@ -68,7 +78,7 @@ break shell quoting). The first line must mention the author:
 ## Step 3: Post the rejection
 
 ```bash
-gh pr review "$PR" --request-changes --body-file /tmp/reject-pr-$PR.md
+gh pr review "$PR" --request-changes --body-file /tmp/reject-pr-$NUM-<revision>.md
 
 # Clear the READY label only if present (avoids a spurious error).
 if gh pr view "$PR" --json labels -q '.labels[].name' | grep -qx "READY"; then
@@ -77,15 +87,15 @@ fi
 ```
 
 Notes:
-- GitHub does not allow requesting changes on your **own** PR. If
-  `gh pr review --request-changes` fails for that reason, fall back to
-  `gh pr comment "$PR" --body-file /tmp/reject-pr-$PR.md`, tell the user the PR
-  could not be moved to "changes requested" because it is self-authored, and
-  still clear the `READY` label.
+- GitHub does not allow requesting changes on your **own** PR. If `gh pr review
+  --request-changes` fails for that reason, fall back to `gh pr comment "$PR"
+  --body-file /tmp/reject-pr-$NUM-<revision>.md`, tell the user the PR could not
+  be moved to "changes requested" because it is self-authored, and still clear
+  the `READY` label.
 
 ## Step 4: Confirm
 
-Report back in one or two lines:
+Report back briefly:
 - PR number + title, author tagged, "changes requested" posted (or the fallback used).
 - Whether the `READY` label was removed or was already absent.
 - The PR URL.

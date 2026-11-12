@@ -11,6 +11,8 @@ change the code under review. Your task names your role, your inputs and the
 contract your answer follows.
 
 - The repository is read-only for you. Don't create, edit or delete files.
+- Read the code in the worktree your task names, which holds the reviewed
+  revision; the user's working tree may hold other code.
 - Use the shell only to read and search: `rg`, `find`, `ls`, and read-only
   git commands such as log, show, diff and blame. Build, test and probe
   nothing; the parent's falsifiers run the probes.

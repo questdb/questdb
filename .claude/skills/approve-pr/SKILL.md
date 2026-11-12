@@ -21,8 +21,8 @@ Actions performed, in order:
    crash drafts and security drafts. File none unless the user says so.
 
 > Harness note: this skill runs inside **Claude Code**. Shell variables don't
-> carry over between `Bash` calls, so once Step 1 resolves the PR number, write
-> it literally into every later command and file path.
+> carry over between `Bash` calls, so once Step 1 resolves the PR's URL and
+> number, write them literally into every later command and file path.
 
 ## Step 0: Confirm the review actually clears the bar
 
@@ -30,10 +30,11 @@ Only approve if the most recent `review-pr` report in this conversation ran at
 level 3, as its opening line states, and has a verdict of **approve** or
 **approve with comments** with ZERO open Blocking findings (per the review-pr
 correctness gate). Deferred findings don't block: the PR ships with them, and
-Step 4 lists them for the user. If the review ran at a lower level, do NOT approve
-— tell the user to run `/review-pr --level=3` first. If a Blocking finding is
-still open, do NOT approve — tell the user the PR does not meet the bar and
-suggest `/reject-pr`.
+Step 4 lists them for the user. If the review ran at a lower level, do NOT
+approve — tell the user to run `/review-pr --level=3` first. If a Blocking
+finding is still open, do NOT approve — tell the user the PR does not meet the
+bar and suggest `/reject-pr`. A **needs discussion** verdict doesn't clear the
+bar either: tell the user which decision the review leaves open.
 
 - If no review report exists in this conversation, STOP and tell the user to run
   `/review-pr` first — do not approve unreviewed code.
@@ -46,35 +47,36 @@ suggest `/reject-pr`.
 
 ## Step 1: Detect the PR and match the reviewed revision
 
-Auto-detect the PR from the checked-out branch. An explicit PR number/URL in the
-arguments overrides detection. Either way, resolve it to a PR number.
+The review's opening line names the PR it reviewed, if any, and the revision.
+Use that PR. An explicit PR number or URL in the arguments overrides it, and
+without either, take the PR of the checked-out branch. Resolve it to its URL,
+which every later `gh pr` command takes, and its number, which names the files.
 
 ```bash
-ARG='$ARGUMENTS'
-PR=$(gh pr view ${ARG:+"$ARG"} --json number -q .number 2>/dev/null)
-if [ -z "$PR" ]; then
-  echo "No PR found for the current branch. Run 'gh pr checkout <n>' or pass a PR number."; exit 1
-fi
-gh pr view "$PR" --json number,title,author,headRefName,headRefOid,url,state,labels
-echo "Approving PR #$PR"
+ARG='<PR from the arguments, else the PR the review names, else empty>'
+gh pr view ${ARG:+"$ARG"} --json number,url,title,author,headRefName,headRefOid,state,labels
 ```
 
-The review's opening line names the revision it reviewed. Approve only when the
-PR's `headRefOid` starts with that commit hash. STOP when the line names no
-revision or names uncommitted changes, or when `headRefOid` doesn't match:
-commits pushed after the review, and local commits not pushed yet, are code no
-review has covered. Tell the user both commits; they either push the reviewed
-commits or run `/review-pr` again on the new head.
+STOP if this finds no PR, and tell the user to run `gh pr checkout <n>` or pass a
+PR number. STOP unless `state` is `OPEN`.
+
+Approve only when the PR's `headRefOid` starts with the commit hash the review's
+opening line names. STOP when the line names no revision or names uncommitted
+changes, or when `headRefOid` doesn't match: the review then covered other code
+than the PR's head, such as an earlier push, local commits or another branch.
+Tell the user both commits; they either push the reviewed commits or run
+`/review-pr` again on the PR's head.
 
 State one line to the user: which PR (`#number — title`) at which commit you are
 about to approve, then proceed.
 
 ## Step 2: Write the review body to a file
 
-Write the review body to `/tmp/approve-pr-<PR>.md` using the `Write` tool (never
-inline it into a shell command — reviews contain backticks, quotes, and `$` that
-break shell quoting). The body is the full verbatim `review-pr` report, minus
-what Step 0 leaves out.
+Write the review body to `/tmp/approve-pr-<PR>-<revision>.md`, where
+`<revision>` is the reviewed commit's first 12 characters, using the `Write`
+tool (never inline it into a shell command — reviews contain backticks, quotes,
+and `$` that break shell quoting). The body is the full verbatim `review-pr`
+report, minus what Step 0 leaves out.
 
 ## Step 2b: Check the issue drafts, file none
 
@@ -116,20 +118,22 @@ review you post.
 ## Step 3: Post the approval
 
 ```bash
-gh pr review <PR> --approve --body-file /tmp/approve-pr-<PR>.md
-gh pr edit <PR> --add-label "QUEUED FOR MERGE"
+gh pr review <PR URL> --approve --body-file /tmp/approve-pr-<PR>-<revision>.md \
+  && gh pr edit <PR URL> --add-label "QUEUED FOR MERGE"
 ```
 
 Notes:
 - GitHub does not allow approving your **own** PR. If `gh pr review --approve`
-  fails for that reason, fall back to
-  `gh pr comment <PR> --body-file /tmp/approve-pr-<PR>.md`, tell the user the PR
-  could not be formally approved because it is self-authored, and still add the
-  `QUEUED FOR MERGE` label.
+  fails for that reason, fall back to `gh pr comment <PR URL> --body-file
+  /tmp/approve-pr-<PR>-<revision>.md`, tell the user the PR could not be
+  formally approved because it is self-authored, and add the `QUEUED FOR MERGE`
+  label once the comment is posted.
+- If the approval fails for any other reason, STOP and show the error; add no
+  label.
 
 ## Step 4: Confirm
 
-Report back in one or two lines:
+Report back briefly:
 - PR number + title, "approved" posted (or the fallback used).
 - Whether the `QUEUED FOR MERGE` label was added.
 - The PR URL.

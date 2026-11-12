@@ -29,7 +29,9 @@ neither is supplied, ask for one.
 > names it), local file reads for source inspection, and
 > fresh-context Codex subagents in the `reviewer`, `review-prober` and `risk-assessor`
 > roles. Do not edit files or push. Build and run tests only in the review's scratch
-> worktrees (Steps 2.6 and 3b), never in the user's working tree.
+> worktrees (Steps 1 and 3b), never in the user's working tree. Shell variables
+> don't carry over between shell calls, so write each value a step records, such
+> as `$BASE`, `$WT` or `$TMP`, literally into later commands.
 
 ## Review mindset
 
@@ -72,7 +74,7 @@ The level controls how much of the review below actually runs. Lower levels keep
 |-------|-----------|
 | **0 (default)** | Steps 1, 2, 2.4, 2.5f, 2.6, 3c, 4. Skip the rest of Step 2.5 and the discovery and falsification agents; re-test the earlier findings of 2.5f inline. Review the diff inline against only the "Correctness & bugs", "Performance & algorithmic optimality", "Test review" and "QuestDB coding standards" checklists. Build the Step 2.6 coverage map inline. Every candidate still passes the Step 3b admission gate inline from a blank evidence form; do not draft severity, a fix, or report prose first. Step 3c still launches its risk assessors. |
 | **1** | Adds Step 2.5a and Step 2.5e when test code is present. Run Agent 1 plus at most **two** applicable roles chosen from Agents 3, 5, 6, 11, and 12. Run an independent falsification task for each surviving atomic candidate. |
-| **2** | Full Step 2.5, with 2.5b restricted to `public`/`protected` symbols. Run Agent 1 plus at most **four** change-relevant roles from Agents 2-7 and 10-12. Run an independent falsification task for each surviving atomic candidate. |
+| **2** | Full Step 2.5, with 2.5b restricted to `public`/`protected` symbols. Run Agent 1 plus at most **four** change-relevant roles from Agents 2-8 and 10-12. Run an independent falsification task for each surviving atomic candidate. |
 | **3** | Full Step 2.5 and the complete admission protocol. Select at most **six** applicable discovery roles: Agent 1 always; Agents 2-7 only when their domain is touched; the others by the selection rule in their entries. Depth comes from producer/reachability evidence and independent falsification, not agent count. |
 
 State the reviewed revision, the chosen level, the model running the review and the version of this skill, given under its title, in one line at the start of the review so the user knows what they're getting (e.g., "Reviewing PR #1234 at 1a2b3c4d5e6f, level 2, with <model>, effort <effort>, review-pr <version>"). Name the revision by the first 12 characters of its commit hash: the PR's `headRefOid` from Step 1, or the range head; for a range that ends at the working tree, the hash of `HEAD` followed by `+ uncommitted changes`. `approve-pr` approves only the revision this line names. Take the model from this session's rollout file, never from memory: models misstate their own name and version.
@@ -105,7 +107,7 @@ say what each agent receives.
 
 ## Step 1: Gather PR context
 
-Every mode must end this step with **`$BASE`** set — the commit the change is measured against. `$BASE` is required by Step 2.4 and by every behavioral finding's same-trigger base check; a review that never established it cannot attribute anything.
+Every mode must end this step with **`$BASE`** set — the merge base the change is measured against — and with the reviewed revision checked out ("Reviewed revision" below). `$BASE` is required by Step 2.4 and by every behavioral finding's same-trigger base check; a review that never established it cannot attribute anything.
 
 ### GitHub PR
 
@@ -119,16 +121,14 @@ gh pr view "$PR" --comments
 # Review-thread replies on the diff, which --comments leaves out:
 PR_API=$(gh pr view "$PR" --json url --jq .url | sed -E 's#https://github.com/([^/]+/[^/]+)/pull/#repos/\1/pulls/#')
 gh api "$PR_API/comments" --paginate --jq '.[] | "\(.user.login) on \(.path):\(.line // .original_line): \(.body)"'
-BASE=$(gh pr view "$PR" --json baseRefOid --jq .baseRefOid)
+git fetch --no-recurse-submodules origin "pull/<number>/head" "<baseRefName>"
+BASE=$(git merge-base '<headRefOid>' "$(gh pr view "$PR" --json baseRefOid --jq .baseRefOid)")
 ```
 
-`gh pr diff` fails on a diff GitHub considers too large, such as one that changes
-more than 300 files (HTTP 406). Then fetch the PR, take the diff from Git, and
-continue as "PR with a local range" below, with `$BASE` as `<base>` and the PR's
-`headRefOid` as `<head>`:
+`gh pr diff` fails on a diff GitHub considers too large. Then take the diff from
+Git, with the PR's `headRefOid` as `<head>`:
 
 ```bash
-git fetch --no-recurse-submodules origin "pull/<number>/head" "<baseRefName>"
 HEAD='<headRefOid>'
 git diff "$BASE...$HEAD" --stat
 git diff "$BASE...$HEAD"
@@ -137,9 +137,9 @@ git diff "$BASE...$HEAD"
 ### PR with a local range
 
 When both a PR and `--range=<base>..<head>` are given, run the GitHub PR commands
-above except `gh pr diff` and the `BASE` line, then take `$BASE` and the diff from
-Git as in range mode below. `<head>` is the reviewed revision wherever a step names
-the PR head, such as Step 2.6's `REV`. Step 2 runs, on the `--body` file when one is
+above except `gh pr diff`, the `git fetch` and the `BASE` line, then take `$BASE`
+and the diff from Git as in range mode below. `<head>` is the reviewed revision
+wherever a step names the PR head, such as `REV` below. Step 2 runs, on the `--body` file when one is
 given.
 
 ### Local range (`--range`)
@@ -148,15 +148,14 @@ When only `--range=<base>..<head>` is given there is no PR, no description, and
 no labels. Take the diff from Git instead:
 
 ```bash
-BASE='<base from --range>'
 HEAD='<head from --range, or empty for the working tree>'
+BASE=$(git merge-base '<base from --range>' "${HEAD:-HEAD}")
 git diff "$BASE"${HEAD:+"...$HEAD"} --stat
 git diff "$BASE"${HEAD:+"...$HEAD"}
 git diff "$BASE"${HEAD:+"...$HEAD"} --name-only
 ```
 
-With `<head>` empty the diff includes uncommitted working-tree changes, which is
-the normal case when reviewing a `fix-pr` result before it is pushed. Untracked
+With `<head>` empty the diff includes uncommitted working-tree changes. Untracked
 files do not appear in `git diff` — list them with `git status --porcelain` and
 read any that are part of the change, especially new test files, or the coverage
 map in Step 2.6 will silently miss them.
@@ -168,6 +167,28 @@ outward beyond the changed files, and findings are still classified by the same
 rubric. Restricting the
 review to the changed files would disable the out-of-diff breakage analysis that
 is the most valuable part of this skill.
+
+### Reviewed revision
+
+Every search, agent and build of this review reads the reviewed revision, not the
+user's working tree, which may hold other work. Check it out in a scratch
+worktree now, keeping dots out of its path:
+
+```bash
+REPO=$(git rev-parse --show-toplevel)
+TMP=$(mktemp -d /tmp/review-pr-XXXXXX)
+WT="$TMP/src"
+# REV is the reviewed revision:
+#   PR:           REV=<headRefOid>
+#   range:        REV=<head> (also with a PR)
+#   working tree: REV=$(git stash create); REV=${REV:-HEAD}
+#                 (a snapshot of the tracked changes; once the worktree exists,
+#                 copy the change's untracked files into it)
+git worktree add --detach "$WT" "$REV"
+```
+
+Step 2.5 searches `$WT`, Step 2.6 measures coverage there, and every agent gets
+its path. Remove it when the review ends: `git worktree remove --force "$WT"`.
 
 ## Step 2: PR title and description
 
@@ -223,7 +244,7 @@ Record the verdict per submodule in one line each, and repeat it in the Step 4 r
 
 ## Step 2.5: Map the change surface
 
-Before launching review agents, produce a structured change surface map. This step is mandatory and must use `rg` and `rg --files` — do not reason about callsites from memory. The output of this step is required input for every agent in Step 3.
+Before launching review agents, produce a structured change surface map. Build the parts the level table asks for. Search `$WT` (Step 1) with real commands — `rg` and `fd`, or the harness's equivalents — and do not reason about callsites from memory. Every agent in Step 3 except Agents 9 and 10 receives the map.
 
 
 ### 2.5a Semantic delta per changed symbol
@@ -254,7 +275,7 @@ For Rust, also search for:
 - `extern "C"` boundaries
 
 
-A changed `pub`/`protected`/package-private symbol with zero recorded `rg` calls in the trace is a skill violation. The model is not allowed to assert "this is only used here" without showing the search.
+A changed `pub`/`protected`/package-private symbol with zero recorded searches in the trace is a skill violation. The model is not allowed to assert "this is only used here" without showing the search.
 
 ### 2.5c Implicit contract list
 
@@ -280,7 +301,7 @@ The list groups the callsites from 2.5b by execution context: hot data paths, SQ
 
 ### 2.5e Test surface & helper inventory
 
-Run this only when the PR adds or changes test code. It is the test-code counterpart to 2.5b and feeds Agents 11-13. Use real `rg` / `rg --files` searches — do not reason about helpers from memory.
+Run this only when the PR adds or changes test code. It is the test-code counterpart to 2.5b and feeds Agents 11-13. Search with real commands, as in Step 2.5 — do not reason about helpers from memory.
 
 - **Existing-infrastructure inventory:** search the changed test files' package and module for base test classes, shared `@Before`/`@After`, helper methods, fixtures, and assertion utilities the new tests could reuse (`rg` for `extends Abstract.*Test`, `class .*TestUtils`, `assertMemoryLeak`, `assertQuery`, shared `protected` helpers in the base class). This list is the baseline Agent 12 uses to flag reinvented boilerplate — a "you stamped boilerplate instead of reusing helper X" finding requires X to appear in this inventory.
 - **Changed shared helpers as symbols:** if the PR changes a shared test base class, helper, or fixture, run the 2.5b callsite inventory for it too — a changed test base class can silently break every subclassing test.
@@ -311,26 +332,16 @@ Build a coverage table with one row per behavioral change: every changed symbol 
 - **Dimensions:** applicable happy, error, NULL, boundary, concurrency, and resource-cleanup dimensions, each covered / uncovered / N-A with a reason. A change the "Crash fuzz coverage" checklist names also has a crash dimension, which that checklist grades.
 - **Disposition rationale:** why the row is `COVERED`, `CRITICAL GAP`, `MODERATE GAP`, `ACCEPTED GAP`, `EXOTIC`, or `EXEMPT`.
 
-**Measure the map.** A search shows which tests might reach a change, not which lines they run. Once the Test column is filled, run `ci/diff_coverage.py` (CLAUDE.md "Measuring coverage locally") at the reviewed revision, unless the change touches no production Java or Rust source. Build and run only in a scratch worktree, never in the user's working tree, which may hold other work and its own build. Keep dots out of the worktree's path.
+**Measure the map.** A search shows which tests might reach a change, not which lines they run. Once the Test column is filled, run `ci/diff_coverage.py` (CLAUDE.md "Measuring coverage locally") at the reviewed revision, unless the change touches no production Java or Rust source. Run it in `$WT`, the scratch worktree from Step 1:
 
 ```bash
-REPO=$(git rev-parse --show-toplevel)
-TMP=$(mktemp -d /tmp/review-pr-XXXXXX)
-WT="$TMP/src"
-# REV is the reviewed revision:
-#   PR:           git fetch origin "pull/<number>/head" "<baseRefName>"; REV=<headRefOid>
-#   range:        REV=<head> (also with a PR)
-#   working tree: REV=$(git stash create); REV=${REV:-HEAD}
-#                 (a snapshot of the tracked changes; once the worktree exists,
-#                 copy the change's untracked files from Step 1 into it)
-git worktree add --detach "$WT" "$REV"
 cd "$WT"
-python3 "$REPO/ci/diff_coverage.py" --base "$(git merge-base "$BASE" "$REV")" \
+python3 "$REPO/ci/diff_coverage.py" --base "$BASE" \
   --tests '<test classes the change adds or changes, plus those the map cites>' \
   --ignore-test-failures --json "$TMP/coverage.json"
 ```
 
-The script runs from `$REPO` because the reviewed revision may predate it. If the change adds no test and the map cites none, skip the run: no test runs any changed line. If the script cannot run for another reason (exit code 2, such as a missing client jar or Rust toolchain), install nothing: keep the static map and state in the report that coverage was not measured and why. A build error or a failing test at the reviewed revision is a Step 3b candidate. Remove the worktree when the review ends: `git worktree remove --force "$WT"`.
+The script runs from `$REPO` because the reviewed revision may predate it. If the change adds no test and the map cites none, skip the run: no test runs any changed line. Exit code 1 means the script found never-run lines, its normal result. If it cannot run (exit code 2, such as a missing client jar or Rust toolchain), install nothing: keep the static map and state in the report that coverage was not measured and why. Exit code 3 means the run failed: correct a test name that matched nothing and run again; a build error at the reviewed revision is a Step 3b candidate, and so is a failing test.
 
 Then apply the result to the map:
 
@@ -357,18 +368,19 @@ Rows with no effective test are marked **UNTESTED**, then classified by evidence
 - **Exotic:** an exotic path (above) with no failing probe. Not a gap.
 - **Exempt:** verified no-behavioral-change rows (pure rename, dead-code removal, comment/doc/CI-only).
 
-A bug-fix label or zero test changes triggers this analysis; neither predetermines severity or verdict. Urgency cannot waive an actual defect or an admitted Critical gap. The coverage map is required internal evidence for Agent 5, Agents 11-13, and the Step 4 test gate. Grade here every `UNTESTED` row, whichever step or agent adds it, and publish only admitted gaps; keep COVERED, ACCEPTED, EXOTIC, EXEMPT, and omitted rows private unless the user asks. At level 0, rows may be per-symbol to bound cost, but new error/exception and NULL/boundary paths still get separate rows.
+A bug-fix label or zero test changes triggers this analysis; neither predetermines severity or verdict. Urgency cannot waive an actual defect or an admitted Critical gap. The coverage map is required internal evidence for Agent 5, Agents 11-13, and the Step 4 correctness gate. Grade here every `UNTESTED` row, whichever step or agent adds it, and publish only admitted gaps; keep COVERED, ACCEPTED, EXOTIC, EXEMPT, and omitted rows private unless the user asks. At level 0, rows may be per-symbol to bound cost, but new error/exception and NULL/boundary paths still get separate rows.
 
 ## Step 3: Change-specific candidate discovery
 
 Run this step with fresh-context Codex subagents in the `reviewer` role. Select only roles whose domain is materially touched, obey the level's discovery cap, and launch those roles as fresh-context, read-only `reviewer` tasks. Agent count is never evidence and unused roles are skipped.
 
-Every selected agent receives the candidate-discovery directive below and its role entry. All except Agents 9 and 10, which get only what their entries list, also receive:
+Every selected agent receives the candidate-discovery directive below, its role entry, and the path of the Step 1 worktree, where it reads the code. All except Agents 9 and 10, which get only what their entries list, also receive:
 1. The PR or local-range diff
 2. The Step 2.4 provenance verdicts
 3. The full change surface map from Step 2.5 (semantic deltas, callsite inventory, implicit contracts, cross-context exposure list, earlier findings, settled items, and the 2.5e test surface inventory when there is one)
 4. The test coverage map from Step 2.6, with the path of its coverage report
 5. Every checklist their role entry names
+6. The PR title and body (the `--body` file when given), except in range mode without a PR
 
 Write the large inputs to a shared file in the review's temporary directory and name its path in each task rather than pasting them into every task.
 
@@ -390,7 +402,7 @@ Write the large inputs to a shared file in the review's temporary directory and 
 
 Use the following as a role catalog; do not launch all of it.
 
-**Agent 1 — Correctness & bugs:** Apply the "Correctness & bugs" checklist, plus the "Store-and-forward & pool startup invariants" and "Permission hooks" checklists when the diff touches what they cover. Cross-reference every changed symbol against its callsite inventory and verify the new behavior is correct at each callsite.
+**Agent 1 — Correctness & bugs:** Apply the "Correctness & bugs" checklist, plus the "Store-and-forward & pool startup invariants" and "Permission hooks" checklists when the diff touches what they cover. Cross-reference every changed symbol against its callsite inventory, at the levels that build one (2.5b), and verify the new behavior is correct at each callsite.
 
 **Agent 2 — Concurrency:** Apply the "Concurrency" checklist. Use the implicit contract list (lock order, thread-affinity) and check every callsite from 2.5b for violations of the new contract.
 
@@ -436,9 +448,9 @@ Select this role whenever changed symbols have meaningful out-of-diff callers; s
 **Agent 9 — Fresh-context adversarial:** Dispatched separately from agents 1-8 to escape checklist anchoring. This agent operates under different rules from the rest:
 
 - It receives ONLY the PR diff and the names of the changed files. It does NOT receive the change surface map from Step 2.5, the implicit contract list, the cross-context exposure list, or any of the review checklists below.
-- Its sole instruction: “generate a small set of falsifiable ways this code could be wrong, and try to disprove each before returning it.” No category list, failure-mode taxonomy, or QuestDB-specific style guide.
+- Its only role instruction: “generate a small set of falsifiable ways this code could be wrong, and try to disprove each before returning it.” No category list, failure-mode taxonomy, or QuestDB-specific style guide; from the candidate-discovery directive it takes only the output fields.
 - It is free to read and search the repository however it wants.
-- Each surviving output follows the candidate contract: atomic proposition, changed attribution, producer, reachability, head/base observations, symptom, counterevidence, and missing evidence. No severity or fix.
+- Each surviving output has the candidate-discovery directive's fields: atomic proposition, changed attribution, producer, reachability, head/base observations, symptom, counterevidence, and missing evidence. No severity or fix.
 
 The point is to escape the structured frame, not to create privileged findings. A unique hypothesis is not high signal by itself, and overlap is not corroboration unless it supplies an independent evidence type.
 
@@ -488,7 +500,7 @@ Use this state machine with no shortcuts:
 
 Any missing proof, unresolved contradiction, failed reproduction, unsupported producer, or dependence on an omitted premise ends at `OMITTED`. There is no `DOWNGRADED` state for an unproven behavioral claim, and “could not disprove” never means `PROVEN`.
 
-At levels 1-3, launch one fresh-context falsifier per atomic candidate. The falsifier receives only (a) the neutral proposition, (b) target repository, base/head revision identities (commit SHAs, or a captured diff hash for an uncommitted working tree) and relevant file names, (c) raw evidence/artifact paths, and (d) when its probe builds or runs code, a scratch worktree of its own at the reviewed revision. The parent creates each such worktree as Step 2.6 does, in the review's temporary directory, and removes it when the review ends; separate worktrees let falsifiers build in parallel without sharing build output. **Do not send** the discovery narrative, proposed severity, suggested fix, author identity, other agents' votes, or statements that the claim was verified. At level 0, the parent applies the same protocol inline from a blank evidence form before writing any report prose.
+At levels 1-3, launch one fresh-context falsifier per atomic candidate. The falsifier receives only (a) the neutral proposition, (b) target repository, base/head revision identities (commit SHAs, or a captured diff hash for an uncommitted working tree) and relevant file names, (c) raw evidence/artifact paths, and (d) when its probe builds or runs code, a scratch worktree of its own at the reviewed revision. The parent creates each such worktree as Step 1 does, in the review's temporary directory, and removes it when the review ends; separate worktrees let falsifiers build in parallel without sharing build output. **Do not send** the discovery narrative, proposed severity, suggested fix, author identity, other agents' votes, or statements that the claim was verified. At level 0, the parent applies the same protocol inline from a blank evidence form before writing any report prose.
 
 The falsifier's first task is to construct the strongest disproof: find a missing state producer, unsupported deployment, impossible version/format pairing, omitted caller or event source, retry, guard, lock, validation, downstream recovery, or identical/better base behavior. Only if the candidate survives does it assemble affirmative proof.
 
@@ -501,7 +513,7 @@ A behavioral candidate is admitted only when every field below is backed by cite
 - **Base observation:** the identical trigger and observed output/state at `$BASE`, or `N/A — genuinely new surface` with proof. A base that rejects the trigger shows no wrong-result defect, not a worse outcome.
 - **User symptom:** independently observable consequence; a statement that merely justifies another candidate is not a finding.
 - **Counterevidence search:** strongest attempted disproof and why it does not apply.
-- **Artifact:** exact command/test, output, environment/config, and revision identity (commit SHA or captured diff hash). Race, ordering, retry, restart, filesystem-state, compatibility, and on-disk-format claims always require runtime evidence; static source reading alone cannot admit them.
+- **Artifact:** exact command/test, output, environment/config, and revision identity (commit SHA or captured diff hash). Claims about runtime behavior — races, ordering, retries, restarts, filesystem state, compatibility, on-disk format, a plan's shape, whether a guard fires or a branch runs — always require runtime evidence; static source reading alone cannot admit them.
 
 For static findings fully proved by source — compile errors, direct standards violations, or malformed LOG chains — mark producer/head/base/runtime fields `N/A — static` and cite the complete source proof. For a coverage gap, recorded searches may statically prove only that an effective test is absent; they never make the supported-state producer, reachability, affected population, credible regression consequence, or user impact `N/A`. A Critical coverage gap must prove those fields under Step 2.6. `N/A` is forbidden whenever a premise the finding depends on concerns runtime behavior, reachability, or impact.
 
@@ -510,7 +522,6 @@ Special burdens:
 - A format/version/state compatibility claim must identify an actual producer that writes the alleged state in a supported deployment. A constant comparison or reader guard is not a producer.
 - A claim containing **never**, **only**, **exactly one**, **no retry**, or an equivalent universal negative must include an exhaustive inventory plus an executed probe. One path proves only that path.
 - A concurrency or ordering claim must force or observe the interleaving; timing prose is not evidence.
-- A regression-test claim must run the test on head and against the reverted production hunk.
 - If a parent premise is omitted, omit every candidate that depends on it; do not preserve its supporting propositions as Moderate findings.
 
 If required execution is impossible, record the validation limitation in the private ledger and omit the candidate from the public findings. Never fall back from failed or unavailable execution to confident prose.
@@ -535,9 +546,9 @@ After a candidate satisfies this admission schema, apply the domain-specific che
    is not verified. Do not drop a technically correct finding because today's tables are small — data grows; the Step 4
    magnitude rule decides whether it blocks.
 9. **For cross-context findings (Agent 8)**: re-read the callsite in full, including its callers up two levels, and confirm the broken behavior is reachable from production code paths. Cross-context findings are high-value but also the easiest to overstate — verify carefully.
-10. **For test-efficacy candidates (Agents 11, 13)**: re-read the cited assertion in full context and confirm it can fail for the claimed regression. For “would pass without the fix” claims, use the falsifier's own scratch worktree, never the primary working tree: run the new test at the reviewed revision, then revert the production hunks (`git checkout <base> -- <files>`) and run it again. Admission requires green-on-head and red-without-fix artifacts. If the environment cannot build or run the test, omit the candidate and record the validation limitation privately; do not fall back to confident reasoning. The same rule applies to every dynamic Critical candidate: execute the claimed trigger and attach the observed output, or omit it.
+10. **For test-efficacy candidates (Agents 11, 13)**: re-read the cited assertion in full context and confirm it can fail for the claimed regression. For “would pass without the fix” claims, use the falsifier's own scratch worktree, never the primary working tree: run the new test at the reviewed revision, then revert the production hunks (`git checkout <base> -- <files>`) and run it again. Admission requires green-on-head and red-without-fix artifacts.
 11. **For coverage-gap candidates (UNTESTED rows from 2.6)**: omit a candidate on an exotic path (Step 2.6). For the rest, verify the recorded test search and failure-link analysis, then try to falsify the risk with existing indirect assertions, guards, type/compile guarantees, constrained inputs, downstream validation, or operational controls. Evaluate the least fragile meaningful test and concrete alternatives. Reject bare "simple", "urgent", "hard to test", or "covered indirectly" claims; test-feasibility evidence counts only when it names where the proposed test would observe the behavior, why it is invasive/unstable, and why cheaper stable alternatives do not work. A Critical gap may be counterfactual about whether the code is currently wrong, but never about reachability or impact.
-12. **For test-code-quality findings (Agent 12)**: confirm a flagged reflective access really has a non-reflective alternative (some QuestDB internals genuinely require reflection in tests) before reporting it. Confirm a "reinvented helper" finding by actually locating the helper with `rg` and checking its signature fits the test's need.
+12. **For test-code-quality findings (Agent 12)**: confirm a flagged reflective access reaches private state, and name the supported surface or test hook that replaces it (CLAUDE.md "Writing tests"). Confirm a "reinvented helper" finding by actually locating the helper with `rg` and checking its signature fits the test's need.
 13. **For "swallowed exception → silent wrong results / leak / corrupt state" claims**: a `catch` block is defensive coding, not evidence that anything throws. Before reporting, name **all three** of:
     (a) the **concrete exception type** and the **exact statement** that raises it — quote the throwing line, don't infer it from the presence of a `try`;
     (b) proof that this type is actually **caught by the specific catch clause cited** — `catch (SqlException | CairoException)` does NOT catch `OutOfMemoryError`, `IllegalArgumentException`, `NullPointerException`, or any other unlisted `Error`/`RuntimeException`. An `Error` that escapes the catch means the query **fails loudly**, which inverts the finding;
@@ -545,7 +556,7 @@ After a candidate satisfies this admission schema, apply the domain-specific che
     If any of (a)-(c) cannot be established, omit the candidate. Do not relabel the unproven mechanism as a latent invariant or hardening finding; it may remain private supporting analysis only.
     Also check for the **non-throwing** sibling: a `void` method that silently drops or frees its argument on an early return (`if (x) { free(arg); return; }`) breaks the same invariant with no exception at all, is usually far more reachable than the throw, and is not fixed by reordering statements around the call. Report that path instead of, or in addition to, the throw.
 14. **Verify the conjunction, not just the links.** A multi-step candidate ("A publishes early → B can throw → C swallows → D reads stale → wrong rows") is only as true as its weakest step. Identify the **critical step**, the one whose failure collapses the chain — usually “this supported state can actually occur” — and try to falsify it first. Per-line support for each isolated link does not prove their conjunction.
-    Reading code is not verification when the critical step is a claim about runtime behavior — “the plan contains factory X”, “the guard does not fire”, “this branch is taken”, or any claim about races, ordering, retries, restarts, or filesystem state. Such a step requires an attached execution artifact produced or independently re-run by the falsifier at the cited revision. An agent's prose is not an artifact. Votes do not count as corroboration; even independent evidence types must still satisfy every admission field.
+    Reading code is not verification when that step is a claim about runtime behavior: it needs the artifact the admission schema's Artifact field asks for, produced or re-run by the falsifier at the cited revision. An agent's prose is not an artifact. Votes do not count as corroboration; even independent evidence types must still satisfy every admission field.
 15. **Derive a fix only after admission, then verify it compiles and closes the window.** A plausible fix is never evidence that the finding is real. Once admitted, check that every referenced variable is in scope and non-`null`, that ownership transfers do not create a double-free or leak, and that the fix closes every admitted path.
 16. **Determine net user impact, then classify.** Step 4 assigns severity only after this determination. A behavioral candidate missing it is `OMITTED` and never reaches Step 4.
 
@@ -596,7 +607,7 @@ Check each reply before using it:
 
 Correct a rating by the evidence, in either direction, and look the risk up again. When a reply lacks evidence for a condition, or the artifacts show a more common trigger or a worse consequence than the reply rates, use the more common likelihood or the worse impact. When a reply rates a consequence or a trigger that neither the artifacts nor the code show, use the milder impact or the rarer likelihood that they do show. A finding whose assessor fails twice is Blocking.
 
-A finding whose author's reply holds is no defect of this PR: omit it, or keep what is left at the severity it earns, such as an avoidable cost that is no regression as a Minor note. Of the rest, a finding rated at or above `--block-at` (default `high`) is **Blocking**, and one rated below it is **Deferred**. The rating decides where a finding is reported and whether it blocks.
+A finding whose author's reply holds is no defect of this PR: omit it, or keep what is left at the severity it earns. Of the rest, a finding rated at or above `--block-at` (default `high`) is **Blocking**, and one rated below it is **Deferred**. The rating decides where a finding is reported and whether it blocks.
 
 ## Review checklists
 
@@ -637,7 +648,7 @@ structure choice, and computation as optimal or near-optimal; the Step 4 magnitu
   lookups for the same key. Re-parsing of already-parsed data. Re-traversal of an already-visited structure.
 - Data structure fitness: is the chosen data structure optimal for the access pattern? Linear search in a list where a
   hash set gives O(1). Sorted array where a heap gives better insert/extract-min. Linked traversal where an indexed
-  array gives O(1) random access. ArrayList where a pre-sized array suffices.
+  array gives O(1) random access. A `java.util` collection where an `io.questdb.std` one fits.
 - Unnecessary copies and conversions: copying data that could be referenced in place, or converting between string
   representations (`String`, `CharSequence`, UTF-8 and native-memory sequences) when the original form works.
 
@@ -664,7 +675,7 @@ structure choice, and computation as optimal or near-optimal; the Step 4 magnitu
 
 ### Code quality
 - Code smell: overly complex methods, deep nesting, unclear intent, dead code
-- No third-party Java dependencies on data paths
+- No third-party Java dependencies
 
 ### QuestDB coding standards
 - Changed lines follow CLAUDE.md "Coding guidelines" (read the file if your context lacks it)
@@ -708,8 +719,9 @@ loses data and never fails hard on a transient outage.
 
 **Once the sender is running**, a background thread ships its buffered data.
 - That thread surfaces no server or transport error to the caller: not to a
-  write, a `flush()` or a pooled handle. The one exception is running out of
-  store-and-forward space. Flag any other failure that reaches the caller,
+  write, a `flush()` or a pooled handle. The exceptions are running out of
+  store-and-forward space and a terminal rejection of a batch (below). Flag
+  any other failure that reaches the caller,
   such as a refused connection, DNS, TLS, authentication, a role rejection,
   a timeout or a reset.
 - It reconnects with exponential backoff and never gives up: no time budget,
@@ -768,9 +780,9 @@ loses data and never fails hard on a transient outage.
 
 Tests assert SQL results through the fluent `AbstractCairoTest.assertQuery(query)` builder. These rules are blocking — treat violations as **Critical** findings, not style nits. Apply them to every test line the diff **adds or modifies** (a residual pattern that the PR merely moves or reindents is not a finding; a newly written or edited one is).
 
-- **Assert query results and plans through the builder**, with the chained assertions CLAUDE.md "Writing tests" lists. The test base classes have no `assertSql(...)`, `TestUtils.assertSql(...)`, `assertPlanNoLeakCheck(...)` or `getPlan(...)`, so a new call to one fails to compile and blocks as a compile error (Step 3c). `TestServerMain.assertSql(sql, expected)` is a live-server wrapper around the builder; do not flag it.
+- **Assert query results and plans through the builder**, with the chained assertions CLAUDE.md "Writing tests" lists. Flag a new call to `assertSql(...)`, `TestUtils.assertSql(...)`, `assertPlanNoLeakCheck(...)` or `getPlan(...)`: the test base classes don't provide them, so the call either fails to compile, which blocks as a compile error (Step 3c), or reaches a class-local copy, which is the same banned assertion. `TestServerMain.assertSql(sql, expected)` is a live-server wrapper around the builder; do not flag it.
 
-- **`.returnsOnce(...)` is a correctness smell — flag every newly added use.** `returnsOnce` reads the cursor once and skips the checks `.returns(...)` makes on a second read and on the factory's properties. Those checks catch real bugs: cursors that don't reset correctly, sizes that disagree between passes, random-access records that return wrong values. `returnsOnce` is **only** justified when the query's output is genuinely unstable across two reads with no underlying data change — e.g. an unseeded `rnd_*` in the projection, `now()`/`sysdate()`/`systimestamp()`-style time-varying output, or inherently non-deterministic row order. For a `.returnsOnce(...)` on a deterministic query this is a Critical finding: demand `.returns(...)`. Require the author to state *why* the query is unstable; "it was simpler" is not a reason — the shortcut leaves real bugs untested.
+- **`.returnsOnce(...)` is a correctness smell — flag every newly added use.** `returnsOnce` reads the cursor once and skips the checks `.returns(...)` makes on a second read and on the factory's properties. Those checks catch real bugs: cursors that don't reset correctly, sizes that disagree between passes, random-access records that return wrong values. `returnsOnce` is **only** justified when the query's output is genuinely unstable across two reads with no underlying data change — an unseeded `rnd_*` in the projection or `now()`/`sysdate()`/`systimestamp()`-style time-varying output (CLAUDE.md "Writing tests"). For a `.returnsOnce(...)` on a deterministic query this is a Critical finding: demand `.returns(...)`. Require the author to state *why* the query is unstable; "it was simpler" is not a reason — the shortcut leaves real bugs untested.
 
 - **Anti-pattern: a lone `assertQuery(...)` wrapped in `assertMemoryLeak(() -> { ... })`.** The builder runs its OWN memory-leak check by default (it wraps internally unless `.noLeakCheck()` is set). When an `assertMemoryLeak(...)` lambda's only meaningful statement is a single `assertQuery(...)` chain, the outer wrapper is redundant and almost always forces a `.noLeakCheck()` on the builder — which disables the builder's leak check and replaces it with a hand-rolled one, defeating the point. Flag it: drop the `assertMemoryLeak` wrapper and the `.noLeakCheck()`, letting the builder leak-check itself. The wrapper is only legitimate when the lambda genuinely holds multiple statements (DDL + inserts + several assertions) that must share one leak-check scope; a single builder call does not.
 
@@ -778,8 +790,8 @@ Tests assert SQL results through the fluent `AbstractCairoTest.assertQuery(query
 
 This check decides on two `rg` searches in this repo — run them instead of reasoning about them.
 
-- **A new ALTER TABLE operation, or any new statement that mutates table state, needs a `SecurityContext.authorize*()` call on its execution path.** Cite the callsite — the `AlterOperation.apply()` dispatch for ALTER, the op or compiler class for everything else. Absence is a proven finding, not a speculative one: the evidence is the search that finds the new operation and the search that finds no `authorize*` call covering it. Classify it with the standard rubric — a state-mutating operation no security context can refuse is a privilege bypass, which the severity table already lists as Critical.
-- **A new `authorize*()` method must be implemented wherever it is abstract:** `AllowAllSecurityContext` and `ReadOnlySecurityContext` (`DenyAllSecurityContext` extends the latter), plus any test `SecurityContext` implementations the compiler does not already catch. If the PR instead adds the method with a permissive `default` body, every implementation that does not override it — including enterprise ones this checkout cannot see — silently grants the permission. The interface does use `default` deliberately in places, so ask for the rationale; treat a missing one as the finding, not the `default` itself.
+- **A new ALTER TABLE operation, or any new statement that mutates table state, needs a `SecurityContext.authorize*()` call on its execution path.** Cite the callsite — the authorization dispatch of the ALTER operation, or the op or compiler class for everything else. Absence is a proven finding, not a speculative one: the evidence is the search that finds the new operation and the search that finds no `authorize*` call covering it. Classify it with the standard rubric — a state-mutating operation no security context can refuse is a privilege bypass, which the Step 4 severity rubric lists as Critical.
+- **A new `authorize*()` method with a permissive `default` body** silently grants the permission in every `SecurityContext` that does not override it, including enterprise ones this checkout cannot see. The interface does use `default` deliberately in places, so ask for the rationale; treat a missing one as the finding, not the `default` itself.
 - **Enterprise wiring is out of scope for a review run in this repo.** Registering the permission, parsing it in GRANT and REVOKE, implementing it in the enterprise security contexts and denying it on replicas all happen in the enterprise repository, which this checkout cannot see. When the PR adds an `authorize*()` method, note that follow-up once; do not raise it as a finding or let it affect the verdict.
 
 ### Crash fuzz coverage (if PR adds a write operation, a background job or an on-disk format change)
@@ -801,7 +813,7 @@ When the PR adds neither, add an `UNTESTED` Step 2.6 row and grade it a Moderate
 ### Test review
 - **Coverage gaps:** add every uncovered path you find to the Step 2.6 map, which grades it.
 - **Execution modes** (CLAUDE.md "Testing", item 7): where the changed code behaves differently in a mode, demand tests in the modes users routinely run the change in; the other modes are exotic paths (Step 2.6).
-- **Fuzz coverage:** for parser, encoder/decoder, ingestion-protocol, or out-of-order (O3) and WAL merge changes, search the test tree for existing fuzz tests (`rg -l Fuzz`) covering the changed surface. If one exists and was neither extended nor mentioned as run against the change, add an `UNTESTED` Step 2.6 row.
+- **Fuzz coverage:** for parser, encoder/decoder, ingestion-protocol, or out-of-order (O3) and WAL merge changes, search the test tree for existing fuzz tests (`rg -l Fuzz`) covering the changed surface. If one exists and the PR does not extend it to the change, add an `UNTESTED` Step 2.6 row.
 - **Cross-context coverage:** for every entry in the cross-context exposure list (2.5d) on the change's main path, verify a test exercises the changed symbol from that context, and record each missing one as an `UNTESTED` Step 2.6 row. An exotic context gets a probe where the change may misbehave, never a request for a test (Step 2.6).
 - **Error path coverage:** Are failure cases, exceptions, and edge conditions tested — not just the happy path?
 - **NULL tests:** Are NULL inputs, NULL columns, and NULL expression results tested?
@@ -820,7 +832,7 @@ When the PR adds neither, add an `UNTESTED` Step 2.6 row and grade it a Moderate
 - **Test setup/teardown resource handling:** native memory allocated in setup/`@Before` that leaks on a failing path.
 
 ### Test code quality
-- **Reflection overuse:** flag `setAccessible(true)`, `getDeclaredField`/`getDeclaredMethod`, `Field.set`, `Class.forName`, and similar when a public API, an existing test helper, or a constructor reaches the same state. Reflection in tests is a last resort; if a neater non-reflective path exists, the reflection is a finding — name the alternative.
+- **Reflection:** CLAUDE.md "Writing tests" bans reflection on private state (`setAccessible(true)`, `getDeclaredField`/`getDeclaredMethod`, `Field.set` and similar). Flag every new use and name the supported surface or test hook that replaces it.
 - **No code reuse / boilerplate stamping:** before accepting repeated setup or assertion blocks, run `rg`/`fd` for existing helpers, base test classes, and fixtures (e.g., `extends Abstract.*Test`, `TestUtils`, `*TestUtils`, shared `assert*`, shared `@Before`), starting from the 2.5e inventory. If a helper already exists that the new test reimplements inline, flag it and name the helper. Duplicated blocks across new test methods that should be a single helper or a parameterized test are findings.
 - **Javadoc bloat:** flag multi-paragraph javadoc on `@Test` methods, javadoc that merely restates the test name, and stacked/duplicated javadoc ("javadoc piled on javadoc"). Test intent belongs in a precise test name plus, at most, a one-line comment.
 - **Residue and smells:** dead code, commented-out code, copy-paste leftovers (a `testFoo` that actually tests bar), `System.out.println` debugging, `@Ignore` without a referenced ticket, magic numbers >= 5 digits without `_` separators.
@@ -850,11 +862,11 @@ Write these lines last from the completed admission form, never first from a hun
 ```
 Problem: Symbol column read twice per scanned row.
 Net impact: ~2x column IO on every filtered scan.
-Evidence: benchmark.sh output at abc123; base 8ms, head 16ms.
+Evidence: JMH run at 1a2b3c4d5e6f; base 8.1 ms/op, head 16.2 ms/op.
 
 Problem: WAL segment leaks a file descriptor on the error path.
 Net impact: Ingestion stalls after ~1k failed commits.
-Evidence: WalLeakTest red at abc123, green at base def456.
+Evidence: WalLeakTest red at 1a2b3c4d5e6f, green at base 9f8e7d6c5b4a.
 ```
 
 Open the report with the line from "Review level" that names the target, the level, the model and the skill version, followed by the revisions reviewed: the head, `$BASE`, and the new commit of each submodule pointer the PR moves, such as a tandem PR's head. PR bodies leave commit hashes out (CLAUDE.md), so the review carries them.
@@ -863,11 +875,11 @@ Structure as:
 
 ### Severity classification (impact-first — severity is the user's consequence, not the finding's category)
 
-Severity is a function of **what the user loses**, not of which checklist the finding came from. Classify by the worst *user-visible* consequence on a *reachable* path. Do not classify up "to be safe": an inflated Critical costs exactly what a real one costs and teaches the author to skim the report.
+Severity is a function of **what the user loses**, not of which checklist the finding came from. Classify by the worst *user-visible* consequence on a *reachable* path. Do not classify up "to be safe": an inflated Critical costs exactly what a real one costs and teaches the author to skim the report. The one exception: a violation Step 3c blocks by rule is Critical whoever it affects.
 
 Severity is not the verdict. Step 3c weighs each Critical finding by how likely users are to hit it: only a rating at or above `--block-at` puts it under **Blocking**, and the rest go under **Deferred**.
 
-**"The user" means a QuestDB database user or a production operator** — someone running queries, ingesting data, or operating a deployment. It does **not** mean a QuestDB developer, a CI job, or the release process. A finding whose only affected population is the team — a slower build, a broken local setup, an awkward merge — is never Critical, whatever its symptom. Developer-experience problems are Moderate at most, and most are Minor.
+**"The user" means a QuestDB database user or a production operator** — someone running queries, ingesting data, or operating a deployment. It does **not** mean a QuestDB developer, a CI job, or the release process. A finding whose only affected population is the team — a slower build, a broken local setup, an awkward merge — is never Critical, whatever its symptom, short of a violation that blocks by rule. Developer-experience problems are Moderate at most, and most are Minor.
 
 **The Critical test — name the symptom.** A finding is Critical only if you can complete this sentence with something a user, operator, or on-call engineer would actually observe: *"Because of this, the user sees ___."* The valid completions are:
 
@@ -939,7 +951,7 @@ Findings that hold up this PR, introduced or exposed by it: the Critical finding
 ### Deferred (ship with them; file privately)
 Critical findings that Step 3c rates below `--block-at`: real defects this PR introduces or exposes that few enough users will meet for the PR to ship with them. They never affect the verdict, and they are never dropped: each leaves as a ready-to-file issue for `questdb/questdb-enterprise`. Keep them out of everything public, the PR body and comments included (CLAUDE.md "Git & PR Conventions"). Number them D1, D2, ..., and give each:
 
-- **Problem:** ≤ 12 words — doubles as the issue title
+- The three summary lines (**Problem** / **Net impact** / **Evidence**); the Problem line doubles as the issue title
 - **Risk:** the tier, impact and likelihood, and each trigger condition with its tier and evidence
 - **Location:** file path + line numbers
 - **Trigger and symptom:** the executed trigger, what it returns at the reviewed revision and at the base, and what a user observes
@@ -975,27 +987,26 @@ Report each as a ready-to-file issue draft, so it can move to GitHub without re-
 Offer to file them; do not file anything without being asked. A filed draft the hostile-input rule covers goes only to `questdb/questdb-enterprise` with the label `crash`, and a security-sensitive draft (authentication or access-control bypass, data exposed across users, memory corruption) only there with the label `security`. Keep both out of anything public, PR comments included. When `gh repo view questdb/questdb-enterprise` fails, as it does for OSS contributors, keep the draft in the console report and file nothing. Their count and severity sit outside the finding-proportionality budget. If one is severe enough that shipping this PR without it is genuinely unsafe — because this PR moves code onto a path where the pre-existing bug now fires — then it is not adjacent: it is out-of-diff-breakage, Step 3c rates it like any other Critical finding, and you state that argument explicitly. This never applies to a failure the hostile-input rule covers.
 
 ### Coverage map
-State the test-gate result, the number of **admitted** coverage gaps, and the measured coverage: changed lines and branches covered (e.g. `118/124 L, 40/46 B`), the tests run and the revision, or that coverage was not measured and why. Render admitted gap rows with their recorded search and failure link, except a gap rated Deferred, which appears only in the Deferred section; then list the never-run lines that became no finding, each with its reason, such as low exposure or an exotic path, except the lines of a failure the hostile-input rule covers, which stay private (Step 2.6). The list records what no test runs and asks for no test. Keep the full Step 2.6 matrix private unless the user asks to see it.
+State the number of **admitted** coverage gaps, and the measured coverage: changed lines and branches covered (e.g. `118/124 L, 40/46 B`), the tests run and the revision, or that coverage was not measured and why. Render admitted gap rows with their recorded search and failure link, except a gap rated Deferred, which appears only in the Deferred section; then list the never-run lines that became no finding, each with its reason, such as low exposure or an exotic path, except the lines of a failure the hostile-input rule covers, which stay private (Step 2.6). The list records what no test runs and asks for no test. Keep the full Step 2.6 matrix private unless the user asks to see it.
 
 ### Summary
 - **Verdict**, exactly one of:
-  - **approve** — no open Blocking finding and the test gate passes. Deferred, Moderate and Minor items may remain open; list them and approve anyway. This is the expected outcome for competent work, and withholding it when both gates pass is itself a review failure.
-  - **approve with comments** — both gates pass; you want specific Moderate items addressed but will not block on them. Name which ones.
-  - **request changes** — at least one Blocking finding is open, or the test gate fails.
+  - **approve** — no open Blocking finding. Deferred, Moderate and Minor items may remain open; list them and approve anyway. This is the expected outcome for competent work, and withholding it when both gates pass is itself a review failure.
+  - **approve with comments** — no open Blocking finding; you want specific Moderate items addressed but will not block on them. Name which ones.
+  - **request changes** — at least one Blocking finding is open, a Blocking coverage gap included.
   - **needs discussion** — the change requires a product, architecture, or compatibility decision a reviewer cannot make alone.
 - **Correctness gate (hard rule):** the verdict cannot be "approve" while any **Blocking** finding remains open, a Blocking coverage gap included. Deferred findings and omitted hypotheses never affect the verdict.
 
   Before finalizing, rerun the admission audit from evidence fields rather than from report prose:
   - **falsification:** state the strongest attempted disproof for each rendered behavioral finding;
   - **producer:** confirm a supported operation/version/configuration actually creates every trigger state;
-  - **independence:** confirm the admitting verifier did not receive the discovery narrative, severity, fix, or votes;
+  - **independence:** at levels 1-3, confirm the admitting falsifier did not receive the discovery narrative, severity, fix, or votes; at level 0, confirm the form was filled from evidence alone;
   - **dynamic evidence:** confirm races, ordering, retries, restarts, filesystem states, and compatibility claims have an executed artifact at the reviewed revision and the same-trigger base result;
   - **dependency:** remove every item whose parent premise was omitted;
   - **severity:** classify only after admission. Never promote missing evidence or uncertainty to Critical.
   - **risk:** confirm each rating passed the Step 3c checks, and that no assessor received the severity, the Net impact line, the narrative or the fix.
 
   If any field fails, omit the candidate and rerun the verdict.
-- **Test gate (hard rule):** the gate fails only while a **Blocking coverage gap** remains open; zero test changes or a bug-fix label alone never fails it.
 - Highlight any regressions or tradeoffs the PR makes on purpose; Deferred findings stay in their own section
 - Never make the verdict conditional on splitting the PR.
 - State the Step 2.4 submodule provenance verdicts, one line per changed pointer (e.g., "java-questdb-client: UPSTREAM-SYNC — out of scope"). If a pointer moved and no verdict is stated, the scope of the review is unknown and the report is incomplete.
