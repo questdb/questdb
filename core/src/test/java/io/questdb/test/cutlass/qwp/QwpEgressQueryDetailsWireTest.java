@@ -1190,7 +1190,8 @@ public class QwpEgressQueryDetailsWireTest extends AbstractQwpBootstrapTest {
         }
     }
 
-    private record Stats(long compileNanos, long executeNanos, long countNanos, long clientWaitNanos, boolean isJitCompiled) {
+    private record Stats(long compileNanos, long executeNanos, long countNanos, long clientWaitNanos,
+                         boolean isJitCompiled) {
         void assertFrozen(boolean isJitCompiled) {
             Assert.assertEquals(toString(), new Stats(0, 0, 0, 0, isJitCompiled), this);
         }
