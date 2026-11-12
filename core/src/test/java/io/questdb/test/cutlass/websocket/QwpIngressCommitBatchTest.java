@@ -115,6 +115,20 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     private static final int FUZZ_TWO_BLOCKS = 4;
     // The index of fuzz table fc, which takes v as a VARCHAR of digits in every frame.
     private static final int FUZZ_VARCHAR_TABLE = 2;
+    // assertQuery's output for column v of the first ten frames of oneRowFramesThen().
+    private static final String V_100_TO_109 = """
+            v
+            100
+            101
+            102
+            103
+            104
+            105
+            106
+            107
+            108
+            109
+            """;
     private final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
 
     @Test
@@ -191,21 +205,6 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
             }
         });
     }
-
-    // assertQuery's output for column v of the first ten frames of oneRowFramesThen().
-    private static final String V_100_TO_109 = """
-            v
-            100
-            101
-            102
-            103
-            104
-            105
-            106
-            107
-            108
-            109
-            """;
 
     @Test
     public void testBatchCommitsBeforeReachingCap() throws Exception {
@@ -4024,7 +4023,6 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
-    /** {@code ddl} changes b between passes: b's first frame is NACKed, and the replay stores a's rows once. */
     // Pass 1 writes x as dictionary id 0; pass 2 redefines id 0 as y in its first frame or its second, and its
     // last frame fails after appending to s. Each row keeps the symbol its frame named; s commits pass 2 once.
     private void assertSymbolRedefinitionCommitsOnce(boolean isRedefinedByFirstFrame) throws Exception {
@@ -4086,6 +4084,7 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
+    /** {@code ddl} changes b between passes: b's first frame is NACKed, and the replay stores a's rows once. */
     private void assertTableChangeBetweenPassesNacksItsFirstFrame(
             String ddl,
             String ddlBeforeReplay,

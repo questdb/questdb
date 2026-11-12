@@ -1778,7 +1778,8 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                     // The frame failed or cannot join, and joinCommitBatch rewound its rows.
                     final boolean isFrameFailed = !state.isOk();
                     final byte frameStatus = responseStatusOf(state);
-                    final String frameError = state.getErrorText();
+                    // Read only for a failed frame: a frame that only cannot join has no error.
+                    final String frameError = isFrameFailed ? state.getErrorText() : null;
                     final boolean isFrameRoleChangeClose = state.isRoleChangeClosePending();
                     if (!state.isCommitBatchIntact()) {
                         // The frame's failure or its rewind left the writers in doubt, so the
