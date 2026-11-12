@@ -7412,9 +7412,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         default -> isDeltaActive
                                 ? "cannot convert parquet partition to native, partition is delta-active [table="
                                 : txFile.isPartitionRemote(i)
-                                ? "cannot convert parquet partition to native, partition is in cold storage and read-only;"
-                                + " query it in place, or copy its rows into another table [table="
-                                : "cannot convert parquet partition to native, partition is read-only [table=";
+                                  ? "cannot convert parquet partition to native, partition is in cold storage and read-only;"
+                                    + " query it in place, or copy its rows into another table [table="
+                                  : "cannot convert parquet partition to native, partition is read-only [table=";
                     })
                     .put(tableToken.getTableName())
                     .put(", partition=").put(formatPartitionName(reader, logicalTimestamp))
@@ -8873,7 +8873,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         );
     }
 
-    /** Parses a partition predicate against the designated timestamp column. The caller closes the function. */
+    /**
+     * Parses a partition predicate against the designated timestamp column. The caller closes the function.
+     */
     protected Function parsePartitionFilter(TableRecordMetadata tableMetadata, SqlExecutionContext executionContext) throws SqlException {
         ExpressionNode expr = parser.expr(lexer, (IQueryModel) null, this);
         int timestampIndex = tableMetadata.getTimestampIndex();
