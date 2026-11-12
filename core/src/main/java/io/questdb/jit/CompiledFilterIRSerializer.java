@@ -69,6 +69,7 @@ import io.questdb.std.Uuid;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.Arrays;
 
@@ -389,6 +390,18 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     .put("unsupported int-width expression vs float operand: ").put(declined.token);
         }
 
+        // A SYMBOL predicate compares symbol keys, so no arithmetic may run on them: a subtree of
+        // literals folds into one symbol constant, and any other subtree declines the JIT.
+        if (predicateContext.isActive() && predicateContext.hasSymbolColumn && node.type == ExpressionNode.OPERATION
+                && (isArithmeticOperation(node) || isUnaryMinus(node))) {
+            if (!isLiteralArithmetic(node)) {
+                throw SqlException.position(node.position)
+                        .put("operator: ").put(node.token).put(" is not supported for SYMBOL type");
+            }
+            serializeConstantStub(node);
+            return false;
+        }
+
         // A pure-constant NARROW integer arithmetic subtree that a 64-bit peer reads. The Java
         // filter folds it to one IntConstant and the comparison reads that through getLong(), so
         // the whole subtree is a single 8-byte immediate to the backend. Emitting the operations at
@@ -491,16 +504,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         // Look ahead for negative const
-        if (node.type == ExpressionNode.OPERATION && node.paramCount == 1 && Chars.equals(node.token, "-")) {
-            ExpressionNode nextNode = node.lhs != null ? node.lhs : node.rhs;
-            if (nextNode != null && nextNode.paramCount == 0 && nextNode.type == ExpressionNode.CONSTANT) {
-                // Store negation node for later backfilling. The stub skips visit(), so the
-                // predicate records the operator here: a CHAR or IPv4 predicate declines it at
-                // exit, ahead of the backfill (see visit()).
-                predicateContext.markUnaryMinus(node);
-                serializeConstantStub(node);
-                return false;
-            }
+        if (node.type == ExpressionNode.OPERATION && isNegatedConstant(node)) {
+            // Store negation node for later backfilling. The stub skips visit(), so the
+            // predicate records the operator here: a CHAR or IPv4 predicate declines it at
+            // exit, ahead of the backfill (see visit()).
+            predicateContext.markUnaryMinus(node);
+            serializeConstantStub(node);
+            return false;
         }
 
         // Record where this ordering node's own IR begins. serializeCharOrdering() /
@@ -1491,6 +1501,30 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 && (Chars.isQuoted(node.token) || SqlKeywords.isNullKeyword(node.token));
     }
 
+    private static boolean isLiteralArithmetic(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.CONSTANT) {
+            return true;
+        }
+        if (node.type != ExpressionNode.OPERATION) {
+            return false;
+        }
+        if (isUnaryMinus(node)) {
+            return isLiteralArithmetic(node.lhs != null ? node.lhs : node.rhs);
+        }
+        return isArithmeticOperation(node) && isLiteralArithmetic(node.lhs) && isLiteralArithmetic(node.rhs);
+    }
+
+    private static boolean isNegatedConstant(ExpressionNode node) {
+        if (!isUnaryMinus(node)) {
+            return false;
+        }
+        final ExpressionNode operand = node.lhs != null ? node.lhs : node.rhs;
+        return operand != null && operand.paramCount == 0 && operand.type == ExpressionNode.CONSTANT;
+    }
+
     private static boolean isNullConstant(ExpressionNode node) {
         return node != null && node.type == ExpressionNode.CONSTANT && SqlKeywords.isNullKeyword(node.token);
     }
@@ -1558,6 +1592,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             return true;
         }
         return Chars.equals(token, ">=");
+    }
+
+    private static boolean isUnaryMinus(ExpressionNode node) {
+        return node.paramCount == 1 && Chars.equals(node.token, '-');
     }
 
     private static boolean isVarSizeType(int type) {
@@ -2100,8 +2138,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         try {
             switch (value.type) {
                 case ExpressionNode.CONSTANT:
-                case ExpressionNode.OPERATION: // constant negation case
                     backfillConstant(key, value);
+                    break;
+                case ExpressionNode.OPERATION:
+                    if (isNegatedConstant(value)) {
+                        backfillConstant(key, value);
+                    } else {
+                        backfillSymbolArithmetic(key, value);
+                    }
                     break;
                 case ExpressionNode.BIND_VARIABLE:
                     backfillSymbolBindVariable(key, value);
@@ -2114,6 +2158,17 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         } catch (SqlException e) {
             throw new SqlWrapperException(e);
         }
+    }
+
+    private void backfillSymbolArithmetic(long offset, final ExpressionNode node) throws SqlException {
+        assert predicateContext.columnType == ColumnType.SYMBOL;
+        final long value;
+        try {
+            value = foldConstantArithWidthAware(node);
+        } catch (NumericException e) {
+            throw SqlException.position(node.position).put("unsupported symbol constant: ").put(node.token);
+        }
+        serializeSymbolNumber(offset, node.position, node.token, value);
     }
 
     private void backfillSymbolBindVariable(long offset, final ExpressionNode node) throws SqlException {
@@ -2365,8 +2420,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     /**
-     * Width-correct long fold, used ONLY to compute the immediate a LONG-width (I8) fold root
-     * emits. It mirrors the Java filter's {@code getLong()} recursion: a narrow (INT-width)
+     * Width-correct long fold. It computes the immediate a LONG-width (I8) fold root emits, and
+     * the value of a literal subtree a SYMBOL predicate compares with. It mirrors the Java filter's {@code getLong()} recursion: a narrow (INT-width)
      * node computes with per-op int wrapping and sign-extends, exactly as
      * {@code AddInt}/{@code MulInt}#getLong() do ({@code Numbers.intToLong(getInt())}); only a
      * genuine LONG-width node folds at 64-bit width.
@@ -2400,9 +2455,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             return operand == Numbers.LONG_NULL ? Numbers.LONG_NULL : -operand;
         }
         // Reject a non-arithmetic token BEFORE folding either child. See tryFoldConstantArith0.
-        // Unreachable while descend() is the only caller - tryFoldConstantArith has already
-        // accepted the subtree by then - but the sentinel propagation below must never be the
-        // first thing a new caller reaches.
+        // Unreachable for both callers - descend() reaches it after tryFoldConstantArith, and
+        // backfillSymbolArithmetic() after isLiteralArithmetic, accepted the subtree - but the
+        // sentinel propagation below must never be the first thing a new caller reaches.
         if (!isArithmeticOperation(node)) {
             throw NumericException.INSTANCE;
         }
@@ -5681,6 +5736,15 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
     }
 
+    private void serializeSymbol(long offset, int position, CharSequence token, @Nullable CharSequence symbol) throws SqlException {
+        if (predicateContext.symbolTable == null || predicateContext.symbolColumnIndex == -1) {
+            throw SqlException.position(position).put("reader or column index is missing for symbol constant: ").put(token);
+        }
+        final SymbolConstant function = SymbolConstant.newUnquotedInstance(symbol);
+        bindVarFunctions.add(new CompiledFilterSymbolBindVariable(function, predicateContext.symbolColumnIndex));
+        putOperand(offset, VAR, bindVariableTypeCode(ColumnType.STRING), bindVarFunctions.size() - 1);
+    }
+
     /**
      * Emits the symbol key for a constant compared against a SYMBOL column.
      * The parser splits unary minus from its numeric token, including when the
@@ -5691,58 +5755,42 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      */
     private void serializeSymbolConstant(long offset, int position, final CharSequence token, boolean negated) throws SqlException {
         final int len = token.length();
-        final CharSequence symbol;
         if (Chars.isQuoted(token)) {
             if (len < 3) {
                 throw SqlException.position(position).put("unsupported symbol constant: ").put(token);
             }
             sink.clear();
             Chars.unescape(token, 1, len - 1, '\'', sink);
-            if (negated) {
-                final long value;
-                try {
-                    final long parsedValue = Numbers.parseLong(sink);
-                    value = parsedValue != Numbers.LONG_NULL ? -parsedValue : Numbers.LONG_NULL;
-                } catch (NumericException e) {
-                    throw SqlException.position(position).put("unsupported symbol constant: ").put(token);
-                }
-                if (value == Numbers.LONG_NULL) {
-                    symbol = null;
-                } else {
-                    sink.clear();
-                    sink.put(value);
-                    symbol = sink;
-                }
-            } else {
-                symbol = sink;
+            if (!negated) {
+                serializeSymbol(offset, position, token, sink);
+                return;
             }
-        } else {
             final long value;
             try {
-                final long parsedValue = Numbers.parseLong(token);
-                value = negated ? -parsedValue : parsedValue;
+                value = Numbers.parseLong(sink);
             } catch (NumericException e) {
                 throw SqlException.position(position).put("unsupported symbol constant: ").put(token);
             }
-            if (value == Numbers.LONG_NULL) {
-                symbol = null;
-            } else {
-                sink.clear();
-                sink.put(value);
-                symbol = sink;
-            }
+            serializeSymbolNumber(offset, position, token, value != Numbers.LONG_NULL ? -value : Numbers.LONG_NULL);
+            return;
         }
-
-        if (predicateContext.symbolTable == null || predicateContext.symbolColumnIndex == -1) {
-            throw SqlException.position(position).put("reader or column index is missing for symbol constant: ").put(token);
+        final long value;
+        try {
+            value = Numbers.parseLong(token);
+        } catch (NumericException e) {
+            throw SqlException.position(position).put("unsupported symbol constant: ").put(token);
         }
+        serializeSymbolNumber(offset, position, token, negated ? -value : value);
+    }
 
-        final SymbolConstant function = SymbolConstant.newUnquotedInstance(symbol);
-        bindVarFunctions.add(new CompiledFilterSymbolBindVariable(function, predicateContext.symbolColumnIndex));
-        int index = bindVarFunctions.size() - 1;
-
-        int typeCode = bindVariableTypeCode(ColumnType.STRING);
-        putOperand(offset, VAR, typeCode, index);
+    private void serializeSymbolNumber(long offset, int position, CharSequence token, long value) throws SqlException {
+        if (value == Numbers.LONG_NULL) {
+            serializeSymbol(offset, position, token, null);
+            return;
+        }
+        sink.clear();
+        sink.put(value);
+        serializeSymbol(offset, position, token, sink);
     }
 
     private void serializeUntypedNumber(long offset, int position, final CharSequence token, boolean negated, boolean isWidenedToI64, boolean isNarrowKept) throws SqlException {
@@ -6243,10 +6291,12 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      */
     private class NarrowI64WidenDetector implements PostOrderTreeTraversalAlgo.Visitor, Mutable {
         private final TypesObserver typesObserver = new TypesObserver();
+        private boolean hasSymbolColumn;
 
         @Override
         public void clear() {
             typesObserver.clear();
+            hasSymbolColumn = false;
         }
 
         @Override
@@ -6260,7 +6310,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 case ExpressionNode.LITERAL: {
                     int columnIndex = metadata.getColumnIndexQuiet(node.token);
                     if (columnIndex != -1) {
-                        typesObserver.observe(columnTypeCode(ColumnType.tagOf(metadata.getColumnType(columnIndex))));
+                        final int columnTypeTag = ColumnType.tagOf(metadata.getColumnType(columnIndex));
+                        hasSymbolColumn |= columnTypeTag == ColumnType.SYMBOL;
+                        typesObserver.observe(columnTypeCode(columnTypeTag));
                     }
                     break;
                 }
@@ -6292,6 +6344,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         boolean hasFloat() {
             return typesObserver.hasFloat();
+        }
+
+        boolean hasSymbolColumn() {
+            return hasSymbolColumn;
         }
     }
 
@@ -6339,6 +6395,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         // when the int-arithmetic subtree is consumed by IntFunction's
         // getDouble / getFloat, which call getInt() and wrap mod 2^32.
         boolean hasFloatInPredicate;
+        boolean hasSymbolColumn;
         int shortCircuitMode = SC_NONE; // short-circuit evaluation mode
         boolean singleBooleanColumn;
         int symbolColumnIndex; // used for symbol deferred constants and bind variables
@@ -6401,8 +6458,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                             && !hasOtherComparison(node, columnFreeComparisonNode)) {
                         columnFreeComparisonNode = null;
                     }
-                    // Pre-pass: remember whether any FLOAT / DOUBLE source is present anywhere in
-                    // the predicate. See NarrowI64WidenDetector.
+                    // Pre-pass: remember whether any FLOAT / DOUBLE source or SYMBOL column is present
+                    // anywhere in the predicate. See NarrowI64WidenDetector.
                     i64WidenConstants.clear();
                     i64FoldedArithRoots.clear();
                     i64WidenArithRoots.clear();
@@ -6421,6 +6478,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                         narrowI64WidenDetector.clear();
                         traverseAlgo.traverse(node, narrowI64WidenDetector);
                         hasFloatInPredicate = narrowI64WidenDetector.hasFloat();
+                        hasSymbolColumn = narrowI64WidenDetector.hasSymbolColumn();
                     } catch (SqlException ignore) {
                         // Detector does not throw; defensive only.
                         hasFloatInPredicate = false;
@@ -6534,6 +6592,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             hasArithmeticOperations = false;
             unaryMinusNode = null;
             hasFloatInPredicate = false;
+            hasSymbolColumn = false;
             localTypesObserver.clear();
             currentInSerialization = false;
             handledShortCircuitExit = false;

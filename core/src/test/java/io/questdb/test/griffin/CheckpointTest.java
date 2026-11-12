@@ -1518,6 +1518,49 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckpointRestoreKeepsTableActiveOnShorterInPlaceParquetUpdate() throws Exception {
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 200);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, s SYMBOL INDEX TYPE POSTING INCLUDE (v), v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t SELECT dateadd('s', x::int, '2024-01-01T00:00:00')::timestamp, rnd_symbol('a', 'b', 'c'), x FROM long_sequence(2000)");
+            execute("INSERT INTO t VALUES ('2024-01-02T00:00:01', 'a', 1)");
+            drainWalQueue();
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+
+            final TableToken tableToken = engine.verifyTableName("t");
+            final String dbRoot = engine.getConfiguration().getDbRoot();
+            final File partDir = findParquetPartitionDir(new File(dbRoot, tableToken.getDirName()), "2024-01-01");
+            engine.clear();
+
+            final File dataParquet = new File(partDir, "data.parquet");
+            final long committedSize = dataParquet.length();
+            try (java.io.FileOutputStream fos = new java.io.FileOutputStream(dataParquet, true)) {
+                fos.write(new byte[1 << 20]);
+            }
+            try (
+                    Path tablePath = new Path().of(dbRoot).concat(tableToken).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)
+            ) {
+                restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), true);
+            }
+            Assert.assertEquals(committedSize + (1 << 20), dataParquet.length());
+
+            execute("INSERT INTO t VALUES ('2024-01-01T00:32:30.500000Z', 'b', 42)");
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+            assertQuery("SELECT count() FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n2002\n");
+            assertQuery("SELECT v FROM t WHERE s = 'b' AND v = 42")
+                    .noLeakCheck()
+                    .returns("v\n42\n");
+        });
+    }
+
+    @Test
     public void testCheckpointRestoreRebuildsBitmapIndexesAcrossParquetPartitionsReusingWorkerScratch() throws Exception {
         // Regression guard for cross-partition reuse of the per-worker parquet
         // scratch (metaReader / decoder / RowGroupBuffers / parquetColumns /
@@ -3032,10 +3075,7 @@ public class CheckpointTest extends AbstractCairoTest {
             TableToken tableToken = engine.verifyTableName("t_pi_parquet");
             String dbRoot = engine.getConfiguration().getDbRoot();
             File tableDir = new File(dbRoot, tableToken.getDirName());
-            File[] partDirs = tableDir.listFiles((_, n) -> n.startsWith("2024-01-01"));
-            Assert.assertNotNull("parquet partition dir missing", partDirs);
-            Assert.assertTrue("parquet partition dir missing", partDirs.length > 0);
-            File partDir = partDirs[0];
+            File partDir = findParquetPartitionDir(tableDir, "2024-01-01");
 
             File[] pciBefore = partDir.listFiles((_, n) -> n.startsWith("sym.pci"));
             Assert.assertNotNull("setup: sym.pci must exist after parquet conversion", pciBefore);

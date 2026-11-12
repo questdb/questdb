@@ -92,7 +92,8 @@ public final class QueryGenerator {
             boolean horizonJoinEnabled,
             boolean windowJoinEnabled,
             boolean hashJoinEnabled,
-            boolean groupingSetsEnabled
+            boolean groupingSetsEnabled,
+            FuzzConfig config
     ) {
         int pick = rnd.nextInt(100);
         FuzzTable t = tables.getQuick(rnd.nextInt(tables.size()));
@@ -127,7 +128,7 @@ public final class QueryGenerator {
         // on/off axis in QueryRunner with nothing to compare.
         if (hashJoinEnabled && pick >= 65 && pick < 70 && tables.size() >= 2) {
             FuzzTable other = pickOtherTable(rnd, tables, t);
-            return HashJoinGroupByClause.generate(rnd, t, other, ctx, injectFaultFn).withShape(QueryShape.HASH_JOIN_GROUP_BY);
+            return HashJoinGroupByClause.generate(rnd, t, other, ctx, injectFaultFn, config).withShape(QueryShape.HASH_JOIN_GROUP_BY);
         }
 
         FuzzSource source = pickSource(rnd, t);
