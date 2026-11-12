@@ -395,31 +395,21 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     }
 
     private int resolveKey(PartitionFrameCursor frameCursor, SqlExecutionContext executionContext) throws SqlException {
-        try {
-            symbolFunction.init(frameCursor, executionContext);
-            symbolKeyCache = frameCursor.getTableReader().getSymbolMapReader(indexColumnIndex).keyOf(symbolFunction.getStrA(null), symbolKeyCache);
-            return symbolKeyCache;
-        } finally {
-            // the key is resolved; free what the function built for this execution
-            symbolFunction.cursorClosed();
-        }
+        symbolFunction.init(frameCursor, executionContext);
+        symbolKeyCache = frameCursor.getTableReader().getSymbolMapReader(indexColumnIndex).keyOf(symbolFunction.getStrA(null), symbolKeyCache);
+        return symbolKeyCache;
     }
 
     private void resolveKeys(PartitionFrameCursor frameCursor, SqlExecutionContext executionContext, IntList keys) throws SqlException {
-        try {
-            Function.init(keyValueFuncs, frameCursor, executionContext, null);
-            final SymbolMapReader smr = frameCursor.getTableReader().getSymbolMapReader(indexColumnIndex);
-            keys.clear();
-            for (int i = 0, n = keyValueFuncs.size(); i < n; i++) {
-                final int key = smr.keyOf(keyValueFuncs.getQuick(i).getStrA(null), keyValueKeyCache.getQuick(i));
-                keyValueKeyCache.setQuick(i, key);
-                if (key != SymbolTable.VALUE_NOT_FOUND && !keys.contains(key)) {
-                    keys.add(key);
-                }
+        Function.init(keyValueFuncs, frameCursor, executionContext, null);
+        final SymbolMapReader smr = frameCursor.getTableReader().getSymbolMapReader(indexColumnIndex);
+        keys.clear();
+        for (int i = 0, n = keyValueFuncs.size(); i < n; i++) {
+            final int key = smr.keyOf(keyValueFuncs.getQuick(i).getStrA(null), keyValueKeyCache.getQuick(i));
+            keyValueKeyCache.setQuick(i, key);
+            if (key != SymbolTable.VALUE_NOT_FOUND && !keys.contains(key)) {
+                keys.add(key);
             }
-        } finally {
-            // the keys are resolved; free what the functions built for this execution
-            Function.cursorClosed(keyValueFuncs);
         }
     }
 
@@ -474,13 +464,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             }
             return singleKeyCursor;
         } catch (Throwable th) {
-            // a failed open leaves the cursor unclosed, so the filter it may have half-initialized
-            // is notified now, while the filter is still alive
-            try {
-                (multiKeyCursor != null ? multiKeyCursor : singleKeyCursor).releaseLatestByFilter();
-            } catch (Throwable releaseFailure) {
-                th.addSuppressed(releaseFailure);
-            }
             Misc.free(frameCursor);
             throw th;
         }
@@ -778,7 +761,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             // before freeing frameCursor).
             this.currentRowCursor = Misc.free(currentRowCursor);
             frameCursor = Misc.free(frameCursor);
-            releaseLatestByFilter();
         }
 
         @Override
@@ -928,16 +910,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     symTablesCache[col] = tableReader.getSymbolMapReader(columnIndexes.getQuick(col));
                 }
                 coveringRecord.setIncludeSymbolTables(symTablesCache);
-            }
-        }
-
-        // The factory hands the filter to the cursor again on every execution, and its close()
-        // frees the filter before the cursors, so the cursor must not keep the filter past this.
-        void releaseLatestByFilter() {
-            final Function latestByFilter = this.latestByFilter;
-            if (latestByFilter != null) {
-                this.latestByFilter = null;
-                latestByFilter.cursorClosed();
             }
         }
 

@@ -211,37 +211,6 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
     }
 
     private void computeLimits(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
-        try {
-            readLimits(baseCursor, executionContext);
-        } finally {
-            // readLimits() copies the values out; free what the functions built for this execution
-            loFunction.cursorClosed();
-            if (hiFunction != null) {
-                hiFunction.cursorClosed();
-            }
-        }
-    }
-
-    private void initialize(SqlExecutionContext executionContext, RecordCursor baseCursor) throws SqlException {
-        if (isInitialized()) {
-            if (chain != null && cursor instanceof DynamicLimitCursor) {
-                computeLimits(baseCursor, executionContext);
-                // The cursor implementation was picked once, off the first execution's isFirstN;
-                // it has to re-gate any first-N-only behaviour on the value we just re-derived.
-                chain.updateLimits(isFirstN, limit);
-                ((DynamicLimitCursor) cursor).updateLimits(isFirstN, limit, skipFirst, skipLast);
-            }
-            return;
-        }
-
-        initializeLimitedSizeCursor(executionContext, baseCursor);
-    }
-
-    private boolean isInitialized() {
-        return cursor != null;
-    }
-
-    private void readLimits(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
         loFunction.init(baseCursor, executionContext);
         if (hiFunction != null) {
             hiFunction.init(baseCursor, executionContext);
@@ -299,6 +268,25 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
                 }
             }
         }
+    }
+
+    private void initialize(SqlExecutionContext executionContext, RecordCursor baseCursor) throws SqlException {
+        if (isInitialized()) {
+            if (chain != null && cursor instanceof DynamicLimitCursor) {
+                computeLimits(baseCursor, executionContext);
+                // The cursor implementation was picked once, off the first execution's isFirstN;
+                // it has to re-gate any first-N-only behaviour on the value we just re-derived.
+                chain.updateLimits(isFirstN, limit);
+                ((DynamicLimitCursor) cursor).updateLimits(isFirstN, limit, skipFirst, skipLast);
+            }
+            return;
+        }
+
+        initializeLimitedSizeCursor(executionContext, baseCursor);
+    }
+
+    private boolean isInitialized() {
+        return cursor != null;
     }
 
     @Override

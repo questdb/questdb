@@ -207,20 +207,6 @@ public final class PerWorkerFunctionList<T extends Function> extends ObjList<T> 
         }
     }
 
-    /**
-     * Notifies the functions this list owns that the cursor has closed, skipping the shared owner
-     * references, which their owner notifies.
-     */
-    public static void cursorClosed(ObjList<? extends Function> functions) {
-        if (functions instanceof PerWorkerFunctionList<?> perWorkerFunctions) {
-            for (int i = perWorkerFunctions.ownedFunctions.nextSetBit(0); i > -1; i = perWorkerFunctions.ownedFunctions.nextSetBit(i + 1)) {
-                perWorkerFunctions.getQuick(i).cursorClosed();
-            }
-        } else {
-            Function.cursorClosed(functions);
-        }
-    }
-
     public static void init(
             ObjList<? extends Function> functions,
             @Nullable ObjList<? extends Function> ownerFunctions,

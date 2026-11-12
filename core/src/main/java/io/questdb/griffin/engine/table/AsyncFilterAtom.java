@@ -65,7 +65,6 @@ public class AsyncFilterAtom implements StatefulAtom, PerWorkerLockOwner, Planna
     private final ObjList<SelectivityStats> perWorkerSelectivityStats;
     private final boolean preTouchEnabled;
     private final double preTouchThreshold;
-    private boolean areFiltersInitialized;
     private IntHashSet lateMatSkipColumnIndexes;
     // Per-query native memory tracker captured from SqlExecutionContext on init.
     // Null when no per-query limit applies. Workers and operator code feed it to
@@ -101,26 +100,14 @@ public class AsyncFilterAtom implements StatefulAtom, PerWorkerLockOwner, Planna
 
     @Override
     public void clear() {
-        try {
-            ownerSelectivityStats.clear();
-            Misc.clearObjList(perWorkerSelectivityStats);
-            memoryTracker = null;
-            lateMatSkipColumnIndexes = null;
-        } finally {
-            // The frame sequence clears the atom after awaiting its workers, so no clone is in use.
-            if (areFiltersInitialized) {
-                areFiltersInitialized = false;
-                filter.cursorClosed();
-                if (perWorkerFilters != null) {
-                    Function.cursorClosed(perWorkerFilters);
-                }
-            }
-        }
+        ownerSelectivityStats.clear();
+        Misc.clearObjList(perWorkerSelectivityStats);
+        memoryTracker = null;
+        lateMatSkipColumnIndexes = null;
     }
 
     @Override
     public void close() {
-        areFiltersInitialized = false;
         final Throwable cleanupFailure = Misc.freeObjListBestEffort(null, perWorkerFilters);
         CairoException.rethrowCleanupFailure(cleanupFailure);
     }
@@ -161,7 +148,6 @@ public class AsyncFilterAtom implements StatefulAtom, PerWorkerLockOwner, Planna
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         memoryTracker = executionContext.getMemoryTracker();
-        areFiltersInitialized = true;
         filter.init(symbolTableSource, executionContext);
         if (perWorkerFilters != null) {
             final boolean current = executionContext.getCloneSymbolTables();

@@ -96,7 +96,6 @@ abstract class AbstractSetRecordCursorFactory extends AbstractRecordCursorFactor
         try {
             cursorA = factoryA.getCursor(executionContext);
             cursorB = factoryB.getCursor(executionContext);
-            cursor.ofCastFunctions(castFunctionsA, castFunctionsB);
             Function.initNc(castFunctionsA, cursorA, executionContext, null);
             Function.initNc(castFunctionsB, cursorB, executionContext, null);
             cursor.of(cursorA, cursorB, executionContext);

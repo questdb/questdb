@@ -149,21 +149,16 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
     ) throws SqlException {
         keys.clear();
         final StaticSymbolTable symbolTable = pageFrameCursor.getSymbolTable(columnIndex);
-        try {
-            for (int i = 0, n = functions.size(); i < n; i++) {
-                final Function function = functions.getQuick(i);
-                function.init(pageFrameCursor, executionContext);
-                final int key = symbolTable.keyOf(function.getStrA(null), keyCache.getQuick(i));
-                keyCache.setQuick(i, key);
-                if (key != SymbolTable.VALUE_NOT_FOUND
-                        && (isNullKeyKept || key != SymbolTable.VALUE_IS_NULL || symbolTable.containsNullValue())
-                        && (excludedKeys == null || excludedKeys.excludes(key))) {
-                    keys.add(key);
-                }
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            final Function function = functions.getQuick(i);
+            function.init(pageFrameCursor, executionContext);
+            final int key = symbolTable.keyOf(function.getStrA(null), keyCache.getQuick(i));
+            keyCache.setQuick(i, key);
+            if (key != SymbolTable.VALUE_NOT_FOUND
+                    && (isNullKeyKept || key != SymbolTable.VALUE_IS_NULL || symbolTable.containsNullValue())
+                    && (excludedKeys == null || excludedKeys.excludes(key))) {
+                keys.add(key);
             }
-        } finally {
-            // the keys are resolved; free what the functions built for this execution
-            Function.cursorClosed(functions);
         }
     }
 

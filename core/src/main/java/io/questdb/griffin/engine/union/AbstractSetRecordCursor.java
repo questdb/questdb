@@ -24,31 +24,23 @@
 
 package io.questdb.griffin.engine.union;
 
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
-import org.jetbrains.annotations.Nullable;
 
 public abstract class AbstractSetRecordCursor implements RecordCursor {
     protected SqlExecutionCircuitBreaker circuitBreaker;
     protected RecordCursor cursorA;
     protected RecordCursor cursorB;
-    private ObjList<Function> castFunctionsA;
-    private ObjList<Function> castFunctionsB;
 
     @Override
     public void close() {
         this.cursorA = Misc.free(this.cursorA);
         this.cursorB = Misc.free(this.cursorB);
         this.circuitBreaker = null;
-        // the factory frees the cast functions only after it closed this cursor
-        castFunctionsA = cursorClosed(castFunctionsA);
-        castFunctionsB = cursorClosed(castFunctionsB);
     }
 
     @Override
@@ -65,22 +57,6 @@ public abstract class AbstractSetRecordCursor implements RecordCursor {
         this.cursorA = cursorA;
         this.cursorB = cursorB;
         this.circuitBreaker = executionContext.getCircuitBreaker();
-    }
-
-    /**
-     * Hands over the cast functions the factory is about to initialize for this execution, so
-     * that {@link #close()} frees what they build for it.
-     */
-    void ofCastFunctions(@Nullable ObjList<Function> castFunctionsA, @Nullable ObjList<Function> castFunctionsB) {
-        this.castFunctionsA = castFunctionsA;
-        this.castFunctionsB = castFunctionsB;
-    }
-
-    private static ObjList<Function> cursorClosed(@Nullable ObjList<Function> functions) {
-        if (functions != null) {
-            Function.cursorClosed(functions);
-        }
-        return null;
     }
 
     protected long sumBranchSizes() {

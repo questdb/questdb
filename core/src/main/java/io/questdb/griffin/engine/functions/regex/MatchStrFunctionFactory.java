@@ -124,13 +124,6 @@ public class MatchStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void cursorClosed() {
-            UnaryFunction.super.cursorClosed();
-            // init() initialized the pattern too; the matcher holds its own copy of it
-            pattern.cursorClosed();
-        }
-
-        @Override
         public Function getArg() {
             return fun;
         }

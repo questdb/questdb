@@ -703,12 +703,6 @@ public class SwitchFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void cursorClosed() {
-            // init() initialized the key function
-            keyFunction.cursorClosed();
-        }
-
-        @Override
         public long getDate(Record rec) {
             return keyFunction.getInt(rec) == resolvedKey ? longThenValue : longElseValue;
         }

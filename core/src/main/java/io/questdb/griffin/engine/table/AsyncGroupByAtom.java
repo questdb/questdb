@@ -88,7 +88,6 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
     private final ObjList<DirectLongLongSortedList> perWorkerLongTopKLists;
     private final ObjList<RecordSink> perWorkerMapSinks;
     private final GroupByShardingContext shardingCtx;
-    private boolean areFunctionsInitialized;
     // Per-query native memory tracker captured from SqlExecutionContext on init.
     // Null when no per-query limit applies. Workers and operator code feed it to
     // tracker-aware Unsafe overloads to charge allocations to the active workload.
@@ -243,43 +242,25 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
 
     @Override
     public void clear() {
-        try {
-            shardingCtx.clear();
-            Misc.clearObjList(ownerGroupByFunctions);
-            if (perWorkerGroupByFunctions != null) {
-                for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
-                    PerWorkerFunctionList.clear(perWorkerGroupByFunctions.getQuick(i));
-                }
-            }
-            Misc.clear(ownerAllocator);
-            Misc.clearObjList(perWorkerAllocators);
-            Misc.clear(ownerLongTopKList);
-            Misc.clearObjList(perWorkerLongTopKLists);
-            Misc.free(ownerBatchList);
-            Misc.freeObjListAndKeepObjects(perWorkerBatchLists);
-            memoryTracker = null;
-        } finally {
-            // the context notifies the filters, and a failing step above must not skip that either
-            try {
-                filterCtx.clear();
-            } finally {
-                // The frame sequence clears the atom after awaiting its workers, so no clone is in use.
-                if (areFunctionsInitialized) {
-                    areFunctionsInitialized = false;
-                    if (ownerKeyFunctions != null) {
-                        Function.cursorClosed(ownerKeyFunctions);
-                    }
-                    Function.cursorClosed(ownerGroupByFunctions);
-                    cursorClosedPerWorkerFunctions(perWorkerKeyFunctions);
-                    cursorClosedPerWorkerFunctions(perWorkerGroupByFunctions);
-                }
+        shardingCtx.clear();
+        Misc.clearObjList(ownerGroupByFunctions);
+        if (perWorkerGroupByFunctions != null) {
+            for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
+                PerWorkerFunctionList.clear(perWorkerGroupByFunctions.getQuick(i));
             }
         }
+        Misc.clear(ownerAllocator);
+        Misc.clearObjList(perWorkerAllocators);
+        Misc.clear(ownerLongTopKList);
+        Misc.clearObjList(perWorkerLongTopKLists);
+        Misc.free(ownerBatchList);
+        Misc.freeObjListAndKeepObjects(perWorkerBatchLists);
+        filterCtx.clear();
+        memoryTracker = null;
     }
 
     @Override
     public void close() {
-        areFunctionsInitialized = false;
         Throwable cleanupFailure = null;
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, shardingCtx);
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, ownerKeyFunctions);
@@ -326,17 +307,6 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
             }
         }
         return cleanupFailure;
-    }
-
-    private static void cursorClosedPerWorkerFunctions(ObjList<? extends ObjList<? extends Function>> perWorkerFunctions) {
-        if (perWorkerFunctions != null) {
-            for (int i = 0, n = perWorkerFunctions.size(); i < n; i++) {
-                final ObjList<? extends Function> functions = perWorkerFunctions.getQuick(i);
-                if (functions != null) {
-                    PerWorkerFunctionList.cursorClosed(functions);
-                }
-            }
-        }
     }
 
     public DirectLongList getBatchList(int slotId) {
@@ -444,7 +414,6 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         memoryTracker = executionContext.getMemoryTracker();
-        areFunctionsInitialized = true;
         filterCtx.initFilters(symbolTableSource, executionContext);
 
         if (ownerKeyFunctions != null) {

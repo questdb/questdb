@@ -46,7 +46,8 @@ public class SqlExecutionResourcesTest extends AbstractCairoTest {
             final SqlExecutionResources resources = new SqlExecutionResources();
             resources.begin();
             resources.bind(sqlExecutionContext);
-            final CastToSymbolDictionary dictionary = new CastToSymbolDictionary(true, sqlExecutionContext);
+            final CastToSymbolDictionary dictionary = new CastToSymbolDictionary(true);
+            dictionary.init(sqlExecutionContext);
             dictionary.put(42, "42");
             new FailingResource("first");
             new FailingResource("second");
@@ -73,7 +74,8 @@ public class SqlExecutionResourcesTest extends AbstractCairoTest {
             final SqlExecutionResources resources = new SqlExecutionResources();
             context.setExecutionResources(resources);
             Assert.assertNull(context.getExecutionResources());
-            final CastToSymbolDictionary dictionary = new CastToSymbolDictionary(true, context);
+            final CastToSymbolDictionary dictionary = new CastToSymbolDictionary(true);
+            dictionary.init(context);
             try {
                 dictionary.put(42, "42");
                 TestUtils.assertEquals("42", dictionary.valueOf(0, new DirectString()));
@@ -95,7 +97,8 @@ public class SqlExecutionResourcesTest extends AbstractCairoTest {
                 sqlExecutionContext.setMemoryTracker(tracker);
                 try {
                     final long id = registry.register("inner SELECT", sqlExecutionContext);
-                    final CastToSymbolDictionary dictionary = new CastToSymbolDictionary(true, sqlExecutionContext);
+                    final CastToSymbolDictionary dictionary = new CastToSymbolDictionary(true);
+                    dictionary.init(sqlExecutionContext);
                     dictionary.put(42, "42");
                     Assert.assertTrue(tracker.getUsed() > 0);
                     registry.unregister(id, sqlExecutionContext);
@@ -142,7 +145,8 @@ public class SqlExecutionResourcesTest extends AbstractCairoTest {
             final SqlExecutionResources execution = new SqlExecutionResources();
             compilation.begin();
             compilation.bind(sqlExecutionContext);
-            final CastToSymbolDictionary dictionary = new CastToSymbolDictionary(true, sqlExecutionContext);
+            final CastToSymbolDictionary dictionary = new CastToSymbolDictionary(true);
+            dictionary.init(sqlExecutionContext);
             dictionary.put(1, "compile");
             dictionary.clear();
             execution.begin();
@@ -166,7 +170,8 @@ public class SqlExecutionResourcesTest extends AbstractCairoTest {
             final QueryRegistry registry = engine.getQueryRegistry();
             final long baseline = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS);
             registry.setListener((query, id, context) -> {
-                final CastToSymbolDictionary dictionary = new CastToSymbolDictionary(true, context);
+                final CastToSymbolDictionary dictionary = new CastToSymbolDictionary(true);
+                dictionary.init(context);
                 dictionary.put(42, "42");
                 throw new IllegalStateException("registration failed");
             });

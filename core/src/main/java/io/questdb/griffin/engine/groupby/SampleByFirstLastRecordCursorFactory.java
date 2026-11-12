@@ -413,7 +413,6 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             Misc.free(frameAddressCache);
             frameMemory = null;
             frameCursor = Misc.free(frameCursor);
-            super.close();
         }
 
         public long getNextTimestamp() {

@@ -329,11 +329,6 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                 } catch (Throwable th) {
                     cleanupFailure = th;
                 }
-                try {
-                    Function.cursorClosed(groupByFunctions);
-                } catch (Throwable th) {
-                    cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
-                }
                 final int count = initializedSlaveFilterCount;
                 initializedSlaveFilterCount = 0;
                 for (int s = 0; s < count; s++) {

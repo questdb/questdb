@@ -117,15 +117,9 @@ abstract class AbstractDeferredValueRecordCursorFactory extends AbstractPageFram
             PageFrameCursor pageFrameCursor,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        final boolean isSymbolAbsent;
-        try {
-            symbolFunc.init(pageFrameCursor, executionContext);
-            isSymbolAbsent = lookupDeferredSymbol(pageFrameCursor);
-        } finally {
-            // the key is resolved; free what the function built for this execution
-            symbolFunc.cursorClosed();
-        }
-        if (isSymbolAbsent) {
+        symbolFunc.init(pageFrameCursor, executionContext);
+
+        if (lookupDeferredSymbol(pageFrameCursor)) {
             // The deferred symbol is absent, so this returns a shared empty cursor that never checks the
             // breaker on its own. Consult it once at open so the query still observes cancellation.
             executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();

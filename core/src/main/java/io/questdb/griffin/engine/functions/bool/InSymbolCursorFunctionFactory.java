@@ -37,6 +37,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionResource;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
@@ -126,6 +127,15 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         private final Record.CharSequenceFunction func;
         private final StringSink sink = new StringSink();
         private final Function valueArg;
+        private final SqlExecutionResource values = new SqlExecutionResource() {
+            @Override
+            public void clear() {
+                if (valueSet.size() > 0) {
+                    valueSet = new CharSequenceHashSet();
+                }
+                stateInherited = false;
+            }
+        };
         private boolean stateInherited = false;
         private boolean stateShared = false;
         private CharSequenceHashSet valueSet = new CharSequenceHashSet();
@@ -141,13 +151,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
             try {
                 BinaryFunction.super.cursorClosed();
             } finally {
-                // A cached factory outlives its cursor: drop the subquery's values together with
-                // the capacity they grew to. Forget inherited state too, so that an init() that is
-                // not preceded by offerStateTo() rebuilds the set rather than reading an empty one.
-                if (valueSet.size() > 0) {
-                    valueSet = new CharSequenceHashSet();
-                }
-                stateInherited = false;
+                values.clear();
             }
         }
 
@@ -168,6 +172,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            values.registerWith(executionContext);
             valueArg.init(symbolTableSource, executionContext);
             cursorArg.init(symbolTableSource, executionContext);
 
@@ -247,6 +252,15 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         private final Function cursorArg;
         private final Record.CharSequenceFunction func;
         private final SymbolFunction valueArg;
+        private final SqlExecutionResource values = new SqlExecutionResource() {
+            @Override
+            public void clear() {
+                if (symbolKeys.size() > 0) {
+                    symbolKeys = new IntHashSet();
+                }
+                stateInherited = false;
+            }
+        };
         private boolean stateInherited = false;
         private boolean stateShared = false;
         private IntHashSet symbolKeys = new IntHashSet();
@@ -262,11 +276,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
             try {
                 BinaryFunction.super.cursorClosed();
             } finally {
-                // See StrInCursorFunc.cursorClosed().
-                if (symbolKeys.size() > 0) {
-                    symbolKeys = new IntHashSet();
-                }
-                stateInherited = false;
+                values.clear();
             }
         }
 
@@ -287,6 +297,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            values.registerWith(executionContext);
             valueArg.init(symbolTableSource, executionContext);
             cursorArg.init(symbolTableSource, executionContext);
             if (stateInherited) {

@@ -55,7 +55,6 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
     private long cachedSkipWalkTarget = NO_SKIP_WALK;
     private SqlExecutionCircuitBreaker circuitBreaker;
     private boolean isExhausted;
-    private boolean isOpen;
     private long maxRowsAfterSkip = RecordCursor.UNBOUNDED_ROW_COUNT;
     private RowCursor rowCursor;
     private long rowsProducedSinceSkip;
@@ -110,17 +109,6 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
     public void close() {
         rowCursor = Misc.free(rowCursor);
         super.close();
-        // The owning factory initializes the filter right after it opens this cursor. Some
-        // factories close this cursor again after they free the filter, which must then stay
-        // untouched.
-        if (isOpen) {
-            isOpen = false;
-            if (filter != null) {
-                filter.cursorClosed();
-            }
-            // of() initialized the row cursor factory's functions
-            rowCursorFactory.cursorClosed();
-        }
     }
 
     public RowCursorFactory getRowCursorFactory() {
@@ -198,7 +186,6 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             close();
             this.frameCursor = frameCursor;
         }
-        isOpen = true;
         recordA.of(frameCursor);
         recordB.of(frameCursor);
         rowCursorFactory.init(frameCursor, sqlExecutionContext);

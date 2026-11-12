@@ -110,9 +110,6 @@ public class JsonExtractFunction implements Function {
         if (this.stateB != null) {
             this.stateB.deflate();
         }
-        // init() initialized both arguments, and the pointer holds its own copy of the path
-        json.cursorClosed();
-        path.cursorClosed();
     }
 
     @Override
@@ -447,8 +444,10 @@ public class JsonExtractFunction implements Function {
 
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        stateA.registerWith(executionContext);
         stateA.reopen();
         if (stateB != null) {
+            stateB.registerWith(executionContext);
             stateB.reopen();
         }
         json.init(symbolTableSource, executionContext);

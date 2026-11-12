@@ -123,9 +123,6 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
                 slaveFrameCursor = Misc.free(slaveFrameCursor);
                 Misc.free(slaveTimeFrameState);
                 isOpen = false;
-                // of() initialized these; free their query-accounted state before the
-                // query's MemoryTracker goes back to its pool
-                Function.cursorClosed(nonGroupByFunctions);
             }
         }
     }

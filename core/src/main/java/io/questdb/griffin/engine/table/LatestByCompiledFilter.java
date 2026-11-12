@@ -145,10 +145,6 @@ public class LatestByCompiledFilter extends BooleanFunction implements UnaryFunc
         if (filter != null) {
             filter.cursorClosed();
         }
-        // init() initialized the bind variables too; _close() nulls the list after freeing it
-        if (bindVarFunctions != null) {
-            Function.cursorClosed(bindVarFunctions);
-        }
     }
 
     @Override

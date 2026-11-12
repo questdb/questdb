@@ -66,19 +66,18 @@ public class CastLongToSymbolFunctionFactory implements FunctionFactory {
             sink.put(arg.getLong(null));
             return SymbolConstant.newInstance(sink);
         }
-        return new Func(arg, sqlExecutionContext);
+        return new Func(arg);
     }
 
     private static class Func extends SymbolFunction implements UnaryFunction {
         private final Function arg;
-        private final CastToSymbolDictionary dictionary;
+        private final CastToSymbolDictionary dictionary = new CastToSymbolDictionary(true);
         private final StringSink sink = new StringSink();
         private final DirectString symbolA = new DirectString();
         private final DirectString symbolB = new DirectString();
 
-        public Func(Function arg, SqlExecutionContext executionContext) {
+        public Func(Function arg) {
             this.arg = arg;
-            dictionary = new CastToSymbolDictionary(true, executionContext);
         }
 
         @Override

@@ -60,14 +60,6 @@ public final class ScalarSubQueryTimestampFunction extends TimestampFunction {
         cursorFunction = Misc.free(cursorFunction);
     }
 
-    @Override
-    public void cursorClosed() {
-        // init() initialized the sub-query function; a released wrapper holds none
-        if (cursorFunction != null) {
-            cursorFunction.cursorClosed();
-        }
-    }
-
     /**
      * Detaches the compiled sub-query and transfers ownership to the caller, leaving this wrapper
      * empty. Used when the pruning bound is declined: rather than freeing a sub-query that the

@@ -53,9 +53,7 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
         if (arg.isConstant()) {
             return SymbolConstant.newInstance(arg.getStrA(null));
         }
-        final Func function = new Func(arg);
-        function.dictionary.init(sqlExecutionContext);
-        return function;
+        return new Func(arg);
     }
 
     public static class Func extends SymbolFunction implements UnaryFunction {

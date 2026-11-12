@@ -98,17 +98,6 @@ public class TimestampMonotonicInverter extends UntypedFunction {
         CairoException.rethrowCleanupFailure(failure);
     }
 
-    @Override
-    public void cursorClosed() {
-        // init() initialized the bounds; evaluate() copies their values out
-        if (loBound != null) {
-            loBound.cursorClosed();
-        }
-        if (hiBound != null && hiBound != loBound) {
-            hiBound.cursorClosed();
-        }
-    }
-
     /**
      * Appends a single inverted {@code [lo, hi]} pair to {@code out}, or nothing
      * when the predicate matches no rows (a NULL bound, or an empty preimage). The

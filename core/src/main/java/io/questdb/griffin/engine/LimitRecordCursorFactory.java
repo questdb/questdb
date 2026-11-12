@@ -188,7 +188,6 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         private final RecordCursor.Counter counter = new Counter();
         private final Function leftFunction;
         private final Function rightFunction;
-        private boolean areFunctionsInitialized;
         private RecordCursor base;
         private long baseRowsToSkip;
         private long baseRowsToTake;
@@ -224,14 +223,6 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         @Override
         public void close() {
             base = Misc.free(base);
-            // the factory frees the functions only after it closed this cursor
-            if (areFunctionsInitialized) {
-                areFunctionsInitialized = false;
-                leftFunction.cursorClosed();
-                if (rightFunction != null) {
-                    rightFunction.cursorClosed();
-                }
-            }
         }
 
         @Override
@@ -421,7 +412,6 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             this.base = base;
             this.circuitBreaker = executionContext.getCircuitBreaker();
 
-            areFunctionsInitialized = true;
             leftFunction.init(base, executionContext);
             if (rightFunction != null) {
                 rightFunction.init(base, executionContext);

@@ -354,10 +354,6 @@ public class GroupingSetsRecordCursorFactory extends AbstractRecordCursorFactory
                 }
                 Misc.free(allocator);
                 Misc.clearObjList(groupByFunctions);
-                // _close() nulls the field after freeing the functions, then closes this cursor
-                if (keyFunctions != null) {
-                    Function.cursorClosed(keyFunctions);
-                }
                 super.close();
             }
         }

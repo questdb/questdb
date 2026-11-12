@@ -102,11 +102,6 @@ public final class CastToSymbolDictionary extends SqlExecutionResource {
         this.descriptorEntrySize = hasLookupField ? LOOKUP_DESCRIPTOR_ENTRY_SIZE : TEXT_DESCRIPTOR_ENTRY_SIZE;
     }
 
-    public CastToSymbolDictionary(boolean hasLookupField, SqlExecutionContext executionContext) {
-        this(hasLookupField);
-        init(executionContext);
-    }
-
     /**
      * Frees all native memory and forgets every key. Text handed out by {@link #valueOf} points
      * into the freed memory afterwards, so its holders must be done with it; valueOf() itself

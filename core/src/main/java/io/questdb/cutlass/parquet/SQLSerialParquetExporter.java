@@ -561,13 +561,8 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
             drainHybridFrames(exporter, streamBuffers, streamColumnData, pfc, cursor, batchSize, phase);
             numOfFiles = 1;
         } finally {
-            try {
-                // release the functions' state while the export's memory tracker is still bound
-                streamBuffers.releaseFunctions();
-            } finally {
-                Misc.free(pfc);
-                Misc.free(cursor);
-            }
+            Misc.free(pfc);
+            Misc.free(cursor);
         }
     }
 

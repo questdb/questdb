@@ -402,13 +402,6 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
                 } catch (Throwable th) {
                     cleanupFailure = th;
                 }
-                try {
-                    // recordFunctions includes the group-by functions (same object references)
-                    Function.cursorClosed(recordFunctions);
-                    Function.cursorClosed(keyFunctions);
-                } catch (Throwable th) {
-                    cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
-                }
                 if (isSlaveFilterInitialized) {
                     isSlaveFilterInitialized = false;
                     cleanupFailure = HorizonJoinSlaveState.cursorClosed(cleanupFailure, slaveFilter);

@@ -30,7 +30,6 @@ import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkTemplate;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.engine.functions.PerWorkerFunctionList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
@@ -63,18 +62,6 @@ public class HorizonJoinSlaveState implements QuietCloseable {
         if (filter != null) {
             try {
                 filter.cursorClosed();
-            } catch (Throwable th) {
-                cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
-            }
-        }
-        return cleanupFailure;
-    }
-
-    // Notifies an owner list, or the clones a per-worker list owns, that the cursor has closed.
-    static Throwable cursorClosed(Throwable cleanupFailure, @Nullable ObjList<? extends Function> functions) {
-        if (functions != null) {
-            try {
-                PerWorkerFunctionList.cursorClosed(functions);
             } catch (Throwable th) {
                 cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
             }

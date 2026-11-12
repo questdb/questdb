@@ -99,18 +99,6 @@ public final class InsertRowImpl implements QuietCloseable {
         Misc.free(virtualRecord);
     }
 
-    /**
-     * The counterpart of {@link #initContext(SqlExecutionContext)}: frees the state the functions
-     * built for this execution, such as a cast to symbol's dictionary, which is charged to the
-     * query's MemoryTracker.
-     */
-    public void cursorClosed() {
-        Function.cursorClosed(virtualRecord.getFunctions());
-        if (timestampFunction != null) {
-            timestampFunction.cursorClosed();
-        }
-    }
-
     public void initContext(SqlExecutionContext executionContext) throws SqlException {
         final ObjList<? extends Function> functions = virtualRecord.getFunctions();
         Function.init(functions, null, executionContext, null);

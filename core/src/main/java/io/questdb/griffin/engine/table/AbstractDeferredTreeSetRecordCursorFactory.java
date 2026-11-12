@@ -87,19 +87,14 @@ public abstract class AbstractDeferredTreeSetRecordCursorFactory extends Abstrac
     ) throws SqlException {
         symbolKeys.clear();
         final StaticSymbolTable symbolTable = pageFrameCursor.getSymbolTable(columnIndex);
-        try {
-            for (int i = 0, n = symbolFuncs.size(); i < n; i++) {
-                final Function symbolFunc = symbolFuncs.getQuick(i);
-                symbolFunc.init(pageFrameCursor, executionContext);
-                final int symbolKey = symbolTable.keyOf(symbolFunc.getStrA(null), symbolKeyCache.getQuick(i));
-                symbolKeyCache.setQuick(i, symbolKey);
-                if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
-                    symbolKeys.add(TableUtils.toIndexKey(symbolKey));
-                }
+        for (int i = 0, n = symbolFuncs.size(); i < n; i++) {
+            final Function symbolFunc = symbolFuncs.getQuick(i);
+            symbolFunc.init(pageFrameCursor, executionContext);
+            final int symbolKey = symbolTable.keyOf(symbolFunc.getStrA(null), symbolKeyCache.getQuick(i));
+            symbolKeyCache.setQuick(i, symbolKey);
+            if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
+                symbolKeys.add(TableUtils.toIndexKey(symbolKey));
             }
-        } finally {
-            // the keys are resolved; free what the functions built for this execution
-            Function.cursorClosed(symbolFuncs);
         }
         return super.initRecordCursor(pageFrameCursor, executionContext);
     }

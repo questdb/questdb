@@ -117,14 +117,6 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
             addEvaluateDynamicIntervals(outIntervals, sqlExecutionContext);
         } finally {
             sqlExecutionContext.setIntervalFunctionType(oldIntervalType);
-            // outIntervals holds the values now; free what the functions built for this evaluation.
-            // A static interval holds a null slot.
-            for (int i = 0, n = dynamicRangeList.size(); i < n; i++) {
-                final Function function = dynamicRangeList.getQuick(i);
-                if (function != null) {
-                    function.cursorClosed();
-                }
-            }
         }
 
         if (currentIntervalPlanGeneration < 0) {

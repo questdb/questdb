@@ -331,11 +331,6 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
                 } catch (Throwable th) {
                     cleanupFailure = th;
                 }
-                try {
-                    Function.cursorClosed(groupByFunctions);
-                } catch (Throwable th) {
-                    cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
-                }
                 if (isSlaveFilterInitialized) {
                     isSlaveFilterInitialized = false;
                     cleanupFailure = HorizonJoinSlaveState.cursorClosed(cleanupFailure, slaveFilter);

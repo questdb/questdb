@@ -37,6 +37,7 @@ import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.InsertRowImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionResources;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -73,6 +74,34 @@ public class InsertOperationImpl implements InsertOperation {
         SecurityContext securityContext = executionContext.getSecurityContext();
         securityContext.authorizeInsert(tableToken);
 
+        insertMethod.resources.close();
+        insertMethod.resources.begin();
+        insertMethod.resources.bind(executionContext);
+        try {
+            return createMethod0(executionContext, writerSource);
+        } catch (Throwable th) {
+            Misc.free(insertMethod.resources, th);
+            throw th;
+        } finally {
+            insertMethod.resources.unbind(executionContext);
+        }
+    }
+
+    @Override
+    public InsertMethod createMethod(SqlExecutionContext executionContext) throws SqlException {
+        return createMethod(executionContext, engine);
+    }
+
+    @Override
+    public OperationFuture execute(SqlExecutionContext sqlExecutionContext) throws SqlException {
+        try (InsertMethod insertMethod = createMethod(sqlExecutionContext)) {
+            insertMethod.execute(sqlExecutionContext);
+            insertMethod.commit();
+            return doneFuture;
+        }
+    }
+
+    private InsertMethod createMethod0(SqlExecutionContext executionContext, WriterSource writerSource) throws SqlException {
         initContext(executionContext);
         if (insertMethod.writer == null) {
             final TableWriterAPI writer = writerSource.getTableWriterAPI(tableToken, "insert");
@@ -93,20 +122,6 @@ public class InsertOperationImpl implements InsertOperation {
         return insertMethod;
     }
 
-    @Override
-    public InsertMethod createMethod(SqlExecutionContext executionContext) throws SqlException {
-        return createMethod(executionContext, engine);
-    }
-
-    @Override
-    public OperationFuture execute(SqlExecutionContext sqlExecutionContext) throws SqlException {
-        try (InsertMethod insertMethod = createMethod(sqlExecutionContext)) {
-            insertMethod.execute(sqlExecutionContext);
-            insertMethod.commit();
-            return doneFuture;
-        }
-    }
-
     private void initContext(SqlExecutionContext executionContext) throws SqlException {
         for (int i = 0, n = insertRows.size(); i < n; i++) {
             InsertRowImpl row = insertRows.get(i);
@@ -115,11 +130,16 @@ public class InsertOperationImpl implements InsertOperation {
     }
 
     private class InsertMethodImpl implements InsertMethod {
+        private final SqlExecutionResources resources = new SqlExecutionResources();
         private TableWriterAPI writer = null;
 
         @Override
         public void close() {
-            writer = Misc.free(writer);
+            final TableWriterAPI writer = this.writer;
+            this.writer = null;
+            Throwable failure = Misc.freeBestEffort(null, writer);
+            failure = Misc.freeBestEffort(failure, resources);
+            CairoException.rethrowCleanupFailure(failure);
         }
 
         @Override
@@ -157,17 +177,9 @@ public class InsertOperationImpl implements InsertOperation {
 
         @Override
         public long execute(SqlExecutionContext executionContext) {
-            try {
-                for (int i = 0, n = insertRows.size(); i < n; i++) {
-                    InsertRowImpl row = insertRows.get(i);
-                    row.append(executionContext, writer);
-                }
-            } finally {
-                // the writer holds the rows now; free what the functions built for them before
-                // the query's MemoryTracker goes back to its pool
-                for (int i = 0, n = insertRows.size(); i < n; i++) {
-                    insertRows.get(i).cursorClosed();
-                }
+            for (int i = 0, n = insertRows.size(); i < n; i++) {
+                InsertRowImpl row = insertRows.get(i);
+                row.append(executionContext, writer);
             }
             return insertRows.size();
         }
@@ -179,6 +191,7 @@ public class InsertOperationImpl implements InsertOperation {
 
         @Override
         public TableWriterAPI popWriter() {
+            resources.close();
             TableWriterAPI w = writer;
             this.writer = null;
             return w;

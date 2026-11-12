@@ -52,12 +52,6 @@ public class CompiledFilterSymbolBindVariable extends SymbolFunction {
     }
 
     @Override
-    public void cursorClosed() {
-        // init() initialized the value function
-        symbolFunction.cursorClosed();
-    }
-
-    @Override
     public int getInt(Record rec) {
         final CharSequence symbolStr = symbolFunction.getStrA(null);
         return symbolTable.keyOf(symbolStr);

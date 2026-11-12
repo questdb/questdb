@@ -48,6 +48,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
 
 /**
@@ -328,7 +329,7 @@ public class FunctionCursorClosedTest extends AbstractCairoTest {
 
     @Test
     public void testCastToSymbolUnderMultiArgFunctionReleasesDictionary() throws Exception {
-        // concat() is a MultiArgFunction, so cursorClosed() only reaches the cast if it forwards
+        // Execution ownership reaches the cast even though MultiArgFunction does not forward cursorClosed().
         assertMemoryLeak(() -> {
             execute("create table t as (select ('k' || x)::varchar v from long_sequence(1000))");
             assertSelectReleasesCastDictionaries("select concat(cast(v as symbol), '-') c from t");
@@ -569,6 +570,49 @@ public class FunctionCursorClosedTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIndexedAndLatestMissingNullDuplicateValuesReleaseDictionaries() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.setStr(0, "1");
+            bindVariableService.setStr(1, "9");
+            bindVariableService.setStr(2, "1");
+            bindVariableService.setStr(3, null);
+            for (String index : List.of("", " INDEX", " INDEX TYPE POSTING INCLUDE (v)")) {
+                execute("CREATE TABLE values_test (s SYMBOL" + index + ", v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                execute("INSERT INTO values_test VALUES ('1', 1, 0), ('2', 2, 1)");
+                for (boolean hasNull : new boolean[]{false, true}) {
+                    if (hasNull) {
+                        execute("INSERT INTO values_test VALUES (NULL, 3, 2)");
+                    }
+                    final String included = "SELECT v::symbol v FROM values_test WHERE s IN ($1, $2, $3, $4)";
+                    final String expected = hasNull ? "v\n1\n3\n" : "v\n1\n";
+                    for (String latest : List.of("", " LATEST ON ts PARTITION BY s")) {
+                        final String sql = included + latest + " ORDER BY v";
+                        assertSelectReleasesCastDictionaries(sql);
+                        assertQuery(sql).noLeakCheck().sizeMayVary().returns(expected);
+                    }
+                    final String excluded = included + " AND s NOT IN ($2) LATEST ON ts PARTITION BY s ORDER BY v";
+                    assertSelectReleasesCastDictionaries(excluded);
+                    assertQuery(excluded).noLeakCheck().sizeMayVary().returns(expected);
+                    final String excludedNull = included + " AND s NOT IN ($3, $4) LATEST ON ts PARTITION BY s";
+                    assertExecutionReleasesCastDictionaries(excludedNull, "v::symbol");
+                    assertQuery(excludedNull).noLeakCheck().sizeMayVary()
+                            .supportsRandomAccess(!index.contains("POSTING")).returns("v\n");
+                    final String excludedPresent = included + " AND s != $3 LATEST ON ts PARTITION BY s ORDER BY v";
+                    assertExecutionReleasesCastDictionaries(excludedPresent, "v::symbol");
+                    assertQuery(excludedPresent).noLeakCheck().sizeMayVary().returns(hasNull ? "v\n3\n" : "v\n");
+                    final String excludedNullOnly = included + " AND s != $4 LATEST ON ts PARTITION BY s ORDER BY v";
+                    assertExecutionReleasesCastDictionaries(excludedNullOnly, "v::symbol");
+                    assertQuery(excludedNullOnly).noLeakCheck().sizeMayVary().returns("v\n1\n");
+                    final String onlyExclusions = "SELECT v::symbol v FROM values_test WHERE s NOT IN ($2, $4) LATEST ON ts PARTITION BY s ORDER BY v";
+                    assertExecutionReleasesCastDictionaries(onlyExclusions, "v::symbol");
+                    assertQuery(onlyExclusions).noLeakCheck().sizeMayVary().returns("v\n1\n2\n");
+                }
+                execute("DROP TABLE values_test");
+            }
+        });
+    }
+
+    @Test
     public void testIndexedFilterReleasesCastDictionary() throws Exception {
         assertMemoryLeak(() -> {
             createIndexedTable();
@@ -668,10 +712,8 @@ public class FunctionCursorClosedTest extends AbstractCairoTest {
 
     @Test
     public void testOwnersKeepResultsAcrossExecutions() throws Exception {
-        // These owners now notify the functions they initialized when the cursor closes, or right
-        // after they read a value once. The functions here hold no cast dictionary, since a cast to
-        // symbol does not reach these plans, so the queries check that each execution of the cached
-        // factory still returns the same rows after that notification.
+        // These operators no longer forward cleanup to their functions. The queries keep their
+        // cached-plan results unchanged while execution ownership handles temporary state.
         assertMemoryLeak(() -> {
             createVarcharTable();
             execute("""
@@ -1129,8 +1171,19 @@ public class FunctionCursorClosedTest extends AbstractCairoTest {
         });
     }
 
-    // A read-once owner, such as a LIMIT, a FROM-TO bound or a dynamic interval, frees the dictionary
-    // as soon as it has the value, so the open cursor may hold none; its close must leave none behind.
+    @Test
+    public void testUnnestReleasesCastDictionaries() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.setLong(0, 1);
+            bindVariableService.setLong(1, 2);
+            final String sql = "SELECT u.val FROM long_sequence(1) t, UNNEST(ARRAY[($1::symbol)::double, ($2::symbol)::double]) u(val)";
+            assertOwnerReleasesCastDictionaries(sql, "Unnest");
+            assertQuery(sql).noLeakCheck().noRandomAccess().returns("val\n1.0\n2.0\n");
+        });
+    }
+
+    // LIMIT, FROM-TO bounds and dynamic intervals evaluate once per execution. Closing the execution
+    // must free their dictionaries even when their operators do not forward cursorClosed().
     private void assertExecutionReleasesCastDictionaries(String sql, String expectedPlanFragment) throws Exception {
         assertQuery(sql).noLeakCheck().assertsPlanContaining(expectedPlanFragment);
         try (RecordCursorFactory factory = select(sql)) {
@@ -1174,8 +1227,8 @@ public class FunctionCursorClosedTest extends AbstractCairoTest {
         }
     }
 
-    // An owner (filter, group by, join, ...) initializes the functions it evaluates, so it must also
-    // notify them when its cursor closes.
+    // Operators initialize their functions; the execution releases their dictionaries without
+    // requiring those operators to forward cursorClosed().
     private void assertOwnerReleasesCastDictionaries(String sql, String expectedPlanFragment) throws Exception {
         assertQuery(sql).noLeakCheck().assertsPlanContaining(expectedPlanFragment);
         assertSelectReleasesCastDictionaries(sql);

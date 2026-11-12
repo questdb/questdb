@@ -115,7 +115,6 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Per
     private final ObjList<Record> ownerMatchedSlaveRecords;
     private final ObjList<ObjList<Record>> perWorkerMatchedSlaveRecords;
     private final ObjList<HorizonJoinSlaveState> slaveStates;
-    private boolean areFunctionsInitialized;
     private int initializedSlaveFilterCount;
 
     protected BaseAsyncMultiHorizonJoinAtom(
@@ -387,25 +386,12 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Per
         for (int s = 0; s < count; s++) {
             cleanupFailure = slaveStates.getQuick(s).cursorClosed(cleanupFailure);
         }
-        // The frame sequence clears the atom after awaiting its workers, so no clone is in use.
-        if (areFunctionsInitialized) {
-            areFunctionsInitialized = false;
-            cleanupFailure = HorizonJoinSlaveState.cursorClosed(cleanupFailure, ownerGroupByFunctions);
-            if (perWorkerGroupByFunctions != null) {
-                for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
-                    cleanupFailure = HorizonJoinSlaveState.cursorClosed(cleanupFailure, perWorkerGroupByFunctions.getQuick(i));
-                }
-            }
-            cleanupFailure = cursorClosedKeyFunctions(cleanupFailure);
-        }
         memoryTracker = null;
         CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     @Override
     public void close() {
-        // the owning factory may have freed the owner functions already
-        areFunctionsInitialized = false;
         // clear() already freed the data chunks and ASOF maps under the bound tracker (the index
         // is on the global counter), so close() has nothing tracked to free. Nulling is defensive:
         // any stray free hits the global counter and cannot underflow an already-recycled block.
@@ -589,9 +575,6 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Per
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         memoryTracker = executionContext.getMemoryTracker();
-        // The cursor initializes the group by and key functions after this, and clear() notifies
-        // them when the cursor closes.
-        areFunctionsInitialized = true;
         filterCtx.initFilters(symbolTableSource, executionContext);
         // Note: the owner group by functions are initialized in initOwnerFunctions(), and their
         // per-worker clones in initGroupByFunctions(), where we have access to both master and
@@ -790,11 +773,4 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Per
      * Close aggregation-specific resources. Called by {@link #close()}.
      */
     protected abstract void closeAggregationState();
-
-    /**
-     * Notifies the key functions, if any, that the cursor has closed. Called by {@link #clear()}.
-     */
-    protected Throwable cursorClosedKeyFunctions(Throwable cleanupFailure) {
-        return cleanupFailure;
-    }
 }

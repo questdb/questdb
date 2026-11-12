@@ -355,7 +355,6 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         private static final int DISPATCH_PREV_SLOT = 3;
         private static final int DISPATCH_TIMESTAMP_FILL = 4;
 
-        private boolean areFunctionsInitialized;
         private RecordCursor baseCursor;
         private Record baseRecord;
         // Unwrapped uniform-UTC sampler. timestampSampler may point here or at
@@ -523,17 +522,6 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             if (isOpen) {
                 isOpen = false;
                 failure = Misc.freeBestEffort(failure, keysMap);
-            }
-            // of() initialized these; the factory frees them only after it closed this cursor
-            if (areFunctionsInitialized) {
-                areFunctionsInitialized = false;
-                Function.cursorClosed(constantFills);
-                fromFunc.cursorClosed();
-                toFunc.cursorClosed();
-                offsetFunc.cursorClosed();
-                if (tzFunc != null) {
-                    tzFunc.cursorClosed();
-                }
             }
             CairoException.rethrowCleanupFailure(failure);
         }
@@ -1036,7 +1024,6 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 }
             }
             this.circuitBreaker = executionContext.getCircuitBreaker();
-            areFunctionsInitialized = true;
             Function.init(constantFills, baseCursor, executionContext, null);
             fromFunc.init(baseCursor, executionContext);
             toFunc.init(baseCursor, executionContext);

@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.json;
 
 import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.SqlExecutionResource;
 import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.json.SimdJsonParser;
@@ -43,7 +44,7 @@ import org.jetbrains.annotations.Nullable;
  * * Cache a UTF-8 result - sometimes as intermediate for TIMESTAMP, DATE or IPV4 parsing.
  * * Cache a UTF-16 result.
  */
-public class JsonExtractSupportingState implements QuietCloseable {
+public class JsonExtractSupportingState extends SqlExecutionResource implements QuietCloseable {
     public static final String EXTRACT_FUNCTION_NAME = "json_extract";
     // Only set for VARCHAR extraction to provide string backwards compatibility.
     public @Nullable StringSink destUtf16Sink;
@@ -70,6 +71,11 @@ public class JsonExtractSupportingState implements QuietCloseable {
             SimdJsonParser.convertJsonPathToPointer(path, pointer);
             return pointer;
         }
+    }
+
+    @Override
+    public void clear() {
+        deflate();
     }
 
     @Override

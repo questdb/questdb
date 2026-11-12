@@ -263,10 +263,9 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
         } catch (Throwable th) {
             failure = th;
         }
-        // the cursor notifies the filter when it closes, so it goes before the filter
-        failure = Misc.freeBestEffort(failure, cursor);
         failure = Misc.freeBestEffort(failure, filter);
         failure = Misc.freeBestEffort(failure, rowCursorFactory);
+        failure = Misc.freeBestEffort(failure, cursor);
         failure = Misc.freeObjListBestEffort(failure, keyExcludedValueFunctions);
         CairoException.rethrowCleanupFailure(failure);
     }
@@ -280,13 +279,8 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
             throw TableReferenceOutOfDateException.of(partitionFrameCursorFactory.getTableToken());
         }
 
-        try {
-            Function.init(keyExcludedValueFunctions, pageFrameCursor, executionContext, null);
-            recalculateIncludedValues(pageFrameCursor);
-        } finally {
-            // recalculateIncludedValues() resolved the values to keys; free what the functions built
-            Function.cursorClosed(keyExcludedValueFunctions);
-        }
+        Function.init(keyExcludedValueFunctions, pageFrameCursor, executionContext, null);
+        recalculateIncludedValues(pageFrameCursor);
         cursor.of(pageFrameCursor, executionContext);
         if (filter != null) {
             filter.init(cursor, executionContext);

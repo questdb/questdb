@@ -139,9 +139,6 @@ class AsyncMultiHorizonJoinRecordCursor implements RecordCursor {
                 Misc.freeObjList(slaveFrameCursors);
                 Misc.freeObjListAndKeepObjects(slaveTimeFrameStates);
                 isOpen = false;
-                // of() initialized these; free their query-accounted state before the
-                // query's MemoryTracker goes back to its pool
-                Function.cursorClosed(nonGroupByFunctions);
             }
         }
     }

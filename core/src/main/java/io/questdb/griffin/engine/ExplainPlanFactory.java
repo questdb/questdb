@@ -35,6 +35,7 @@ import io.questdb.griffin.JsonPlanSink;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionResources;
 import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.model.ExplainModel;
 
@@ -106,6 +107,7 @@ public class ExplainPlanFactory extends AbstractRecordCursorFactory {
     public class ExplainPlanRecordCursor implements RecordCursor {
         private final PlanSink planSink;
         private final Record record;
+        private final SqlExecutionResources resources = new SqlExecutionResources();
         private int row = 0;
         private int rowCount;
 
@@ -140,7 +142,9 @@ public class ExplainPlanFactory extends AbstractRecordCursorFactory {
         public void of(RecordCursorFactory base, SqlExecutionContext executionContext) throws SqlException {
             final long previousIntervalPlanGeneration = executionContext.getIntervalPlanGeneration();
             final long preparingIntervalPlanGeneration = executionContext.nextIntervalPlanGeneration();
-            try {
+            resources.begin();
+            resources.bind(executionContext);
+            try (resources) {
                 // Open the cursor to initialize bind-variable types and dynamic intervals. Only a
                 // successful open promotes the preparation generation for the following render.
                 try (RecordCursor ignored = base.getCursor(executionContext)) {
@@ -150,6 +154,7 @@ public class ExplainPlanFactory extends AbstractRecordCursorFactory {
                 rowCount = planSink.getLineCount();
                 toTop();
             } finally {
+                resources.unbind(executionContext);
                 executionContext.setIntervalPlanGeneration(previousIntervalPlanGeneration);
             }
         }

@@ -34,7 +34,7 @@ import io.questdb.std.Mutable;
 public abstract class SqlExecutionResource implements Mutable {
     private SqlExecutionResources owner;
 
-    protected final void registerWith(SqlExecutionContext executionContext) {
+    public final void registerWith(SqlExecutionContext executionContext) {
         final SqlExecutionResources resources = executionContext.getExecutionResources();
         if (resources != null && owner != resources) {
             resources.add(this);

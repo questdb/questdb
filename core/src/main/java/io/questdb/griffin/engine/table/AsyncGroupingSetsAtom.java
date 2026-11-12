@@ -87,7 +87,6 @@ public class AsyncGroupingSetsAtom implements StatefulAtom, Reopenable, Closeabl
     private final AsyncFilterContext filterContext;
     private final ColumnTypes keyTypes;
     private final ColumnTypes valueTypes;
-    private boolean areFunctionsInitialized;
     private MemoryTracker memoryTracker;
 
     public AsyncGroupingSetsAtom(
@@ -189,7 +188,6 @@ public class AsyncGroupingSetsAtom implements StatefulAtom, Reopenable, Closeabl
 
     @Override
     public void close() {
-        areFunctionsInitialized = false;
         Throwable failure = null;
         failure = Misc.freeObjListBestEffort(failure, maps);
         for (int i = 0, n = allocators.size(); i < n; i++) {
@@ -211,7 +209,6 @@ public class AsyncGroupingSetsAtom implements StatefulAtom, Reopenable, Closeabl
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         memoryTracker = executionContext.getMemoryTracker();
-        areFunctionsInitialized = true;
         Function.init(ownerKeyFunctions, symbolTableSource, executionContext, null);
         Function.init(ownerGroupByFunctions, symbolTableSource, executionContext, null);
         initWorkerFunctions(perWorkerKeyFunctions, ownerKeyFunctions, symbolTableSource, executionContext);
@@ -230,38 +227,23 @@ public class AsyncGroupingSetsAtom implements StatefulAtom, Reopenable, Closeabl
 
     @Override
     public void clear() {
-        try {
-            for (int i = 0, n = maps.size(); i < n; i++) {
-                Map map = maps.getQuick(i);
-                if (map != null) {
-                    map.close();
-                }
-            }
-            Misc.clearObjList(ownerGroupByFunctions);
-            if (perWorkerGroupByFunctions != null) {
-                for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
-                    PerWorkerFunctionList.clear(perWorkerGroupByFunctions.getQuick(i));
-                }
-            }
-            for (int i = 0, n = allocators.size(); i < n; i++) {
-                Misc.clear(allocators.getQuick(i));
-            }
-            memoryTracker = null;
-        } finally {
-            // the context notifies the filters, and a failing step above must not skip that either
-            try {
-                filterContext.clear();
-            } finally {
-                // The frame sequence clears the atom after awaiting its workers, so no clone is in use.
-                if (areFunctionsInitialized) {
-                    areFunctionsInitialized = false;
-                    Function.cursorClosed(ownerKeyFunctions);
-                    Function.cursorClosed(ownerGroupByFunctions);
-                    cursorClosedWorkerFunctions(perWorkerKeyFunctions);
-                    cursorClosedWorkerFunctions(perWorkerGroupByFunctions);
-                }
+        for (int i = 0, n = maps.size(); i < n; i++) {
+            Map map = maps.getQuick(i);
+            if (map != null) {
+                map.close();
             }
         }
+        Misc.clearObjList(ownerGroupByFunctions);
+        if (perWorkerGroupByFunctions != null) {
+            for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
+                PerWorkerFunctionList.clear(perWorkerGroupByFunctions.getQuick(i));
+            }
+        }
+        for (int i = 0, n = allocators.size(); i < n; i++) {
+            Misc.clear(allocators.getQuick(i));
+        }
+        filterContext.clear();
+        memoryTracker = null;
     }
 
     public AsyncFilterContext getFilterContext() {
@@ -370,14 +352,6 @@ public class AsyncGroupingSetsAtom implements StatefulAtom, Reopenable, Closeabl
             }
         }
         return failure;
-    }
-
-    private static void cursorClosedWorkerFunctions(ObjList<? extends ObjList<? extends Function>> functions) {
-        if (functions != null) {
-            for (int i = 0, n = functions.size(); i < n; i++) {
-                PerWorkerFunctionList.cursorClosed(functions.getQuick(i));
-            }
-        }
     }
 
     private static void initWorkerFunctions(

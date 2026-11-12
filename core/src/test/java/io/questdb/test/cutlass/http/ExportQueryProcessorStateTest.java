@@ -180,7 +180,7 @@ public class ExportQueryProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testClearReleasesMaterializerFunctionsBeforeUnregisteringQuery() throws Exception {
+    public void testClearReleasesMaterializerFunctionsBeforeRecyclingTracker() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE export_cast AS (SELECT ('k' || (x % 300))::varchar v, x l FROM long_sequence(1000))");
             try (RecordCursorFactory factory = select("SELECT v::symbol s, l FROM export_cast")) {
@@ -190,7 +190,7 @@ public class ExportQueryProcessorStateTest extends AbstractCairoTest {
                         ParquetExportMode.determineExportMode(factory, false, sqlExecutionContext)
                 );
                 for (MaterializerReleasePath releasePath : MaterializerReleasePath.values()) {
-                    assertReleasesMaterializerFunctionsBeforeUnregister(factory, releasePath);
+                    assertReleasesMaterializerFunctionsBeforeRecyclingTracker(factory, releasePath);
                 }
             }
         });
@@ -356,7 +356,7 @@ public class ExportQueryProcessorStateTest extends AbstractCairoTest {
     // tracker, and a cast to symbol charges its native dictionary to that tracker. Closing the
     // page-frame cursor unregisters the query and returns the tracker to the pool, so the
     // dictionary must be gone by then.
-    private static void assertReleasesMaterializerFunctionsBeforeUnregister(
+    private static void assertReleasesMaterializerFunctionsBeforeRecyclingTracker(
             RecordCursorFactory factory,
             MaterializerReleasePath releasePath
     ) throws Exception {
@@ -403,7 +403,7 @@ public class ExportQueryProcessorStateTest extends AbstractCairoTest {
             }
             Assert.assertTrue("the release must close the page-frame cursor", probe.isClosed);
             Assert.assertEquals(
-                    "the dictionary must be released before the query unregisters and recycles its tracker",
+                    "query unregister must release the dictionary before recycling its tracker",
                     0,
                     probe.trackerUsedAtClose
             );
@@ -557,8 +557,8 @@ public class ExportQueryProcessorStateTest extends AbstractCairoTest {
         }
     }
 
-    // Records the query's native function memory at the moment the page-frame cursor closes, which
-    // is when the query unregisters and its memory tracker goes back to the pool.
+    // QueryRegistry now frees execution resources inside cursor close. Read the counters after
+    // that close; a dirty tracker keeps its nonzero count when the provider refuses to recycle it.
     private static final class UnregisterProbePageFrameCursor implements PageFrameCursor {
         private final PageFrameCursor delegate;
         private final MemoryTracker tracker;
@@ -578,12 +578,12 @@ public class ExportQueryProcessorStateTest extends AbstractCairoTest {
 
         @Override
         public void close() {
+            delegate.close();
             if (!isClosed) {
                 isClosed = true;
                 trackerUsedAtClose = tracker.getUsed();
                 nativeFuncMemAtClose = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS);
             }
-            delegate.close();
         }
 
         @Override
