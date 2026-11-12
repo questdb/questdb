@@ -54,9 +54,11 @@ public class PhysicalLayerNullScanTest {
     private static final Map<String, Integer> BASELINE = new LinkedHashMap<>();
     // the NULL policy is not a token: physical code reads it once at setup (getNullPolicy(),
     // getColumnNullPolicy()) and switches on it exhaustively. The pattern also skips a bare
-    // NOT_NULL, so a policy constant of that name would not count either; NullPolicy has none
+    // NOT_NULL, so a policy constant of that name would not count either; NullPolicy has none.
+    // ColumnType.isNull(type) is not a token either: it tests for the NULL type, as
+    // type == ColumnType.NULL does, and reads no value
     private static final Pattern NULL_TOKEN = Pattern.compile(
-            "\\b(?!NOT_NULL\\b)[A-Z0-9_]*_NULL\\b|\\bisNull\\(|NullMemory|\\bgetNull(?!Policy\\()\\w*\\(|\\bNaN\\b|isNaN\\(|setNull\\("
+            "\\b(?!NOT_NULL\\b)[A-Z0-9_]*_NULL\\b|(?<!ColumnType\\.)\\bisNull\\(|NullMemory|\\bgetNull(?!Policy\\()\\w*\\(|\\bNaN\\b|isNaN\\(|setNull\\("
     );
     private static final String ROOT = "src/main/java/io/questdb/";
 
