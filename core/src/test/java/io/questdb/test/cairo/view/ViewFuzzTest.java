@@ -422,8 +422,8 @@ public class ViewFuzzTest extends AbstractFuzzTest {
         // The final correctness check below orders each view by ALL non-binary columns to make the
         // cursor comparison deterministic. RandomSelectGenerator can chain self-joins whose
         // many-to-many key matches inflate the row count enough that ordering the result overruns
-        // the 128-page (16 MB) sort-key budget the fuzz test config imposes (Overrides sets
-        // cairo.sql.sort.key.max.pages=128), throwing a spurious LimitOverflowException on an
+        // the sort-key budget the test config imposes (Overrides sets
+        // cairo.sql.sort.key.max.bytes), throwing a spurious LimitOverflowException on an
         // otherwise legal query. Production leaves the sort-key budget unbounded (Long.MAX_VALUE);
         // mirror that here, since this test exercises view correctness, not sort memory limits.
         node1.setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES, Long.MAX_VALUE);
