@@ -2641,6 +2641,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         // so it reaches the caller unchanged: a failed flush keeps its data-sync classification and carries
         // no position in the view SQL.
         boolean isWritingDefinition = false;
+        final boolean wasViewCompile = executionContext.isViewCompile();
+        executionContext.setViewCompile(true);
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             int remainingRetries = maxRecompileAttempts;
             for (; ; ) {
@@ -2747,6 +2749,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
             // position is reported from the view SQL, we have to adjust it
             throw SqlException.$(viewSqlPosition + e.getPosition(), e.getFlyweightMessage());
+        } finally {
+            executionContext.setViewCompile(wasViewCompile);
         }
     }
 
@@ -6312,6 +6316,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final long sqlId = queryRegistry.register(createViewOp.getSqlText(), executionContext);
         final long beginNanos = configuration.getNanosecondClock().getTicks();
         QueryProgress.logStart(sqlId, createViewOp.getSqlText(), executionContext, false);
+        final boolean wasViewCompile = executionContext.isViewCompile();
+        executionContext.setViewCompile(true);
         try {
             final int status = executionContext.getTableStatus(path, createViewOp.getTableName());
             if (status == TableUtils.TABLE_EXISTS) {
@@ -6419,6 +6425,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             QueryProgress.logError(th, sqlId, createViewOp.getSqlText(), executionContext, beginNanos);
             throw th;
         } finally {
+            executionContext.setViewCompile(wasViewCompile);
             queryRegistry.unregister(sqlId, executionContext);
         }
     }
