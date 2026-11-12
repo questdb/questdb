@@ -10770,6 +10770,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final boolean isSampleFromRuntimeUtc = isSampleFromUtc && !isSampleFromConstant;
             final boolean isSampleFromOrToRuntimeUtc = isSampleFromRuntimeUtc || (isSampleToUtc && !isSampleToConstant);
 
+            if (!isFillNone && keyTypes.getColumnCount() > 0 && factory.isRewindRecomputing()) {
+                final RecordCursorFactory base = factory;
+                factory = null;
+                factory = materialize(base, false);
+            }
+
             if (fillCount == 1 && Chars.equalsLowerCaseAscii(sampleByFill.getQuick(0).token, "prev")) {
                 if (keyTypes.getColumnCount() == 0) {
                     final ObjList<GroupByFunction> groupByFunctions0 = groupByFunctions;

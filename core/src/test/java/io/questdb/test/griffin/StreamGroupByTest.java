@@ -45,6 +45,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.engine.QueryProgress;
+import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.StreamGroupByMap;
 import io.questdb.griffin.engine.groupby.StreamGroupByRecordCursorFactory;
@@ -694,6 +695,32 @@ public class StreamGroupByTest extends AbstractCairoTest {
                                 """);
             } finally {
                 setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
+            }
+        });
+    }
+
+    @Test
+    public void testKeyedFillReadsStreamInputOnce() throws Exception {
+        run((engine, compiler, context) -> {
+            engine.execute("CREATE TABLE tr AS (SELECT timestamp_sequence('2024-01-01', 60_000_000L) ts, "
+                    + "(CASE WHEN x <= 300 THEN 's1' ELSE 's2' END)::SYMBOL sym, x::DOUBLE px FROM long_sequence(600)) "
+                    + "TIMESTAMP(ts) PARTITION BY DAY", context);
+            final String inner = "SELECT ts, sym, sum(px) s FROM tr WHERE test_latched_counter() SAMPLE BY 1m";
+            for (String fill : new String[]{" FILL(PREV)", " FILL(NULL)", " FILL(0)"}) {
+                final String sql = "SELECT ts, sym, sum(s) s FROM (" + inner + ") SAMPLE BY 1h" + fill + " ALIGN TO FIRST OBSERVATION ORDER BY ts, sym";
+                final String actual;
+                try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()) {
+                    Assert.assertTrue(sql, plan(factory, context).contains("Stream Group By"));
+                    TestLatchedCounterFunctionFactory.reset(null);
+                    actual = read(factory, context);
+                    Assert.assertEquals(sql, 600, TestLatchedCounterFunctionFactory.getCount());
+                }
+                context.setStreamGroupByEnabled(false);
+                try {
+                    Assert.assertEquals(sql, compileAndRead(compiler, context, sql), actual);
+                } finally {
+                    context.setStreamGroupByEnabled(true);
+                }
             }
         });
     }
