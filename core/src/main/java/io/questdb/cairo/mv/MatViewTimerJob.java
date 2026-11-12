@@ -336,12 +336,14 @@ public class MatViewTimerJob extends SynchronizedJob {
                                 break;
                             case Timer.PERIOD_REFRESH_TYPE:
                                 final MatViewDefinition viewDefinition = state.getViewDefinition();
-                                if (viewDefinition.getRefreshType() == MatViewDefinition.REFRESH_TYPE_IMMEDIATE) {
-                                    // An incremental refresh of a period view also refreshes the periods that
-                                    // completed since the last refresh, and it consumes the base table
+                                if (viewDefinition.getRefreshType() == MatViewDefinition.REFRESH_TYPE_IMMEDIATE && state.getLastRefreshBaseTxn() != -1) {
+                                    // An incremental refresh of a built period view also refreshes the periods
+                                    // that completed since the last refresh, and it consumes the base table
                                     // transactions it reads. A range refresh would leave those transactions to
                                     // the refresh their commit enqueued, which would compute their buckets in
-                                    // the completed period again.
+                                    // the completed period again. A view that was never built, as a DEFERRED
+                                    // one is until its first base commit, keeps the range refresh, which leaves
+                                    // it unbuilt: an incremental refresh would run its first build.
                                     matViewStateStore.enqueueIncrementalRefresh(viewToken);
                                 } else {
                                     // range hi boundary is inclusive

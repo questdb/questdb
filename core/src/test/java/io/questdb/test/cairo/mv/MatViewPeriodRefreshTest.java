@@ -152,6 +152,37 @@ public class MatViewPeriodRefreshTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDeferredViewStaysEmptyUntilBaseCommit() throws Exception {
+        assertMemoryLeak(() -> {
+            currentMicros = parseFloorPartialTimestamp("2022-01-02T10:30:00.000000Z");
+            createBaseTable("base");
+            execute("insert into base values (1, '2022-01-02T08:15'), (2, '2022-01-02T09:15')");
+            drainWalQueue();
+            execute("create materialized view mv refresh immediate deferred period (length 1h) as " + viewSql("base", "1h"));
+            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+            // DEFERRED leaves the view unbuilt until the next base commit, and the period timer firing for the
+            // periods that completed by now does not build it either
+            drain(timerJob);
+            assertView("mv", "min_v\tmax_v\tts\n");
+            assertQuery("select refresh_base_table_txn from materialized_views where view_name = 'mv'")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("refresh_base_table_txn\n-1\n");
+            // the commit builds it from the complete periods; the period of the 10:15 row ends at 11:00
+            execute("insert into base values (3, '2022-01-02T10:15')");
+            drain(timerJob);
+            assertView(
+                    "mv",
+                    """
+                            min_v\tmax_v\tts
+                            1\t1\t2022-01-02T08:00:00.000000Z
+                            2\t2\t2022-01-02T09:00:00.000000Z
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testDstEndAheadOfUtcRefreshesRowAtPeriodEnd() throws Exception {
         // DST ends in Europe/Berlin on 2022-10-30 at 01:00Z (03:00 CEST -> 02:00 CET), and the clock passes 02:00-03:00
         // local twice. At 00:30Z, the period [00:00Z, 01:00Z) has not ended yet.

@@ -26,7 +26,6 @@ package io.questdb.cutlass.http.processors;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TimestampDriver;
@@ -52,7 +51,6 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.SCSequence;
-import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.Decimals;
@@ -70,7 +68,6 @@ import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
-import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -96,6 +93,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     static final int QUERY_CONFIRMATION = QUERY_EMPTY_QUERY + 1; // 14
     static final int QUERY_INSERT_CONFIRMATION = QUERY_CONFIRMATION + 1; // 15
     static final int QUERY_UPDATE_CONFIRMATION = QUERY_INSERT_CONFIRMATION + 1; // 16
+    static final int QUERY_ERROR_SUFFIX = QUERY_UPDATE_CONFIRMATION + 1; // 17
+    static final int QUERY_RECORD_ERROR_SUFFIX = QUERY_ERROR_SUFFIX + 1; // 18
     private static final byte DEFAULT_API_VERSION = 1;
     private static final Log LOG = LogFactory.getLog(JsonQueryProcessorState.class);
     private final HttpResponseArrayWriteState arrayState = new HttpResponseArrayWriteState();
@@ -176,6 +175,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         resumeActions.extendAndSet(QUERY_CONFIRMATION, (response, _) -> onResumeConfirmation(response));
         resumeActions.extendAndSet(QUERY_INSERT_CONFIRMATION, (response, _) -> onResumeInsertConfirmation(response));
         resumeActions.extendAndSet(QUERY_UPDATE_CONFIRMATION, (response, _) -> onResumeUpdateConfirmation(response));
+        resumeActions.extendAndSet(QUERY_ERROR_SUFFIX, (response, _) -> querySuffix(response));
+        resumeActions.extendAndSet(QUERY_RECORD_ERROR_SUFFIX, (response, _) -> querySuffix(response));
         this.nanosecondClock = nanosecondClock;
         this.statementTimeout = httpConnectionContext.getRequestHeader().getStatementTimeout();
         this.keepAliveHeader = keepAliveHeader;
@@ -1005,18 +1006,11 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             HttpChunkedResponse response,
             int columnCount
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        try {
-            do {
-                doQueryRecordPrefix(response);
-                doQueryRecord(response, columnCount);
-                doQueryRecordSuffix(response);
-            } while (doQueryNextRecord());
-        } catch (EntryUnavailableException | NoSpaceLeftInResponseBufferException e) {
-            throw e;
-        } catch (Throwable e) {
-            response.resetToBookmark();
-            throw e;
-        }
+        do {
+            doQueryRecordPrefix(response);
+            doQueryRecord(response, columnCount);
+            doQueryRecordSuffix(response);
+        } while (doQueryNextRecord());
         onResumeQuerySuffix(response, columnCount);
     }
 
@@ -1092,7 +1086,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             HttpChunkedResponse response,
             int columnCount
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        querySuffixWithError(response, 0, null, 0);
+        queryState = QUERY_SUFFIX;
+        querySuffix(response);
     }
 
     private void onResumeSendRecordsLoop(
@@ -1224,6 +1219,56 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         }
     }
 
+    private void querySuffix(HttpChunkedResponse response) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        // we no longer need cursor when we reached query suffix
+        // closing cursor here guarantees that by the time an http client finished reading response, the table
+        // is released
+        cursor = Misc.free(cursor);
+        NetworkSqlExecutionCircuitBreaker cb = httpConnectionContext.getCircuitBreaker();
+        if (cb != null) {
+            cb.clear();
+        }
+        if (count > -1) {
+            logTimings();
+            response.bookmark();
+            if (queryState == QUERY_RECORD_ERROR_SUFFIX) {
+                // closing the failed record to make the JSON response parsable
+                response.putAscii(']');
+            }
+            // always close the dataset
+            response.putAscii(']');
+            response.putAscii(',').putAsciiQuoted("count").putAscii(':').put(count);
+            if (queryState != QUERY_SUFFIX) {
+                response.putAscii(',')
+                        .putAsciiQuoted("error").putAscii(':')
+                        .putQuote().escapeJsonStr(errorMessage).putQuote()
+                        .putAscii(", \"errorPos\"").putAscii(':').put(errorPosition);
+            }
+            if (timings) {
+                response.putAscii(',').putAsciiQuoted("timings").putAscii(':')
+                        .putAscii('{')
+                        .putAsciiQuoted("authentication").putAscii(':').put(httpConnectionContext.getAuthenticationNanos()).putAscii(',')
+                        .putAsciiQuoted("compiler").putAscii(':').put(compilerNanos).putAscii(',')
+                        .putAsciiQuoted("execute").putAscii(':').put(nanosecondClock.getTicks() - executeStartNanos).putAscii(',')
+                        .putAsciiQuoted("count").putAscii(':').put(recordCountNanos).putAscii(',')
+                        .putAsciiQuoted("clientWait").putAscii(':').put(clientWaitAccumNanos)
+                        .putAscii('}');
+            }
+            if (explain) {
+                response.putAscii(',').putAsciiQuoted("explain").putAscii(':')
+                        .putAscii('{')
+                        .putAsciiQuoted("jitCompiled").putAscii(':').putAscii(Boolean.toString(queryJitCompiled))
+                        .putAscii('}');
+            }
+            response.putAscii('}');
+            count = -1;
+            counter.set(-1);
+            response.sendChunk(true);
+            return;
+        }
+        response.done();
+    }
+
     private void setupFirstRecord() {
         if (skip > 0) {
             final RecordCursor cursor = this.cursor;
@@ -1348,65 +1393,18 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         response.sendChunk(true);
     }
 
-    void querySuffixWithError(
-            HttpChunkedResponse response,
-            int code,
-            @Nullable CharSequence message,
-            int messagePosition
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        // we no longer need cursor when we reached query suffix
-        // closing cursor here guarantees that by the time an http client finished reading response, the table
-        // is released
-        cursor = Misc.free(cursor);
-        NetworkSqlExecutionCircuitBreaker cb = httpConnectionContext.getCircuitBreaker();
-        if (cb != null) {
-            cb.clear();
-        }
-        queryState = QUERY_SUFFIX;
-        if (count > -1) {
-            logTimings();
-            response.bookmark();
-            if (code > 0) {
-                // closing the failed record to make the JSON response parsable
-                response.putAscii(']');
-            }
-            // always close the dataset
-            response.putAscii(']');
-            response.putAscii(',').putAsciiQuoted("count").putAscii(':').put(count);
-            if (code > 0) {
-                response.putAscii(',')
-                        .putAsciiQuoted("error").putAscii(':')
-                        .putQuote().escapeJsonStr(message != null ? message : "Internal server error").putQuote()
-                        .putAscii(", \"errorPos\"").putAscii(':').put(messagePosition);
-            }
-            if (timings) {
-                response.putAscii(',').putAsciiQuoted("timings").putAscii(':')
-                        .putAscii('{')
-                        .putAsciiQuoted("authentication").putAscii(':').put(httpConnectionContext.getAuthenticationNanos()).putAscii(',')
-                        .putAsciiQuoted("compiler").putAscii(':').put(compilerNanos).putAscii(',')
-                        .putAsciiQuoted("execute").putAscii(':').put(nanosecondClock.getTicks() - executeStartNanos).putAscii(',')
-                        .putAsciiQuoted("count").putAscii(':').put(recordCountNanos).putAscii(',')
-                        .putAsciiQuoted("clientWait").putAscii(':').put(clientWaitAccumNanos)
-                        .putAscii('}');
-            }
-            if (explain) {
-                response.putAscii(',').putAsciiQuoted("explain").putAscii(':')
-                        .putAscii('{')
-                        .putAsciiQuoted("jitCompiled").putAscii(':').putAscii(Boolean.toString(queryJitCompiled))
-                        .putAscii('}');
-            }
-            response.putAscii('}');
-            count = -1;
-            counter.set(-1);
-            response.sendChunk(true);
-            return;
-        }
-        response.done();
-    }
-
     void resume(HttpChunkedResponse response)
             throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
-        resumeActions.getQuick(queryState).onResume(response, columnCount);
+        try {
+            resumeActions.getQuick(queryState).onResume(response, columnCount);
+        } catch (Throwable e) {
+            if (queryState == QUERY_RECORD || queryState == QUERY_RECORD_SUFFIX) {
+                // drops the partly written column, or the closing bracket of the record the cursor
+                // failed to move past, so the response ends inside the record the error suffix closes
+                response.resetToBookmark();
+            }
+            throw e;
+        }
     }
 
     void setQueryCacheable(boolean queryCacheable) {
@@ -1415,6 +1413,16 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     void storeBadUtf8() {
         queryState = QUERY_BAD_UTF8;
+    }
+
+    void storeQuerySuffixError(int errorPosition, CharSequence errorMessage) {
+        queryState = switch (queryState) {
+            case QUERY_RECORD, QUERY_RECORD_SUFFIX, QUERY_RECORD_ERROR_SUFFIX -> QUERY_RECORD_ERROR_SUFFIX;
+            default -> QUERY_ERROR_SUFFIX;
+        };
+        this.errorPosition = errorPosition;
+        this.errorMessage.clear();
+        this.errorMessage.put(errorMessage);
     }
 
     @FunctionalInterface

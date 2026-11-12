@@ -27,7 +27,6 @@ package io.questdb.cutlass.http.processors;
 import io.questdb.Metrics;
 import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.ImplicitCastException;
@@ -351,16 +350,18 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             try {
                 state.resumeSqlExecutionOwner();
                 doResumeSend(state, context);
-            } catch (CairoError e) {
+            } catch (CairoException e) {
                 internalError(
-                        HTTP_INTERNAL_ERROR,
+                        HTTP_BAD_REQUEST,
                         e,
                         state,
                         context.getMetrics()
                 );
-            } catch (CairoException e) {
+            } catch (PeerIsSlowToReadException | PeerDisconnectedException e) {
+                throw e;
+            } catch (Throwable e) {
                 internalError(
-                        HTTP_BAD_REQUEST,
+                        HTTP_INTERNAL_ERROR,
                         e,
                         state,
                         context.getMetrics()
@@ -981,7 +982,8 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
         final HttpConnectionContext context = state.getHttpConnectionContext();
         final HttpChunkedResponse response = context.getChunkedResponse();
         if (context.getLastRequestBytesSent() > 0) {
-            state.querySuffixWithError(response, code, message, position);
+            state.storeQuerySuffixError(position, message);
+            doResumeSend(state, context);
             return;
         }
         state.storeError(position, message);
