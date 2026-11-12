@@ -3524,10 +3524,7 @@ public class CheckpointTest extends AbstractCairoTest {
             TableToken tableToken = engine.verifyTableName("t_pi_parquet");
             String dbRoot = engine.getConfiguration().getDbRoot();
             File tableDir = new File(dbRoot, tableToken.getDirName());
-            File[] partDirs = tableDir.listFiles((_, n) -> n.startsWith("2024-01-01"));
-            Assert.assertNotNull("parquet partition dir missing", partDirs);
-            Assert.assertTrue("parquet partition dir missing", partDirs.length > 0);
-            File partDir = partDirs[0];
+            File partDir = findParquetPartitionDir(tableDir, "2024-01-01");
 
             File[] pciBefore = partDir.listFiles((_, n) -> n.startsWith("sym.pci"));
             Assert.assertNotNull("setup: sym.pci must exist after parquet conversion", pciBefore);
