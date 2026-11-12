@@ -59,7 +59,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
-import io.questdb.std.Files;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
@@ -2934,6 +2933,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
     private static class KeyOrderedRowChain implements QuietCloseable {
         // the first and the last record of a key, and the rows of the key the pass went over
         private static final int KEY_ENTRY_SIZE = 3;
+        private static final long MAX_PAGE_SIZE = 4096;
         private final DirectLongList keyEntries;
         // The memory of the chain grows by pages of this size, a power of two, so that it holds at least one.
         private final long pageSize;
@@ -2972,8 +2972,8 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
                 windowColumnTypes.add(metadata.getColumnType(i));
             }
             windowColumnTypes.add(ColumnType.LONG);
-            // the chain reserves the memory of a window up front, which pages of the OS page size round the least
-            pageSize = Numbers.ceilPow2(Math.min(configuration.getSqlSortValuePageSize(), Files.PAGE_SIZE));
+            // the chain reserves the memory of a window up front, which small pages round the least
+            pageSize = Numbers.ceilPow2(Math.min(configuration.getSqlSortValuePageSize(), MAX_PAGE_SIZE));
             final int maxPages = Math.clamp(configuration.getSqlSortValueMaxBytes() / pageSize, 1, Integer.MAX_VALUE);
             final String maxBytesKey = PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_BYTES.getPropertyPath();
             rows = new RecordChain(metadata, rowSink, pageSize, maxPages, maxBytesKey);
