@@ -571,7 +571,9 @@ public class TableReader implements Closeable, SymbolTableSource {
         return state != 0 ? PartitionFrameState.getParquetAddr(state) : parquetPartitions.getQuick(partitionIndex).addressOf(0);
     }
 
-    /** Returns the extent of the selected Parquet source, including remote sources without a local mapping. */
+    /**
+     * Returns the extent of the selected Parquet source, including remote sources without a local mapping.
+     */
     public long getParquetFileSize(int partitionIndex) {
         final long state = getOrOpenPartitionState(partitionIndex);
         if (state != 0) {

@@ -60,7 +60,9 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
-/** Tests TableReader's consumer contract; Rust catalog tests cover actual snapshot selection and pins. */
+/**
+ * Tests TableReader's consumer contract; Rust catalog tests cover actual snapshot selection and pins.
+ */
 public class TableReaderSourceTest extends AbstractCairoTest {
     @Test
     public void testNativeSourceBinding() throws Exception {

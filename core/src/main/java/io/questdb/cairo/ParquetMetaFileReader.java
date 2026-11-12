@@ -910,7 +910,9 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
         return resolveLastFooter(true);
     }
 
-    /** Resolves an explicitly selected metadata prefix, with optional CRC verification. */
+    /**
+     * Resolves an explicitly selected metadata prefix, with optional CRC verification.
+     */
     public boolean resolveLastFooter(boolean isVerifyChecksum) {
         final long addr = this.addr;
         final long currentSize = this.fileSize;
