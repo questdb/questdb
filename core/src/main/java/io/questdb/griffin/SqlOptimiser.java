@@ -6602,24 +6602,10 @@ public class SqlOptimiser implements Mutable {
         if (isLatestKeyLiteral(value)) {
             return true;
         }
-        if (!isBindAllowed || value == null || value.type != BIND_VARIABLE
-                || executionContext.getBindVariableService() == null) {
+        if (!isBindAllowed || value == null || value.type != BIND_VARIABLE) {
             return false;
         }
-        Function bind;
-        if (Chars.startsWith(value.token, ':')) {
-            bind = executionContext.getBindVariableService().getFunction(value.token);
-        } else {
-            try {
-                int index = Numbers.parseInt(value.token, 1, value.token.length());
-                if (index < 1) {
-                    return false;
-                }
-                bind = executionContext.getBindVariableService().getFunction(index - 1);
-            } catch (NumericException e) {
-                return false;
-            }
-        }
+        final Function bind = SqlUtil.getBindVariableFunction(executionContext.getBindVariableService(), value.token);
         if (bind == null || (bind.getType() != ColumnType.STRING && bind.getType() != ColumnType.VARCHAR)) {
             return false;
         }
@@ -15516,7 +15502,7 @@ public class SqlOptimiser implements Mutable {
                 if (!(func instanceof CharConstant)) {
                     value = func.getLong(null);
                 } else {
-                    long tmp = (byte) (func.getChar(null) - '0');
+                    long tmp = func.getChar(null) - '0';
                     value = tmp > -1 && tmp < 10 ? tmp : Numbers.LONG_NULL;
                 }
 
@@ -16404,7 +16390,7 @@ public class SqlOptimiser implements Mutable {
                 if (!(func instanceof CharConstant)) {
                     value = func.getLong(null);
                 } else {
-                    long tmp = (byte) (func.getChar(null) - '0');
+                    long tmp = func.getChar(null) - '0';
                     value = tmp > -1 && tmp < 10 ? tmp : Numbers.LONG_NULL;
                 }
 

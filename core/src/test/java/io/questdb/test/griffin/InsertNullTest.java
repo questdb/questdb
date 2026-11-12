@@ -30,6 +30,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -81,6 +82,54 @@ public class InsertNullTest extends AbstractCairoTest {
                 tearDown();
             }
         }
+    }
+
+    @Test
+    public void testInsertNullFromDistinctIntoColumnList() throws Exception {
+        // the column list puts the NULL column between columns of other types in the table, and the
+        // DISTINCT map record keeps no bytes for it
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE xx (c LONG, k INT, v INT, d DOUBLE)");
+            execute("INSERT INTO xx (v, k, c, d) SELECT DISTINCT x::INT, null, count(), null FROM long_sequence(3)");
+            assertQuery("xx ORDER BY v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            c\tk\tv\td
+                            1\tnull\t1\tnull
+                            1\tnull\t2\tnull
+                            1\tnull\t3\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testInsertNullFromDistinctOnDesignatedColumnMustFail() throws Exception {
+        _testInsertNullFromDistinctOnDesignatedColumnMustFail("TIMESTAMP", "", "2024-01-01T00:00:00.000000Z");
+    }
+
+    @Test
+    public void testInsertNullFromDistinctOnDesignatedNSColumnMustFail() throws Exception {
+        _testInsertNullFromDistinctOnDesignatedColumnMustFail("TIMESTAMP_NS", "", "2024-01-01T00:00:00.000000000Z");
+    }
+
+    @Test
+    public void testInsertNullFromDistinctOnDesignatedWalColumnMustFail() throws Exception {
+        _testInsertNullFromDistinctOnDesignatedColumnMustFail("TIMESTAMP", " WAL", "2024-01-01T00:00:00.000000Z");
+    }
+
+    @Test
+    public void testInsertNullFromEmptyDistinctOnDesignatedColumn() throws Exception {
+        // no row reaches the writer, so the NULL designated timestamp fails nothing
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE xx (sym SYMBOL, y TIMESTAMP, c LONG) TIMESTAMP(y) PARTITION BY DAY");
+            execute("INSERT INTO xx SELECT DISTINCT x::SYMBOL, null, count() FROM long_sequence(3) WHERE x < 0");
+            assertQuery("xx")
+                    .noLeakCheck()
+                    .timestamp("y")
+                    .expectSize()
+                    .returns("sym\ty\tc\n");
+        });
     }
 
     @Test
@@ -181,6 +230,32 @@ public class InsertNullTest extends AbstractCairoTest {
         return Chars.equalsLowerCaseAscii(type, "short") ||
                 Chars.equalsLowerCaseAscii(type, "byte") ||
                 Chars.equalsLowerCaseAscii(type, "boolean");
+    }
+
+    private void _testInsertNullFromDistinctOnDesignatedColumnMustFail(
+            String timestampType,
+            String walClause,
+            String expectedTimestamp
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE xx (sym SYMBOL, y " + timestampType + ", c LONG) TIMESTAMP(y) PARTITION BY DAY" + walClause);
+            // an aggregate keeps DISTINCT from turning into GROUP BY, so the INSERT reads the DISTINCT
+            // map record, which keeps no bytes for the NULL column
+            try {
+                execute("INSERT INTO xx SELECT DISTINCT 'AA', null, count() FROM long_sequence(3)");
+                Assert.fail();
+            } catch (CairoException expected) {
+                TestUtils.assertContains(expected.getFlyweightMessage(), "designated timestamp column cannot be NULL");
+            }
+            // the failed INSERT left the table empty and writable
+            execute("INSERT INTO xx VALUES ('BB', '2024-01-01', 1)");
+            drainWalQueue();
+            assertQuery("xx")
+                    .noLeakCheck()
+                    .timestamp("y")
+                    .expectSize()
+                    .returns("sym\ty\tc\nBB\t" + expectedTimestamp + "\t1\n");
+        });
     }
 
     private void _testInsertNullFromSelectOnDesignatedColumnMustFail(String timestampType) throws Exception {
