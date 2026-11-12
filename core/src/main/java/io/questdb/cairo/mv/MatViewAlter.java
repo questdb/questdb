@@ -159,7 +159,7 @@ public final class MatViewAlter {
             throw fullRefreshPending(viewToken, viewNamePosition);
         }
         final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
-        MatViewResume.lockView(viewState, circuitBreaker, viewToken, viewNamePosition);
+        MatViewResume.lockView(engine, viewState, circuitBreaker, viewToken, viewNamePosition);
         try {
             if (viewState.isPendingFullRefresh()) {
                 throw fullRefreshPending(viewToken, viewNamePosition);

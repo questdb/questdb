@@ -52,13 +52,13 @@ import java.util.concurrent.locks.Lock;
  * {@code executeFenced()} holds it for a re-executed prepared statement. The latch holder, a refresh that commits
  * under the latch, takes the same read lock through {@link MatViewCommitFence} on its own thread, and a role-switch
  * writer (a demote) that arrives first makes that read lock wait for the writer, which waits for the statement's read
- * hold. The three threads wait on each other until the statement's timer expires. These tests pin how the cycle
- * unwinds then: the statement refuses with "retry later" and writes nothing, its read hold goes away, the writer and
- * the latch holder proceed, and the view takes the statement once the latch is free. Each test plays the three roles
- * on three threads and orders them with latches; the statement's timer expires once the latch holder heads for the
- * fence behind the pending writer.
+ * hold. The statement stops waiting as soon as the writer waits for its read hold, or when its timer expires, which
+ * the latch holder requests once it heads for the fence behind the pending writer. These tests pin how the cycle
+ * unwinds: the statement refuses with "retry later" and writes nothing, its read hold goes away, the writer and the
+ * latch holder proceed, and the view takes the statement once the latch is free. Each test plays the three roles on
+ * three threads and orders them with latches.
  * <p>
- * The stall itself, on the real pg-wire path, is in {@code PGMatViewRoleSwitchTest}.
+ * The same race on the real pg-wire path, without a statement timeout, is in {@code PGMatViewRoleSwitchTest}.
  */
 public class MatViewRoleSwitchWaitTest extends AbstractCairoTest {
     private static final String ALTER_WITH_BASE_SQL = "ALTER MATERIALIZED VIEW price_1h WITH BASE base2 AS (SELECT ts, sym, last(price) AS price FROM base2 SAMPLE BY 1h)";
@@ -74,7 +74,7 @@ public class MatViewRoleSwitchWaitTest extends AbstractCairoTest {
             """;
 
     @Test
-    public void testBaseChangeHoldingReadLockRefusesAtTimeoutBehindPendingWriter() throws Exception {
+    public void testBaseChangeHoldingReadLockRefusesBehindPendingWriter() throws Exception {
         assertMemoryLeak(() -> {
             createBaseWithRefreshedView();
             createBase2();
@@ -102,7 +102,7 @@ public class MatViewRoleSwitchWaitTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testResumeHoldingReadLockRefusesAtTimeoutBehindPendingWriter() throws Exception {
+    public void testResumeHoldingReadLockRefusesBehindPendingWriter() throws Exception {
         assertMemoryLeak(() -> {
             createBaseWithRefreshedView();
             engine.getMatViewStateStore().enqueueInvalidate(viewToken(), "test invalidation");
@@ -270,7 +270,7 @@ public class MatViewRoleSwitchWaitTest extends AbstractCairoTest {
         if (error.get() != null) {
             throw new AssertionError(error.get());
         }
-        Assert.assertNotNull("the statement must refuse once its timer expires", refusal);
+        Assert.assertNotNull("the statement must refuse behind the pending writer", refusal);
         Assert.assertTrue("the role-switch writer must get through once the statement refused", isWriterLocked.get());
         Assert.assertTrue("the latch holder must get through the commit fence once the writer left", isFenceAcquired.get());
         Assert.assertFalse(state.isLocked());

@@ -65,6 +65,11 @@ import java.util.concurrent.atomic.AtomicReference;
  * symbol's base rows within the hour.
  */
 public class MatViewResumeTest extends AbstractCairoTest {
+    private static final String BARE_COUNT_VIEW_ROWS = """
+            ts\tsym\tcount\tprice
+            2024-01-01T00:00:00.000000Z\ta\t1\t1.0
+            2024-01-01T01:00:00.000000Z\tb\t1\t2.0
+            """;
     private static final String RESUME_SQL = "REFRESH MATERIALIZED VIEW price_1h RESUME SKIP BACKLOG";
     private static final int VIEW_NAME_POSITION = "REFRESH MATERIALIZED VIEW ".length();
     private static final String VIEW_ROWS = """
@@ -637,6 +642,316 @@ public class MatViewResumeTest extends AbstractCairoTest {
             drainWalAndMatViewQueues();
             assertViewStatus("valid", "");
             assertViewRows(VIEW_ROWS + "2024-01-01T03:00:00.000000Z\td\t4.0\n");
+        });
+    }
+
+    @Test
+    public void testResumeDropsEarlierGuardInvalidationOfChangeAppliedBeforeLatch() throws Exception {
+        // A bare-name guard invalidation that was pending when RESUME took the latch, as a FULL refresh that then failed
+        // leaves it, stands for a base column change, here the ADD COLUMN count that turns the bare count of the view's
+        // SQL from a call into a column. The change had applied when RESUME took the latch, so RESUME's compile, which
+        // reads bare names as columns, read count as the new column, as the view's refreshes do from then on: RESUME
+        // read past the invalidation, and the resumed view stays valid.
+        assertMemoryLeak(() -> {
+            createBase();
+            insertBaseRows();
+            createBareCountView();
+            invalidate("test invalidation");
+            execute("ALTER TABLE base ADD COLUMN count LONG");
+            drainWalQueue();
+            final TableToken baseToken = engine.verifyTableName("base");
+            // the base's insert is txn 1, the ADD COLUMN txn 2
+            Assert.assertEquals(2, appliedTxn(baseToken));
+            viewState().markAsPendingInvalidationForTesting(MatViewBareNameGuard.invalidationReason("count"), baseToken, 2, false);
+            Assert.assertTrue(viewState().hasPendingInvalidationBaseTableChangeForTesting());
+
+            assertResumeSucceeds();
+            Assert.assertFalse(viewState().hasPendingInvalidationReason());
+            Assert.assertFalse(viewState().hasPendingInvalidationBaseTableChangeForTesting());
+            drainWalAndMatViewQueues();
+            assertViewStatus("valid", "");
+            // the view follows the base and reads count as the column, a grouping key
+            execute("INSERT INTO base (sym, price, amount, ts, count) VALUES ('c', 3.0, 3.0, '2024-01-01T02:10:00.000000Z', 7)");
+            drainWalAndMatViewQueues();
+            assertViewStatus("valid", "");
+            assertViewRows(BARE_COUNT_VIEW_ROWS + "2024-01-01T02:00:00.000000Z\tc\t7\t3.0\n");
+        });
+    }
+
+    @Test
+    public void testResumeDropsEarlierGuardInvalidationOfReplacedBase() throws Exception {
+        // A bare-name guard invalidation that was pending when RESUME took the latch stands for a column change of a
+        // table that the view no longer follows: the base was dropped, and while RESUME holds the latch a new table
+        // takes its name, which RESUME positions the view on. RESUME read past the invalidation, whether or not the
+        // change applied, and the resumed view stays valid.
+        assertMemoryLeak(() -> {
+            createBaseWithRefreshedView("IMMEDIATE");
+            final TableToken oldBaseToken = engine.verifyTableName("base");
+            execute("DROP TABLE base");
+            drainWalAndMatViewQueues();
+            assertViewStatus("invalid", "base table is dropped or renamed");
+            // the dropped table applied its txn 1 only
+            viewState().markAsPendingInvalidationForTesting(MatViewBareNameGuard.invalidationReason("version"), oldBaseToken, 2, false);
+            viewState().setOnResumeHoldingLockForTesting(() -> {
+                try {
+                    createBase();
+                    execute("INSERT INTO base VALUES ('c', 3.0, 3.0, '2024-01-01T02:10:00.000000Z')");
+                    drainWalQueue();
+                } catch (SqlException e) {
+                    throw new RuntimeException(e);
+                }
+            });
+
+            assertResumeSucceeds();
+            Assert.assertFalse(viewState().hasPendingInvalidationReason());
+            drainWalAndMatViewQueues();
+            assertViewStatus("valid", "");
+            Assert.assertEquals(engine.verifyTableName("base").getTableId(), viewState().getBaseTableId());
+            execute("INSERT INTO base VALUES ('d', 4.0, 4.0, '2024-01-01T03:10:00.000000Z')");
+            drainWalAndMatViewQueues();
+            assertViewStatus("valid", "");
+            assertViewRows(VIEW_ROWS + "2024-01-01T03:00:00.000000Z\td\t4.0\n");
+        });
+    }
+
+    @Test
+    public void testResumeKeepsEarlierGuardInvalidationOfChangeNotAppliedAtLatch() throws Exception {
+        // A bare-name guard invalidation that was pending when RESUME took the latch stands for a DROP of the base
+        // column version, which the view's SQL reads bare. The guard publishes before the change applies, and here the
+        // DROP had not applied when RESUME took the latch, so RESUME's compile still read version as the column, while
+        // the view's refreshes read it as a call of version() once the DROP applies. The invalidation stays pending, and
+        // invalidates the resumed view again; the view keeps its rows.
+        assertMemoryLeak(() -> {
+            createBase();
+            execute("ALTER TABLE base ADD COLUMN version INT");
+            execute("""
+                    INSERT INTO base (sym, price, amount, version, ts) VALUES
+                    ('a', 1.0, 1.0, 1, '2024-01-01T00:10:00.000000Z'),
+                    ('b', 2.0, 2.0, 2, '2024-01-01T01:10:00.000000Z')
+                    """);
+            drainWalQueue();
+            execute("CREATE MATERIALIZED VIEW price_1h AS (SELECT ts, sym, version, last(price) AS price FROM base SAMPLE BY 1h) PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+            final String rows = """
+                    ts\tsym\tversion\tprice
+                    2024-01-01T00:00:00.000000Z\ta\t1\t1.0
+                    2024-01-01T01:00:00.000000Z\tb\t2\t2.0
+                    """;
+            assertViewRows(rows);
+            invalidate("test invalidation");
+            execute("ALTER TABLE base DROP COLUMN version");
+            final TableToken baseToken = engine.verifyTableName("base");
+            // the ADD COLUMN is txn 1, the insert txn 2 and the DROP, not applied yet, txn 3
+            Assert.assertEquals(2, appliedTxn(baseToken));
+            final String reason = MatViewBareNameGuard.invalidationReason("version");
+            viewState().markAsPendingInvalidationForTesting(reason, baseToken, 3, false);
+
+            execute(RESUME_SQL);
+            Assert.assertFalse(viewState().isInvalid());
+            Assert.assertEquals(reason, viewState().getPendingInvalidationReason());
+            Assert.assertEquals(3, viewState().getPendingInvalidationBaseTxnForTesting());
+            drainWalAndMatViewQueues();
+            assertViewStatus("invalid", reason);
+            Assert.assertFalse(viewState().hasPendingInvalidationReason());
+            assertViewRows(rows);
+        });
+    }
+
+    @Test
+    public void testResumeKeepsEarlierGuardInvalidationThroughFailedFull() throws Exception {
+        // A bare-name guard invalidation pending on an invalid view stays what it is while a FULL refresh is requested
+        // on top of it and then fails: the FULL's compile fails on a dropped base column, so the FULL consumes nothing,
+        // and its owner leaves the marker. The user re-adds the column and resumes the view. The change the guard
+        // invalidation stands for has not applied when RESUME takes the latch, so it stays pending and invalidates the
+        // resumed view again; the view keeps its rows throughout.
+        assertMemoryLeak(() -> {
+            createBaseWithRefreshedView("IMMEDIATE");
+            invalidate("test invalidation");
+            final TableToken baseToken = engine.verifyTableName("base");
+            // the insert is the base's txn 1; the DROP and ADD COLUMN below are txns 2 and 3, and the change of the
+            // guard invalidation txn 4, which has not applied when RESUME takes the latch
+            final String reason = MatViewBareNameGuard.invalidationReason("version");
+            viewState().markAsPendingInvalidationForTesting(reason, baseToken, 4, false);
+            execute("ALTER TABLE base DROP COLUMN price");
+            drainWalQueue();
+            // the refresh job publishes the FULL's owner on the guard invalidation's marker, and clears it once the
+            // FULL has failed
+            execute("REFRESH MATERIALIZED VIEW price_1h FULL");
+            drainMatViewQueue(engine);
+            Assert.assertFalse(viewState().hasPendingFullRefreshOwnerForTesting());
+            Assert.assertEquals(reason, viewState().getPendingInvalidationReason());
+            Assert.assertEquals(4, viewState().getPendingInvalidationBaseTxnForTesting());
+            drainWalAndMatViewQueues();
+            assertViewStatus("invalid", "[" + VIEW_SQL.indexOf("price") + "]: Invalid column: price");
+            assertViewRows(VIEW_ROWS);
+            execute("ALTER TABLE base ADD COLUMN price DOUBLE");
+            drainWalQueue();
+            Assert.assertEquals(3, appliedTxn(baseToken));
+
+            execute(RESUME_SQL);
+            Assert.assertFalse(viewState().isInvalid());
+            Assert.assertEquals(reason, viewState().getPendingInvalidationReason());
+            Assert.assertEquals(4, viewState().getPendingInvalidationBaseTxnForTesting());
+            drainWalAndMatViewQueues();
+            assertViewStatus("invalid", reason);
+            Assert.assertFalse(viewState().hasPendingInvalidationReason());
+            assertViewRows(VIEW_ROWS);
+        });
+    }
+
+    @Test
+    public void testResumeKeepsEarlierGuardInvalidationOfTableRenamedToBaseUnderLatch() throws Exception {
+        // A bare-name guard invalidation that was pending when RESUME took the latch stands for a column change of
+        // another table, which, while RESUME holds the latch, takes the base table's name after a drop of the base.
+        // RESUME positions the view on that table. The change's txn is below the transaction the dropped base had
+        // applied, but that transaction says nothing about the other table, so RESUME cannot tell that its compile saw
+        // the change: the invalidation stays pending. The drop's invalidation, delivered after RESUME, invalidates the
+        // view again.
+        assertMemoryLeak(() -> {
+            createBaseWithRefreshedView("IMMEDIATE");
+            execute("INSERT INTO base VALUES ('c', 3.0, 3.0, '2024-01-01T02:10:00.000000Z')");
+            execute("CREATE TABLE other (sym SYMBOL, price DOUBLE, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO other VALUES ('o', 9.0, 9.0, '2024-01-01T00:30:00.000000Z')");
+            drainWalAndMatViewQueues();
+            invalidate("test invalidation");
+            final TableToken baseToken = engine.verifyTableName("base");
+            final TableToken otherToken = engine.verifyTableName("other");
+            Assert.assertEquals(2, appliedTxn(baseToken));
+            Assert.assertEquals(1, appliedTxn(otherToken));
+            final String reason = MatViewBareNameGuard.invalidationReason("version");
+            viewState().markAsPendingInvalidationForTesting(reason, otherToken, 1, false);
+            viewState().setOnResumeHoldingLockForTesting(() -> {
+                try {
+                    execute("DROP TABLE base");
+                    execute("RENAME TABLE other TO base");
+                    drainWalQueue();
+                } catch (SqlException e) {
+                    throw new RuntimeException(e);
+                }
+            });
+
+            execute(RESUME_SQL);
+            Assert.assertFalse(viewState().isInvalid());
+            Assert.assertEquals(otherToken.getTableId(), viewState().getBaseTableId());
+            Assert.assertEquals(reason, viewState().getPendingInvalidationReason());
+            Assert.assertEquals(1, viewState().getPendingInvalidationBaseTxnForTesting());
+            drainWalAndMatViewQueues();
+            assertViewStatus("invalid", "base table is dropped or renamed");
+            Assert.assertFalse(viewState().hasPendingInvalidationReason());
+            assertViewRows(VIEW_ROWS + "2024-01-01T02:00:00.000000Z\tc\t3.0\n");
+        });
+    }
+
+    @Test
+    public void testResumeKeepsEarlierInvalidationThatLostItsBaseTableChange() throws Exception {
+        // A bare-name guard invalidation for a base column change that had applied, which RESUME would read past, merged
+        // with a later invalidation without a base table change before RESUME took the latch. The merge keeps the later
+        // reason and loses the change's table and txn, so RESUME cannot tell that its compile saw the change: the
+        // invalidation stays pending, and invalidates the resumed view again.
+        assertMemoryLeak(() -> {
+            createBaseWithRefreshedView("IMMEDIATE");
+            invalidate("test invalidation");
+            final TableToken baseToken = engine.verifyTableName("base");
+            Assert.assertEquals(1, appliedTxn(baseToken));
+            viewState().markAsPendingInvalidationForTesting(MatViewBareNameGuard.invalidationReason("version"), baseToken, 1, false);
+            Assert.assertTrue(viewState().hasPendingInvalidationBaseTableChangeForTesting());
+            viewState().markAsPendingInvalidation("forced invalidation");
+            Assert.assertNull(viewState().getPendingInvalidationBaseTableTokenForTesting());
+            Assert.assertTrue(viewState().hasPendingInvalidationBaseTableChangeForTesting());
+
+            execute(RESUME_SQL);
+            Assert.assertFalse(viewState().isInvalid());
+            Assert.assertEquals("forced invalidation", viewState().getPendingInvalidationReason());
+            drainWalAndMatViewQueues();
+            assertViewStatus("invalid", "forced invalidation");
+            Assert.assertFalse(viewState().hasPendingInvalidationReason());
+            assertViewRows(VIEW_ROWS);
+        });
+    }
+
+    @Test
+    public void testResumeKeepsInvalidationPublishedAfterEarlierOne() throws Exception {
+        // RESUME read past the invalidation that was pending when it took the latch, but not past one published while
+        // it holds the latch, which replaces the earlier one: the later invalidation stays pending, and invalidates
+        // the resumed view again.
+        assertMemoryLeak(() -> {
+            createBaseWithRefreshedView("IMMEDIATE");
+            invalidate("test invalidation");
+            viewState().markAsPendingInvalidation("earlier invalidation");
+            viewState().setOnResumeHoldingLockForTesting(() -> {
+                engine.getMatViewStateStore().enqueueInvalidate(viewToken(), "late invalidation");
+                drainMatViewQueue(engine);
+                Assert.assertEquals("late invalidation", viewState().getPendingInvalidationReason());
+                Assert.assertFalse(viewState().hasPendingInvalidationBaseTableChangeForTesting());
+            });
+
+            execute(RESUME_SQL);
+            Assert.assertFalse(viewState().isInvalid());
+            Assert.assertEquals("late invalidation", viewState().getPendingInvalidationReason());
+            drainWalAndMatViewQueues();
+            assertViewStatus("invalid", "late invalidation");
+            Assert.assertFalse(viewState().hasPendingInvalidationReason());
+            assertViewRows(VIEW_ROWS);
+        });
+    }
+
+    @Test
+    public void testResumeWaitingAgainForViewWalKeepsInvalidationForNextPass() throws Exception {
+        // An invalidation published while RESUME holds the latch stays pending when RESUME releases the latch to wait
+        // for a view WAL transaction that arrived meanwhile: RESUME's next pass takes the latch with it pending. Here
+        // it is one that RESUME cannot read past, a bare-name guard invalidation merged with a later one, so it
+        // invalidates the view again once RESUME's next pass has made the view valid.
+        assertMemoryLeak(() -> {
+            createBaseWithRefreshedView("IMMEDIATE");
+            invalidate("test invalidation");
+            final MatViewState state = viewState();
+            final TableToken baseToken = engine.verifyTableName("base");
+            final CountDownLatch applyGate = new CountDownLatch(1);
+            final AtomicReference<Throwable> applierError = new AtomicReference<>();
+            final Thread applier = new Thread(() -> {
+                try {
+                    applyGate.await();
+                    drainWalQueue();
+                } catch (Throwable th) {
+                    applierError.set(th);
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            });
+            final AtomicBoolean isReleasedForWait = new AtomicBoolean();
+            state.setOnResumeHoldingLockForTesting(() -> {
+                state.markAsPendingInvalidationForTesting(MatViewBareNameGuard.invalidationReason("version"), baseToken, 1, false);
+                state.markAsPendingInvalidation("late invalidation");
+                try {
+                    execute("ALTER MATERIALIZED VIEW price_1h ADD COLUMN extra DOUBLE");
+                } catch (SqlException e) {
+                    throw new RuntimeException(e);
+                }
+                // RESUME finds the view's new transaction unapplied and releases the latch to wait for it
+                state.setOnBeforeUnlockForTesting(() -> {
+                    isReleasedForWait.set(true);
+                    applyGate.countDown();
+                });
+            });
+            applier.start();
+            try {
+                execute(RESUME_SQL);
+            } finally {
+                applyGate.countDown();
+                applier.join();
+            }
+            Assert.assertNull(applierError.get());
+            Assert.assertTrue(isReleasedForWait.get());
+            Assert.assertFalse(state.isInvalid());
+            Assert.assertEquals("late invalidation", state.getPendingInvalidationReason());
+            drainWalAndMatViewQueues();
+            assertViewStatus("invalid", "late invalidation");
+            Assert.assertFalse(state.hasPendingInvalidationReason());
+            assertViewRows("""
+                    ts\tsym\tprice\textra
+                    2024-01-01T00:00:00.000000Z\ta\t1.0\tnull
+                    2024-01-01T01:00:00.000000Z\tb\t2.0\tnull
+                    """);
         });
     }
 
@@ -1481,6 +1796,11 @@ public class MatViewResumeTest extends AbstractCairoTest {
         };
     }
 
+    // The last sequencer txn that the table has applied.
+    private static long appliedTxn(TableToken tableToken) {
+        return engine.getTableSequencerAPI().getTxnTracker(tableToken).getWriterTxn();
+    }
+
     private void assertCacheEmpty() {
         final LongList intervals = viewState().getRefreshIntervals();
         Assert.assertEquals(0, intervals.size());
@@ -1521,6 +1841,19 @@ public class MatViewResumeTest extends AbstractCairoTest {
                 .noLeakCheck()
                 .noRandomAccess()
                 .returns("view_status\tinvalidation_reason\n" + status + "\t" + reason + "\n");
+    }
+
+    // A view, created before the explicit-name rule, whose SQL calls count without parentheses, refreshed from the
+    // base's two rows.
+    private void createBareCountView() throws Exception {
+        SqlParser.setMatViewExplicitNamesCheckSkipped(true);
+        try {
+            execute("CREATE MATERIALIZED VIEW price_1h AS (SELECT ts, sym, count, last(price) AS price FROM base SAMPLE BY 1h) PARTITION BY DAY");
+        } finally {
+            SqlParser.setMatViewExplicitNamesCheckSkipped(false);
+        }
+        drainWalAndMatViewQueues();
+        assertViewRows(BARE_COUNT_VIEW_ROWS);
     }
 
     private void createBase() throws SqlException {

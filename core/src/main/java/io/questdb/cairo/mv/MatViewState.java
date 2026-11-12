@@ -648,6 +648,7 @@ public class MatViewState implements QuietCloseable {
                     pending.reason,
                     pending.invalidationBaseTableToken,
                     pending.invalidationBaseTxn,
+                    pending.hasBaseTableChange,
                     pending.isInvalidationForced,
                     null
             )
@@ -986,6 +987,21 @@ public class MatViewState implements QuietCloseable {
     }
 
     /**
+     * Returns whether the marker's reason stands for a base table change, which a publication names with the base
+     * table's token and the change's sequencer txn, such as the bare-name guard's: true also when a merge with a
+     * publication of another or no provenance dropped the token and txn, see
+     * {@link #getPendingInvalidationBaseTableToken}.
+     */
+    boolean hasPendingInvalidationBaseTableChange(Object marker) {
+        return marker instanceof PendingInvalidation pending && pending.hasBaseTableChange;
+    }
+
+    @TestOnly
+    public boolean hasPendingInvalidationBaseTableChangeForTesting() {
+        return hasPendingInvalidationBaseTableChange(pendingInvalidationMarker);
+    }
+
+    /**
      * Returns true only when the pending marker carries an invalidation reason. The refresh and
      * WAL-purge gates use this reason-only view: a full-refresh-only marker must not freeze a
      * valid view's refreshes -- those refreshes' post-release finalize is the redelivery channel
@@ -1181,6 +1197,7 @@ public class MatViewState implements QuietCloseable {
                     pending.reason,
                     pending.invalidationBaseTableToken,
                     pending.invalidationBaseTxn,
+                    pending.hasBaseTableChange,
                     pending.isInvalidationForced,
                     fullRefreshOwner
             )
@@ -1226,8 +1243,13 @@ public class MatViewState implements QuietCloseable {
             TableToken combinedBaseTableToken = invalidationBaseTableToken;
             long combinedBaseTxn = invalidationBaseTxn;
             boolean isCombinedForced = isInvalidationForced;
+            // A publication that names a base table stands for a change of it. Sticky across merges: a merge with a
+            // publication of another or no provenance drops the token and txn, but RESUME must still tell that the
+            // reason may stand for a base table change, see hasPendingInvalidationBaseTableChange().
+            boolean hasCombinedBaseTableChange = invalidationBaseTableToken != null;
             if (pending != null && pending.reason != null) {
                 isCombinedForced |= pending.isInvalidationForced;
+                hasCombinedBaseTableChange |= pending.hasBaseTableChange;
                 if (combinedBaseTableToken == null
                         || combinedBaseTxn == Numbers.LONG_NULL
                         || pending.invalidationBaseTableToken == null
@@ -1246,6 +1268,7 @@ public class MatViewState implements QuietCloseable {
                     invalidationReason,
                     combinedBaseTableToken,
                     combinedBaseTxn,
+                    hasCombinedBaseTableChange,
                     isCombinedForced,
                     fullRefreshOwner
             );
@@ -1889,11 +1912,15 @@ public class MatViewState implements QuietCloseable {
 
     private static final class PendingInvalidation {
         private final Object fullRefreshOwner;
+        // Whether a reason publication merged into this marker carried a base table change, a base token and txn,
+        // also when the merge lost them.
+        private final boolean hasBaseTableChange;
         private final TableToken invalidationBaseTableToken;
         private final long invalidationBaseTxn;
         private final boolean isInvalidationForced;
         private final String reason;
 
+        // A marker without a base table change, such as one that carries a full refresh owner only.
         private PendingInvalidation(
                 String reason,
                 TableToken invalidationBaseTableToken,
@@ -1901,7 +1928,19 @@ public class MatViewState implements QuietCloseable {
                 boolean isInvalidationForced,
                 Object fullRefreshOwner
         ) {
+            this(reason, invalidationBaseTableToken, invalidationBaseTxn, false, isInvalidationForced, fullRefreshOwner);
+        }
+
+        private PendingInvalidation(
+                String reason,
+                TableToken invalidationBaseTableToken,
+                long invalidationBaseTxn,
+                boolean hasBaseTableChange,
+                boolean isInvalidationForced,
+                Object fullRefreshOwner
+        ) {
             this.fullRefreshOwner = fullRefreshOwner;
+            this.hasBaseTableChange = hasBaseTableChange;
             this.invalidationBaseTableToken = invalidationBaseTableToken;
             this.invalidationBaseTxn = invalidationBaseTxn;
             this.isInvalidationForced = isInvalidationForced;

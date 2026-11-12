@@ -3326,6 +3326,16 @@ public class CairoEngine implements Closeable, WriterSource {
         return configuration.isReadOnlyInstance();
     }
 
+    /**
+     * Returns true when the calling execution holds the role-switch read lock while a role switch, such as a demote,
+     * waits for the write lock. The role switch cannot proceed until that read hold goes away, and every fenced commit
+     * that starts meanwhile waits behind it, so a statement that waits under the read lock for something another thread
+     * produces stops waiting then: the other thread may itself wait for the role switch at the commit fence.
+     */
+    public boolean isRoleSwitchWaitingForCurrentReadHold() {
+        return roleSwitchLock.isWriterWaitingForCurrentReadHold();
+    }
+
     public final boolean isSqlExecutionCooperativePollingEnabled() {
         return isSqlExecutionCooperativePollingEnabled;
     }

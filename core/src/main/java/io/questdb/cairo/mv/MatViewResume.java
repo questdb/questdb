@@ -40,6 +40,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.LongList;
+import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -63,8 +64,9 @@ import org.jetbrains.annotations.Nullable;
  *     timeout, so that it can follow a view column change directly, and refuses a view whose WAL is suspended;</li>
  *     <li>it refuses at once while a FULL refresh is pending, which recovers the view itself; otherwise it takes the
  *     view latch, polling it within the statement timeout while another holder has it, and refuses with "retry
- *     later" only when the timeout expires first. Under the latch it refuses a FULL refresh that became pending
- *     meanwhile, and goes back to the wait when a view WAL transaction arrived after it;</li>
+ *     later" when the timeout expires first, or when a role switch waits for the role-switch read lock that the
+ *     statement holds. Under the latch it refuses a FULL refresh that became pending meanwhile, and goes back to the
+ *     wait when a view WAL transaction arrived after it;</li>
  *     <li>it compiles the view's SQL under the caller's security context, reading every bare name as a column, and
  *     checks the column mapping and casts;</li>
  *     <li>it resolves the base table by name, which must be a WAL table or a materialized view with the view's
@@ -79,7 +81,10 @@ import org.jetbrains.annotations.Nullable;
  * </ol>
  * While it holds the latch, the view counts as recovering, see {@link MatViewState#isResuming()}: an invalidation
  * that arrives meanwhile is kept, and invalidates the view again once RESUME has made it valid. A RESUME that refuses
- * drops those invalidations, since the view stays invalid.
+ * drops those invalidations, since the view stays invalid. An invalidation that was already pending when RESUME took
+ * the latch, which a FULL refresh or another refresh that failed and left the view invalid did not consume, is
+ * dropped once RESUME has made the view valid, as long as RESUME read past it: RESUME resolved the base table and
+ * compiled the view's SQL after it, unless it stands for a base table change that applied after the compile.
  */
 public final class MatViewResume {
     public static final String MODE_CATCH_UP = "catch-up";
@@ -125,7 +130,7 @@ public final class MatViewResume {
             if (viewState.isPendingFullRefresh()) {
                 throw fullRefreshPending(viewToken, viewNamePosition);
             }
-            lockView(viewState, circuitBreaker, viewToken, viewNamePosition);
+            lockView(engine, viewState, circuitBreaker, viewToken, viewNamePosition);
             if (resumeLocked(engine, executionContext, viewToken, viewState, viewSeqTracker, viewNamePosition, validator, isSkipBacklog)) {
                 return;
             }
@@ -165,6 +170,56 @@ public final class MatViewResume {
                 .put(" RESUME SKIP BACKLOG, then REFRESH ... RANGE over the gap");
     }
 
+    private static SqlException busy(TableToken viewToken, int viewNamePosition) {
+        return SqlException.$(viewNamePosition, "materialized view is busy, retry later [view=")
+                .put(viewToken.getTableName()).put(']');
+    }
+
+    // Consumes the invalidation that was pending when RESUME took the latch, once RESUME has made the view valid, when
+    // RESUME read past it. Such an invalidation reached the view while it was invalid: under a FULL refresh that then
+    // failed, under an earlier pass of RESUME that waited again for the view's WAL, or while another refresh that then
+    // failed held the latch. RESUME resolved the base table by name and compiled the view's SQL after its publication,
+    // so an invalidation without a base table change, such as a base table drop, says nothing that RESUME did not
+    // see, as for an invalidation published before a FULL refresh fixes its base reader. The bare-name guard publishes
+    // an invalidation for a base table change before the change applies, so RESUME read past it only when the change
+    // belongs to a table the view no longer follows, or had applied when RESUME took the latch, before its compile.
+    // Otherwise the change may switch a bare name after RESUME's compile, and the invalidation stays pending: the
+    // release of the latch invalidates the view again. An invalidation published from the latch on, which minted
+    // another marker, stays pending too.
+    private static void consumePriorInvalidation(
+            TableToken viewToken,
+            MatViewState viewState,
+            Object priorMarker,
+            TableToken baseTableToken,
+            int snapshotBaseTableId,
+            long snapshotBaseTableTxn
+    ) {
+        final String reason = viewState.getPendingInvalidationReason(priorMarker);
+        if (reason == null) {
+            return;
+        }
+        if (viewState.hasPendingInvalidationBaseTableChange(priorMarker)) {
+            final TableToken changedTableToken = viewState.getPendingInvalidationBaseTableToken(priorMarker);
+            // a merge with another publication lost the change's table and txn, so RESUME cannot tell that it saw it
+            if (changedTableToken == null) {
+                return;
+            }
+            // A change of the base table that RESUME positions the view on is one its compile saw when the table had
+            // the base table's name and had applied it when RESUME took the latch.
+            final int changedTableId = changedTableToken.getTableId();
+            if (changedTableId == baseTableToken.getTableId()
+                    && (changedTableId != snapshotBaseTableId
+                    || viewState.getPendingInvalidationBaseTxn(priorMarker) > snapshotBaseTableTxn)) {
+                return;
+            }
+        }
+        if (viewState.clearPendingInvalidation(priorMarker)) {
+            LOG.info().$("materialized view resumed past an earlier invalidation, dropping it [view=").$(viewToken)
+                    .$(", reason=").$safe(reason)
+                    .I$();
+        }
+    }
+
     // The cause of a lost backlog that RESUME SKIP BACKLOG reports in its telemetry event without a WAL scan: the
     // marker, or a condition that the view's state and the base table give away.
     private static @Nullable String findKnownLostCause(MatViewState viewState, TableToken baseTableToken, long baseTableTxn) {
@@ -177,6 +232,15 @@ public final class MatViewResume {
                 .put(viewToken.getTableName()).put(']');
     }
 
+    // The last sequencer txn that the WAL table has applied, a lower bound of what a compile that follows the call
+    // sees: below every txn for a table whose WAL apply this process has not tracked yet, and LONG_NULL for a missing
+    // table and for a table without a WAL, which RESUME refuses as a base table.
+    private static long getAppliedTxn(CairoEngine engine, @Nullable TableToken tableToken) {
+        return tableToken != null && tableToken.isWal()
+                ? engine.getTableSequencerAPI().getTxnTracker(tableToken).getWriterTxn()
+                : Numbers.LONG_NULL;
+    }
+
     private static boolean hasUnappliedViewWal(SeqTxnTracker viewSeqTracker) {
         return viewSeqTracker.getWriterTxn() < viewSeqTracker.getSeqTxn();
     }
@@ -185,7 +249,14 @@ public final class MatViewResume {
     // short, so RESUME polls the latch within the statement timeout instead of refusing a busy latch at once, and
     // refuses with "retry later" only when the timeout expires first. A cancelled statement stops. The base change of
     // ALTER MATERIALIZED VIEW ... WITH BASE takes the latch the same way, see MatViewAlter.
+    //
+    // pg-wire re-executes a prepared statement under the role-switch read lock (PGPipelineEntry.executeFenced()). A
+    // latch holder that commits takes that read lock at the commit fence on its own thread, which waits while a role
+    // switch, such as a demote, waits for the write lock, and the role switch waits for the statement's read hold. So
+    // the statement stops waiting with "retry later" as soon as a role switch waits for its read hold: neither the
+    // role switch nor the fenced commits queued behind it wait for the statement's timeout.
     static void lockView(
+            CairoEngine engine,
             MatViewState viewState,
             SqlExecutionCircuitBreaker circuitBreaker,
             TableToken viewToken,
@@ -196,12 +267,14 @@ public final class MatViewResume {
         }
         viewState.runResumeLatchBusySeamForTesting();
         while (!viewState.tryLock()) {
+            if (engine.isRoleSwitchWaitingForCurrentReadHold()) {
+                throw busy(viewToken, viewNamePosition);
+            }
             try {
                 circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
             } catch (CairoException e) {
                 if (e.getInterruptionReason() == SqlExecutionCircuitBreaker.STATE_TIMEOUT) {
-                    throw SqlException.$(viewNamePosition, "materialized view is busy, retry later [view=")
-                            .put(viewToken.getTableName()).put(']');
+                    throw busy(viewToken, viewNamePosition);
                 }
                 throw e;
             }
@@ -235,7 +308,19 @@ public final class MatViewResume {
             boolean isSkipBacklog
     ) throws SqlException {
         final MatViewStateStore stateStore = engine.getMatViewStateStore();
+        // The invalidation pending when RESUME takes the latch, which a resumed view consumes when RESUME read past it,
+        // see consumePriorInvalidation(). Each publication mints a new marker, so this identity never stands for an
+        // invalidation published from here on.
+        final Object priorMarker = viewState.getPendingInvalidationMarker();
+        // The table under the base table's name and the transaction it has applied by now, which RESUME's compile sees
+        // at least: a base table change of that table up to the transaction is one the compile saw.
+        final TableToken snapshotBaseTableToken = engine.getTableTokenIfExists(viewState.getViewDefinition().getBaseTableName());
+        final int snapshotBaseTableId = snapshotBaseTableToken != null ? snapshotBaseTableToken.getTableId() : MatViewState.BASE_TABLE_ID_UNKNOWN;
+        final long snapshotBaseTableTxn = getAppliedTxn(engine, snapshotBaseTableToken);
         boolean isResumed = false;
+        // Set when a view WAL transaction arrived after the wait: the statement waits again and takes the latch again,
+        // so the invalidations published meanwhile stay pending for it.
+        boolean isWaitingAgain = false;
         // From here on the view counts as recovering: an invalidation that arrives while RESUME holds the latch is
         // kept, so that it invalidates the view again once RESUME has made it valid.
         viewState.setResuming(true);
@@ -253,6 +338,7 @@ public final class MatViewResume {
             }
             if (hasUnappliedViewWal(viewSeqTracker)) {
                 LOG.info().$("materialized view WAL received a transaction, waiting for it again [view=").$(viewToken).I$();
+                isWaitingAgain = true;
                 return false;
             }
             final MatViewDefinition viewDefinition = viewState.getViewDefinition();
@@ -338,6 +424,7 @@ public final class MatViewResume {
                 );
                 viewState.resumeSuccess(refreshBaseTxn, periodHi, baseTableToken.getTableId(), isCatchUp, mode);
                 isResumed = true;
+                consumePriorInvalidation(viewToken, viewState, priorMarker, baseTableToken, snapshotBaseTableId, snapshotBaseTableTxn);
                 LOG.info().$("resumed materialized view [view=").$(viewToken)
                         .$(", baseTable=").$(baseTableToken)
                         .$(", refreshBaseTxn=").$(refreshBaseTxn)
@@ -346,7 +433,7 @@ public final class MatViewResume {
                         .I$();
             }
         } finally {
-            if (!isResumed && viewState.isInvalid()) {
+            if (!isResumed && !isWaitingAgain && viewState.isInvalid()) {
                 // The view stays invalid, so the invalidations published while RESUME held the latch have nothing to
                 // invalidate, as for any invalidation that reaches an invalid view.
                 viewState.clearPendingInvalidationReason();

@@ -109,8 +109,10 @@ public class MatViewConcurrentOperationsFuzzTest extends AbstractCairoTest {
             "table already exists",
             "table is dropped",
             "table name is reserved",
-            // an INSERT whose WAL writer opens the base while a DROP TABLE removes its files
+            // an INSERT whose WAL writer opens the base while a DROP TABLE removes its files: the _txn file, or the _cv
+            // file, which the WAL writer opens right after it to configure the base's symbol tables
             "could not open txn file",
+            "/_cv]",
             // view and base column DDL that another statement thread has already made, or made moot
             "already exists",
             "duplicate column",
@@ -130,6 +132,8 @@ public class MatViewConcurrentOperationsFuzzTest extends AbstractCairoTest {
     // Serializes the statements that change the base's columns or replace it with a DETACH and ATTACH pair and with
     // UPDATE.
     private final ReentrantLock baseLayoutLock = new ReentrantLock();
+    // Keeps TRUNCATE of the base out of a DETACH and ATTACH pair, see questdb/questdb#8355. Taken after baseLayoutLock.
+    private final ReentrantLock detachedPartitionLock = new ReentrantLock();
     // Whether the base table, since it was created, dropped a column or changed a column's type, which leaves a deleted
     // column whose name a live column may carry. Guarded by baseLayoutLock.
     private boolean hasDeletedBaseColumn;
@@ -189,26 +193,6 @@ public class MatViewConcurrentOperationsFuzzTest extends AbstractCairoTest {
     private static void drainAll() {
         for (int i = 0; i < 4; i++) {
             drainWalAndMatViewQueues();
-        }
-    }
-
-    // Skips the bug that MatViewResumeTest#testInvalidationKeptByFailedFullDoesNotInvalidateResumedView reproduces,
-    // until it is fixed: an invalidation that reaches the view while a refresh holds the latch stays pending when the
-    // refresh fails and leaves the view invalid, and it invalidates the view again once RESUME has made it valid,
-    // although RESUME read the base after it. With every thread stopped and the queues drained, a pending
-    // invalidation of an invalid view can only be such a leftover, so the final RESUME runs without it. Remove the
-    // skip with the fix.
-    private static void dropInvalidationLeftByFailedRefresh(MatViewState state) {
-        if (state.hasPendingInvalidationReason()) {
-            LOG.info().$("fuzz: dropping the invalidation a failed refresh left pending [reason=")
-                    .$(state.getPendingInvalidationReason())
-                    .I$();
-            Assert.assertTrue("view latch is held", state.tryLock());
-            try {
-                state.clearPendingInvalidationForTesting();
-            } finally {
-                state.unlock();
-            }
         }
     }
 
@@ -302,7 +286,6 @@ public class MatViewConcurrentOperationsFuzzTest extends AbstractCairoTest {
         drainAll();
         final MatViewState state = viewState("mv");
         if (state.isInvalid()) {
-            dropInvalidationLeftByFailedRefresh(state);
             engine.execute("REFRESH MATERIALIZED VIEW mv RESUME SKIP BACKLOG", context);
             drainAll();
         }
@@ -458,7 +441,21 @@ public class MatViewConcurrentOperationsFuzzTest extends AbstractCairoTest {
                 sql.put(rnd.nextBoolean() ? "ALTER MATERIALIZED VIEW mv DROP PARTITION LIST " : "ALTER MATERIALIZED VIEW mv DROP PARTITION WHERE ts < ");
                 appendDay(sql, rnd.nextInt(DAY_COUNT));
             }
-            case 16 -> sql.put("TRUNCATE TABLE base");
+            case 16 -> {
+                // Skips the sequence that questdb/questdb#8355 breaks until master fixes it: ATTACH PARTITION of a
+                // partition that DETACH PARTITION produced before a TRUNCATE reads a base column added after the
+                // partition was written as if the partition held it, and every refresh that reads the partition then
+                // fails. So TRUNCATE does not run between a DETACH and its ATTACH. Remove the lock with the fix.
+                sql.put("TRUNCATE TABLE base");
+                detachedPartitionLock.lock();
+                try {
+                    LOG.info().$("fuzz: ").$(sql).$();
+                    engine.execute(sql, context);
+                } finally {
+                    detachedPartitionLock.unlock();
+                }
+                return;
+            }
             case 17, 18 -> {
                 // DETACH and ATTACH of one day, with no base column change in between: ATTACH checks the partition's
                 // columns against the table's, and a mismatch suspends the base table's WAL
@@ -476,19 +473,24 @@ public class MatViewConcurrentOperationsFuzzTest extends AbstractCairoTest {
                         LOG.info().$("fuzz: skipping DETACH and ATTACH PARTITION after a base column was deleted, see questdb/questdb#8258").$();
                         return;
                     }
-                    sql.put("ALTER TABLE base DETACH PARTITION LIST ");
-                    appendDay(sql, day);
-                    LOG.info().$("fuzz: ").$(sql).$();
-                    engine.execute(sql, context);
-                    awaitBaseWalApplied();
-                    if (!makeAttachable(day)) {
-                        return;
+                    detachedPartitionLock.lock();
+                    try {
+                        sql.put("ALTER TABLE base DETACH PARTITION LIST ");
+                        appendDay(sql, day);
+                        LOG.info().$("fuzz: ").$(sql).$();
+                        engine.execute(sql, context);
+                        awaitBaseWalApplied();
+                        if (!makeAttachable(day)) {
+                            return;
+                        }
+                        sql.clear();
+                        sql.put("ALTER TABLE base ATTACH PARTITION LIST ");
+                        appendDay(sql, day);
+                        LOG.info().$("fuzz: ").$(sql).$();
+                        engine.execute(sql, context);
+                    } finally {
+                        detachedPartitionLock.unlock();
                     }
-                    sql.clear();
-                    sql.put("ALTER TABLE base ATTACH PARTITION LIST ");
-                    appendDay(sql, day);
-                    LOG.info().$("fuzz: ").$(sql).$();
-                    engine.execute(sql, context);
                 } finally {
                     baseLayoutLock.unlock();
                 }
@@ -500,9 +502,10 @@ public class MatViewConcurrentOperationsFuzzTest extends AbstractCairoTest {
                 appendDay(sql, day);
                 sql.put(" AND ts < ");
                 appendDay(sql, day + 1);
-                // An UPDATE that compiled before a concurrent DROP or RENAME COLUMN of qty commits and still reaches
-                // the base's WAL after it, and its apply then fails and suspends the base table's WAL, so base
-                // column changes do not race it.
+                // Skips the race that questdb/questdb#8351 breaks until master fixes it: an UPDATE that took its WAL
+                // writer before a concurrent DROP or RENAME COLUMN of qty commits still reaches the base's WAL after
+                // it, and its apply then fails and suspends the base table's WAL, so base column changes do not race
+                // it. Remove the serialization with the fix.
                 baseLayoutLock.lock();
                 try {
                     LOG.info().$("fuzz: ").$(sql).$();
