@@ -29,7 +29,8 @@ Only approve if the most recent `review-pr` report in this conversation has a
 verdict of **approve** or **approve with comments** with ZERO open Blocking
 findings (per the review-pr correctness gate). Deferred findings don't block:
 the PR ships with them, and Step 2b files them privately. If a Blocking finding
-is still open, do NOT approve — tell the user the PR does not meet the bar.
+is still open, do NOT approve — tell the user the PR does not meet the bar and
+suggest `/reject-pr`.
 
 - If no review report exists in this conversation, STOP and tell the user to run
   `/review-pr` first — do not approve unreviewed code.
