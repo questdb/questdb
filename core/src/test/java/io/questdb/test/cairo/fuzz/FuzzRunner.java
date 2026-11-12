@@ -2718,6 +2718,7 @@ public class FuzzRunner {
         } finally {
             Misc.freeObjList(readers);
             Path.clearThreadLocals();
+            Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
         }
     }
 
