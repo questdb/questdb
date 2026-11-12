@@ -2034,10 +2034,14 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                                 }
                                 // Filters observe cancellation at frame boundaries. Native frames absorb short
                                 // tails; Parquet uses one row group (the first DAY partition has 86,400 rows).
-                                // A parallel build lets every thread that filters a frame finish it.
+                                // A parallel build lets every thread that filters a frame finish it. The
+                                // bound counts from the moment cancel() returns: the OS may pause the
+                                // cancelling thread, and the other threads keep filtering until then.
                                 final int maxFrameRows = (storage == 0 ? 2 * frameRows : 86_400) * (isParallel ? WORKERS + 1 : 1);
-                                Assert.assertTrue("rejected rows must stop at the next frame boundary: " + hook.calls.get(),
-                                        hook.calls.get() >= 32 && hook.calls.get() <= maxFrameRows);
+                                final int callsAfterCancel = hook.calls.get() - hook.callsAtCancel.get();
+                                Assert.assertTrue("rejected rows must stop at the next frame boundary: " + hook.calls.get()
+                                                + ", after cancel: " + callsAfterCancel,
+                                        hook.calls.get() >= 32 && callsAfterCancel <= maxFrameRows);
                                 Assert.assertNull(sqlExecutionContext.getMemoryTracker());
                                 hook.cancel = null;
                                 hook.isBuildAccepted = true;
@@ -2687,6 +2691,8 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
         // isSymbolLookupCounted.
         final AtomicInteger buildKeyOfCalls = new AtomicInteger();
         final AtomicInteger calls = new AtomicInteger();
+        // The calls counted right after cancel() returned, so after the breaker trips.
+        final AtomicInteger callsAtCancel = new AtomicInteger();
         final AtomicInteger closed = new AtomicInteger();
         final AtomicInteger maxActive = new AtomicInteger();
         final AtomicInteger initCount = new AtomicInteger();
@@ -2769,6 +2775,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                 }
                 if (cancel != null && count == 32) {
                     cancel.cancel();
+                    callsAtCancel.set(calls.get());
                 }
                 if (reduceTracker != null && count == reduceLimitAt) {
                     mergeBytes = reduceTracker.getUsed();

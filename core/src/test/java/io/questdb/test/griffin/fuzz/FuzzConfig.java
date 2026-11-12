@@ -77,6 +77,10 @@ public final class FuzzConfig {
     // runs stay green instead of failing a working generator.
     private static final int DEFAULT_NUM_QUERIES = 1_000;
     private static final int MAX_SMALL_PAGE_FRAME_ROWS = 32;
+    // A SAMPLE BY FILL over a join, keyed on a column from each side, emits one row per pair
+    // of joined rows and bucket. On forConcurrency's tables that reaches tens of millions of
+    // rows, more than the sort budget and QueryRunner's text copies of the result can take.
+    private static final long MAX_JOIN_FILL_ROWS = 3_000_000;
 
     private final boolean isDiffFusedEnabled;
     private final boolean isDiffJitEnabled;
@@ -282,6 +286,19 @@ public final class FuzzConfig {
 
     public boolean isHorizonJoinEnabled() {
         return isHorizonJoinEnabled;
+    }
+
+    /**
+     * Whether a SAMPLE BY FILL at this interval over a join of two of this config's tables,
+     * keyed on a column from each side, can emit more than {@link #MAX_JOIN_FILL_ROWS} rows.
+     * The join keys sym and vk draw 8 values plus NULL with equal probability, and NULL keys
+     * match, so about a ninth of all row pairs join; an eighth leaves margin.
+     */
+    public boolean isJoinFillTooLarge(long intervalMicros) {
+        final long joinedRows = (long) rowsPerTable * rowsPerTable / 8;
+        // +2 for the partial buckets at both ends
+        final long buckets = (long) rowsPerTable * stepMicros / intervalMicros + 2;
+        return joinedRows * buckets > MAX_JOIN_FILL_ROWS;
     }
 
     public boolean isLatestOnEnabled() {

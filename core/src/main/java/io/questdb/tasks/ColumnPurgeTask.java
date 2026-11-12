@@ -188,4 +188,12 @@ public class ColumnPurgeTask implements Mutable {
         of(tableToken, columnName, tableId, truncateVersion, columnType, indexType, timestampType, partitionBy, updateTxn);
         this.updatedColumnInfo.add(columnVersions, columnVersionsLo, columnVersionsHi);
     }
+
+    /**
+     * Sets the txn before which a reader or a save point can still see the purged versions. The column purge job
+     * raises it for entries it located through a table snapshot, see ColumnPurgeJob.
+     */
+    public void setUpdateTxn(long updateTxn) {
+        this.updateTxn = updateTxn;
+    }
 }

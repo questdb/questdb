@@ -74,6 +74,7 @@ import io.questdb.griffin.engine.functions.columns.StrColumn;
 import io.questdb.griffin.engine.functions.columns.TimestampColumn;
 import io.questdb.griffin.engine.functions.columns.UuidColumn;
 import io.questdb.griffin.engine.functions.columns.VarcharColumn;
+import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.griffin.engine.functions.groupby.GroupingFunction;
 import io.questdb.griffin.engine.functions.groupby.SparklineGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.TwapGroupByFunction;
@@ -608,6 +609,9 @@ public class GroupByUtils {
                 break;
             case ColumnType.INTERVAL:
                 func = IntervalColumn.newInstance(keyColumnIndex - 1, type);
+                break;
+            case ColumnType.NULL:
+                func = NullConstant.NULL;
                 break;
             case ColumnType.ARRAY:
                 func = new ArrayColumn(keyColumnIndex - 1, type);

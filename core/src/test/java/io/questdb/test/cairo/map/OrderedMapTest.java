@@ -2086,6 +2086,66 @@ public class OrderedMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNullKeyMergeFixedSizeKey() throws Exception {
+        // An all-NULL key is zero bytes wide. A merge copies the entry into a map that lacks it
+        // and merges the values into the entry of a map that has it, as parallel GROUP BY does.
+        TestUtils.assertMemoryLeak(() -> {
+            final SingleColumnType keyTypes = new SingleColumnType(ColumnType.NULL);
+            final SingleColumnType valueTypes = new SingleColumnType(ColumnType.LONG);
+            try (
+                    OrderedMap dest = new OrderedMap(64, keyTypes, valueTypes, 16, 0.5, Integer.MAX_VALUE);
+                    OrderedMap src = new OrderedMap(64, keyTypes, valueTypes, 16, 0.5, Integer.MAX_VALUE)
+            ) {
+                src.withKey().createValue().putLong(0, 5);
+                dest.merge(src, new TestMapValueMergeFunction());
+                Assert.assertEquals(1, dest.size());
+                // a zero-byte key and an 8-byte value; a length header would make it 16
+                Assert.assertEquals(8, dest.getUsedHeapSize());
+                Assert.assertEquals(5, dest.withKey().findValue().getLong(0));
+
+                src.clear();
+                src.withKey().createValue().putLong(0, 7);
+                dest.merge(src, new TestMapValueMergeFunction());
+                Assert.assertEquals(1, dest.size());
+                Assert.assertEquals(8, dest.getUsedHeapSize());
+                Assert.assertEquals(12, dest.withKey().findValue().getLong(0));
+            }
+        });
+    }
+
+    @Test
+    public void testNullKeyUsesFixedSizeLayout() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final ArrayColumnTypes valueTypes = new ArrayColumnTypes()
+                    .add(ColumnType.LONG)
+                    .add(ColumnType.LONG);
+            try (
+                    OrderedMap map = new OrderedMap(
+                            17,
+                            new SingleColumnType(ColumnType.NULL),
+                            valueTypes,
+                            16,
+                            0.5,
+                            Integer.MAX_VALUE
+                    )
+            ) {
+                final MapKey key = map.withKey();
+                final MapValue value = key.createValue();
+                Assert.assertTrue(value.isNew());
+                Assert.assertEquals(16, map.getUsedHeapSize());
+
+                value.putLong(0, 42);
+                value.putLong(1, 84);
+
+                final MapValue existing = map.withKey().createValue();
+                Assert.assertFalse(existing.isNew());
+                Assert.assertEquals(42, existing.getLong(0));
+                Assert.assertEquals(84, existing.getLong(1));
+            }
+        });
+    }
+
+    @Test
     public void testProbeTreatsTopBitOffsetSlotAsOccupied() throws Exception {
         // A compressed offset with the top bit set is a legal, occupied slot: it encodes a heap
         // offset at or above 16GB. Testing emptiness as "raw > 0" instead of "raw != 0" reads such
