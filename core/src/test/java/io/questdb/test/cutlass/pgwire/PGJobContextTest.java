@@ -78,6 +78,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.crash.TruncateRepairTest;
 import io.questdb.test.cutlass.NetUtils;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -182,6 +183,8 @@ public class PGJobContextTest extends BasePGTest {
      * When set to true, tests or sections of tests that are don't work with the WAL are skipped.
      */
     private static final long DAY_MICROS = Micros.HOUR_MICROS * 24L;
+    private static final String INTERRUPTED_TRUNCATE_REFUSED = "could not complete interrupted TRUNCATE,"
+            + " there is an active query against 't' or a checkpoint is in progress. Try again.";
     private static final Log LOG = LogFactory.getLog(PGJobContextTest.class);
     private static final int count = 200;
     private static final String createDatesTblStmt = "create table xts as (select timestamp_sequence(0, 3600L * 1000 * 1000) ts from long_sequence(" + count + ")) timestamp(ts) partition by DAY";
@@ -6778,6 +6781,47 @@ nodejs code:
     }
 
     @Test
+    public void testInsertWaitsForPortalAfterInterruptedTruncate() throws Exception {
+        // A TRUNCATE of a non-partitioned table stopped after it armed _todo_. One connection reads the table through a
+        // portal that fetches a row at a time. A prepared INSERT on another connection would complete the TRUNCATE
+        // under the rows of the portal, so it fails while the portal is open, and its next execution succeeds. Simple
+        // query mode reads a result whole and keeps no portal open.
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
+            createInterruptedTruncateTable(connection);
+            try (
+                    Connection insertConnection = getConnection(mode, port, binary);
+                    PreparedStatement insert = insertConnection.prepareStatement("INSERT INTO t VALUES (?)")
+            ) {
+                insert.setLong(1, 4);
+                connection.setAutoCommit(false);
+                try (Statement query = connection.createStatement()) {
+                    query.setFetchSize(1);
+                    try (ResultSet rs = query.executeQuery("SELECT x FROM t")) {
+                        Assert.assertTrue(rs.next());
+                        Assert.assertEquals(1, rs.getLong(1));
+                        try {
+                            insert.execute();
+                            Assert.fail("the INSERT must wait for the portal");
+                        } catch (PSQLException e) {
+                            TestUtils.assertContains(e.getMessage(), INTERRUPTED_TRUNCATE_REFUSED);
+                        }
+                        // the portal reads its rows as they were
+                        Assert.assertTrue(rs.next());
+                        Assert.assertEquals(2, rs.getLong(1));
+                        Assert.assertTrue(rs.next());
+                        Assert.assertEquals(3, rs.getLong(1));
+                        Assert.assertFalse(rs.next());
+                    }
+                }
+                connection.commit();
+                connection.setAutoCommit(true);
+                insert.execute();
+            }
+            assertInterruptedTruncateCompleted(connection);
+        });
+    }
+
+    @Test
     public void testIntAndLongParametersWithoutExplicitParameterTypeButOneExplicitTextFormatHex() throws Exception {
         String script = """
                 >0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000
@@ -13032,6 +13076,14 @@ create table tab as (
         });
     }
 
+    // table t holds only the row the INSERT after the interrupted TRUNCATE wrote
+    private static void assertInterruptedTruncateCompleted(Connection connection) throws SQLException {
+        try (ResultSet rs = connection.prepareStatement("SELECT x FROM t").executeQuery()) {
+            assertResultSet("x[BIGINT]\n4\n", new StringSink(), rs);
+        }
+        Assert.assertEquals("count of the _todo_ entry", 0, TruncateRepairTest.readTodoCount(engine, "t"));
+    }
+
     private static void consume(ResultSet stmt) throws SQLException {
         int count = 0;
         try (ResultSet ignore = stmt) {
@@ -13041,6 +13093,15 @@ create table tab as (
             }
         }
         Assert.assertTrue(count > 0);
+    }
+
+    // table t with the rows 1, 2 and 3, and the _todo_ entry of a TRUNCATE that stopped after it armed the entry
+    private static void createInterruptedTruncateTable(Connection connection) throws SQLException {
+        try (Statement statement = connection.createStatement()) {
+            statement.execute("CREATE TABLE t (x LONG)");
+            statement.execute("INSERT INTO t VALUES (1), (2), (3)");
+        }
+        TruncateRepairTest.armInterruptedTruncate(engine, "t", false);
     }
 
     private static int executeAndCancelQuery(PgConnection connection) throws SQLException, InterruptedException {

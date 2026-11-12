@@ -31,6 +31,7 @@ import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.DefaultLifecycleManager;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
@@ -45,9 +46,11 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.wal.MetadataService;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Chars;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
@@ -56,6 +59,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestFilesFacade;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -917,6 +921,134 @@ public class WriterPoolTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFailedOpenThenHeldWriterSurvivesReleaseAll() throws Exception {
+        // A writer open fails, and the next open in the same pool entry succeeds. Releasing every writer while that one
+        // is held, as a role switch drain does, keeps its entry: the writer goes back to the pool when it closes.
+        final WriterOpenFailingFacade ff = new WriterOpenFailingFacade(zTableToken);
+        final CairoConfiguration configuration = productionTtlConfiguration(ff);
+        assertWithPool(pool -> {
+            failWriterOpen(pool, ff);
+            final TableWriter writer = pool.get(zTableToken, "testing");
+            pool.releaseAll();
+            Assert.assertEquals(1, pool.size());
+            appendRow(writer, 1);
+            writer.close();
+            Assert.assertEquals(0, pool.getBusyCount());
+            pool.releaseAll();
+            Assert.assertEquals(0, pool.size());
+            // no writer left outside the pool holds the table lock
+            newOffPoolWriter(configuration, "z").close();
+        }, configuration);
+    }
+
+    @Test
+    public void testFailedOpenThenIdleWriterSurvivesReaper() throws Exception {
+        // A writer open fails, and the next open in the same pool entry succeeds. That writer goes back to the pool
+        // idle, and the reaper keeps it until it expires, as any other idle writer: with the production TTL, past this
+        // pass.
+        final WriterOpenFailingFacade ff = new WriterOpenFailingFacade(zTableToken);
+        final CairoConfiguration configuration = productionTtlConfiguration(ff);
+        assertWithPool(pool -> {
+            failWriterOpen(pool, ff);
+            final TableWriter writer = pool.get(zTableToken, "testing");
+            appendRow(writer, 1);
+            writer.close();
+            pool.releaseInactive();
+            Assert.assertEquals(1, pool.size());
+            try (TableWriter pooled = pool.get(zTableToken, "testing")) {
+                Assert.assertSame(writer, pooled);
+            }
+            pool.releaseAll();
+            Assert.assertEquals(0, pool.size());
+            // no writer left outside the pool holds the table lock
+            newOffPoolWriter(configuration, "z").close();
+        }, configuration);
+    }
+
+    @Test
+    public void testFailedOpensUnderConcurrentReaper() throws Exception {
+        // Writer opens fail at random while three threads take the writer, append a row and return it, and a fourth
+        // thread runs the reaper, which now and then releases every writer as well. Every open that fails must be one
+        // the facade failed, and no writer may be left outside the pool.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        final WriterOpenFailingFacade ff = new WriterOpenFailingFacade(zTableToken);
+        ff.rnd = rnd;
+        final CairoConfiguration configuration = productionTtlConfiguration(ff);
+        assertWithPool(pool -> {
+            final int writerThreadCount = 3;
+            final int iterations = 500;
+            final AtomicInteger appends = new AtomicInteger();
+            final AtomicInteger failedOpens = new AtomicInteger();
+            final AtomicInteger runningWriterThreads = new AtomicInteger(writerThreadCount);
+            final AtomicReference<Throwable> error = new AtomicReference<>();
+            final CyclicBarrier start = new CyclicBarrier(writerThreadCount + 1);
+            final ObjList<Thread> threads = new ObjList<>();
+            for (int t = 0; t < writerThreadCount; t++) {
+                threads.add(new Thread(() -> {
+                    try {
+                        start.await();
+                        for (int i = 0; i < iterations; i++) {
+                            try (TableWriter writer = pool.get(zTableToken, "testing")) {
+                                appendRow(writer, i);
+                                appends.incrementAndGet();
+                            } catch (EntryUnavailableException ignore) {
+                                // a sibling holds the writer
+                            } catch (CairoException e) {
+                                if (!Chars.contains(e.getFlyweightMessage(), "cannot lock table: ")) {
+                                    throw e;
+                                }
+                                failedOpens.incrementAndGet();
+                            }
+                        }
+                    } catch (Throwable th) {
+                        error.compareAndSet(null, th);
+                    } finally {
+                        runningWriterThreads.decrementAndGet();
+                        Path.clearThreadLocals();
+                    }
+                }));
+            }
+            threads.add(new Thread(() -> {
+                try {
+                    start.await();
+                    for (int pass = 1; runningWriterThreads.get() > 0; pass++) {
+                        if (pass % 16 == 0) {
+                            pool.releaseAll();
+                        } else {
+                            pool.releaseInactive();
+                        }
+                    }
+                } catch (Throwable th) {
+                    error.compareAndSet(null, th);
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            }));
+            for (int i = 0, n = threads.size(); i < n; i++) {
+                threads.getQuick(i).start();
+            }
+            for (int i = 0, n = threads.size(); i < n; i++) {
+                threads.getQuick(i).join();
+            }
+            // the opens below must not fail
+            ff.rnd = null;
+            if (error.get() != null) {
+                throw new AssertionError("a pool thread failed", error.get());
+            }
+            Assert.assertEquals(0, pool.getBusyCount());
+            Assert.assertTrue("no writer open failed", ff.getFailedOpenCount() > 0);
+            Assert.assertEquals("failed writer opens", ff.getFailedOpenCount(), failedOpens.get());
+            pool.releaseAll();
+            Assert.assertEquals(0, pool.size());
+            // no writer left outside the pool holds the table lock
+            newOffPoolWriter(configuration, "z").close();
+            try (TableReader reader = newOffPoolReader(configuration, "z")) {
+                Assert.assertEquals(appends.get(), reader.size());
+            }
+        }, configuration);
+    }
+
+    @Test
     public void testGetAfterPoolClosedReturnDoesNotSpin() throws Exception {
         // returnToPool's pool-closed re-grab (the EV_OUT_OF_POOL_CLOSE branch) CASes the entry back to a
         // positive owner id and returns false. Nothing releases or re-stamps that entry afterwards:
@@ -1386,6 +1518,32 @@ public class WriterPoolTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReaperDuringOpenAfterFailedOpenKeepsEntry() throws Exception {
+        // A writer open fails, and the reaper runs while the next open builds a writer in the same pool entry: the
+        // reaper leaves the entry to the open, and the writer goes back to the pool when it closes.
+        final WriterOpenFailingFacade ff = new WriterOpenFailingFacade(zTableToken);
+        final CairoConfiguration configuration = productionTtlConfiguration(ff);
+        assertWithPool(pool -> {
+            failWriterOpen(pool, ff);
+            final AtomicInteger reaperRuns = new AtomicInteger();
+            ff.todoOpenListener = () -> {
+                pool.releaseInactive();
+                reaperRuns.incrementAndGet();
+            };
+            try (TableWriter writer = pool.get(zTableToken, "testing")) {
+                Assert.assertEquals("reaper runs during the open", 1, reaperRuns.get());
+                Assert.assertEquals(1, pool.size());
+                appendRow(writer, 1);
+            }
+            Assert.assertEquals(0, pool.getBusyCount());
+            pool.releaseAll();
+            Assert.assertEquals(0, pool.size());
+            // no writer left outside the pool holds the table lock
+            newOffPoolWriter(configuration, "z").close();
+        }, configuration);
+    }
+
+    @Test
     public void testReplaceWriterAfterUnlock() throws Exception {
         assertWithPool(pool -> {
             String x = "x";
@@ -1423,6 +1581,32 @@ public class WriterPoolTest extends AbstractCairoTest {
             Assert.assertSame(writer, pool.get(tableToken, "testing"));
             writer.close();
         });
+    }
+
+    @Test
+    public void testSecondGetOfHeldWriterAfterFailedOpenIsBusy() throws Exception {
+        // A writer open fails, and the next open in the same pool entry succeeds. Asked for the writer again, the pool
+        // tells its holder that the writer is busy, as for any held writer.
+        final WriterOpenFailingFacade ff = new WriterOpenFailingFacade(zTableToken);
+        final CairoConfiguration configuration = productionTtlConfiguration(ff);
+        assertWithPool(pool -> {
+            failWriterOpen(pool, ff);
+            try (TableWriter writer = pool.get(zTableToken, "testing")) {
+                try {
+                    pool.get(zTableToken, "testing again");
+                    Assert.fail("the writer is held");
+                } catch (EntryUnavailableException e) {
+                    TestUtils.assertEquals("table busy [reason=testing]", e.getFlyweightMessage());
+                }
+                Assert.assertEquals(1, pool.size());
+                appendRow(writer, 1);
+            }
+            Assert.assertEquals(0, pool.getBusyCount());
+            pool.releaseAll();
+            Assert.assertEquals(0, pool.size());
+            // no writer left outside the pool holds the table lock
+            newOffPoolWriter(configuration, "z").close();
+        }, configuration);
     }
 
     @Test
@@ -1841,6 +2025,28 @@ public class WriterPoolTest extends AbstractCairoTest {
         });
     }
 
+    private static void appendRow(TableWriter writer, long value) {
+        final TableWriter.Row row = writer.newRow();
+        row.putDate(0, value);
+        row.append();
+        writer.commit();
+    }
+
+    // the configuration of the tests, with the facade and the writer TTL of production, 10 minutes
+    private static CairoConfiguration productionTtlConfiguration(FilesFacade ff) {
+        return new DefaultTestCairoConfiguration(root) {
+            @Override
+            public @NotNull FilesFacade getFilesFacade() {
+                return ff;
+            }
+
+            @Override
+            public long getInactiveWriterTTL() {
+                return 600_000;
+            }
+        };
+    }
+
     private void assertWithPool(PoolAwareCode code, CairoConfiguration configuration) throws Exception {
         assertMemoryLeak(() -> {
             try (WriterPool pool = new WriterPool(configuration, engine, engine.getRecentWriteTracker())) {
@@ -1853,6 +2059,20 @@ public class WriterPoolTest extends AbstractCairoTest {
         assertWithPool(code, configuration);
     }
 
+    // a writer open of z that fails as when another process holds the table lock, and leaves its pool entry free
+    private void failWriterOpen(WriterPool pool, WriterOpenFailingFacade ff) {
+        ff.isLockOpenFailureArmed = true;
+        try {
+            pool.get(zTableToken, "testing").close();
+            Assert.fail("the writer open must fail");
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "cannot lock table: ");
+        }
+        Assert.assertEquals(1, ff.getFailedOpenCount());
+        Assert.assertEquals(1, pool.size());
+        Assert.assertEquals(0, pool.getBusyCount());
+    }
+
     private void populate(TableWriter w) {
         long start = w.getMaxTimestamp();
         for (int i = 0; i < 1000; i++) {
@@ -1863,6 +2083,58 @@ public class WriterPoolTest extends AbstractCairoTest {
 
     private interface PoolAwareCode {
         void run(WriterPool pool) throws Exception;
+    }
+
+    /**
+     * Fails the open of a table's .lock file, as when another process holds the table: once while armed, and at random
+     * with a seeded generator when it has one. Runs a listener once when the _todo_ file of the table opens, which a
+     * writer open does.
+     */
+    private static class WriterOpenFailingFacade extends TestFilesFacadeImpl {
+        private final String lockFileSuffix;
+        private final String todoFileSuffix;
+        volatile boolean isLockOpenFailureArmed;
+        volatile Rnd rnd;
+        volatile Runnable todoOpenListener;
+        private int failedOpenCount;
+
+        WriterOpenFailingFacade(TableToken tableToken) {
+            this.lockFileSuffix = Files.SEPARATOR + tableToken.getDirName() + ".lock";
+            this.todoFileSuffix = Files.SEPARATOR + tableToken.getDirName()
+                    + Files.SEPARATOR + TableUtils.TODO_FILE_NAME;
+        }
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            final Runnable listener = todoOpenListener;
+            if (listener != null && Utf8s.endsWithAscii(name, todoFileSuffix)) {
+                todoOpenListener = null;
+                listener.run();
+            }
+            return super.openRW(name, opts);
+        }
+
+        @Override
+        public long openRWNoCache(LPSZ name, int opts) {
+            if (Utf8s.endsWithAscii(name, lockFileSuffix) && isLockOpenFailing()) {
+                return -1;
+            }
+            return super.openRWNoCache(name, opts);
+        }
+
+        synchronized int getFailedOpenCount() {
+            return failedOpenCount;
+        }
+
+        private synchronized boolean isLockOpenFailing() {
+            final Rnd rnd = this.rnd;
+            if (isLockOpenFailureArmed || (rnd != null && rnd.nextInt(4) == 0)) {
+                isLockOpenFailureArmed = false;
+                failedOpenCount++;
+                return true;
+            }
+            return false;
+        }
     }
 
     // Minimal non-structural async command for the publish-vs-close tests. With latches it

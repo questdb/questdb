@@ -35,6 +35,8 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.line.udp.DefaultLineUdpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.LineUdpLexer;
 import io.questdb.cutlass.line.udp.LineUdpParserImpl;
@@ -54,6 +56,7 @@ import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestFilesFacade;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
+import io.questdb.test.cairo.crash.TruncateRepairTest;
 import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestMicroClock;
 import io.questdb.test.tools.TestUtils;
@@ -1004,6 +1007,60 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 """;
 
         assertMultiTable(expected1, expected2, lines);
+    }
+
+    @Test
+    public void testUdpLineWaitsForQueryAfterInterruptedTruncate() throws Exception {
+        // A TRUNCATE of a non-partitioned table stopped after it armed _todo_. A line that arrives while a query reads
+        // the table would complete the TRUNCATE in the writer open under the query: the parser skips the line, as on
+        // any failed writer open, and the query reads its rows. Once the query is closed, the same line, sent again,
+        // completes the TRUNCATE and lands.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY NONE BYPASS WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                        (1, '2024-01-01T00:00:00.000000Z'),
+                        (2, '2024-01-02T00:00:00.000000Z'),
+                        (3, '2024-01-03T00:00:00.000000Z')""");
+            TruncateRepairTest.armInterruptedTruncate(engine, "t", false);
+            try (
+                    LineUdpParserImpl parser = new LineUdpParserImpl(engine, new DefaultLineUdpReceiverConfiguration());
+                    LineUdpLexer lexer = new LineUdpLexer(4096)
+            ) {
+                lexer.withParser(parser);
+                try (
+                        RecordCursorFactory factory = select("SELECT * FROM t");
+                        RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+                ) {
+                    parseDatagram(lexer, "t x=4i 1704326400000000000\n");
+                    lexer.parseLast();
+                    parser.commitAll();
+                    Assert.assertEquals("count of the _todo_ entry", 1, TruncateRepairTest.readTodoCount(engine, "t"));
+                    sink.clear();
+                    TestUtils.assertCursor(
+                            """
+                                    x\tts
+                                    1\t2024-01-01T00:00:00.000000Z
+                                    2\t2024-01-02T00:00:00.000000Z
+                                    3\t2024-01-03T00:00:00.000000Z
+                                    """,
+                            cursor,
+                            factory.getMetadata(),
+                            true,
+                            sink
+                    );
+                }
+                parseDatagram(lexer, "t x=4i 1704326400000000000\n");
+                lexer.parseLast();
+                parser.commitAll();
+            }
+            Assert.assertEquals("count of the _todo_ entry", 0, TruncateRepairTest.readTodoCount(engine, "t"));
+            assertQuery("SELECT * FROM t")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("x\tts\n4\t2024-01-04T00:00:00.000000Z\n");
+        });
     }
 
     @Test

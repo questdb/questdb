@@ -136,6 +136,7 @@ import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestRecord;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
+import io.questdb.test.cairo.crash.TruncateRepairTest;
 import io.questdb.test.cutlass.NetUtils;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -161,6 +162,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.LockSupport;
+import java.util.regex.Pattern;
 
 import static io.questdb.test.cutlass.http.HttpUtils.urlEncodeQuery;
 import static io.questdb.test.tools.TestUtils.assertEventually;
@@ -2727,6 +2729,96 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testImportWaitsForQueryAfterInterruptedTruncate() throws Exception {
+        // A TRUNCATE of a non-partitioned table stopped after it armed _todo_. An import into the table while a query
+        // reads it would complete the TRUNCATE under the query, so it fails, and succeeds once the query is closed.
+        final String request = """
+                POST /upload?name=t HTTP/1.1\r
+                Host: localhost:9000\r
+                User-Agent: curl/7.71.1\r
+                Accept: */*\r
+                Content-Length: 156\r
+                Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryOsOAD9cPKyHuxyBV\r
+                \r
+                ------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r
+                Content-Disposition: form-data; name="data"\r
+                \r
+                x,y\r
+                4,40\r
+                5,50\r
+                6,60\r
+                \r
+                ------WebKitFormBoundaryOsOAD9cPKyHuxyBV--""";
+        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(2).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withNetwork(NetworkFacadeImpl.INSTANCE).withDumpingTraffic(false).withAllowDeflateBeforeSend(false).withHttpProtocolVersion("HTTP/1.1 ").withServerKeepAlive(true)).run((engine, _) -> {
+            try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                engine.execute("CREATE TABLE t (x LONG, y LONG)", executionContext);
+                engine.execute("INSERT INTO t VALUES (1, 10), (2, 20), (3, 30)", executionContext);
+                TruncateRepairTest.armInterruptedTruncate(engine, "t", false);
+                try (
+                        RecordCursorFactory factory = engine.select("SELECT * FROM t", executionContext);
+                        RecordCursor cursor = factory.getCursor(executionContext)
+                ) {
+                    sendAndReceive(NetworkFacadeImpl.INSTANCE, request, """
+                            HTTP/1.1 200 OK\r
+                            Server: questDB/1.0\r
+                            Date: Thu, 1 Jan 1970 00:00:00 GMT\r
+                            Transfer-Encoding: chunked\r
+                            Content-Type: text/plain; charset=utf-8\r
+                            \r
+                            78\r
+                            could not complete interrupted TRUNCATE, there is an active query against 't' or a checkpoint is in progress. Try again.\r
+                            00\r
+                            \r
+                            """, 1, 0, false);
+                    Assert.assertEquals("count of the _todo_ entry", 1, TruncateRepairTest.readTodoCount(engine, "t"));
+                    TestUtils.assertCursor(
+                            "x\ty\n1\t10\n2\t20\n3\t30\n",
+                            cursor,
+                            factory.getMetadata(),
+                            true,
+                            new StringSink()
+                    );
+                }
+
+                sendAndReceive(NetworkFacadeImpl.INSTANCE, request, """
+                        HTTP/1.1 200 OK\r
+                        Server: questDB/1.0\r
+                        Date: Thu, 1 Jan 1970 00:00:00 GMT\r
+                        Transfer-Encoding: chunked\r
+                        Content-Type: text/plain; charset=utf-8\r
+                        \r
+                        0507\r
+                        +-----------------------------------------------------------------------------------------------------------------+\r
+                        |      Location:  |                                                 t  |        Pattern  | Locale  |      Errors  |\r
+                        |   Partition by  |                                              NONE  |                 |         |              |\r
+                        |      Timestamp  |                                              NONE  |                 |         |              |\r
+                        +-----------------------------------------------------------------------------------------------------------------+\r
+                        |   Rows handled  |                                                 3  |                 |         |              |\r
+                        |  Rows imported  |                                                 3  |                 |         |              |\r
+                        +-----------------------------------------------------------------------------------------------------------------+\r
+                        |              0  |                                                 x  |                     LONG  |           0  |\r
+                        |              1  |                                                 y  |                     LONG  |           0  |\r
+                        +-----------------------------------------------------------------------------------------------------------------+\r
+                        \r
+                        00\r
+                        \r
+                        """, 1, 0, false);
+                assertQuery("t")
+                        .withEngine(engine)
+                        .withContext(executionContext)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                x\ty
+                                4\t40
+                                5\t50
+                                6\t60
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testImportWithSingleCharacterColumnName() throws Exception {
         testImport("""
                 HTTP/1.1 200 OK\r
@@ -2770,6 +2862,48 @@ public class IODispatcherTest extends AbstractTest {
             testHttpClient.assertGet("{\"ddl\":\"OK\"}", "CREATE TABLE test(id LONG);");
             testHttpClient.assertGet("{\"dml\":\"OK\"}", "INSERT INTO test values(alloc(42));");
             testHttpClient.assertGet("{\"query\":\"test;\",\"columns\":[{\"name\":\"id\",\"type\":\"LONG\"}],\"timestamp\":-1,\"dataset\":[[42]],\"count\":1}", "test;");
+        });
+    }
+
+    @Test
+    public void testInsertWaitsForQueryAfterInterruptedTruncate() throws Exception {
+        // A TRUNCATE of a non-partitioned table stopped after it armed _todo_. An INSERT over /exec while a query reads
+        // the table would complete the TRUNCATE under the query, so it fails with HTTP 400, and succeeds once the query
+        // is closed.
+        getSimpleTester().run((engine, sqlExecutionContext) -> {
+            engine.execute("CREATE TABLE t (x LONG)", sqlExecutionContext);
+            engine.execute("INSERT INTO t VALUES (1), (2), (3)", sqlExecutionContext);
+            TruncateRepairTest.armInterruptedTruncate(engine, "t", false);
+            try (
+                    RecordCursorFactory factory = engine.select("SELECT x FROM t", sqlExecutionContext);
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                testHttpClient.assertGetRegexp(
+                        "/exec",
+                        Pattern.quote(
+                                "{\"query\":\"INSERT INTO t VALUES (4)\","
+                                        + "\"error\":\"could not complete interrupted TRUNCATE,"
+                                        + " there is an active query against 't' or a checkpoint is in progress."
+                                        + " Try again.\","
+                                        + "\"position\":0}"
+                        ),
+                        "INSERT INTO t VALUES (4)",
+                        null,
+                        null,
+                        null,
+                        null,
+                        "400"
+                );
+                Assert.assertEquals("count of the _todo_ entry", 1, TruncateRepairTest.readTodoCount(engine, "t"));
+                TestUtils.assertCursor("x\n1\n2\n3\n", cursor, factory.getMetadata(), true, new StringSink());
+            }
+            testHttpClient.assertGet("/exec", "{\"dml\":\"OK\"}", "INSERT INTO t VALUES (4)");
+            testHttpClient.assertGet(
+                    "/exec",
+                    "{\"query\":\"SELECT x FROM t\",\"columns\":[{\"name\":\"x\",\"type\":\"LONG\"}],"
+                            + "\"timestamp\":-1,\"dataset\":[[4]],\"count\":1}",
+                    "SELECT x FROM t"
+            );
         });
     }
 

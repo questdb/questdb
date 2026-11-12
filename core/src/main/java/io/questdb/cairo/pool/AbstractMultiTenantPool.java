@@ -147,7 +147,8 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
     }
 
     public boolean lock(TableToken tableToken) {
-        Entry<T> e = getEntry(tableToken);
+        final Entry<T> firstEntry = getEntry(tableToken);
+        Entry<T> e = firstEntry;
         final long thread = Thread.currentThread().threadId();
         if (Unsafe.cas(e, LOCK_OWNER, UNLOCKED, thread) || e.lockOwner == thread) {
             do {
@@ -158,7 +159,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
                         // same thread, don't need to order reads
                         if (e.getTenant(i) != null) {
                             // this thread has busy reader, it should close first
-                            e.lockOwner = UNLOCKED;
+                            releaseFailedLock(firstEntry, e, i, thread);
                             return false;
                         }
                     } else {
@@ -167,7 +168,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
                                 .$(", owner=").$(e.allocations[i])
                                 .$(", thread=").$(thread)
                                 .I$();
-                        e.lockOwner = UNLOCKED;
+                        releaseFailedLock(firstEntry, e, i, thread);
                         return false;
                     }
                 }
@@ -459,6 +460,22 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
         if (listener != null) {
             listener.onEvent(getListenerSrc(), thread, token, event, (short) segment, (short) position);
         }
+    }
+
+    // Undoes a lock() that met a busy tenant at slot busyIndex of busyEntry. Every slot before it is this thread's,
+    // with its tenant closed: it goes back to the pool. Then the first entry, which holds the lock, unlocks.
+    private void releaseFailedLock(Entry<T> firstEntry, Entry<T> busyEntry, int busyIndex, long thread) {
+        for (Entry<T> e = firstEntry; ; e = e.next) {
+            final int n = e == busyEntry ? busyIndex : segmentSize;
+            for (int i = 0; i < n; i++) {
+                assert Unsafe.arrayGetVolatile(e.allocations, i) == thread && e.getTenant(i) == null;
+                Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
+            }
+            if (e == busyEntry) {
+                break;
+            }
+        }
+        firstEntry.lockOwner = UNLOCKED;
     }
 
     @Override

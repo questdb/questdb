@@ -580,7 +580,6 @@ public class WriterPool extends AbstractPool {
                     .$(", msg=").$safe(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno())
                     .I$();
-            e.ex = ex;
             e.ownershipReason = OWNERSHIP_REASON_WRITER_ERROR;
             e.owner = UNALLOCATED;
             notifyListener(e.owner, tableToken, PoolListener.EV_CREATE_EX);
@@ -676,14 +675,6 @@ public class WriterPool extends AbstractPool {
                 if (owner == thread) {
                     if (e.lockFd != -1L) {
                         throw EntryLockedException.instance(reinterpretOwnershipReason(e.ownershipReason));
-                    }
-
-                    if (e.ex != null) {
-                        notifyListener(thread, tableToken, PoolListener.EV_EX_RESEND);
-                        // this writer failed to allocate by this very thread
-                        // ensure consistent response
-                        entries.remove(tableToken.getDirName());
-                        throw e.ex;
                     }
                 }
                 if (asyncWriterCommand != null) {
@@ -862,8 +853,11 @@ public class WriterPool extends AbstractPool {
         while (iterator.hasNext()) {
             Entry e = iterator.next();
             // lastReleaseTime is volatile, which makes
-            // order of conditions important
-            if ((deadline > e.lastReleaseTime && e.owner == UNALLOCATED)) {
+            // order of conditions important.
+            // An entry without a writer holds nothing, a failed open leaves one: the reaper takes it at once, like an
+            // expired entry. It claims the entry first, so it never removes an entry that a thread holds or opens a
+            // writer in.
+            if ((deadline > e.lastReleaseTime || e.writer == null) && e.owner == UNALLOCATED) {
                 // looks like this writer is unallocated and can be released
                 // Lock with negative 3-based owner thread id to indicate it's that next
                 // allocating thread can wait until the entry is released.
@@ -890,10 +884,6 @@ public class WriterPool extends AbstractPool {
                     iterator.remove();
                     removed = true;
                 }
-            } else if (e.ex != null) {
-                LOG.info().$("purging entry for failed to allocate writer").$();
-                iterator.remove();
-                removed = true;
             }
         }
         CairoException.rethrowCleanupFailure(closeFailure);
@@ -910,7 +900,6 @@ public class WriterPool extends AbstractPool {
         // dir name is stable across renames, so it stays valid for the entry's whole life and
         // lets evictEntry() remove the entry in O(1) even once e.writer has been nulled.
         private final String dirName;
-        private CairoException ex = null;
         // time writer was last released
         private volatile long lastReleaseTime;
         private volatile long lockFd = -1;

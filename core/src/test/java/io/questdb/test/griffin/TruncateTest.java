@@ -32,6 +32,9 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Misc;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -40,6 +43,7 @@ import org.junit.Test;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.griffin.CompiledQuery.TRUNCATE;
 
@@ -640,6 +644,50 @@ public class TruncateTest extends AbstractCairoTest {
                             count
                             0
                             """);
+        });
+    }
+
+    @Test
+    public void testTruncateAfterRefusedTruncateOnOtherThread() throws Exception {
+        // A TRUNCATE on a thread of its own is refused by a running query, and the thread ends. The refusal must leave
+        // the readers of the table as it found them: once the query is closed, TRUNCATE succeeds.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x LONG)");
+            execute("INSERT INTO t VALUES (1), (2), (3)");
+            try (
+                    RecordCursorFactory idleFactory = select("SELECT * FROM t");
+                    RecordCursorFactory factory = select("SELECT x FROM t")
+            ) {
+                RecordCursor idleCursor = idleFactory.getCursor(sqlExecutionContext);
+                try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
+                    // the reader of the first query goes back to the pool idle, in front of the reader of the second
+                    idleCursor = Misc.free(idleCursor);
+                    final AtomicReference<Throwable> truncateError = new AtomicReference<>();
+                    final Thread truncate = new Thread(() -> {
+                        try (SqlExecutionContext context = TestUtils.createSqlExecutionCtx(engine)) {
+                            engine.execute("TRUNCATE TABLE t", context);
+                        } catch (Throwable th) {
+                            truncateError.set(th);
+                        } finally {
+                            Path.clearThreadLocals();
+                        }
+                    });
+                    truncate.start();
+                    truncate.join();
+                    Assert.assertTrue("TRUNCATE must wait for the query", truncateError.get() instanceof SqlException);
+                    final SqlException e = (SqlException) truncateError.get();
+                    Assert.assertEquals(0, e.getPosition());
+                    TestUtils.assertEquals("there is an active query against 't'. Try again.", e.getFlyweightMessage());
+                } finally {
+                    Misc.free(idleCursor);
+                }
+            }
+            execute("TRUNCATE TABLE t");
+            assertQuery("SELECT count() FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n0\n");
         });
     }
 

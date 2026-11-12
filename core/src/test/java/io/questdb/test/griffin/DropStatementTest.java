@@ -30,11 +30,16 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.cairo.TableUtils.TABLE_DOES_NOT_EXIST;
 import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
@@ -81,6 +86,47 @@ public class DropStatementTest extends AbstractCairoTest {
             tableBucket.clear();
             engine.getTableTokens(tableBucket, true);
             Assert.assertEquals(getSystemTablesCount(engine), tableBucket.size());
+        });
+    }
+
+    @Test
+    public void testDropTableAfterRefusedDropOnOtherThread() throws Exception {
+        // A DROP TABLE on a thread of its own is refused by a running query, and the thread ends. The refusal must
+        // leave the readers of the table as it found them: once the query is closed, DROP TABLE succeeds.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x LONG)");
+            execute("INSERT INTO t VALUES (1), (2), (3)");
+            try (
+                    RecordCursorFactory idleFactory = select("SELECT * FROM t");
+                    RecordCursorFactory factory = select("SELECT x FROM t")
+            ) {
+                RecordCursor idleCursor = idleFactory.getCursor(sqlExecutionContext);
+                try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
+                    // the reader of the first query goes back to the pool idle, in front of the reader of the second
+                    idleCursor = Misc.free(idleCursor);
+                    final AtomicReference<Throwable> dropError = new AtomicReference<>();
+                    final Thread drop = new Thread(() -> {
+                        try (SqlExecutionContext context = TestUtils.createSqlExecutionCtx(engine)) {
+                            engine.execute("DROP TABLE t", context);
+                        } catch (Throwable th) {
+                            dropError.set(th);
+                        } finally {
+                            Path.clearThreadLocals();
+                        }
+                    });
+                    drop.start();
+                    drop.join();
+                    Assert.assertTrue("DROP TABLE must wait for the query", dropError.get() instanceof CairoException);
+                    TestUtils.assertEquals(
+                            "could not lock 't~' [reason='busyReader']",
+                            ((CairoException) dropError.get()).getFlyweightMessage()
+                    );
+                } finally {
+                    Misc.free(idleCursor);
+                }
+            }
+            execute("DROP TABLE t");
+            Assert.assertEquals(TABLE_DOES_NOT_EXIST, engine.getTableStatus("t"));
         });
     }
 

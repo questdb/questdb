@@ -74,6 +74,7 @@ import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
+import io.questdb.test.cairo.crash.TruncateRepairTest;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -1916,6 +1917,82 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     value 2\t\t\t1970-01-01T00:00:00.000000Z
                     """;
             assertTable(expected, "table");
+        });
+    }
+
+    @Test
+    public void testWriteWaitsForQueryAfterInterruptedTruncate() throws Exception {
+        // A TRUNCATE of a non-partitioned table stopped after it armed _todo_. A line that arrives while a query reads
+        // the table would complete the TRUNCATE in the writer open under the query: the open fails, the receiver drops
+        // the line and disconnects the client, as on any failed writer open, and the query reads its rows. Once the
+        // query is closed, a line on a new connection completes the TRUNCATE and lands.
+        disconnectOnError = true;
+        runInContext((_) -> {
+            execute("CREATE TABLE t (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY NONE BYPASS WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                        (1, '2024-01-01T00:00:00.000000Z'),
+                        (2, '2024-01-02T00:00:00.000000Z'),
+                        (3, '2024-01-03T00:00:00.000000Z')""");
+            TruncateRepairTest.armInterruptedTruncate(engine, "t", false);
+            final SOCountDownLatch isOpenRefused = new SOCountDownLatch(1);
+            engine.setPoolListener((factoryType, _, token, event, _, _) -> {
+                if (factoryType == PoolListener.SRC_WRITER
+                        && event == PoolListener.EV_CREATE_EX
+                        && token != null
+                        && Chars.equals(token.getTableName(), "t")) {
+                    isOpenRefused.countDown();
+                }
+            });
+            try (
+                    RecordCursorFactory factory = select("SELECT * FROM t");
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                try (
+                        AbstractLineTcpSender sender = LineTcpSenderV2.newSender(
+                                Net.parseIPv4("127.0.0.1"),
+                                bindPort,
+                                msgBufferSize
+                        )
+                ) {
+                    sender.metric("t").field("x", 4).$(1_704_326_400_000_000_000L);
+                    sender.flush();
+                    Assert.assertTrue(
+                            "the writer open was not refused",
+                            isOpenRefused.await(TimeUnit.MINUTES.toNanos(1))
+                    );
+                }
+                Assert.assertEquals("count of the _todo_ entry", 1, TruncateRepairTest.readTodoCount(engine, "t"));
+                sink.clear();
+                TestUtils.assertCursor(
+                        """
+                                x\tts
+                                1\t2024-01-01T00:00:00.000000Z
+                                2\t2024-01-02T00:00:00.000000Z
+                                3\t2024-01-03T00:00:00.000000Z
+                                """,
+                        cursor,
+                        factory.getMetadata(),
+                        true,
+                        sink
+                );
+            } finally {
+                engine.setPoolListener(null);
+            }
+            send("t", WAIT_ENGINE_TABLE_RELEASE, () -> {
+                try (
+                        AbstractLineTcpSender sender = LineTcpSenderV2.newSender(
+                                Net.parseIPv4("127.0.0.1"),
+                                bindPort,
+                                msgBufferSize
+                        )
+                ) {
+                    sender.metric("t").field("x", 5).$(1_704_412_800_000_000_000L);
+                    sender.flush();
+                }
+            });
+            Assert.assertEquals("count of the _todo_ entry", 0, TruncateRepairTest.readTodoCount(engine, "t"));
+            assertTable("x\tts\n5\t2024-01-05T00:00:00.000000Z\n", "t");
         });
     }
 

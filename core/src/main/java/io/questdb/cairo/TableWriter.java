@@ -251,6 +251,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // MetadataCache hydration. Null in production; the fire site is a single volatile read and null check.
     @TestOnly
     private static volatile Runnable metadataVersionPublishedBarrier;
+    // Test hook: fires in the writer-open repair of an interrupted TRUNCATE of a table that is not partitioned, right
+    // after the repair takes the reader lock, so that a test can query or checkpoint the table while the repair holds
+    // it. Null in production; firing it is one volatile read and a null check.
+    @TestOnly
+    private static volatile Runnable truncateRepairLockedBarrier;
     // Test hook: fires in truncate0() right before it stores the code of its _todo_ entry, so that a test can take
     // a process-kill image there. Null in production; firing it is one volatile read and a null check.
     @TestOnly
@@ -988,6 +993,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     @TestOnly
     public static void setMetadataVersionPublishedBarrier(@Nullable Runnable barrier) {
         metadataVersionPublishedBarrier = barrier;
+    }
+
+    /**
+     * Installs a one-shot test barrier that fires in the writer-open repair of an interrupted TRUNCATE of a table that
+     * is not partitioned, right after the repair takes the reader lock. Pass null to uninstall.
+     */
+    @TestOnly
+    public static void setTruncateRepairLockedBarrier(@Nullable Runnable barrier) {
+        truncateRepairLockedBarrier = barrier;
     }
 
     /**
@@ -5823,6 +5837,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final Runnable barrier = metadataVersionPublishedBarrier;
         if (barrier != null) {
             metadataVersionPublishedBarrier = null;
+            barrier.run();
+        }
+    }
+
+    private static void fireTruncateRepairLockedBarrier() {
+        final Runnable barrier = truncateRepairLockedBarrier;
+        if (barrier != null) {
+            truncateRepairLockedBarrier = null;
             barrier.run();
         }
     }
@@ -19047,32 +19069,55 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     /**
      * Completes a TRUNCATE that stopped after it armed its {@code _todo_} entry and before it published the empty
      * {@code _txn}, as {@link #truncate0(boolean)} would have: no partitions, no rows, no column tops. The
-     * constructor calls it before it opens the columns and the symbol map writers.
+     * constructor calls it before it opens the columns and the symbol map writers. The repair of a table that is not
+     * partitioned runs under the reader lock, as SQL TRUNCATE does, and fails the writer open while a query reads the
+     * table or a checkpoint holds it.
      */
     private void repairTruncate(boolean isKeepSymbolMaps) {
-        LOG.info().$("repairing abnormally terminated truncate on ").$substr(pathRootSize, path)
-                .$(" [keepSymbolMaps=").$(isKeepSymbolMaps).I$();
-        scheduleRemoveAllPartitions();
-        columnVersionWriter.truncate();
-        if (isKeepSymbolMaps) {
-            // TRUNCATE ... KEEP SYMBOL MAPS leaves the symbol maps as _txn counts them, and a reader of the old rows
-            // may still resolve their keys: the record keeps those counts, so new symbols do not overwrite them.
-            final ObjList<SymbolCountProvider> symbolCounts = new ObjList<>();
-            for (int i = 0, n = txWriter.getSymbolColumnCount(); i < n; i++) {
-                final int symbolCount = txWriter.getSymbolValueCount(i);
-                symbolCounts.add(() -> symbolCount);
-            }
-            txWriter.truncate(columnVersionWriter.getVersion(), symbolCounts);
-        } else {
-            // A TRUNCATE without KEEP SYMBOL MAPS empties the symbol maps before it arms _todo_, so their files may
-            // hold fewer symbols than _txn counts. Zero counts are valid for the files in either state.
-            txWriter.truncate(columnVersionWriter.getVersion(), NO_SYMBOL_COUNTS);
+        // A table that is not partitioned keeps its rows in default/ for good: the repair removes it, or leaves it to
+        // the purge job while someone reads it, and this writer then rewrites the same files from row 0. Like SQL
+        // TRUNCATE, such a repair runs only while no query reads the table and no checkpoint holds it; otherwise the
+        // writer open fails and _todo_ stays armed for the next one.
+        final boolean isReaderLockRequired = !PartitionBy.isPartitioned(partitionBy);
+        if (isReaderLockRequired && !engine.lockReaders(tableToken)) {
+            throw CairoException.nonCritical()
+                    .put("could not complete interrupted TRUNCATE, there is an active query against '")
+                    .put(tableToken.getTableName())
+                    .put("' or a checkpoint is in progress. Try again.");
         }
-        // The symbol map writers open with the counts txWriter loaded, so it loads the record it just published
-        txWriter.unsafeLoadAll();
-        resetCompositePartitionTracking();
-        clearTodoLog();
-        processPartitionRemoveCandidates();
+        try {
+            if (isReaderLockRequired) {
+                fireTruncateRepairLockedBarrier();
+            }
+            LOG.info().$("repairing abnormally terminated truncate on ").$substr(pathRootSize, path)
+                    .$(" [keepSymbolMaps=").$(isKeepSymbolMaps).I$();
+            scheduleRemoveAllPartitions();
+            columnVersionWriter.truncate();
+            if (isKeepSymbolMaps) {
+                // TRUNCATE ... KEEP SYMBOL MAPS leaves the symbol maps as _txn counts them, and a reader of the old
+                // rows may still resolve their keys: the record keeps those counts, so new symbols do not overwrite
+                // them.
+                final ObjList<SymbolCountProvider> symbolCounts = new ObjList<>();
+                for (int i = 0, n = txWriter.getSymbolColumnCount(); i < n; i++) {
+                    final int symbolCount = txWriter.getSymbolValueCount(i);
+                    symbolCounts.add(() -> symbolCount);
+                }
+                txWriter.truncate(columnVersionWriter.getVersion(), symbolCounts);
+            } else {
+                // A TRUNCATE without KEEP SYMBOL MAPS empties the symbol maps before it arms _todo_, so their files may
+                // hold fewer symbols than _txn counts. Zero counts are valid for the files in either state.
+                txWriter.truncate(columnVersionWriter.getVersion(), NO_SYMBOL_COUNTS);
+            }
+            // The symbol map writers open with the counts txWriter loaded, so it loads the record it just published
+            txWriter.unsafeLoadAll();
+            resetCompositePartitionTracking();
+            clearTodoLog();
+            processPartitionRemoveCandidates();
+        } finally {
+            if (isReaderLockRequired) {
+                engine.unlockReaders(tableToken);
+            }
+        }
     }
 
     private long tryFastAppendInOrderBlock(long o3Lo, long o3LoHi, int blockTransactionCount, long timestampAddr) {
