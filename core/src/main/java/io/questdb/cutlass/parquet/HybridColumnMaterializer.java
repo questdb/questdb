@@ -66,6 +66,7 @@ import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
 
@@ -362,6 +363,15 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
 
     public IntList getBaseColumnMap() {
         return baseColumnMap;
+    }
+
+    /**
+     * Returns the table symbol map through which the encoder resolves the keys of a SYMBOL column that a
+     * cursor-based set-up keeps as SYMBOL, or null for every other column.
+     */
+    @TestOnly
+    public @Nullable SymbolMapReader getCursorSymbolMap(int columnIndex) {
+        return cursorSymbolMaps.getQuiet(columnIndex);
     }
 
     /**
