@@ -52,13 +52,13 @@ public class CastCharToSymbolFunctionFactory implements FunctionFactory {
             }
             return SymbolConstant.newInstance(Chars.toString(value));
         }
-        return new Func(arg);
+        return new Func(arg, sqlExecutionContext);
     }
 
     public static class Func extends AbstractCastToSymbolFunction {
 
-        public Func(Function arg) {
-            super(arg);
+        public Func(Function arg, SqlExecutionContext executionContext) {
+            super(arg, executionContext);
         }
 
         @Override

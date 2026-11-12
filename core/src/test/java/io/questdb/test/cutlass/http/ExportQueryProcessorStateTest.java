@@ -36,6 +36,9 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cutlass.http.ActiveConnectionTracker;
+import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
+import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.processors.ExportQueryProcessorState;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.cutlass.parquet.HTTPSerialParquetExporter;
@@ -49,11 +52,13 @@ import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.metrics.QueryTrace;
 import io.questdb.mp.ConcurrentQueue;
+import io.questdb.network.PlainSocketFactory;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.MemoryTrackerWorkload;
+import io.questdb.std.NoOpAssociativeCache;
 import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
 import org.jetbrains.annotations.Nullable;
@@ -70,6 +75,34 @@ public class ExportQueryProcessorStateTest extends AbstractCairoTest {
     @Before
     public void enableQueryTracing() {
         node1.getConfigurationOverrides().setProperty(PropertyKey.QUERY_TRACING_ENABLED, true);
+    }
+
+    @Test
+    public void testCachePutFailureReleasesFactory() throws Exception {
+        assertMemoryLeak(() -> {
+            final RuntimeException failure = new RuntimeException("expected cache put failure");
+            try (
+                    HttpConnectionContext context = new HttpConnectionContext(
+                            new DefaultHttpServerConfiguration(configuration),
+                            PlainSocketFactory.INSTANCE,
+                            new NoOpAssociativeCache<>() {
+                                @Override
+                                public void put(CharSequence key, RecordCursorFactory factory) {
+                                    super.put(key, factory);
+                                    throw failure;
+                                }
+                            },
+                            ActiveConnectionTracker.NO_TRACKING
+                    );
+                    ExportQueryProcessorState state = new ExportQueryProcessorState(context, null)
+            ) {
+                final String sql = "SELECT regexp_replace(x::varchar, '^([0-9])$', '$1') FROM long_sequence(3)";
+                state.setQueryFactoryForTest(select(sql), sql, true);
+                Assert.assertSame(failure, Assert.assertThrows(RuntimeException.class, state::clear));
+                Assert.assertFalse(state.isQueryCacheable());
+                state.clear();
+            }
+        });
     }
 
     @Test
@@ -121,6 +154,32 @@ public class ExportQueryProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testClearDiscardsCacheableFactoryAfterCleanupFailure() throws Exception {
+        assertMemoryLeak(() -> {
+            final RuntimeException failure = new RuntimeException("expected task cleanup failure");
+            try (ExportQueryProcessorState state = new ExportQueryProcessorState(null, null)) {
+                final String sql = "SELECT regexp_replace(x::varchar, '^([0-9])$', '$1') FROM long_sequence(3)";
+                state.setQueryFactoryForTest(select(sql), sql, true);
+                state.setTaskAndCursorForTest(new CopyExportRequestTask() {
+                    private boolean hasFailed;
+
+                    @Override
+                    public void clear() {
+                        super.clear();
+                        if (!hasFailed) {
+                            hasFailed = true;
+                            throw failure;
+                        }
+                    }
+                }, null);
+                Assert.assertSame(failure, Assert.assertThrows(RuntimeException.class, state::clear));
+                Assert.assertFalse(state.isQueryCacheable());
+                state.clear();
+            }
+        });
+    }
+
+    @Test
     public void testClearReleasesMaterializerFunctionsBeforeUnregisteringQuery() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE export_cast AS (SELECT ('k' || (x % 300))::varchar v, x l FROM long_sequence(1000))");
@@ -132,6 +191,24 @@ public class ExportQueryProcessorStateTest extends AbstractCairoTest {
                 );
                 for (MaterializerReleasePath releasePath : MaterializerReleasePath.values()) {
                     assertReleasesMaterializerFunctionsBeforeUnregister(factory, releasePath);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCloseAndNonCacheableClearReleaseFactories() throws Exception {
+        assertMemoryLeak(() -> {
+            for (boolean isClosing : new boolean[]{false, true}) {
+                try (ExportQueryProcessorState state = new ExportQueryProcessorState(null, null)) {
+                    final String sql = "SELECT regexp_replace(x::varchar, '^([0-9])$', '$1') FROM long_sequence(3)";
+                    state.setQueryFactoryForTest(select(sql), sql, isClosing);
+                    if (isClosing) {
+                        state.close();
+                    } else {
+                        state.clear();
+                    }
+                    Assert.assertFalse(state.isQueryCacheable());
                 }
             }
         });

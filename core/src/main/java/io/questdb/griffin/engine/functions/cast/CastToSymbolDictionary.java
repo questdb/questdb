@@ -26,11 +26,12 @@ package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionResource;
 import io.questdb.std.Chars;
 import io.questdb.std.Hash;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
-import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectString;
 import io.questdb.std.str.MutableUtf16Sink;
@@ -55,7 +56,7 @@ import org.jetbrains.annotations.Nullable;
  * The UTF-8 and scalar lookups need a lookup field per key that the text lookup does not, so the
  * owner says which kind it is at construction.
  */
-public final class CastToSymbolDictionary implements Mutable {
+public final class CastToSymbolDictionary extends SqlExecutionResource {
     private static final int CHUNK_ENTRY_SIZE = 2 * Long.BYTES;
     // Every key owns a descriptor: {long textAddress, int hash, int length[, long lookup]}.
     // Holding the hash and the length here rather than in a header on the text itself lets
@@ -101,6 +102,11 @@ public final class CastToSymbolDictionary implements Mutable {
         this.descriptorEntrySize = hasLookupField ? LOOKUP_DESCRIPTOR_ENTRY_SIZE : TEXT_DESCRIPTOR_ENTRY_SIZE;
     }
 
+    public CastToSymbolDictionary(boolean hasLookupField, SqlExecutionContext executionContext) {
+        this(hasLookupField);
+        init(executionContext);
+    }
+
     /**
      * Frees all native memory and forgets every key. Text handed out by {@link #valueOf} points
      * into the freed memory afterwards, so its holders must be done with it; valueOf() itself
@@ -132,6 +138,11 @@ public final class CastToSymbolDictionary implements Mutable {
         hashThreshold = 0;
         next = 1;
         memoryTracker = null;
+    }
+
+    public void init(SqlExecutionContext executionContext) {
+        registerWith(executionContext);
+        setMemoryTracker(executionContext.getMemoryTracker());
     }
 
     /**

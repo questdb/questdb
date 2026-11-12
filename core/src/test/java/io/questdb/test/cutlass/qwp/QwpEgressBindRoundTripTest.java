@@ -24,18 +24,23 @@
 
 package io.questdb.test.cutlass.qwp;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.client.cutlass.qwp.client.QwpBindSetter;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatch;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
 import io.questdb.client.cutlass.qwp.client.WebSocketResponse;
 import io.questdb.client.cutlass.qwp.protocol.QwpConstants;
+import io.questdb.griffin.SqlExecutionResource;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * End-to-end bind-parameter round-trip tests. Every supported scalar bind
@@ -673,6 +678,166 @@ public class QwpEgressBindRoundTripTest extends AbstractReusedServerQwpEgressTes
                 );
             }
         });
+    }
+
+    @Test
+    public void testCachedGenerateSeriesReleasesCastDictionary() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (
+                    TestServerMain serverMain = startServerWithRetry("QDB_HTTP_QUERY_CACHE_ENABLED", "true", "QDB_HTTP_WORKER_COUNT", "1");
+                    QwpQueryClient client = QwpQueryClient.newPlainText("127.0.0.1", HTTP_PORT)
+            ) {
+                client.connect();
+                final long baseline = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS);
+                for (int run = 0; run < 3; run++) {
+                    final long[] rows = {0};
+                    client.execute("SELECT * FROM generate_series(1, ($1::symbol)::long)",
+                            binds -> binds.setLong(0, 3), new QwpColumnBatchHandler() {
+                                @Override
+                                public void onBatch(QwpColumnBatch batch) {
+                                    for (int row = 0; row < batch.getRowCount(); row++) {
+                                        Assert.assertEquals(++rows[0], batch.getLongValue(0, row));
+                                    }
+                                }
+
+                                @Override
+                                public void onEnd(long totalRows) {
+                                    Assert.assertEquals(3, totalRows);
+                                }
+
+                                @Override
+                                public void onError(byte status, String message) {
+                                    Assert.fail(message);
+                                }
+                            });
+                    Assert.assertEquals(3, rows[0]);
+                    Assert.assertEquals(baseline, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCachedLastBatchWithoutRoomForEndFrame() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (
+                    TestServerMain serverMain = startServerWithRetry(
+                            "QDB_HTTP_SEND_BUFFER_SIZE", "163840",
+                            "QDB_HTTP_WORKER_COUNT", "1",
+                            "QDB_HTTP_QUERY_CACHE_ENABLED", "true",
+                            "QDB_METRICS_ENABLED", "true"
+                    );
+                    QwpQueryClient client = QwpQueryClient.newPlainText("127.0.0.1", HTTP_PORT)
+            ) {
+                client.connect();
+                final var cacheHits = serverMain.getEngine().getMetrics().jsonQueryMetrics().cacheHitCounter();
+                final long initialHits = cacheHits.getValue();
+                // The row and its batch headers fit in 160 KiB, but leave less than the
+                // 51-byte worst-case reservation for the separate RESULT_END frame.
+                final String expected = "x".repeat(163_770);
+                for (int run = 0; run < 2; run++) {
+                    final long[] rows = {0};
+                    client.execute("SELECT lpad(''::varchar, 163_770, 'x'::varchar) v", new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            Assert.assertEquals(1, batch.getRowCount());
+                            Assert.assertEquals(expected, batch.getString(0, 0));
+                            rows[0] += batch.getRowCount();
+                        }
+
+                        @Override
+                        public void onEnd(long totalRows) {
+                            Assert.assertEquals(1, totalRows);
+                        }
+
+                        @Override
+                        public void onError(byte status, String message) {
+                            Assert.fail(message);
+                        }
+                    });
+                    Assert.assertEquals(1, rows[0]);
+                }
+                Assert.assertEquals(initialHits + 1, cacheHits.getValue());
+            }
+        });
+    }
+
+    @Test
+    public void testExecutionCleanupFailureLeavesConnectionUsable() throws Exception {
+        for (int maxBatchRows : new int[]{3, 4}) {
+            TestUtils.assertMemoryLeak(() -> {
+                try (
+                        TestServerMain serverMain = startServerWithRetry("QDB_HTTP_QUERY_CACHE_ENABLED", "true", "QDB_HTTP_WORKER_COUNT", "1");
+                        QwpQueryClient client = QwpQueryClient.newPlainText("127.0.0.1", HTTP_PORT).withMaxBatchRows(maxBatchRows)
+                ) {
+                    client.connect();
+                    final AtomicBoolean hasInjectedFailure = new AtomicBoolean();
+                    serverMain.getEngine().getQueryRegistry().setListener((query, id, context) -> {
+                        if (hasInjectedFailure.compareAndSet(false, true)) {
+                            new SqlExecutionResource() {
+                                {
+                                    registerWith(context);
+                                }
+
+                                @Override
+                                public void clear() {
+                                    throw CairoException.nonCritical().put("expected execution cleanup failure");
+                                }
+                            };
+                        }
+                    });
+                    // regexp_replace also owns native buffers which only closing the factory frees.
+                    final String sql = "SELECT regexp_replace(x::varchar, '^([0-9])$', '$1')::symbol s FROM long_sequence(3)";
+                    final StringBuilder error = new StringBuilder();
+                    final long[] firstRows = {0};
+                    try {
+                        client.execute(sql, new QwpColumnBatchHandler() {
+                            @Override
+                            public void onBatch(QwpColumnBatch batch) {
+                                for (int row = 0; row < batch.getRowCount(); row++) {
+                                    Assert.assertEquals(Long.toString(++firstRows[0]), batch.getSymbol(0, row));
+                                }
+                            }
+
+                            @Override
+                            public void onEnd(long totalRows) {
+                                Assert.fail("cleanup failure must reach the client");
+                            }
+
+                            @Override
+                            public void onError(byte status, String message) {
+                                error.append(message);
+                            }
+                        });
+                    } finally {
+                        serverMain.getEngine().getQueryRegistry().setListener(null);
+                    }
+                    TestUtils.assertContains(error, "expected execution cleanup failure");
+                    // A full batch ships before EOF; a partial last batch waits for cleanup.
+                    Assert.assertEquals(maxBatchRows == 3 ? 3 : 0, firstRows[0]);
+                    final long[] rows = {0};
+                    client.execute(sql, new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            for (int row = 0; row < batch.getRowCount(); row++) {
+                                Assert.assertEquals(Long.toString(++rows[0]), batch.getSymbol(0, row));
+                            }
+                        }
+
+                        @Override
+                        public void onEnd(long totalRows) {
+                            Assert.assertEquals(3, totalRows);
+                        }
+
+                        @Override
+                        public void onError(byte status, String message) {
+                            Assert.fail(message);
+                        }
+                    });
+                    Assert.assertEquals(3, rows[0]);
+                }
+            });
+        }
     }
 
     @Test

@@ -1581,7 +1581,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 break;
             case ColumnType.CHAR:
                 if (toType == ColumnType.SYMBOL) {
-                    return new CastCharToSymbolFunctionFactory.Func(function);
+                    return new CastCharToSymbolFunctionFactory.Func(function, sqlExecutionContext);
                 } else if (ColumnType.isDecimal(toType)) {
                     return CastStrToDecimalFunctionFactory.newInstance(sqlExecutionContext.getDecimal256(), position, toType, function);
                 }

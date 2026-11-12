@@ -194,6 +194,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             record = null;
             if (recordCursorFactory != null) {
                 if (queryCacheable) {
+                    // The cache can hand this plan to another execution immediately.
+                    sqlExecutionOwner.end();
                     httpConnectionContext.getSelectCache().put(
                             SelectCacheKey.of(selectCacheScope, query, selectCacheKeySink),
                             recordCursorFactory

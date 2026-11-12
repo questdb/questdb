@@ -43,13 +43,14 @@ import org.jetbrains.annotations.Nullable;
  */
 public abstract class AbstractCastToSymbolFunction extends SymbolFunction implements CastFunction {
     protected final Function arg;
-    private final CastToSymbolDictionary dictionary = new CastToSymbolDictionary(true);
+    private final CastToSymbolDictionary dictionary;
     private final StringSink sink = new StringSink();
     private final DirectString symbolA = new DirectString();
     private final DirectString symbolB = new DirectString();
 
-    public AbstractCastToSymbolFunction(Function arg) {
+    public AbstractCastToSymbolFunction(Function arg, SqlExecutionContext executionContext) {
         this.arg = arg;
+        dictionary = new CastToSymbolDictionary(true, executionContext);
     }
 
     @Override
@@ -91,7 +92,7 @@ public abstract class AbstractCastToSymbolFunction extends SymbolFunction implem
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         releaseDictionary();
         arg.init(symbolTableSource, executionContext);
-        dictionary.setMemoryTracker(executionContext.getMemoryTracker());
+        dictionary.init(executionContext);
     }
 
     @Override

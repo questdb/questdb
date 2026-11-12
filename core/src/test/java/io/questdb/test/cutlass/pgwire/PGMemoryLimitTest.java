@@ -119,6 +119,24 @@ public class PGMemoryLimitTest extends BasePGTest {
     }
 
     @Test
+    public void testCachedGenerateSeriesReleasesQueryMemory() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (PreparedStatement statement = connection.prepareStatement("SELECT * FROM generate_series(1, (?::symbol)::long)")) {
+                for (int run = 0; run < 3; run++) {
+                    statement.setLong(1, run + 1);
+                    try (ResultSet rows = statement.executeQuery()) {
+                        for (int x = 1; x <= run + 1; x++) {
+                            Assert.assertTrue(rows.next());
+                            Assert.assertEquals(x, rows.getLong(1));
+                        }
+                        Assert.assertFalse(rows.next());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testGroupingSetsCastToSymbolKeyReleasesQueryMemory() throws Exception {
         // ROLLUP evaluates its cast-to-SYMBOL key itself, and the key's dictionary is charged to the
         // query's memory tracker. Each run of the prepared statement must give that memory back when

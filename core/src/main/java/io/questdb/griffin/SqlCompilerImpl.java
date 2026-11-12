@@ -209,6 +209,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final BlockFileWriter blockFileWriter;
     private final CharacterStore characterStore;
     private final ObjList<CharSequence> columnNames = new ObjList<>();
+    private final SqlExecutionResources compilationResources = new SqlExecutionResources();
     private final ViewCompilerExecutionContext compileViewContext;
     private final CharSequenceObjHashMap<String> dropAllTablesFailures = new CharSequenceObjHashMap<>();
     private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
@@ -702,9 +703,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     @Override
     public ExecutionModel generateExecutionModel(CharSequence sqlText, SqlExecutionContext executionContext) throws SqlException {
-        clear();
-        lexer.of(sqlText);
-        return compileExecutionModel(executionContext, false, null);
+        return generateExecutionModel(sqlText, executionContext, null);
     }
 
     @Override
@@ -753,9 +752,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             SqlExecutionContext executionContext,
             LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> outDependencies
     ) throws SqlException {
-        clear();
-        lexer.of(viewSql);
-        return compileExecutionModel(executionContext, false, outDependencies);
+        return generateExecutionModel(viewSql, executionContext, outDependencies);
     }
 
     @Override
@@ -4450,6 +4447,22 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             CharSequence sqlText,
             boolean generateProgressLogger
     ) throws SqlException {
+        // CTAS compiles its SELECT when the operation executes, after its outer compile finishes.
+        // begin() asserts that the compiler has no overlapping compilation scope.
+        compilationResources.begin();
+        compilationResources.bind(executionContext);
+        try (compilationResources) {
+            compileInner0(executionContext, sqlText, generateProgressLogger);
+        } finally {
+            compilationResources.unbind(executionContext);
+        }
+    }
+
+    private void compileInner0(
+            @NotNull SqlExecutionContext executionContext,
+            CharSequence sqlText,
+            boolean generateProgressLogger
+    ) throws SqlException {
         final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
         if (!circuitBreaker.isTimerSet()) {
             circuitBreaker.resetTimer();
@@ -6725,6 +6738,22 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             if (cleanupFailure != failure) {
                 failure.addSuppressed(cleanupFailure);
             }
+        }
+    }
+
+    private ExecutionModel generateExecutionModel(
+            CharSequence sqlText,
+            SqlExecutionContext executionContext,
+            @Nullable LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> outDependencies
+    ) throws SqlException {
+        compilationResources.begin();
+        compilationResources.bind(executionContext);
+        try (compilationResources) {
+            clear();
+            lexer.of(sqlText);
+            return compileExecutionModel(executionContext, false, outDependencies);
+        } finally {
+            compilationResources.unbind(executionContext);
         }
     }
 

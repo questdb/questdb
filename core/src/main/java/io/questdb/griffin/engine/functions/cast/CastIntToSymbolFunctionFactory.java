@@ -51,12 +51,12 @@ public class CastIntToSymbolFunctionFactory implements FunctionFactory {
             sink.put(arg.getInt(null));
             return SymbolConstant.newInstance(sink);
         }
-        return new Func(arg);
+        return new Func(arg, sqlExecutionContext);
     }
 
     private static class Func extends AbstractCastToSymbolFunction {
-        public Func(Function arg) {
-            super(arg);
+        public Func(Function arg, SqlExecutionContext executionContext) {
+            super(arg, executionContext);
         }
 
         @Override

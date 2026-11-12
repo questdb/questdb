@@ -24,15 +24,78 @@
 
 package io.questdb.test.cutlass.http;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cutlass.http.client.HttpClient;
+import io.questdb.cutlass.http.client.HttpClientException;
+import io.questdb.griffin.SqlExecutionResource;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+
 public class QueryExportTest extends AbstractCairoTest {
+
+    @Test
+    public void testCachedQueryAndExportReleaseCastDictionaries() throws Exception {
+        assertMemoryLeak(() -> getSimpleTester().run((HttpQueryTestBuilder.HttpClientCode) (engine, executionContext) -> {
+            // Keep the count runtime-constant without depending on the clock's actual value.
+            final String sql = "SELECT generate_series x FROM generate_series(1, ((now()::long * 0 + 3)::symbol)::long)";
+            final String json = "{\"query\":\"" + sql + "\",\"columns\":[{\"name\":\"x\",\"type\":\"LONG\"}],"
+                    + "\"timestamp\":-1,\"dataset\":[[1],[2],[3]],\"count\":3}";
+            final String csv = "\"x\"\r\n1\r\n2\r\n3\r\n";
+            final long baseline = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS);
+            try (TestHttpClient client = new TestHttpClient()) {
+                client.setKeepConnection(true);
+                for (int run = 0; run < 3; run++) {
+                    client.assertGet("/query", json, sql);
+                    TestUtils.assertEventually(() -> Assert.assertEquals(baseline, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS)));
+                    client.assertGet("/exp", csv, sql);
+                    TestUtils.assertEventually(() -> Assert.assertEquals(baseline, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS)));
+                }
+            }
+        }));
+    }
+
+    @Test
+    public void testCleanupFailureDoesNotRetainExportFactory() throws Exception {
+        assertMemoryLeak(() -> getSimpleTester().run((HttpQueryTestBuilder.HttpClientCode) (engine, executionContext) -> {
+            final AtomicBoolean hasInjectedFailure = new AtomicBoolean();
+            final AtomicBoolean hasReleasedResource = new AtomicBoolean();
+            engine.getQueryRegistry().setListener((query, id, context) -> {
+                if (hasInjectedFailure.compareAndSet(false, true)) {
+                    new SqlExecutionResource() {
+                        {
+                            registerWith(context);
+                        }
+
+                        @Override
+                        public void clear() {
+                            hasReleasedResource.set(true);
+                            throw CairoException.nonCritical().put("expected execution cleanup failure");
+                        }
+                    };
+                }
+            });
+            // The capture-group regexp owns native buffers until the factory closes.
+            final String sql = "SELECT regexp_replace(x::varchar, '^([0-9])$', '$1')::symbol s FROM long_sequence(3)";
+            final String csv = "\"s\"\r\n\"1\"\r\n\"2\"\r\n\"3\"\r\n";
+            try (TestHttpClient client = new TestHttpClient()) {
+                final HttpClientException error = Assert.assertThrows(HttpClientException.class, () -> client.assertGet("/exp", csv, sql));
+                TestUtils.assertContains(error.getMessage(), "peer disconnect");
+                TestUtils.assertEventually(() -> Assert.assertTrue(hasReleasedResource.get()));
+                client.assertGet("/exp", csv, sql);
+            } finally {
+                engine.getQueryRegistry().setListener(null);
+            }
+        }));
+    }
 
     @Test
     public void testCsvExportFuzz() throws Exception {

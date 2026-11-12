@@ -946,6 +946,18 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             Misc.free(factory);
             return;
         }
+        try {
+            // Finish cursor/worker cleanup and release execution resources before cache reuse.
+            state.endStreaming();
+        } catch (Throwable th) {
+            // endStreaming already reset isStreamingActive, so the request's error handler
+            // cannot discard this unsent batch. Do not roll back a batch already on the wire.
+            if (state.getBatchBuffer().getRowCount() > 0) {
+                state.getBatchBuffer().rollbackCurrentBatch();
+            }
+            Misc.freeBestEffort(th, factory);
+            throw th;
+        }
         selectCache.put(sqlText, factory);
     }
 
@@ -1951,6 +1963,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             batchBuffer.advanceStartRow(rowsThisBatch);
             metrics.markBatchSent(qwp1Size, rowsThisBatch);
             rawSocket.send(frame1Size);
+            cacheStreamingFactoryIfAvailable(state);
             state.endStreaming();
             sendResultEnd(context, state, requestId, batchSeq, totalRows);
             return;
@@ -1981,6 +1994,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         // Release cursor/factory BEFORE the kernel gets the bytes. Otherwise the
         // client can observe RESULT_END and issue a DROP TABLE while we still
         // hold the TableReader. See the matching notes on the two-send paths.
+        cacheStreamingFactoryIfAvailable(state);
         state.endStreaming();
         batchBuffer.advanceStartRow(rowsThisBatch);
         metrics.markBatchSent(qwp1Size, rowsThisBatch);
@@ -2218,11 +2232,8 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 // Partial-emit iterations cannot take this shortcut because
                 // the suffix still has to ship in a later iteration.
                 long totalRows = state.getStreamingRowsEmitted();
-                // Cache the factory for the next query with this SQL text. Must
-                // happen before sendResultBatchAndEnd because that method calls
-                // state.endStreaming() internally; after it runs, state no longer
-                // has the factory reference.
-                cacheStreamingFactoryIfAvailable(state);
+                // The send method finishes encoding before releasing the execution and caching
+                // its factory. Ending the stream here would reset its batch-sequence state.
                 sendResultBatchAndEnd(context, state, requestId, currentSeq,
                         batchBuffer, isFirstBatch, totalRows, rowsToShip);
                 return;

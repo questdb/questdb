@@ -55,18 +55,19 @@ public class CastDoubleToSymbolFunctionFactory implements FunctionFactory {
             sink.put(arg.getDouble(null));
             return SymbolConstant.newInstance(sink);
         }
-        return new Func(arg);
+        return new Func(arg, sqlExecutionContext);
     }
 
     private static class Func extends SymbolFunction implements UnaryFunction {
         private final Function arg;
-        private final CastToSymbolDictionary dictionary = new CastToSymbolDictionary(true);
+        private final CastToSymbolDictionary dictionary;
         private final StringSink sink = new StringSink();
         private final DirectString symbolA = new DirectString();
         private final DirectString symbolB = new DirectString();
 
-        public Func(Function arg) {
+        public Func(Function arg, SqlExecutionContext executionContext) {
             this.arg = arg;
+            dictionary = new CastToSymbolDictionary(true, executionContext);
         }
 
         @Override
@@ -124,7 +125,7 @@ public class CastDoubleToSymbolFunctionFactory implements FunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             releaseDictionary();
             arg.init(symbolTableSource, executionContext);
-            dictionary.setMemoryTracker(executionContext.getMemoryTracker());
+            dictionary.init(executionContext);
         }
 
         @Override

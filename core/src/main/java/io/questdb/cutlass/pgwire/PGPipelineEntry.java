@@ -287,12 +287,15 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             cursor = Misc.free(cursor);
             queryCancellation.clear();
             queryMemoryTracker = null;
+            // Finish execution-owned cleanup before another connection can borrow this plan.
+            endSqlExecutionOwner();
             // make sure factory is not released when the pipeline entry is closed
             factory = null;
             // we don't have to use immutable string since ConcurrentAssociativeCache does it when needed
             tasCache.put(SelectCacheKey.of(selectCacheScope, sqlText, selectCacheKeySink), tas);
             tas = null;
         } else if (tai != null) {
+            endSqlExecutionOwner();
             taiCache.put(sqlText, tai);
             // make sure we don't close insert operation when the pipeline entry is closed
             tai = null;

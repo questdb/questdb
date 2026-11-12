@@ -266,8 +266,10 @@ public class QueryRegistry {
             if (entry.memoryTracker != null) {
                 executionContext.setMemoryTracker(entry.memoryTracker);
             }
+            entry.resources.bind(executionContext);
             bindOwner(queryId, entry);
         } catch (Throwable th) {
+            entry.resources.unbind(executionContext);
             try {
                 restoreOwner(queryId, entry);
             } catch (Throwable cleanupFailure) {
@@ -389,6 +391,7 @@ public class QueryRegistry {
         } catch (Throwable th) {
             cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
         }
+        entry.resources.unbind(executionContext);
         CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
@@ -469,6 +472,8 @@ public class QueryRegistry {
             @Nullable MemoryTracker restoreTracker,
             @Nullable Throwable failure
     ) {
+        e.resources.unbind(executionContext);
+        failure = Misc.freeBestEffort(failure, e.resources);
         final MemoryTracker memoryTracker = e.memoryTracker;
         if (memoryTracker != null) {
             try {
@@ -584,6 +589,7 @@ public class QueryRegistry {
         e.executionContext = executionContext;
         e.protocolOwner = deferQueryText;
         e.referenceCount = 1;
+        e.resources.begin();
 
         final MemoryTracker outerTracker = executionContext.getMemoryTracker();
 
@@ -627,6 +633,7 @@ public class QueryRegistry {
                 executionContext.setMemoryTracker(tracker);
                 e.memoryTracker = tracker;
             }
+            e.resources.bind(executionContext);
             if (deferQueryText) {
                 bindOwner(queryId, e);
             }
@@ -770,6 +777,7 @@ public class QueryRegistry {
         private final CancellationBinding previousCancelledBinding = new CancellationBinding();
         private final CancellationBinding previousSimpleCancelledBinding = new CancellationBinding();
         private final StringSink query = new StringSink();
+        private final SqlExecutionResources resources = new SqlExecutionResources();
         private long cancelledGeneration;
         private long changedAtNs;
         private SqlExecutionContext executionContext;

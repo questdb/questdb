@@ -71,7 +71,7 @@ public class CastVarcharToSymbolFunctionFactory implements FunctionFactory {
             final String symbol = utf8ToString(value);
             return symbol != null ? SymbolConstant.newInstance(symbol) : SymbolConstant.NULL;
         }
-        return new Func(arg);
+        return new Func(arg, sqlExecutionContext);
     }
 
     private static @Nullable String utf8ToString(Utf8Sequence value) {
@@ -81,12 +81,13 @@ public class CastVarcharToSymbolFunctionFactory implements FunctionFactory {
     private static class Func extends SymbolFunction implements UnaryFunction {
         private final Function arg;
         private final StringSink decodeSink = new StringSink();
-        private final CastToSymbolDictionary dictionary = new CastToSymbolDictionary(true);
+        private final CastToSymbolDictionary dictionary;
         private final DirectString symbolA = new DirectString();
         private final DirectString symbolB = new DirectString();
 
-        public Func(Function arg) {
+        public Func(Function arg, SqlExecutionContext executionContext) {
             this.arg = arg;
+            dictionary = new CastToSymbolDictionary(true, executionContext);
         }
 
         @Override
@@ -135,7 +136,7 @@ public class CastVarcharToSymbolFunctionFactory implements FunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             releaseDictionary();
             arg.init(symbolTableSource, executionContext);
-            dictionary.setMemoryTracker(executionContext.getMemoryTracker());
+            dictionary.init(executionContext);
         }
 
         @Override

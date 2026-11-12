@@ -53,7 +53,9 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
         if (arg.isConstant()) {
             return SymbolConstant.newInstance(arg.getStrA(null));
         }
-        return new Func(arg);
+        final Func function = new Func(arg);
+        function.dictionary.init(sqlExecutionContext);
+        return function;
     }
 
     public static class Func extends SymbolFunction implements UnaryFunction {
@@ -115,7 +117,7 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
             // cursorClosed(); this defensive release also keeps failed/abandoned cursors safe.
             releaseDictionary();
             arg.init(symbolTableSource, executionContext);
-            dictionary.setMemoryTracker(executionContext.getMemoryTracker());
+            dictionary.init(executionContext);
         }
 
         public int intern(@Nullable CharSequence value) {

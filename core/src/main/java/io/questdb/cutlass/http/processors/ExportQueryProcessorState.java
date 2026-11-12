@@ -184,23 +184,10 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
 
         final RecordCursorFactory recordCursorFactory = this.recordCursorFactory;
         this.recordCursorFactory = null;
-        if (recordCursorFactory != null) {
-            if (queryCacheable && !isClosing) {
-                try {
-                    httpConnectionContext.getSelectCache().put(
-                            SelectCacheKey.of(selectCacheScope, sqlText, selectCacheKeySink),
-                            recordCursorFactory
-                    );
-                } catch (Throwable th) {
-                    cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
-                }
-            } else {
-                cleanupFailure = Misc.freeBestEffort(cleanupFailure, recordCursorFactory);
-            }
+        final boolean isCachingFactory = recordCursorFactory != null && queryCacheable && !isClosing;
+        if (!isCachingFactory) {
+            cleanupFailure = Misc.freeBestEffort(cleanupFailure, recordCursorFactory);
         }
-        queryCacheable = false;
-        selectCacheScope = null;
-        sqlText.clear();
         queryState = JsonQueryProcessorState.QUERY_SETUP_FIRST_RECORD;
         columnIndex = 0;
         skip = 0;
@@ -233,6 +220,24 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         } catch (Throwable th) {
             cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
         }
+        // End the execution before publishing its reusable plan to another connection.
+        if (isCachingFactory) {
+            if (cleanupFailure == null) {
+                try {
+                    httpConnectionContext.getSelectCache().put(
+                            SelectCacheKey.of(selectCacheScope, sqlText, selectCacheKeySink),
+                            recordCursorFactory
+                    );
+                } catch (Throwable th) {
+                    cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
+                }
+            } else {
+                cleanupFailure = Misc.freeBestEffort(cleanupFailure, recordCursorFactory);
+            }
+        }
+        queryCacheable = false;
+        selectCacheScope = null;
+        sqlText.clear();
         CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
@@ -328,6 +333,15 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
 
     public void setParquetTempTableCreate(CreateTableOperation createOp) {
         this.createParquetOp = createOp;
+    }
+
+    /** Supplies a compiled plan to exercise cache publication and cleanup failures without a socket. */
+    @TestOnly
+    public void setQueryFactoryForTest(RecordCursorFactory factory, CharSequence sql, boolean isCacheable) {
+        this.recordCursorFactory = factory;
+        this.sqlText.clear();
+        this.sqlText.put(sql);
+        this.queryCacheable = isCacheable;
     }
 
     @TestOnly
