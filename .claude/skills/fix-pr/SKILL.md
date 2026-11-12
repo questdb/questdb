@@ -37,9 +37,9 @@ to fix, or a finding from a review.
    it finds gaps, a fresh agent writes the missing tests. Commit.
 
 Tests are written while developing; the review at the end is the last resort,
-not the place where test cases get discovered. When the queue is empty, the
-main session runs `review-pr` at level 3 over the whole PR - the review the
-user runs before approving it. Its Blocking findings, and Adjacent ones this PR
+not the place where test cases get discovered. When the queue is empty, a
+helper runs `review-pr` at level 3 over the whole PR - the review the user
+runs before approving it. Its Blocking findings, and Adjacent ones this PR
 introduced, become new items: each is a test that should have existed.
 Deferred findings - real bugs, but rare enough for the PR to ship with them -
 become private issues in `questdb/questdb-enterprise`, and the other Adjacent
@@ -63,9 +63,10 @@ standard every item meets.
 
 > Harness note: this skill runs inside **Claude Code**. Helpers are
 > fresh-context agents launched through the Agent tool: `general-purpose`, and
-> `reviewer` and `risk-assessor` from `.claude/agents/`. Shell variables don't
-> carry over between `Bash` calls, so write each value Setup records, such as
-> `START` or the PR base, literally into later commands and task texts.
+> `reviewer`, `risk-assessor` and `review-pr-runner` from `.claude/agents/`.
+> Shell variables don't carry over between `Bash` calls, so write each value
+> Setup records, such as `START` or the PR base, literally into later commands
+> and task texts.
 
 ## Arguments
 
@@ -89,11 +90,10 @@ for them.
 ## Keep the main session small
 
 The main session only coordinates. Fresh helper agents analyze, build and test
-each item, write their details to files, and reply in a few lines. Read only
-those replies - never the files in the state directory, unless a reply is
-unclear or the user asks. The backstop review is the one step the main session
-runs itself: the review's parent launches agents of its own, which a Claude
-Code subagent cannot ("Backstop review").
+each item and review the PR, write their details to files, and reply in a few
+lines. Read only those replies - never the files in the state directory, unless
+a reply is unclear or the user asks. A small main session is cheap to resume
+after waiting on a helper; a large one is not.
 
 Launch helpers one at a time with the Agent tool, using the agent types below
 and the task templates at the end of this file. A helper runs in the
@@ -103,8 +103,9 @@ helper runs on this session's model.
 
 Every agent of the run thinks at max, except the review's discovery agents:
 review-pr runs them as `reviewer` at its default, high, because they only read
-code. Pass `effort: "max"` to every helper launch; `risk-assessor` and the
-review's `review-prober` falsifiers set max in their definitions.
+code. Pass `effort: "max"` to every helper launch; `review-pr-runner`,
+`risk-assessor` and the review's `review-prober` falsifiers set max in their
+definitions.
 
 | Helper | Agent type | Extra parameters |
 |---|---|---|
@@ -114,6 +115,13 @@ review's `review-prober` falsifiers set max in their definitions.
 | Test review | `reviewer` | `effort: "max"` |
 | Test gaps | `general-purpose` | `effort: "max"` |
 | Risk | `risk-assessor` | none |
+| Review | `review-pr-runner` | none |
+
+The review helper is the only one that launches agents of its own: the
+review's discovery agents and falsifiers. Its definition,
+`.claude/agents/review-pr-runner.md`, allows that. If it fails twice, run the
+review in the main session instead: read `.claude/skills/review-pr/SKILL.md`
+and follow it with the helper's arguments.
 
 ## Setup
 
@@ -252,8 +260,7 @@ START, not only this run's. Number the rounds from 1.
    bullet of each item built since, one `- ` line each, and then their
    APPROACH lines. The review checks the body the PR will get, not the
    published one.
-2. Run review round N in the main session, as the Review template at the
-   end of this file says. It follows review-pr with
+2. Launch the review helper for round N. It follows review-pr with
    `<PR> --range=<PR base>..<HEAD sha> --level=<review-level>
    --block-at=<block-at> --body=<state>/pr-body.md --prior=<files>`; without
    a PR, drop `<PR>` and `--body`. The prior files are the `report.md` of
@@ -332,7 +339,9 @@ below `--block-at`. Unless `--no-issues`, file each one:
   fresh one once - for the analysis, as a continuation of what the first
   one wrote - rather than continuing the old agent. If the fresh one fails
   too, mark the item blocked with what it left and go to the next item; if
-  two items in a row end this way, stop and report.
+  two items in a row end this way, stop and report. The review helper is the
+  exception: after it fails twice, the main session runs the review itself
+  ("Keep the main session small").
 
 ## Final summary
 
@@ -724,18 +733,17 @@ definition asks for.
 
 ### Review
 
-The main session runs this itself.
-
 ```text
-Review round <N> of this fix-pr run in <repo>: the review the user runs
-before approving the PR. Follow .claude/skills/review-pr/SKILL.md, as the
-review's parent, with these arguments:
+Review round <N> of a fix-pr run in <repo>: the review the user runs before
+approving the PR. Read .claude/skills/review-pr/SKILL.md and follow it with
+these arguments:
 <PR> --range=<PR base>..<HEAD sha> --level=<review-level>
   --block-at=<block-at> --body=<state>/pr-body.md
   --prior=<comma-separated prior files>
 [Without a PR: --range=<PR base>..<HEAD sha> --level=<review-level>
   --block-at=<block-at> --prior=<comma-separated prior files>]
-Write the review's files to <state>/review<N>/.
+You are the review's parent: launch its agents yourself. Write your files to
+<state>/review<N>/.
 
 When the review is done, write there:
 - report.md: the Step 4 report;
@@ -745,8 +753,8 @@ When the review is done, write there:
 - deferred-<ID>.md (D1, D2, ...): the draft of each Deferred finding, ready
   to file;
 - issue-<slug>.md: the draft of each other Adjacent finding, ready to file;
-- pr-body.md: the body with Step 2's replacements applied (with a PR only);
-- result.md: only these lines, which the backstop review's steps read:
+- pr-body.md: the body with Step 2's replacements applied (with a PR only).
+Reply with only these lines:
 VERDICT: approve | approve with comments | request changes | needs discussion
 FINDING: <ID> <Blocking <risk tier> | Adjacent> <one line>, one line each | none
 DEFERRED: <ID> <risk tier> <one line>, one line each | none
