@@ -1592,14 +1592,16 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
     public void testCreateWithCharThresholdRejected() throws Exception {
         // A one-character literal binds as CHAR, and a read compares the timestamp with it as timestamp text,
         // which no single character is, so such a policy would fail every read of the view with "Invalid date".
-        // DDL refuses it at CREATE and at ALTER, with the timestamp on either side.
+        // DDL binds the policy as a read does, so it refuses it at CREATE and at ALTER with the read's error, with
+        // the timestamp on either side.
         assertMemoryLeak(() -> {
             execute("create table base (sym symbol, ts timestamp) timestamp(ts) partition by day wal");
-            for (String predicate : new String[]{"ts < 'a'", "'a' > ts", "ts >= 'x'", "ts < '5'"}) {
+            final String[][] policies = {{"ts < 'a'", "a"}, {"'a' > ts", "a"}, {"ts >= 'x'", "x"}, {"ts < '5'", "5"}};
+            for (String[] policy : policies) {
                 assertExceptionNoLeakCheck(
-                        "create materialized view mv as (select * from base) expire rows when " + predicate,
+                        "create materialized view mv as (select * from base) expire rows when " + policy[0],
                         25,
-                        "a CHAR threshold is not a timestamp, so every read of the view fails"
+                        "invalid EXPIRE ROWS predicate: Invalid date [str='" + policy[1] + "']"
                 );
             }
             execute("create materialized view mv as (select * from base) expire rows when ts < '2024'");
@@ -1607,7 +1609,7 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "alter materialized view mv set expire rows when ts < 'a'",
                     48,
-                    "a CHAR threshold is not a timestamp, so every read of the view fails"
+                    "invalid EXPIRE ROWS predicate: Invalid date [str='a']"
             );
             assertQuery("select expire_clause from materialized_views() where view_name = 'mv'")
                     .noLeakCheck()

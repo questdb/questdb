@@ -86,7 +86,6 @@ import io.questdb.griffin.bind.UpdateTarget;
 import io.questdb.griffin.codegen.SqlCodeGenerator;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.StaleViewCheckFactory;
-import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.engine.ops.CopyCancelFactory;
 import io.questdb.griffin.engine.ops.CopyExportFactory;
@@ -750,7 +749,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             if (exprReferencesColumn(thresholdNode)) {
                 return Numbers.LONG_NULL;
             }
-            f = functionParser.parseFunction(thresholdNode, metadata, executionContext);
+            f = bindStatementExpression(thresholdNode, metadata, ColumnType.UNDEFINED, executionContext);
             if (f == null || !ColumnType.isTimestamp(f.getType()) || !(f.isConstant() || f.isRuntimeConstant())) {
                 return Numbers.LONG_NULL;
             }
@@ -1013,11 +1012,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * stored text is embedded verbatim into every read's generated SQL, so anything that read-path
      * parse would choke on must be rejected here. Any parse/bind error is rewritten as a clear
      * "invalid EXPIRE ROWS predicate" positioned at {@code position}. Runs on a freshly-borrowed
-     * compiler (its own lexer/parser/functionParser).
+     * compiler (its own lexer, parser and binder). It binds with the planner's binder, as reads and the
+     * cleanup sweep do, so a predicate it accepts binds there too.
      * <p>
-     * The last things it does are binding the predicate again, wrapped as the cleanup sweep and a read wrap it,
+     * The last thing it does is bind the predicate a second time, wrapped exactly as a read wraps it,
      * because binding the bare predicate does not answer the question the DDL is being asked. See
-     * {@link #validateExpiryKeepFilterBinds} and {@link #validateExpiryKeepFilterReads}.
+     * {@link #validateExpiryKeepFilterBinds}.
      */
     @Override
     public ExpiryValidationResult validateExpiryPredicateOnMetadata(
@@ -1041,7 +1041,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 if (trailingTok != null) {
                     throw SqlException.$(position, "unexpected token after expression: ").put(trailingTok);
                 }
-                f = functionParser.parseFunction(node, metadata, executionContext);
+                // The read filter embeds the predicate as an argument, where an aggregate is illegal, and the
+                // binder refuses one at the root as it would in any expression; name the policy's own rule.
+                if (node.type == ExpressionNode.FUNCTION && getFunctionFactoryCache().isGroupBy(node.token)) {
+                    throw SqlException.$(position, "aggregate functions are not supported");
+                }
+                f = bindStatementExpression(node, metadata, ColumnType.UNDEFINED, executionContext);
             } catch (SqlException | CairoException | ImplicitCastException e) {
                 // ImplicitCastException extends RuntimeException, not CairoException. A constant the bind
                 // folds - `i = 'abc'` against an INT column - raises one here, and it has to read as an
@@ -1051,14 +1056,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
             if (f == null || !ColumnType.isBoolean(f.getType())) {
                 throw SqlException.$(position, "invalid EXPIRE ROWS predicate: expected a boolean expression");
-            }
-            // The read filter embeds the predicate as an argument of a CASE expression, where an
-            // aggregate is illegal ("Aggregate function cannot be passed as an argument"). The
-            // function parser rejects an aggregate only when it is an argument of another function,
-            // so a bare root-level aggregate (e.g. `bool_and(flag)`) passes the bind above; reject it
-            // here so the view does not get created with a policy that fails every read.
-            if (f instanceof GroupByFunction) {
-                throw SqlException.$(position, "invalid EXPIRE ROWS predicate: aggregate functions are not supported");
             }
             // A stored predicate has no statement to supply bind values, so `v > $1` would fail on
             // every read with "undefined bind variable"; reject it at definition time instead.
@@ -1101,8 +1098,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             validateExpiryKeepFilterBinds(executionContext, metadata, predicate, position);
             // Also re-lexes, so it has to follow everything that reads `node`.
             rejectUnusableConstantExpiryThreshold(executionContext, metadata, predicate, timestampColumn, position);
-            // After the threshold check, whose message names the cause of a CHAR threshold this bind also refuses.
-            validateExpiryKeepFilterReads(executionContext, metadata, predicate, position);
             return result;
         } finally {
             Misc.free(f);
@@ -7611,14 +7606,20 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             LOG.advisory().$("EXPIRE ROWS set on an aggregating (non-passthrough) materialized view; a later refresh may regenerate expired rows - align base-table retention (TTL) with the expiry horizon [view=")
                     .$safe(tableToken.getTableName()).I$();
         }
-        final ExpiryValidationResult validationResult;
-        if (RowExpiryUtil.isKeepLatest(clause.predicate) || RowExpiryUtil.isKeepBy(clause.predicate) || RowExpiryUtil.isWindow(clause.predicate)) {
-            validationResult = validateAlterRelativePolicy(executionContext, tableToken, tableMetadata, clause.predicate, clause.predicatePos);
-        } else {
-            validationResult = validateExpiryPredicate(executionContext, tableMetadata, clause.predicate, clause.predicatePos);
-            authorizeExpiryPredicateSelect(executionContext, tableToken, tableMetadata, validationResult);
+        // WAL apply replays a SET EXPIRE that was validated when its user submitted it, and validating it again
+        // checks nothing the policy can have changed: a view's column names and types stay as they were. A policy
+        // that an older version stored may fail the current rules; refusing it would suspend the view, while a read
+        // reports it as the view's policy and DROP EXPIRE removes it.
+        if (!executionContext.isWalApplication()) {
+            final ExpiryValidationResult validationResult;
+            if (RowExpiryUtil.isKeepLatest(clause.predicate) || RowExpiryUtil.isKeepBy(clause.predicate) || RowExpiryUtil.isWindow(clause.predicate)) {
+                validationResult = validateAlterRelativePolicy(executionContext, tableToken, tableMetadata, clause.predicate, clause.predicatePos);
+            } else {
+                validationResult = validateExpiryPredicate(executionContext, tableMetadata, clause.predicate, clause.predicatePos);
+                authorizeExpiryPredicateSelect(executionContext, tableToken, tableMetadata, validationResult);
+            }
+            warnIfExpiryKeepsDisk(validationResult, clause.predicate, tableToken.getTableName());
         }
-        warnIfExpiryKeepsDisk(validationResult, clause.predicate, tableToken.getTableName());
         final AlterOperationBuilder setExpire = alterOperationBuilder.ofSetExpire(
                 tableNamePosition,
                 tableToken,
@@ -7792,40 +7793,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     /**
-     * Binds {@link RowExpiryUtil#appendKeepFilter} as a read of the policied view binds it, with the planner's binder,
-     * and refuses the policy when that fails. The binder runs temporal checks that the function parser does not:
-     * it refuses timestamp text outside the range of the compared column, or text no timestamp reads, such as
-     * {@code ts > '2300-01-01'} on a {@code TIMESTAMP_NS} column, which would fail every read of the view.
-     * <p>
-     * Like the read probe of a structural policy, it runs when the user submits the statement, and not when WAL
-     * apply replays the stored SET EXPIRE: a replay that refused a policy an older version accepted would suspend
-     * the view, while a read reports such a policy by name and {@code DROP EXPIRE} removes it.
-     */
-    private void validateExpiryKeepFilterReads(
-            SqlExecutionContext executionContext,
-            RecordMetadata metadata,
-            CharSequence predicate,
-            int position
-    ) throws SqlException {
-        if (executionContext.isWalApplication()) {
-            return;
-        }
-        Function f = null;
-        try {
-            clear();
-            expiryPolicySql.clear();
-            RowExpiryUtil.appendKeepFilter(expiryPolicySql, predicate);
-            lexer.of(expiryPolicySql);
-            final ExpressionNode keepFilter = SqlUtil.optimiseBooleanNot(parser.expr(lexer, (QueryModel) null, this), sqlNodePool);
-            f = bindStatementExpression(keepFilter, metadata, ColumnType.BOOLEAN, executionContext);
-        } catch (SqlException | CairoException | ImplicitCastException e) {
-            throw SqlException.$(position, "invalid EXPIRE ROWS predicate: ").put(reasonOf(e));
-        } finally {
-            Misc.free(f);
-        }
-    }
-
-    /**
      * Binds {@link RowExpiryUtil#appendKeepCase} and refuses the policy when that fails. The
      * strict form's type rules refuse a cross-type equality such as {@code s = 12345} on a {@code STRING}
      * column, which binds on its own but casts every value to {@code INT} once rows are evaluated: every
@@ -7855,7 +7822,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             expiryPolicySql.clear();
             RowExpiryUtil.appendKeepCase(expiryPolicySql, predicate);
             lexer.of(expiryPolicySql);
-            f = functionParser.parseFunction(parser.expr(lexer, (QueryModel) null, this), metadata, executionContext);
+            f = bindStatementExpression(parser.expr(lexer, (QueryModel) null, this), metadata, ColumnType.UNDEFINED, executionContext);
             f = Misc.free(f);
             // A bare <column> = <constant> has to compare values of one kind. A number compared with a text column
             // reads each value as a number, which fails on the first non-numeric value of a read or a sweep. Text
@@ -7872,7 +7839,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 final int columnIndex = metadata.getColumnIndexQuiet(GenericLexer.unquote(column.token));
                 if (columnIndex > -1) {
                     final int columnType = metadata.getColumnType(columnIndex);
-                    f = functionParser.parseFunction(constant, metadata, executionContext);
+                    f = bindStatementExpression(constant, metadata, ColumnType.UNDEFINED, executionContext);
                     final int constantType = f.getType();
                     f = Misc.free(f);
                     final boolean isTextConstant = ColumnType.isStringyType(constantType) || ColumnType.isSymbol(constantType) || constantType == ColumnType.CHAR;
@@ -7919,9 +7886,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * returns {@code LONG_NULL} for a dozen unrelated reasons - no designated timestamp, the opposite
      * comparison direction, a non-timestamp threshold type - so it cannot tell a NULL threshold from a
      * shape it simply does not handle.
-     * <p>
-     * It also rejects a CHAR threshold, such as {@code ts < 'a'}. The bind accepts it, but a read compares the
-     * timestamp with it as timestamp text, which no single character is, and fails.
      */
     private void rejectUnusableConstantExpiryThreshold(
             SqlExecutionContext executionContext,
@@ -7931,7 +7895,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             int position
     ) throws SqlException {
         final boolean isNullThreshold;
-        final boolean isCharThreshold;
         Function t = null;
         try {
             clear();
@@ -7941,13 +7904,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             if (thresholdNode == null) {
                 return;
             }
-            t = functionParser.parseFunction(thresholdNode, metadata, executionContext);
+            t = bindStatementExpression(thresholdNode, metadata, ColumnType.UNDEFINED, executionContext);
             if (t == null || !t.isConstant()) {
                 return;
             }
             t.init(null, executionContext);
             isNullThreshold = isNullConstant(t);
-            isCharThreshold = ColumnType.tagOf(t.getType()) == ColumnType.CHAR;
         } catch (SqlException | CairoException | ImplicitCastException e) {
             // The whole-predicate bind above already reported anything that matters; a failure here only
             // means the threshold could not be evaluated, which is not itself a reason to reject.
@@ -7960,9 +7922,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         // the statement the user wrote.
         if (isNullThreshold) {
             throw SqlException.$(position, "invalid EXPIRE ROWS predicate: the threshold is NULL, so no row can ever expire");
-        }
-        if (isCharThreshold) {
-            throw SqlException.$(position, "invalid EXPIRE ROWS predicate: a CHAR threshold is not a timestamp, so every read of the view fails");
         }
     }
 
@@ -8011,14 +7970,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 validateKeepByColumn(metadata, predicate, position);
             }
         }
-        // The probe runs when the user submits the statement, and not when WAL apply replays the stored
-        // SET EXPIRE. By then the probe has already accepted the policy for this view, and a view's column
-        // names and types cannot change in between, so running it again checks nothing new. A second run
-        // can fail only for reasons unrelated to the policy: the probe borrows a compiler and a view reader
-        // and opens the view's files, and any of these can fail when the server is under load.
-        if (!executionContext.isWalApplication()) {
-            probeExpiryPolicyRead(executionContext, source, tsName(metadata), predicate, isNarrowProjection, position);
-        }
+        probeExpiryPolicyRead(executionContext, source, tsName(metadata), predicate, isNarrowProjection, position);
         return RowExpiryUtil.isWindow(predicate)
                 ? ExpiryValidationResult.NON_MONOTONIC
                 : ExpiryValidationResult.MONOTONIC;
