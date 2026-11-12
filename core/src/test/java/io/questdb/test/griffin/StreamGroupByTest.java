@@ -59,6 +59,7 @@ import io.questdb.std.DirectLongList;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.MemoryTrackerWorkload;
+import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.StringSink;
@@ -1500,6 +1501,37 @@ public class StreamGroupByTest extends AbstractCairoTest {
                     final double[] nulls = new double[expected[j].length];
                     Arrays.fill(nulls, nan);
                     assertValues(compiler, context, sql, "e", nulls);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testColumnTopKeySumsKeepOverflow() throws Exception {
+        run((engine, compiler, context) -> {
+            engine.execute("CREATE TABLE o (ts TIMESTAMP, d DOUBLE) TIMESTAMP(ts) PARTITION BY DAY", context);
+            engine.execute("INSERT INTO o VALUES ('2024-01-01T00', 1.5e308), ('2024-01-01T01', 1.5e308), ('2024-01-01T02', 1.0), ('2024-01-02T00', 5.0)", context);
+            engine.execute("ALTER TABLE o ADD COLUMN i INT", context);
+            engine.execute("INSERT INTO o VALUES ('2024-01-03T00', 1.5e308, 1), ('2024-01-03T01', 1.5e308, 1), ('2024-01-03T02', 5.0, 1)", context);
+            for (String function : new String[]{"ksum", "nsum", "sum", "avg"}) {
+                for (String sql : new String[]{"SELECT i, " + function + "(d) v FROM o ORDER BY i", "SELECT " + function + "(d) v FROM o WHERE ts < '2024-01-03'"}) {
+                    try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()) {
+                        if (parallel) {
+                            Assert.assertTrue(sql, plan(factory, context).contains("vectorized: true"));
+                        }
+                        final int column = factory.getMetadata().getColumnIndex("v");
+                        final int rows = column == 0 ? 1 : 2;
+                        for (int pass = 0; pass < 2; pass++) {
+                            try (RecordCursor cursor = factory.getCursor(context)) {
+                                final Record record = cursor.getRecord();
+                                for (int row = 0; row < rows; row++) {
+                                    Assert.assertTrue(sql, cursor.hasNext());
+                                    Assert.assertFalse(sql + ": " + record.getDouble(column), Numbers.isFinite(record.getDouble(column)));
+                                }
+                                Assert.assertFalse(sql, cursor.hasNext());
+                            }
+                        }
+                    }
                 }
             }
         });

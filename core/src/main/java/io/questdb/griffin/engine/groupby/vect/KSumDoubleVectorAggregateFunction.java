@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -71,15 +72,23 @@ public class KSumDoubleVectorAggregateFunction extends DoubleFunction implements
     @Override
     public void aggregate(long address, long frameRowCount, int workerId) {
         if (address != 0) {
-            // Kahan compensated summation
+            final int sumOffset = workerId * SUM_PADDING;
             final double x = Vect.sumDoubleKahan(address, frameRowCount);
-            if (x == x) {
-                final int sumOffset = workerId * SUM_PADDING;
-                final double sum = this.sum[sumOffset];
-                final double y = x - this.sum[sumOffset + 1]; // y = x - c
-                final double t = sum + y; // t = sum + y
-                this.sum[sumOffset + 1] = t - sum - y; // c = t - sum - y
-                this.sum[sumOffset] = t; // sum = t
+            if (Numbers.isFinite(x)) {
+                add(sumOffset, x);
+                this.count[workerId * COUNT_PADDING]++;
+                return;
+            }
+            // The sum is NaN without finite values and after an overflow, which per-row GROUP BY keeps.
+            boolean hasFinite = false;
+            for (long i = 0; i < frameRowCount; i++) {
+                final double value = Unsafe.getDouble(address + (i << 3));
+                if (Numbers.isFinite(value)) {
+                    add(sumOffset, value);
+                    hasFinite = true;
+                }
+            }
+            if (hasFinite) {
                 this.count[workerId * COUNT_PADDING]++;
             }
         }
@@ -163,5 +172,14 @@ public class KSumDoubleVectorAggregateFunction extends DoubleFunction implements
             count += this.count[i * COUNT_PADDING];
         }
         return Rosti.keyedIntKSumDoubleWrapUp(pRosti, valueOffset, sum, count);
+    }
+
+    // Kahan compensated summation
+    private void add(int sumOffset, double x) {
+        final double sum = this.sum[sumOffset];
+        final double y = x - this.sum[sumOffset + 1]; // y = x - c
+        final double t = sum + y; // t = sum + y
+        this.sum[sumOffset + 1] = t - sum - y; // c = t - sum - y
+        this.sum[sumOffset] = t; // sum = t
     }
 }
