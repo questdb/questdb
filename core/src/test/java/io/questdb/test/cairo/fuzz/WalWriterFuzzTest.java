@@ -34,7 +34,6 @@ import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -107,6 +106,9 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     private final Set<String> txnZeroRunRefusedPurges = ConcurrentHashMap.newKeySet();
     private boolean existingFilesParanoia;
     private boolean fsAllowsMixedIO;
+    // whether the purge job after the fuzz run of runTxnZeroCoveredSymbolFuzz() replays the purge log as a version
+    // before partition_timestamp_raw wrote it, see eraseRawPartitionTimestamps()
+    private boolean isTxnZeroRunPurgeLogLegacy;
     private long txnZeroRunPurgeTasksConsumed = -1;
     private long txnZeroRunPurgeTasksLogged = -1;
     private int txnZeroRunSkippedRefusedPurgeFileCount;
@@ -545,7 +547,10 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testConvertPartitionToParquetWithCoveringIndexOnTxnZeroSymbolFuzz() throws Exception {
-        runTxnZeroCoveredSymbolRandomFuzz(generateRandom(LOG), null, null, 1);
+        // the run draws first whether the purge job after the run replays the purge log as a version before
+        // partition_timestamp_raw wrote it
+        final Rnd rnd = generateRandom(LOG);
+        runTxnZeroCoveredSymbolRandomFuzz(rnd, null, null, 1, rnd.nextBoolean());
     }
 
     @Test
@@ -571,13 +576,35 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                         return super.openRW(name, opts);
                     }
                 },
-                0
+                0,
+                false
         );
         Assert.assertTrue(isPurgeLogOpenFailed.get());
         Assert.assertTrue(
                 txnZeroRunPurgeTasksLogged + " < " + txnZeroRunPurgeTasksConsumed,
                 txnZeroRunPurgeTasksLogged < txnZeroRunPurgeTasksConsumed
         );
+    }
+
+    @Test
+    public void testConvertPartitionToParquetWithCoveringIndexOnTxnZeroSymbolSubMicroSplitPartition() throws Exception {
+        // Pins a run of the fuzz test above on TIMESTAMP_NS tables that defers the column purges past the run. An O3
+        // split named a partition of the non-WAL table 2022-02-27T093239-229558942.98, and DROP COLUMN c2 left files
+        // there. The purge log kept that timestamp in microseconds only, and the purge job after the run looked for
+        // the files in a directory that does not exist. The fuzz test drew the default symbol index type from other
+        // seeds. The fuzz plants no IO failure: one that hit the purge job would lose the purge log, and the check
+        // before VACUUM TABLE would skip.
+        runTxnZeroCoveredSymbolRandomFuzz(generateRandom(LOG, 2414605847469761L, 1794246069604L), "POSTING EF", null, 0, false);
+        Assert.assertEquals(txnZeroRunPurgeTasksConsumed, txnZeroRunPurgeTasksLogged);
+    }
+
+    @Test
+    public void testConvertPartitionToParquetWithCoveringIndexOnTxnZeroSymbolSubMicroSplitPartitionLegacyPurgeLog() throws Exception {
+        // The run above, with a purge log as a version before partition_timestamp_raw left it: its rows keep the
+        // timestamp of the split partition 2022-02-27T093239-229558942.98 of the non-WAL table in microseconds only,
+        // and the purge job after the run locates the partition in a snapshot of the table.
+        runTxnZeroCoveredSymbolRandomFuzz(generateRandom(LOG, 2414605847469761L, 1794246069604L), "POSTING EF", null, 0, true);
+        Assert.assertEquals(txnZeroRunPurgeTasksConsumed, txnZeroRunPurgeTasksLogged);
     }
 
     @Test
@@ -589,7 +616,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         // default symbol index type from other seeds. The fuzz plants no IO failure: one that hit the purge
         // job would lose the purge log, and the check before VACUUM TABLE would skip.
         replayPinnedSeedsWithoutVacuum();
-        runTxnZeroCoveredSymbolRandomFuzz(generateRandom(LOG, 101024978098573L, 9175392298475L), "POSTING DELTA", null, 0);
+        runTxnZeroCoveredSymbolRandomFuzz(generateRandom(LOG, 101024978098573L, 9175392298475L), "POSTING DELTA", null, 0, false);
         Assert.assertEquals(txnZeroRunPurgeTasksConsumed, txnZeroRunPurgeTasksLogged);
         // instance 0 of sym0 in partition 2022-02-26 (name txn 53) of the non-WAL table, whose index DROP
         // INDEX dropped before DROP PARTITION of 2022-02-27
@@ -1327,12 +1354,10 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     private void addPurgesWithChangedTruncateVersion(String tableName, Set<String> purges) throws SqlException {
         final TableToken tableToken = engine.verifyTableName(tableName);
         final long truncateVersion;
-        final int timestampType;
         try (TableReader reader = getReader(tableName)) {
             truncateVersion = reader.getTxFile().getTruncateVersion();
-            timestampType = reader.getMetadata().getTimestampType();
         }
-        final String sql = "SELECT partition_timestamp, partition_name_txn, column_name, column_version FROM \""
+        final String sql = "SELECT partition_timestamp_raw, partition_name_txn, column_name, column_version FROM \""
                 + configuration.getSystemTableNamePrefix() + "column_versions_purge_log\" WHERE table_name = '"
                 + tableToken.getDirName() + "' AND table_id = " + tableToken.getTableId() + " AND truncate_version <> " + truncateVersion;
         try (
@@ -1343,7 +1368,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
             while (cursor.hasNext()) {
                 final String key = refusedPurgeKey(
                         tableToken.getDirName(),
-                        ColumnType.getTimestampDriver(timestampType).fromMicros(record.getTimestamp(0)),
+                        record.getLong(0),
                         record.getLong(1),
                         record.getSymA(2),
                         record.getLong(3)
@@ -1372,6 +1397,22 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
             Assert.assertTrue(cursor.hasNext());
             return cursor.getRecord().getLong(0);
         }
+    }
+
+    /**
+     * Erases partition_timestamp_raw of the rows of tableName in the purge log, as a version before the column wrote
+     * them, so the purge job after the run locates their partitions in a snapshot of the table. The rows that the job
+     * may refuse keep the column, see {@link #addPurgesWithChangedTruncateVersion}: the job reports a refused entry
+     * with the partition timestamp it read, and the check before VACUUM TABLE skips the files of those entries.
+     */
+    private void eraseRawPartitionTimestamps(String tableName) throws SqlException {
+        final TableToken tableToken = engine.verifyTableName(tableName);
+        final long truncateVersion;
+        try (TableReader reader = getReader(tableName)) {
+            truncateVersion = reader.getTxFile().getTruncateVersion();
+        }
+        execute("UPDATE \"" + configuration.getSystemTableNamePrefix() + "column_versions_purge_log\" SET partition_timestamp_raw = NULL WHERE table_name = '"
+                + tableToken.getDirName() + "' AND table_id = " + tableToken.getTableId() + " AND truncate_version = " + truncateVersion);
     }
 
     /**
@@ -1443,10 +1484,9 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         txnZeroRunRefusedPurges.clear();
         node1.getConfigurationOverrides().setColumnPurgeTruncateRefusalListener((task, offset) -> {
             final LongList info = task.getUpdatedColumnInfo();
-            final TimestampDriver driver = task.getTimestampTypeDriver();
             final String key = refusedPurgeKey(
                     task.getTableToken().getDirName(),
-                    driver.fromMicros(driver.toMicros(info.getQuick(offset + ColumnPurgeTask.OFFSET_PARTITION_TIMESTAMP))),
+                    info.getQuick(offset + ColumnPurgeTask.OFFSET_PARTITION_TIMESTAMP),
                     info.getQuick(offset + ColumnPurgeTask.OFFSET_PARTITION_NAME_TXN),
                     task.getColumnName(),
                     info.getQuick(offset + ColumnPurgeTask.OFFSET_COLUMN_VERSION)
@@ -1557,7 +1597,8 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
             Rnd rnd,
             String defaultSymbolIndexType,
             FilesFacade filesFacade,
-            int ioFailureCount
+            int ioFailureCount,
+            boolean isLegacyPurgeLog
     ) throws Exception {
         setTestParams(rnd);
         if (filesFacade != null) {
@@ -1609,7 +1650,15 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
             LOG.info().$("deferring column purges past the fuzz run").$();
             node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, Micros.DAY_MICROS);
         }
-        runTxnZeroCoveredSymbolFuzz(rnd);
+        if (isLegacyPurgeLog) {
+            LOG.info().$("replaying the purge log without partition_timestamp_raw").$();
+        }
+        isTxnZeroRunPurgeLogLegacy = isLegacyPurgeLog;
+        try {
+            runTxnZeroCoveredSymbolFuzz(rnd);
+        } finally {
+            isTxnZeroRunPurgeLogLegacy = false;
+        }
     }
 
     /**
@@ -1652,6 +1701,12 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
             addPurgesWithChangedTruncateVersion(tableNameNoWal, purgesWithChangedTruncateVersion);
             for (String walTableName : walTableNames) {
                 addPurgesWithChangedTruncateVersion(walTableName, purgesWithChangedTruncateVersion);
+            }
+            if (isTxnZeroRunPurgeLogLegacy) {
+                eraseRawPartitionTimestamps(tableNameNoWal);
+                for (String walTableName : walTableNames) {
+                    eraseRawPartitionTimestamps(walTableName);
+                }
             }
             purgeColumnVersions();
             if (purgeTasksLogged == purgeTasksConsumed) {

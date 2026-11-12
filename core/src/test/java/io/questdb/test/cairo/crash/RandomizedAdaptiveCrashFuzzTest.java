@@ -30,6 +30,7 @@ import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
@@ -46,6 +47,7 @@ import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.mp.SCSequence;
+import io.questdb.std.Chars;
 import io.questdb.std.NumericException;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -55,7 +57,9 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.cairo.fuzz.FuzzRunner;
 import io.questdb.test.cairo.fuzz.O3ParquetPathCounts;
+import io.questdb.test.fuzz.FuzzSetDedupOperation;
 import io.questdb.test.fuzz.FuzzTransaction;
+import io.questdb.test.fuzz.FuzzTransactionOperation;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;
@@ -114,10 +118,24 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
     // rename (see testRenameColumnCrashSafeW0); the full library reaches it only for seeds that emit a rename.
     private boolean fuzzOverrideRenameOnly = false;
 
-    // Canonical committed-state fingerprint: full ordered dump to a String.
+    // Canonical committed-state fingerprint: a full ordered dump, then the dedup keys and mode, to a String. A table
+    // that lost its dedup mode holds the same rows until a later write resends a key, so the rows alone would not
+    // tell.
     private String fingerprint(String table) throws SqlException {
         StringSink fp = new StringSink();
         printSql("select * from " + table + " order by ts", fp);
+        fp.put("dedup:");
+        try (TableReader reader = getReader(table)) {
+            final TableReaderMetadata metadata = reader.getMetadata();
+            boolean hasKeys = false;
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                if (metadata.isDedupKey(i)) {
+                    fp.put(' ').put(metadata.getColumnName(i));
+                    hasKeys = true;
+                }
+            }
+            fp.put(' ').put(hasKeys ? dedupModeName(metadata.getDedupMode()) : dedupModeName(NO_DEDUP)).put('\n');
+        }
         return fp.toString();
     }
 
@@ -206,10 +224,29 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
         fuzzer.setFuzzCounts(true, 200, 20, 4, 4, 4, 0, 3);
     }
 
-    private ObjList<FuzzTransaction> generateTxns(Rnd rnd, String walTableName) throws Exception {
+    // With a dedup mode, an ALTER TABLE ... DEDUP ENABLE in that mode on the designated timestamp joins the transactions
+    // at a position drawn after them, so a seed generates the same other transactions in every mode.
+    private ObjList<FuzzTransaction> generateTxns(Rnd rnd, String walTableName, int dedupMode) throws Exception {
         configureFuzz();
         fuzzer.createInitialTableWal(walTableName, 0);   // 0 initial rows → deterministic (no nondeterministic data_temp seed)
-        return fuzzer.generateTransactions(walTableName, rnd);
+        final ObjList<FuzzTransaction> txns = fuzzer.generateTransactions(walTableName, rnd);
+        if (dedupMode != NO_DEDUP) {
+            final FuzzTransaction dedupEnable = new FuzzTransaction();
+            dedupEnable.operationList.add(new FuzzSetDedupOperation(dedupMode));
+            txns.insert(rnd.nextInt(txns.size() + 1), 1, dedupEnable);
+        }
+        return txns;
+    }
+
+    // The index of the transaction that enables dedup, -1 when none does.
+    private static int dedupEnablePosition(ObjList<FuzzTransaction> txns) {
+        for (int i = 0, n = txns.size(); i < n; i++) {
+            final ObjList<FuzzTransactionOperation> operations = txns.getQuick(i).operationList;
+            if (operations.size() > 0 && operations.getQuick(0) instanceof FuzzSetDedupOperation) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     private ObjList<CommittedState> buildTwinFingerprints(String twinName, ObjList<FuzzTransaction> txns, Rnd applyRnd) throws Exception {
@@ -238,14 +275,16 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
     private static final String TWIN_TABLE = "cf_twin";
 
     private final class FuzzCrashWorkload implements AdaptiveCrashWorkload {
+        private final int dedupMode;
         private final long s0, s1;
         private ObjList<FuzzTransaction> txns;
         private ObjList<CommittedState> fp;   // built lazily, once
         private TableToken walToken;
 
-        FuzzCrashWorkload(long s0, long s1) {
+        FuzzCrashWorkload(long s0, long s1, int dedupMode) {
             this.s0 = s0;
             this.s1 = s1;
+            this.dedupMode = dedupMode;
         }
 
         @Override
@@ -260,7 +299,7 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
             // facade does not keep and re-snapshot hundreds of obsolete, preallocated column files on every later
             // syncfs (quadratic work and multi-GB heap growth in the nightly sweep).
             forceWalPurge();
-            txns = generateTxns(new Rnd(s0, s1), WAL_TABLE);          // recreates cf_wal (0 rows), same txns
+            txns = generateTxns(new Rnd(s0, s1), WAL_TABLE, dedupMode); // recreates cf_wal (0 rows), same txns
             walToken = engine.verifyTableName(WAL_TABLE);
             // createInitialTableWal queues its unconditional "column top" ALTERs in cf_wal's WAL without draining them,
             // so without this drain they stay part of commit()'s crashable WAL. A crash then rolls the table back to
@@ -270,6 +309,8 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
             // fp[0], so the sweep crashes only the fuzz workload and every recovery lands on a real fp[] snapshot.
             drainWalQueue();
             if (fp == null) {
+                LOG.info().$("[seed] dedup ").$(dedupModeName(dedupMode)).$(", enabled at transaction ")
+                        .$(dedupEnablePosition(txns)).$(" of ").$(txns.size()).I$();
                 fp = buildTwinFingerprints(TWIN_TABLE, txns, new Rnd(s0, s1)); // once; drops the twin
             }
             expectedFullCommitSeqTxn = (int) fp.getLast().seqTxn;
@@ -294,7 +335,45 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
             Assert.assertTrue("recovered state at k=" + k + " matches NO committed seqTxn/state (corruption?) "
                     + "[seqTxn=" + recoveredSeqTxn + "]\n" + recovered, p >= 0);
             Assert.assertTrue("recovered seqTxn exceeds int test range", recoveredSeqTxn <= Integer.MAX_VALUE);
+            assertResentKeyFollowsDedupMode(k);
             return (int) recoveredSeqTxn;
+        }
+
+        // Bar 3, after bar 1 as it writes to the table: a writer that opens on the recovered table deduplicates in the
+        // mode the recovered metadata names, which bar 1 compared. The writer the recovery left open may still run the
+        // mode a replayed ALTER gave it, so the check closes it first. A write that resends the key of a row that no
+        // other row shares keeps that row under SKIP and replaces it under UPSERT. Of such rows it takes the latest,
+        // which a TTL drop reaches last.
+        private void assertResentKeyFollowsDedupMode(int k) throws SqlException {
+            final boolean isSkip;
+            try (TableReader reader = getReader(WAL_TABLE)) {
+                final TableReaderMetadata metadata = reader.getMetadata();
+                if (!metadata.isDedupKey(metadata.getTimestampIndex())) {
+                    return;
+                }
+                isSkip = metadata.getDedupMode() == TableUtils.DEDUP_MODE_SKIP;
+            }
+            final StringSink key = new StringSink();
+            printSql("select ts::varchar from (select ts, count() c from " + WAL_TABLE + ") where c = 1 order by ts desc limit 1", key);
+            final int keyLo = Chars.indexOf(key, '\n') + 1;
+            if (keyLo == key.length()) {
+                return; // no row has a key of its own
+            }
+            final String where = " where ts = '" + key.subSequence(keyLo, key.length() - 1) + "'";
+            final StringSink before = new StringSink();
+            printSql("select * from " + WAL_TABLE + where, before);
+            engine.releaseAllWriters();
+            execute("insert into " + WAL_TABLE + " (ts) select ts from " + WAL_TABLE + where);
+            drainWalQueue();
+            Assert.assertFalse("the write after recovery suspended the table at k=" + k + " " + suspendReason(walToken),
+                    anyTableSuspended(walToken));
+            final StringSink after = new StringSink();
+            printSql("select * from " + WAL_TABLE + where, after);
+            if (isSkip) {
+                TestUtils.assertEquals("k=" + k + ": SKIP replaced the row of a resent key", before, after);
+            } else {
+                Assert.assertNotEquals("k=" + k + ": UPSERT kept the row of a resent key", before.toString(), after.toString());
+            }
         }
     }
 
@@ -328,7 +407,7 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
     }
 
     private SweepResult runSeedSweep(long s0, long s1, int windowUs) throws Exception {
-        return runSeedSweep(s0, s1, windowUs, DEFAULT_ADAPTIVE_CRASH_POINT_CAP);
+        return runSeedSweep(s0, s1, NO_DEDUP, windowUs, DEFAULT_ADAPTIVE_CRASH_POINT_CAP);
     }
 
     /**
@@ -338,10 +417,10 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
      * last one" into a failure that looks like a durability defect. Count N first, then sweep at
      * {@code max(capFloor, N)}. Returns {@code null} if N exceeds {@code hardLimit}, and the caller redraws.
      */
-    private SweepResult runSeedSweepAutoCap(long s0, long s1, int windowUs, int capFloor, int hardLimit) throws Exception {
+    private SweepResult runSeedSweepAutoCap(long s0, long s1, int dedupMode, int windowUs, int capFloor, int hardLimit) throws Exception {
         applySweepConfig(windowUs);
         try {
-            final FuzzCrashWorkload workload = new FuzzCrashWorkload(s0, s1);
+            final FuzzCrashWorkload workload = new FuzzCrashWorkload(s0, s1, dedupMode);
             final int n = probeCommitDurabilityOps(workload);
             if (n > hardLimit) {
                 LOG.info().$("[seed] REJECTED seed ").$(s0).$("L, ").$(s1)
@@ -358,10 +437,10 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
         }
     }
 
-    private SweepResult runSeedSweep(long s0, long s1, int windowUs, int cap) throws Exception {
+    private SweepResult runSeedSweep(long s0, long s1, int dedupMode, int windowUs, int cap) throws Exception {
         applySweepConfig(windowUs);
         try {
-            return forEachAdaptiveCrashPoint(new FuzzCrashWorkload(s0, s1), cap);
+            return forEachAdaptiveCrashPoint(new FuzzCrashWorkload(s0, s1, dedupMode), cap);
         } finally {
             if (windowUs == 0) {
                 setCurrentMicros(-1);
@@ -469,22 +548,29 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
     public void testTwinFingerprintsDeterministic() throws Exception {
         assertMemoryLeak(() -> {
             final long s0 = 42L, s1 = 99L;
-            ObjList<CommittedState> h1 = runTwinOnce("wal_a", "twin_a", s0, s1);
-            ObjList<CommittedState> h2 = runTwinOnce("wal_b", "twin_b", s0, s1);
-            Assert.assertEquals("fp history length must be deterministic", h1.size(), h2.size());
-            for (int i = 0; i < h1.size(); i++) {
-                Assert.assertEquals("seqTxn[" + i + "] must be identical across runs",
-                        h1.getQuick(i).seqTxn, h2.getQuick(i).seqTxn);
-                Assert.assertTrue("fp[" + i + "] must be identical across two runs of the same seed",
-                        TestUtils.equals(h1.getQuick(i).fingerprint, h2.getQuick(i).fingerprint));
+            for (int dedupMode : DEDUP_MODES) {
+                final String mode = dedupModeName(dedupMode);
+                ObjList<CommittedState> h1 = runTwinOnce("wal_a_" + mode, "twin_a_" + mode, s0, s1, dedupMode);
+                ObjList<CommittedState> h2 = runTwinOnce("wal_b_" + mode, "twin_b_" + mode, s0, s1, dedupMode);
+                Assert.assertEquals(mode + ": fp history length must be deterministic", h1.size(), h2.size());
+                for (int i = 0; i < h1.size(); i++) {
+                    Assert.assertEquals(mode + ": seqTxn[" + i + "] must be identical across runs",
+                            h1.getQuick(i).seqTxn, h2.getQuick(i).seqTxn);
+                    Assert.assertTrue(mode + ": fp[" + i + "] must be identical across two runs of the same seed",
+                            TestUtils.equals(h1.getQuick(i).fingerprint, h2.getQuick(i).fingerprint));
+                }
+                Assert.assertTrue(mode + ": fp history must be non-trivial", h1.size() > 3);
+                // the twin ran the dedup ALTER of the mode, and the fingerprint names it
+                final String dedup = dedupMode == NO_DEDUP ? "\ndedup: none\n" : "\ndedup: ts " + mode + '\n';
+                Assert.assertTrue(mode + ": the last state does not end with '" + dedup + "': " + h1.getLast().fingerprint,
+                        h1.getLast().fingerprint.endsWith(dedup));
             }
-            Assert.assertTrue("fp history must be non-trivial", h1.size() > 3);
         });
     }
 
-    private ObjList<CommittedState> runTwinOnce(String walName, String twinName, long s0, long s1) throws Exception {
+    private ObjList<CommittedState> runTwinOnce(String walName, String twinName, long s0, long s1, int dedupMode) throws Exception {
         Rnd genRnd = new Rnd(s0, s1);
-        ObjList<FuzzTransaction> txns = generateTxns(genRnd, walName);
+        ObjList<FuzzTransaction> txns = generateTxns(genRnd, walName, dedupMode);
         return buildTwinFingerprints(twinName, txns, new Rnd(s0, s1));
     }
 
@@ -507,7 +593,7 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
     public void testChangeColumnTypeSegmentPublishOrderCrashSafeW0() throws Exception {
         Assume.assumeTrue("crash sweep is nightly-only; run with -D" + NIGHTLY_PROP + "=true",
                 Boolean.getBoolean(NIGHTLY_PROP));
-        runWithCrashFacade(() -> runSeedSweep(-6969352248487674537L, -4282943605332762306L, 0, 600));
+        runWithCrashFacade(() -> runSeedSweep(-6969352248487674537L, -4282943605332762306L, NO_DEDUP, 0, 600));
     }
 
     // Nightly only: even the minimal (inserts + O3) profile writes the full ~14-column fuzz schema. Sweeps a large
@@ -520,7 +606,7 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
         runWithCrashFacade(() -> {
             fuzzOverrideMinimal = true;               // inserts + O3 only, to validate the sweep machinery
             try {
-                assertW0MonotonePrefix(runSeedSweep(1234L, 5678L, 0, 800));
+                assertW0MonotonePrefix(runSeedSweep(1234L, 5678L, NO_DEDUP, 0, 800));
             } finally {
                 fuzzOverrideMinimal = false;
             }
@@ -533,16 +619,22 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
     private static final long[] FIXED_SEEDS1 = {5678L, 33L, 9090L};
 
     // One fresh seed per run. A fixed pair replays one workload forever, so the sweep stops being a fuzzer, and
-    // one 20-txn workload cannot emit all 13 enabled op types.
+    // one 20-txn workload cannot emit all 13 enabled op types. Each run also draws its dedup mode, see DEDUP_MODES:
+    // no dedup, UPSERT or SKIP, a third of the runs each.
     //
     // Coverage accumulates across runs: the soak pipeline re-runs this class back to back, so a new workload per
     // invocation is what makes continuous fuzzing worth it. Several seeds inside one invocation would only make each
     // run longer and each failure slower to surface.
     //
     // PR CI and local runs keep the fixed pair, so a failure there is reproducible from the PR alone. Replay a soak
-    // failure with -Dquestdb.fuzz.seed=<s0>,<s1>; TestUtils.generateRandom prints the pair, it is echoed per run
-    // below, and the failure message names it.
+    // failure with -Dquestdb.fuzz.seed=<s0>,<s1>,<dedup>; TestUtils.generateRandom prints the pair, it is echoed per
+    // run below with the run's dedup mode, and the failure message names all three. A replay without the mode runs
+    // without dedup, as every run did before the mode was drawn.
     private static final String SEED_PROP = "questdb.fuzz.seed";
+    // The dedup mode of a run: the table does not deduplicate, or an ALTER TABLE ... DEDUP ENABLE among the run's
+    // transactions makes it deduplicate on the designated timestamp in the mode UPSERT or SKIP.
+    private static final int NO_DEDUP = -1;
+    private static final int[] DEDUP_MODES = {NO_DEDUP, TableUtils.DEDUP_MODE_UPSERT, TableUtils.DEDUP_MODE_SKIP};
     // A drawn workload's N varies, and assertW0Bars needs cap >= N. The floor keeps every seed sweeping at least
     // this many points; the hard limit rejects an outlier that would stretch one soak iteration far past the others
     // (a redraw costs one count pass).
@@ -551,23 +643,43 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
     private static final int SEED_DRAW_ATTEMPTS = 8;
 
     /**
-     * The seed for this run: the replay override if set, else the fixed pair when the soak flag is off, else a
-     * freshly drawn pair.
+     * The seed and the dedup mode for this run, as {@code {s0, s1, dedupMode}}: the replay override if set, else the
+     * fixed pair without dedup when the soak flag is off, else a freshly drawn pair and one of {@link #DEDUP_MODES}.
      */
     private long[] drawSeed(Rnd redraw) {
         final String replay = System.getProperty(SEED_PROP);
         if (replay != null) {
-            final int comma = replay.indexOf(',');
-            Assert.assertTrue("-D" + SEED_PROP + " must be '<s0>,<s1>' (was '" + replay + "')", comma > 0);
+            final String[] parts = replay.split(",");
+            Assert.assertTrue("-D" + SEED_PROP + " must be '<s0>,<s1>[,none|upsert|skip]' (was '" + replay + "')",
+                    parts.length == 2 || parts.length == 3);
             return new long[]{
-                    Long.parseLong(replay.substring(0, comma).trim()),
-                    Long.parseLong(replay.substring(comma + 1).trim())
+                    Long.parseLong(parts[0].trim()),
+                    Long.parseLong(parts[1].trim()),
+                    parts.length == 3 ? parseDedupMode(parts[2].trim()) : NO_DEDUP
             };
         }
         if (redraw == null) {
-            return new long[]{FIXED_SEEDS0[0], FIXED_SEEDS1[0]};
+            return new long[]{FIXED_SEEDS0[0], FIXED_SEEDS1[0], NO_DEDUP};
         }
-        return new long[]{redraw.nextLong(), redraw.nextLong()};
+        return new long[]{redraw.nextLong(), redraw.nextLong(), DEDUP_MODES[redraw.nextInt(DEDUP_MODES.length)]};
+    }
+
+    private static String dedupModeName(int dedupMode) {
+        return switch (dedupMode) {
+            case NO_DEDUP -> "none";
+            case TableUtils.DEDUP_MODE_UPSERT -> "upsert";
+            case TableUtils.DEDUP_MODE_SKIP -> "skip";
+            default -> throw new AssertionError("unknown dedup mode " + dedupMode);
+        };
+    }
+
+    private static int parseDedupMode(String name) {
+        for (int dedupMode : DEDUP_MODES) {
+            if (dedupModeName(dedupMode).equalsIgnoreCase(name)) {
+                return dedupMode;
+            }
+        }
+        throw new AssertionError("-D" + SEED_PROP + ": the dedup mode must be none, upsert or skip (was '" + name + "')");
     }
 
     /**
@@ -587,13 +699,14 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
                     seed = drawSeed(redraw);
                 }
                 try {
-                    r = body.run(seed[0], seed[1]);
+                    r = body.run(seed[0], seed[1], (int) seed[2]);
                 } catch (WorkloadNotCrashTestableException notTestable) {
                     // Reject workloads that already suspend without a fault, i.e. a generator combination that
                     // suspends the table on a clean, uncrashed pass. A pinned workload never redraws: report its
                     // seed and the original failure.
                     final String reason = notTestable.getMessage();
-                    LOG.info().$("[seed] REJECTED seed ").$(seed[0]).$("L, ").$(seed[1]).$("L: ").$(reason).I$();
+                    LOG.info().$("[seed] REJECTED seed ").$(seed[0]).$("L, ").$(seed[1]).$("L, dedup ")
+                            .$(dedupModeName((int) seed[2])).$(": ").$(reason).I$();
                     if (redraw == null) {
                         throw notTestable;
                     }
@@ -602,29 +715,30 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
             Assert.assertNotNull("no seed under the N<=" + SWEEP_CAP_HARD_LIMIT + " hard limit after "
                     + SEED_DRAW_ATTEMPTS + " draws — the op library got much heavier; re-check the limit", r);
         } catch (Throwable e) {
-            throw new AssertionError("seed " + seed[0] + "L, " + seed[1] + "L (replay with -D" + SEED_PROP
-                    + "=" + seed[0] + "," + seed[1] + "): " + e.getMessage(), e);
+            final String dedup = dedupModeName((int) seed[2]);
+            throw new AssertionError("seed " + seed[0] + "L, " + seed[1] + "L, dedup " + dedup + " (replay with -D"
+                    + SEED_PROP + "=" + seed[0] + "," + seed[1] + "," + dedup + "): " + e.getMessage(), e);
         }
-        LOG.info().$("[seed] PASSED with seeds ").$(seed[0]).$("L, ").$(seed[1]).$("L (N=").$(r.n)
-                .$(", swept=").$(r.sweptPoints).I$();
+        LOG.info().$("[seed] PASSED with seeds ").$(seed[0]).$("L, ").$(seed[1]).$("L, dedup ")
+                .$(dedupModeName((int) seed[2])).$(" (N=").$(r.n).$(", swept=").$(r.sweptPoints).I$();
     }
 
     @FunctionalInterface
     private interface SeedSweep {
-        SweepResult run(long s0, long s1) throws Exception;
+        SweepResult run(long s0, long s1, int dedupMode) throws Exception;
     }
 
     // Nightly only (-Dquestdb.fuzz.nightly=true). assertW0Bars requires a full untruncated sweep (cap >= N), so
-    // the cap is sized to the seed drawn rather than pinned to one workload's N. One fresh seed per run; PR CI
-    // keeps the fixed pair (see drawSeed).
+    // the cap is sized to the seed drawn rather than pinned to one workload's N. One fresh seed and dedup mode per
+    // run; PR CI keeps the fixed pair without dedup (see drawSeed).
     @Test
     public void testFullLibraryW0() throws Exception {
         // Redundant with AbstractAdaptiveCrashSweepTest#assumeNightlySweep, which gates every method in this family;
         // it keeps this sweep nightly-only if the class-level gate is relaxed to run the cheap sweeps more often.
         Assume.assumeTrue("full-library crash sweep is nightly-only; run with -D" + NIGHTLY_PROP + "=true",
                 Boolean.getBoolean(NIGHTLY_PROP));
-        runWithCrashFacade(() -> withSweepSeed((s0, s1) -> {
-            SweepResult r = runSeedSweepAutoCap(s0, s1, 0, SWEEP_CAP_FLOOR, SWEEP_CAP_HARD_LIMIT);
+        runWithCrashFacade(() -> withSweepSeed((s0, s1, dedupMode) -> {
+            SweepResult r = runSeedSweepAutoCap(s0, s1, dedupMode, 0, SWEEP_CAP_FLOOR, SWEEP_CAP_HARD_LIMIT);
             if (r != null) {
                 assertW0Bars(r);
             }
@@ -655,7 +769,7 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
         runWithCrashFacade(() -> {
             fuzzOverrideRenameOnly = true;
             try {
-                SweepResult r = runSeedSweep(1234L, 5678L, 0, 1400);
+                SweepResult r = runSeedSweep(1234L, 5678L, NO_DEDUP, 0, 1400);
                 Assert.assertFalse("rename sweep truncated (N > cap) — raise the cap", r.truncated);
                 Assert.assertTrue("sweep must exercise crash points", r.sweptPoints > 1);
             } finally {
@@ -736,8 +850,8 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
             // Fresh seeds per nightly run, as in W0. Truncation is tolerated here (the W>0 oracle is per crash
             // point, not a full-history bar), so the cap stays a fixed 700, a heavier seed sweeps its first 700
             // points, and the driver logs the truncation.
-            runWithCrashFacade(() -> withSweepSeed((s0, s1) -> {
-                SweepResult r = runSeedSweep(s0, s1, GROUP_WINDOW_WN_US, 700);
+            runWithCrashFacade(() -> withSweepSeed((s0, s1, dedupMode) -> {
+                SweepResult r = runSeedSweep(s0, s1, dedupMode, GROUP_WINDOW_WN_US, 700);
                 Assert.assertTrue("sweep must exercise >= 1 crash point under W>0", r.sweptPoints >= 1);
                 return r;
             }));
