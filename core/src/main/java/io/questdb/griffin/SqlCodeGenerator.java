@@ -3820,9 +3820,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordMetadata slaveMetadata,
             RecordCursorFactory slaveCursorFactory
     ) {
-        // Detect the markout_horizon hint, and ensure the master cursor supports random access
+        // Detect the markout_horizon hint, and ensure the master cursor supports random access, or gets it from a copy
         if (!SqlHints.hasMarkoutHorizonHint(masterModel, masterAlias, slaveModel.getName()) ||
-                !masterCursorFactory.recordCursorSupportsRandomAccess()
+                !(masterCursorFactory.recordCursorSupportsRandomAccess() || isRandomAccessLostToStream(masterCursorFactory))
         ) {
             return null;
         }
@@ -7490,6 +7490,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 );
 
                                 if (horizonInfo != null) {
+                                    if (!master.recordCursorSupportsRandomAccess()) {
+                                        final RecordCursorFactory masterToMaterialize = master;
+                                        master = null;
+                                        master = materialize(masterToMaterialize, true);
+                                    }
                                     // Create RecordSink for materializing slave records
                                     entityColumnFilter.of(slaveMetadata.getColumnCount());
                                     RecordSink slaveRecordSink = RecordSinkFactory.getInstance(configuration, asm, slaveMetadata, entityColumnFilter);
