@@ -32,6 +32,7 @@ import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.pool.ResourcePoolSupervisor;
 import io.questdb.cairo.security.DenyAllSecurityContext;
@@ -39,6 +40,7 @@ import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowContextImpl;
@@ -81,6 +83,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final ObjStack<RuntimeIntrinsicIntervalModel> intervalModelObjStack = new ObjStack<>();
     private final MicrosecondClock microClock;
     private final NanosecondClock nanoClock;
+    private final ObjList<PageFrameSequence<?>> pageFrameSequences = new ObjList<>();
     private final int sharedQueryWorkerCount;
     private final AtomicBooleanCircuitBreaker simpleCircuitBreaker;
     private final Telemetry<TelemetryTask> telemetry;
@@ -89,12 +92,16 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final ObjList<WindowContextImpl> windowContexts = new ObjList<>();
     protected BindVariableService bindVariableService;
     protected SecurityContext securityContext;
+    private boolean allowBareNoArgFunctionCalls = true;
     private boolean allowNonDeterministicFunction = true;
     private boolean cacheHit;
     private SqlExecutionCircuitBreaker circuitBreaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
     private boolean clockUseNow = false;
     private boolean cloneSymbolTables;
     private boolean containsSecret;
+    private CharSequence expiryMaterializingViewName;
+    private TableToken expiryRawReadTable;
+    private ExpiryReadPolicy expiryReadPolicy = ExpiryReadPolicy.FILTER;
     private int intervalFunctionType;
     private long intervalPlanGeneration;
     private long intervalPlanGenerationCounter;
@@ -163,8 +170,20 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public boolean allowBareNoArgFunctionCalls() {
+        return allowBareNoArgFunctionCalls;
+    }
+
+    @Override
     public boolean allowNonDeterministicFunctions() {
         return allowNonDeterministicFunction;
+    }
+
+    @Override
+    public void awaitPageFrameSequences() {
+        for (int i = 0, n = pageFrameSequences.size(); i < n; i++) {
+            pageFrameSequences.getQuick(i).awaitReduced();
+        }
     }
 
     @Override
@@ -449,6 +468,35 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public boolean isExpiryReadFilterEnabled() {
+        return expiryReadPolicy == ExpiryReadPolicy.FILTER;
+    }
+
+    @Override
+    public CharSequence getExpiryMaterializingViewName() {
+        return expiryMaterializingViewName;
+    }
+
+    @Override
+    public @Nullable TableToken getExpiryRawReadTable() {
+        return expiryRawReadTable;
+    }
+
+    @Override
+    public ExpiryReadPolicy getExpiryReadPolicy() {
+        return expiryReadPolicy;
+    }
+
+    @Override
+    public ExpiryReadPolicy getExpiryReadPolicy(TableToken tableToken) {
+        // The raw table overrides only a filtered read: a materializing compile in REJECT mode keeps
+        // rejecting every policied table.
+        return expiryReadPolicy == ExpiryReadPolicy.FILTER && tableToken.equals(expiryRawReadTable)
+                ? ExpiryReadPolicy.RAW
+                : expiryReadPolicy;
+    }
+
+    @Override
     public boolean isLiveViewCompile() {
         return liveViewCompile;
     }
@@ -579,6 +627,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public void registerPageFrameSequence(PageFrameSequence<?> frameSequence) {
+        pageFrameSequences.add(frameSequence);
+    }
+
+    @Override
     public void reset() {
         checkNoMountedQueryOwner();
         resetState();
@@ -602,6 +655,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     public void restoreToDefaultPageFrameSizes() {
         this.pageFrameMinRows = defaultPageFrameMinRows;
         this.pageFrameMaxRows = defaultPageFrameMaxRows;
+    }
+
+    @Override
+    public void setAllowBareNoArgFunctionCalls(boolean value) {
+        this.allowBareNoArgFunctionCalls = value;
     }
 
     @Override
@@ -635,6 +693,23 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void setCloneSymbolTables(boolean cloneSymbolTables) {
         this.cloneSymbolTables = cloneSymbolTables;
+    }
+
+    @Override
+    public void setExpiryRawReadTable(@Nullable TableToken tableToken) {
+        this.expiryRawReadTable = tableToken;
+    }
+
+    @Override
+    public void setExpiryReadFilterEnabled(boolean enabled) {
+        this.expiryReadPolicy = enabled ? ExpiryReadPolicy.FILTER : ExpiryReadPolicy.RAW;
+        this.expiryMaterializingViewName = null;
+    }
+
+    @Override
+    public void setExpiryReadPolicy(ExpiryReadPolicy policy, @Nullable CharSequence materializingViewName) {
+        this.expiryReadPolicy = policy;
+        this.expiryMaterializingViewName = materializingViewName;
     }
 
     @Override
@@ -783,6 +858,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         sink.putAscii("principal=").put(securityContext.getPrincipal()).putAscii(", cache=").put(isCacheHit());
     }
 
+    @Override
+    public void unregisterPageFrameSequence(PageFrameSequence<?> frameSequence) {
+        pageFrameSequences.remove(frameSequence);
+    }
+
     public SqlExecutionContextImpl with(@NotNull SecurityContext securityContext, @Nullable BindVariableService bindVariableService, @Nullable Rnd rnd) {
         checkNoMountedQueryOwner();
         this.securityContext = securityContext;
@@ -857,6 +937,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.containsSecret = false;
         this.useSimpleCircuitBreaker = false;
         this.cacheHit = false;
+        this.allowBareNoArgFunctionCalls = true;
         this.allowNonDeterministicFunction = true;
         this.intervalPlanGeneration = 0;
         this.validationOnly = false;

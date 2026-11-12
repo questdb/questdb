@@ -416,6 +416,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final WorkerPoolMode matViewRefreshWorkerPoolMode;
     private final long matViewRefreshWorkerSleepThreshold;
     private final long matViewRefreshWorkerYieldThreshold;
+    private final boolean matViewRowExpiryCleanupEnabled;
+    private final int matViewRowExpiryCleanupMaxCachedPartitions;
+    private final double matViewRowExpiryCleanupMinExpiredFraction;
     private final long matViewRowsPerQueryEstimate;
     private final int maxFileNameLength;
     private final long maxHttpQueryResponseRowLimit;
@@ -534,6 +537,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int qwpMaxRowsPerTable;
     private final int qwpMaxTablesPerConnection;
     private final long qwpMaxUncommittedRows;
+    private final long qwpMinIdleMsBeforeWriterRelease;
     private final long qwpUdpCommitInterval;
     private final boolean qwpUdpEnabled;
     private final int qwpUdpGroupIPv4Address;
@@ -619,6 +623,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlMapMaxPages;
     private final int sqlMapMaxResizes;
     private final int sqlMaxArrayElementCount;
+    private final int sqlMaxGroupingSets;
     private final int sqlMaxNegativeLimit;
     private final int sqlMaxSymbolNotEqualsCount;
     private final int sqlModelPoolCapacity;
@@ -1741,6 +1746,15 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             // reuse wal-apply defaults for mat view workers
             this.matViewEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_ENABLED, true);
+            this.matViewRowExpiryCleanupEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_ENABLED, true);
+            this.matViewRowExpiryCleanupMaxCachedPartitions = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MAX_CACHED_PARTITIONS, 16_384);
+            if (matViewRowExpiryCleanupMaxCachedPartitions < 0) {
+                throw new ServerConfigurationException(PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MAX_CACHED_PARTITIONS.getPropertyPath() + " must not be negative");
+            }
+            this.matViewRowExpiryCleanupMinExpiredFraction = getDouble(properties, env, PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MIN_EXPIRED_FRACTION, "0.5");
+            if (!(matViewRowExpiryCleanupMinExpiredFraction >= 0 && matViewRowExpiryCleanupMinExpiredFraction <= 1)) {
+                throw new ServerConfigurationException(PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MIN_EXPIRED_FRACTION.getPropertyPath() + " must be between 0 and 1");
+            }
             this.matViewMaxRefreshRetries = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_RETRIES, 10);
             this.matViewRefreshBusyRetryTimeout = getMillis(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_TIMEOUT, 1000);
             this.matViewRefreshBusyRetryLimit = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_LIMIT, 10);
@@ -1841,6 +1855,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlViewLexerPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_VIEW_LEXER_POOL_CAPACITY, 8);
             this.sqlExplainModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_EXPLAIN_MODEL_POOL_CAPACITY, 32);
             this.sqlModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_MODEL_POOL_CAPACITY, 1024);
+            this.sqlMaxGroupingSets = getInt(properties, env, PropertyKey.CAIRO_SQL_MAX_GROUPING_SETS, 4096);
             this.sqlMaxNegativeLimit = getInt(properties, env, PropertyKey.CAIRO_SQL_MAX_NEGATIVE_LIMIT, 10_000);
             // Heap-backed page sizes (sort.key, sort.light.value, window.*) must hold one fixed-size
             // block, so validatePageSizeAtLeast rejects a sub-block value at startup rather than let a
@@ -2302,6 +2317,12 @@ public class PropServerConfiguration implements ServerConfiguration {
                                 + " must be at least 1"
                 );
             }
+            this.qwpMinIdleMsBeforeWriterRelease = getMillis(
+                    properties,
+                    env,
+                    PropertyKey.QWP_MIN_IDLE_MS_BEFORE_WRITER_RELEASE,
+                    QwpConstants.DEFAULT_MIN_IDLE_MS_BEFORE_WRITER_RELEASE
+            );
             long qwpUdpCommitInterval = getMillis(properties, env, PropertyKey.QWP_UDP_COMMIT_INTERVAL, COMMIT_INTERVAL_DEFAULT);
             if (qwpUdpCommitInterval < 1L) {
                 throw new ServerConfigurationException(
@@ -4917,6 +4938,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getMatViewRowExpiryCleanupMaxCachedPartitions() {
+            return matViewRowExpiryCleanupMaxCachedPartitions;
+        }
+
+        @Override
+        public double getMatViewRowExpiryCleanupMinExpiredFraction() {
+            return matViewRowExpiryCleanupMinExpiredFraction;
+        }
+
+        @Override
         public long getMatViewRowsPerQueryEstimate() {
             return matViewRowsPerQueryEstimate;
         }
@@ -5672,6 +5703,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getSqlMaxGroupingSets() {
+            return sqlMaxGroupingSets;
+        }
+
+        @Override
         public int getSqlMaxNegativeLimit() {
             return sqlMaxNegativeLimit;
         }
@@ -6230,6 +6266,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isMatViewRefreshMissingWalFilesFatal() {
             return matViewRefreshMissingWalFilesFatal;
+        }
+
+        @Override
+        public boolean isMatViewRowExpiryCleanupEnabled() {
+            return matViewRowExpiryCleanupEnabled;
         }
 
         @Override
@@ -7107,6 +7148,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getQwpMaxUncommittedRows() {
             return qwpMaxUncommittedRows;
+        }
+
+        @Override
+        public long getQwpMinIdleMsBeforeWriterRelease() {
+            return qwpMinIdleMsBeforeWriterRelease;
         }
 
         @Override

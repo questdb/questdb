@@ -32,10 +32,23 @@ import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 
 public class CairoTable implements Sinkable {
+    public static final int EXPIRY_FLIP_NO = 2;
+    public static final int EXPIRY_FLIP_UNKNOWN = 0;
+    public static final int EXPIRY_FLIP_YES = 1;
     public final LowerCaseCharSequenceIntHashMap columnNameIndexMap;
     public final IntList columnOrderList;
     public final ObjList<CairoColumn> columns;
     private boolean dedup;
+    private int dedupMode = TableUtils.DEDUP_MODE_UPSERT;
+    private long expiryCleanupIntervalMicros;
+    // Memoized derivations of the EXPIRE ROWS predicate for the read-filter rewrite, computed lazily on
+    // first use by the parser. Both are pure functions of this instance's predicate, designated timestamp
+    // and column list, and a policy or metadata change replaces the whole CairoTable on re-hydration, so a
+    // stale value cannot outlive a change. Racing computations store the same idempotent result; volatile
+    // gives the String safe publication.
+    private volatile int expiryFlipEligibility;
+    private String expiryPredicate;
+    private volatile String expiryQuotedColumnsCsv;
     private boolean hasParquetPartitions;
     private int matViewRefreshLimitHoursOrMonths;
     private int matViewTimerInterval;
@@ -74,9 +87,15 @@ public class CairoTable implements Sinkable {
         o3MaxLag = fromTab.getO3MaxLag();
         timestampIndex = fromTab.getTimestampIndex();
         ttlHoursOrMonths = fromTab.getTtlHoursOrMonths();
+        expiryPredicate = fromTab.getExpiryPredicate();
+        expiryCleanupIntervalMicros = fromTab.getExpiryCleanupIntervalMicros();
+        // A rename changes neither the predicate nor the columns, so the memoized derivations stay valid.
+        expiryFlipEligibility = fromTab.expiryFlipEligibility;
+        expiryQuotedColumnsCsv = fromTab.expiryQuotedColumnsCsv;
         tableFormat = fromTab.getTableFormat();
         softLink = fromTab.isSoftLink();
         dedup = fromTab.hasDedup();
+        dedupMode = fromTab.getDedupMode();
         hasParquetPartitions = fromTab.hasParquetPartitions();
         matViewRefreshLimitHoursOrMonths = fromTab.getMatViewRefreshLimitHoursOrMonths();
         matViewTimerStart = fromTab.getMatViewTimerStart();
@@ -105,8 +124,32 @@ public class CairoTable implements Sinkable {
         return columns.getQuiet(position);
     }
 
+    /**
+     * Returns the dedup mode, {@link TableUtils#DEDUP_MODE_UPSERT} or {@link TableUtils#DEDUP_MODE_SKIP}.
+     * It applies only when {@link #hasDedup()} is true.
+     */
+    public int getDedupMode() {
+        return dedupMode;
+    }
+
     public String getDirectoryName() {
         return token.getDirName();
+    }
+
+    public long getExpiryCleanupIntervalMicros() {
+        return expiryCleanupIntervalMicros;
+    }
+
+    public int getExpiryFlipEligibility() {
+        return expiryFlipEligibility;
+    }
+
+    public String getExpiryPredicate() {
+        return expiryPredicate;
+    }
+
+    public String getExpiryQuotedColumnsCsv() {
+        return expiryQuotedColumnsCsv;
     }
 
     public int getId() {
@@ -205,6 +248,23 @@ public class CairoTable implements Sinkable {
 
     public void setDedupFlag(boolean dedup) {
         this.dedup = dedup;
+    }
+
+    public void setDedupMode(int dedupMode) {
+        this.dedupMode = dedupMode;
+    }
+
+    public void setExpiry(String expiryPredicate, long expiryCleanupIntervalMicros) {
+        this.expiryPredicate = expiryPredicate;
+        this.expiryCleanupIntervalMicros = expiryCleanupIntervalMicros;
+    }
+
+    public void setExpiryFlipEligibility(int expiryFlipEligibility) {
+        this.expiryFlipEligibility = expiryFlipEligibility;
+    }
+
+    public void setExpiryQuotedColumnsCsv(String expiryQuotedColumnsCsv) {
+        this.expiryQuotedColumnsCsv = expiryQuotedColumnsCsv;
     }
 
     public void setHasParquetPartitions(boolean hasParquetPartitions) {
