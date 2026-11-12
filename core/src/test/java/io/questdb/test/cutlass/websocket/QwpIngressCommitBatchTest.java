@@ -563,6 +563,16 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testDemoteBetweenTablesOfGroupClosingFrameClosesAtOnce() throws Exception {
+        assertDemoteBetweenTablesOfGroupClosingFrame(false);
+    }
+
+    @Test
+    public void testDemoteBetweenTablesOfGroupClosingFrameDefersClose() throws Exception {
+        assertDemoteBetweenTablesOfGroupClosingFrame(true);
+    }
+
     /**
      * Another session drops b while it waits in the batch: a commits, c does not, and b's first frame is NACKed.
      */
@@ -3626,6 +3636,44 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
+    // A deferred frame appends to a, and the plain frame after it closes the group with a row of b, so the closing
+    // frame commits both tables on the normal path. The demote lands at b's commit, after a committed: a's row sits
+    // above the ack, and only the role-change CLOSE tells the client to replay. A durable-ack connection defers that
+    // CLOSE until its committed work is durable, which the lagging registry never reports, so nothing goes out yet.
+    private void assertDemoteBetweenTablesOfGroupClosingFrame(boolean isDurableAck) throws Exception {
+        assertMemoryLeak(() -> {
+            createTables("a", "b");
+            try (DemotableEngine demotableEngine = new DemotableEngine()) {
+                // a's commit takes the role-switch lock first, b's second.
+                demotableEngine.demoteAtCommit(2);
+                try (Connection connection = new Connection(
+                        demotableEngine,
+                        httpConfig,
+                        AllowAllSecurityContext.INSTANCE,
+                        isDurableAck,
+                        createMaskedFrame(WebSocketOpcode.BINARY, deferred(oneRowMessage("a", 100L, 1_000_000L))),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 200L, 2_000_000L))
+                )) {
+                    connection.deliverFrames(2);
+                    Assert.assertTrue("test setup: the demote must land at a commit", demotableEngine.isReadOnlyMode());
+                    final ObjList<byte[]> sent = connection.sentFrames();
+                    if (isDurableAck) {
+                        Assert.assertTrue("the CLOSE must wait for the durable upload", connection.getState().isRoleChangeCloseDeferred());
+                        Assert.assertEquals("a deferred CLOSE sends nothing yet: no ack, no NACK", 0, sent.size());
+                    } else {
+                        Assert.assertFalse(connection.getState().isRoleChangeCloseDeferred());
+                        assertOnlyRoleChangeCloseSent(sent);
+                    }
+                }
+                drainWalQueue(demotableEngine);
+                try (TableReader a = demotableEngine.getReader("a"); TableReader b = demotableEngine.getReader("b")) {
+                    Assert.assertEquals("a commits before the demote", 1, a.size());
+                    Assert.assertEquals("b's commit meets the demote", 0, b.size());
+                }
+            }
+        });
+    }
+
     // Five frames of t with every column type form a batch; the sixth fails on its only block's v or on a second
     // block, of b. The batch commits once before the NACK, and a fresh connection appends at the rewound positions.
     private void assertFailedFrameRewindsEveryColumnType(boolean isSecondBlockFailing) throws Exception {
@@ -4457,8 +4505,10 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
 
     /**
      * As above, through a receive buffer of {@code recvBufferSize} bytes, which must hold every frame.
+     *
+     * @return whether the pass left a role-change CLOSE deferred until the connection's committed work is durable
      */
-    private void ingestInOnePass(
+    private boolean ingestInOnePass(
             CairoEngine stateEngine,
             QwpIngressUpgradeProcessor processor,
             HttpFullFatServerConfiguration httpConfig,
@@ -4486,6 +4536,7 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
             getLV().set(context, state);
             // Every frame arrives in one receive pass, as from a client with many in flight.
             drive(processor, context, nf, wire.length);
+            return state.isRoleChangeCloseDeferred();
         } finally {
             sent.addAll(rawSocket.sentFrames);
             Unsafe.free(recvBuf, recvBufferSize, MemoryTag.NATIVE_DEFAULT);
@@ -4710,9 +4761,10 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
 
         final HttpFullFatServerConfiguration customConfig = httpConfigWithMaxUncommittedRows(it.cap);
         final ObjList<byte[]> sent = new ObjList<>();
+        boolean isRoleChangeCloseDeferred = false;
         try {
             // Room for the largest iteration: up to 11 frames of two blocks each.
-            ingestInOnePass(hookEngine, new QwpIngressUpgradeProcessor(hookEngine, customConfig), customConfig,
+            isRoleChangeCloseDeferred = ingestInOnePass(hookEngine, new QwpIngressUpgradeProcessor(hookEngine, customConfig), customConfig,
                     securityContext, it.isDurable, 4 * RECV_BUFFER_SIZE, sent, toArray(it.wireFrames));
         } catch (ServerDisconnectException ignore) {
             // a role-change CLOSE tells the dispatcher to drop the fd
@@ -4754,8 +4806,10 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         if (hasCommittedAboveAck) {
             // Only a commit of several tables that failed on one after others committed:
             // a batch commit, or a multi-table frame's own commit. The client must learn
-            // to replay: a NACK above the ack, or a CLOSE.
-            boolean isTold = indexOfCloseFrame(sent) >= 0;
+            // to replay: a NACK above the ack, or a CLOSE. A durable-ack connection defers a
+            // role-change CLOSE until its committed work is durable, at most for the upload
+            // grace, and refuses every frame meanwhile: a deferred CLOSE tells the client too.
+            boolean isTold = isRoleChangeCloseDeferred || indexOfCloseFrame(sent) >= 0;
             for (int s = (int) acked + 1; s <= lastSeq && !isTold; s++) {
                 isTold = hasErrorResponseForSeq(sent, s);
             }
