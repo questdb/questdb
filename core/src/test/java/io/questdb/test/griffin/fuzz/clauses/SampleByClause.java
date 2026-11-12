@@ -64,7 +64,7 @@ public final class SampleByClause {
     // SAMPLE BY with FILL(PREV/NULL/LINEAR) emits one row per (key, bucket) -- multiplying
     // a tight bucket interval, a wide span, and a high-cardinality key produces an output
     // row count that overruns the sort budget the test config uses (Overrides
-    // sets cairo.sql.sort.key.max.bytes=64m). That manifests as LimitOverflowException
+    // sets cairo.sql.sort.key.max.bytes=512m). That manifests as LimitOverflowException
     // on otherwise legal SAMPLE BY queries. Below the 5m interval floor, the
     // LimitOverflow rate becomes noise dominating real bugs.
     private static final String[] INTERVALS = {"5m", "15m", "1h", "1d"};
