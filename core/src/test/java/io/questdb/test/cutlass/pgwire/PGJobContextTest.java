@@ -3870,6 +3870,7 @@ if __name__ == "__main__":
         // The wait for a view compile run does not check the circuit breaker, as the busy wait of
         // ALTER does not. A DROP whose query is cancelled, and a TRUNCATE whose client
         // disconnects, while they wait still complete once the run ends, and leave nothing busy.
+        // The TRUNCATE also queues the recompile of the view whose compile met its lock.
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             node1.setProperty(CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, Long.MAX_VALUE);
             final LogCapture capture = new LogCapture();
@@ -3885,16 +3886,34 @@ if __name__ == "__main__":
                     statement.execute("DROP VIEW v");
                 }
                 createTableAndViewThenAddColumn(connection);
-                try (
-                        Connection disconnecting = getConnection(mode, port, binary);
-                        PreparedStatement truncate = disconnecting.prepareStatement("TRUNCATE TABLE t")
-                ) {
-                    try {
-                        executeWhileViewCompileHolds(capture, truncate, () -> disconnecting.abort(Runnable::run));
-                        Assert.fail("expected the disconnect to fail the statement");
-                    } catch (SQLException e) {
-                        TestUtils.assertContains(e.getMessage(), "An I/O error occurred while sending to the backend");
+                // the server takes the lock of t's readers after the client is gone, and a compile
+                // of the view over t, queued at that moment, meets the lock
+                final ViewCompileInsideLockOfT compileInsideLock = new ViewCompileInsideLockOfT(true);
+                try {
+                    try (
+                            Connection disconnecting = getConnection(mode, port, binary);
+                            PreparedStatement truncate = disconnecting.prepareStatement("TRUNCATE TABLE t")
+                    ) {
+                        try {
+                            executeWhileViewCompileHolds(capture, truncate, () -> disconnecting.abort(Runnable::run), compileInsideLock);
+                            Assert.fail("expected the disconnect to fail the statement");
+                        } catch (SQLException e) {
+                            TestUtils.assertContains(e.getMessage(), "An I/O error occurred while sending to the backend");
+                        }
                     }
+                    // the server is done with the statement once it no longer lists it as running
+                    TestUtils.assertEventually(() -> {
+                        try {
+                            assertSql(connection, "SELECT count() FROM query_activity() WHERE query = 'TRUNCATE TABLE t'", """
+                                    count[BIGINT]
+                                    0
+                                    """);
+                        } catch (SQLException e) {
+                            throw new AssertionError(e);
+                        }
+                    });
+                } finally {
+                    engine.setPoolListener(null);
                 }
                 // the server completes the statement after the client is gone
                 TestUtils.assertEventually(() -> {
@@ -3908,6 +3927,13 @@ if __name__ == "__main__":
                         throw new AssertionError(e);
                     }
                 });
+                compileInsideLock.assertDrainedOnce();
+                // TRUNCATE queued another compile of the view, which leaves it valid with the new column
+                drainViewQueue();
+                assertViewValidWithColumns(connection, """
+                        a,INT
+                        b,INT
+                        """);
                 try (Connection anotherConnection = getConnection(mode, port, binary)) {
                     assertSql(anotherConnection, "SELECT 1", "1[INTEGER]\n1\n");
                 }
@@ -11977,6 +12003,37 @@ create table tab as (
     }
 
     @Test
+    public void testTruncateRecompilesViewsWhoseCompileMetTheLock() throws Exception {
+        // ALTER of a non-WAL table queues the recompile of the view over it, which runs while
+        // TRUNCATE holds the lock of the table's readers, and marks the view invalid. TRUNCATE
+        // queues another recompile once it releases the readers, which leaves the view valid with
+        // the new column, each time the prepared statement runs.
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
+            createTableAndViewThenAddColumn(connection);
+            try (PreparedStatement truncate = connection.prepareStatement("TRUNCATE TABLE t")) {
+                executeWithViewCompileInsideLockOfT(truncate);
+                drainViewQueue();
+                assertViewValidWithColumns(connection, """
+                        a,INT
+                        b,INT
+                        """);
+
+                try (Statement statement = connection.createStatement()) {
+                    statement.execute("ALTER TABLE t ADD COLUMN c INT");
+                }
+                executeWithViewCompileInsideLockOfT(truncate);
+                drainViewQueue();
+                assertViewValidWithColumns(connection, """
+                        a,INT
+                        b,INT
+                        c,INT
+                        """);
+            }
+            assertSql(connection, "SELECT * FROM v", "a[INTEGER],b[INTEGER],c[INTEGER]\n");
+        });
+    }
+
+    @Test
     public void testUndefinedBindVariableInSymbol() throws Exception {
         final String[] values = {"'5'", "null", "'5' || ''", "replace(null, 'A', 'A')", "?5", "?null"};
         final CharSequenceObjHashMap<String> valMap = new CharSequenceObjHashMap<>();
@@ -13234,18 +13291,46 @@ create table tab as (
             PreparedStatement ddl,
             @Nullable TestUtils.CheckedRunnable onWait
     ) throws Exception {
+        executeWhileViewCompileHolds(capture, ddl, onWait, null);
+    }
+
+    // As above, and the engine passes its pool events to the lock listener too. The lock listener
+    // stays set when the method returns, since the server may take the lock of t after the client
+    // is gone: the caller removes it.
+    private static void executeWhileViewCompileHolds(
+            LogCapture capture,
+            PreparedStatement ddl,
+            @Nullable TestUtils.CheckedRunnable onWait,
+            @Nullable PoolListener lockListener
+    ) throws Exception {
         // a wait line of an earlier statement would release the run before this one waits
         capture.start();
         final ViewCompileParker run = ViewCompileParker.ofQueueDrain(engine, "t", PoolListener.SRC_READER);
-        engine.setPoolListener(run);
+        engine.setPoolListener(lockListener == null ? run : (factoryType, thread, tableToken, event, segment, position) -> {
+            run.onEvent(factoryType, thread, tableToken, event, segment, position);
+            lockListener.onEvent(factoryType, thread, tableToken, event, segment, position);
+        });
         try {
             run.start();
             run.releaseAfterLogged(capture, "waiting for view compilation to release table [table=t]", onWait);
             ddl.execute();
         } finally {
             run.join();
+            engine.setPoolListener(lockListener);
+        }
+    }
+
+    // Executes the statement while a view compile meets the lock of t's readers that the
+    // statement takes.
+    private static void executeWithViewCompileInsideLockOfT(PreparedStatement ddl) throws SQLException {
+        final ViewCompileInsideLockOfT compileInsideLock = new ViewCompileInsideLockOfT(false);
+        engine.setPoolListener(compileInsideLock);
+        try {
+            ddl.execute();
+        } finally {
             engine.setPoolListener(null);
         }
+        compileInsideLock.assertDrainedOnce();
     }
 
     private static int getCountStar(Connection conn) throws Exception {
@@ -13482,6 +13567,15 @@ create table tab as (
              ResultSet rs = stmt.executeQuery(sql)) {
             BasePGTest.assertResultSet(expectedResult, sink, rs);
         }
+    }
+
+    // asserts that the view v is valid, and that the catalogue lists the expected columns for it
+    private void assertViewValidWithColumns(Connection connection, String expectedColumns) throws SQLException {
+        assertSql(connection, "SELECT view_status, invalidation_reason FROM views() WHERE view_name = 'v'", """
+                view_status[VARCHAR],invalidation_reason[VARCHAR]
+                valid,null
+                """);
+        assertSql(connection, "SELECT \"column\", type FROM table_columns('v')", "column[VARCHAR],type[VARCHAR]\n" + expectedColumns);
     }
 
     private PGServer createPGServer(SOCountDownLatch queryScheduledCount) {
@@ -14552,6 +14646,46 @@ create table tab as (
         void reset() {
             remainingAllowedSendCalls.set(initialAllowedSendCalls);
             socketClosed = false;
+        }
+    }
+
+    // At the first lock of t's readers, which a statement takes on a server worker, drains the view
+    // compile queue on another thread while the statement holds the lock, so that a compile of the
+    // views over t meets the lock. With isCompileQueued, the listener first queues that compile.
+    private static class ViewCompileInsideLockOfT implements PoolListener {
+        private final AtomicReference<Throwable> drainError = new AtomicReference<>();
+        private final boolean isCompileQueued;
+        private final AtomicInteger lockCount = new AtomicInteger();
+
+        private ViewCompileInsideLockOfT(boolean isCompileQueued) {
+            this.isCompileQueued = isCompileQueued;
+        }
+
+        @Override
+        public void onEvent(byte factoryType, long thread, TableToken tableToken, short event, short segment, short position) {
+            if (factoryType == PoolListener.SRC_READER
+                    && event == PoolListener.EV_LOCK_SUCCESS
+                    && Chars.equals(tableToken.getTableName(), "t")
+                    && lockCount.incrementAndGet() == 1) {
+                try {
+                    if (isCompileQueued) {
+                        engine.enqueueCompileView(tableToken);
+                    }
+                    ViewCompileParker.runQueueDrain(engine);
+                } catch (Throwable th) {
+                    // an error thrown into the pool would leave t locked
+                    drainError.set(th);
+                }
+            }
+        }
+
+        // fails with the error of the drain, or when the drain did not run once
+        void assertDrainedOnce() {
+            final Throwable th = drainError.get();
+            if (th != null) {
+                throw new AssertionError("view compile inside the lock of t failed", th);
+            }
+            Assert.assertEquals("locks of t's readers", 1, lockCount.get());
         }
     }
 }

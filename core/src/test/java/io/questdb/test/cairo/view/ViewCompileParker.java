@@ -96,6 +96,36 @@ public class ViewCompileParker implements PoolListener {
     }
 
     /**
+     * Drains the view compile queue on a thread of its own, as a view-compiler worker does, and
+     * waits until the drain ends. A pool listener calls it to have views compile while the thread
+     * that fired the event holds, or tries to take, the lock of a table. Fails with the error the
+     * drain met.
+     */
+    public static void runQueueDrain(CairoEngine engine) {
+        final AtomicReference<Throwable> drainError = new AtomicReference<>();
+        final Thread drainThread = new Thread(() -> {
+            try (ViewCompilerJob job = new ViewCompilerJob(0, engine)) {
+                job.run();
+            } catch (Throwable th) {
+                drainError.set(th);
+            } finally {
+                Path.clearThreadLocals();
+            }
+        }, "view-compile-drain");
+        drainThread.start();
+        try {
+            drainThread.join();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new AssertionError(e);
+        }
+        final Throwable th = drainError.get();
+        if (th != null) {
+            throw new AssertionError("view compile drain failed", th);
+        }
+    }
+
+    /**
      * Releases the run and waits for it and for the helper thread of {@link #releaseAfterLogged}.
      * Fails with the first error either thread met. A helper that is still waiting for its line
      * stops waiting and skips its action.

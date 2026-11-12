@@ -27,6 +27,7 @@ package io.questdb.test.cairo.view;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.pool.PoolListener;
@@ -43,10 +44,12 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.ops.OperationDispatcher;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
@@ -58,8 +61,10 @@ import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import java.util.regex.Pattern;
 
 /**
@@ -73,6 +78,8 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
     private static final long ALTER_MICROS = 1_750_330_800_000_000L;
     // 2025-06-19T10:00:00.000000Z
     private static final long CREATE_MICROS = 1_750_327_200_000_000L;
+    // 2025-06-19T12:00:00.000000Z
+    private static final long TRUNCATE_MICROS = 1_750_334_400_000_000L;
     // a DROP, RENAME or TRUNCATE of t logs this line when it waits for a view compile run
     private static final String WAIT_LINE = "waiting for view compilation to release table [table=t]";
     private static final LogCapture capture = new LogCapture();
@@ -687,6 +694,64 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
     }
 
     @Test
+    public void testFailedTruncateRecompilesViewsWhoseCompileMetTheLockAttempt() throws Exception {
+        // A query holds t's reader in the second slot of the pool, and an idle reader sits in the
+        // first. The lock attempt of TRUNCATE closes the idle reader while it holds the lock of t's
+        // readers, and a view compile that runs at that moment marks the views over t invalid. The
+        // attempt then fails on the query, and so does TRUNCATE, which queues another compile of
+        // the views: it leaves them valid with the new column.
+        assertMemoryLeak(() -> {
+            // TRUNCATE gives up at once, or, at the server default, tries the lock once more
+            for (long timeoutMillis : new long[]{0, 500}) {
+                node1.setProperty(PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, timeoutMillis);
+                setCurrentMicros(CREATE_MICROS);
+                createTableAndViewsThenAddColumn();
+                final TableReader idleReader = engine.getReader("t");
+                final ReaderHoldingThread query = ReaderHoldingThread.start(engine, "t");
+                idleReader.close();
+                setCurrentMicros(TRUNCATE_MICROS);
+                try {
+                    executeWithViewCompileInsideLock("TRUNCATE TABLE t", PoolListener.EV_LOCK_CLOSE, "t");
+                    Assert.fail("expected to fail: TRUNCATE TABLE t");
+                } catch (SqlException e) {
+                    TestUtils.assertEquals("there is an active query against 't'. Try again.", e.getFlyweightMessage());
+                } finally {
+                    query.close();
+                }
+                try {
+                    assertQuery("t")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
+                                    a\tb
+                                    1\tnull
+                                    2\tnull
+                                    """);
+                    // the compile that the failed TRUNCATE queued leaves the views valid
+                    drainViewQueue();
+                    assertViewStatus("v", "valid", "", "2025-06-19T12:00:00.000000Z");
+                    assertViewStatus("v_dep", "valid", "", "2025-06-19T12:00:00.000000Z");
+                    assertViewColumns("v", "a:INT, b:INT");
+                    assertViewColumns("v_dep", "a:INT, b:INT");
+                } finally {
+                    // The failed attempt kept the first slot of t's reader pool. TRUNCATE on the
+                    // same thread passes over the slot, and its unlock drops t's pool entry with
+                    // the slot.
+                    execute("TRUNCATE TABLE t");
+                }
+                assertQuery("t")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("a\tb\n");
+                Assert.assertEquals(0, engine.getBusyReaderCount());
+                execute("DROP VIEW v_dep");
+                execute("DROP VIEW v");
+                execute("DROP TABLE t");
+            }
+        });
+    }
+
+    @Test
     public void testNonStructuralAlterDoesNotRecompileView() throws Exception {
         assertMemoryLeak(() -> {
             setCurrentMicros(CREATE_MICROS);
@@ -759,6 +824,138 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
     }
 
     @Test
+    public void testStaleFailedViewCompileDoesNotOverwriteTruncateRecompile() throws Exception {
+        // With more than one view compile worker, a compile that met the lock of TRUNCATE can update
+        // the views after the compile that TRUNCATE queued. The failed compile's task is the older
+        // one, so the views keep the state of the compile that TRUNCATE queued.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(CREATE_MICROS);
+            createTableAndViewsThenAddColumn();
+            setCurrentMicros(TRUNCATE_MICROS);
+            executeWithViewCompileInsideLock("TRUNCATE TABLE t", PoolListener.EV_LOCK_SUCCESS, "t");
+            drainViewQueue();
+            assertViewStatus("v", "valid", "", "2025-06-19T12:00:00.000000Z");
+            assertViewStatus("v_dep", "valid", "", "2025-06-19T12:00:00.000000Z");
+
+            // a compile task older than the one TRUNCATE queued, which fails on the lock
+            final TableToken tableToken = engine.verifyTableName("t");
+            Assert.assertTrue(engine.lockReadersByTableToken(tableToken));
+            try {
+                setCurrentMicros(ALTER_MICROS);
+                engine.enqueueCompileView(tableToken);
+                drainViewQueue();
+            } finally {
+                engine.unlockReaders(tableToken);
+            }
+            assertViewStatus("v", "valid", "", "2025-06-19T12:00:00.000000Z");
+            assertViewStatus("v_dep", "valid", "", "2025-06-19T12:00:00.000000Z");
+            assertViewColumns("v", "a:INT, b:INT");
+            assertViewColumns("v_dep", "a:INT, b:INT");
+        });
+    }
+
+    @Test
+    public void testTruncateAfterCompileViewRecompilesViewsWhoseCompileMetTheLock() throws Exception {
+        // COMPILE VIEW, and CREATE VIEW, queue a compile of the view, which runs while TRUNCATE of
+        // the table the view reads holds the lock of the table's readers. TRUNCATE queues another
+        // compile of the views over the table, which leaves them valid.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(CREATE_MICROS);
+            createTableWithRows("t");
+            createView("v", "SELECT * FROM t");
+            createView("v_dep", "SELECT * FROM v");
+            execute("COMPILE VIEW v");
+            setCurrentMicros(TRUNCATE_MICROS);
+            executeWithViewCompileInsideLock("TRUNCATE TABLE t", PoolListener.EV_LOCK_SUCCESS, "t");
+            drainViewQueue();
+            assertViewStatus("v", "valid", "", "2025-06-19T12:00:00.000000Z");
+            assertViewStatus("v_dep", "valid", "", "2025-06-19T12:00:00.000000Z");
+            assertViewColumns("v", "a:INT");
+            assertViewColumns("v_dep", "a:INT");
+
+            execute("CREATE VIEW v2 AS (SELECT a FROM t)");
+            executeWithViewCompileInsideLock("TRUNCATE TABLE t", PoolListener.EV_LOCK_SUCCESS, "t");
+            drainViewQueue();
+            assertViewStatus("v2", "valid", "", "2025-06-19T12:00:00.000000Z");
+            assertViewColumns("v2", "a:INT");
+        });
+    }
+
+    @Test
+    public void testTruncateEmptyTableRecompilesViewsWhoseCompileMetTheLock() throws Exception {
+        // TRUNCATE of a table with no rows leaves the table's files be, and still queues another
+        // compile of the views whose compile met its lock.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(CREATE_MICROS);
+            execute("CREATE TABLE t (a INT)");
+            createViewsThenAddColumn();
+            setCurrentMicros(TRUNCATE_MICROS);
+            executeWithViewCompileInsideLock("TRUNCATE TABLE t", PoolListener.EV_LOCK_SUCCESS, "t");
+            drainViewQueue();
+            assertViewStatus("v", "valid", "", "2025-06-19T12:00:00.000000Z");
+            assertViewStatus("v_dep", "valid", "", "2025-06-19T12:00:00.000000Z");
+            assertViewColumns("v", "a:INT, b:INT");
+            assertViewColumns("v_dep", "a:INT, b:INT");
+            assertQuery("v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("a\tb\n");
+        });
+    }
+
+    @Test
+    public void testTruncateFailingOnFileRecompilesViewsWhoseCompileMetTheLock() throws Exception {
+        // A view compile meets the lock of TRUNCATE, which then fails to truncate a column file.
+        // TRUNCATE still queues another compile of the views, which leaves them valid, and the
+        // table works.
+        final AtomicBoolean isTruncateFailing = new AtomicBoolean();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean truncate(long fd, long size) {
+                if (isTruncateFailing.compareAndSet(true, false)) {
+                    return false;
+                }
+                return super.truncate(fd, size);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            setCurrentMicros(CREATE_MICROS);
+            createTableAndViewsThenAddColumn();
+            setCurrentMicros(TRUNCATE_MICROS);
+            try {
+                executeWithActionInsideLock(
+                        "TRUNCATE TABLE t",
+                        PoolListener.EV_LOCK_SUCCESS,
+                        tableToken -> {
+                            ViewCompileParker.runQueueDrain(engine);
+                            isTruncateFailing.set(true);
+                        },
+                        "t"
+                );
+                Assert.fail("expected to fail: TRUNCATE TABLE t");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "Cannot truncate fd=");
+            }
+            Assert.assertFalse(isTruncateFailing.get());
+            drainViewQueue();
+            assertViewStatus("v", "valid", "", "2025-06-19T12:00:00.000000Z");
+            assertViewStatus("v_dep", "valid", "", "2025-06-19T12:00:00.000000Z");
+            assertViewColumns("v", "a:INT, b:INT");
+            assertViewColumns("v_dep", "a:INT, b:INT");
+
+            execute("TRUNCATE TABLE t");
+            execute("INSERT INTO t VALUES (5, 50)");
+            assertQuery("v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a\tb
+                            5\t50
+                            """);
+        });
+    }
+
+    @Test
     public void testTruncateFailsWhenCheckpointStartsDuringViewCompileWait() throws Exception {
         // CHECKPOINT CREATE calls sync(), which Windows does not have.
         Assume.assumeFalse(Os.isWindows());
@@ -806,6 +1003,76 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
     }
 
     @Test
+    public void testTruncateKeepSymbolMapsRecompilesViewsWhoseCompileMetTheLock() throws Exception {
+        // TRUNCATE that keeps the symbol maps locks t's readers too, and queues another compile
+        // of the views whose compile met the lock.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(CREATE_MICROS);
+            execute("CREATE TABLE t (a INT, s SYMBOL)");
+            execute("INSERT INTO t VALUES (1, 'x'), (2, 'y')");
+            createViewsThenAddColumn();
+            setCurrentMicros(TRUNCATE_MICROS);
+            executeWithViewCompileInsideLock("TRUNCATE TABLE t KEEP SYMBOL MAPS", PoolListener.EV_LOCK_SUCCESS, "t");
+            drainViewQueue();
+            assertViewStatus("v", "valid", "", "2025-06-19T12:00:00.000000Z");
+            assertViewStatus("v_dep", "valid", "", "2025-06-19T12:00:00.000000Z");
+            assertViewColumns("v", "a:INT, s:SYMBOL, b:INT");
+            assertViewColumns("v_dep", "a:INT, s:SYMBOL, b:INT");
+
+            execute("INSERT INTO t VALUES (3, 'x', 30)");
+            assertQuery("v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a\ts\tb
+                            3\tx\t30
+                            """);
+        });
+    }
+
+    @Test
+    public void testTruncateOfTwoTablesRecompilesViewsWhoseCompileMetEachLock() throws Exception {
+        // TRUNCATE locks the readers of one table after the other. While it holds each lock, a
+        // compile of the views over that table runs and marks them invalid. TRUNCATE queues another
+        // compile of the views over each table, which leaves all views valid with the new columns.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(CREATE_MICROS);
+            createTableWithRows("t3");
+            createView("v3", "SELECT * FROM t3");
+            createTableAndViewsThenAddColumn();
+            execute("ALTER TABLE t3 ADD COLUMN c INT");
+            setCurrentMicros(TRUNCATE_MICROS);
+            executeWithActionInsideLock(
+                    "TRUNCATE TABLE t, t3",
+                    PoolListener.EV_LOCK_SUCCESS,
+                    tableToken -> {
+                        // the compiles that the ALTERs queued run at the first lock, so queue a
+                        // compile of the views over each table that TRUNCATE locks
+                        engine.enqueueCompileView(tableToken);
+                        ViewCompileParker.runQueueDrain(engine);
+                    },
+                    "t",
+                    "t3"
+            );
+            drainViewQueue();
+            assertViewStatus("v", "valid", "", "2025-06-19T12:00:00.000000Z");
+            assertViewStatus("v_dep", "valid", "", "2025-06-19T12:00:00.000000Z");
+            assertViewStatus("v3", "valid", "", "2025-06-19T12:00:00.000000Z");
+            assertViewColumns("v", "a:INT, b:INT");
+            assertViewColumns("v_dep", "a:INT, b:INT");
+            assertViewColumns("v3", "a:INT, c:INT");
+            assertQuery("t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("a\tb\n");
+            assertQuery("t3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("a\tc\n");
+        });
+    }
+
+    @Test
     public void testTruncateOfTwoTablesWaitsForViewCompile() throws Exception {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, Long.MAX_VALUE);
@@ -820,6 +1087,37 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("a\n");
+        });
+    }
+
+    @Test
+    public void testTruncatePartitionedTableRecompilesViewsWhoseCompileMetTheLock() throws Exception {
+        // TRUNCATE removes every partition of the table. The view over table_partitions() reads
+        // the table's metadata, not its readers, so its compile does not meet the lock, but
+        // TRUNCATE queues another compile of every view over the table.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(CREATE_MICROS);
+            execute("CREATE TABLE t (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-02T00:00:00.000000Z')");
+            createView("vp", "SELECT name, numRows FROM table_partitions('t')");
+            createViewsThenAddColumn();
+            setCurrentMicros(TRUNCATE_MICROS);
+            executeWithViewCompileInsideLock("TRUNCATE TABLE t", PoolListener.EV_LOCK_SUCCESS, "t");
+            drainViewQueue();
+            assertViewStatus("v", "valid", "", "2025-06-19T12:00:00.000000Z");
+            assertViewStatus("v_dep", "valid", "", "2025-06-19T12:00:00.000000Z");
+            assertViewStatus("vp", "valid", "", "2025-06-19T12:00:00.000000Z");
+            assertViewColumns("v", "a:INT, ts:TIMESTAMP, b:INT");
+            assertViewColumns("v_dep", "a:INT, ts:TIMESTAMP, b:INT");
+            assertQuery("v")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("a\tts\tb\n");
+            assertQuery("vp")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("name\tnumRows\n");
         });
     }
 
@@ -841,6 +1139,112 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
             assertViewState("v_dep");
             assertViewColumns("v", "a:INT, ts:TIMESTAMP, b:INT");
             assertViewColumns("v_dep", "a:INT, ts:TIMESTAMP, b:INT");
+        });
+    }
+
+    @Test
+    public void testTruncateRecompilesJoinAndGroupByViewsWhoseCompileMetTheLock() throws Exception {
+        // Views that join t, on either side, and a view that groups t compile while TRUNCATE holds
+        // the lock of t's readers. TRUNCATE queues another compile of them, which leaves them valid.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(CREATE_MICROS);
+            createTableWithRows("t");
+            createTableWithRows("t2");
+            final String joinSql = "SELECT x.a, y.a a2 FROM t x JOIN t2 y ON x.a = y.a";
+            // reads every column of t, so it gets the column that the ALTER adds
+            final String joinAllSql = "SELECT y.*, x.a a2 FROM t2 x JOIN t y ON x.a = y.a";
+            final String groupBySql = "SELECT a, count() c FROM t";
+            createView("vj", joinSql);
+            createView("vj2", joinAllSql);
+            createView("vg", groupBySql);
+            execute("ALTER TABLE t ADD COLUMN b INT");
+            setCurrentMicros(TRUNCATE_MICROS);
+            executeWithViewCompileInsideLock("TRUNCATE TABLE t", PoolListener.EV_LOCK_SUCCESS, "t");
+            drainViewQueue();
+            assertViewStatus("vj", "valid", "", "2025-06-19T12:00:00.000000Z");
+            assertViewStatus("vj2", "valid", "", "2025-06-19T12:00:00.000000Z");
+            assertViewStatus("vg", "valid", "", "2025-06-19T12:00:00.000000Z");
+            assertViewColumns("vj", "a:INT, a2:INT");
+            assertViewColumns("vj2", "a:INT, b:INT, a2:INT");
+            assertViewColumns("vg", "a:INT, c:LONG");
+
+            execute("INSERT INTO t VALUES (3, 30)");
+            execute("INSERT INTO t2 VALUES (3)");
+            assertQuery("vj")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            a\ta2
+                            3\t3
+                            """);
+            assertQuery("vj2")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            a\tb\ta2
+                            3\t30\t3
+                            """);
+            assertQuery("vg")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a\tc
+                            3\t1
+                            """);
+            assertSqlCursors(joinSql, "vj");
+            assertSqlCursors(joinAllSql, "vj2");
+            assertSqlCursors(groupBySql, "vg");
+        });
+    }
+
+    @Test
+    public void testTruncateRecompilesViewsWhenViewCompileRunStartedBeforeIt() throws Exception {
+        // A view compile run starts before TRUNCATE and holds t2's reader. TRUNCATE locks t's
+        // readers, and the run goes on to compile the views over t, which fail on the lock. The run
+        // was running when TRUNCATE started, and no run started since, yet TRUNCATE queues another
+        // compile of the views over t, which leaves them valid with the new column.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(CREATE_MICROS);
+            createTableWithRows("t");
+            createTableWithRows("t2");
+            createView("v", "SELECT * FROM t");
+            createView("v_dep", "SELECT * FROM v");
+            createView("v2", "SELECT * FROM t2");
+            // the run compiles the views over t2 first, then the views over t
+            execute("ALTER TABLE t2 ADD COLUMN c INT");
+            execute("ALTER TABLE t ADD COLUMN b INT");
+            setCurrentMicros(TRUNCATE_MICROS);
+
+            final ViewCompileParker run = ViewCompileParker.ofQueueDrain(engine, "t2", PoolListener.SRC_READER);
+            final AtomicInteger lockCount = new AtomicInteger();
+            final long ddlThread = Thread.currentThread().threadId();
+            engine.setPoolListener((factoryType, thread, tableToken, event, segment, position) -> {
+                run.onEvent(factoryType, thread, tableToken, event, segment, position);
+                if (thread == ddlThread
+                        && factoryType == PoolListener.SRC_READER
+                        && event == PoolListener.EV_LOCK_SUCCESS
+                        && Chars.equals(tableToken.getTableName(), "t")
+                        && lockCount.incrementAndGet() == 1) {
+                    // the run compiles the views over t while TRUNCATE holds the lock, and ends
+                    joinRun(run);
+                }
+            });
+            try {
+                run.start();
+                execute("TRUNCATE TABLE t");
+            } finally {
+                run.join();
+                engine.setPoolListener(null);
+            }
+            Assert.assertEquals(1, lockCount.get());
+            drainViewQueue();
+            assertViewStatus("v", "valid", "", "2025-06-19T12:00:00.000000Z");
+            assertViewStatus("v_dep", "valid", "", "2025-06-19T12:00:00.000000Z");
+            assertViewColumns("v", "a:INT, b:INT");
+            assertViewColumns("v_dep", "a:INT, b:INT");
+            // the run compiled the views over t2 before TRUNCATE, and nothing compiled them since
+            assertViewStatus("v2", "valid", "", "2025-06-19T10:00:00.000000Z");
+            assertViewColumns("v2", "a:INT, c:INT");
         });
     }
 
@@ -902,6 +1306,49 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
             drainViewQueue();
             assertViewState("v2");
             assertViewColumns("v2", "a:INT, b:INT");
+        });
+    }
+
+    @Test
+    public void testTruncateRightAfterAlterRecompilesViewsWhoseCompileMetTheLock() throws Exception {
+        // The ALTER queues the recompile of the views over t, which runs while TRUNCATE holds the
+        // lock of t's readers: it cannot read t, and marks the views invalid with their old
+        // columns. TRUNCATE queues another recompile once it releases the readers, which leaves the
+        // views valid with the new column.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(CREATE_MICROS);
+            createTableAndViewsThenAddColumn();
+            setCurrentMicros(TRUNCATE_MICROS);
+            executeWithViewCompileInsideLock("TRUNCATE TABLE t", PoolListener.EV_LOCK_SUCCESS, "t");
+            drainViewQueue();
+
+            assertViewStatus("v", "valid", "", "2025-06-19T12:00:00.000000Z");
+            assertViewStatus("v_dep", "valid", "", "2025-06-19T12:00:00.000000Z");
+            assertViewColumns("v", "a:INT, b:INT");
+            assertViewColumns("v_dep", "a:INT, b:INT");
+            // SHOW COLUMNS reads the metadata cache, which only the view compiler updates
+            assertQuery("SHOW COLUMNS FROM v")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                            a\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            b\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            """);
+            assertQuery("v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("a\tb\n");
+
+            execute("INSERT INTO t VALUES (3, 30)");
+            assertSqlCursors("SELECT * FROM t", "v");
+            assertQuery("v_dep")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a\tb
+                            3\t30
+                            """);
         });
     }
 
@@ -1069,6 +1516,38 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
     }
 
     @Test
+    public void testTruncateWithoutOverlappingViewCompileKeepsViewStatus() throws Exception {
+        // No view compile runs while TRUNCATE locks t's readers, so TRUNCATE queues no compile of
+        // the views over t: they keep their status time. A compile over the emptied table would
+        // mark the view whose PIVOT IN sub-query reads the rows of t invalid, and the INSERT that
+        // follows queues no compile.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(CREATE_MICROS);
+            execute("CREATE TABLE t (k SYMBOL, x INT)");
+            execute("INSERT INTO t VALUES ('a', 1), ('b', 2)");
+            createView("v", "SELECT * FROM t");
+            createView("vp", "SELECT * FROM t PIVOT (sum(x) FOR k IN (SELECT DISTINCT k FROM t ORDER BY k))");
+            setCurrentMicros(TRUNCATE_MICROS);
+            execute("TRUNCATE TABLE t");
+            drainViewQueue();
+            assertViewStatus("v", "valid", "", "2025-06-19T10:00:00.000000Z");
+            assertViewStatus("vp", "valid", "", "2025-06-19T10:00:00.000000Z");
+
+            execute("INSERT INTO t VALUES ('a', 1), ('b', 2)");
+            drainViewQueue();
+            assertViewStatus("vp", "valid", "", "2025-06-19T10:00:00.000000Z");
+            assertQuery("vp")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            a\tb
+                            1\t2
+                            """);
+        });
+    }
+
+    @Test
     public void testWalDdlDoesNotWaitForViewCompile() throws Exception {
         // DROP, RENAME and TRUNCATE of a WAL table take no reader lock, so a view compile run that
         // holds the table's reader does not delay them.
@@ -1099,6 +1578,16 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
             assertTableListed("w", false);
             assertTableListed("w2", false);
         });
+    }
+
+    // fails with the error of the action, or when the action did not run once for each table
+    private static void assertActionRanOnceForEachTable(@Nullable Throwable actionError, int[] actionCounts, String[] tableNames) {
+        if (actionError != null) {
+            throw new AssertionError("action inside the lock failed", actionError);
+        }
+        for (int i = 0; i < tableNames.length; i++) {
+            Assert.assertEquals("actions inside the lock of " + tableNames[i], 1, actionCounts[i]);
+        }
     }
 
     private static void assertDdlFails(String ddl, String expectedError) {
@@ -1180,6 +1669,48 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
             run.join();
             engine.setPoolListener(null);
         }
+    }
+
+    // Runs the DDL, and the action on the DDL thread at its first event of the given kind on the
+    // reader pool of each named table: at EV_LOCK_SUCCESS the DDL holds the lock of the table's
+    // readers, at EV_LOCK_CLOSE it is trying to take the lock. Fails with the error of the action,
+    // or when the action did not run once for each table.
+    private static void executeWithActionInsideLock(
+            String ddl,
+            short lockEvent,
+            Consumer<TableToken> action,
+            String... tableNames
+    ) throws SqlException {
+        final long ddlThread = Thread.currentThread().threadId();
+        final int[] actionCounts = new int[tableNames.length];
+        final AtomicReference<Throwable> actionError = new AtomicReference<>();
+        engine.setPoolListener((factoryType, thread, tableToken, event, segment, position) -> {
+            if (thread == ddlThread && factoryType == PoolListener.SRC_READER && event == lockEvent) {
+                for (int i = 0; i < tableNames.length; i++) {
+                    if (Chars.equals(tableToken.getTableName(), tableNames[i]) && actionCounts[i]++ == 0) {
+                        try {
+                            action.accept(tableToken);
+                        } catch (Throwable th) {
+                            // an error thrown into the pool would leave the table locked
+                            actionError.compareAndSet(null, th);
+                        }
+                    }
+                }
+            }
+        });
+        try {
+            execute(ddl);
+        } finally {
+            engine.setPoolListener(null);
+            assertActionRanOnceForEachTable(actionError.get(), actionCounts, tableNames);
+        }
+    }
+
+    // Runs the DDL, and a drain of the view compile queue on another thread at the DDL thread's
+    // first event of the given kind on the reader pool of each named table. The DDL thread waits
+    // for the drain, so a compile of the drain that reads the table meets the lock.
+    private static void executeWithViewCompileInsideLock(String ddl, short lockEvent, String... tableNames) throws SqlException {
+        executeWithActionInsideLock(ddl, lockEvent, tableToken -> ViewCompileParker.runQueueDrain(engine), tableNames);
     }
 
     private static boolean isPresentInDbRoot(String fileName) {

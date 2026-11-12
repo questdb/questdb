@@ -92,8 +92,10 @@ public class ViewFuzzTest extends AbstractFuzzTest {
         // An ALTER of a non-WAL table queues the recompile of the views over it, and a TRUNCATE,
         // RENAME or DROP of the table follows at once while view compile workers run. Every DDL
         // succeeds: it waits for a compile run that holds the table instead of failing as busy.
-        // One session runs all DDLs; ViewOverNonWalTableTest pins what a DDL does when another
-        // session changes its table while it waits.
+        // A compile that meets the lock of a DDL marks views invalid, and the DDL queues another
+        // compile of them, so every view ends valid. One session runs all DDLs;
+        // ViewOverNonWalTableTest pins what a DDL does when another session changes its table
+        // while it waits.
         assertMemoryLeak(() -> {
             final Rnd rnd = fuzzer.generateRandom(LOG);
             node1.setProperty(PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, Long.MAX_VALUE);
@@ -127,8 +129,11 @@ public class ViewFuzzTest extends AbstractFuzzTest {
 
             final AtomicBoolean stop = new AtomicBoolean();
             final ObjList<Thread> viewCompilerJobs = new ObjList<>();
-            final int[] ddlCounts = new int[3];
-            final int ddlOffset = rnd.nextInt(3);
+            // TRUNCATE, RENAME, DROP, TRUNCATE KEEP SYMBOL MAPS and, with two tables or more,
+            // TRUNCATE of two tables
+            final int ddlShapeCount = tableCount > 1 ? 5 : 4;
+            final int[] ddlCounts = new int[ddlShapeCount];
+            final int ddlOffset = rnd.nextInt(ddlShapeCount);
             int addedColumnCount = 0;
             try {
                 for (int i = 0, n = 1 + rnd.nextInt(4); i < n; i++) {
@@ -139,8 +144,8 @@ public class ViewFuzzTest extends AbstractFuzzTest {
                     final int tableIndex = rnd.nextInt(tableCount);
                     final String tableName = "t" + tableIndex;
                     execute("ALTER TABLE " + tableName + " ADD COLUMN c" + addedColumnCount++ + " INT");
-                    // the first three iterations run each DDL once
-                    final int ddl = i < 3 ? (i + ddlOffset) % 3 : rnd.nextInt(3);
+                    // the first iterations run each DDL once
+                    final int ddl = i < ddlShapeCount ? (i + ddlOffset) % ddlShapeCount : rnd.nextInt(ddlShapeCount);
                     ddlCounts[ddl]++;
                     switch (ddl) {
                         case 0 -> execute("TRUNCATE TABLE " + tableName);
@@ -148,9 +153,14 @@ public class ViewFuzzTest extends AbstractFuzzTest {
                             execute("RENAME TABLE " + tableName + " TO " + tableName + "_tmp");
                             execute("RENAME TABLE " + tableName + "_tmp TO " + tableName);
                         }
-                        default -> {
+                        case 2 -> {
                             execute("DROP TABLE " + tableName);
                             createNonWalTable(tableName, isPartitioned[tableIndex]);
+                        }
+                        case 3 -> execute("TRUNCATE TABLE " + tableName + " KEEP SYMBOL MAPS");
+                        default -> {
+                            final int otherTableIndex = (tableIndex + 1 + rnd.nextInt(tableCount - 1)) % tableCount;
+                            execute("TRUNCATE TABLE " + tableName + ", t" + otherTableIndex);
                         }
                     }
                     insertRows(tableName, isPartitioned[tableIndex]);
@@ -158,28 +168,20 @@ public class ViewFuzzTest extends AbstractFuzzTest {
             } finally {
                 stopAndJoinJobs(stop, viewCompilerJobs);
             }
-            Assert.assertTrue(ddlCounts[0] > 0 && ddlCounts[1] > 0 && ddlCounts[2] > 0);
+            for (int ddl = 0; ddl < ddlShapeCount; ddl++) {
+                Assert.assertTrue("DDL " + ddl + " did not run", ddlCounts[ddl] > 0);
+            }
 
-            // Compiles that raced the DDLs may have left a view invalid. One more compile of each
-            // view, with no DDL running, brings every view up to date, and then every view must
-            // match its SQL.
+            // the compiles that the DDLs queued leave every view valid
+            drainViewQueue();
+            assertViewsValidAndMatchSql(viewNames, viewSqls);
+
+            // one more compile of each view, with no DDL running, keeps them so
             for (int i = 0, n = viewNames.size(); i < n; i++) {
                 engine.enqueueCompileView(engine.verifyTableName(viewNames.getQuick(i)));
             }
             drainViewQueue();
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                for (int i = 0, n = viewNames.size(); i < n; i++) {
-                    final String viewName = viewNames.getQuick(i);
-                    assertQuery("SELECT view_status FROM views() WHERE view_name = '" + viewName + "'")
-                            .noLeakCheck()
-                            .noRandomAccess()
-                            .returns("""
-                                    view_status
-                                    valid
-                                    """);
-                    TestUtils.assertSqlCursors(compiler, sqlExecutionContext, viewSqls.getQuick(i), viewName, LOG);
-                }
-            }
+            assertViewsValidAndMatchSql(viewNames, viewSqls);
         });
     }
 
@@ -275,6 +277,22 @@ public class ViewFuzzTest extends AbstractFuzzTest {
             execute("INSERT INTO " + tableName + " (a, ts) VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-02T00:00:00.000000Z')");
         } else {
             execute("INSERT INTO " + tableName + " (a) VALUES (1), (2)");
+        }
+    }
+
+    private void assertViewsValidAndMatchSql(ObjList<String> viewNames, ObjList<String> viewSqls) throws Exception {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            for (int i = 0, n = viewNames.size(); i < n; i++) {
+                final String viewName = viewNames.getQuick(i);
+                assertQuery("SELECT view_status FROM views() WHERE view_name = '" + viewName + "'")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("""
+                                view_status
+                                valid
+                                """);
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, viewSqls.getQuick(i), viewName, LOG);
+            }
         }
     }
 
