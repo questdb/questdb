@@ -36,6 +36,8 @@ import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewRefreshStats;
 import io.questdb.cairo.lv.LiveViewState;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
@@ -52,6 +54,11 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.zone.ZoneOffsetTransition;
+import java.time.zone.ZoneRules;
 
 /**
  * Differential fuzz for the out-of-order repair routes of anchored live views.
@@ -96,7 +103,23 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
     private static final int RUNS_PER_TEST = 10;
     // A pass that skips its repair's inline apply rather than injecting a fault.
     private static final int APPLY_SKIP = 11;
+    // The anchor dstFrontierEpisode runs under: daily at a wall time the Berlin fall-back repeats
+    // and the spring-forward skips, so a segment around either transition has no start of its own.
+    private static final String BERLIN_REPEATED_ANCHOR_CLAUSE = "ANCHOR DAILY '02:30' 'Europe/Berlin'";
     private static final long DAY_MICROS = 86_400_000_000L;
+    // Where dstFrontierEpisode puts the view's frontier once its departure leaves it: in the half
+    // hour before the fall-back, whose segment has no start of its own; in the repeated half hour
+    // after it, whose rows carry the previous day's anchor value; or on the spring-forward day,
+    // whose segment has no start of its own either.
+    private static final int DST_FRONTIER_IN_OPEN_RUN = 0;
+    private static final int DST_FRONTIER_IN_REPEATED_HALF_HOUR = 1;
+    private static final int DST_FRONTIER_ON_SPRING_FORWARD_DAY = 2;
+    // Salt the draws of dstFrontierEpisode apart from the run's sequence, so a run that reaches it
+    // draws everything else as it did before the episode existed.
+    private static final long DST_FRONTIER_SALT0 = 0x3C6EF372FE94F82BL;
+    private static final long DST_FRONTIER_SALT1 = 0xA54FF53A5F1D36F1L;
+    private static final int DST_FRONTIER_SHAPES = 3;
+    private static final long MINUTE_MICROS = 60_000_000L;
     // The rows each batch of departureEpisode commits: above the largest row cadence the knobs
     // draw, so each batch seals a root of its own.
     private static final int DEPARTURE_BATCH_ROWS = 96;
@@ -132,6 +155,8 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
     private final StringSink syntheticSink = new StringSink();
     private final LongHashSet syntheticTs = new LongHashSet();
     private int consecutiveFaultedPasses;
+    // Episodes of dstFrontierEpisode the batch ran, logged with the route coverage.
+    private int dstFrontierEpisodes;
     private LiveViewMidDrainFault fault;
     private int firedFaults;
     private int firedThisRun;
@@ -195,6 +220,20 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
         // Exact duplicate rows. A keyed repair over a repeated (timestamp, key) pair cannot
         // upsert it without collapsing it, so it abandons its sparse publication.
         runBatch(STEER_SPARSE_FALLBACK);
+    }
+
+    // The first Europe/Berlin transition above minTs that winds the clocks back, isFallBack, or
+    // forward, in epoch micros.
+    private static long nextBerlinTransition(long minTs, boolean isFallBack) {
+        final ZoneRules rules = ZoneId.of("Europe/Berlin").getRules();
+        Instant at = Instant.ofEpochSecond(Math.floorDiv(minTs, 1_000_000L));
+        while (true) {
+            final ZoneOffsetTransition transition = rules.nextTransition(at);
+            if (transition.isOverlap() == isFallBack) {
+                return transition.toEpochSecond() * 1_000_000L;
+            }
+            at = transition.getInstant();
+        }
     }
 
     private static String oracleProjection(int variant, String partition) {
@@ -319,6 +358,7 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
                 .$(", tierReadRecompute=").$(tierReadRecomputeChecks)
                 .$(", tierReadTableOnly=").$(tierReadTableOnlyChecks)
                 .$(", windowJoin=").$(windowJoinChecks)
+                .$(", dstFrontierEpisodes=").$(dstFrontierEpisodes)
                 .$(", firedFaults=").$(firedFaults)
                 .$(", injectedRefreshFaults=").$(ledger.injected)
                 .$(", driftFaults=").$(ledger.drift).I$();
@@ -691,6 +731,186 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
         }
         driveRefreshToQuiescence(job);
         assertNoCheckpointRootAboveTheNewestRow(viewInstance());
+    }
+
+    /**
+     * A correction that empties the view's newest rows next to a Europe/Berlin transition, under
+     * the run's {@code ANCHOR DAILY '02:30' 'Europe/Berlin'}, in one of three shapes a salted
+     * draw picks, placed on the first transition at least three days above every row. One commit
+     * puts the kept rows and the departed rows on salted keys, and a REPLACE_RANGE then deletes
+     * the departed rows, so a localized end-of-table head-miss rebuild emits no row and derives
+     * the state at the new frontier F instead of retiring the timeline:
+     * <ul>
+     *     <li>{@link #DST_FRONTIER_IN_OPEN_RUN}: kept rows at 00:05Z to 00:25Z, on the previous
+     *     day's segment, and at 00:35Z to 00:55Z, in the half hour before the fall-back at 01:00Z,
+     *     whose anchor value no other instant carries, so its segment has no start of its own;
+     *     the departed rows at 01:35Z to 01:50Z. F's floor is the view's start: the rebuild
+     *     restores the newest root below F when it counts every row of the view at or below it,
+     *     and folds every base row up to F otherwise;</li>
+     *     <li>{@link #DST_FRONTIER_IN_REPEATED_HALF_HOUR}: also kept rows at 01:05Z to 01:25Z, in
+     *     the half hour after the fall-back, which reads 02:05 to 02:25 again and carries the
+     *     previous day's anchor value. F's floor is that day's segment start, above every root
+     *     of the run, so the rebuild folds the base rows from there;</li>
+     *     <li>{@link #DST_FRONTIER_ON_SPRING_FORWARD_DAY}: kept rows on the day below, then from
+     *     01:00Z, when 02:30 is skipped, to 12:00Z, whose segment starts half an hour below its
+     *     own anchor value, so it has no start of its own; the departed rows on the next day's
+     *     segment. F's floor is the view's start, as in the first shape.</li>
+     * </ul>
+     * Pins the cadence, so no root seals the episode's rows, and the routes that would take the
+     * correction elsewhere, for the episode. The run's oracle, then a restart that restores from
+     * the root at F, then rows committed in order at exactly F and above it - in the first shape,
+     * one of a key whose newest kept row is on the previous day's segment, in the repeated half
+     * hour, where its run continues - then the oracle and another restart that restores.
+     */
+    private void dstFrontierEpisode(Rnd rnd, LiveViewFuzzKnobs knobs, PassShape shape, int symCount) throws Exception {
+        final Rnd episodeRnd = new Rnd(rnd.getSeed0() ^ DST_FRONTIER_SALT0, rnd.getSeed1() ^ DST_FRONTIER_SALT1);
+        final int dstShape = episodeRnd.nextInt(DST_FRONTIER_SHAPES);
+        driveRefreshToQuiescence(job);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS, (String) null);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ADAPTIVE_CADENCE_ENABLED, "false");
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_PER_SEGMENT_ENABLED, "false");
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_REPLAY_ENABLED, "false");
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_OPEN_SEGMENT_KEYED_REPLAY_ENABLED, "false");
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_ISOLATED_RUNTIME_ENABLED, "false");
+        try {
+            final LiveViewInstance instance = viewInstance();
+            final long transitionTs = nextBerlinTransition(
+                    Math.max(maxInsertedTs, instance.getLatestSeenTs()) + 3 * DAY_MICROS,
+                    dstShape != DST_FRONTIER_ON_SPRING_FORWARD_DAY
+            );
+            // The kept rows' offsets from the transition, in minutes, ascending, then the departed
+            // rows'.
+            final int[] keptMinutes = switch (dstShape) {
+                case DST_FRONTIER_IN_OPEN_RUN -> new int[]{-55, -50, -45, -40, -35, -25, -20, -15, -10, -5};
+                case DST_FRONTIER_IN_REPEATED_HALF_HOUR -> new int[]{-55, -50, -45, -40, -35, -25, -20, -15, -10, -5, 5, 10, 15, 20, 25};
+                default -> new int[]{-12 * 60, -30, 0, 5, 10, 15, 20, 11 * 60};
+            };
+            final int[] departedMinutes = dstShape == DST_FRONTIER_ON_SPRING_FORWARD_DAY
+                    ? new int[]{23 * 60 + 35, 23 * 60 + 40, 23 * 60 + 45, 23 * 60 + 50}
+                    : new int[]{35, 40, 45, 50};
+            // A key whose newest kept row is on the previous day's segment, 00:20Z, and which has
+            // no row in the half hour before the fall-back, in the first shape.
+            final int continuingKeyMinute = -40;
+            final ObjList<String> keptKeys = new ObjList<>();
+            syntheticSink.clear();
+            syntheticSink.put("INSERT INTO base (ts, sym, i, x) VALUES ");
+            for (int k = 0; k < keptMinutes.length; k++) {
+                final String key = dstShape == DST_FRONTIER_IN_OPEN_RUN && keptMinutes[k] == continuingKeyMinute
+                        ? SYNTHETIC_TIE_KEY
+                        : SYMBOLS[episodeRnd.nextInt(symCount)];
+                keptKeys.add(key);
+                appendEpisodeRow(k > 0, transitionTs + keptMinutes[k] * MINUTE_MICROS, key);
+            }
+            for (int departedMinute : departedMinutes) {
+                appendEpisodeRow(true, transitionTs + departedMinute * MINUTE_MICROS, SYMBOLS[episodeRnd.nextInt(symCount)]);
+            }
+            final long frontierTs = transitionTs + keptMinutes[keptMinutes.length - 1] * MINUTE_MICROS;
+            final String frontierKey = keptKeys.getQuick(keptKeys.size() - 1);
+            final long departedLowTs = transitionTs + departedMinutes[0] * MINUTE_MICROS;
+            final long departedHighTs = transitionTs + departedMinutes[departedMinutes.length - 1] * MINUTE_MICROS;
+            maxInsertedTs = Math.max(maxInsertedTs, departedHighTs);
+            execute(syntheticSink);
+            drainWalQueue();
+            driveRefreshToQuiescence(job);
+
+            // The rule's route: the frontier's floor in the repeated half hour is the previous
+            // day's segment start, above every root of the run, so the rebuild folds from there.
+            // In the other two shapes it is the view's start, and the newest root at or below the
+            // frontier serves when it counts every row of the view at or below it.
+            boolean isRestoreExpected = false;
+            long rootTs = Numbers.LONG_NULL;
+            if (dstShape != DST_FRONTIER_IN_REPEATED_HALF_HOUR) {
+                final LongList ladder = snapshotCheckpointLadder(instance);
+                for (int k = ladder.size() - 2; k >= 0; k -= 2) {
+                    if (ladder.getQuick(k) <= frontierTs) {
+                        rootTs = ladder.getQuick(k);
+                        isRestoreExpected = ladder.getQuick(k + 1) == queryLong("SELECT count() FROM lv WHERE ts <= " + rootTs);
+                        break;
+                    }
+                }
+            }
+            LOG.info().$("LV route fuzz: DST frontier [shape=").$(dstShape)
+                    .$(", transition=").$ts(transitionTs)
+                    .$(", frontier=").$ts(frontierTs)
+                    .$(", departedLowTs=").$ts(departedLowTs)
+                    .$(", rootTs=").$ts(rootTs)
+                    .$(", restore=").$(isRestoreExpected).I$();
+            final LiveViewRefreshStats stats = job.getStatsForTest();
+            final long headMissRepairsBefore = countHeadMissRepairs(job);
+            final long sealsBefore = stats.get(LiveViewRefreshStats.HEAD_MISS_ZERO_ROW_FRONTIER_SEAL_COUNT);
+            final long restoresBefore = stats.get(LiveViewRefreshStats.HEAD_MISS_FRONTIER_STATE_RESTORE_COUNT);
+            final long warmUpsBefore = stats.get(LiveViewRefreshStats.HEAD_MISS_FRONTIER_STATE_WARM_UP_COUNT);
+            final long retiresBefore = stats.get(LiveViewRefreshStats.HEAD_MISS_SPLICE_ZERO_ROW_RETIRE_COUNT);
+            replaceBaseRange(departedLowTs, departedHighTs + 1, Double.NaN);
+            drainWalQueue();
+            driveRefreshToQuiescence(job);
+            Assert.assertEquals("the head-miss rebuild repairs the departure", headMissRepairsBefore + 1, countHeadMissRepairs(job));
+            Assert.assertEquals("and seals the frontier", sealsBefore + 1, stats.get(LiveViewRefreshStats.HEAD_MISS_ZERO_ROW_FRONTIER_SEAL_COUNT));
+            Assert.assertEquals(
+                    "a restore derives the frontier's state",
+                    restoresBefore + (isRestoreExpected ? 1 : 0),
+                    stats.get(LiveViewRefreshStats.HEAD_MISS_FRONTIER_STATE_RESTORE_COUNT)
+            );
+            Assert.assertEquals(
+                    "a warm-up derives the frontier's state",
+                    warmUpsBefore + (isRestoreExpected ? 0 : 1),
+                    stats.get(LiveViewRefreshStats.HEAD_MISS_FRONTIER_STATE_WARM_UP_COUNT)
+            );
+            Assert.assertEquals("nothing retires", retiresBefore, stats.get(LiveViewRefreshStats.HEAD_MISS_SPLICE_ZERO_ROW_RETIRE_COUNT));
+            final LongList ladder = snapshotCheckpointLadder(instance);
+            Assert.assertEquals("the newest root sits at the new frontier", frontierTs, ladder.getQuick(ladder.size() - 2));
+            Assert.assertEquals("and counts every row of the view", queryLong("SELECT count() FROM lv"), ladder.getQuick(ladder.size() - 1));
+            assertView(shape.oracleSql, shape.orderBy, "after the DST frontier departure");
+            restart();
+            driveRefreshToQuiescence(job);
+            assertRestoredFromTimeline("lv");
+            assertView(shape.oracleSql, shape.orderBy, "after the restart from the DST frontier");
+
+            // In order after the restore: a row at exactly the frontier, which folds over the
+            // root's state, and a row above it.
+            syntheticSink.clear();
+            syntheticSink.put("INSERT INTO base (ts, sym, i, x) VALUES ");
+            appendEpisodeRow(false, frontierTs, frontierKey);
+            final long aboveTs = switch (dstShape) {
+                // The continuing key's row in the repeated half hour, which carries the anchor
+                // value of its 00:20Z row again.
+                case DST_FRONTIER_IN_OPEN_RUN -> transitionTs + 10 * MINUTE_MICROS;
+                case DST_FRONTIER_IN_REPEATED_HALF_HOUR -> transitionTs + 28 * MINUTE_MICROS;
+                default -> transitionTs + 12 * 60 * MINUTE_MICROS;
+            };
+            appendEpisodeRow(true, aboveTs, dstShape == DST_FRONTIER_IN_OPEN_RUN ? SYNTHETIC_TIE_KEY : SYMBOLS[episodeRnd.nextInt(symCount)]);
+            execute(syntheticSink);
+            drainWalQueue();
+            driveRefreshToQuiescence(job);
+            assertView(shape.oracleSql, shape.orderBy, "after the rows at and above the DST frontier");
+            restart();
+            driveRefreshToQuiescence(job);
+            assertRestoredFromTimeline("lv");
+            assertView(shape.oracleSql, shape.orderBy, "after the restart past the DST frontier");
+            dstFrontierEpisodes++;
+        } finally {
+            knobs.apply(AbstractLiveViewTest::setProperty);
+        }
+    }
+
+    // One row of the DST frontier episode on key, a comma ahead of it when isNext, appended to
+    // syntheticSink's INSERT. Its i passes the filtered view's predicate.
+    private void appendEpisodeRow(boolean isNext, long ts, String key) {
+        if (isNext) {
+            syntheticSink.put(", ");
+        }
+        syntheticSink.put('(').put(ts).put("::timestamp, '").put(key).put("', ").put(1 + (ts & 511)).put(", 1.0)");
+    }
+
+    private long queryLong(String sql) throws SqlException {
+        try (
+                RecordCursorFactory factory = select(sql);
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            Assert.assertTrue(cursor.hasNext());
+            return cursor.getRecord().getLong(0);
+        }
     }
 
     /**
@@ -1220,6 +1440,9 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
             }
             if (steer == STEER_KEYED_OPEN_SEGMENT) {
                 keyedOwedRootEpisode(knobs, oracleSql, orderBy, symCount);
+            }
+            if (steer != STEER_FAULTS && BERLIN_REPEATED_ANCHOR_CLAUSE.equals(anchor.clause)) {
+                dstFrontierEpisode(rnd, knobs, shape, symCount);
             }
             if (faultPct > 0 && firedThisRun == 0) {
                 // No drawn fault fired. One in-order row above every other one, whose forward

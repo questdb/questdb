@@ -303,56 +303,218 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testAnUpsertMovingEveryNewestRowOutOfTheFilterOverALostDayBlocksTheRestart() throws Exception {
-        // The three newest rows move out of the filter and nothing is emitted in their place, from
-        // a rebuild whose runtime holds only the state it warmed from one minute below them. No
-        // root sits at the new frontier 00:56, so the repair retires the timeline rather than keep
-        // one a restart could not restore. That restart then rebuilds with the restatement guard
-        // armed, which refuses the rebuild over the day the base lost: the view stops and keeps
-        // its 2025-12-31 row, where a rebuild would drop it. Known limitation: a zero-row
-        // end-of-table repair with no restorable root at its frontier retires the timeline.
+    public void testAnUpsertMovingEveryNewestRowOutOfTheFilterOverALostDayRestoresRetainedRows() throws Exception {
+        assertAnUpsertMovingEveryNewestRowOutOfTheFilterOverALostDayRestoresRetainedRows("-1.0");
+    }
+
+    @Test
+    public void testASecondZeroRowDepartureSealsTheLowerFrontier() throws Exception {
+        // The item's upsert over the lost day seals the frontier 00:56, then a second upsert moves
+        // 00:55 and 00:56 out of the filter too. Its rebuild re-versions the root it sealed at
+        // 00:56, warms the new frontier 00:54's frame from 00:53, truncates that root and seals
+        // 00:54, and every restart restores over the lost day.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
         assertMemoryLeak(() -> {
             createHeadMissDepartureView("TIMESTAMP");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveSeedToCompletion(job, "lv");
                 commitMinuteBatchesOverTheLostDay(job);
-                final long headMissRepairsBefore = countHeadMissRepairs(job);
-                final long resetsBefore = departureView().getCheckpointTimelineResets();
-                commitDeparture(
+                assertZeroRowDepartureSealsTheFrontier(
                         job,
-                        "('2026-01-01T00:57:00.000000Z', 'a', -1.0), ('2026-01-01T00:58:00.000000Z', 'a', -1.0), ('2026-01-01T00:59:00.000000Z', 'a', -1.0)"
+                        () -> execute("INSERT INTO base VALUES " + minuteRowsOfA(57, 59, "-1.0")),
+                        "2026-01-01T00:56:00.000000Z",
+                        FRONTIER_STATE_WARM_UP,
+                        1,
+                        6,
+                        3,
+                        false,
+                        """
+                                2025-12-31T23:55:00.000000Z -> 1
+                                2026-01-01T00:56:00.000000Z -> 58
+                                """
                 );
-                Assert.assertEquals("the head-miss rebuild repairs the departure", headMissRepairsBefore + 1, countHeadMissRepairs(job));
-                Assert.assertEquals(1, job.getStatsForTest().get(LiveViewRefreshStats.HEAD_MISS_SPLICE_ZERO_ROW_RETIRE_COUNT));
-                Assert.assertEquals("the repair retires the timeline", resetsBefore + 1, departureView().getCheckpointTimelineResets());
-                try (Path dir = departureCheckpointsDir(); Path timelinePath = new Path()) {
-                    LiveViewCheckpointLayout.timelinePath(timelinePath, dir);
-                    Assert.assertFalse(configuration.getFilesFacade().exists(timelinePath.$()));
-                    Assert.assertFalse(LiveViewCheckpointRepairMarker.exists(configuration.getFilesFacade(), dir));
-                }
+                assertZeroRowDepartureSealsTheFrontier(
+                        job,
+                        () -> execute("INSERT INTO base VALUES " + minuteRowsOfA(55, 56, "-1.0")),
+                        "2026-01-01T00:54:00.000000Z",
+                        FRONTIER_STATE_WARM_UP,
+                        1,
+                        // The replay reads 00:54 to 00:59, the warm-up 00:53 and 00:54.
+                        8,
+                        3,
+                        false,
+                        """
+                                2025-12-31T23:55:00.000000Z -> 1
+                                2026-01-01T00:54:00.000000Z -> 56
+                                """
+                );
             }
-            final String rows = headMissDepartureRows(true, 56);
+            final String rows = headMissDepartureRows(true, 54);
             assertDepartureRows(rows);
-            for (int restart = 0; restart < 2; restart++) {
+            assertTieAtTheFrontierFoldsOntoTheRestoredRoot(
+                    rows,
+                    "('2026-01-01T00:54:00.000000Z', 'a', 2.0)",
+                    headMissDepartureRows(true, 53) + "2026-01-01T00:54:00.000000Z\ta\t2.0\t3.0\n"
+            );
+        });
+    }
+
+    @Test
+    public void testAnUpsertMovingEveryNewestRowOutOfTheFilterAtTheEpochRestores() throws Exception {
+        // The item's upsert over a base whose rows start at the epoch and lost nothing: the newest
+        // root below the frontier, 00:30, sits below its frame, so the rebuild warms the frame from
+        // 00:55, truncates the root at 00:59 the splice kept and seals 00:56 above the root at
+        // 00:30.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        assertMemoryLeak(() -> {
+            createHeadMissDepartureView("TIMESTAMP");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                commitDeparture(job, atTheEpoch(minuteRowsOfA(0, 30, "1.0")));
+                setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+                commitDeparture(job, atTheEpoch(minuteRowsOfA(31, 59, "1.0")));
+                assertDepartureLadder("""
+                        1970-01-01T00:30:00.000000Z -> 31
+                        1970-01-01T00:59:00.000000Z -> 60
+                        """);
+                assertZeroRowDepartureSealsTheFrontier(
+                        job,
+                        () -> execute("INSERT INTO base VALUES " + atTheEpoch(minuteRowsOfA(57, 59, "-1.0"))),
+                        "1970-01-01T00:56:00.000000Z",
+                        FRONTIER_STATE_WARM_UP,
+                        1,
+                        // The replay reads 00:56 and the three upserted rows, the warm-up 00:55 and 00:56.
+                        6,
+                        3,
+                        false,
+                        """
+                                1970-01-01T00:30:00.000000Z -> 31
+                                1970-01-01T00:56:00.000000Z -> 57
+                                """
+                );
+            }
+            final String rows = atTheEpoch(headMissDepartureRows(false, 56));
+            assertDepartureRows(rows);
+            assertTieAtTheFrontierFoldsOntoTheRestoredRoot(
+                    rows,
+                    "('1970-01-01T00:56:00.000000Z', 'a', 2.0)",
+                    atTheEpoch(headMissDepartureRows(false, 55)) + "1970-01-01T00:56:00.000000Z\ta\t2.0\t3.0\n"
+            );
+        });
+    }
+
+    @Test
+    public void testAnUpsertMovingEveryNewestRowOutOfTheFilterInNanosRestores() throws Exception {
+        // The item's upsert over a base with nanosecond timestamps: the frame floor, the frontier
+        // and the seal work in the base's unit, and the derivation's log line prints them as the
+        // base's dates.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        assertMemoryLeak(() -> {
+            createHeadMissDepartureView("TIMESTAMP_NS");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                commitNanosMinuteBatchesOverTheLostDay(job, "");
                 final LogCapture capture = new LogCapture();
                 capture.start();
                 try {
-                    restartLiveViewsAndRecover();
+                    assertZeroRowDepartureSealsTheFrontier(
+                            job,
+                            () -> execute("INSERT INTO base VALUES " + minuteRowsOfA(57, 59, "-1.0")),
+                            "2026-01-01T00:56:00.000000000Z",
+                            FRONTIER_STATE_WARM_UP,
+                            1,
+                            // The replay reads 00:56 and the three upserted rows, the warm-up 00:55 and 00:56.
+                            6,
+                            3,
+                            false,
+                            """
+                                    2025-12-31T23:55:00.000000000Z -> 1
+                                    2026-01-01T00:56:00.000000000Z -> 58
+                                    """
+                    );
                     capture.drain();
-                    capture.assertLogged("live view restart rebuilding from applied base [view=lv, cause=timeline is absent");
-                    capture.assertNotLogged("runs without the restatement guard");
+                    capture.assertLogged("live view O3 head miss derived the frontier state [view=lv, frontier=2026-01-01T00:56:00.000000000Z, "
+                            + "floor=2026-01-01T00:55:00.000000000Z, openBelow=false, route=warm-up, rootMaxTs=2025-12-31T23:55:00.000000000Z, rows=2]");
                 } finally {
                     capture.stop();
                 }
-                Assert.assertEquals(
-                        "rebuild_blocked",
-                        LiveViewCheckpointRecoveryPhase.routeName(departureView().getCheckpointRestoreRoute())
-                );
-                Assert.assertTrue(departureView().isCheckpointRecoveryBlocked());
-                assertDepartureRows(rows);
             }
+            final String rows = inNanos(headMissDepartureRows(true, 56));
+            assertDepartureRows(rows);
+            assertTieAtTheFrontierFoldsOntoTheRestoredRoot(
+                    rows,
+                    "('2026-01-01T00:56:00.000000000Z', 'a', 2.0)",
+                    inNanos(headMissDepartureRows(true, 55)) + "2026-01-01T00:56:00.000000000Z\ta\t2.0\t3.0\n"
+            );
         });
+    }
+
+    @Test
+    public void testAnUpsertMovingEveryNewestRowOutOfTheFilterOneNanoBelowItsOutputFloorRestores() throws Exception {
+        // As above, with a row one nanosecond below the departed rows: the new frontier sits one
+        // tick below the output floor 00:57, so its frame floor 00:55:59.999999999 sits one tick
+        // below the replay's, and the rebuild folds the frame from there - 00:56 and the frontier -
+        // rather than taking the replay's state.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        assertMemoryLeak(() -> {
+            createHeadMissDepartureView("TIMESTAMP_NS");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                commitNanosMinuteBatchesOverTheLostDay(job, ", ('2026-01-01T00:56:59.999999999Z', 'a', 1.0)");
+                final LogCapture capture = new LogCapture();
+                capture.start();
+                try {
+                    assertZeroRowDepartureSealsTheFrontier(
+                            job,
+                            () -> execute("INSERT INTO base VALUES " + minuteRowsOfA(57, 59, "-1.0")),
+                            "2026-01-01T00:56:59.999999999Z",
+                            FRONTIER_STATE_WARM_UP,
+                            1,
+                            // The replay reads 00:56, the frontier and the three upserted rows, the
+                            // warm-up 00:56 and the frontier.
+                            7,
+                            3,
+                            false,
+                            """
+                                    2025-12-31T23:55:00.000000000Z -> 1
+                                    2026-01-01T00:56:59.999999999Z -> 59
+                                    """
+                    );
+                    capture.drain();
+                    capture.assertLogged("live view O3 head miss derived the frontier state [view=lv, frontier=2026-01-01T00:56:59.999999999Z, "
+                            + "floor=2026-01-01T00:55:59.999999999Z, openBelow=false, route=warm-up, rootMaxTs=2025-12-31T23:55:00.000000000Z, rows=2]");
+                } finally {
+                    capture.stop();
+                }
+            }
+            final String rows = inNanos(headMissDepartureRows(true, 56)) + "2026-01-01T00:56:59.999999999Z\ta\t1.0\t2.0\n";
+            assertDepartureRows(rows);
+            assertTieAtTheFrontierFoldsOntoTheRestoredRoot(
+                    rows,
+                    "('2026-01-01T00:56:59.999999999Z', 'a', 2.0)",
+                    inNanos(headMissDepartureRows(true, 56)) + "2026-01-01T00:56:59.999999999Z\ta\t2.0\t3.0\n"
+            );
+        });
+    }
+
+    @Test
+    public void testAnUpsertMovingEveryNewestRowToNullOverALostDayRestoresRetainedRows() throws Exception {
+        assertAnUpsertMovingEveryNewestRowOutOfTheFilterOverALostDayRestoresRetainedRows("NULL");
+    }
+
+    @Test
+    public void testAnUpsertMovingEveryNewestRowToZeroOverALostDayRestoresRetainedRows() throws Exception {
+        assertAnUpsertMovingEveryNewestRowOutOfTheFilterOverALostDayRestoresRetainedRows("0.0");
+    }
+
+    @Test
+    public void testANewKeyAtTheFrontierFoldsOntoTheSealedFrontierStateThroughTheRawWalDrain() throws Exception {
+        assertANewKeyAtTheFrontierFoldsOntoTheSealedFrontierState(true);
+    }
+
+    @Test
+    public void testANewKeyAtTheFrontierOfAnIntactBaseFoldsOntoTheSealedFrontierState() throws Exception {
+        assertANewKeyAtTheFrontierFoldsOntoTheSealedFrontierState(false);
     }
 
     @Test
@@ -3358,6 +3520,16 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
         return new Path().of(configuration.getDbRoot()).concat("zero_row_resume_crash_image").slash();
     }
 
+    // The minute fixture's rows moved to the epoch's day.
+    private static String atTheEpoch(String rows) {
+        return rows.replace("2026-01-01", "1970-01-01");
+    }
+
+    // Rows of the minute fixture printed as a TIMESTAMP_NS view prints them.
+    private static String inNanos(String rows) {
+        return rows.replace(".000000Z", ".000000000Z");
+    }
+
     private static long lastBaseSeqTxn() {
         return engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("base"));
     }
@@ -3965,6 +4137,115 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
         assertDepartureRestored(grownRows);
     }
 
+    /**
+     * The minute fixture over a deduplicating base, with {@code b}'s row at 00:55, the floor of
+     * the one-minute frame of the frontier 00:56 the upsert of 00:57 to 00:59 out of the filter
+     * leaves, over the day the base lost when {@code isDayLost}. The rebuild warms the frontier's
+     * state from that floor - three rows - and seals it there. After the restart, a row of
+     * {@code b} at exactly the frontier collides with nothing, so the raw-WAL drain reads it in
+     * order, with no repair, and it folds over the restored root: {@code b}'s frame holds its rows
+     * at 00:55 and 00:56.
+     */
+    private void assertANewKeyAtTheFrontierFoldsOntoTheSealedFrontierState(boolean isDayLost) throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        assertMemoryLeak(() -> {
+            createHeadMissDepartureView("TIMESTAMP");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                commitDeparture(job, "('2025-12-31T23:55:00.000000Z', 'a', 0.5)");
+                if (isDayLost) {
+                    execute("ALTER TABLE base DROP PARTITION LIST '2025-12-31'");
+                    drainWalQueue();
+                    driveRefreshToQuiescence(job);
+                }
+                commitDeparture(job, minuteRowsOfA(0, 30, "1.0"));
+                setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+                commitDeparture(job, minuteRowsOfA(31, 55, "1.0") + ", ('2026-01-01T00:55:00.000000Z', 'b', 1.0), " + minuteRowsOfA(56, 59, "1.0"));
+                assertZeroRowDepartureSealsTheFrontier(
+                        job,
+                        () -> execute("INSERT INTO base VALUES " + minuteRowsOfA(57, 59, "-1.0")),
+                        "2026-01-01T00:56:00.000000Z",
+                        FRONTIER_STATE_WARM_UP,
+                        1,
+                        // The replay reads 00:56 and the three upserted rows, the warm-up both rows
+                        // at 00:55 and the one at 00:56.
+                        7,
+                        3,
+                        false,
+                        """
+                                2025-12-31T23:55:00.000000Z -> 1
+                                2026-01-01T00:56:00.000000Z -> 59
+                                """
+                );
+            }
+            final String rows = headMissDepartureRows(true, 55) + """
+                    2026-01-01T00:55:00.000000Z\tb\t1.0\t1.0
+                    2026-01-01T00:56:00.000000Z\ta\t1.0\t2.0
+                    """;
+            assertDepartureRows(rows);
+            restartLiveViewsAndRecover();
+            assertRestoredFromTimeline("lv");
+            assertDepartureRows(rows);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final long headMissRepairsBefore = countHeadMissRepairs(job);
+                final long resumesBefore = departureView().getCheckpointRepairResumes();
+                commitDeparture(job, "('2026-01-01T00:56:00.000000Z', 'b', 1.0)");
+                Assert.assertEquals("no repair", headMissRepairsBefore, countHeadMissRepairs(job));
+                Assert.assertEquals("no resume", resumesBefore, departureView().getCheckpointRepairResumes());
+            }
+            final String rowsWithTie = rows + "2026-01-01T00:56:00.000000Z\tb\t1.0\t2.0\n";
+            assertDepartureRows(rowsWithTie);
+            restartLiveViewsAndRecover();
+            assertRestoredFromTimeline("lv");
+            Assert.assertFalse(departureView().isCheckpointRecoveryBlocked());
+            assertDepartureRows(rowsWithTie);
+            assertNoRefreshFaults("lv");
+        });
+    }
+
+    /**
+     * The minute fixture over a deduplicating base that lost the 2025-12-31 day: the three newest
+     * rows move out of the filter to {@code departedX} and nothing is emitted in their place. The
+     * rebuild warmed its state from one minute below them, which is not the state at the new
+     * frontier 00:56, so it derives that state ahead of its commit from the frame floor 00:55,
+     * truncates the root the splice kept at 00:59 and seals 00:56. Every restart restores from it
+     * over the day the base lost, where the repair once retired the timeline and the restatement
+     * guard stopped the view. An upsert of the row at the frontier after the first restart repairs
+     * it over the restored root.
+     */
+    private void assertAnUpsertMovingEveryNewestRowOutOfTheFilterOverALostDayRestoresRetainedRows(String departedX) throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        assertMemoryLeak(() -> {
+            createHeadMissDepartureView("TIMESTAMP");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                commitMinuteBatchesOverTheLostDay(job);
+                assertZeroRowDepartureSealsTheFrontier(
+                        job,
+                        () -> execute("INSERT INTO base VALUES " + minuteRowsOfA(57, 59, departedX)),
+                        "2026-01-01T00:56:00.000000Z",
+                        FRONTIER_STATE_WARM_UP,
+                        1,
+                        // The replay reads 00:56 and the three upserted rows, the warm-up 00:55 and 00:56.
+                        6,
+                        3,
+                        false,
+                        """
+                                2025-12-31T23:55:00.000000Z -> 1
+                                2026-01-01T00:56:00.000000Z -> 58
+                                """
+                );
+            }
+            final String rows = headMissDepartureRows(true, 56);
+            assertDepartureRows(rows);
+            assertTieAtTheFrontierFoldsOntoTheRestoredRoot(
+                    rows,
+                    "('2026-01-01T00:56:00.000000Z', 'a', 2.0)",
+                    headMissDepartureRows(true, 55) + "2026-01-01T00:56:00.000000Z\ta\t2.0\t3.0\n"
+            );
+        });
+    }
+
     private void assertDepartureRows(String expected) throws Exception {
         assertQuery("SELECT ts, sym, x, s FROM lv")
                 .noLeakCheck()
@@ -4169,6 +4450,20 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
      * row a minute from 00:00 to 00:30 the cadence leaves unsealed, then one from 00:31 to 00:59,
      * which seals a root at 00:59.
      */
+    // commitMinuteBatchesOverTheLostDay over a base with nanosecond timestamps, with secondBatchTail
+    // appended to the second batch.
+    private void commitNanosMinuteBatchesOverTheLostDay(LiveViewRefreshJob job, String secondBatchTail) throws Exception {
+        commitDeparture(job, "('2025-12-31T23:55:00.000000Z', 'a', 0.5)");
+        execute("ALTER TABLE base DROP PARTITION LIST '2025-12-31'");
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+        commitDeparture(job, minuteRowsOfA(0, 30, "1.0"));
+        setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+        commitDeparture(job, minuteRowsOfA(31, 59, "1.0") + secondBatchTail);
+        assertDepartureLadderNanos("2025-12-31T23:55:00.000000000Z -> 1\n"
+                + "2026-01-01T00:59:00.000000000Z -> " + (secondBatchTail.isEmpty() ? 61 : 62) + "\n");
+    }
+
     private void commitMinuteBatchesOverTheLostDay(LiveViewRefreshJob job) throws Exception {
         commitDeparture(job, "('2025-12-31T23:55:00.000000Z', 'a', 0.5)");
         execute("ALTER TABLE base DROP PARTITION LIST '2025-12-31'");

@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.PartitionGeometry;
@@ -37,6 +38,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointLifecycle;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
 import io.questdb.cairo.lv.LiveViewCheckpointRecoveryPhase;
+import io.questdb.cairo.lv.LiveViewCheckpointRepairMarker;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairRoute;
 import io.questdb.cairo.lv.LiveViewCheckpointRowPositionDeltaReader;
 import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectoryReader;
@@ -46,6 +48,7 @@ import io.questdb.cairo.lv.LiveViewCompiledPlan;
 import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.lv.LiveViewRefreshStats;
 import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.vm.api.MemoryCR;
@@ -63,6 +66,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
@@ -108,6 +112,13 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
     // Past the default five-minute checkpoint duration cadence, so the next commit after the
     // clock moves this far seals a root at its newest row.
     protected static final long DURATION_CADENCE_ELAPSED_MICROS = 6 * 60 * 1_000_000L;
+    // How a zero-row end-of-table head-miss rebuild derives the state at the view's new frontier:
+    // its replay already holds it, it restores the newest root below the frontier and folds the
+    // base rows above it, or it folds the base rows from the frontier's dependency floor up.
+    // See assertZeroRowDepartureSealsTheFrontier.
+    protected static final int FRONTIER_STATE_RESTORE = 1;
+    protected static final int FRONTIER_STATE_SKIP = 0;
+    protected static final int FRONTIER_STATE_WARM_UP = 2;
     // A filtered view whose one-minute RANGE frame lets a localized rebuild warm its state from
     // one minute below a correction. Under the default checkpoint cadence its roots are sparse,
     // so a correction of its newest rows prices that rebuild below a resume from the root under
@@ -1189,6 +1200,113 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
     }
 
     /**
+     * Commits {@code departure}, which leaves the view's newest rows to a localized end-of-table
+     * head-miss rebuild that emits no row, and asserts the rebuild derived the state at the view's
+     * new frontier {@code frontierTs} the way {@code frontierStateRoute} names
+     * ({@link #FRONTIER_STATE_SKIP}, {@link #FRONTIER_STATE_RESTORE} or
+     * {@link #FRONTIER_STATE_WARM_UP}) and sealed a root there instead of retiring the timeline:
+     * one head-miss repair, {@code frontierTruncates} truncates of a splice at the frontier, the
+     * replay's and the derivation's base rows together {@code scanRows} (not asserted when
+     * negative: a repair that parks counts a row twice per park), the head at the frontier
+     * at the departure's base commit, no marker, and {@code ladder}. Over a timeline the frontier
+     * truncate retired, when {@code isFreshHistory}, the seal opens generation 1; otherwise the
+     * generation moves {@code generations} on.
+     */
+    protected void assertZeroRowDepartureSealsTheFrontier(
+            LiveViewRefreshJob job,
+            ZeroRowDeparture departure,
+            String frontierTs,
+            int frontierStateRoute,
+            long frontierTruncates,
+            long scanRows,
+            long generations,
+            boolean isFreshHistory,
+            String ladder
+    ) throws Exception {
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        Assert.assertNotNull(instance);
+        final LiveViewRefreshStats stats = job.getStatsForTest();
+        final long headMissRepairsBefore = countHeadMissRepairs(job);
+        final long generationBefore = publishedCheckpointGeneration(instance);
+        final long resetsBefore = instance.getCheckpointTimelineResets();
+        final long scanRowsBefore = instance.getO3ReplayScanRows();
+        final long sealsBefore = stats.get(LiveViewRefreshStats.HEAD_MISS_ZERO_ROW_FRONTIER_SEAL_COUNT);
+        final long restoresBefore = stats.get(LiveViewRefreshStats.HEAD_MISS_FRONTIER_STATE_RESTORE_COUNT);
+        final long warmUpsBefore = stats.get(LiveViewRefreshStats.HEAD_MISS_FRONTIER_STATE_WARM_UP_COUNT);
+        final long truncatesBefore = stats.get(LiveViewRefreshStats.HEAD_MISS_SPLICE_FRONTIER_TRUNCATE_COUNT);
+        final long retiresBefore = stats.get(LiveViewRefreshStats.HEAD_MISS_SPLICE_ZERO_ROW_RETIRE_COUNT);
+        final long keepsBefore = stats.get(LiveViewRefreshStats.HEAD_MISS_TRUNCATE_ZERO_ROW_KEEP_COUNT);
+        departure.run();
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+        final long departureSeqTxn = engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("base"));
+        Assert.assertEquals("the head-miss rebuild repairs the departure", headMissRepairsBefore + 1, countHeadMissRepairs(job));
+        Assert.assertEquals("the seal lands at the frontier", sealsBefore + 1, stats.get(LiveViewRefreshStats.HEAD_MISS_ZERO_ROW_FRONTIER_SEAL_COUNT));
+        Assert.assertEquals(
+                "a restore derives the frontier state",
+                restoresBefore + (frontierStateRoute == FRONTIER_STATE_RESTORE ? 1 : 0),
+                stats.get(LiveViewRefreshStats.HEAD_MISS_FRONTIER_STATE_RESTORE_COUNT)
+        );
+        Assert.assertEquals(
+                "a warm-up derives the frontier state",
+                warmUpsBefore + (frontierStateRoute == FRONTIER_STATE_WARM_UP ? 1 : 0),
+                stats.get(LiveViewRefreshStats.HEAD_MISS_FRONTIER_STATE_WARM_UP_COUNT)
+        );
+        Assert.assertEquals(truncatesBefore + frontierTruncates, stats.get(LiveViewRefreshStats.HEAD_MISS_SPLICE_FRONTIER_TRUNCATE_COUNT));
+        Assert.assertEquals("nothing retires", retiresBefore, stats.get(LiveViewRefreshStats.HEAD_MISS_SPLICE_ZERO_ROW_RETIRE_COUNT));
+        Assert.assertEquals("no watermark publishes a root", keepsBefore, stats.get(LiveViewRefreshStats.HEAD_MISS_TRUNCATE_ZERO_ROW_KEEP_COUNT));
+        if (scanRows >= 0) {
+            Assert.assertEquals("the replay's and the derivation's base rows", scanRows, instance.getO3ReplayScanRows() - scanRowsBefore);
+        }
+        if (isFreshHistory) {
+            Assert.assertEquals("the frontier truncate keeps no root", resetsBefore + 1, instance.getCheckpointTimelineResets());
+            Assert.assertEquals("the seal opens a fresh history", 1, publishedCheckpointGeneration(instance));
+        } else {
+            Assert.assertEquals("the timeline stays", resetsBefore, instance.getCheckpointTimelineResets());
+            Assert.assertEquals(generationBefore + generations, publishedCheckpointGeneration(instance));
+        }
+        assertCheckpointLadder(instance, ColumnType.isTimestampNano(instance.getDefinition().getBaseTimestampType()), ladder);
+        Assert.assertEquals("the head sits at the frontier", parseBaseTimestamp(instance, frontierTs), instance.getHeadCheckpointMaxTs());
+        Assert.assertEquals("at the departure's commit", departureSeqTxn, instance.getHeadCheckpointBaseSeqTxn());
+        try (Path dir = new Path().of(configuration.getDbRoot()).concat(instance.getLiveViewToken()).concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME)) {
+            Assert.assertFalse("the seal resolves the marker", LiveViewCheckpointRepairMarker.exists(configuration.getFilesFacade(), dir));
+        }
+        assertNoRefreshFaults("lv");
+    }
+
+    /**
+     * The restart after a zero-row departure sealed the view's frontier restores from that root,
+     * with the view holding {@code rows}; rows committed in order at exactly the frontier, and
+     * above it, by {@code tieValues}, fold over the restored state into {@code rowsWithTie}; and the
+     * next restart restores again, replaying their commit over the root from its own timestamp.
+     */
+    protected void assertTieAtTheFrontierFoldsOntoTheRestoredRoot(String rows, String tieValues, String rowsWithTie) throws Exception {
+        assertTieAtTheFrontierFoldsOntoTheRestoredRoot("SELECT ts, sym, x, s FROM lv", rows, tieValues, rowsWithTie);
+    }
+
+    /**
+     * As above, with the view's rows read through {@code rowsSql}, a query over {@code lv}
+     * ordered by its designated timestamp {@code ts}.
+     */
+    protected void assertTieAtTheFrontierFoldsOntoTheRestoredRoot(
+            String rowsSql,
+            String rows,
+            String tieValues,
+            String rowsWithTie
+    ) throws Exception {
+        restartLiveViewsAndRecover();
+        assertZeroRowDepartureRestored(rowsSql, rows);
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            execute("INSERT INTO base VALUES " + tieValues);
+            drainWalQueue();
+            driveRefreshToQuiescence(job);
+        }
+        assertZeroRowDepartureRows(rowsSql, rowsWithTie);
+        restartLiveViewsAndRecover();
+        assertZeroRowDepartureRestored(rowsSql, rowsWithTie);
+    }
+
+    /**
      * Asserts every logical root of {@code instance}'s checkpoint timeline, ascending, one line
      * each as {@code maxTimestamp -> effective row position}, with the timestamp printed in
      * microseconds, or in nanoseconds when {@code isNanos}. See {@link #snapshotCheckpointLadder}.
@@ -1474,6 +1592,35 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
         }
     }
 
+    private static long parseBaseTimestamp(LiveViewInstance instance, String timestamp) {
+        try {
+            return ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType()).parseFloorLiteral(timestamp);
+        } catch (NumericException e) {
+            throw new AssertionError("not a timestamp: " + timestamp, e);
+        }
+    }
+
+    private void assertZeroRowDepartureRestored(String rowsSql, String rows) throws Exception {
+        assertRestoredFromTimeline("lv");
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        Assert.assertNotNull(instance);
+        Assert.assertFalse(instance.isCheckpointRecoveryBlocked());
+        assertQuery("SELECT view_status FROM live_views() WHERE view_name = 'lv'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("view_status\nactive\n");
+        assertZeroRowDepartureRows(rowsSql, rows);
+        assertNoRefreshFaults("lv");
+    }
+
+    private void assertZeroRowDepartureRows(String rowsSql, String rows) throws Exception {
+        assertQuery(rowsSql)
+                .noLeakCheck()
+                .timestamp("ts")
+                .sizeMayVary()
+                .returns(rows);
+    }
+
     private LiveViewInstance restoreWitnessInstance(String viewName) {
         final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance(viewName);
         Assert.assertNotNull("live view '" + viewName + "' is not registered", instance);
@@ -1483,5 +1630,14 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
                 instance.isCheckpointRestoreAttempted()
         );
         return instance;
+    }
+
+    /**
+     * A commit that moves the view's newest rows out of it: a REPLACE_RANGE, or an upsert over a
+     * deduplicating base.
+     */
+    @FunctionalInterface
+    protected interface ZeroRowDeparture {
+        void run() throws Exception;
     }
 }

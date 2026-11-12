@@ -26,6 +26,7 @@ package io.questdb.test.cairo.lv;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.lv.LiveViewCheckpointAnchorPlan;
 import io.questdb.cairo.lv.LiveViewCheckpointContracts.HighBoundTag;
 import io.questdb.cairo.lv.LiveViewCheckpointOutputKeyDomain;
@@ -877,6 +878,81 @@ public class LiveViewCheckpointRepairPlanTest {
     }
 
     @Test
+    public void testDependencyFloorOfARangeArmIsTheFrameFloorAtItsOutputFloor() {
+        // A frame [t - W, t] reaches its floor inclusively, so the state serving a row at exactly
+        // the output floor depends on the rows at outputFloor - W.
+        Assert.assertEquals(7_000, LiveViewCheckpointRepairPlan.dependencyFloor(10_000, BEGINNING, 3_000, NO_ANCHOR));
+        // A zero-width frame depends on the output floor's own rows only.
+        Assert.assertEquals(10_000, LiveViewCheckpointRepairPlan.dependencyFloor(10_000, BEGINNING, 0, NO_ANCHOR));
+        // Clamped up to the view's start, and saturating instead of wrapping below it.
+        Assert.assertEquals(8_000, LiveViewCheckpointRepairPlan.dependencyFloor(10_000, 8_000, 3_000, NO_ANCHOR));
+        Assert.assertEquals(Long.MIN_VALUE, LiveViewCheckpointRepairPlan.dependencyFloor(Long.MIN_VALUE + 5, BEGINNING, 100, NO_ANCHOR));
+        Assert.assertEquals(-50, LiveViewCheckpointRepairPlan.dependencyFloor(Long.MIN_VALUE + 5, -50, 100, NO_ANCHOR));
+        // Neither arm: nothing bounds the floor.
+        Assert.assertEquals(Long.MAX_VALUE, LiveViewCheckpointRepairPlan.dependencyFloor(10_000, BEGINNING, NO_RANGE, NO_ANCHOR));
+    }
+
+    @Test
+    public void testDependencyFloorOfAnAnchorArmIsItsOutputFloorsSegmentStart() {
+        Assert.assertEquals(8_000, LiveViewCheckpointRepairPlan.dependencyFloor(9_000, BEGINNING, NO_RANGE, SEGMENTS_OF_4000));
+        // An output floor on a segment start is its own floor.
+        Assert.assertEquals(8_000, LiveViewCheckpointRepairPlan.dependencyFloor(8_000, BEGINNING, NO_RANGE, SEGMENTS_OF_4000));
+        // One on the last tick of a segment depends on that whole segment, not on the next one.
+        Assert.assertEquals(4_000, LiveViewCheckpointRepairPlan.dependencyFloor(7_999, BEGINNING, NO_RANGE, SEGMENTS_OF_4000));
+        Assert.assertEquals(8_500, LiveViewCheckpointRepairPlan.dependencyFloor(9_000, 8_500, NO_RANGE, SEGMENTS_OF_4000));
+        // Both arms: the lower floor of the two.
+        Assert.assertEquals(8_000, LiveViewCheckpointRepairPlan.dependencyFloor(9_000, BEGINNING, 500, SEGMENTS_OF_4000));
+        Assert.assertEquals(7_500, LiveViewCheckpointRepairPlan.dependencyFloor(9_000, BEGINNING, 1_500, SEGMENTS_OF_4000));
+        // A non-zero origin leaves the segments below it and the first aligned one above it open
+        // below: the floor clamps to the view's start.
+        final LiveViewCheckpointAnchorPlan shifted = LiveViewCheckpointAnchorPlan.of('U', 4_000, 2_000, ColumnType.TIMESTAMP_MICRO);
+        Assert.assertNotNull(shifted);
+        Assert.assertEquals(BEGINNING, LiveViewCheckpointRepairPlan.dependencyFloor(1_000, BEGINNING, NO_RANGE, shifted));
+        Assert.assertEquals(BEGINNING, LiveViewCheckpointRepairPlan.dependencyFloor(5_000, BEGINNING, NO_RANGE, shifted));
+        Assert.assertEquals(500, LiveViewCheckpointRepairPlan.dependencyFloor(5_000, 500, NO_RANGE, shifted));
+        Assert.assertEquals(6_000, LiveViewCheckpointRepairPlan.dependencyFloor(7_000, BEGINNING, NO_RANGE, shifted));
+    }
+
+    @Test
+    public void testDependencyFloorOfAZonedAnchorIsNotMonotoneAcrossATransition() {
+        // ANCHOR DAILY '02:30' Europe/Berlin around the 2025 transitions. The half hour the
+        // fall-back repeats, 02:30 CEST on 10-26, carries an anchor value no instant below it
+        // carries, and the half hour after it floors back to 10-25's: its segment has no start of
+        // its own, so the floor drops to the view's start between two finite starts. So does the
+        // spring-forward day, whose run starts half an hour below its own anchor value.
+        final LiveViewCheckpointAnchorPlan berlin = LiveViewCheckpointAnchorPlan.ofTimeZone(
+                'd',
+                1,
+                MicrosTimestampDriver.floor("1970-01-01T02:30:00.000000Z"),
+                ColumnType.TIMESTAMP_MICRO,
+                "Europe/Berlin"
+        );
+        Assert.assertNotNull(berlin);
+        final long previousDayStart = MicrosTimestampDriver.floor("2025-10-25T00:30:00.000000Z");
+        Assert.assertEquals(previousDayStart, dependencyFloorOf(berlin, "2025-10-26T00:25:00.000000Z", BEGINNING));
+        Assert.assertEquals(BEGINNING, dependencyFloorOf(berlin, "2025-10-26T00:30:00.000000Z", BEGINNING));
+        Assert.assertEquals(BEGINNING, dependencyFloorOf(berlin, "2025-10-26T00:45:00.000000Z", BEGINNING));
+        Assert.assertEquals(previousDayStart, dependencyFloorOf(berlin, "2025-10-26T01:10:00.000000Z", BEGINNING));
+        Assert.assertEquals(
+                MicrosTimestampDriver.floor("2025-10-26T01:30:00.000000Z"),
+                dependencyFloorOf(berlin, "2025-10-26T02:00:00.000000Z", BEGINNING)
+        );
+        Assert.assertEquals(BEGINNING, dependencyFloorOf(berlin, "2025-03-30T12:00:00.000000Z", BEGINNING));
+        Assert.assertEquals(
+                MicrosTimestampDriver.floor("2025-03-29T01:30:00.000000Z"),
+                dependencyFloorOf(berlin, "2025-03-30T00:50:00.000000Z", BEGINNING)
+        );
+        // A finite view start clamps the open-below floor, below and above the previous day's
+        // start alike.
+        final long startBelow = MicrosTimestampDriver.floor("2025-10-24T00:00:00.000000Z");
+        final long startAbove = MicrosTimestampDriver.floor("2025-10-26T00:21:00.000000Z");
+        Assert.assertEquals(previousDayStart, dependencyFloorOf(berlin, "2025-10-26T00:25:00.000000Z", startBelow));
+        Assert.assertEquals(startBelow, dependencyFloorOf(berlin, "2025-10-26T00:45:00.000000Z", startBelow));
+        Assert.assertEquals(startAbove, dependencyFloorOf(berlin, "2025-10-26T00:25:00.000000Z", startAbove));
+        Assert.assertEquals(startAbove, dependencyFloorOf(berlin, "2025-10-26T00:45:00.000000Z", startAbove));
+    }
+
+    @Test
     public void testDenialReasonNamesWhichBoundTheRepairLost() throws SqlException {
         // Localization is denied by a chain of guards, each describing a different lost
         // bound, and isLocalized() collapses all of them to false. The denial code is
@@ -1703,6 +1779,16 @@ public class LiveViewCheckpointRepairPlanTest {
         // rebuild the executor ran before any dependency was derived.
         Assert.assertEquals(BEGINNING, plan.getOutputLowTs());
         Assert.assertEquals(BEGINNING, plan.getReplayLowTs());
+    }
+
+    // The anchor arm's dependency floor alone, at a microsecond output floor.
+    private static long dependencyFloorOf(LiveViewCheckpointAnchorPlan anchorPlan, String outputFloor, long viewLowerBoundTimestamp) {
+        return LiveViewCheckpointRepairPlan.dependencyFloor(
+                MicrosTimestampDriver.floor(outputFloor),
+                viewLowerBoundTimestamp,
+                NO_RANGE,
+                anchorPlan
+        );
     }
 
     /**

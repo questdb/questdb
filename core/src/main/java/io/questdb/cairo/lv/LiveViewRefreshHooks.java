@@ -51,6 +51,16 @@ public interface LiveViewRefreshHooks {
     }
 
     /**
+     * Called by a zero-row end-of-table head-miss rebuild that derives the window state at the
+     * view's new frontier, ahead of its replacement commit, once it has read that frontier and
+     * found its replay does not already hold the state there: immediately before it looks up the
+     * newest root at or below the frontier, and so ahead of the root's restore and of the fold of
+     * base rows that follows either route. Inside the replay's try, with the refresh latch held.
+     */
+    default void beforeHeadMissFrontierStateFold() {
+    }
+
+    /**
      * Called by a head-miss rebuild on the turn that finishes it, once its replacement is
      * applied and the consumed seqTxn advanced, immediately before its head seal and the
      * resolution of its repair marker. When the rebuild's end-of-table splice kept roots

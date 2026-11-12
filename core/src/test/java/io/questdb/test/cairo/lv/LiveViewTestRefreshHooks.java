@@ -43,6 +43,7 @@ public final class LiveViewTestRefreshHooks implements LiveViewRefreshHooks {
     private Runnable baseApplyDuringRederive;
     private Runnable baseCommitBetweenAheadGuardReads;
     private QuietCloseable baseMetadataCloseFault;
+    private Runnable headMissFrontierStateFoldStart;
     private Runnable headMissHeadSealStart;
     private boolean isColdKeyedTimelineFaultArmed;
     private boolean isForwardCommitDedupCollapsed;
@@ -99,6 +100,15 @@ public final class LiveViewTestRefreshHooks implements LiveViewRefreshHooks {
             // itself on an I/O failure, and the call reads no file when the pinned generation
             // carries no row-position delta.
             throw CairoException.critical(0).put("simulated live view checkpoint row position fault");
+        }
+    }
+
+    @Override
+    public void beforeHeadMissFrontierStateFold() {
+        final Runnable action = headMissFrontierStateFoldStart;
+        if (action != null) {
+            headMissFrontierStateFoldStart = null;
+            action.run();
         }
     }
 
@@ -380,6 +390,17 @@ public final class LiveViewTestRefreshHooks implements LiveViewRefreshHooks {
 
     public void setSimulateForwardCommitDedupCollapse(boolean simulate) {
         isForwardCommitDedupCollapsed = simulate;
+    }
+
+    /**
+     * One-shot. The action runs on the refresh worker with the refresh latch held, inside the
+     * replay of a zero-row end-of-table head-miss rebuild, ahead of its commit and of its lookup
+     * of the root below the view's new frontier, so a throw ends the turn as a fault the refresh
+     * failure handler counts, with nothing durable moved. It must not reach DROP LIVE VIEW or a
+     * checkpoint freeze, which wait for that latch.
+     */
+    public void setSimulateHeadMissFrontierStateFoldStart(Runnable action) {
+        headMissFrontierStateFoldStart = action;
     }
 
     /**

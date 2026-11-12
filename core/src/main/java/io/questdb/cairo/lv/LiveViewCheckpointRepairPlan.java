@@ -288,6 +288,49 @@ public final class LiveViewCheckpointRepairPlan implements QuietCloseable {
     }
 
     /**
+     * The dependency floor L of the RANGE and ANCHOR arms at {@code outputFloor}: the lowest
+     * timestamp whose rows the window state serving every row AT OR ABOVE {@code outputFloor}
+     * depends on, clamped up to the view's START FROM boundary S. A RANGE frame
+     * {@code [t - W, t]} and an anchor segment {@code [segmentStart(t), t]} both reach their
+     * lower edge inclusively, so a row tying {@code outputFloor} is served too - the rule
+     * {@code WindowFunction.hasFrameLocalCheckpointState} states for the replay's own L, and
+     * the one a checkpoint root at {@code outputFloor} has to meet, because a restore puts the
+     * runtime back on the root and a later row at exactly its timestamp folds over it.
+     * <p>
+     * The answer is a lower bound valid at its own output floor only, not a monotone function
+     * of it: a zoned anchor of a day or longer answers S for a segment a DST transition leaves
+     * open below, while the segments either side of it keep finite starts
+     * ({@link LiveViewCheckpointAnchorPlan#getSegmentStart}). A caller compares a floor with
+     * the read that actually happened, never with a floor taken at another output floor.
+     * ROWS has no closed form and is not an arm here.
+     *
+     * @param rangeFrameWidth the RANGE arm's widest look-behind W, or {@link Numbers#LONG_NULL}
+     *                        when the view has no RANGE arm
+     * @param anchorPlan      the ANCHOR arm's segment plan, or null when the view has none
+     * @return the floor, or {@link Long#MAX_VALUE} when neither arm is present
+     */
+    public static long dependencyFloor(
+            long outputFloor,
+            long viewLowerBoundTimestamp,
+            long rangeFrameWidth,
+            @Nullable LiveViewCheckpointAnchorPlan anchorPlan
+    ) {
+        long floorTs = Long.MAX_VALUE;
+        if (rangeFrameWidth != Numbers.LONG_NULL) {
+            floorTs = Math.max(viewLowerBoundTimestamp, saturatingSubtract(outputFloor, rangeFrameWidth));
+        }
+        if (anchorPlan != null) {
+            // getSegmentStart reports Long.MIN_VALUE for a segment that is open below -
+            // every row under a non-zero alignment origin or in the first aligned bucket
+            // above it shares one, and so does a zoned segment a DST transition leaves
+            // without a start of its own - and the clamp resolves it to S, which is as far
+            // down as a rebuild would read anyway.
+            floorTs = Math.min(floorTs, Math.max(viewLowerBoundTimestamp, anchorPlan.getSegmentStart(outputFloor)));
+        }
+        return floorTs;
+    }
+
+    /**
      * Renders what one repair actually did: which executor ran, and for the rebuild,
      * whether a dependency bounded it. The two rebuilds share a {@code DISPOSITION_*}
      * code because they run the same executor, and what separates them is exactly
@@ -1018,11 +1061,14 @@ public final class LiveViewCheckpointRepairPlan implements QuietCloseable {
             denialReason = DENIAL_UNFLUSHED_OUTPUT;
             return;
         }
-        long lowTs = Long.MAX_VALUE;
+        // The RANGE and ANCHOR arms' L, spelled once for this plan and for the state a
+        // zero-row end-of-table repair derives at the view's new frontier. The floor stands
+        // whether or not an arm proves a ceiling: L is derived from R alone, and an arm that
+        // names no H still names where R's frame or segment starts.
+        long lowTs = dependencyFloor(outputFloor, viewLowerBoundTimestamp, rangeFrameWidth, anchorPlan);
         long highTs = Long.MIN_VALUE;
         boolean isHighEof = false;
         if (hasRange) {
-            lowTs = Math.min(lowTs, Math.max(viewLowerBoundTimestamp, saturatingSubtract(outputFloor, rangeFrameWidth)));
             final long armHighTs = isHighBoundDerivable
                     ? rangeHighTs(rangeFrameWidth, outputFloor)
                     : Numbers.LONG_NULL;
@@ -1063,13 +1109,6 @@ public final class LiveViewCheckpointRepairPlan implements QuietCloseable {
             } else {
                 highTs = Math.max(highTs, armHighTs);
             }
-            // getSegmentStart reports Long.MIN_VALUE for a segment that is open below -
-            // every row under a non-zero alignment origin or in the first aligned bucket
-            // above it shares one - and the clamp resolves it to S, which is as far down
-            // as the rebuild would read anyway.
-            // The floor stands whether or not the arm proved a ceiling: L is derived from
-            // R alone, and an arm that names no H still names where R's segment starts.
-            lowTs = Math.min(lowTs, Math.max(viewLowerBoundTimestamp, anchorPlan.getSegmentStart(outputFloor)));
         }
         if (hasRows) {
             rowsBoundSource.discoverRowsBounds(
