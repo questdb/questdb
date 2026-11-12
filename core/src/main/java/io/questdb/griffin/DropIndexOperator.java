@@ -84,8 +84,16 @@ public class DropIndexOperator {
                 byte partitionFormat = tableWriter.getPartitionFormat(pIndex);
 
                 if (columnTop != -1) {
+                    // read before the upsert names the column after this txn
+                    final boolean isForeignParquetVersion = tableWriter.isForeignParquetColumnVersion(pIndex, columnIndex);
                     // bump up column version, metadata will be updated later
                     tableWriter.upsertColumnVersion(pTimestamp, columnIndex, columnTop);
+                    if (isForeignParquetVersion) {
+                        // No purge may take a version at or above this txn: the partition moves to a new directory
+                        // version without the dropped index, and the version leaves with the old directory
+                        tableWriter.relocateParquetPartition(pIndex, columnIndex);
+                        continue;
+                    }
                     final long columnDropIndexVersion = tableWriter.getColumnNameTxn(pTimestamp, columnIndex);
 
                     if (partitionFormat == PartitionFormat.NATIVE) {

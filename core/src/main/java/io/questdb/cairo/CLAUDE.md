@@ -48,6 +48,7 @@ isRewrite = hasSchemaChange            // missing / extra / type-converted colum
          || hasCoalescableTie          // a boundary-straddling timestamp run
          || projectedUnusedBytes/parquetSize > ratio  // too many dead bytes, after this commit
          || projectedUnusedBytes > maxBytes
+         || hasForeignParquetIndex      // a rebuilt index named at or above txn, from ATTACH of a copied directory
          || hasLiveIndexUnderColumnTop; // a 10.0.1-or-older index under a column top
 hasSchemaChange = hasMissingColumns || hasExtraColumns || hasTypeConvertedColumns;
 projectedUnusedBytes = unusedBytes     // already dead (_pm footer)
@@ -85,7 +86,15 @@ reads them, and a failure before `_txn` commits must leave them valid. So the re
 reuses the committed name:
 - `O3PartitionJob.updateParquetIndexes` writes each index under the new column name txn `txn`
   (the current txn, the same value rewrite mode names its directory with) next to the committed
-  files in the live partition directory. A committed name is always below the current txn.
+  files in the live partition directory. Every name the table creates is below the current txn,
+  but ATTACH of a partition directory copied from another table pins the column name txns of its
+  files (`attachPartitionPinColumnVersions`), which can be at or above it. Update mode never
+  rebuilds such an index: `isForeignParquetIndex()` sends the partition to a rewrite. DROP INDEX
+  and RENAME COLUMN never leave such a version behind in a parquet partition directory, whose files,
+  purge or readers a later in-place commit at that txn would collide with: they move the partition
+  to a new directory version instead (`TableWriter.relocateParquetPartition`, see
+  `isForeignParquetColumnVersion()`), and RENAME of a column without an index queues no purge of
+  it. So the files update mode names `txn` are new or an uncommitted attempt's.
   It rebuilds the whole index, placing each row group's rows at the index rows the new footer's
   index row map gives it (`collectRowGroupsInIndexRowOrder`): a kept row group keeps its index
   rows, a written one takes fresh rows past the committed count, and the rows of a replaced or
@@ -107,7 +116,10 @@ reuses the committed name:
   txn). They cost disk space only: readers resolve the name from `_cv`.
 
 Rewrite mode builds the indexes in the new directory under the unchanged name, and needs none of
-this. Keep the worker and the writer on the shared predicate: a column the worker rebuilds but
+this, except for an index named at or above txn: it names that one `txn`, and the rewrite branch of
+`o3ConsumePartitionUpdateSink` moves `_cv` to it (`versionForeignParquetIndexes`, on the shared
+predicate `isForeignParquetIndex()`), queuing no purge: the old version leaves with the old
+partition directory. Keep the worker and the writer on the shared predicates: a column the worker rebuilds but
 `_cv` does not move is read from the stale committed files, and a column `_cv` moves but the
 worker did not build has no files. Pinned by `ParquetInPlaceIndexPinnedReaderTest`, and under
 concurrent readers and purge jobs by `ParquetInPlaceIndexConcurrentReaderTest`.
@@ -120,7 +132,9 @@ the decoder reads those rows as NULL, so `_cv` keeps no top. TableWriter's publi
 `_cv` consumers (CONVERT TO NATIVE, dedup, symbol index) treat present values as absent. The
 in-place branch also moves every rebuilt index column to the new column name txn
 (`versionRebuiltParquetIndexes`, see Index MVCC above); a new in-place publish branch must do
-that too, or readers keep opening the committed index files for the new row layout.
+that too, or readers keep opening the committed index files for the new row layout. The rewrite
+branch moves the index columns named at or above the txn to it (`versionForeignParquetIndexes`); a
+new rewrite publish branch must do that too, or readers open index files the rewrite did not build.
 
 **Column tops on CONVERT TO NATIVE.** `CONVERT PARTITION TO PARQUET` keeps a native column top in
 the file's QuestDB metadata but zeroes a top below the row count in `_cv`. The Rust decoder skips

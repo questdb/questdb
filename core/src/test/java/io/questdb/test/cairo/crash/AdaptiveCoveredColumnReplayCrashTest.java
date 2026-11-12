@@ -54,6 +54,16 @@ import org.junit.Test;
 public class AdaptiveCoveredColumnReplayCrashTest extends AbstractAdaptiveCrashTest {
 
     @Test
+    public void testDropIndexMovingAttachedParquetPartitionReplayedAfterKill() throws Exception {
+        assertAttachedParquetPartitionMoveReplayed(false, true);
+    }
+
+    @Test
+    public void testDropIndexMovingAttachedParquetPartitionReplayedAfterPowerLoss() throws Exception {
+        assertAttachedParquetPartitionMoveReplayed(true, true);
+    }
+
+    @Test
     public void testDropIndexOnCoveredColumnReplayedAfterKill() throws Exception {
         assertChangeReplayed(false, "ALTER TABLE x ALTER COLUMN k DROP INDEX", "k", this::assertDroppedIndexOnCoveredColumn);
     }
@@ -74,6 +84,16 @@ public class AdaptiveCoveredColumnReplayCrashTest extends AbstractAdaptiveCrashT
     }
 
     @Test
+    public void testRenameMovingAttachedParquetPartitionReplayedAfterKill() throws Exception {
+        assertAttachedParquetPartitionMoveReplayed(false, false);
+    }
+
+    @Test
+    public void testRenameMovingAttachedParquetPartitionReplayedAfterPowerLoss() throws Exception {
+        assertAttachedParquetPartitionMoveReplayed(true, false);
+    }
+
+    @Test
     public void testUpdateCoveredColumnReplayedAfterKill() throws Exception {
         assertChangeReplayed(false, "UPDATE x SET v = v + 10 WHERE ts < '2024-01-03'", "v", this::assertUpdatedCoveredColumn);
     }
@@ -81,6 +101,134 @@ public class AdaptiveCoveredColumnReplayCrashTest extends AbstractAdaptiveCrashT
     @Test
     public void testUpdateCoveredColumnReplayedAfterPowerLoss() throws Exception {
         assertChangeReplayed(true, "UPDATE x SET v = v + 10 WHERE ts < '2024-01-03'", "v", this::assertUpdatedCoveredColumn);
+    }
+
+    /**
+     * The parquet partition 2024-01-01 of x is attached from a copy of table src's, where s carries the column version
+     * 31, at or above the txn of the DROP INDEX on s or RENAME COLUMN s TO s2 applied after the last save point. The
+     * DDL moves the partition to a directory named after its txn and rebuilds there the indexes it keeps: the index of
+     * s2, and t, which INCLUDEs s. After the process dies, recovery restores the save point, whose _txn names the old
+     * directory, and the replay moves the partition again, to the same directory and name txns. The old directory
+     * goes once a save point covers the DDL.
+     *
+     * @param powerLoss   whether the process dies by a power loss, which loses the names the DDL added, or by a
+     *                    kill, which keeps every file it wrote
+     * @param isDropIndex DROP INDEX on s, or RENAME COLUMN s TO s2
+     */
+    private void assertAttachedParquetPartitionMoveReplayed(boolean powerLoss, boolean isDropIndex) throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0");
+        // No periodic save point inside a test, and none at writer close: the DDL stays uncovered.
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1_000_000_000L);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, Long.MAX_VALUE);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
+        final String columns = "(ts TIMESTAMP, s SYMBOL INDEX, t SYMBOL INDEX TYPE POSTING INCLUDE (s, v), v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY ";
+        final String columnName = isDropIndex ? "s" : "s2";
+        runWithCrashFacade(() -> {
+            execute("CREATE TABLE src " + columns + "BYPASS WAL");
+            execute("""
+                    INSERT INTO src VALUES
+                        ('2024-01-01T00:00:00.000000Z', 'a', 'a', 1.0),
+                        ('2024-01-01T01:00:00.000000Z', 'b', 'b', 2.0),
+                        ('2024-01-01T02:00:00.000000Z', 'a', 'a', 3.0)
+                    """);
+            // src moves to txn 31, then s of 2024-01-01 takes column version 31 under a pinned reader
+            while (getTableTxn("src") < 31) {
+                execute("INSERT INTO src (ts) VALUES ('2024-01-09T00:00:00.000000Z')");
+            }
+            try (TableReader ignore = engine.getReader(engine.verifyTableName("src"))) {
+                execute("UPDATE src SET s = s WHERE ts IN '2024-01-01'");
+            }
+            Assert.assertEquals(31, partitionColumnNameTxn("src", "s"));
+
+            execute("CREATE TABLE x " + columns + "WAL");
+            // the symbols in the order src uses them first, so that they take the keys of the copied column files
+            execute("""
+                    INSERT INTO x VALUES
+                        ('2024-01-02T00:00:00.000000Z', 'a', 'a', 4.0),
+                        ('2024-01-02T01:00:00.000000Z', 'b', 'b', 5.0)
+                    """);
+            drainWalQueue();
+            final TableToken token = engine.verifyTableName("x");
+            try (Path from = new Path(); Path to = new Path(); TableReader reader = engine.getReader(engine.verifyTableName("src"))) {
+                from.of(root).concat(reader.getTableToken().getDirName());
+                TableUtils.setPathForNativePartition(
+                        from,
+                        reader.getMetadata().getTimestampType(),
+                        reader.getPartitionedBy(),
+                        reader.getPartitionTimestampByIndex(0),
+                        reader.getPartitionNameTxnByIndex(0)
+                );
+                from.slash$();
+                to.of(root).concat(token.getDirName()).concat("2024-01-01").put(engine.getConfiguration().getAttachPartitionSuffix()).slash$();
+                TestUtils.copyDirectory(from, to, engine.getConfiguration().getMkDirMode());
+            }
+            execute("ALTER TABLE x ATTACH PARTITION LIST '2024-01-01'");
+            drainWalQueue();
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            // a save point covers the conversion; the DDL after it is the change recovery replays
+            releaseSavePointHolds("x");
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
+            final long seqTxn = tracker.getSeqTxn();
+            Assert.assertEquals("the conversion must be covered by a save point", seqTxn, tracker.getDurableEpochSeqTxn());
+            final long ddlTxn = getTableTxn("x");
+            final long oldPartitionNameTxn = firstPartitionNameTxn();
+            Assert.assertTrue("the attached column version must be at or above the txn of the DDL", partitionColumnNameTxn("x", "s") >= ddlTxn);
+            if (powerLoss) {
+                markDurableBaseline();
+            }
+
+            execute(isDropIndex ? "ALTER TABLE x ALTER COLUMN s DROP INDEX" : "ALTER TABLE x RENAME COLUMN s TO s2");
+            drainWalQueue();
+            Assert.assertFalse("the DDL suspended the table", anyTableSuspended(token));
+            Assert.assertEquals("the DDL must be applied", seqTxn + 1, tracker.getSeqTxn());
+            Assert.assertEquals("no save point must cover the DDL", seqTxn, tracker.getDurableEpochSeqTxn());
+            Assert.assertEquals("the DDL must move the partition to the directory of its txn", ddlTxn, firstPartitionNameTxn());
+            Assert.assertEquals("the DDL must name the column after its txn", ddlTxn, partitionColumnNameTxn("x", columnName));
+
+            if (powerLoss) {
+                recoverAfterCrash(new TableToken[]{token});
+            } else {
+                kill(token);
+                engine.notifyWalTxnRepublisher(token);
+                drainWalQueue();
+            }
+            Assert.assertFalse("recovery suspended the table: " + tracker.getErrorMessage(), anyTableSuspended(token));
+            Assert.assertEquals("the replay must apply the DDL again", seqTxn + 1, tracker.getSeqTxn());
+            Assert.assertEquals("the replay must move the partition to the same directory", ddlTxn, firstPartitionNameTxn());
+            Assert.assertEquals("the replay must name the column after the same txn", ddlTxn, partitionColumnNameTxn("x", columnName));
+            // the save point holds the old directory until one covers the DDL
+            Assert.assertTrue("the old directory went before a save point covered the DDL", partitionDirExists(oldPartitionNameTxn));
+            assertQuery("SELECT t, " + columnName + ", v, ts FROM x WHERE t = 'a'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanContaining("CoveringIndex on: t")
+                    .returns("t\t" + columnName + """
+                            \tv\tts
+                            a\ta\t1.0\t2024-01-01T00:00:00.000000Z
+                            a\ta\t3.0\t2024-01-01T02:00:00.000000Z
+                            a\ta\t4.0\t2024-01-02T00:00:00.000000Z
+                            """);
+            if (isDropIndex) {
+                execute("ALTER TABLE x ALTER COLUMN s ADD INDEX");
+                drainWalQueue();
+                Assert.assertFalse("ADD INDEX suspended the table", anyTableSuspended(token));
+            }
+            assertQuery("SELECT " + columnName + ", v, ts FROM x WHERE " + columnName + " = 'a'")
+                    .timestamp("ts")
+                    .withPlanContaining("Index forward scan on: " + columnName)
+                    .returns(columnName + """
+                            \tv\tts
+                            a\t1.0\t2024-01-01T00:00:00.000000Z
+                            a\t3.0\t2024-01-01T02:00:00.000000Z
+                            a\t4.0\t2024-01-02T00:00:00.000000Z
+                            """);
+            releaseSavePointHolds("x");
+            Assert.assertFalse("the old directory must go once a save point covers the DDL", partitionDirExists(oldPartitionNameTxn));
+            releaseEngineHandles();
+        });
     }
 
     /**
@@ -229,9 +377,34 @@ public class AdaptiveCoveredColumnReplayCrashTest extends AbstractAdaptiveCrashT
     }
 
     private long firstPartitionColumnNameTxn(String column) {
+        return partitionColumnNameTxn("x", column);
+    }
+
+    private long firstPartitionNameTxn() {
         try (TableReader reader = engine.getReader(engine.verifyTableName("x"))) {
+            return reader.getPartitionNameTxnByIndex(0);
+        }
+    }
+
+    private long getTableTxn(String tableName) {
+        try (TableReader reader = engine.getReader(engine.verifyTableName(tableName))) {
+            return reader.getTxn();
+        }
+    }
+
+    // the name txn of the column in the first partition of the table
+    private long partitionColumnNameTxn(String tableName, String column) {
+        try (TableReader reader = engine.getReader(engine.verifyTableName(tableName))) {
             final int writerIndex = reader.getMetadata().getWriterIndex(reader.getMetadata().getColumnIndex(column));
             return reader.getColumnVersionReader().getColumnNameTxn(reader.getPartitionTimestampByIndex(0), writerIndex);
+        }
+    }
+
+    // whether the directory of partition 2024-01-01 of x under the name txn exists
+    private boolean partitionDirExists(long partitionNameTxn) {
+        try (Path path = new Path()) {
+            path.of(root).concat(engine.verifyTableName("x").getDirName()).concat("2024-01-01").put('.').put(partitionNameTxn);
+            return Files.exists(path.$());
         }
     }
 

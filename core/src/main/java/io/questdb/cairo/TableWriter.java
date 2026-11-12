@@ -3075,24 +3075,40 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             commit();
         }
 
+        reindexedPartitions.clear();
         try {
             LOG.info().$("removing index [txn=").$(txWriter.getTxn())
                     .$(", table=").$(tableToken)
                     .$(", column=").$safe(columnName)
                     .I$();
-            // drop index
-            if (dropIndexOperator == null) {
-                dropIndexOperator = new DropIndexOperator(configuration, this, path, other, pathSize, getPurgingOperator());
-            }
-            dropIndexOperator.executeDropIndex(columnName, columnIndex); // upserts column version in partitions
-            // swap meta commit
+            boolean isTxnWriteStarted = false;
+            try {
+                // drop index
+                if (dropIndexOperator == null) {
+                    dropIndexOperator = new DropIndexOperator(configuration, this, path, other, pathSize, getPurgingOperator());
+                }
+                // upserts column version in partitions, moves the parquet partitions that hold a version at or above
+                // the txn to new directory versions
+                dropIndexOperator.executeDropIndex(columnName, columnIndex);
+                // swap meta commit
 
-            // refresh metadata
-            columnMetadata.setIndexType(IndexType.NONE);
-            columnMetadata.setIndexValueBlockCapacity(defaultIndexValueBlockSize);
-            columnMetadata.setCoveringColumnIndices(null);
-            rewriteAndSwapMetadata(metadata);
-            clearTodoAndCommitMeta();
+                // refresh metadata
+                columnMetadata.setIndexType(IndexType.NONE);
+                columnMetadata.setIndexValueBlockCapacity(defaultIndexValueBlockSize);
+                columnMetadata.setCoveringColumnIndices(null);
+                rewriteAndSwapMetadata(metadata);
+                isTxnWriteStarted = true;
+                clearTodoAndCommitMeta();
+            } catch (Throwable th) {
+                // A failed _txn msync does not undo the write: the page cache may hold a _txn that names the moved
+                // directories, so they stay, and the distressed writer reloads the state.
+                if (!isTxnWriteStarted) {
+                    rollbackParquetPartitionReindexes();
+                } else {
+                    reindexedPartitions.clear();
+                }
+                throw th;
+            }
 
             // remove indexer - skip seal since the index is being dropped
             ColumnIndexer columnIndexer = indexers.getQuick(columnIndex);
@@ -3144,6 +3160,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .put(", column=").put(columnName)
                     .put("]: ").put(e.getMessage());
         }
+        // DROP INDEX is in the WAL: a replay from an earlier save point repeats the move, no save point is needed
+        finishPartitionReindexes(false);
     }
 
     @Override
@@ -4063,6 +4081,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return enrolledAdaptive;
     }
 
+    /**
+     * Whether the committed version of the column in a local, writable parquet partition is at or above the current
+     * txn. Every version the table creates is below it; only ATTACH of a partition directory copied from another
+     * table pins such a version, from the file names ({@link #attachPartitionPinColumnVersions}). DROP INDEX and RENAME
+     * COLUMN, which supersede the version at this txn, must not leave it to the column purge: the purge does not wait
+     * for the readers pinned since the attach, and a later in-place parquet O3 commit at the version's txn would build
+     * the index under its name for the purge to delete. Such a partition moves to a new directory version instead,
+     * see {@link #relocateParquetPartition}. Read it before the DDL names the column after this txn.
+     */
+    public boolean isForeignParquetColumnVersion(int partitionIndex, int columnIndex) {
+        return txWriter.isPartitionParquet(partitionIndex)
+                && !txWriter.isPartitionReadOnly(partitionIndex)
+                && !txWriter.isPartitionRemotelyServed(partitionIndex)
+                && columnVersionWriter.getColumnNameTxn(txWriter.getPartitionTimestampByIndex(partitionIndex), columnIndex) >= txWriter.txn;
+    }
+
     public boolean isOpen() {
         return tempMem16b != 0;
     }
@@ -4488,6 +4522,64 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
+     * Moves a parquet partition to a new directory version named after the current txn, for DROP INDEX and RENAME
+     * COLUMN when they supersede a column version at or above the txn, see {@link #isForeignParquetColumnVersion}:
+     * the version leaves with the old directory, whose purge waits for its readers. Repairs stale column tops as ADD
+     * INDEX does, links data.parquet and _pm, and rebuilds every index but the one DROP INDEX drops, under the names
+     * _cv holds: the caller names the column it changes after the current txn first. Records the old directory in
+     * {@link #reindexedPartitions}, which the caller undoes with {@link #rollbackParquetPartitionReindexes} before
+     * the _txn write and removes with {@link #finishPartitionReindexes} after the commit. Updates _cv and _txn in
+     * memory only.
+     *
+     * @param droppedIndexColumnIndex the column whose index DROP INDEX drops, -1 for none
+     */
+    public void relocateParquetPartition(int partitionIndex, int droppedIndexColumnIndex) {
+        final long partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
+        final long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
+        // Parquet partitions merged by QuestDB 9.3.4 - 10.0.1 carry stale column tops. Repair them, so the rebuilt
+        // indexes cover the rows the data has.
+        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+        try {
+            normalizeParquetColumnTops(
+                    partitionTimestamp,
+                    txWriter.getPartitionSize(partitionIndex),
+                    path.size(),
+                    txWriter.getPartitionParquetFileSize(partitionIndex),
+                    true
+            );
+        } finally {
+            path.trimTo(pathSize);
+        }
+
+        if (parquetRewriteColumnIndexes == null) {
+            parquetRewriteColumnIndexes = new IntList();
+        } else {
+            parquetRewriteColumnIndexes.clear();
+        }
+        for (int columnIndex = 0, n = metadata.getColumnCount(); columnIndex < n; columnIndex++) {
+            if (
+                    columnIndex != droppedIndexColumnIndex
+                            && ColumnType.isSymbol(metadata.getColumnType(columnIndex))
+                            && IndexType.isIndexed(metadata.getColumnIndexType(columnIndex))
+            ) {
+                parquetRewriteColumnIndexes.add(columnIndex);
+            }
+        }
+        LOG.info().$("moving parquet partition to a new directory version, a column version is at or above the txn [table=").$(tableToken)
+                .$(", partition=").$ts(timestampDriver, partitionTimestamp)
+                .$(", partitionNameTxn=").$(partitionNameTxn)
+                .$(", txn=").$(getTxn())
+                .$(", indexCount=").$(parquetRewriteColumnIndexes.size())
+                .I$();
+        try {
+            writeParquetPartitionVersion(partitionIndex, parquetRewriteColumnIndexes);
+        } finally {
+            parquetRewriteColumnIndexes.clear();
+        }
+        reindexedPartitions.add(partitionTimestamp, partitionNameTxn);
+    }
+
+    /**
      * Truncates table partitions leaving symbol files.
      * Used to truncate without holding Read lock on the table like in case of WAL tables.
      * This method leaves symbol files intact.
@@ -4668,6 +4760,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 rewriteAndSwapMetadata(metadata);
 
                 // rename column files has to be done before _todo is removed
+                reindexedPartitions.clear();
                 hardLinkAndPurgeColumnFiles(columnName, index, indexType, newColumnName, type);
 
                 // Rebind the indexer to the new (name, columnNameTxn) so subsequent
@@ -4740,6 +4833,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // commit to _txn file
                 bumpMetadataAndColumnStructureVersion();
             } catch (CairoException e) {
+                // The writer reopens and removes the partition directories _txn does not name, the moved ones too
+                reindexedPartitions.clear();
                 throwDistressException(e);
             }
             committed = true;
@@ -4751,6 +4846,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             try {
                 // Call finish purge to remove old column files before renaming them in metadata
                 finishColumnPurge();
+                // RENAME is in the WAL: a replay from an earlier save point repeats the move, no save point is needed
+                finishPartitionReindexes(false);
 
                 if (index == metadata.getTimestampIndex()) {
                     designatedTimestampColumnName = newColumnName;
@@ -11307,17 +11404,34 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     long partitionTimestamp = txWriter.getPartitionTimestampByIndex(i);
                     long partitionNameTxn = txWriter.getPartitionNameTxn(i);
                     long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
-                    hardLinkAndPurgeColumnFiles(columnName, columnIndex, columnType, indexType, newName, partitionTimestamp, partitionNameTxn, newColumnNameTxn, columnNameTxn);
+                    if (isForeignParquetColumnVersion(i, columnIndex)) {
+                        // No purge may take a version at or above this txn: it leaves with the partition directory
+                        if (ColumnType.isSymbol(columnType) && IndexType.isIndexed(indexType)) {
+                            // The partition moves to a new directory version, which rebuilds the index under the new
+                            // name and the name txn _cv gives the column first
+                            columnVersionWriter.upsert(partitionTimestamp, columnIndex, newColumnNameTxn, columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex));
+                            relocateParquetPartition(i, -1);
+                            continue;
+                        }
+                        // A parquet partition directory holds no file of the column, the covering sidecars of the
+                        // indexes that INCLUDE it aside
+                        hardLinkColumnFiles(columnName, columnIndex, columnType, indexType, newName, partitionTimestamp, partitionNameTxn, newColumnNameTxn, columnNameTxn);
+                    } else {
+                        hardLinkColumnFiles(columnName, columnIndex, columnType, indexType, newName, partitionTimestamp, partitionNameTxn, newColumnNameTxn, columnNameTxn);
+                        purgingOperator.add(columnIndex, columnName, columnType, indexType, columnNameTxn, partitionTimestamp, partitionNameTxn);
+                    }
                     if (columnVersionWriter.getRecordIndex(partitionTimestamp, columnIndex) > -1L) {
                         long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
                         columnVersionWriter.upsert(partitionTimestamp, columnIndex, newColumnNameTxn, columnTop);
                     }
                 }
             } else {
-                long columnNameTxn = columnVersionWriter.getColumnNameTxn(txWriter.getLastPartitionTimestamp(), columnIndex);
-                hardLinkAndPurgeColumnFiles(columnName, columnIndex, columnType, indexType, newName, txWriter.getLastPartitionTimestamp(), -1L, newColumnNameTxn, columnNameTxn);
-                long columnTop = columnVersionWriter.getColumnTop(txWriter.getLastPartitionTimestamp(), columnIndex);
-                columnVersionWriter.upsert(txWriter.getLastPartitionTimestamp(), columnIndex, newColumnNameTxn, columnTop);
+                final long partitionTimestamp = txWriter.getLastPartitionTimestamp();
+                long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
+                hardLinkColumnFiles(columnName, columnIndex, columnType, indexType, newName, partitionTimestamp, -1L, newColumnNameTxn, columnNameTxn);
+                purgingOperator.add(columnIndex, columnName, columnType, indexType, columnNameTxn, partitionTimestamp, -1L);
+                long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
+                columnVersionWriter.upsert(partitionTimestamp, columnIndex, newColumnNameTxn, columnTop);
             }
 
             if (ColumnType.isSymbol(columnType)) {
@@ -11364,7 +11478,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void hardLinkAndPurgeColumnFiles(String columnName, int columnIndex, int columnType, byte indexType, CharSequence newName, long partitionTimestamp, long partitionNameTxn, long newColumnNameTxn, long columnNameTxn) {
+    private void hardLinkColumnFiles(String columnName, int columnIndex, int columnType, byte indexType, CharSequence newName, long partitionTimestamp, long partitionNameTxn, long newColumnNameTxn, long columnNameTxn) {
         setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
         setPathForNativePartition(other, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
         int plen = path.size();
@@ -11393,7 +11507,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         fsyncPartitionDirUnderSync(path, plen);
         path.trimTo(pathSize);
         other.trimTo(pathSize);
-        purgingOperator.add(columnIndex, columnName, columnType, indexType, columnNameTxn, partitionTimestamp, partitionNameTxn);
     }
 
     private void hardLinkAndPurgeSymbolTableFiles(
@@ -13707,6 +13820,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // decoder reads the top rows as NULL from the file. Zero ALL
                         // column tops here, including previously non-existent columns.
                         zeroColumnTopsAfterFullMaterialization(partitionTimestamp, srcDataNewPartitionSize, true);
+                        // The O3 worker named the indexes it found at or above the txn after the txn
+                        // in the new directory; publish it with this commit.
+                        versionForeignParquetIndexes(partitionTimestamp);
                         // Parquet rewrite replaces the partition directory (old dir
                         // queued for removal). Bump the partition table version so
                         // readers do a full reconciliation and drop stale references
@@ -14677,47 +14793,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 .$(", indexCount=").$(parquetRewriteColumnIndexes.size())
                 .I$();
 
-        // A new directory version: readers of the current one keep it until they let go.
-        final long newPartitionNameTxn = getTxn();
-        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
-        setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, newPartitionNameTxn);
-        final int newPartitionDirLen = other.size();
-        boolean newDirCreated = false;
         try {
-            createDirsOrFail(ff, other, configuration.getMkDirMode());
-            newDirCreated = true;
-            if (
-                    !linkFile(ff, path.trimTo(partitionDirLen).concat(PARQUET_PARTITION_NAME).$(), other.trimTo(newPartitionDirLen).concat(PARQUET_PARTITION_NAME).$())
-                            || !linkFile(ff, path.trimTo(partitionDirLen).concat(PARQUET_METADATA_FILE_NAME).$(), other.trimTo(newPartitionDirLen).concat(PARQUET_METADATA_FILE_NAME).$())
-            ) {
-                throw CairoException.critical(ff.errno()).put("could not link parquet partition file [path=").put(path).put(']');
-            }
-            if (parquetRewriteColumnIndexes.size() > 0) {
-                rebuildParquetRewriteIndexes(partitionTimestamp, newPartitionNameTxn, parquetFileSize, newPartitionDirLen, parquetRewriteColumnIndexes);
-            }
-            // The index files are the last write into the new directory; the commit that names it comes next
-            fsyncConvertedPartitionDir(partitionTimestamp);
-        } catch (Throwable th) {
-            // Nothing is committed: drop the column top changes and the new directory.
-            columnVersionWriter.readUnsafe();
-            if (newDirCreated && !ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
-                LOG.error().$("could not remove partition dir after failed reindex [path=").$(other).I$();
-            }
-            if (engine.isDataSyncFailureFatal(th)) {
-                distressed = true;
-                engine.handleDataSyncFailure(th);
-            }
-            throw th;
+            writeParquetPartitionVersion(partitionIndex, parquetRewriteColumnIndexes);
         } finally {
             parquetRewriteColumnIndexes.clear();
-            path.trimTo(pathSize);
-            other.trimTo(pathSize);
         }
-
-        final int partitionIndexRaw = partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION;
-        txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndexRaw, partitionRowCount);
-        txWriter.setPartitionParquetFileSizeByRawIndex(partitionIndexRaw, parquetFileSize);
-        txWriter.bumpPartitionTableVersion();
+        txWriter.setPartitionParquetFileSizeByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, parquetFileSize);
         return true;
     }
 
@@ -22327,6 +22408,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
+     * Points _cv at the index files a parquet O3 rewrite built in the new partition directory under the current txn,
+     * for the columns whose committed name txn is at or above it, {@link O3PartitionJob#isForeignParquetIndex}, the
+     * predicate the worker shares. Queues no purge: the superseded version leaves with the old partition directory.
+     */
+    private void versionForeignParquetIndexes(long partitionTimestamp) {
+        final long newColumnNameTxn = txWriter.txn;
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (O3PartitionJob.isForeignParquetIndex(metadata, columnVersionWriter, partitionTimestamp, i, newColumnNameTxn)) {
+                columnVersionWriter.upsert(partitionTimestamp, i, newColumnNameTxn, 0);
+            }
+        }
+    }
+
+    /**
      * Points _cv at the index files an in-place parquet O3 update rebuilt under the current txn.
      * The change commits with the new parquet size in the same _txn, so pinned readers keep the
      * old files and a rollback leaves _cv on them. Queues each superseded version, except one this
@@ -22443,6 +22538,59 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // than the stale cache until a later successful hydration reconciles it.
             throw th;
         }
+    }
+
+    /**
+     * Writes a new directory version of a parquet partition, named after the current txn: hard-links data.parquet and
+     * _pm of the live version into it, and rebuilds there, from the parquet file, the indexes of
+     * {@code columnIndexes} under the column name txns _cv holds. Moves the partition's name txn in {@code _txn}, in
+     * memory only: the caller commits. On failure, removes the new directory and reloads _cv, which drops the
+     * caller's uncommitted _cv changes too.
+     */
+    private void writeParquetPartitionVersion(int partitionIndex, IntList columnIndexes) {
+        final long partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
+        final long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
+        final long parquetFileSize = txWriter.getPartitionParquetFileSize(partitionIndex);
+        // A new directory version: readers of the current one keep it until they let go.
+        final long newPartitionNameTxn = getTxn();
+        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+        final int partitionDirLen = path.size();
+        setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, newPartitionNameTxn);
+        final int newPartitionDirLen = other.size();
+        boolean newDirCreated = false;
+        try {
+            createDirsOrFail(ff, other, configuration.getMkDirMode());
+            newDirCreated = true;
+            if (
+                    !linkFile(ff, path.trimTo(partitionDirLen).concat(PARQUET_PARTITION_NAME).$(), other.trimTo(newPartitionDirLen).concat(PARQUET_PARTITION_NAME).$())
+                            || !linkFile(ff, path.trimTo(partitionDirLen).concat(PARQUET_METADATA_FILE_NAME).$(), other.trimTo(newPartitionDirLen).concat(PARQUET_METADATA_FILE_NAME).$())
+            ) {
+                throw CairoException.critical(ff.errno()).put("could not link parquet partition file [path=").put(path).put(']');
+            }
+            if (columnIndexes.size() > 0) {
+                rebuildParquetRewriteIndexes(partitionTimestamp, newPartitionNameTxn, parquetFileSize, newPartitionDirLen, columnIndexes);
+            }
+            // The index files are the last write into the new directory; the commit that names it comes next
+            fsyncConvertedPartitionDir(partitionTimestamp);
+        } catch (Throwable th) {
+            // Nothing is committed: drop the _cv changes and the new directory.
+            columnVersionWriter.readUnsafe();
+            if (newDirCreated && !ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
+                LOG.error().$("could not remove partition dir after failed reindex [path=").$(other).I$();
+            }
+            if (engine.isDataSyncFailureFatal(th)) {
+                distressed = true;
+                engine.handleDataSyncFailure(th);
+            }
+            throw th;
+        } finally {
+            path.trimTo(pathSize);
+            other.trimTo(pathSize);
+        }
+
+        final int partitionIndexRaw = partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION;
+        txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndexRaw, txWriter.getPartitionSize(partitionIndex));
+        txWriter.bumpPartitionTableVersion();
     }
 
     private void writeRestoreMetaTodo(int targetEffectiveCommitMode) {

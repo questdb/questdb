@@ -2525,6 +2525,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // Parquet file.
                 // Projected unused bytes lie inside the current file, so the ratio stays
                 // below 1.0, and a 1.0 ratio / Long.MAX_VALUE bytes still disables the gate.
+                // An index whose committed name is at or above txn forces a rewrite too: the
+                // in-place rebuild would name its new version txn, see isForeignParquetIndex().
                 isRewrite = hasSchemaChange
                         || forceFullReencode
                         || hasStaleColumnTops
@@ -2532,6 +2534,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         || hasCoalescableTie
                         || (parquetSize > 0 && (double) projectedUnusedBytes / parquetSize > cairoConfiguration.getPartitionEncoderParquetO3RewriteUnusedRatio())
                         || projectedUnusedBytes > cairoConfiguration.getPartitionEncoderParquetO3RewriteUnusedMaxBytes()
+                        || hasForeignParquetIndex(tableWriter, tableWriterMetadata, partitionTimestamp, txn)
                         || hasLiveIndexUnderColumnTop(tableWriter, tableWriterMetadata, ff, path, partitionTimestamp, oldPartitionSize);
 
                 // the last O3 row at or below the partition max, srcOooLo - 1 when there is none
@@ -5085,6 +5088,26 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     }
 
     /**
+     * Whether the commit at {@code txn} would rebuild an index of the parquet partition whose committed column name
+     * txn is at or above txn, see {@link #isForeignParquetIndex}. Such a partition takes a rewrite.
+     */
+    private static boolean hasForeignParquetIndex(TableWriter tableWriter, TableRecordMetadata metadata, long partitionTimestamp, long txn) {
+        final ColumnVersionReader columnVersionReader = tableWriter.columnVersionReader();
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (isForeignParquetIndex(metadata, columnVersionReader, partitionTimestamp, i, txn)) {
+                LOG.info().$("parquet partition takes a rewrite, its index is named at or above the txn [table=").$(tableWriter.getTableToken())
+                        .$(", partition=").$ts(ColumnType.getTimestampDriver(metadata.getTimestampType()), partitionTimestamp)
+                        .$(", column=").$safe(metadata.getColumnName(i))
+                        .$(", columnNameTxn=").$(columnVersionReader.getColumnNameTxn(partitionTimestamp, i))
+                        .$(", txn=").$(txn)
+                        .I$();
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * Whether {@link #updateParquetIndexes} has an index to maintain; without one, no index file refers to index rows.
      */
     private static boolean hasIndexedSymbolColumn(TableRecordMetadata metadata) {
@@ -5281,6 +5304,24 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             rowOffset += parquetMeta.getRowGroupSize(rg);
         }
         return partitionUpdater.isRowGroupRewriteUnchanged(action.rowGroupIndex, action.rowGroupIndexHi, rowOffset);
+    }
+
+    // Whether updateParquetIndexes, in the commit at txn, rebuilds the index of the column on the parquet partition
+    // and the committed column name txn of the column there is at or above txn. Every name the table creates is below
+    // txn; only ATTACH of a partition directory copied from another table pins such a name, from the file names
+    // (TableWriter.attachPartitionPinColumnVersions). An in-place rebuild names its version txn, which that name can
+    // equal or a later commit's txn can reach while its files, its purge or its readers are live, so the partition
+    // takes a rewrite, which names the index txn in the new directory. Shared with
+    // TableWriter.versionForeignParquetIndexes, which moves _cv to txn for the same columns.
+    static boolean isForeignParquetIndex(
+            TableRecordMetadata metadata,
+            ColumnVersionReader columnVersionReader,
+            long partitionTimestamp,
+            int columnIndex,
+            long txn
+    ) {
+        return isRebuiltParquetIndex(metadata, columnIndex)
+                && columnVersionReader.getColumnNameTxn(partitionTimestamp, columnIndex) >= txn;
     }
 
     // Columns whose index updateParquetIndexes rebuilds on a parquet partition. Shared with
@@ -7397,9 +7438,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
     /**
      * Rebuilds the partition's symbol indexes from the parquet file, at the index rows of the new file's index
-     * row map. Rewrite mode writes them into the new partition directory under the committed column name txns.
-     * Update mode writes them beside the committed files, which pinned readers still use, under column name txn
-     * {@code txn}; TableWriter.versionRebuiltParquetIndexes points _cv at them in the same _txn.
+     * row map. Rewrite mode writes them into the new partition directory under the committed column name txns,
+     * except a name at or above {@code txn}, see {@link #isForeignParquetIndex}, which it names {@code txn};
+     * TableWriter.versionForeignParquetIndexes points _cv at those in the same _txn. Update mode writes them beside
+     * the committed files, which pinned readers still use, under column name txn {@code txn};
+     * TableWriter.versionRebuiltParquetIndexes points _cv at them in the same _txn.
      */
     private static void updateParquetIndexes(
             int partitionBy,
@@ -7465,9 +7508,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     final int indexBlockCapacity = tableWriterMetadata.getIndexValueBlockCapacity(columnIndex);
 
                     final CharSequence columnName = tableWriterMetadata.getColumnName(columnIndex);
-                    // Committed column name txns are below txn, so files named txn are new
-                    // or left by an uncommitted attempt of this txn.
-                    final long columnNameTxn = isRewrite ? tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex) : txn;
+                    // A committed name at or above txn sends the partition to a rewrite, which names the
+                    // index txn in the new directory. So in update mode committed names are below txn,
+                    // and the files named txn are new or left by an uncommitted attempt of this txn.
+                    final boolean isForeign = isForeignParquetIndex(tableWriterMetadata, tableWriter.columnVersionReader(), partitionTimestamp, columnIndex, txn);
+                    assert isRewrite || !isForeign : "in-place update of an index named at or above the txn [columnIndex=" + columnIndex + ']';
+                    final long columnNameTxn = isRewrite && !isForeign ? tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex) : txn;
 
                     byte indexType = tableWriterMetadata.getColumnIndexType(columnIndex);
 

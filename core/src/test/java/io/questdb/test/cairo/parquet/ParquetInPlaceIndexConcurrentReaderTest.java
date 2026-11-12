@@ -105,17 +105,37 @@ public class ParquetInPlaceIndexConcurrentReaderTest extends AbstractCairoTest {
 
     @Test
     public void testBitmap() throws Exception {
-        assertConcurrentReaders(IDX_BITMAP);
+        assertConcurrentReaders(IDX_BITMAP, AttachedStart.NONE);
+    }
+
+    @Test
+    public void testBitmapAttachedForeign() throws Exception {
+        // pq's partition 2024-01-01 is attached from a copy of table src's, whose sym carries the column version
+        // of the first commit of the loop, which goes into that partition: the commit rewrites the partition under
+        // the readers and the purge thread, and names the index after its txn. The version is not superseded below
+        // its txn: the purge of such a version would not wait for the readers pinned since the attach, a separate
+        // bug. BITMAP only, as for every attached partition: a POSTING index copied from another table hides the
+        // rows its chain stamped with a txn above the reader's, a separate bug.
+        assertConcurrentReaders(IDX_BITMAP, AttachedStart.FOREIGN_VERSION);
+    }
+
+    @Test
+    public void testBitmapAttachedForeignDropAddIndex() throws Exception {
+        // As testBitmapAttachedForeign, with DROP INDEX and ADD INDEX on sym before the readers start, and the
+        // version of sym that of the first commit of the loop, after them. DROP INDEX moves the partition to a new
+        // directory: the first commit updates it in place there, and no purge of the version the DROP superseded
+        // deletes the index the commit builds under that name.
+        assertConcurrentReaders(IDX_BITMAP, AttachedStart.DROP_ADD_INDEX);
     }
 
     @Test
     public void testCovering() throws Exception {
-        assertConcurrentReaders(IDX_COVERING);
+        assertConcurrentReaders(IDX_COVERING, AttachedStart.NONE);
     }
 
     @Test
     public void testPosting() throws Exception {
-        assertConcurrentReaders(IDX_POSTING);
+        assertConcurrentReaders(IDX_POSTING, AttachedStart.NONE);
     }
 
     private static void appendRow(WalWriter ww, long ts, long v) {
@@ -250,10 +270,16 @@ public class ParquetInPlaceIndexConcurrentReaderTest extends AbstractCairoTest {
         drainWalQueue();
     }
 
-    private void assertConcurrentReaders(String indexClause) throws Exception {
+    private void assertConcurrentReaders(String indexClause, AttachedStart attachedStart) throws Exception {
         final Rnd rnd = TestUtils.generateRandom(LOG);
         assertMemoryLeak(() -> {
-            createTwins(indexClause);
+            createTwins(indexClause, attachedStart);
+            // the txn and the directory name txn of partition 2024-01-01 at the first commit of the loop
+            final long firstCommitTxn = pqTxn();
+            final long firstPartitionNameTxn = pqPartitionNameTxn();
+            if (attachedStart != AttachedStart.NONE) {
+                Assert.assertEquals(attachedStart == AttachedStart.FOREIGN_VERSION ? firstCommitTxn : firstPartitionNameTxn, pqSymNameTxn());
+            }
             final long inPlaceBase = O3ParquetCounters.getInPlaceCount();
             final long dropInPlaceBase = O3ParquetCounters.getDropInPlaceCount();
 
@@ -390,12 +416,14 @@ public class ParquetInPlaceIndexConcurrentReaderTest extends AbstractCairoTest {
                 long nextV = 10_000;
                 final int rounds = 100 + rnd.nextInt(50);
                 for (int round = 0; round < rounds && error.get() == null; round++) {
+                    // the first commit after an attached start goes into the attached partition
+                    final boolean isAttachedFirstCommit = round == 0 && attachedStart != AttachedStart.NONE;
                     // 0: O3 insert into a parquet day, 1: replace within a parquet day,
                     // 2: replace across both parquet days, 3: O3 insert into the native day
-                    final int op = rnd.nextInt(10) < 4 ? 0 : (rnd.nextInt(5) < 3 ? 1 : (rnd.nextBoolean() ? 2 : 3));
+                    final int op = isAttachedFirstCommit ? 0 : rnd.nextInt(10) < 4 ? 0 : (rnd.nextInt(5) < 3 ? 1 : (rnd.nextBoolean() ? 2 : 3));
                     final long lo;
                     final long hi;
-                    final long dayStart = op == 3 ? DAY1 + 2 * Micros.DAY_MICROS : DAY1 + rnd.nextInt(2) * Micros.DAY_MICROS;
+                    final long dayStart = op == 3 ? DAY1 + 2 * Micros.DAY_MICROS : DAY1 + (isAttachedFirstCommit ? 0 : rnd.nextInt(2)) * Micros.DAY_MICROS;
                     if (op == 2) {
                         lo = DAY1 + Micros.DAY_MICROS - (1 + rnd.nextInt(6 * 60)) * Micros.MINUTE_MICROS;
                         hi = DAY1 + Micros.DAY_MICROS + rnd.nextInt(6 * 60) * Micros.MINUTE_MICROS;
@@ -428,6 +456,12 @@ public class ParquetInPlaceIndexConcurrentReaderTest extends AbstractCairoTest {
                         inPlaceCommitStartSeq.set(startSeq);
                     }
                     Assert.assertFalse("pq suspended", engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("pq")));
+                    if (isAttachedFirstCommit) {
+                        // The version of sym was at or above the txn: the commit rewrote the partition and named the index
+                        // after its txn. After DROP INDEX moved the partition, the commit updated it in place.
+                        Assert.assertEquals(attachedStart == AttachedStart.FOREIGN_VERSION ? firstCommitTxn : firstPartitionNameTxn, pqPartitionNameTxn());
+                        Assert.assertEquals(firstCommitTxn, pqSymNameTxn());
+                    }
                     applyRound("nat", op, rows, lo, hi);
                 }
                 isCommitLoopDone.set(true);
@@ -486,16 +520,42 @@ public class ParquetInPlaceIndexConcurrentReaderTest extends AbstractCairoTest {
         });
     }
 
+    private static long pqPartitionNameTxn() {
+        try (TableReader reader = engine.getReader(engine.verifyTableName("pq"))) {
+            return reader.getTxFile().getPartitionNameTxn(0);
+        }
+    }
+
+    // the column name txn of sym in partition 2024-01-01 of pq
+    private static long pqSymNameTxn() {
+        try (TableReader reader = engine.getReader(engine.verifyTableName("pq"))) {
+            return reader.getColumnVersionReader().getColumnNameTxn(
+                    reader.getPartitionTimestampByIndex(0),
+                    reader.getMetadata().getWriterIndex(reader.getMetadata().getColumnIndex("sym"))
+            );
+        }
+    }
+
+    private static long pqTxn() {
+        try (TableReader reader = engine.getReader(engine.verifyTableName("pq"))) {
+            return reader.getTxn();
+        }
+    }
+
     /**
      * nat (native) and pq with 3 daily partitions of 48 rows at 30 minute spacing and two
      * indexed symbols, sym before sym2. pq's first two days are parquet. The symbol of a
-     * row is a function of its unique v.
+     * row is a function of its unique v. An attached start attaches pq's first day from a copy
+     * of table src's, which holds the same rows, with sym at the column version of the txn of
+     * the first commit of the test's loop. DROP_ADD_INDEX runs DROP INDEX and ADD INDEX on sym
+     * of pq before that commit.
      */
-    private void createTwins(String indexClause) throws Exception {
-        final String ddl = "CREATE TABLE %s (id INT, ts TIMESTAMP, sym SYMBOL %s, sym2 SYMBOL %s, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL";
+    private void createTwins(String indexClause, AttachedStart attachedStart) throws Exception {
+        final String ddl = "CREATE TABLE %s (id INT, ts TIMESTAMP, sym SYMBOL %s, sym2 SYMBOL %s, v LONG) TIMESTAMP(ts) PARTITION BY DAY %s";
         final String idx2 = indexClause.replace("INCLUDE (v)", "INCLUDE (id)");
-        execute(String.format(ddl, "nat", indexClause, idx2));
-        execute(String.format(ddl, "pq", indexClause, idx2));
+        execute(String.format(ddl, "nat", indexClause, idx2, "WAL"));
+        execute(String.format(ddl, "pq", indexClause, idx2, "WAL"));
+        // rows lo..hi, x - 1 half hours after the start of 2024-01-01; every day uses the symbols in the same order
         final String insert = """
                 INSERT INTO %s
                 SELECT
@@ -505,12 +565,51 @@ public class ParquetInPlaceIndexConcurrentReaderTest extends AbstractCairoTest {
                     't' || (x %% 3),
                     x
                 FROM long_sequence(%d)
+                WHERE x >= %d
                 """;
-        execute(String.format(insert, "nat", ROW_STEP, KEY_COUNT, 3 * ROWS_PER_DAY));
-        execute(String.format(insert, "pq", ROW_STEP, KEY_COUNT, 3 * ROWS_PER_DAY));
-        drainWalQueue();
+        execute(String.format(insert, "nat", ROW_STEP, KEY_COUNT, 3 * ROWS_PER_DAY, 1));
+        if (attachedStart == AttachedStart.NONE) {
+            execute(String.format(insert, "pq", ROW_STEP, KEY_COUNT, 3 * ROWS_PER_DAY, 1));
+            drainWalQueue();
+        } else {
+            execute(String.format(insert, "pq", ROW_STEP, KEY_COUNT, 3 * ROWS_PER_DAY, ROWS_PER_DAY + 1));
+            drainWalQueue();
+            // the first commit of the loop follows ATTACH, a commit per partition CONVERT takes, and the DDLs
+            final long foreignNameTxn = pqTxn() + 3 + (attachedStart == AttachedStart.DROP_ADD_INDEX ? 2 : 0);
+            execute(String.format(ddl, "src", indexClause, idx2, "BYPASS WAL"));
+            execute(String.format(insert, "src", ROW_STEP, KEY_COUNT, ROWS_PER_DAY, 1));
+            final TableToken srcToken = engine.verifyTableName("src");
+            while (srcTxn(srcToken) < foreignNameTxn) {
+                execute("INSERT INTO src (ts) VALUES ('2024-01-09T00:00:00.000000Z')");
+            }
+            Assert.assertEquals(foreignNameTxn, srcTxn(srcToken));
+            try (TableReader ignore = engine.getReader(srcToken)) {
+                // sym takes the column version of the txn, the previous version stays on disk beside it
+                execute("UPDATE src SET sym = sym WHERE ts IN '2024-01-01'");
+            }
+            try (Path from = new Path(); Path to = new Path(); TableReader reader = engine.getReader(srcToken)) {
+                from.of(configuration.getDbRoot()).concat(srcToken);
+                TableUtils.setPathForNativePartition(from, ColumnType.TIMESTAMP, PartitionBy.DAY, DAY1, reader.getTxFile().getPartitionNameTxn(0));
+                from.slash$();
+                to.of(configuration.getDbRoot()).concat(engine.verifyTableName("pq")).concat("2024-01-01").put(configuration.getAttachPartitionSuffix()).slash$();
+                TestUtils.copyDirectory(from, to, configuration.getMkDirMode());
+            }
+            engine.releaseAllWriters();
+            execute("ALTER TABLE pq ATTACH PARTITION LIST '2024-01-01'");
+            drainWalQueue();
+            Assert.assertEquals(foreignNameTxn, pqSymNameTxn());
+        }
         execute("ALTER TABLE pq CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-03'");
         drainWalQueue();
+        if (attachedStart == AttachedStart.DROP_ADD_INDEX) {
+            final long dropIndexTxn = pqTxn();
+            execute("ALTER TABLE pq ALTER COLUMN sym DROP INDEX");
+            drainWalQueue();
+            // the version of sym is at or above the txn: DROP INDEX moved the partition to the directory of its txn
+            Assert.assertEquals(dropIndexTxn, pqPartitionNameTxn());
+            execute("ALTER TABLE pq ALTER COLUMN sym ADD " + indexClause);
+            drainWalQueue();
+        }
         assertQuery("SELECT count() FROM table_partitions('pq') WHERE isParquet")
                 .noLeakCheck()
                 .expectSize()
@@ -520,5 +619,20 @@ public class ParquetInPlaceIndexConcurrentReaderTest extends AbstractCairoTest {
         final String planFragment = indexClause.contains("INCLUDE") ? "CoveringIndex on: sym" : "Index forward scan on: sym";
         assertQuery(indexQuery("s1")).noLeakCheck().assertsPlanContaining(planFragment);
         assertQuery(plainQuery("s1")).noLeakCheck().assertsPlanNotContaining("Index");
+    }
+
+    private static long srcTxn(TableToken srcToken) {
+        try (TableReader reader = engine.getReader(srcToken)) {
+            return reader.getTxn();
+        }
+    }
+
+    private enum AttachedStart {
+        // pq's first day holds its own rows
+        NONE,
+        // attached with sym at the version of the first commit of the loop
+        FOREIGN_VERSION,
+        // attached with sym at the version of the first commit of the loop, which DROP INDEX and ADD INDEX precede
+        DROP_ADD_INDEX
     }
 }
