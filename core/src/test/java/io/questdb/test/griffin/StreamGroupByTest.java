@@ -2244,7 +2244,6 @@ public class StreamGroupByTest extends AbstractCairoTest {
                     } catch (CairoException e) {
                         TestUtils.assertContains(e.getFlyweightMessage(), "injected munmap failure");
                     }
-                    engine.releaseCrashOrphanedReaders();
                     Assert.assertEquals(0, tracker.getUsed());
                     Assert.assertEquals(expected, read(factory, context));
                 } finally {
