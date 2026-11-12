@@ -243,6 +243,8 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
             return;
         }
 
+        detachContextIfOwnerCannotPark();
+
         // Initialize the circuit breaker for work stealing and local reduces.
         workStealCircuitBreaker.init(sqlExecutionContext.getCircuitBreaker());
 
@@ -255,10 +257,13 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
         // so that await() in close() properly drains in-flight tasks.
         final boolean isFiberSuspendable = isFiberSuspendable();
         final boolean canPark = dispatcher != null && isFiberSuspendable;
-        boolean hasPublication = dispatcher == null || dispatcher.tryAcquirePublication();
+        int publication = dispatcher != null
+                ? dispatcher.acquirePublication()
+                : PageFrameReduceDispatcher.PUBLICATION_ACQUIRED;
+        boolean hasPublication = publication == PageFrameReduceDispatcher.PUBLICATION_ACQUIRED;
         try {
             if (!hasPublication) {
-                if (dispatcher.isCurrentFiberOwned()) {
+                if (publication == PageFrameReduceDispatcher.PUBLICATION_LOCAL) {
                     for (int i = 0; i < taskCount && isActive(); i++) {
                         reduceLocally(i);
                         localCount++;
@@ -274,9 +279,10 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
                             break DISPATCH;
                         }
                         if (dispatcher != null && !hasPublication) {
-                            hasPublication = dispatcher.tryAcquirePublication();
+                            publication = dispatcher.acquirePublication();
+                            hasPublication = publication == PageFrameReduceDispatcher.PUBLICATION_ACQUIRED;
                             if (!hasPublication) {
-                                if (dispatcher.isCurrentFiberOwned()) {
+                                if (publication == PageFrameReduceDispatcher.PUBLICATION_LOCAL) {
                                     reduceLocally(i);
                                     localCount++;
                                     break;

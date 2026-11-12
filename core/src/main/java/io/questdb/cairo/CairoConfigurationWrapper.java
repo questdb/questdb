@@ -858,6 +858,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getPageFrameReduceReservedShardCount() {
+        return getDelegate().getPageFrameReduceReservedShardCount();
+    }
+
+    @Override
     public int getPageFrameReduceRowIdListCapacity() {
         return getDelegate().getPageFrameReduceRowIdListCapacity();
     }

@@ -35,7 +35,6 @@ import io.questdb.mp.Job;
 import io.questdb.mp.MCSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.continuation.CancellationBinding;
-import io.questdb.mp.continuation.Fiber;
 import io.questdb.mp.continuation.FiberCancellationSignal;
 import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.MemoryTracker;
@@ -205,7 +204,10 @@ public class PageFrameReduceJob implements Job, QuietCloseable {
             if (cursor > -1) {
                 final PageFrameReduceTask task = queue.get(cursor);
                 final PageFrameSequence<?> frameSequence = task.getFrameSequence();
-                final boolean isFiberSuspendable = SuspensionScope.isFiberMode() && Fiber.isMounted();
+                final boolean isFiberSuspendable = AbstractPageFrameSequence.isReducerSuspendable(
+                        frameSequence,
+                        stealingFrameSequence
+                );
                 final SuspensionScope.CarrierScope suspensionScope = isFiberSuspendable
                         ? null
                         : SuspensionScope.scope();

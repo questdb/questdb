@@ -55,6 +55,9 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicLongArray;
 
 public final class PageFrameReduceDispatcher implements FiberRuntimeConfigurationListener, FiberRuntimeQuiesceListener, QuietCloseable {
+    public static final int PUBLICATION_ACQUIRED = 0;
+    public static final int PUBLICATION_CLOSED = 1;
+    public static final int PUBLICATION_LOCAL = 2;
     static final long DEFAULT_BATCH_CHECK_ROWS = 262_144L;
     static final int DEFAULT_BATCH_LIMIT = 64;
     private static final Log LOG = LogFactory.getLog(PageFrameReduceDispatcher.class);
@@ -126,6 +129,28 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
                 }
             }
             throw th;
+        }
+    }
+
+    /**
+     * Acquires a publication permit or returns why it was refused. Callers act on this answer
+     * rather than asking again, because a dispatch context's policy can change in between.
+     */
+    public int acquirePublication() {
+        if (runtime.isCurrentFiberOwned() || Fiber.isHoldingLimitedGrant()) {
+            return PUBLICATION_LOCAL;
+        }
+        while (true) {
+            final long current = publicationAdmission.get();
+            if ((current & PUBLICATION_OPEN) == 0) {
+                return PUBLICATION_CLOSED;
+            }
+            if ((current & PUBLICATION_PERMIT_MASK) == PUBLICATION_PERMIT_MASK) {
+                throw new IllegalStateException("page frame publication admission overflow");
+            }
+            if (publicationAdmission.compareAndSet(current, current + 1)) {
+                return PUBLICATION_ACQUIRED;
+            }
         }
     }
 
@@ -450,10 +475,6 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
         return taskPool.getMaxRetainedCount();
     }
 
-    public boolean isCurrentFiberOwned() {
-        return runtime.isCurrentFiberOwned();
-    }
-
     @Override
     public boolean isQuiesced() {
         return quiesceState.get() == QUIESCE_DRAINED;
@@ -518,22 +539,9 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
         signalProgress(frameSequence, frameSequence.getShard());
     }
 
+    @TestOnly
     public boolean tryAcquirePublication() {
-        if (runtime.isCurrentFiberOwned()) {
-            return false;
-        }
-        while (true) {
-            final long current = publicationAdmission.get();
-            if ((current & PUBLICATION_OPEN) == 0) {
-                return false;
-            }
-            if ((current & PUBLICATION_PERMIT_MASK) == PUBLICATION_PERMIT_MASK) {
-                throw new IllegalStateException("page frame publication admission overflow");
-            }
-            if (publicationAdmission.compareAndSet(current, current + 1)) {
-                return true;
-            }
-        }
+        return acquirePublication() == PUBLICATION_ACQUIRED;
     }
 
     @TestOnly
