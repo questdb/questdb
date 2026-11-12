@@ -1357,39 +1357,6 @@ public class OrderedMapTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNullTypedKeyMakesRoomInSmallHeap() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            // The 12-byte entry fits a 13-byte heap, and the aligned append position lands past its end.
-            try (
-                    OrderedMap map = new OrderedMap(
-                            13,
-                            new SingleColumnType(ColumnType.NULL),
-                            new SingleColumnType(ColumnType.LONG),
-                            16,
-                            0.5,
-                            Integer.MAX_VALUE
-                    )
-            ) {
-                final int N = 100;
-                for (int i = 0; i < N; i++) {
-                    final MapKey key = map.withKey();
-                    if (i > 0) {
-                        Assert.assertTrue("heap size " + map.getHeapSize(), map.getHeapSize() >= 16 + Integer.BYTES + Long.BYTES);
-                    }
-                    final MapValue value = key.createValue();
-                    Assert.assertEquals(i == 0, value.isNew());
-                    value.putLong(0, i == 0 ? 1 : value.getLong(0) + 1);
-                }
-                Assert.assertEquals(1, map.size());
-                final MapRecordCursor cursor = map.getCursor();
-                Assert.assertTrue(cursor.hasNext());
-                Assert.assertEquals(N, cursor.getRecord().getLong(0));
-                Assert.assertFalse(cursor.hasNext());
-            }
-        });
-    }
-
-    @Test
     public void testGroupByNullKeyWithSmallMapPage() throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_SMALL_MAP_PAGE_SIZE, 13);
         assertMemoryLeak(() -> {

@@ -1910,14 +1910,6 @@ public class OrderedMap implements Map, Reopenable {
         }
 
         @Override
-        public VarSizeKey init() {
-            super.init();
-            // A key of NULL columns puts nothing, so only this makes room for its length and value.
-            checkCapacity(0);
-            return this;
-        }
-
-        @Override
         public void putArray(ArrayView value) {
             long byteCount = ArrayTypeDriver.getPlainValueSize(value);
             checkCapacity(byteCount);
