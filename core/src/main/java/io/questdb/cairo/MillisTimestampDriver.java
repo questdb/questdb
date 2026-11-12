@@ -30,6 +30,7 @@ import io.questdb.griffin.engine.functions.constants.DateConstant;
 import io.questdb.griffin.engine.functions.constants.IntervalConstant;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.std.Chars;
 import io.questdb.std.Interval;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
@@ -165,6 +166,18 @@ public class MillisTimestampDriver implements TimestampDriver {
             interval.of(lo, hi);
         }
         return interval;
+    }
+
+    @Override
+    public long floorFrom(long timestamp, int fromTimestampType) {
+        // from() rounds toward zero, which is up in time before 1970
+        if (ColumnType.isTimestampNano(fromTimestampType)) {
+            return Math.floorDiv(timestamp, Nanos.MILLI_NANOS);
+        }
+        if (ColumnType.isTimestampMicro(fromTimestampType)) {
+            return Math.floorDiv(timestamp, Micros.MILLI_MICROS);
+        }
+        return timestamp;
     }
 
     @Override
@@ -614,6 +627,37 @@ public class MillisTimestampDriver implements TimestampDriver {
     @Override
     public boolean inInterval(long value, int intervalType, Interval interval) {
         throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public boolean isExactFrom(long timestamp, int fromTimestampType) {
+        if (ColumnType.isTimestampNano(fromTimestampType)) {
+            return Math.floorMod(timestamp, Nanos.MILLI_NANOS) == 0;
+        }
+        if (ColumnType.isTimestampMicro(fromTimestampType)) {
+            return Math.floorMod(timestamp, Micros.MILLI_MICROS) == 0;
+        }
+        return true;
+    }
+
+    @Override
+    public boolean isExactText(CharSequence str, int lo, int hi) {
+        // the only '.' in timestamp text starts the fraction of the seconds; the parser ignores up to
+        // six digits past the millis
+        final int dot = Chars.indexOf(str, lo, hi, '.');
+        if (dot < 0) {
+            return true;
+        }
+        for (int p = dot + 1; p < hi; p++) {
+            final char c = str.charAt(p);
+            if (Numbers.notDigit(c)) {
+                break;
+            }
+            if (c != '0' && p - dot > 3) {
+                return false;
+            }
+        }
+        return true;
     }
 
     @Override

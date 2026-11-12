@@ -825,6 +825,58 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTextOutsideRange() throws Exception {
+        // TIMESTAMP_NS holds 1677-09-21T00:12:43.145224193Z to 2262-04-11T23:47:16.854775807Z;
+        // text outside that range used to wrap around the long range into an unrelated value
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango(id INT, v TIMESTAMP_NS, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tango VALUES
+                    (1, '2262-04-11T23:47:16.854775807Z', '1970-01-01'),
+                    (2, '1677-09-21T00:12:43.145224193Z', '1970-01-02'),
+                    (3, '2262-04-11 23:47:16.854z', '1970-01-03')
+                    """);
+            final String[][] texts = {
+                    {"'2262-04-11T23:47:16.854775808Z'", "`2262-04-11T23:47:16.854775808Z` [STRING"},
+                    {"'2262-12-31'", "`2262-12-31` [STRING"},
+                    {"'9999-12-31T00:00:00Z'::VARCHAR", "`9999-12-31T00:00:00Z` [VARCHAR"},
+                    {"'1677-09-21T00:12:43.145224192Z'", "`1677-09-21T00:12:43.145224192Z` [STRING"},
+                    {"'0001-01-01'", "`0001-01-01` [STRING"},
+                    {"'2262-12-31 UTC'", "`2262-12-31 UTC` [STRING"},
+                    {"'9999-12-31 00:00:00.0Z'::VARCHAR", "`9999-12-31 00:00:00.0Z` [VARCHAR"}
+            };
+            for (String[] text : texts) {
+                assertQuery("INSERT INTO tango VALUES (4, " + text[0] + ", '1970-01-04')")
+                        .noLeakCheck()
+                        .fails(0, "inconvertible value: " + text[1] + " -> TIMESTAMP_NS]");
+            }
+            assertQuery("SELECT id, v::LONG v FROM tango")
+                    .expectSize()
+                    .returns("""
+                            id\tv
+                            1\t9223372036854775807
+                            2\t-9223372036854775807
+                            3\t9223372036854000000
+                            """);
+
+            assertQuery("""
+                    SELECT
+                        '2262-04-11T23:47:16.854775808Z'::TIMESTAMP_NS a,
+                        '2262-12-31'::TIMESTAMP_NS b,
+                        '9999-12-31'::VARCHAR::TIMESTAMP_NS c,
+                        '1677-09-21T00:12:43.145224192Z'::TIMESTAMP_NS d,
+                        '0001-01-01'::TIMESTAMP_NS e,
+                        '2262-04-11T23:47:16.854775807Z'::TIMESTAMP_NS f
+                    """)
+                    .expectSize()
+                    .returns("""
+                            a\tb\tc\td\te\tf
+                            \t\t\t\t\t2262-04-11T23:47:16.854775807Z
+                            """);
+        });
+    }
+
+    @Test
     public void testTimestampEqualityWithBindVariables() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE mixed_ts(id INT, nano_time TIMESTAMP_NS, micro_time TIMESTAMP) TIMESTAMP(nano_time) PARTITION BY DAY");

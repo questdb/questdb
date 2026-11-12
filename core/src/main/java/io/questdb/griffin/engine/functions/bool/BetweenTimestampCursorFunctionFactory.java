@@ -40,7 +40,9 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.ScalarSubQueryUtils;
 import io.questdb.griffin.engine.functions.TernaryFunction;
+import io.questdb.griffin.engine.functions.TimestampBounds;
 import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
@@ -91,7 +93,7 @@ public class BetweenTimestampCursorFunctionFactory implements FunctionFactory {
         // execution during init() instead of re-evaluating it (getter + precision conversion +
         // min/max) per row, mirroring the ConstFunc specialization in between(NNN)
         if (loFunc.isConstant() || loFunc.isRuntimeConstant()) {
-            return new CursorScalarFunc(arg, loFunc, hiFunc, hiFactory, driver, hiColumnType, hiPos, loValueType, true);
+            return new CursorScalarFunc(arg, loFunc, hiFunc, hiFactory, driver, hiColumnType, hiPos, true);
         }
         return new CursorHiFunc(
                 arg,
@@ -119,7 +121,7 @@ public class BetweenTimestampCursorFunctionFactory implements FunctionFactory {
         // execution during init() instead of re-evaluating it (getter + precision conversion +
         // min/max) per row, mirroring the ConstFunc specialization in between(NNN)
         if (hiFunc.isConstant() || hiFunc.isRuntimeConstant()) {
-            return new CursorScalarFunc(arg, loFunc, hiFunc, loFactory, driver, loColumnType, loPos, hiValueType, false);
+            return new CursorScalarFunc(arg, loFunc, hiFunc, loFactory, driver, loColumnType, loPos, false);
         }
         return new CursorLoFunc(
                 arg,
@@ -169,46 +171,67 @@ public class BetweenTimestampCursorFunctionFactory implements FunctionFactory {
     }
 
     /**
-     * Reads the single scalar value of a sub-query bound during {@code init()} and converts it
-     * to the left operand's timestamp precision, the same conversion {@code between(NNN)} and
-     * the interval intrinsic apply to their bounds. An empty sub-query yields
-     * {@link Numbers#LONG_NULL}, which makes the predicate false.
+     * Reads the single scalar value of a sub-query bound during {@code init()} into the left operand's timestamp
+     * type: out holds the first value of the type at or after the bound, then the last value at or before it.
+     * The two are equal unless the bound lies between two values of the type, as a finer one can. An empty
+     * sub-query yields {@link Numbers#LONG_NULL} twice, which makes the predicate false.
      */
-    private static long readCursorBound(
+    private static void readCursorBound(
             RecordCursorFactory factory,
             int columnType,
             TimestampDriver driver,
             SqlExecutionContext executionContext,
-            int position
+            int position,
+            LongList out
     ) throws SqlException {
+        out.clear();
         try (RecordCursor cursor = factory.getCursor(executionContext)) {
             if (!cursor.hasNext()) {
-                return Numbers.LONG_NULL;
+                out.add(Numbers.LONG_NULL, Numbers.LONG_NULL);
+                return;
             }
             final Record record = cursor.getRecord();
-            final long value;
+            final long lower;
+            final long upper;
             switch (ColumnType.tagOf(columnType)) {
                 case ColumnType.STRING -> {
                     final CharSequence str = record.getStrA(0);
                     try {
-                        value = driver.parseFloorLiteral(str);
+                        upper = driver.parseFloorLiteral(str);
                     } catch (NumericException e) {
                         throw SqlException.$(position, "the cursor selected invalid timestamp value: ").put(str);
                     }
+                    lower = upper != Numbers.LONG_NULL && !TimestampBounds.isExactText(driver, str) ? upper + 1 : upper;
                 }
                 case ColumnType.VARCHAR -> {
                     final Utf8Sequence str = record.getVarcharA(0);
                     try {
-                        value = driver.parseFloorLiteral(str);
+                        upper = driver.parseFloorLiteral(str);
                     } catch (NumericException e) {
                         throw SqlException.$(position, "the cursor selected invalid timestamp value: ").put(str);
                     }
+                    lower = upper != Numbers.LONG_NULL && !TimestampBounds.isExactText(driver, str) ? upper + 1 : upper;
                 }
-                default -> value = driver.from(record.getTimestamp(0), ColumnType.getTimestampType(columnType));
+                default -> {
+                    final long value = record.getTimestamp(0);
+                    final int valueType = ColumnType.getTimestampType(columnType);
+                    if (value == Numbers.LONG_NULL || driver.compareToRange(value, valueType) != 0) {
+                        // a value past the range of the left operand's type fails to convert
+                        lower = upper = driver.from(value, valueType);
+                    } else {
+                        lower = driver.lowerBound(value, valueType, false);
+                        upper = driver.upperBound(value, valueType, false);
+                    }
+                }
             }
             ScalarSubQueryUtils.assertNoMoreRows(cursor, position);
-            return value;
+            out.add(lower, upper);
         }
+    }
+
+    // where a cursor bound [lower, upper] lies against a value: after it, at it or before it
+    private static int compareBound(long lower, long upper, long value) {
+        return value < lower ? 1 : (value > upper ? -1 : 0);
     }
 
     private static int resolveLeftTimestampType(
@@ -250,7 +273,10 @@ public class BetweenTimestampCursorFunctionFactory implements FunctionFactory {
         private final int hiPos;
         private final Function loFunc;
         private final int loValueType;
+        private final LongList bound = new LongList(2);
+        // the cursor bound lies at or between hiEpoch and hiEpochHi
         private long hiEpoch;
+        private long hiEpochHi;
         private boolean stateInherited = false;
         private boolean stateShared = false;
 
@@ -283,11 +309,12 @@ public class BetweenTimestampCursorFunctionFactory implements FunctionFactory {
             if (value == Numbers.LONG_NULL) {
                 return false;
             }
-            final long loTs = driver.from(loFunc.getTimestamp(rec), loValueType);
+            final long loTs = loFunc.getTimestamp(rec);
             if (loTs == Numbers.LONG_NULL) {
                 return false;
             }
-            return Math.min(loTs, hiEpoch) <= value && value <= Math.max(loTs, hiEpoch);
+            // the value lies at or between the bounds, in either order; nothing converts
+            return driver.compareFrom(loTs, loValueType, value) * compareBound(hiEpoch, hiEpochHi, value) <= 0;
         }
 
         @Override
@@ -312,7 +339,9 @@ public class BetweenTimestampCursorFunctionFactory implements FunctionFactory {
                 return;
             }
             this.stateShared = false;
-            hiEpoch = readCursorBound(hiFactory, hiColumnType, driver, executionContext, hiPos);
+            readCursorBound(hiFactory, hiColumnType, driver, executionContext, hiPos, bound);
+            hiEpoch = bound.getQuick(0);
+            hiEpochHi = bound.getQuick(1);
         }
 
         @Override
@@ -324,6 +353,7 @@ public class BetweenTimestampCursorFunctionFactory implements FunctionFactory {
         public void offerStateTo(Function that) {
             if (that instanceof CursorHiFunc thatF) {
                 thatF.hiEpoch = hiEpoch;
+                thatF.hiEpochHi = hiEpochHi;
                 thatF.stateInherited = this.stateShared = true;
             }
             TernaryFunction.super.offerStateTo(that);
@@ -347,7 +377,10 @@ public class BetweenTimestampCursorFunctionFactory implements FunctionFactory {
         private final RecordCursorFactory loFactory;
         private final Function loFunc;
         private final int loPos;
+        private final LongList bound = new LongList(2);
+        // the cursor bound lies at or between loEpoch and loEpochHi
         private long loEpoch;
+        private long loEpochHi;
         private boolean stateInherited = false;
         private boolean stateShared = false;
 
@@ -380,11 +413,12 @@ public class BetweenTimestampCursorFunctionFactory implements FunctionFactory {
             if (value == Numbers.LONG_NULL) {
                 return false;
             }
-            final long hiTs = driver.from(hiFunc.getTimestamp(rec), hiValueType);
+            final long hiTs = hiFunc.getTimestamp(rec);
             if (hiTs == Numbers.LONG_NULL) {
                 return false;
             }
-            return Math.min(loEpoch, hiTs) <= value && value <= Math.max(loEpoch, hiTs);
+            // the value lies at or between the bounds, in either order; nothing converts
+            return driver.compareFrom(hiTs, hiValueType, value) * compareBound(loEpoch, loEpochHi, value) <= 0;
         }
 
         @Override
@@ -409,7 +443,9 @@ public class BetweenTimestampCursorFunctionFactory implements FunctionFactory {
                 return;
             }
             this.stateShared = false;
-            loEpoch = readCursorBound(loFactory, loColumnType, driver, executionContext, loPos);
+            readCursorBound(loFactory, loColumnType, driver, executionContext, loPos, bound);
+            loEpoch = bound.getQuick(0);
+            loEpochHi = bound.getQuick(1);
         }
 
         @Override
@@ -421,6 +457,7 @@ public class BetweenTimestampCursorFunctionFactory implements FunctionFactory {
         public void offerStateTo(Function that) {
             if (that instanceof CursorLoFunc thatF) {
                 thatF.loEpoch = loEpoch;
+                thatF.loEpochHi = loEpochHi;
                 thatF.stateInherited = this.stateShared = true;
             }
             TernaryFunction.super.offerStateTo(that);
@@ -454,7 +491,7 @@ public class BetweenTimestampCursorFunctionFactory implements FunctionFactory {
         private final Function hiFunc;
         private final Function loFunc;
         private final Function scalarFunc;
-        private final int scalarValueType;
+        private final LongList bound = new LongList(2);
         private long hiEpoch;
         private long loEpoch;
         private boolean stateInherited = false;
@@ -468,7 +505,6 @@ public class BetweenTimestampCursorFunctionFactory implements FunctionFactory {
                 TimestampDriver driver,
                 int cursorColumnType,
                 int cursorPos,
-                int scalarValueType,
                 boolean cursorIsHi
         ) {
             this.arg = arg;
@@ -478,7 +514,6 @@ public class BetweenTimestampCursorFunctionFactory implements FunctionFactory {
             this.driver = driver;
             this.cursorColumnType = cursorColumnType;
             this.cursorPos = cursorPos;
-            this.scalarValueType = scalarValueType;
             this.cursorIsHi = cursorIsHi;
             this.scalarFunc = cursorIsHi ? loFunc : hiFunc;
         }
@@ -517,23 +552,20 @@ public class BetweenTimestampCursorFunctionFactory implements FunctionFactory {
                 return;
             }
             this.stateShared = false;
-            final long cursorEpoch = readCursorBound(cursorFactory, cursorColumnType, driver, executionContext, cursorPos);
-            // the non-cursor bound is (runtime-)constant, so a null record yields the per-execution
-            // value; convert it to the left operand's precision exactly like the per-row path did
-            final long scalarEpoch = driver.from(scalarFunc.getTimestamp(null), scalarValueType);
-            if (cursorIsHi) {
-                loEpoch = scalarEpoch;
-                hiEpoch = cursorEpoch;
-            } else {
-                loEpoch = cursorEpoch;
-                hiEpoch = scalarEpoch;
+            readCursorBound(cursorFactory, cursorColumnType, driver, executionContext, cursorPos, bound);
+            final long cursorLo = bound.getQuick(0);
+            final long cursorHi = bound.getQuick(1);
+            // the non-cursor bound is (runtime-)constant, so a null record yields the per-execution value
+            if (cursorLo == Numbers.LONG_NULL || !TimestampBounds.bounds(driver, scalarFunc, bound)) {
+                loEpoch = hiEpoch = Numbers.LONG_NULL;
+                return;
             }
-            // normalize reversed bounds once per execution, matching between(NNN) and DualCursorFunc
-            if (loEpoch != Numbers.LONG_NULL && hiEpoch != Numbers.LONG_NULL && loEpoch > hiEpoch) {
-                final long tmp = loEpoch;
-                loEpoch = hiEpoch;
-                hiEpoch = tmp;
-            }
+            // the bounds come in either order; a scalar bound with no value of the type on its side, past the
+            // range of the type, gives way to the cursor bound
+            final long scalarLo = bound.getQuick(0);
+            final long scalarHi = bound.getQuick(1);
+            loEpoch = scalarLo == Numbers.LONG_NULL ? cursorLo : Math.min(scalarLo, cursorLo);
+            hiEpoch = scalarHi == Numbers.LONG_NULL ? cursorHi : Math.max(scalarHi, cursorHi);
         }
 
         @Override
@@ -572,6 +604,7 @@ public class BetweenTimestampCursorFunctionFactory implements FunctionFactory {
         private final RecordCursorFactory loFactory;
         private final Function loFunc;
         private final int loPos;
+        private final LongList bound = new LongList(2);
         private long hiEpoch;
         private long loEpoch;
         private boolean stateInherited = false;
@@ -635,13 +668,18 @@ public class BetweenTimestampCursorFunctionFactory implements FunctionFactory {
                 return;
             }
             this.stateShared = false;
-            loEpoch = readCursorBound(loFactory, loColumnType, driver, executionContext, loPos);
-            hiEpoch = readCursorBound(hiFactory, hiColumnType, driver, executionContext, hiPos);
-            // normalize reversed bounds once per execution, matching between(NNN)
-            if (loEpoch != Numbers.LONG_NULL && hiEpoch != Numbers.LONG_NULL && loEpoch > hiEpoch) {
-                final long tmp = loEpoch;
-                loEpoch = hiEpoch;
-                hiEpoch = tmp;
+            readCursorBound(loFactory, loColumnType, driver, executionContext, loPos, bound);
+            final long fromLo = bound.getQuick(0);
+            final long fromHi = bound.getQuick(1);
+            readCursorBound(hiFactory, hiColumnType, driver, executionContext, hiPos, bound);
+            final long toLo = bound.getQuick(0);
+            final long toHi = bound.getQuick(1);
+            if (fromLo == Numbers.LONG_NULL || toLo == Numbers.LONG_NULL) {
+                loEpoch = hiEpoch = Numbers.LONG_NULL;
+            } else {
+                // the bounds come in either order, as in between(NNN)
+                loEpoch = Math.min(fromLo, toLo);
+                hiEpoch = Math.max(fromHi, toHi);
             }
         }
 

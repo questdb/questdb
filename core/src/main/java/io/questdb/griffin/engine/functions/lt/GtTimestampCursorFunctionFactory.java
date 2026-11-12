@@ -94,36 +94,14 @@ public class GtTimestampCursorFunctionFactory implements FunctionFactory {
                 if (ColumnType.isTimestamp(metadataType)) {
                     timestampType = ColumnType.getHigherPrecisionTimestampType(arg0Type, metadataType);
                 }
-                boolean leftNeedsConvert = arg0Type != timestampType;
-                if (leftNeedsConvert) {
-                    return new LeftConvertTimestampCursorFunc(factory, arg0, args.getQuick(1), ColumnType.getTimestampDriver(timestampType), argPositions.getQuick(1), arg0Type);
-                } else {
-                    return new TimestampCursorFunc(factory, arg0, args.getQuick(1), ColumnType.getTimestampDriver(timestampType), argPositions.getQuick(1));
-                }
+                // the cursor's value turns into a bound in the left operand's type, so no value converts
+                return new TimestampCursorFunc(factory, arg0, args.getQuick(1), ColumnType.getTimestampDriver(arg0Type), argPositions.getQuick(1));
             case ColumnType.STRING:
                 return new StrCursorFunc(factory, arg0, args.getQuick(1), ColumnType.getTimestampDriver(arg0Type), argPositions.getQuick(1));
             case ColumnType.VARCHAR:
                 return new VarcharCursorFunc(factory, arg0, args.getQuick(1), ColumnType.getTimestampDriver(arg0Type), argPositions.getQuick(1));
             default:
                 throw SqlException.$(argPositions.getQuick(1), "cannot compare TIMESTAMP and ").put(ColumnType.nameOf(metadataType));
-        }
-    }
-
-    private static class LeftConvertTimestampCursorFunc extends TimestampCursorFunc {
-        private final int leftTimestampType;
-
-        public LeftConvertTimestampCursorFunc(RecordCursorFactory factory, Function leftFunc, Function rightFunc, TimestampDriver driver, int rightPos, int leftTimestampType) {
-            super(factory, leftFunc, rightFunc, driver, rightPos);
-            this.leftTimestampType = leftTimestampType;
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            return Numbers.lessThan(
-                    epoch,
-                    driver.from(leftFunc.getTimestamp(rec), leftTimestampType),
-                    negated
-            );
         }
     }
 
@@ -264,7 +242,15 @@ public class GtTimestampCursorFunctionFactory implements FunctionFactory {
             this.stateShared = false;
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 if (cursor.hasNext()) {
-                    epoch = driver.from(cursor.getRecord().getTimestamp(0), ColumnType.getTimestampType(factory.getMetadata().getColumnType(0)));
+                    final long value = cursor.getRecord().getTimestamp(0);
+                    final int valueType = ColumnType.getTimestampType(factory.getMetadata().getColumnType(0));
+                    if (value == Numbers.LONG_NULL || driver.compareToRange(value, valueType) != 0) {
+                        // a value past the range of the left operand's type fails to convert
+                        epoch = driver.from(value, valueType);
+                    } else {
+                        // left > c holds exactly when left > the last value at or before c, and so does its negation
+                        epoch = driver.upperBound(value, valueType, false);
+                    }
                     ScalarSubQueryUtils.assertNoMoreRows(cursor, rightPos);
                 } else {
                     epoch = Numbers.LONG_NULL;

@@ -39,6 +39,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
+import io.questdb.griffin.engine.functions.TimestampBounds;
 import io.questdb.griffin.engine.functions.ScalarSubQueryUtils;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
@@ -123,7 +124,12 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (driver.from(leftFunc.getTimestamp(rec), leftType) == epoch);
+            final long left = leftFunc.getTimestamp(rec);
+            // compares without converting a value past the range of the comparison's type
+            final boolean isEqual = left == Numbers.LONG_NULL || epoch == Numbers.LONG_NULL
+                    ? left == epoch
+                    : driver.compareFrom(left, leftType, epoch) == 0;
+            return negated != isEqual;
         }
     }
 
@@ -133,7 +139,9 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
         private final Function leftFunc;
         private final Function rightFunc;
         private final int rightPos;
+        // [epoch, epochHi] holds the value that equals the text; it is empty for text between two values
         private long epoch;
+        private long epochHi;
         private boolean stateInherited = false;
         private boolean stateShared = false;
 
@@ -147,7 +155,8 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (leftFunc.getTimestamp(rec) == epoch);
+            final long value = leftFunc.getTimestamp(rec);
+            return negated != (epoch <= value && value <= epochHi);
         }
 
         @Override
@@ -171,13 +180,16 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
                 if (cursor.hasNext()) {
                     final CharSequence value = cursor.getRecord().getStrA(0);
                     try {
-                        epoch = driver.parseFloorLiteral(value);
+                        epoch = epochHi = driver.parseFloorLiteral(value);
+                        if (epoch != Numbers.LONG_NULL && !TimestampBounds.isExactText(driver, value)) {
+                            epoch++;
+                        }
                     } catch (NumericException e) {
                         throw SqlException.$(rightPos, "the cursor selected invalid timestamp value: ").put(value);
                     }
                     ScalarSubQueryUtils.assertNoMoreRows(cursor, rightPos);
                 } else {
-                    epoch = Numbers.LONG_NULL;
+                    epoch = epochHi = Numbers.LONG_NULL;
                 }
             }
         }
@@ -191,6 +203,7 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
         public void offerStateTo(Function that) {
             if (that instanceof StrCursorFunc thatF) {
                 thatF.epoch = epoch;
+                thatF.epochHi = epochHi;
                 thatF.stateInherited = this.stateShared = true;
             }
             BinaryFunction.super.offerStateTo(that);
@@ -292,7 +305,9 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
         private final Function leftFunc;
         private final Function rightFunc;
         private final int rightPos;
+        // [epoch, epochHi] holds the value that equals the text; it is empty for text between two values
         private long epoch;
+        private long epochHi;
         private boolean stateInherited = false;
         private boolean stateShared = false;
 
@@ -306,7 +321,8 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (leftFunc.getTimestamp(rec) == epoch);
+            final long value = leftFunc.getTimestamp(rec);
+            return negated != (epoch <= value && value <= epochHi);
         }
 
         @Override
@@ -330,13 +346,16 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
                 if (cursor.hasNext()) {
                     final Utf8Sequence value = cursor.getRecord().getVarcharA(0);
                     try {
-                        epoch = driver.parseFloorLiteral(value);
+                        epoch = epochHi = driver.parseFloorLiteral(value);
+                        if (epoch != Numbers.LONG_NULL && !TimestampBounds.isExactText(driver, value)) {
+                            epoch++;
+                        }
                     } catch (NumericException e) {
                         throw SqlException.$(rightPos, "the cursor selected invalid timestamp value: ").put(value);
                     }
                     ScalarSubQueryUtils.assertNoMoreRows(cursor, rightPos);
                 } else {
-                    epoch = Numbers.LONG_NULL;
+                    epoch = epochHi = Numbers.LONG_NULL;
                 }
             }
         }
@@ -350,6 +369,7 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
         public void offerStateTo(Function that) {
             if (that instanceof VarcharCursorFunc thatF) {
                 thatF.epoch = epoch;
+                thatF.epochHi = epochHi;
                 thatF.stateInherited = this.stateShared = true;
             }
             BinaryFunction.super.offerStateTo(that);

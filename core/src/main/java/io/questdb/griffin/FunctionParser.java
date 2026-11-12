@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.MillisTimestampDriver;
+import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.FunctionArray;
 import io.questdb.cairo.sql.BindVariableService;
@@ -1499,11 +1500,13 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     // Adaptive precision: prefer nano if the string has nanosecond precision
                     int adaptiveType = getAdaptiveTimestampType(timestampStr, sigArgType);
                     long timestamp = parseTimestamp(adaptiveType, timestampStr, position);
-                    args.set(k, TimestampConstant.newInstance(timestamp, adaptiveType));
+                    // keeps the text when the value drops digits of it, for comparisons to read exactly
+                    args.set(k, TimestampConstant.newInstance(timestamp, adaptiveType, timestampStr));
                 } else if (sigArgTypeTag == ColumnType.DATE) {
                     int position = argPositions.getQuick(k);
-                    long millis = parseDate(arg.getStrA(null), position);
-                    args.set(k, DateConstant.newInstance(millis));
+                    final CharSequence dateStr = arg.getStrA(null);
+                    long millis = parseDate(dateStr, position);
+                    args.set(k, DateConstant.newInstance(millis, dateStr));
                 }
             } else if (argTypeTag == ColumnType.UUID && sigArgTypeTag == ColumnType.STRING) {
                 args.setQuick(k, new CastUuidToStrFunctionFactory.Func(arg));
@@ -1625,45 +1628,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             throw SqlException.position(position).put("undefined bind variable: ").put(name);
         }
         return new NamedParameterLinkFunction(Chars.toString(name), function.getType());
-    }
-
-    /**
-     * Extracts the year from a timestamp string.
-     * Supports formats like "YYYY-MM-DD...", "YYYY/MM/DD...", etc.
-     *
-     * @param timestampStr the timestamp string
-     * @return the year, or -1 if cannot be extracted
-     */
-    private int extractYearFromTimestamp(CharSequence timestampStr) {
-        if (timestampStr == null || timestampStr.length() < 4) {
-            return -1;
-        }
-
-        // Look for the first 4 consecutive digits at the start
-        int yearStart = 0;
-        int digitCount = 0;
-
-        for (int i = 0; i < timestampStr.length() && i < 10; i++) { // Limit search to first 10 chars
-            char c = timestampStr.charAt(i);
-            if (c >= '0' && c <= '9') {
-                if (digitCount == 0) {
-                    yearStart = i;
-                }
-                digitCount++;
-                if (digitCount == 4) {
-                    // Found 4 consecutive digits, extract as year
-                    try {
-                        return Numbers.parseInt(timestampStr, yearStart, yearStart + 4);
-                    } catch (NumericException e) {
-                        return -1;
-                    }
-                }
-            } else {
-                digitCount = 0; // Reset if non-digit found
-            }
-        }
-
-        return -1; // Could not extract year
     }
 
     private Function functionToConstant(Function function) {
@@ -1871,9 +1835,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     }
 
     /**
-     * Determines the appropriate timestamp type based on the string precision and year range.
+     * Determines the appropriate timestamp type based on the string precision and range.
      * If the string contains nanosecond precision (more than 6 digits after seconds) and
-     * the year is within nano timestamp range (< 2262), returns nano type;
+     * the nano timestamp parser accepts it, i.e. it is within the nano timestamp range
+     * (1677-09-21T00:12:43.145224193Z to 2262-04-11T23:47:16.854775807Z), returns nano type;
      * otherwise returns the original signature type.
      *
      * @param timestampStr the timestamp string to analyze
@@ -1882,13 +1847,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
      */
     private int getAdaptiveTimestampType(CharSequence timestampStr, int sigArgType) {
         if (timestampStr == null || timestampStr.isEmpty()) {
-            return FunctionFactoryDescriptor.toType(sigArgType);
-        }
-
-        // Extract year from timestamp string to check nano range
-        int year = extractYearFromTimestamp(timestampStr);
-        if (year >= 2262) {
-            // Year is beyond nano timestamp range, use original type
             return FunctionFactoryDescriptor.toType(sigArgType);
         }
 
@@ -1920,7 +1878,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
             // If more than 6 digits (microsecond precision) and within nano range, use nanosecond type
             if (digitCount > 6) {
-                return ColumnType.TIMESTAMP_NANO;
+                try {
+                    NanosTimestampDriver.INSTANCE.parseFloorLiteral(timestampStr);
+                    return ColumnType.TIMESTAMP_NANO;
+                } catch (NumericException ignore) {
+                    // outside the nano range, or not a timestamp: the original type reports it
+                }
             }
         }
 

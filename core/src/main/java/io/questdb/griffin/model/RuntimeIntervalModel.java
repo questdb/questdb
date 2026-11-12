@@ -27,6 +27,7 @@ package io.questdb.griffin.model;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
@@ -61,6 +62,8 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
     private final TimestampDriver timestampDriver;
     private SqlExecutionContext intervalPlanContext;
     private long intervalPlanGeneration;
+    // set by getTimestamp(): whether the timestamp type holds the dynamic bound it read exactly
+    private boolean isTimestampExact;
     // This used to assemble the result
     private LongList outIntervals;
 
@@ -270,8 +273,8 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                         // copy 4 longs to output and apply the operation
                         outIntervals.add(intervals, i, i + STATIC_LONGS_PER_DYNAMIC_INTERVAL);
                         IntervalUtils.applyLastEncodedInterval(timestampDriver, outIntervals);
-                        // Apply day filter if specified
-                        if (dayFilterMask != 0) {
+                        // Apply day filter if specified; an empty period adds no interval to filter
+                        if (dayFilterMask != 0 && outIntervals.size() > divider) {
                             // Check if the interval's lo timestamp matches the day filter
                             long lo = outIntervals.getQuick(divider);
                             int dayOfWeek = timestampDriver.getDayOfWeek(lo);
@@ -307,9 +310,13 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
 
                     if (operation != IntervalOperation.INTERSECT_INTERVALS && operation != IntervalOperation.SUBTRACT_INTERVALS) {
                         long dynamicValue = getTimestamp(dynamicFunction, functionType, sqlExecutionContext, cursorFunctionIndex);
+                        // an inexact value lies between dynamicValue and the next value of the timestamp type
+                        final boolean isExact = isTimestampExact;
                         if (functionType == ColumnType.CURSOR) {
                             cursorFunctionIndex++;
                         }
+                        final boolean isBetween = operation == IntervalOperation.INTERSECT_BETWEEN
+                                || operation == IntervalOperation.SUBTRACT_BETWEEN;
                         long dynamicValue2 = 0;
                         if (dynamicHiLo == IntervalDynamicIndicator.IS_LO_SEPARATE_DYNAMIC) {
                             // Both ends of BETWEEN are dynamic and different values. Take the next dynamic point.
@@ -318,23 +325,36 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                             dynamicIndex++;
                             dynamicFunction.init(null, sqlExecutionContext);
                             final int functionType2 = dynamicFunction.getType();
-                            dynamicValue2 = hi = getTimestamp(
+                            dynamicValue2 = getTimestamp(
                                     dynamicFunction,
                                     functionType2,
                                     sqlExecutionContext,
                                     cursorFunctionIndex
                             );
+                            final boolean isExact2 = isTimestampExact;
                             if (functionType2 == ColumnType.CURSOR) {
                                 cursorFunctionIndex++;
                             }
-                            lo = dynamicValue;
+                            // the bounds come in either order
+                            lo = Math.min(isExact ? dynamicValue : dynamicValue + 1, isExact2 ? dynamicValue2 : dynamicValue2 + 1);
+                            hi = Math.max(dynamicValue, dynamicValue2);
+                        } else if (isBetween) {
+                            // the other bound is static and exact, and the bounds come in either order
+                            final long staticBound = (dynamicHiLo & IntervalDynamicIndicator.IS_HI_DYNAMIC) != 0 ? lo : hi;
+                            lo = Math.min(staticBound, isExact ? dynamicValue : dynamicValue + 1);
+                            hi = Math.max(staticBound, dynamicValue);
                         } else {
                             if ((dynamicHiLo & IntervalDynamicIndicator.IS_HI_DYNAMIC) != 0) {
-                                hi = dynamicValue + adjustment;
+                                hi = isExact ? dynamicValue + adjustment : dynamicValue;
                             }
                             if ((dynamicHiLo & IntervalDynamicIndicator.IS_LO_DYNAMIC) != 0) {
-                                lo = dynamicValue + adjustment;
+                                lo = isExact ? dynamicValue + adjustment : dynamicValue + 1;
                             }
+                        }
+                        if (lo > hi && dynamicValue != Numbers.LONG_NULL && dynamicValue2 != Numbers.LONG_NULL) {
+                            // no value of the timestamp type lies in the range, as for an equality with a value
+                            // between two of them: it matches nothing, as NULL does
+                            dynamicValue = Numbers.LONG_NULL;
                         }
 
                         if (dynamicValue == Numbers.LONG_NULL || dynamicValue2 == Numbers.LONG_NULL) {
@@ -375,12 +395,6 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                                 negatedNothing(outIntervals, divider, firstFuncApplied);
                                 continue;
                             }
-                        }
-
-                        if (operation == IntervalOperation.INTERSECT_BETWEEN || operation == IntervalOperation.SUBTRACT_BETWEEN) {
-                            long tempHi = Math.max(hi, lo);
-                            lo = Math.min(hi, lo);
-                            hi = tempHi;
                         }
 
                         // Apply day filter if specified
@@ -486,17 +500,20 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                 : 0;
     }
 
+    // Reads a dynamic bound in the timestamp type, rounded down, and sets isTimestampExact to whether it holds the
+    // bound's value exactly. A bound past the range saturates, as a literal bound does.
     private long getTimestamp(
             Function dynamicFunction,
             int functionType,
             SqlExecutionContext sqlExecutionContext,
             int cursorFunctionIndex
     ) throws SqlException {
+        isTimestampExact = true;
         if (ColumnType.isString(functionType)) {
             final CharSequence value = dynamicFunction.getStrA(null);
             if (value != null) {
                 try {
-                    return timestampDriver.parseFloorLiteral(value);
+                    return parseBound(value);
                 } catch (NumericException e) {
                     return Numbers.LONG_NULL;
                 }
@@ -513,12 +530,48 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
             );
             return value == Numbers.LONG_NULL
                     ? Numbers.LONG_NULL
-                    : timestampDriver.from(
-                    value,
-                    ColumnType.getTimestampType(factory.getMetadata().getColumnType(0))
-            );
+                    : getTimestamp(value, ColumnType.getTimestampType(factory.getMetadata().getColumnType(0)));
         } else {
-            return timestampDriver.from(dynamicFunction.getTimestamp(null), ColumnType.getTimestampType(functionType));
+            final long value;
+            try {
+                value = dynamicFunction.getTimestamp(null);
+            } catch (ImplicitCastException e) {
+                if (ColumnType.isVarchar(functionType)) {
+                    // VARCHAR text converts with the TIMESTAMP_NS parser, which rejects text past 2262 that
+                    // a TIMESTAMP column holds; parse it with the column's driver, as the STRING branch does
+                    final CharSequence text = dynamicFunction.getStrA(null);
+                    try {
+                        return parseBound(text);
+                    } catch (NumericException ignore) {
+                        throw e;
+                    }
+                }
+                throw e;
+            }
+            return value == Numbers.LONG_NULL ? Numbers.LONG_NULL : getTimestamp(value, ColumnType.getTimestampType(functionType));
+        }
+    }
+
+    private long getTimestamp(long value, int timestampType) {
+        final int side = timestampDriver.compareToRange(value, timestampType);
+        if (side != 0) {
+            return side > 0 ? Long.MAX_VALUE : Long.MIN_VALUE + 1;
+        }
+        isTimestampExact = timestampDriver.isExactFrom(value, timestampType);
+        return timestampDriver.floorFrom(value, timestampType);
+    }
+
+    private long parseBound(CharSequence text) throws NumericException {
+        try {
+            final long timestamp = timestampDriver.parseFloor(text, 0, text.length());
+            isTimestampExact = timestampDriver.isExactText(text, 0, text.length());
+            return timestamp;
+        } catch (NumericException e) {
+            final int side = timestampDriver.compareToRange(text, 0, text.length());
+            if (side == 0) {
+                throw e;
+            }
+            return side > 0 ? Long.MAX_VALUE : Long.MIN_VALUE + 1;
         }
     }
 

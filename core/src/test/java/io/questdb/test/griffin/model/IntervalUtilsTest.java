@@ -208,6 +208,19 @@ public class IntervalUtilsTest {
     }
 
     @Test
+    public void testInvertEmpty() {
+        // the complement of no interval is the whole range, and the complement of the whole range is empty
+        runTestInvertInplace(new LongList(), 0, "[null,9223372036854775807]");
+
+        LongList intervals = new LongList();
+        // A
+        add(intervals, 1, 2);
+
+        // B is empty
+        runTestInvertInplace(intervals, 2, "[null,9223372036854775807]");
+    }
+
+    @Test
     public void testInvertSimple() {
         LongList intervals = new LongList();
         // A

@@ -85,6 +85,8 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     private Function betweenBoundaryFunc;
     private int betweenBoundaryFuncPosition;
     private boolean betweenBoundarySet;
+    // the upper bound of a constant boundary that lies between two values of the timestamp type, else betweenBoundary
+    private long betweenBoundaryUpper = Numbers.LONG_NULL;
     private boolean betweenNegated;
     private CairoConfiguration configuration;
     private boolean intervalApplied = false;
@@ -226,6 +228,13 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             return;
         }
 
+        final int side = timestampDriver.compareIntervalToRange(seq, lo, lim);
+        if (side != 0) {
+            final long timestamp = endOfRange(side);
+            intersect(timestamp, timestamp);
+            return;
+        }
+
         // Date variable expressions ($now, $today, etc.) must be evaluated dynamically
         // so that cached queries always use the current time.
         // compileTickExpr() validates the expression at compile time and returns
@@ -316,7 +325,12 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         final int intersectDividerIndex = staticIntervals.size();
         long timestamp;
         try {
-            timestamp = timestampDriver.parseFloor(seq, lo, lim);
+            timestamp = timestampDriver.parseFloorSaturated(seq, lo, lim);
+            if (!timestampDriver.isExactText(seq, lo, lim)) {
+                // the text lies between two values of the type, so no value equals it; nor does NULL, as no
+                // designated timestamp is NULL
+                timestamp = Numbers.LONG_NULL;
+            }
         } catch (NumericException e) {
             try {
                 timestamp = Numbers.parseLong(seq);
@@ -450,8 +464,19 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     }
 
     public void setBetweenBoundary(long timestamp) {
+        setBetweenBoundary(timestamp, timestamp);
+    }
+
+    /**
+     * Sets a constant BETWEEN boundary. A boundary that lies between two values of the timestamp type, such as a
+     * literal finer than the type, has the first value after it as lower and the last value before it as upper;
+     * any other has lower == upper. Only a constant boundary paired with another constant boundary may lie
+     * between two values.
+     */
+    public void setBetweenBoundary(long lower, long upper) {
         if (!betweenBoundarySet) {
-            betweenBoundary = timestamp;
+            betweenBoundary = lower;
+            betweenBoundaryUpper = upper;
             betweenBoundarySet = true;
             return;
         }
@@ -459,15 +484,22 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         if (betweenBoundaryFunc == null) {
             // No Function ownership changes on this branch, so reset temporary parsing state
             // before an empty-model cleanup can throw.
-            final long pendingTimestamp = betweenBoundary;
+            final long pendingLower = betweenBoundary;
+            final long pendingUpper = betweenBoundaryUpper;
             resetBetweenParsingState();
-            final long lo = Math.min(timestamp, pendingTimestamp);
-            final long hi = Math.max(timestamp, pendingTimestamp);
-            if (hi == Numbers.LONG_NULL || lo == Numbers.LONG_NULL) {
+            // the boundaries come in either order
+            final long lo = Math.min(lower, pendingLower);
+            final long hi = Math.max(upper, pendingUpper);
+            if (lower == Numbers.LONG_NULL || pendingLower == Numbers.LONG_NULL) {
                 if (!betweenNegated) {
                     intersectEmpty();
                 }
                 // NOT BETWEEN with NULL does no filtering, consistent with row filtering.
+            } else if (lo > hi) {
+                // both boundaries lie between the same two values of the type: no value is between them
+                if (!betweenNegated) {
+                    intersectEmpty();
+                }
             } else if (!betweenNegated) {
                 intersect(lo, hi);
             } else {
@@ -475,6 +507,8 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             }
             return;
         }
+
+        final long timestamp = lower;
 
         final Function pendingFunction = betweenBoundaryFunc;
         final int pendingFunctionPosition = betweenBoundaryFuncPosition;
@@ -602,6 +636,13 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             return;
         }
 
+        final int side = timestampDriver.compareIntervalToRange(seq, lo, lim);
+        if (side != 0) {
+            final long timestamp = endOfRange(side);
+            subtractInterval(timestamp, timestamp);
+            return;
+        }
+
         // Date variable expressions ($now, $today, etc.) must be evaluated dynamically
         // so that cached queries always use the current time.
         if (containsDateVariable(seq, lo, lim)) {
@@ -669,6 +710,13 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
     public void unionIntervals(CharSequence seq, int lo, int lim, int position) throws SqlException {
         if (isEmptySet()) {
+            return;
+        }
+
+        final int side = timestampDriver.compareIntervalToRange(seq, lo, lim);
+        if (side != 0) {
+            final long timestamp = endOfRange(side);
+            union(timestamp, timestamp);
             return;
         }
 
@@ -792,6 +840,12 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             }
         }
         return false;
+    }
+
+    // A designated timestamp never takes either end of the range, so the end next to an interval past
+    // the range (see TimestampDriver.compareIntervalToRange()) matches no row, as the interval does.
+    private static long endOfRange(int side) {
+        return side > 0 ? Long.MAX_VALUE : Long.MIN_VALUE + 1;
     }
 
     private static long subtractSaturating(long value, long offset) {
@@ -992,6 +1046,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         betweenBoundaryFunc = null;
         betweenBoundaryFuncPosition = 0;
         betweenBoundary = Numbers.LONG_NULL;
+        betweenBoundaryUpper = Numbers.LONG_NULL;
     }
 
     private void subtractCompiledTickExpr(CompiledTickExpression expr) {

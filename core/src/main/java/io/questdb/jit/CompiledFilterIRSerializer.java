@@ -26,8 +26,9 @@ package io.questdb.jit;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
-import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.MillisTimestampDriver;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
@@ -309,6 +310,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     // PostOrderTreeTraversalAlgo descends node.rhs first, so a comparison written on the left of
     // the predicate is descended before the column on its right has typed anything. See visit().
     private ExpressionNode columnFreeComparisonNode;
+    // The root of the predicate whose constants are being backfilled. predicateContext.rootNode is already
+    // cleared when the predicate is left.
+    private ExpressionNode backfillPredicateNode;
     // The operand markIntCmpFloatOperand found on the INT side of a comparison against an F4
     // operand and could not sign-extend. descend() turns it into the SqlException that declines
     // JIT compilation for the whole filter. See markIntCmpFloatOperand.
@@ -1247,6 +1251,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
             // Then backfill constants and symbol bind variables and clean up
             try {
+                backfillPredicateNode = node;
                 backfillNodes.forEach(backfillNodeConsumer);
                 backfillNodes.clear();
             } catch (SqlWrapperException e) {
@@ -1539,6 +1544,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             return true;
         }
         return Chars.equals(token, ">=");
+    }
+
+    private static TimestampDriver timestampDriver(int columnType) {
+        return columnType == ColumnType.DATE ? MillisTimestampDriver.INSTANCE : ColumnType.getTimestampDriver(columnType);
     }
 
     private static boolean isVarSizeType(int type) {
@@ -2072,7 +2081,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             }
         }
 
-        serializeConstant(offset, position, token, isNegated,
+        serializeConstant(offset, node, position, token, isNegated,
                 isI64WidenLeaf(node) || i64WidenConstants.contains(node),
                 narrowKeptConstants.contains(node), intWidthNullElements.contains(node));
     }
@@ -3055,6 +3064,25 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         // check predicate type is timestamp
         return ColumnType.isTimestamp(predicateContext.columnType);
+    }
+
+    // A one-item list of text on a timestamp or DATE column names a period, as the bare interval string does.
+    private boolean isOneItemTimestampTextIn() throws SqlException {
+        final ExpressionNode in = predicateContext.inOperationNode;
+        if (in.args.size() > 0 || in.lhs == null || in.lhs.type != ExpressionNode.LITERAL
+                || in.rhs == null || in.rhs.type != ExpressionNode.CONSTANT || !Chars.isQuoted(in.rhs.token)) {
+            return false;
+        }
+        final int columnIndex = metadata.getColumnIndexQuiet(in.lhs.token);
+        if (columnIndex < 0) {
+            return false;
+        }
+        final int columnType = metadata.getColumnType(columnIndex);
+        if (!ColumnType.isTimestamp(columnType) && columnType != ColumnType.DATE) {
+            return false;
+        }
+        predicateContext.onNodeVisited(in.lhs);
+        return true;
     }
 
     // A bare or unary-minus-wrapped integer CONSTANT node (I4- or I8-typed). Returns
@@ -4497,6 +4525,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
     private void serializeConstant(
             long offset,
+            ExpressionNode node,
             int position,
             final CharSequence token,
             boolean negated,
@@ -4532,23 +4561,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         if (Chars.isQuoted(token)) {
-            if (ColumnType.isTimestamp(predicateContext.columnType)) {
+            if (ColumnType.isTimestamp(predicateContext.columnType) || predicateContext.columnType == ColumnType.DATE) {
                 try {
-                    putOperand(
-                            offset,
-                            IMM,
-                            I8_TYPE,
-                            ColumnType.getTimestampDriver(predicateContext.columnType).parseQuotedLiteral(token)
-                    );
-                } catch (NumericException e) {
-                    throw SqlException.invalidDate(token, position);
-                }
-                return;
-            } else if (predicateContext.columnType == ColumnType.DATE) {
-                try {
-                    // This is a hack for DATA column type. We use a TIMESTAMP specific driver to
-                    // do the work and then derive millis
-                    putOperand(offset, IMM, I8_TYPE, MicrosTimestampDriver.INSTANCE.toDate(MicrosTimestampDriver.INSTANCE.parseQuotedLiteral(token)));
+                    putOperand(offset, IMM, I8_TYPE, timestampLiteralValue(node, position, token));
                 } catch (NumericException e) {
                     throw SqlException.invalidDate(token, position);
                 }
@@ -4816,9 +4831,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         final CharSequence token = predicateContext.inOperationNode.rhs.token;
         final CharSequence intervalEx = token == null || SqlKeywords.isNullKeyword(token) ? null : GenericLexer.unquote(token);
 
+        final TimestampDriver driver = timestampDriver(predicateContext.columnType);
+        if (intervalEx != null && driver.compareIntervalToRange(intervalEx, 0, intervalEx.length()) != 0) {
+            // the Java filter matches no value for an interval past the range of the column type
+            throw SqlException.position(position).put("interval outside the range of the column type: ").put(intervalEx);
+        }
         final LongList intervals = predicateContext.inIntervals;
         IntervalUtils.parseTickExprAndIntersect(
-                ColumnType.getTimestampDriver(predicateContext.columnType),
+                driver,
                 executionContext.getCairoEngine().getConfiguration(),
                 intervalEx,
                 intervals,
@@ -4826,6 +4846,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 sink,
                 true
         );
+        if (intervals.size() == 0) {
+            // the Java filter matches no value for an empty period, such as text finer than the column
+            throw SqlException.position(position).put("empty interval: ").put(intervalEx);
+        }
 
         final ExpressionNode lhs = predicateContext.inOperationNode.lhs;
 
@@ -5263,7 +5287,11 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         final CharSequence token = node.token;
         if (SqlKeywords.isInKeyword(token)) {
             if (type == ExpressionNode.FUNCTION) {
-                serializeIn();
+                if (isOneItemTimestampTextIn()) {
+                    serializeInTimestampRange(position);
+                } else {
+                    serializeIn();
+                }
                 return;
             } else if (type == ExpressionNode.SET_OPERATION && isInTimestampPredicate()) {
                 serializeInTimestampRange(position);
@@ -5630,6 +5658,35 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * want the Java filter's fold behavior compare {@code (int) longVal}
      * against {@code longVal} and treat a mismatch as a fold root.
      */
+    // A literal finer than the column lies between two of its values. Compared with the column by <, <=, > or >=, it
+    // takes the column value next to it on the side the operator keeps: the one below for > and <=, the one above
+    // for >= and <. Elsewhere, as for = or in an IN list, the Java filter compares it exactly.
+    private long timestampLiteralValue(ExpressionNode node, int position, CharSequence token) throws NumericException, SqlException {
+        final TimestampDriver driver = timestampDriver(predicateContext.columnType);
+        final long value = driver.parseQuotedLiteral(token);
+        final int hi = token.length() - 1;
+        if (driver.isExactText(token, 1, hi)) {
+            return value;
+        }
+        final ExpressionNode root = backfillPredicateNode;
+        if (root != null && root.paramCount == 2 && isOrderingComparison(root)) {
+            final boolean isLiteralRight = root.rhs == node && root.lhs != null && root.lhs.type == ExpressionNode.LITERAL;
+            final boolean isLiteralLeft = root.lhs == node && root.rhs != null && root.rhs.type == ExpressionNode.LITERAL;
+            if (isLiteralRight || isLiteralLeft) {
+                // the operator as written with the column on the left
+                final boolean isGreater = (root.token.charAt(0) == '>') == isLiteralRight;
+                final boolean isOrEqual = root.token.length() == 2;
+                final long bound = isGreater != isOrEqual
+                        ? driver.upperBound(token, 1, hi, false)
+                        : driver.lowerBound(token, 1, hi, false);
+                if (bound != Numbers.LONG_NULL) {
+                    return bound;
+                }
+            }
+        }
+        throw SqlException.position(position).put("timestamp literal finer than the column: ").put(token);
+    }
+
     private long tryFoldConstantArith(ExpressionNode node) throws NumericException {
         if (node == null) {
             throw NumericException.INSTANCE;

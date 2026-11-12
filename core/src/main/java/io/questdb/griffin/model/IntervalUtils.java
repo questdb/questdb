@@ -126,8 +126,7 @@ public final class IntervalUtils {
 
         intervals.setPos(index);
         if (periodType == PeriodType.NONE) {
-            intervals.extendAndSet(index + 1, hi);
-            intervals.setQuick(index, lo);
+            addPeriod(intervals, lo, hi);
             return;
         }
         apply(timestampDriver, intervals, lo, hi, period, periodType, count);
@@ -613,8 +612,14 @@ public final class IntervalUtils {
      *                   before this index are ignored and preserved.
      */
     public static void invert(LongList intervals, int startIndex) {
-        long last = Long.MIN_VALUE;
         int n = intervals.size();
+        if (n == startIndex) {
+            // the complement of no interval is the whole range; the loop below cannot tell it from a last
+            // interval that ends at Long.MAX_VALUE
+            intervals.add(Long.MIN_VALUE, Long.MAX_VALUE);
+            return;
+        }
+        long last = Long.MIN_VALUE;
         int writeIndex = startIndex;
         for (int i = startIndex; i < n; i += 2) {
             final long lo = intervals.getQuick(i);
@@ -1569,7 +1574,10 @@ public final class IntervalUtils {
     }
 
     private static void apply(TimestampDriver timestampDriver, LongList temp, long lo, long hi, int period, char periodType, int count) {
-        temp.add(lo, hi);
+        if (!addPeriod(temp, lo, hi)) {
+            // every repetition of an empty period is empty
+            return;
+        }
         if (count > 1) {
             switch (periodType) {
                 case PeriodType.YEAR:
@@ -2225,6 +2233,7 @@ public final class IntervalUtils {
         }
         long tLo = decodeIntervalLo(tmp, 0);
         long tHi = decodeIntervalHi(tmp, 0);
+        final long width = compileTimeOverrideWidth(timestampDriver, parseSink, tLo, tHi);
 
         // Per-element timezone
         long zoneMatch = Long.MIN_VALUE;
@@ -2247,7 +2256,7 @@ public final class IntervalUtils {
         }
 
         irList.add(tLo);
-        irList.add(tHi - tLo);
+        irList.add(width);
         irList.add(zoneMatch);
     }
 
@@ -2451,9 +2460,20 @@ public final class IntervalUtils {
         long tLo = decodeIntervalLo(tmp, 0);
         long tHi = decodeIntervalHi(tmp, 0);
         irList.add(tLo);
-        irList.add(tHi - tLo);
+        irList.add(compileTimeOverrideWidth(timestampDriver, parseSink, tLo, tHi));
         irList.add(Long.MIN_VALUE);
         return 1;
+    }
+
+    // The width of a time override in the IR: hi - lo of its period, or INEXACT_TIME_WIDTH for a time finer than
+    // the column, which the parser cut down to the column value before it
+    private static long compileTimeOverrideWidth(TimestampDriver timestampDriver, CharSequence time, long lo, long hi) {
+        if (timestampDriver.isExactText(time, 0, time.length())) {
+            return hi - lo;
+        }
+        // text finer than the column names an instant
+        assert lo == hi;
+        return CompiledTickExpression.INEXACT_TIME_WIDTH;
     }
 
     /**
@@ -4346,6 +4366,7 @@ public final class IntervalUtils {
                 // no semicolons, just date part, which can be the interval in itself
                 try {
                     timestampDriver.parseInterval(seq, lo, lim, operation, out);
+                    exactTextPeriod(timestampDriver, seq, lo, lim, false, out, writeIndex);
                     break;
                 } catch (NumericException ignore) {
                     // this must be a date then?
@@ -4354,6 +4375,7 @@ public final class IntervalUtils {
                 try {
                     long timestamp = timestampDriver.parseFloor(seq, lo, lim);
                     encodeInterval(timestamp, timestamp, operation, out);
+                    exactTextPeriod(timestampDriver, seq, lo, lim, false, out, writeIndex);
                     break;
                 } catch (NumericException e) {
                     try {
@@ -4447,6 +4469,22 @@ public final class IntervalUtils {
         return ((long) year << 16) | ((long) month << 8) | lastDay;
     }
 
+    // Moves the bounds of the period that the date text seq[lo, lim) names, parsed into the encoded interval at
+    // index, to the column values the text names exactly; see textPeriodLo() and textPeriodHi().
+    private static void exactTextPeriod(
+            TimestampDriver timestampDriver,
+            CharSequence seq,
+            int lo,
+            int lim,
+            boolean hasDuration,
+            LongList out,
+            int index
+    ) {
+        final boolean isExactText = timestampDriver.isExactText(seq, lo, lim);
+        out.setQuick(index + LO_INDEX, textPeriodLo(out.getQuick(index + LO_INDEX), isExactText));
+        out.setQuick(index + HI_INDEX, textPeriodHi(out.getQuick(index + HI_INDEX), isExactText, hasDuration));
+    }
+
     private static void parseRange(
             TimestampDriver timestampDriver,
             CharSequence seq,
@@ -4465,12 +4503,15 @@ public final class IntervalUtils {
             long intervalLo = resolveDurationLo(low, endExclusive);
             long intervalHi = resolveDurationHi(low, endExclusive);
             replaceHiLoInterval(intervalLo, intervalHi, operation, out);
+            exactTextPeriod(timestampDriver, seq, lo, p, true, out, index);
             return;
         } catch (NumericException ignore) {
             // try date instead
         }
         try {
             long loMicros = timestampDriver.parseAnyFormat(seq, lo, p);
+            // the formats parseAnyFormat() takes have no digits finer than the column
+            assert timestampDriver.isExactText(seq, lo, p);
             long endExclusive = addDuration(timestampDriver, loMicros, seq, p + 1, lim, position);
             long intervalLo = resolveDurationLo(loMicros, endExclusive);
             long intervalHi = resolveDurationHi(loMicros, endExclusive);
@@ -4722,6 +4763,21 @@ public final class IntervalUtils {
         }
     }
 
+    /**
+     * Adds the period [lo, hi] to a list of intervals unless it holds no timestamp, that is lo &gt; hi, such as a
+     * zero duration or text finer than the column between two of its values. Every path that turns a tick
+     * expression into intervals adds its periods here, so no list holds an empty period.
+     *
+     * @return whether the period was added
+     */
+    static boolean addPeriod(LongList intervals, long lo, long hi) {
+        if (lo > hi) {
+            return false;
+        }
+        intervals.add(lo, hi);
+        return true;
+    }
+
     static void replaceHiLoInterval(long lo, long hi, short operation, LongList out) {
         replaceHiLoInterval(lo, hi, 0, (char) 0, 1, operation, out);
     }
@@ -4735,6 +4791,26 @@ public final class IntervalUtils {
 
     static long resolveDurationLo(long anchor, long endExclusive) {
         return endExclusive >= anchor ? anchor : endExclusive;
+    }
+
+    /**
+     * The last value of the period that timestamp text names, from the last value of the period the parsers give.
+     * The parsers cut text finer than the column down to the column value before it, and compute the period from
+     * there. Text without a duration names its own period, which they end at the last value at or before the text.
+     * With a duration the period lies between the text and the text plus the duration, without its later end. Both
+     * ends lie between two column values, so the period holds the value after the end of the truncated one too.
+     */
+    static long textPeriodHi(long hi, boolean isExactText, boolean hasDuration) {
+        return isExactText || !hasDuration ? hi : hi + 1;
+    }
+
+    /**
+     * The first value of the period that timestamp text names, from the first value of the period the parsers
+     * give. The parsers cut text finer than the column down to the column value before it; the period starts at
+     * the next value, the first one at or after the text, as {@code >=} reads it.
+     */
+    static long textPeriodLo(long lo, boolean isExactText) {
+        return isExactText ? lo : lo + 1;
     }
 
     /**

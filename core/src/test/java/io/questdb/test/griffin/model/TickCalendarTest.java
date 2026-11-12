@@ -32,6 +32,7 @@ import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.TickCalendarServiceFactory;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.model.CompiledTickExpression;
 import io.questdb.griffin.model.IntervalOperation;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.LongList;
@@ -493,6 +494,20 @@ public class TickCalendarTest {
                 "[]",
                 "2025-01-24T21:00:00.000001#XNYS"
         );
+    }
+
+    @Test
+    public void testExchangeFilterTimeOverrideFinerThanColumn() throws SqlException {
+        // In the compiled expression the duration extends the exchange sessions within the time override. A time
+        // finer than the column names an empty period, which the filter and the duration keep empty.
+        final TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP);
+        final long now = driver.parseFloorLiteral("2025-01-24T12:00:00.000000Z");
+        final String expression = "$todayT14:30:00.0000005#XNYS;1h";
+        try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(driver, configuration, expression, 0, expression.length(), 0)) {
+            final LongList out = new LongList();
+            compiled.evaluate(out, now);
+            Assert.assertEquals("[]", intervalToString(driver, out));
+        }
     }
 
     @Test
