@@ -366,7 +366,8 @@ public class SqlOptimiser implements Mutable {
     // True once optimiseOrderBy() has dropped the ORDER BY of a model outside the sub-queries of expressions, see
     // isOrderByCleared().
     private boolean isOrderByCleared;
-    // True while optimiseOrderBy() keeps the ORDER BY of every model, see setOrderByKept().
+    // True while optimiseOrderBy() keeps the ORDER BY of every model outside the sub-queries of expressions, see
+    // setOrderByKept().
     private boolean isOrderByKept;
     // True while the columns of a query propagate in kept-whole mode, see setSubQueryKeptWhole(), and, set by
     // the caller, until optimise() starts.
@@ -8642,14 +8643,19 @@ public class SqlOptimiser implements Mutable {
                         final boolean outerViewText = optimisingViewText;
                         optimisingViewText = viewText;
                         // An ORDER BY the sub-query drops changes no read of a view, which reads the tables of the
-                        // sub-query as the reader, see isOrderByCleared().
+                        // sub-query as the reader, see isOrderByCleared(). A read compiles the sub-query as a query of
+                        // its own, wherever it places the view, so the sub-query keeps only the ORDER BY it needs,
+                        // see setOrderByKept().
                         final boolean wasOrderByCleared = isOrderByCleared;
+                        final boolean wasOrderByKept = isOrderByKept;
+                        isOrderByKept = false;
                         final IQueryModel optimised;
                         try {
                             optimised = optimise(node.queryModel, executionContext, sqlParserCallback);
                         } finally {
                             optimisingViewText = outerViewText;
                             isOrderByCleared = wasOrderByCleared;
+                            isOrderByKept = wasOrderByKept;
                         }
                         if (optimised != node.queryModel) {
                             node.queryModel = optimised;
@@ -17496,10 +17502,11 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
-     * Makes the next optimise() keep the ORDER BY of every model, or not, and forgets whether an earlier one dropped
-     * one, see {@link #isOrderByCleared()}. A query that places a SELECT on a side of a join other than the first
-     * gets such a plan of the SELECT: only the first side has its order optimised, see
-     * pushDownOrderByAdviceToJoinModels().
+     * Makes the next optimise() keep the ORDER BY of every model outside the sub-queries of expressions, or not, and
+     * forgets whether an earlier one dropped one, see {@link #isOrderByCleared()}. A query that places a SELECT on a
+     * side of a join other than the first gets such a plan of the SELECT: only the first side has its order optimised,
+     * see pushDownOrderByAdviceToJoinModels(). It compiles a sub-query of an expression as a query of its own, which
+     * keeps only the ORDER BY the sub-query needs.
      */
     void setOrderByKept(boolean isOrderByKept) {
         this.isOrderByKept = isOrderByKept;
