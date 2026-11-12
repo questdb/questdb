@@ -33,12 +33,14 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairMarker;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
+import io.questdb.cairo.lv.LiveViewCompiledPlan;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewRefreshStats;
 import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.std.Files;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.microtime.Micros;
@@ -2010,6 +2012,250 @@ public class LiveViewBaseReplaceRangeTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testAnEndOfTableRepairThatRestoresARootBelowTheRowsItsReplayFoldedClearsTheirState() throws Exception {
+        // The new frontier 00:56 holds a row of a and the first row of c, which the replay folded
+        // when it warmed from one minute below R = 00:57, and a root sits at the frame floor 00:55.
+        // The rebuild restores that root and folds the base rows of (00:55, 00:56] onto it, so it
+        // drops what the replay folded first: the sealed state holds c's row at 00:56 once, and a
+        // row of c at the frontier after the restart reads two rows of c, not three.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        assertMemoryLeak(() -> {
+            createHeadMissDepartureView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                commitTheDayTheBaseLoses(job);
+                commitAndRefresh(job, minuteRowsOfA(0, 30, "1.0"));
+                setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+                commitAndRefresh(job, minuteRowsOfA(31, 55, "1.0"));
+                commitAndRefresh(
+                        job,
+                        "('2026-01-01T00:55:30.000000Z', 'a', -1.0), ('2026-01-01T00:56:00.000000Z', 'a', 1.0), "
+                                + "('2026-01-01T00:56:00.000000Z', 'c', 1.0), " + minuteRowsOfA(57, 59, "1.0")
+                );
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                assertCheckpointLadder(instance, false, """
+                        2025-12-31T23:55:00.000000Z -> 1
+                        2026-01-01T00:55:00.000000Z -> 57
+                        """);
+                final LogCapture capture = new LogCapture();
+                capture.start();
+                try {
+                    assertZeroRowDepartureSealsTheFrontier(
+                            job,
+                            () -> replaceBaseRange(ts("2026-01-01T00:57:00.000000Z"), ts("2026-01-01T01:00:00.000000Z"), Double.NaN),
+                            "2026-01-01T00:56:00.000000Z",
+                            FRONTIER_STATE_RESTORE,
+                            0,
+                            // The replay reads the two rows at 00:56; the fold 00:55:30 and those two.
+                            5,
+                            2,
+                            false,
+                            """
+                                    2025-12-31T23:55:00.000000Z -> 1
+                                    2026-01-01T00:55:00.000000Z -> 57
+                                    2026-01-01T00:56:00.000000Z -> 59
+                                    """
+                    );
+                    capture.drain();
+                    capture.assertLogged("live view O3 head miss derived the frontier state [view=lv, frontier=2026-01-01T00:56:00.000000Z, "
+                            + "floor=2026-01-01T00:55:00.000000Z, openBelow=false, route=restore, rootMaxTs=2026-01-01T00:55:00.000000Z, rows=3]");
+                } finally {
+                    capture.stop();
+                }
+            }
+            final String rows = headMissDepartureRows(true, 55) + """
+                    2026-01-01T00:56:00.000000Z\ta\t1.0\t2.0
+                    2026-01-01T00:56:00.000000Z\tc\t1.0\t1.0
+                    """;
+            assertDepartedViewRows(rows);
+            // a's frame holds 00:55, 00:56 and its new row; c's its row at 00:56 and its new row.
+            assertTieAtTheFrontierFoldsOntoTheRestoredRoot(
+                    rows,
+                    "('2026-01-01T00:56:00.000000Z', 'a', 1.0), ('2026-01-01T00:56:00.000000Z', 'c', 1.0)",
+                    rows + """
+                            2026-01-01T00:56:00.000000Z\ta\t1.0\t3.0
+                            2026-01-01T00:56:00.000000Z\tc\t1.0\t2.0
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testAnEndOfTableRepairThatDeletesTheNewestRangeWarmsAcrossAParquetPartition() throws Exception {
+        // The partition-crossing warm-up with the base's 2026-01-01 partition converted to parquet
+        // ahead of the departure: the replay reads nothing, and the fold opens the base scan again
+        // over the parquet day for the frame floor's row 01-01T23:59:50, then over 01-02.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        assertMemoryLeak(() -> {
+            createHeadMissDepartureView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                commitTheFrameAcrossMidnight(job, FRAME_ROOT_NONE);
+                execute("ALTER TABLE base CONVERT PARTITION TO PARQUET LIST '2026-01-01'");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                assertQuery("SELECT name, isParquet FROM table_partitions('base')")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("""
+                                name\tisParquet
+                                2026-01-01\ttrue
+                                2026-01-02\tfalse
+                                """);
+                assertZeroRowDepartureSealsTheFrontier(
+                        job,
+                        () -> departTheRowsAboveTheFrameAcrossMidnight(),
+                        "2026-01-02T00:00:50.000000Z",
+                        FRONTIER_STATE_WARM_UP,
+                        0,
+                        6,
+                        2,
+                        false,
+                        """
+                                2025-12-31T23:55:00.000000Z -> 1
+                                2026-01-02T00:00:50.000000Z -> 35
+                                """
+                );
+            }
+            assertTheFrameAcrossMidnightRestores();
+        });
+    }
+
+    @Test
+    public void testAnEndOfTableRepairCancelledInsideItsFrontierStateFoldMovesNothing() throws Exception {
+        // The daily anchored departure that warms the frontier's segment, over a view with no
+        // filter, cancelled as the fold starts: the fold's breaker check unwinds the repair ahead
+        // of its commit, so the view's rows, its timeline and the base commit it consumed stay as
+        // the repair found them, and a cancellation leaves the view valid. The restart restores
+        // the untouched timeline, runs the repair again and seals the frontier.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS SELECT ts, sym, x, sum(x) OVER w s FROM base "
+                    + "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')");
+            final String ladder = "2025-12-31T23:55:00.000000Z -> 1\n";
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                commitTheDayTheBaseLoses(job);
+                commitAndRefresh(job, minuteRowsOfA(0, 59, "1.0") + ", " + minuteRowsOfAOnTheSecond(0, 10));
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                assertCheckpointLadder(instance, false, ladder);
+                final LiveViewRefreshStats stats = job.getStatsForTest();
+                final long generationBefore = publishedCheckpointGeneration(instance);
+                final long processedBefore = instance.getLastProcessedSeqTxn();
+                final long faultsBefore = instance.getRefreshFaultCount();
+                final AtomicBoolean isCancelled = new AtomicBoolean();
+                hooks(job).setSimulateHeadMissFrontierStateFoldStart(() -> {
+                    instance.cancelRefresh();
+                    isCancelled.set(true);
+                });
+                final LogCapture capture = new LogCapture();
+                capture.start();
+                try {
+                    replaceBaseRange(ts("2026-01-02T00:00:00.000000Z"), ts("2026-01-02T00:11:00.000000Z"), Double.NaN);
+                    drainWalQueue();
+                    // A pass at a time, up to the turn the cancellation ends: every later turn of a
+                    // cancelled view trips the breaker again.
+                    for (int pass = 0; pass < REFRESH_QUIESCENCE_PASSES && !isCancelled.get(); pass++) {
+                        setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                        job.processNotificationsForTest();
+                    }
+                    drainWalQueue();
+                    capture.drain();
+                    capture.assertLogged("live view refresh cancelled [view=lv, dropped=false, invalid=false]");
+                } finally {
+                    capture.stop();
+                }
+                Assert.assertTrue("the repair reaches its fold", isCancelled.get());
+                Assert.assertEquals("the cancelled turn counts as a fault", faultsBefore + 1, instance.getRefreshFaultCount());
+                Assert.assertFalse("a cancellation leaves the view valid", instance.isInvalid());
+                Assert.assertEquals(0, stats.get(LiveViewRefreshStats.HEAD_MISS_FRONTIER_STATE_WARM_UP_COUNT));
+                Assert.assertEquals(0, stats.get(LiveViewRefreshStats.HEAD_MISS_FRONTIER_STATE_RESTORE_COUNT));
+                Assert.assertEquals(0, stats.get(LiveViewRefreshStats.HEAD_MISS_ZERO_ROW_FRONTIER_SEAL_COUNT));
+                Assert.assertEquals("nothing publishes", generationBefore, publishedCheckpointGeneration(instance));
+                assertCheckpointLadder(instance, false, ladder);
+                assertNoRepairMarker(instance);
+                Assert.assertEquals("the departure stays unconsumed", processedBefore, instance.getLastProcessedSeqTxn());
+            }
+            // 2025-12-31T23:55, the hour of 01-01 and the eleven minutes of 01-02 the departure deletes.
+            assertQuery("SELECT count() FROM lv")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n72\n");
+            restartLiveViewsAndRecover();
+            assertRestoredFromTimeline("lv");
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            assertCheckpointLadder(instance, false, """
+                    2025-12-31T23:55:00.000000Z -> 1
+                    2026-01-01T00:59:00.000000Z -> 61
+                    """);
+            assertNoRefreshFaults("lv");
+            assertQuery("SELECT count() FROM lv")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n61\n");
+            assertTheDailyAnchoredFrontierRestores();
+        });
+    }
+
+    @Test
+    public void testAnEndOfTableRepairOfAWindowOverAComputedInputWarmsTheFrontierState() throws Exception {
+        // The item's departure over a view whose window sums x2 = x * 2, a column the plan computes
+        // in a projection under the window: the fold that warms the frame of the new frontier
+        // 00:56 runs the base rows through that projection, as the replay does, so a row at the
+        // frontier after the restart sums 00:55, 00:56 and itself, doubled.
+        final String viewSql = "SELECT ts, sym, x, x * 2 x2, sum(x2) OVER (PARTITION BY sym ORDER BY ts "
+                + "RANGE BETWEEN '1' MINUTE PRECEDING AND CURRENT ROW) s FROM base WHERE x > 0";
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " + viewSql);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                commitTwoBatchesOverTheLostDay(job, 59);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                final LiveViewCompiledPlan plan = instance.getCompiledPlan();
+                Assert.assertNotNull(plan);
+                Assert.assertTrue(
+                        "the window reads its input through a projection",
+                        plan.getWindowFactory().getBaseFactory() instanceof VirtualRecordCursorFactory
+                );
+                assertZeroRowDepartureSealsTheFrontier(
+                        job,
+                        () -> replaceBaseRange(ts("2026-01-01T00:57:00.000000Z"), ts("2026-01-01T01:00:00.000000Z"), Double.NaN),
+                        "2026-01-01T00:56:00.000000Z",
+                        FRONTIER_STATE_WARM_UP,
+                        1,
+                        3,
+                        3,
+                        false,
+                        """
+                                2025-12-31T23:55:00.000000Z -> 1
+                                2026-01-01T00:56:00.000000Z -> 58
+                                """
+                );
+            }
+            final String rows = headMissDepartureRows(true, 56)
+                    .replace("\t1.0\t2.0\n", "\t1.0\t4.0\n")
+                    .replace("\t1.0\t1.0\n", "\t1.0\t2.0\n")
+                    .replace("\t0.5\t0.5\n", "\t0.5\t1.0\n");
+            assertDepartedViewRows(rows);
+            assertTieAtTheFrontierFoldsOntoTheRestoredRoot(
+                    rows,
+                    "('2026-01-01T00:56:00.000000Z', 'a', 1.0)",
+                    rows + "2026-01-01T00:56:00.000000Z\ta\t1.0\t6.0\n"
+            );
+        });
+    }
+
+    @Test
     public void testAnEndOfTableRepairInsideAnAnchorSegmentSealsWithoutAFold() throws Exception {
         // A daily anchored sum whose departed rows and new frontier share 01-02's segment: the
         // replay warmed from the segment's start, which is the frontier's own dependency floor, so
@@ -2998,6 +3244,212 @@ public class LiveViewBaseReplaceRangeTest extends AbstractLiveViewTest {
                 assertTheDepartureRetiredTheTimeline(instance, resetsBefore);
             }
             assertRebuiltOnRestartAsARecomputeDoes(headMissDepartureRows(true, 56));
+        });
+    }
+
+    @Test
+    public void testAnEndOfTableRepairWithoutASpliceOverARootAtTheFrontierTruncatesTheRootAboveItAndPublishesItsHead() throws Exception {
+        // The chain declined, a root at the row that becomes the frontier, 00:40, and one at 00:45
+        // whose row an earlier repair deleted. The departure of the rows from 00:57 prices as a
+        // head miss: a resume from the root at 00:45 reads the rows the filter drops from 00:46
+        // to 00:55, the rebuild warming from 00:56 reads none. It emits nothing and derives
+        // nothing - the root at 00:40 is the state at the frontier - and its truncate at R keeps
+        // the root at 00:45, which holds no row of the view. So after the commit a truncate one
+        // tick above the frontier drops it, and a watermark publishes the root at 00:40 at the
+        // repair commit. Every restart restores from it.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        assertMemoryLeak(() -> {
+            createHeadMissDepartureView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                commitARootWhoseRowLeftAboveARootAt0040(job);
+                setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                final LiveViewRefreshStats stats = job.getStatsForTest();
+                final long generationBefore = publishedCheckpointGeneration(instance);
+                final long headMissRepairsBefore = countHeadMissRepairs(job);
+                final long resetsBefore = instance.getCheckpointTimelineResets();
+                final long scanRowsBefore = instance.getO3ReplayScanRows();
+                final LogCapture capture = new LogCapture();
+                capture.start();
+                try {
+                    replaceBaseRange(ts("2026-01-01T00:57:00.000000Z"), ts("2026-01-01T01:00:00.000000Z"), Double.NaN);
+                    drainWalQueue();
+                    driveRefreshToQuiescence(job);
+                    capture.drain();
+                    capture.assertLogged("live view O3 head miss emitted no row under a root at or above its frontier, truncating at the frontier [view=lv, "
+                            + "frontier=2026-01-01T00:40:00.000000Z, rootMaxTs=2026-01-01T00:45:00.000000Z, truncateFloor=2026-01-01T00:40:00.000001Z]");
+                } finally {
+                    capture.stop();
+                }
+                Assert.assertEquals("the head-miss rebuild repairs the departure", headMissRepairsBefore + 1, countHeadMissRepairs(job));
+                Assert.assertEquals(1, stats.get(LiveViewRefreshStats.HEAD_MISS_TRUNCATE_ZERO_ROW_KEEP_COUNT));
+                Assert.assertEquals(0, stats.get(LiveViewRefreshStats.HEAD_MISS_ZERO_ROW_FRONTIER_SEAL_COUNT));
+                Assert.assertEquals(0, stats.get(LiveViewRefreshStats.HEAD_MISS_FRONTIER_STATE_RESTORE_COUNT));
+                Assert.assertEquals(0, stats.get(LiveViewRefreshStats.HEAD_MISS_FRONTIER_STATE_WARM_UP_COUNT));
+                assertNoHeadMissSpliceFrontierStat(job);
+                Assert.assertEquals("the replay reads nothing at or above 00:56, and nothing is derived", 0, instance.getO3ReplayScanRows() - scanRowsBefore);
+                Assert.assertEquals("the truncate at R, the one above the frontier and the watermark", generationBefore + 3, publishedCheckpointGeneration(instance));
+                Assert.assertEquals(resetsBefore, instance.getCheckpointTimelineResets());
+                assertCheckpointLadder(instance, false, """
+                        2025-12-31T23:55:00.000000Z -> 1
+                        2026-01-01T00:40:00.000000Z -> 42
+                        """);
+                assertNoRepairMarker(instance);
+                Assert.assertEquals(ts("2026-01-01T00:40:00.000000Z"), instance.getHeadCheckpointMaxTs());
+                Assert.assertEquals(
+                        engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("base")),
+                        instance.getHeadCheckpointBaseSeqTxn()
+                );
+                Assert.assertEquals(Numbers.LONG_NULL, instance.getHeadCheckpointRootId());
+                assertNoRefreshFaults("lv");
+            }
+            final String rows = headMissDepartureRows(true, 40);
+            assertDepartedViewRows(rows);
+            assertMatchesRecompute(HEAD_MISS_DEPARTURE_VIEW_SQL);
+            // The frame of a row at the frontier holds 00:39, 00:40 and itself.
+            assertTieAtTheFrontierFoldsOntoTheRestoredRoot(
+                    rows,
+                    "('2026-01-01T00:40:00.000000Z', 'a', 1.0)",
+                    rows + "2026-01-01T00:40:00.000000Z\ta\t1.0\t3.0\n"
+            );
+        });
+    }
+
+    @Test
+    public void testAnEndOfTableRepairWithoutASpliceWhoseTruncateAboveARootAtTheFrontierFailsRetiresTheTimeline() throws Exception {
+        // The departure above, with the truncate one tick above the frontier failing to write its
+        // repair marker: it retires the timeline, so no prefix stands for the watermark to
+        // publish, and the repair keeps nothing. Over a base that lost nothing the restart
+        // rebuilds what a recompute gives.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        final AtomicInteger markerPublicationsToFail = new AtomicInteger();
+        final AtomicBoolean hasMarkerPublicationFailed = new AtomicBoolean();
+        final TestFilesFacadeImpl ff = new TestFilesFacadeImpl() {
+            @Override
+            public int rename(LPSZ from, LPSZ to) {
+                if (Utf8s.endsWithAscii(to, Files.SEPARATOR + LiveViewCheckpointLayout.REPAIRING_MARKER_FILE_NAME)
+                        && markerPublicationsToFail.get() > 0
+                        && markerPublicationsToFail.decrementAndGet() == 0) {
+                    hasMarkerPublicationFailed.set(true);
+                    return Files.FILES_RENAME_ERR_OTHER;
+                }
+                return super.rename(from, to);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            createHeadMissDepartureView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                commitARootWhoseRowLeftAboveARootAt0040(job);
+                setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                final long headMissRepairsBefore = countHeadMissRepairs(job);
+                final long resetsBefore = instance.getCheckpointTimelineResets();
+                // Ahead of the commit: the truncate at R writes its marker first, and the truncate
+                // above the frontier its own after the commit.
+                hooks(job).setSimulateHeadMissFrontierStateFoldStart(() -> markerPublicationsToFail.set(2));
+                final LogCapture capture = new LogCapture();
+                capture.start();
+                try {
+                    replaceBaseRange(ts("2026-01-01T00:57:00.000000Z"), ts("2026-01-01T01:00:00.000000Z"), Double.NaN);
+                    drainWalQueue();
+                    driveRefreshToQuiescence(job);
+                    capture.drain();
+                    capture.assertLogged("live view O3 head miss emitted no row under a root at or above its frontier, truncating at the frontier [view=lv, "
+                            + "frontier=2026-01-01T00:40:00.000000Z, rootMaxTs=2026-01-01T00:45:00.000000Z, truncateFloor=2026-01-01T00:40:00.000001Z]");
+                    capture.assertLogged("could not preserve live view checkpoint timeline prefix, retiring [view=lv");
+                } finally {
+                    capture.stop();
+                }
+                Assert.assertTrue("the truncate above the frontier fails its marker", hasMarkerPublicationFailed.get());
+                final LiveViewRefreshStats stats = job.getStatsForTest();
+                Assert.assertEquals("the head-miss rebuild repairs the departure", headMissRepairsBefore + 1, countHeadMissRepairs(job));
+                Assert.assertEquals(0, stats.get(LiveViewRefreshStats.HEAD_MISS_TRUNCATE_ZERO_ROW_KEEP_COUNT));
+                Assert.assertEquals(0, stats.get(LiveViewRefreshStats.HEAD_MISS_ZERO_ROW_FRONTIER_SEAL_COUNT));
+                Assert.assertEquals(0, stats.get(LiveViewRefreshStats.HEAD_MISS_FRONTIER_STATE_RESTORE_COUNT));
+                Assert.assertEquals(0, stats.get(LiveViewRefreshStats.HEAD_MISS_FRONTIER_STATE_WARM_UP_COUNT));
+                assertTheDepartureRetiredTheTimeline(instance, resetsBefore);
+                assertNoRefreshFaults("lv");
+            }
+            assertRebuiltOnRestartAsARecomputeDoes(headMissDepartureRows(true, 40));
+        });
+    }
+
+    @Test
+    public void testACrashBetweenTheFrontierTruncateOfARepairWithoutASpliceAndItsSealRebuildsOnRestart() throws Exception {
+        // The grown-root departure with the chain declined, with the process stopping after the
+        // truncate at the frontier, which runs after the commit, and ahead of the seal: the image
+        // the restart comes back from holds that truncate's marker, which records no seqTxn, under
+        // the generation the truncate published. The restart reads it as live and rebuilds the
+        // view from the applied base, which lost nothing: what a recompute gives.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+        assertMemoryLeak(() -> {
+            createHeadMissDepartureView();
+            final TableToken viewToken;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                commitAndRefresh(job, "('2025-12-31T23:55:00.000000Z', 'a', 0.5)");
+                setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+                commitAndRefresh(job, minuteRowsOfA(0, 56, "1.0"));
+                commitAndRefresh(job, "('2026-01-01T00:56:00.000000Z', 'b', 1.0)");
+                commitAndRefresh(job, minuteRowsOfA(57, 59, "1.0"));
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                viewToken = instance.getLiveViewToken();
+                final long generationBefore = publishedCheckpointGeneration(instance);
+                final AtomicBoolean hasCrashed = new AtomicBoolean();
+                try (Path checkpoints = checkpointsDir(instance).slash(); Path crashImage = frontierSealCrashImageDir()) {
+                    hooks(job).setSimulateHeadMissHeadSealStart(() -> {
+                        TestUtils.copyDirectory(checkpoints, crashImage, configuration.getMkDirMode());
+                        hasCrashed.set(true);
+                    });
+                    replaceBaseRange(ts("2026-01-01T00:57:00.000000Z"), ts("2026-01-01T01:00:00.000000Z"), Double.NaN);
+                    drainWalQueue();
+                    driveRefreshToQuiescence(job);
+                }
+                Assert.assertTrue("the repair reaches its seal", hasCrashed.get());
+                Assert.assertEquals("the seal lands past the image", 1, job.getStatsForTest().get(LiveViewRefreshStats.HEAD_MISS_ZERO_ROW_FRONTIER_SEAL_COUNT));
+                try (Path crashImage = frontierSealCrashImageDir()) {
+                    Assert.assertTrue(LiveViewCheckpointRepairMarker.exists(configuration.getFilesFacade(), crashImage));
+                    // Written after the commit, over the generation the truncate at R published.
+                    Assert.assertEquals(Numbers.LONG_NULL, LiveViewCheckpointRepairMarker.readLvSeqTxn(configuration, crashImage));
+                    Assert.assertEquals(generationBefore + 1, LiveViewCheckpointRepairMarker.readBaseGeneration(configuration, crashImage));
+                }
+            }
+            final String rows = headMissDepartureRows(true, 56) + "2026-01-01T00:56:00.000000Z\tb\t1.0\t1.0\n";
+            assertDepartedViewRows(rows);
+            engine.getLiveViewRegistry().clear();
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            engine.releaseInactive();
+            try (
+                    Path checkpoints = new Path().of(configuration.getDbRoot()).concat(viewToken).concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME).slash();
+                    Path crashImage = frontierSealCrashImageDir()
+            ) {
+                Assert.assertTrue(configuration.getFilesFacade().rmdir(checkpoints));
+                TestUtils.copyDirectory(crashImage, checkpoints, configuration.getMkDirMode());
+                Assert.assertTrue(configuration.getFilesFacade().rmdir(crashImage));
+            }
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            try {
+                restartLiveViewsAndRecover();
+                capture.drain();
+                capture.assertLogged("live view restart rebuilding from applied base [view=lv, cause=prefix preservation repair marker present");
+            } finally {
+                capture.stop();
+            }
+            assertRebuiltFromAppliedBase("lv");
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            Assert.assertFalse(instance.isCheckpointRecoveryBlocked());
+            assertDepartedViewRows(rows);
+            assertMatchesRecompute(HEAD_MISS_DEPARTURE_VIEW_SQL);
+            assertNoRefreshFaults("lv");
         });
     }
 
@@ -4333,6 +4785,10 @@ public class LiveViewBaseReplaceRangeTest extends AbstractLiveViewTest {
         return new Path().of(configuration.getDbRoot()).concat(instance.getLiveViewToken()).concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
     }
 
+    private static Path frontierSealCrashImageDir() {
+        return new Path().of(configuration.getDbRoot()).concat("frontier_seal_crash_image").slash();
+    }
+
     private void assertTimelineBase(long normalizedBaseSeqTxn) throws Exception {
         assertQuery("SELECT checkpoint_timeline_normalized_base_seqtxn FROM live_views() WHERE view_name = 'lv'")
                 .noLeakCheck()
@@ -4433,6 +4889,40 @@ public class LiveViewBaseReplaceRangeTest extends AbstractLiveViewTest {
                 2025-12-31T23:55:00.000000Z -> 1
                 2026-01-01T00:56:00.000000Z -> 58
                 """);
+    }
+
+    /**
+     * Over a base that lost nothing, a root at 00:40 and one at the row 00:45, then ten rows the
+     * view's filter drops from 00:46 to 00:55 and rows of the view from 00:57 to 00:59, which no
+     * root seals. A REPLACE_RANGE then deletes the row at 00:45. Its localized rebuild ends below
+     * the rows of the view above it, re-versions the root at 00:45, which now holds no row of its
+     * own and counts the 42 rows at or below 00:40, and seals its kept runtime at 00:59.
+     */
+    private void commitARootWhoseRowLeftAboveARootAt0040(LiveViewRefreshJob job) throws Exception {
+        commitAndRefresh(job, "('2025-12-31T23:55:00.000000Z', 'a', 0.5)");
+        commitAndRefresh(job, minuteRowsOfA(0, 30, "1.0"));
+        setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+        commitAndRefresh(job, minuteRowsOfA(31, 40, "1.0"));
+        setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+        commitAndRefresh(job, "('2026-01-01T00:45:00.000000Z', 'a', 1.0)");
+        commitAndRefresh(job, minuteRowsOfA(46, 55, "-1.0") + ", " + minuteRowsOfA(57, 59, "1.0"));
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        Assert.assertNotNull(instance);
+        assertCheckpointLadder(instance, false, """
+                2025-12-31T23:55:00.000000Z -> 1
+                2026-01-01T00:40:00.000000Z -> 42
+                2026-01-01T00:45:00.000000Z -> 43
+                """);
+        replaceBaseRange(ts("2026-01-01T00:45:00.000000Z"), ts("2026-01-01T00:45:00.000001Z"), Double.NaN);
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+        assertCheckpointLadder(instance, false, """
+                2025-12-31T23:55:00.000000Z -> 1
+                2026-01-01T00:40:00.000000Z -> 42
+                2026-01-01T00:45:00.000000Z -> 42
+                2026-01-01T00:59:00.000000Z -> 45
+                """);
+        assertNoRefreshFaults("lv");
     }
 
     // The one row of a day the base then drops, which the view walks past and keeps: a rebuild

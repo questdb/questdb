@@ -11579,6 +11579,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 }
             } catch (Throwable t) {
                 if (t instanceof CairoException ce && ce.isCancellation()) {
+                    // Nothing the lookup runs consults the circuit breaker, the one source of a
+                    // cancellation on this path, so none reaches here.
+                    assert false : "the frontier root lookup was cancelled";
                     throw ce;
                 }
                 LOG.error().$("could not read the live view checkpoint root below the frontier, deriving its state from the base [view=")
