@@ -279,7 +279,7 @@ stages:
                     break
                   fi
                   if [ $rc -ne 0 ]; then
-                    echo "##vso[task.logissue type=error]soak iteration $iter ($what) FAILED - stopping. Replay the seed printed above with -Dquestdb.fuzz.seed=<s0>,<s1>"
+                    echo "##vso[task.logissue type=error]soak iteration $iter ($what) FAILED - stopping. Replay the seed printed above with -Dquestdb.fuzz.seed=<s0>,<s1>,<dedup>, as the failure message names it"
                     break
                   fi
                 done
