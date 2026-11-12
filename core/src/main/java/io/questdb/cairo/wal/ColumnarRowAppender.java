@@ -147,7 +147,8 @@ public interface ColumnarRowAppender {
     void putBooleanToStringColumn(int columnIndex, QwpBooleanColumnCursor cursor, int rowCount);
 
     /**
-     * Writes a BOOLEAN column cursor to a numeric column (BYTE, SHORT, INT, LONG, FLOAT, DOUBLE).
+     * Writes a BOOLEAN column cursor to a numeric column (BYTE, SHORT, INT, LONG, FLOAT, DOUBLE),
+     * or to a DATE or TIMESTAMP column as an epoch offset in the column's unit.
      * <p>
      * Converts true to 1, false to 0, null to the type's null sentinel.
      *
@@ -157,6 +158,15 @@ public interface ColumnarRowAppender {
      * @param columnType  the target QuestDB column type
      */
     void putBooleanToNumericColumn(int columnIndex, QwpBooleanColumnCursor cursor, int rowCount, int columnType);
+
+    /**
+     * Writes a BOOLEAN column cursor to a SYMBOL column as {@code true} or {@code false}.
+     *
+     * @param columnIndex the column index in the table
+     * @param cursor      the boolean column cursor
+     * @param rowCount    total number of rows
+     */
+    void putBooleanToSymbolColumn(int columnIndex, QwpBooleanColumnCursor cursor, int rowCount);
 
     /**
      * Writes a BOOLEAN column cursor to a VARCHAR column.
@@ -179,6 +189,17 @@ public interface ColumnarRowAppender {
      * @param rowCount    total number of rows
      */
     void putCharColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount) throws QwpParseException;
+
+    /**
+     * Writes a DATE column cursor (milliseconds) to a TIMESTAMP or TIMESTAMP_NS column, the
+     * conversion ALTER COLUMN TYPE applies. Rejects a value outside the target's range.
+     *
+     * @param columnIndex the column index in the table
+     * @param cursor      the fixed-width cursor of a TYPE_DATE column
+     * @param rowCount    total number of rows
+     * @param columnType  the target timestamp column type
+     */
+    void putDateToTimestampColumn(int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount, int columnType);
 
     /**
      * Writes a DECIMAL128 column with optional scale conversion.
@@ -221,6 +242,17 @@ public interface ColumnarRowAppender {
      */
     void putDecimal64Column(int columnIndex, QwpDecimalColumnCursor cursor,
                             int rowCount, int columnType) throws QwpParseException;
+
+    /**
+     * Writes a wire DECIMAL64/128/256 column to a FLOAT or DOUBLE column, rounded to the nearest
+     * value as ALTER COLUMN TYPE rounds it. Rejects a value outside the FLOAT range.
+     *
+     * @param columnIndex the column index in the table
+     * @param cursor      the decimal column cursor
+     * @param rowCount    total number of rows
+     * @param columnType  the target column type, FLOAT or DOUBLE
+     */
+    void putDecimalToFloatColumn(int columnIndex, QwpDecimalColumnCursor cursor, int rowCount, int columnType);
 
     /**
      * Writes a wire DECIMAL64/128/256 column to a DECIMAL8, DECIMAL16, or DECIMAL32 column.
@@ -294,6 +326,27 @@ public interface ColumnarRowAppender {
      * @param ilpType     the QWP wire type code
      */
     void putFixedOtherToVarcharColumn(int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount, byte ilpType);
+
+    /**
+     * Writes a DATE, IPv4, UUID or CHAR column cursor to a SYMBOL column, formatted as
+     * {@link #putFixedOtherToVarcharColumn} formats it. A CHAR of 0 is NULL.
+     *
+     * @param columnIndex the column index in the table
+     * @param cursor      the fixed-width column cursor
+     * @param rowCount    total number of rows
+     * @param ilpType     the QWP wire type
+     */
+    void putFixedOtherToSymbolColumn(int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount, byte ilpType);
+
+    /**
+     * Writes an integer, DATE or floating-point column cursor to a BOOLEAN column: zero, NaN and
+     * NULL are false, any other value is true.
+     *
+     * @param columnIndex the column index in the table
+     * @param cursor      the fixed-width column cursor
+     * @param rowCount    total number of rows
+     */
+    void putFixedToBooleanColumn(int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount);
 
     /**
      * Writes a fixed-width integer column to a DECIMAL128 column with scale conversion.
@@ -571,6 +624,16 @@ public interface ColumnarRowAppender {
     void putStringToLong256Column(int columnIndex, QwpStringColumnCursor cursor, int rowCount) throws QwpParseException;
 
     /**
+     * Parses a VARCHAR column cursor as dotted IPv4 addresses. An empty string, {@code null}
+     * and 0.0.0.0 are NULL; a value that does not parse rejects the batch.
+     *
+     * @param columnIndex the column index in the table
+     * @param cursor      the string column cursor
+     * @param rowCount    total number of rows
+     */
+    void putStringToIPv4Column(int columnIndex, QwpStringColumnCursor cursor, int rowCount) throws QwpParseException;
+
+    /**
      * Writes a STRING column cursor to a numeric column (BYTE, SHORT, INT, LONG, FLOAT, DOUBLE, DATE).
      * <p>
      * Parses string values using the appropriate numeric parser for the target type.
@@ -677,6 +740,18 @@ public interface ColumnarRowAppender {
     void putSymbolToVarcharColumn(int columnIndex, QwpSymbolColumnCursor cursor, int rowCount);
 
     /**
+     * Parses a SYMBOL column cursor into a BOOLEAN, BYTE, SHORT, INT, LONG, FLOAT, DOUBLE, DATE,
+     * TIMESTAMP, TIMESTAMP_NS, IPv4, UUID or CHAR column, with the grammar the matching
+     * putStringToXxx method applies to a VARCHAR cursor.
+     *
+     * @param columnIndex the column index in the table
+     * @param cursor      the symbol column cursor
+     * @param rowCount    total number of rows
+     * @param columnType  the target QuestDB column type
+     */
+    void putSymbolToParsedColumn(int columnIndex, QwpSymbolColumnCursor cursor, int rowCount, int columnType) throws QwpParseException;
+
+    /**
      * Writes the designated timestamp column.
      * <p>
      * The designated timestamp has special handling: in WAL format, it stores 128-bit
@@ -728,6 +803,20 @@ public interface ColumnarRowAppender {
     ) throws QwpParseException;
 
     /**
+     * Writes a TIMESTAMP or TIMESTAMP_NS column cursor to a BOOLEAN, BYTE, SHORT, INT, LONG, FLOAT,
+     * DOUBLE or DATE column, the conversions ALTER COLUMN TYPE applies: a DATE receives the
+     * milliseconds, truncated toward zero, and the other types the epoch offset in the wire's
+     * unit. Rejects a value outside the target's range.
+     *
+     * @param columnIndex the column index in the table
+     * @param cursor      the timestamp column cursor
+     * @param rowCount    total number of rows
+     * @param ilpType     the QWP wire type, TYPE_TIMESTAMP or TYPE_TIMESTAMP_NANOS
+     * @param columnType  the target QuestDB column type
+     */
+    void putTimestampToFixedColumn(int columnIndex, QwpTimestampColumnCursor cursor, int rowCount, byte ilpType, int columnType);
+
+    /**
      * Writes a TIMESTAMP column cursor to a STRING column.
      *
      * @param columnIndex the column index in the table
@@ -736,6 +825,17 @@ public interface ColumnarRowAppender {
      * @param ilpType     the QWP wire type (for precision: micros vs nanos)
      */
     void putTimestampToStringColumn(int columnIndex, QwpTimestampColumnCursor cursor, int rowCount, byte ilpType);
+
+    /**
+     * Writes a TIMESTAMP or TIMESTAMP_NS column cursor to a SYMBOL column at the wire's precision,
+     * as ALTER COLUMN TYPE formats it.
+     *
+     * @param columnIndex the column index in the table
+     * @param cursor      the timestamp column cursor
+     * @param rowCount    total number of rows
+     * @param ilpType     the QWP wire type, TYPE_TIMESTAMP or TYPE_TIMESTAMP_NANOS
+     */
+    void putTimestampToSymbolColumn(int columnIndex, QwpTimestampColumnCursor cursor, int rowCount, byte ilpType);
 
     /**
      * Writes a TIMESTAMP column cursor to a VARCHAR column.

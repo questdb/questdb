@@ -1275,9 +1275,10 @@ public final class Numbers {
         // removes any leading dots
         if (notDigit(sign)) {
             if (sign == '.') {
+                // Bounded: a value of only dots must not read past its end.
                 do {
                     lo++;
-                } while (sequence.charAt(lo) == '.');
+                } while (lo < lim && sequence.charAt(lo) == '.');
             } else {
                 throw NumericException.instance().put("invalid IPv4 address: ").put(sequence);
             }
