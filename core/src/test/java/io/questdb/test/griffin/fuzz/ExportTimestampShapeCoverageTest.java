@@ -200,7 +200,8 @@ public class ExportTimestampShapeCoverageTest extends AbstractCairoTest {
                         switch (ParquetExportMode.determineExportMode(factory, false, sqlExecutionContext)) {
                             case CURSOR_BASED -> cursorBasedCount++;
                             case TEMP_TABLE -> tempTableCount++;
-                            default -> Assert.fail("a plan that reads a retyped column exported its page frames: " + sql);
+                            default ->
+                                    Assert.fail("a plan that reads a retyped column exported its page frames: " + sql);
                         }
                     }
                     if (timestampIndex < 0) {

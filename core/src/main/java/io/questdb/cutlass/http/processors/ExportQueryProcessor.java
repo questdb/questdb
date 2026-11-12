@@ -213,10 +213,11 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         try {
                             if (isParquet) {
                                 switch (state.parquetExportMode) {
-                                    case DIRECT_PAGE_FRAME -> state.pageFrameCursor = state.recordCursorFactory.getPageFrameCursor(
-                                            sqlExecutionContext,
-                                            state.descending ? ORDER_DESC : ORDER_ASC
-                                    );
+                                    case DIRECT_PAGE_FRAME ->
+                                            state.pageFrameCursor = state.recordCursorFactory.getPageFrameCursor(
+                                                    sqlExecutionContext,
+                                                    state.descending ? ORDER_DESC : ORDER_ASC
+                                            );
                                     case PAGE_FRAME_BACKED -> {
                                         // Safe cast: determineExportMode() only returns PAGE_FRAME_BACKED
                                         // when unwrapped instanceof VirtualRecordCursorFactory.

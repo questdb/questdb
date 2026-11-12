@@ -9130,7 +9130,8 @@ public class CopyExportTest extends AbstractCairoTest {
 
     // A query over the retyped table r, the same query over nr, the designated timestamp of the file of its export, and
     // whether the query fixes the order of its rows. The template form replaces %s with r and nr.
-    private record RetypedExportShape(String query, String controlQuery, @Nullable String timestampColumn, boolean isOrdered) {
+    private record RetypedExportShape(String query, String controlQuery, @Nullable String timestampColumn,
+                                      boolean isOrdered) {
         RetypedExportShape(String template, @Nullable String timestampColumn) {
             this(template.replace("%s", "r"), template.replace("%s", "nr"), timestampColumn, true);
         }

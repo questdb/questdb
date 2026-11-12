@@ -692,7 +692,8 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
                     exporter.finishExport();
                     numOfFiles = 1;
                 }
-                case PAGE_FRAME_BACKED, CURSOR_BASED -> processHybridExport(baseFactory, mode, pfc, cursor, exporter, phase);
+                case PAGE_FRAME_BACKED, CURSOR_BASED ->
+                        processHybridExport(baseFactory, mode, pfc, cursor, exporter, phase);
             }
             streamSuccess = true;
         } catch (CopyExportException e) {
