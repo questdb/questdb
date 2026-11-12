@@ -382,6 +382,47 @@ public class BindVariableServiceImplTest {
     }
 
     @Test
+    public void testLong256VarSetToHexStr() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.define(0, ColumnType.LONG256, 0);
+            bindVariableService.setLong256("v");
+            final String digest = "0123456789abcdef".repeat(4);
+            final String prefixedDigest = "0x123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0";
+            final String[][] inputsAndExpected = {
+                    {"0x02", "0x02"},
+                    {"0X02", "0x02"},
+                    {"0x3", "0x03"},
+                    {"02", "0x02"},
+                    {"012", "0x12"},
+                    {digest, "0x" + digest},
+                    {prefixedDigest, prefixedDigest},
+                    {null, ""}
+            };
+            final StringSink sink = new StringSink();
+            for (String[] inputAndExpected : inputsAndExpected) {
+                final String value = inputAndExpected[0];
+                final String expected = inputAndExpected[1];
+                bindVariableService.setStr(0, value);
+                bindVariableService.setStr("v", value);
+                sink.clear();
+                bindVariableService.getFunction(0).getLong256(null, sink);
+                TestUtils.assertEquals(expected, sink);
+                sink.clear();
+                bindVariableService.getFunction(":v").getLong256(null, sink);
+                TestUtils.assertEquals(expected, sink);
+            }
+            for (String value : new String[]{"0x", "0X", "0xg", "1x02", "0x" + "1".repeat(65)}) {
+                try {
+                    bindVariableService.setStr(0, value);
+                    Assert.fail("Accepted invalid LONG256: " + value);
+                } catch (ImplicitCastException expected) {
+                    TestUtils.assertContains(expected.getFlyweightMessage(), "STRING -> LONG256");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testLongIndexedOverride() throws Exception {
         assertMemoryLeak(() -> {
             bindVariableService.setInt(0, 10);

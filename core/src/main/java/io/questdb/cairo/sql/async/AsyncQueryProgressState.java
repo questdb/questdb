@@ -48,6 +48,6 @@ public final class AsyncQueryProgressState {
 
     void signalProgress() {
         version.incrementAndGet();
-        waitQueue.fire();
+        waitQueue.fireAll();
     }
 }
