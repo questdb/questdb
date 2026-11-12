@@ -365,6 +365,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             rowCount = copyOrderedBatchedStrTimestamp(context, writer, cursor, copier, cursorTimestampIndex, batchSize, o3MaxLag, reporter);
         } else if (ColumnType.isVarchar(metadata.getColumnType(cursorTimestampIndex))) {
             rowCount = copyOrderedBatchedVarcharTimestamp(context, writer, cursor, copier, cursorTimestampIndex, batchSize, o3MaxLag, reporter);
+        } else if (ColumnType.isNull(timestampColumnType)) {
+            rowCount = copyOrderedBatchedNullTimestamp(cursor, reporter);
         } else {
             rowCount = copyOrderedBatched0(context, writer, cursor, copier, timestampColumnType, cursorTimestampIndex, batchSize, o3MaxLag, reporter, reportFrequency);
         }
@@ -1033,6 +1035,18 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         reporter.onProgress(CopyDataProgressReporter.Stage.Finish, rowCount);
 
         return rowCount;
+    }
+
+    // A NULL-typed column holds no value, and records that materialize rows, such as map records and
+    // sort chains, keep no bytes for it to read. Every row would get a NULL designated timestamp, which
+    // the writers reject, so the first row fails without reading it.
+    private static long copyOrderedBatchedNullTimestamp(RecordCursor cursor, CopyDataProgressReporter reporter) {
+        reporter.onProgress(CopyDataProgressReporter.Stage.Start, cursor.size());
+        if (cursor.hasNext()) {
+            throw CairoException.nonCritical().put("designated timestamp column cannot be NULL");
+        }
+        reporter.onProgress(CopyDataProgressReporter.Stage.Finish, 0);
+        return 0;
     }
 
     // returns number of copied rows
