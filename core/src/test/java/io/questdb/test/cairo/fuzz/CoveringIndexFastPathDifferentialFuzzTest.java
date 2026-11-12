@@ -194,14 +194,6 @@ public class CoveringIndexFastPathDifferentialFuzzTest extends AbstractFuzzTest 
         // refuses - every one of its commits is a merge-append, and the two replays would be the same
         // run. Tests default to merge-append; ask for master's behaviour.
         setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
-        // assertTablesIdentical() sorts the whole table (ORDER BY ts, sym, value) through
-        // EncodedSort, which charges 32 bytes per row against these two caps combined. The
-        // corpus can retain up to 79 rounds x 8 txns x 4049 rows = ~2.56M rows when truncates
-        // land early or never, or ~82MB of sort entries - the test-default combined cap of
-        // ~22.4MB overflows at ~699k rows. 128MB each (256MB combined) covers the worst case
-        // three times over; the sort commits memory as rows arrive, so typical runs stay small.
-        setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES, 134_217_728);
-        setProperty(PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES, 134_217_728);
 
         final int symbolCardinality = 3 + rnd.nextInt(14); // 3..16
         final List<Op> ops = precomputeStream(rnd, symbolCardinality);

@@ -262,13 +262,16 @@ stages:
                   # as a hard red indistinguishable from a real fuzz failure. A clean cut here is reported
                   # as budget exhaustion instead.
                   remaining=$(( budget - ( $(date +%s) - start ) ))
+                  # Same client profile as the template's test pass, set by detect-local-client.yml:
+                  # "-P local-client" for a -SNAPSHOT client, whose submodule that step clones, and empty
+                  # for a released client, whose submodule is never checked out.
                   timeout --signal=TERM --kill-after=60s "${remaining}s" \
                     mvn -f pom.xml -s "${MAVEN_SETTINGS_FILE:-ci/maven-settings-hetzner.xml}" \
                     --batch-mode --quiet \
                     -Dtest.include="$inc" -Dtest.exclude= \
                     -Dout="$(Build.SourcesDirectory)/ci/qlog.conf" \
                     -DfailIfNoTests=false -Dsurefire.failIfNoSpecifiedTests=false \
-                    -P local-client $(MAVEN_RUN_OPTS) test
+                    $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS) test
                   rc=$?
                   if [ $rc -eq 124 ] || [ $rc -eq 137 ]; then
                     echo "soak iteration $iter ($what) hit the run budget and was stopped cleanly; not a failure"
@@ -276,7 +279,7 @@ stages:
                     break
                   fi
                   if [ $rc -ne 0 ]; then
-                    echo "##vso[task.logissue type=error]soak iteration $iter ($what) FAILED - stopping. Replay the seed printed above with -Dquestdb.fuzz.seed=<s0>,<s1>"
+                    echo "##vso[task.logissue type=error]soak iteration $iter ($what) FAILED - stopping. Replay the seed printed above with -Dquestdb.fuzz.seed=<s0>,<s1>,<dedup>, as the failure message names it"
                     break
                   fi
                 done

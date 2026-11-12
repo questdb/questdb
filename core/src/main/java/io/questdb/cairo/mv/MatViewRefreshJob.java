@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
@@ -1095,24 +1096,22 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 TimestampSampler periodSampler = viewDefinition.getPeriodSampler();
                 if (periodSampler == null) {
                     periodSampler = TimestampSamplerFactory.getInstance(
-                            driver,
+                            MicrosTimestampDriver.INSTANCE,
                             viewDefinition.getPeriodLength(),
                             viewDefinition.getPeriodLengthUnit(),
                             -1
                     );
                     viewDefinition.setPeriodSampler(periodSampler);
                 }
-                periodSampler.setStart(driver.fromMicros(viewDefinition.getTimerStartUs()));
+                periodSampler.setStart(viewDefinition.getTimerStartUs());
 
-                final long nowLocal = viewDefinition.getTimerTzRulesUs() != null
-                        ? now + driver.fromMicros(viewDefinition.getTimerTzRulesUs().getOffset(driver.toMicros(now)))
-                        : now;
-                final long delay = driver.from(viewDefinition.getPeriodDelay(), viewDefinition.getPeriodDelayUnit());
-                // Period hi is exclusive, but maxTs is inclusive, so we align them.
-                final long periodHiLocal = periodSampler.round(nowLocal - delay) - 1;
-                final long periodHi = viewDefinition.getTimerTzRulesUs() != null
-                        ? periodHiLocal - driver.fromMicros(viewDefinition.getTimerTzRulesUs().getOffset(driver.toMicros(periodHiLocal)))
-                        : periodHiLocal;
+                // A period is complete once its delay has passed since its end, as the period timer has it, so the
+                // last complete period ends where the period that holds now - delay starts. Period hi is exclusive,
+                // but maxTs is inclusive, so we align them.
+                final long delayUs = MicrosTimestampDriver.INSTANCE.from(viewDefinition.getPeriodDelay(), viewDefinition.getPeriodDelayUnit());
+                final long periodHi = driver.fromMicros(
+                        MatViewPeriods.periodStart(periodSampler, viewDefinition.getTimerTzRulesUs(), driver.toMicros(now) - delayUs)
+                ) - 1;
 
                 // Remove incomplete periods from both txn intervals and refresh interval.
                 intersectIntervals(refreshIntervals, Long.MIN_VALUE, periodHi);
@@ -1126,17 +1125,33 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     if (periodLo == Numbers.LONG_NULL) {
                         periodLo = baseTableReader.getMinTimestamp();
                     }
-                    if (periodLo < periodHi) {
+                    // [periodLo, periodHi] includes both ends, so it holds a row even when the base table's first
+                    // row lies on periodHi itself.
+                    if (periodLo <= periodHi) {
                         if (refreshIntervals != null) {
                             unionIntervals(refreshIntervals, periodLo, periodHi);
                             minTs = refreshIntervals.getQuick(0);
                             maxTs = refreshIntervals.getQuick(refreshIntervals.size() - 1);
                         } else {
-                            minTs = periodLo;
+                            // When updateRefreshIntervals0() cannot read the WAL transactions, minTs holds the
+                            // base table's first row. Keep it, so that the refresh also covers the rows that
+                            // those transactions wrote before lastPeriodHi.
+                            minTs = Math.min(minTs, periodLo);
                             maxTs = periodHi;
                         }
                         // Bump lastPeriodHi once we're done.
                         // lastPeriodHi is exclusive, but the local periodHi value is inclusive.
+                        refreshContext.periodHi = periodHi + 1;
+                    } else {
+                        // No complete period that the view has not refreshed holds a base row. Record periodHi
+                        // anyway: the refresh that runs once a period completes starts at lastPeriodHi, or at the
+                        // base table's first row when there is none.
+                        // - Starting at the first row would skip a bucket that crosses periodHi when a range
+                        //   replace deletes the bucket's rows in the incomplete period: that moves the first row
+                        //   past them.
+                        // - An ALTER that moves the period end earlier, such as a new TIME ZONE or LENGTH, or a
+                        //   clock step back leaves lastPeriodHi past periodHi. Starting there would skip the rows
+                        //   that this refresh trims between periodHi and lastPeriodHi, so rewind it.
                         refreshContext.periodHi = periodHi + 1;
                     }
                 } else {
