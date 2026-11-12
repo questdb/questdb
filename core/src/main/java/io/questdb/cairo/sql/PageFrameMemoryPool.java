@@ -660,6 +660,26 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         return frameMemory;
     }
 
+    /**
+     * As {@link #navigateTo(int, PageFrameMemoryRecord)}, returning the number of rows the
+     * record can address in the frame: the declared span for an exact frame, otherwise the
+     * decoded row count (see {@link PageFrameMemory#getRowCount()}).
+     */
+    public long navigateToAndCount(int frameIndex, PageFrameMemoryRecord record) {
+        navigateTo(frameIndex, record);
+        if (addressCache.isFrameRowCountExact(frameIndex)) {
+            return addressCache.getFrameSize(frameIndex);
+        }
+        final byte usageBit = record.getLetter() == PageFrameMemoryRecord.RECORD_A_LETTER ? RECORD_A_MASK : RECORD_B_MASK;
+        final DecodedFrameBuffers buffers = getBound(usageBit);
+        if (buffers == null || buffers.frameIndex != frameIndex || buffers.rowCount < 0) {
+            throw CairoException.critical(0)
+                    .put("inexact page frame is not decoded for the record [frameIndex=").put(frameIndex)
+                    .put(']');
+        }
+        return buffers.rowCount;
+    }
+
     public void of(PageFrameAddressCache addressCache) {
         of(addressCache, ParquetDecodeHint.MONOTONIC);
     }
@@ -928,6 +948,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 victim.decodedBytes = 0;
                 victim.decodedRowHi = -1;
                 victim.decodedRowLo = -1;
+                victim.rowCount = -1;
                 victim.slotCount = 0;
                 victim.isRowFiltered = false;
                 lruAppend(victim);
@@ -1625,6 +1646,11 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         if (slice == -1) {
             return false;
         }
+        // Row IDs over an inexact frame address its dense decoded output, not input rows,
+        // so a row filter expressed in input positions cannot select them: decode in full.
+        if (!addressCache.isFrameRowCountExact(frameIndex)) {
+            return false;
+        }
         return isRowFilterEligible(frameIndex, Numbers.decodeHighInt(slice) - Numbers.decodeLowInt(slice));
     }
 
@@ -2132,6 +2158,9 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         // reuse keeps the Rust Vec capacities at this watermark, so the budget
         // accounts it rather than the current chunk's logical size.
         private long retainedBytes;
+        // Exact row count of the decoded frame (PageFrameMemory#getRowCount): the declared
+        // span for an exact frame, otherwise what the decoder reported. -1 until decoded.
+        private long rowCount = -1;
         private int slotCount;
         private long sourceBaseRowHi = -1;
         private long sourceBaseRowLo = Long.MAX_VALUE;
@@ -2139,6 +2168,8 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         private long sourceRowRefsAddress;
         private int sourceRowRefsRowCount;
         private long sourceRowTimestampsAddress;
+        // Whether the decode reported source rows; an empty dense decode has them with no addresses.
+        private boolean sourceRowsKnown;
         private byte usageFlags;
 
         public DecodedFrameBuffers() {
@@ -2202,6 +2233,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             decodedRowHi = -1;
             decodedRowLo = -1;
             retainedBytes = 0;
+            rowCount = -1;
             isRowFiltered = false;
             resourceReleaser = null;
             sourceBaseRowHi = -1;
@@ -2210,6 +2242,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             sourceRowRefsAddress = 0;
             sourceRowRefsRowCount = 0;
             sourceRowTimestampsAddress = 0;
+            sourceRowsKnown = false;
             // releaseDecodedFrameBuffers() parks closed shells without unlinking first; drop the
             // LRU links so a pooled shell cannot retain its former neighbours.
             prev = null;
@@ -2220,6 +2253,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             // This buffer is being repurposed for a new frame; drop the prior frame's pins.
             releaseDecodeResources();
             clearAddresses();
+            rowCount = exactRowCount();
             if (decodeColumns.size() > 0) {
                 decoder.decodeRowGroup(rowGroupBuffers, decodeColumns, rowGroup, rowLo, rowHi);
                 retainDecodeResource(decoder, decoder.takeDecodeResource());
@@ -2241,10 +2275,14 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             clearAddresses();
             final long resource = decoder.decodeSubframe(rowGroupBuffers, rowLo, rowHi);
             retainDecodeResource(decoder, resource);
+            rowCount = decodedRowCount(decoder, resource, rowHi - rowLo, frameRowLo);
             if (frameRowLo == 0) {
                 sourceRowRefsAddress = decoder.sourceRowRefsAddress(resource);
-                sourceRowRefsRowCount = rowHi - rowLo;
+                // An inexact frame decodes densely: its source rows are the rows that survived.
+                sourceRowRefsRowCount = addressCache.isFrameRowCountExact(frameIndex) ? rowHi - rowLo : (int) rowCount;
                 sourceRowTimestampsAddress = decoder.sourceRowTimestampsAddress(resource);
+                // Every hit of a frame that decoded no rows resolves to absent.
+                sourceRowsKnown = sourceRowRefsRowCount == 0 || (sourceRowRefsAddress != 0 && sourceRowTimestampsAddress != 0);
             }
             if (columns.size() > 0) {
                 slotCount = (int) (columns.size() / 2);
@@ -2286,6 +2324,16 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     hi = mid;
                 }
             }
+            if (!addressCache.isFrameRowCountExact(frameIndex)) {
+                // Dedup on read keeps a replacing row where the row it replaced was, so the tie
+                // group of a frame that resolved duplicates need not follow source row refs.
+                for (int row = timestampLo; row < lo; row++) {
+                    if (Unsafe.getLong(sourceRowRefsAddress + (long) row * Long.BYTES) == sourceRowRef) {
+                        return row;
+                    }
+                }
+                return -1;
+            }
             hi = lo;
             lo = timestampLo;
             // Query-local refs preserve merge order inside one timestamp tie group.
@@ -2303,6 +2351,17 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     && Unsafe.getLong(sourceRowRefsAddress + (long) lo * Long.BYTES) == sourceRowRef
                     ? lo
                     : -1;
+        }
+
+        @Override
+        public int findNext(long timestamp, long sourceRowRef, int after) {
+            for (int row = after + 1; row < sourceRowRefsRowCount
+                    && Unsafe.getLong(sourceRowTimestampsAddress + (long) row * Long.BYTES) == timestamp; row++) {
+                if (Unsafe.getLong(sourceRowRefsAddress + (long) row * Long.BYTES) == sourceRowRef) {
+                    return row;
+                }
+            }
+            return -1;
         }
 
         @Override
@@ -2336,6 +2395,11 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 return Long.MIN_VALUE;
             }
             return Unsafe.getLong(sourceRowTimestampsAddress);
+        }
+
+        @Override
+        public boolean isExactRowCount() {
+            return addressCache.isFrameRowCountExact(frameIndex);
         }
 
         public long decodeRemainingColumns(
@@ -2406,6 +2470,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             // This buffer is being repurposed for a new frame; drop the prior frame's pins.
             releaseDecodeResources();
             clearAddresses();
+            rowCount = exactRowCount();
             if (decodeColumns.size() > 0) {
                 decoder.decodeRowGroupWithRowFilterFillNulls(rowGroupBuffers, 0, decodeColumns, rowGroup, rowLo, rowHi, localRowsAddr, localRowCount);
                 retainDecodeResource(decoder, decoder.takeDecodeResource());
@@ -2442,9 +2507,13 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                         localRowsAddr, localRowCount, true
                 );
                 retainDecodeResource(decoder, resource);
+                // Null-filled output spans the whole requested range, so the decoder's
+                // count is the frame's dense row count in both the exact and inexact case.
+                rowCount = decodedRowCount(decoder, resource, rowHi - rowLo, 0);
                 slotCount = (int) (columns.size() / 2);
                 decodedBytes = isAccountingEnabled() ? rowGroupBuffers.sumChunkBytes(0, slotCount) : 0;
             } else {
+                rowCount = exactRowCount();
                 slotCount = 0;
                 decodedBytes = 0;
             }
@@ -2489,12 +2558,54 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             auxPageAddresses.clear();
             auxPageSizes.clear();
             columnTopRows.clear();
+            rowCount = -1;
             sourceBaseRowHi = -1;
             sourceBaseRowLo = Long.MAX_VALUE;
             sourceBaseRowsPrepared = false;
             sourceRowRefsAddress = 0;
             sourceRowRefsRowCount = 0;
             sourceRowTimestampsAddress = 0;
+            sourceRowsKnown = false;
+        }
+
+        // Resolves the frame's dense row count after a custom decode of [rowLo, rowHi).
+        // An exact frame keeps its declared span (the decoder, when it reports, must agree);
+        // an inexact frame takes the decoder's count and refuses to proceed without one,
+        // since a missing count is not a proof that nothing was dropped. A partial window
+        // (frameRowLo > 0) over an inexact frame is rejected: its rows before the window
+        // are addressed in input coordinates while the decoded tail is dense output, and
+        // that translation is not defined yet.
+        private long decodedRowCount(PartitionFrameDecoder decoder, long resource, int requestedRows, int frameRowLo) {
+            final long reported = decoder.decodedRowCount(resource);
+            if (addressCache.isFrameRowCountExact(frameIndex)) {
+                if (reported >= 0 && reported != requestedRows) {
+                    throw CairoException.critical(0)
+                            .put("decoder row count does not match exact frame [frameIndex=").put(frameIndex)
+                            .put(", requested=").put(requestedRows)
+                            .put(", decoded=").put(reported)
+                            .put(']');
+                }
+                return addressCache.getFrameSize(frameIndex);
+            }
+            if (reported < 0) {
+                throw CairoException.critical(0)
+                        .put("decoder did not report a row count for an inexact frame [frameIndex=").put(frameIndex)
+                        .put(']');
+            }
+            if (frameRowLo > 0) {
+                throw CairoException.critical(0)
+                        .put("partial window decode is not supported for an inexact frame [frameIndex=").put(frameIndex)
+                        .put(", frameRowLo=").put(frameRowLo)
+                        .put(']');
+            }
+            if (reported > requestedRows) {
+                throw CairoException.critical(0)
+                        .put("decoder produced more rows than the frame declares [frameIndex=").put(frameIndex)
+                        .put(", requested=").put(requestedRows)
+                        .put(", decoded=").put(reported)
+                        .put(']');
+            }
+            return reported;
         }
 
         private void ensureCapacityAndZero(DirectLongList list, int size) {
@@ -2503,8 +2614,20 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             list.setPos(size);
         }
 
+        // Row count of a frame decoded by a path that never drops rows (plain parquet, or a
+        // custom decode that read no columns and so produced no count): only valid for an
+        // exact frame, whose declared span is the answer. An inexact frame needs a real decode.
+        private long exactRowCount() {
+            if (!addressCache.isFrameRowCountExact(frameIndex)) {
+                throw CairoException.critical(0)
+                        .put("decode path cannot report a row count for an inexact frame [frameIndex=").put(frameIndex)
+                        .put(']');
+            }
+            return addressCache.getFrameSize(frameIndex);
+        }
+
         private boolean hasSourceRows() {
-            return sourceRowRefsAddress != 0 && sourceRowTimestampsAddress != 0;
+            return sourceRowsKnown;
         }
 
         private void prepareSourceBaseRows() {
@@ -2753,6 +2876,25 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         @Override
         public PageFrameMemoryPool getPool() {
             return PageFrameMemoryPool.this;
+        }
+
+        @Override
+        public long getRowCount() {
+            if (currentDecodedFrameBuffers != null) {
+                final long rowCount = currentDecodedFrameBuffers.rowCount;
+                assert rowCount >= 0 : "decoded frame buffers bound without a row count";
+                return rowCount;
+            }
+            // No decoded buffers are bound: a native or covered frame published as is (the
+            // address cache only admits inexact frames that go through a custom decode), or a
+            // decoded frame whose requested window was empty. The declared span is the answer
+            // whenever it is exact; an inexact frame with nothing decoded has no count to give.
+            if (addressCache.isFrameRowCountExact(frameIndex)) {
+                return addressCache.getFrameSize(frameIndex);
+            }
+            throw CairoException.critical(0)
+                    .put("row count of an inexact page frame is unknown before decode [frameIndex=").put(frameIndex)
+                    .put(']');
         }
 
         @Override

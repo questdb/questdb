@@ -94,20 +94,14 @@ public abstract class AbstractFullPartitionFrameCursor implements PartitionFrame
 
     @Override
     public long size() {
-        return reader.getLogicalRowCount();
+        // Declared rows over-count a snapshot whose frames may drop duplicates on decode.
+        return reader.hasInexactRowCount() ? -1 : reader.getLogicalRowCount();
     }
 
     @Override
     public void toPartition(int targetPartitionIndex) {
         this.partitionIndex = targetPartitionIndex;
         this.partitionScanHi = targetPartitionIndex + 1;
-    }
-
-    protected long getLogicalPartitionRowCount(int partitionIndex, long baseRows) {
-        if (!reader.getTxFile().getPartitionHasDelta(partitionIndex)) {
-            return baseRows;
-        }
-        return reader.getLogicalPartitionRowCount(partitionIndex, baseRows);
     }
 
     /**

@@ -3251,6 +3251,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         assert txWriter.getLagRowCount() == 0;
         checkDistressed();
         LOG.info().$("disabling row deduplication [table=").$(tableToken).I$();
+        metadata.setDedupVersion(metadata.getMetadataVersion() + 1);
         for (int i = 0; i < columnCount; i++) {
             metadata.getColumnMetadata(i).setDedupKeyFlag(false);
         }
@@ -3372,16 +3373,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         assert txWriter.getLagRowCount() == 0;
         assert tableDedupMode == TableUtils.DEDUP_MODE_UPSERT || tableDedupMode == TableUtils.DEDUP_MODE_SKIP;
         checkDistressed();
-        for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
-            // Delta writes are insert-only. Reads do not select deduplication survivors
-            // across the base and residual Runs.
-            if (txWriter.isPartitionDeltaActive(i)) {
-                throw CairoException.nonCritical().put("cannot enable deduplication, table has a delta-active partition [table=")
-                        .put(tableToken.getTableName())
-                        .put(", partition=").ts(timestampDriver, txWriter.getPartitionTimestampByIndex(i))
-                        .put(']');
-            }
-        }
         LogRecord logRec = LOG.info().$("enabling row deduplication [table=").$(tableToken)
                 .$(", mode=").$(tableDedupMode == TableUtils.DEDUP_MODE_SKIP ? "SKIP" : "UPSERT")
                 .$(", columns=[");
@@ -3413,6 +3404,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             logRec.I$();
         }
 
+        metadata.setDedupVersion(metadata.getMetadataVersion() + 1);
         columnsIndexes.sort();
         for (int i = 0, j = 0; i < columnCount; i++) {
             boolean isNewDedupCol = j < columnsIndexes.size() && i == columnsIndexes.getQuick(j);
@@ -3773,6 +3765,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public long getDedupRowsRemovedSinceLastCommit() {
         return dedupRowsRemovedSinceLastCommit.sum();
+    }
+
+    public long getDedupVersion() {
+        return metadata.getDedupVersion();
     }
 
     @TestOnly
@@ -4938,6 +4934,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // writerIndex lookup is valid.
         tombstoneCoveredColumnInOtherIndexes(metadata.getColumnMetadata(index).getWriterIndex());
 
+        if (metadata.isDedupKey(index)) {
+            metadata.setDedupVersion(metadata.getMetadataVersion() + 1);
+        }
         metadata.removeColumn(index);
         if (timestamp) {
             metadata.clearTimestampIndex();
@@ -19253,6 +19252,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (PartitionBy.isPartitioned(partitionBy)) {
             for (int i = txWriter.getPartitionCount() - 1; i > -1L; i--) {
                 long partitionTimestamp = txWriter.getPartitionTimestampByIndex(i);
+                // Current dedup flags cannot identify keys used by older Runs.
+                if (txWriter.isPartitionDeltaActive(i)) {
+                    final PartitionDeltaWriter deltaWriter = getPartitionDeltaWriter();
+                    if (deltaWriter == null || !deltaWriter.isColumnPurgeSafe(
+                            this, i, metadata.getColumnMetadata(columnIndex).getOriginalWriterIndex()
+                    )) {
+                        continue;
+                    }
+                }
                 if (!txWriter.isPartitionReadOnlyByPartitionTimestamp(partitionTimestamp)) {
                     long partitionNameTxn = txWriter.getPartitionNameTxn(i);
                     long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
@@ -20230,6 +20238,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ddlMem.putInt(metadata.getTtlHoursOrMonths());
             ddlMem.putInt(metadata.getTableFormat());
             ddlMem.putInt(metadata.getDedupMode());
+            ddlMem.jumpTo(META_OFFSET_DEDUP_VERSION);
+            ddlMem.putLong(metadata.getDedupVersion());
 
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {

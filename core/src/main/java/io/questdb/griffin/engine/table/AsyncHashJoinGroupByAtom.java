@@ -762,7 +762,8 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
                 final Slot slot = atom.getSlot(slotId);
                 final PageFrameMemoryRecord record = slot.buildRecord;
                 record.init(frameMemory);
-                final long rowCount = atom.buildFrames.getFrameRowCount(frameIndex);
+                // A frame whose row count is inexact reports its decoded count once decoded.
+                final long rowCount = frameMemory.getRowCount();
                 if (atom.isBuildFiltered) {
                     final DirectLongList rows = atom.buildFilterContext.getFilteredRows(slotId);
                     atom.filterBuildFrame(slotId, frameMemory, record, rowCount, rows);
@@ -835,16 +836,18 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
             roundTaskRowCounts.add(buildFrames.getFrameRowCount(frameIndex));
         }
         // Frames that keep every row may go straight to the heap, which takes their rows up front.
+        // A frame whose row count is inexact cannot: its region would be sized by its declared span.
+        final boolean isChunked = isFiltered || buildFrames.getAddressCache().hasInexactFrames();
         if (isKeyStaged) {
             mapBuild.open(memoryTracker, circuitBreaker);
-            if (isFiltered) {
+            if (isChunked) {
                 mapBuild.beginPartitioning(frameCount, buildFrames.getRowCount(), rowsPerPartition);
             } else {
                 mapBuild.beginUnfilteredPartitioning(roundTaskRowCounts, rowsPerPartition);
             }
         } else {
             intBuild.open(memoryTracker, circuitBreaker);
-            if (isFiltered) {
+            if (isChunked) {
                 intBuild.beginPartitioning(frameCount, buildFrames.getRowCount(), rowsPerPartition);
             } else {
                 intBuild.beginUnfilteredPartitioning(roundTaskRowCounts, rowsPerPartition);
@@ -907,7 +910,8 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
             circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
             final PageFrameMemory frameMemory = pool.navigateTo(frameIndex);
             buildRecord.init(frameMemory);
-            final long rowCount = buildFrames.getFrameRowCount(frameIndex);
+            // A frame whose row count is inexact reports its decoded count once decoded.
+            final long rowCount = frameMemory.getRowCount();
             try {
                 if (isFiltered) {
                     filterBuildFrame(-1, frameMemory, buildRecord, rowCount, rows);

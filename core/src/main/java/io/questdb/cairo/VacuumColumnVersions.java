@@ -322,6 +322,14 @@ public class VacuumColumnVersions implements Closeable {
                         }
                     }
 
+                    if (tableReader.getTxFile().isPartitionDeltaActiveByPartitionTimestamp(partitionTimestamp)
+                            && ColumnPurgeOperator.isHistoricalKeyFile(
+                            tableReader, partitionTimestamp,
+                            tableReader.getTxFile().getPartitionNameTxnByPartitionTimestamp(partitionTimestamp),
+                            columnNameSink, columnVersion
+                    )) {
+                        return;
+                    }
                     tableFiles.add(name2Index);
                     tableFiles.add(partitionTimestamp);
                     tableFiles.add(columnVersion);

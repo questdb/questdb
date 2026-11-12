@@ -36,6 +36,11 @@ import io.questdb.std.QuietCloseable;
  * logical subframes, then releases the window before the backing views.
  */
 public interface PartitionFrameDecoder extends DecodeResourceReleaser, QuietCloseable {
+    /** Supplies keys from a requested preceding base window; views are consumed synchronously. */
+    default void addBaseWindow(int windowIndex, long baseViewsAddress, int baseViewCount) {
+        throw new UnsupportedOperationException();
+    }
+
     void bind(long state);
 
     /**
@@ -58,6 +63,16 @@ public interface PartitionFrameDecoder extends DecodeResourceReleaser, QuietClos
      * return the owning, non-zero decode-resource handle.
      */
     long decodeSubframe(RowGroupBuffers buffers, int rowLo, int rowHi);
+
+    /**
+     * Returns the exact number of output rows the decode owning {@code resource} produced,
+     * including zero, or {@code -1} when the decoder does not report it. A frame whose
+     * declared row count is not exact ({@link PageFrame#isExactRowCount()}) may only be
+     * decoded by a decoder that reports this count.
+     */
+    default long decodedRowCount(long resource) {
+        return -1;
+    }
 
     /**
      * Materialize the requested remaining columns in the supplied order for a previously
@@ -92,6 +107,11 @@ public interface PartitionFrameDecoder extends DecodeResourceReleaser, QuietClos
             int baseViewCount,
             long memoryTrackerAddress
     );
+
+    /** Earlier base window needed to resolve a shared timestamp, or -1 when ready. */
+    default int requiredBaseWindow() {
+        return -1;
+    }
 
     @Override
     void releaseDecodeResource(long resource);

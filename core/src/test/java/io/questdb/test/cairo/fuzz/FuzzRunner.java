@@ -521,7 +521,7 @@ public class FuzzRunner {
                 if (transaction.reopenTable) {
                     // Table is dropped, reopen all writers.
                     for (int writerIndex = 0; writerIndex < walWriterCount; writerIndex++) {
-                        writers.getQuick(writerIndex).close();
+                        Misc.free(writers.getAndSetQuick(writerIndex, null));
                         writers.setQuick(writerIndex, (WalWriter) engine.getTableWriterAPI(tableName, "apply trans test"));
                     }
                 } else {

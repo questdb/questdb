@@ -297,7 +297,7 @@ public class AsyncHorizonJoinProjectionRecordCursorFactory extends AbstractRecor
             @NotNull SqlExecutionCircuitBreaker circuitBreaker,
             @Nullable PageFrameSequence<?> stealingFrameSequence
     ) {
-        final long frameRowCount = task.getFrameRowCount();
+        long frameRowCount = task.getFrameRowCount();
         assert frameRowCount > 0;
         final PageFrameSequence<AsyncHorizonJoinProjectionAtom> frameSequence = task.getFrameSequence(AsyncHorizonJoinProjectionAtom.class);
         final AsyncHorizonJoinProjectionAtom atom = frameSequence.getAtom();
@@ -315,6 +315,8 @@ public class AsyncHorizonJoinProjectionRecordCursorFactory extends AbstractRecor
             final PageFrameMemory frameMemory = isLateMaterialization
                     ? task.populateFrameMemory(atom.getFilterUsedColumnIndexes())
                     : task.populateFrameMemory();
+            // A frame whose row count is inexact reports its decoded count once populated.
+            frameRowCount = task.getFrameRowCount();
             record.init(frameMemory);
 
             final CompiledFilter compiledFilter = atom.getCompiledFilter();
@@ -374,16 +376,17 @@ public class AsyncHorizonJoinProjectionRecordCursorFactory extends AbstractRecor
             @NotNull SqlExecutionCircuitBreaker circuitBreaker,
             @Nullable PageFrameSequence<?> stealingFrameSequence
     ) {
-        final long frameRowCount = task.getFrameRowCount();
+        long frameRowCount = task.getFrameRowCount();
         assert frameRowCount > 0;
         final PageFrameSequence<AsyncHorizonJoinProjectionAtom> frameSequence = task.getFrameSequence(AsyncHorizonJoinProjectionAtom.class);
         final AsyncHorizonJoinProjectionAtom atom = frameSequence.getAtom();
         final DirectLongList rows = task.getFilteredRows();
         rows.clear();
-        task.setFilteredRowCount(frameRowCount);
-        if (task.isCountOnly()) {
+        // A frame whose row count is inexact must be decoded to be counted.
+        if (task.isCountOnly() && task.isFrameRowCountExact()) {
             // Without a filter every row counts; the owner thread never asks for this, but the
             // answer is cheap either way.
+            task.setFilteredRowCount(frameRowCount);
             return;
         }
 
@@ -391,6 +394,12 @@ public class AsyncHorizonJoinProjectionRecordCursorFactory extends AbstractRecor
         final int slotId = atom.maybeAcquire(workerId, isOwner, circuitBreaker);
         try {
             final PageFrameMemory frameMemory = task.populateFrameMemory();
+            // A frame whose row count is inexact reports its decoded count once populated.
+            frameRowCount = task.getFrameRowCount();
+            task.setFilteredRowCount(frameRowCount);
+            if (task.isCountOnly() || frameRowCount == 0) {
+                return;
+            }
             record.init(frameMemory);
             final long matchedRowCount = Math.min(frameRowCount, atom.getMaxTaskRows());
             final long slotCount = matchedRowCount * atom.getSlotsPerRow();

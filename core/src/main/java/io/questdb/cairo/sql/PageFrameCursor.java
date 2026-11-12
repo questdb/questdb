@@ -126,6 +126,16 @@ public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
     }
 
     /**
+     * Returns true when this cursor may produce a frame whose row count is inexact, i.e.
+     * one that decodes to fewer rows than its declared span (see
+     * {@link PageFrame#isExactRowCount()}). Metadata-only shortcuts that trust declared
+     * spans (sizes, skipping, LIMIT clamps) must not be taken on such a cursor.
+     */
+    default boolean hasInexactFrames() {
+        return false;
+    }
+
+    /**
      * Returns true if the cursor belongs to an external parquet file, false in case of table partition files.
      */
     boolean isExternal();
