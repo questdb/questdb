@@ -131,6 +131,38 @@ public class QwpSenderTransactionE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testStrictTransactionRefusesRowsPastClientBuffer() throws Exception {
+        // As at the server's row limit, the row that takes the transaction past the
+        // client buffer is not part of it: flush() commits the rows before it, and
+        // only those, in one transaction.
+        runInContext(port -> {
+            int refused = -1;
+            try (Sender sender = Sender.fromConfig(conf(port) + "transaction=strict;"
+                    + "sf_max_segment_bytes=64k;sf_max_total_bytes=256k;")) {
+                for (int i = 0; i < 100_000 && refused < 0; i++) {
+                    try {
+                        sender.table("t").longColumn("v", i).stringColumn("s", PAD).atNow();
+                    } catch (TransactionTooLargeException e) {
+                        TestUtils.assertContains(e.getMessage(), "; the client holds a strict transaction until the "
+                                + "server commits it, and sf_max_total_bytes cannot hold this one, so the row was not "
+                                + "added. Raise sf_max_total_bytes, or set sf_dir to keep the transaction on disk");
+                        refused = i;
+                    }
+                }
+                Assert.assertTrue("the client buffer must refuse a row", refused > 0);
+                TableToken token = awaitTable();
+                long txnBefore = engine.getTableSequencerAPI().lastTxn(token);
+                sender.flush();
+                Assert.assertTrue(sender.drain(60_000));
+                Assert.assertEquals("one transaction", txnBefore + 1, engine.getTableSequencerAPI().lastTxn(token));
+            }
+            drainWalQueue();
+            assertQuery("SELECT count(), min(v), max(v) FROM t").noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\tmin\tmax\n" + refused + "\t0\t" + (refused - 1) + "\n");
+        });
+    }
+
+    @Test
     public void testStrictTransactionRefusesRowsPastServerCap() throws Exception {
         qwpMaxUncommittedRows = 1_000;
         runInContext(port -> {
@@ -141,7 +173,10 @@ public class QwpSenderTransactionE2ETest extends AbstractQwpWebSocketTest {
                     writeRows(sender, 999, 1);
                     Assert.fail("the server would commit the 1000th row on its own");
                 } catch (TransactionTooLargeException e) {
-                    TestUtils.assertContains(e.getMessage(), "[table=t, rows=1000, maxUncommittedRows=1000]");
+                    Assert.assertEquals("transaction too large for the server [table=t, rows=1000, "
+                            + "maxUncommittedRows=1000]; the server commits a table's rows on its own once "
+                            + "qwp.max.uncommitted.rows of them are uncommitted, which would split the transaction, "
+                            + "so the row was not added. Raise qwp.max.uncommitted.rows on the server", e.getMessage());
                 }
                 TableToken token = awaitTable();
                 long txnBefore = engine.getTableSequencerAPI().lastTxn(token);
