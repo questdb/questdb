@@ -124,6 +124,8 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
     @Override
     public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor.Counter counter) {
         buildSlaveTimeFrameCacheConditionally();
+        // Populate the master cache before checking whether its frame spans are exact.
+        masterFrameSequence.prepareForDispatch();
 
         // Declared frame spans over-count master frames that drop duplicates on decode;
         // the filtered path counts what the workers actually produced.

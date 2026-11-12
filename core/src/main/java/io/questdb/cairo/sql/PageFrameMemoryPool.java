@@ -2397,6 +2397,11 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             return Unsafe.getLong(sourceRowTimestampsAddress);
         }
 
+        @Override
+        public boolean isExactRowCount() {
+            return addressCache.isFrameRowCountExact(frameIndex);
+        }
+
         public long decodeRemainingColumns(
                 ParquetDecoder decoder,
                 IntHashSet filterColumnIndexes,

@@ -75,18 +75,16 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
 
     @Override
     public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor.Counter counter) {
+        if (isExhausted) {
+            return;
+        }
         prepareRowCursorFactory();
 
-        // Mirrors the slow-path gate in skipRows(): pushdown pruning drops whole non-matching
-        // parquet row groups, so the metadata-only accounting below would count physical rows
-        // the cursor never yields and over-report the size. The row-by-row walk counts exactly
-        // the rows hasNext() yields, matching the pruned scan. Inexact frames are counted
-        // whole by the partition frame cursor, so a partly consumed scan must walk its rows.
-        if (!frameCursor.supportsSizeCalculation()
-                || filter != null
+        // Filters and indexes can select individual rows; pushdown pruning can drop whole
+        // row groups. Neither permits accounting from the unfiltered frame spans.
+        if (filter != null
                 || rowCursorFactory.isUsingIndex()
-                || frameCursor.hasActivePushdownFilter()
-                || ((frameCount > 0 || rowCursor != null) && frameCursor.hasInexactFrames())) {
+                || frameCursor.hasActivePushdownFilter()) {
             while (hasNext()) {
                 counter.inc();
             }
@@ -94,11 +92,36 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         }
 
         if (rowCursor != null) {
-            while (rowCursor.hasNext()) {
+            while (rowsProducedSinceSkip < maxRowsAfterSkip && rowCursor.hasNext()) {
                 rowCursor.next();
                 counter.inc();
+                rowsProducedSinceSkip++;
             }
             rowCursor = Misc.free(rowCursor);
+        }
+
+        // Full-partition counting already resolves inexact partitions. Interval counting,
+        // and a partly consumed inexact partition, need frame-local counts instead. Exact
+        // frames still contribute their spans without decoding or visiting their rows.
+        if (!frameCursor.supportsSizeCalculation()
+                || (frameCount > 0 && frameCursor.hasInexactFrames())) {
+            if (frameCount == 0 && cachedSkipWalkTarget != NO_SKIP_WALK) {
+                dropSkipWalkFrames();
+            }
+            PageFrame frame;
+            while (rowsProducedSinceSkip < maxRowsAfterSkip && (frame = frameCursor.next()) != null) {
+                this.circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+                frameAddressCache.add(frameCount, frame);
+                final long rowCount = frame.isExactRowCount()
+                        ? frame.getPartitionHi() - frame.getPartitionLo()
+                        : frameMemoryPool.navigateTo(frameCount).getRowCount();
+                frameCount++;
+                final long counted = Math.min(rowCount, maxRowsAfterSkip - rowsProducedSinceSkip);
+                counter.add(counted);
+                rowsProducedSinceSkip += counted;
+            }
+            isExhausted = true;
+            return;
         }
 
         counter.add(frameCursor.getRemainingRowsInInterval());
@@ -274,12 +297,9 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         //   the cache when it reproduced the cached layout's leading skip (or when neither walk skipped),
         //   and a skip that ran after that point recorded its own ordinal, which stops the next walk from
         //   reaching here at all.
-        // - frames may be inexact (dedup on a delta partition): the declared spans the fast path
-        //   subtracts over-count the rows the cursor yields, so the skip would land short.
         if (filter != null
                 || rowCursorFactory.isUsingIndex()
                 || frameCursor.hasActivePushdownFilter()
-                || frameCursor.hasInexactFrames()
                 || (hasFramesOfAnotherWalk && frameCount > 0)) {
             // hasNext() charges every row it yields against the clamp, but the rows this loop
             // walks are the skip itself, not reads after it. So walk unclamped and arm the
@@ -325,7 +345,8 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         }
         PageFrame pageFrame;
         while ((pageFrame = frameCursor.next(skipTarget)) != null) {
-            final long frameSize = pageFrame.getPartitionHi() - pageFrame.getPartitionLo();
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+            long frameSize = pageFrame.getPartitionHi() - pageFrame.getPartitionLo();
             // A skip-only skeleton stands for a span the scan discards, so it must not take a slot in the
             // address cache: it carries no addresses, and its span is cut where the skip landed rather than
             // where a readable scan cuts a frame. The cache indexes frames by their position in the scan and
@@ -339,6 +360,11 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
                         + ", skipTarget=" + skipTarget + ']';
             }
 
+            // Only inexact frames need materialization to determine how many rows the
+            // skip consumes. Exact/custom and ordinary frames retain metadata skipping.
+            if (!pageFrame.isExactRowCount()) {
+                frameSize = frameMemoryPool.navigateTo(frameCount - 1).getRowCount();
+            }
             if (frameSize > skipTarget) {
                 rowCount.dec(skipTarget);
                 break;
@@ -358,7 +384,11 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             // frame-relative row indexes valid. Only a forward 1:1 scan may do this.
             final int inFrameLo = canClamp ? (int) Math.min(skipTarget, Integer.MAX_VALUE) : 0;
             final int inFrameHi = (int) Math.min(skipTarget + takeFromFrame, Integer.MAX_VALUE);
-            final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex, inFrameLo, inFrameHi);
+            // Inexact frames can lose rows anywhere in their declared span. Decode them
+            // whole, then jump in decoded-row coordinates rather than clamping input rows.
+            final PageFrameMemory frameMemory = pageFrame.isExactRowCount()
+                    ? frameMemoryPool.navigateTo(frameIndex, inFrameLo, inFrameHi)
+                    : frameMemoryPool.navigateTo(frameIndex);
             // move to frame, rowlo doesn't matter
             recordA.init(frameMemory);
             recordA.setRowIndex(0);

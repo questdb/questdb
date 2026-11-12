@@ -318,5 +318,10 @@ public interface IndexReader extends Closeable {
         default boolean isAvailable() {
             return this != NONE;
         }
+
+        /** Whether this frame is exact, with each source row occurring at most once. */
+        default boolean isExactRowCount() {
+            return false;
+        }
     }
 }

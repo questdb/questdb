@@ -51,6 +51,20 @@ public class CairoConfigurationWrapperTest extends AbstractCairoTest {
         Assert.assertSame(deltaWriter, new CairoConfigurationWrapper(inner).newPartitionDeltaWriter());
     }
 
+    @Test
+    public void testPartitionDeltaWriterDefaultsToUnsafeColumnPurge() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT x AS value, timestamp_sequence(0, 1) AS ts FROM long_sequence(1)) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            try (TableWriter writer = getWriter("x")) {
+                Assert.assertEquals(1, writer.getPartitionCount());
+                Assert.assertEquals(1, writer.size());
+                final int columnIndex = writer.getMetadata().getColumnIndexQuiet("value");
+                final int stableColumnId = writer.getMetadata().getColumnMetadata(columnIndex).getOriginalWriterIndex();
+                Assert.assertFalse(new StubPartitionDeltaWriter().isColumnPurgeSafe(writer, 0, stableColumnId));
+            }
+        });
+    }
+
     private static class StubPartitionDeltaWriter implements PartitionDeltaWriter {
         @Override
         public void initialize(TableWriter writer, int partitionIndex) {

@@ -54,6 +54,14 @@ public interface PartitionDeltaWriter extends QuietCloseable {
     void initialize(TableWriter writer, int partitionIndex);
 
     /**
+     * Proves that no Run visible at the locked writer's sequence transaction uses this stable
+     * column ID as a key. False (including unavailable metadata) retains the native-base files.
+     */
+    default boolean isColumnPurgeSafe(TableWriter writer, int partitionIndex, int stableColumnId) {
+        return false;
+    }
+
+    /**
      * Returns whether WAL apply may start the next transaction that can write Delta state.
      * Implementations may use this boundary to apply back-pressure before the transaction
      * mutates the table writer.

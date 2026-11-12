@@ -19251,10 +19251,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (PartitionBy.isPartitioned(partitionBy)) {
             for (int i = txWriter.getPartitionCount() - 1; i > -1L; i--) {
                 long partitionTimestamp = txWriter.getPartitionTimestampByIndex(i);
-                // Historical Run keys can still reference a dropped native-base column.
-                // Its files retire with that physical base, not with the live schema entry.
-                if (!txWriter.isPartitionReadOnlyByPartitionTimestamp(partitionTimestamp)
-                        && !txWriter.isPartitionDeltaActive(i)) {
+                // Current dedup flags cannot identify keys used by older Runs.
+                if (txWriter.isPartitionDeltaActive(i)) {
+                    final PartitionDeltaWriter deltaWriter = getPartitionDeltaWriter();
+                    if (deltaWriter == null || !deltaWriter.isColumnPurgeSafe(
+                            this, i, metadata.getColumnMetadata(columnIndex).getOriginalWriterIndex()
+                    )) {
+                        continue;
+                    }
+                }
+                if (!txWriter.isPartitionReadOnlyByPartitionTimestamp(partitionTimestamp)) {
                     long partitionNameTxn = txWriter.getPartitionNameTxn(i);
                     long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
                     purgingOperator.add(
