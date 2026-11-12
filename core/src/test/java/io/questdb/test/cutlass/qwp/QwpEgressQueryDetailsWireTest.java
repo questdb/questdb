@@ -76,12 +76,14 @@ import java.util.regex.Pattern;
  * error position, the timings and JIT use, and the size of a result it pages
  * through.
  * <p>
- * The pinned {@code java-questdb-client} cannot send these flags, so the tests
- * drive the raw wire and decode the server's frames here. What they assert is
- * the server's output, checked against independent oracles: /exec on the same
- * server for positions, row counts and JIT use, and SQL {@code LIMIT} and
- * {@code count(*)} through the pinned client for row windows. The servers run
- * with the randomised send and receive fragmentation of
+ * The tests drive the raw wire and decode the server's frames here, so they pin
+ * the bytes of each trailer and also send requests a correct client never
+ * sends, such as one cut short; {@link QwpEgressQueryDetailsClientTest} sends
+ * the same flags through the pinned {@code java-questdb-client}. What they
+ * assert is the server's output, checked against independent oracles: /exec on
+ * the same server for positions, row counts and JIT use, and SQL {@code LIMIT}
+ * and {@code count(*)} through the pinned client for row windows. The servers
+ * run with the randomised send and receive fragmentation of
  * {@link AbstractQwpBootstrapTest}, so the trailers also cross parked sends.
  */
 public class QwpEgressQueryDetailsWireTest extends AbstractQwpBootstrapTest {
