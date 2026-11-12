@@ -3536,6 +3536,14 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     /**
+     * Asks CheckWalTransactionsJob to rescan the WAL tables at its paced interval, leaving every transaction
+     * tracker as it is. A table whose initialised tracker lags its sequencer is notified again from that scan.
+     */
+    public void notifyWalTxnRepublisher() {
+        unpublishedWalTxnCount.incrementAndGet();
+    }
+
+    /**
      * This is a workaround for notification queue full and other off-piste events. It includes a hack to
      * prevent repeated notifications by uninitializing the writer's transaction tracker.
      *
@@ -3543,7 +3551,7 @@ public class CairoEngine implements Closeable, WriterSource {
      */
     public void notifyWalTxnRepublisher(TableToken tableToken) {
         tableSequencerAPI.updateWriterTxns(tableToken, SeqTxnTracker.UNINITIALIZED_TXN, SeqTxnTracker.UNINITIALIZED_TXN);
-        unpublishedWalTxnCount.incrementAndGet();
+        notifyWalTxnRepublisher();
     }
 
     /**

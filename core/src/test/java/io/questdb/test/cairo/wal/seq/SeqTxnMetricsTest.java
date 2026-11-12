@@ -40,6 +40,7 @@ import java.util.HashMap;
 
 import static io.questdb.test.tools.TestUtils.assertEventually;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 public class SeqTxnMetricsTest extends AbstractCairoTest {
@@ -283,6 +284,143 @@ public class SeqTxnMetricsTest extends AbstractCairoTest {
                 assertEquals("writer txn should have caught up wit seq txn", seqTxnMetricAfter, writerTxnMetricAfter);
             }
         });
+    }
+
+    @Test
+    public void testSeqTxnGaugeAcrossReinit() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final long baseline = TestUtils.getMetricValue(engine, TAG_SEQ_TXN);
+            final SeqTxnTracker tracker = new SeqTxnTracker(configuration);
+            assertSeqTxnGauge(baseline, 0);
+
+            tracker.initTxns(0, 5, false);
+            assertSeqTxnGauge(baseline, 5);
+
+            // A commit lands between the re-read of the sequencer and the re-initialisation
+            tracker.notifyOnCommit(8);
+            assertSeqTxnGauge(baseline, 8);
+
+            // An older or repeated re-initialisation leaves seqTxn and the gauge alone
+            tracker.initTxns(0, 7, false);
+            assertEquals(8, tracker.getSeqTxn());
+            assertSeqTxnGauge(baseline, 8);
+            tracker.initTxns(0, 8, false);
+            assertSeqTxnGauge(baseline, 8);
+
+            // A newer one adds exactly the difference
+            tracker.initTxns(0, 10, false);
+            assertEquals(10, tracker.getSeqTxn());
+            assertSeqTxnGauge(baseline, 10);
+
+            tracker.notifyOnDrop();
+            assertSeqTxnGauge(baseline, 0);
+        });
+    }
+
+    @Test
+    public void testSeqTxnGaugeCountsCheckJobAdvance() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final long baseline = TestUtils.getMetricValue(engine, TAG_SEQ_TXN);
+            final SeqTxnTracker tracker = new SeqTxnTracker(configuration);
+            tracker.initTxns(0, 5, false);
+            assertSeqTxnGauge(baseline, 5);
+
+            // A scan reads the sequencer before the committer's own notification
+            tracker.notifyOnCheck(8);
+            assertEquals(8, tracker.getSeqTxn());
+            assertSeqTxnGauge(baseline, 8);
+            tracker.notifyOnCommit(8);
+            assertSeqTxnGauge(baseline, 8);
+
+            // An older scan leaves seqTxn and the gauge alone
+            tracker.notifyOnCheck(7);
+            assertEquals(8, tracker.getSeqTxn());
+            assertSeqTxnGauge(baseline, 8);
+
+            tracker.notifyOnDrop();
+            assertSeqTxnGauge(baseline, 0);
+        });
+    }
+
+    @Test
+    public void testSeqTxnGaugeFromUninitialisedTracker() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final long baseline = TestUtils.getMetricValue(engine, TAG_SEQ_TXN);
+
+            // The first increase from -1 adds the txn, not the txn + 1
+            final SeqTxnTracker committed = new SeqTxnTracker(configuration);
+            committed.notifyOnCommit(3);
+            assertSeqTxnGauge(baseline, 3);
+            committed.notifyOnDrop();
+            assertSeqTxnGauge(baseline, 0);
+
+            final SeqTxnTracker checked = new SeqTxnTracker(configuration);
+            checked.notifyOnCheck(4);
+            assertSeqTxnGauge(baseline, 4);
+            checked.notifyOnDrop();
+            assertSeqTxnGauge(baseline, 0);
+
+            // An untouched tracker has nothing to take back
+            new SeqTxnTracker(configuration).notifyOnDrop();
+            assertSeqTxnGauge(baseline, 0);
+        });
+    }
+
+    @Test
+    public void testWriterTxnGaugeAcrossResetAndReinit() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final long baseline = TestUtils.getMetricValue(engine, TAG_WRITER_TXN);
+            final SeqTxnTracker tracker = new SeqTxnTracker(configuration);
+            assertWriterTxnGauge(baseline, 0);
+
+            // The first increase from -1 adds W, not W + 1
+            tracker.updateWriterTxns(5, 5);
+            assertWriterTxnGauge(baseline, 5);
+
+            long writerTxn = 5;
+            for (int i = 0; i < 5; i++) {
+                // A stopped apply resets the tracker, which takes the table's share out
+                tracker.updateWriterTxns(SeqTxnTracker.UNINITIALIZED_TXN, SeqTxnTracker.UNINITIALIZED_TXN);
+                assertFalse(tracker.isInitialised());
+                assertWriterTxnGauge(baseline, 0);
+
+                // CheckWalTransactionsJob re-initialises it from the applied writerTxn
+                tracker.initTxns(writerTxn, writerTxn + 3, false);
+                assertEquals(writerTxn, tracker.getWriterTxn());
+                assertWriterTxnGauge(baseline, writerTxn);
+
+                // A repeated or older re-initialisation leaves writerTxn and the gauge alone
+                tracker.initTxns(writerTxn - 1, writerTxn + 3, false);
+                assertEquals(writerTxn, tracker.getWriterTxn());
+                assertWriterTxnGauge(baseline, writerTxn);
+
+                writerTxn += 2;
+                tracker.updateWriterTxns(writerTxn, writerTxn);
+                assertWriterTxnGauge(baseline, writerTxn);
+            }
+
+            // A reset followed directly by progress adds W, not W + 1
+            tracker.updateWriterTxns(SeqTxnTracker.UNINITIALIZED_TXN, SeqTxnTracker.UNINITIALIZED_TXN);
+            assertWriterTxnGauge(baseline, 0);
+            writerTxn++;
+            tracker.updateWriterTxns(writerTxn, writerTxn);
+            assertWriterTxnGauge(baseline, writerTxn);
+
+            // Dropping takes the share out, and an uninitialised tracker has none to take
+            final SeqTxnTracker uninitialised = new SeqTxnTracker(configuration);
+            uninitialised.notifyOnDrop();
+            assertWriterTxnGauge(baseline, writerTxn);
+            tracker.notifyOnDrop();
+            assertWriterTxnGauge(baseline, 0);
+        });
+    }
+
+    private void assertSeqTxnGauge(long baseline, long expectedShare) {
+        assertEquals(baseline + expectedShare, TestUtils.getMetricValue(engine, TAG_SEQ_TXN));
+    }
+
+    private void assertWriterTxnGauge(long baseline, long expectedShare) {
+        assertEquals(baseline + expectedShare, TestUtils.getMetricValue(engine, TAG_WRITER_TXN));
     }
 
     private void execute(CairoEngine engine, CharSequence sqlText) throws SqlException {
