@@ -601,7 +601,9 @@ A finding whose author's reply holds is no defect of this PR: omit it, or keep w
 ## Review checklists
 
 These checklists say what to look for. Each selected discovery agent gets the ones its entry names, and at level 0 the
-parent applies the ones the level's row names. No other checklist runs, except where a step names one, as Step 2.6
+parent applies the ones the level's row names. At level 3, the parent also applies inline each of "Logging", "SQL test
+assertions" and "Store-and-forward & pool startup invariants" that the diff touches and no selected agent applies,
+since Step 3c blocks on their violations by rule. No other checklist runs, except where a step names one, as Step 2.6
 does for "Crash fuzz coverage".
 
 ### Correctness & bugs
