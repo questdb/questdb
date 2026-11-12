@@ -68,6 +68,33 @@ public class QwpEgressPageFrameTest extends AbstractQwpBootstrapTest {
         dbPath.parent().$();
     }
 
+    private static long[] collectLongColumn(QwpQueryClient client, String sql) {
+        final io.questdb.std.LongList values = new io.questdb.std.LongList();
+        client.execute(sql, new QwpColumnBatchHandler() {
+            @Override
+            public void onBatch(QwpColumnBatch batch) {
+                for (int r = 0; r < batch.getRowCount(); r++) {
+                    values.add(batch.getLongValue(0, r));
+                }
+            }
+
+            @Override
+            public void onEnd(long totalRows) {
+                Assert.assertEquals(values.size(), totalRows);
+            }
+
+            @Override
+            public void onError(byte status, String message) {
+                Assert.fail("egress error: " + message);
+            }
+        });
+        final long[] result = new long[values.size()];
+        for (int i = 0; i < result.length; i++) {
+            result[i] = values.getQuick(i);
+        }
+        return result;
+    }
+
     /**
      * Number of characters {@code Long.toString(v)} would emit. Used in expected-
      * value computations so the test preloop can mirror the server's VARCHAR /
@@ -206,6 +233,47 @@ public class QwpEgressPageFrameTest extends AbstractQwpBootstrapTest {
                 Assert.assertEquals("VARCHAR length sum", expectedNoteLen, noteLenSum[0]);
                 Assert.assertEquals("STRING length sum", expectedStrLen, strLenSum[0]);
                 Assert.assertEquals("SYMBOL length sum", expectedSymLen, symLenSum[0]);
+            }
+        });
+    }
+
+    /**
+     * A backward scan ({@code ORDER BY ts DESC}) hands out its page frames last
+     * first, but each frame's rows are still stored ascending. The page-frame
+     * path copied every frame in storage order, so a three-partition table came
+     * back with each partition's rows ascending. Backward scans now stream
+     * through the RecordCursor, which reads them last first. The
+     * {@code LIMIT} variant, which has no page frames, is the oracle.
+     */
+    @Test
+    public void testBackwardScanStreamsRowsInDescendingOrder() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startFragmented(SMALL_PAGE_FRAME_ENV)) {
+                serverMain.execute("CREATE TABLE bwd(x LONG, v VARCHAR, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY HOUR WAL");
+                // 3 hourly partitions of 500 rows, 4 page frames each: x = 1..1500,
+                // ts = (x - 1) * 7.2s
+                serverMain.execute("INSERT INTO bwd SELECT x, 'v' || x, ((x - 1) * 7_200_000)::TIMESTAMP FROM long_sequence(1_500)");
+                serverMain.awaitTable("bwd");
+
+                try (QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+                    client.connect();
+                    final long[] descending = collectLongColumn(client, "SELECT x, v FROM bwd ORDER BY ts DESC");
+                    Assert.assertArrayEquals(
+                            collectLongColumn(client, "SELECT x, v FROM bwd ORDER BY ts DESC LIMIT 2_000"),
+                            descending
+                    );
+                    Assert.assertEquals(1_500, descending.length);
+                    for (int i = 0; i < descending.length; i++) {
+                        Assert.assertEquals(1_500 - i, descending[i]);
+                    }
+                    // the forward scan keeps the page-frame path and its order
+                    final long[] ascending = collectLongColumn(client, "SELECT x, v FROM bwd");
+                    Assert.assertEquals(1_500, ascending.length);
+                    for (int i = 0; i < ascending.length; i++) {
+                        Assert.assertEquals(i + 1, ascending[i]);
+                    }
+                }
             }
         });
     }

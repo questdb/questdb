@@ -598,11 +598,34 @@ public class QwpEgressRequestDecoderTest {
     }
 
     /**
+     * Every bit set, the sign bit included: the row-window bits make the decoder
+     * read {@code skip_rows} and then {@code max_rows} after the flags.
+     */
+    @Test
+    public void testDecodeQueryFlagsAllBitsWithRowWindowFields() throws Exception {
+        runWithBuf(64, (buf, bindVars, decoder) -> {
+            int len = writeBindScaffold(buf, 0);
+            long p = buf + len;
+            p = QwpVarint.encode(p, -1L);
+            p = QwpVarint.encode(p, 3L);
+            p = QwpVarint.encode(p, 4L);
+            decoder.decodeQueryRequest(buf, (int) (p - buf), bindVars);
+            Assert.assertEquals(-1L, decoder.queryFlags);
+            Assert.assertEquals(3L, decoder.skipRows);
+            Assert.assertEquals(4L, decoder.maxRows);
+        });
+    }
+
+    /**
      * Unlike {@code initial_credit} and {@code sql_len}, {@code query_flags} is
      * NOT range-validated: it is consumed purely as a bitmask, so even a value
      * with the sign bit set decodes without error and the RESET_DICT bit is
      * still detectable. Pins the deliberate asymmetry with
      * {@link #testRejectsNegativeInitialCredit}.
+     * <p>
+     * The value sets every bit but the two row-window bits: those make the
+     * request carry {@code skip_rows} and {@code max_rows}, which
+     * {@link #testDecodeQueryFlagsAllBitsWithRowWindowFields} covers.
      */
     @Test
     public void testDecodeQueryFlagsHighBitsAccepted() throws Exception {
@@ -610,15 +633,17 @@ public class QwpEgressRequestDecoderTest {
             int len = writeBindScaffold(buf, 0);
             long p = buf + len;
             // 10-byte LEB128 with the sign bit set; bit 0 (RESET_DICT) is set too.
-            for (int i = 0; i < 9; i++) {
-                Unsafe.putByte(p++, (byte) 0xFF);
-            }
-            Unsafe.putByte(p++, (byte) 0x01);
+            final long flags = ~(long) (QwpEgressMsgKind.QUERY_FLAG_SKIP_ROWS | QwpEgressMsgKind.QUERY_FLAG_MAX_ROWS);
+            p = QwpVarint.encode(p, flags);
+            Assert.assertEquals("the flags must take all 10 varint bytes", buf + len + 10, p);
             decoder.decodeQueryRequest(buf, (int) (p - buf), bindVars);
+            Assert.assertEquals(flags, decoder.queryFlags);
             Assert.assertTrue("sign-bit-set query_flags must decode, not be rejected",
                     decoder.queryFlags < 0);
             Assert.assertTrue("RESET_DICT bit must survive in a sign-bit-set value",
                     (decoder.queryFlags & QwpEgressMsgKind.QUERY_FLAG_RESET_DICT) != 0);
+            Assert.assertEquals(0L, decoder.skipRows);
+            Assert.assertEquals(Long.MAX_VALUE, decoder.maxRows);
         });
     }
 
@@ -643,16 +668,18 @@ public class QwpEgressRequestDecoderTest {
     /**
      * A multi-byte varint trailer (value &gt; 127) must be consumed in full so
      * the decoded flags carry every bit. Guards against reading only the first
-     * continuation byte.
+     * continuation byte. The value leaves the row-window bits clear, so no
+     * field follows the flags.
      */
     @Test
     public void testDecodeQueryFlagsMultiByteVarint() throws Exception {
         runWithBuf(64, (buf, bindVars, decoder) -> {
             int len = writeBindScaffold(buf, 0);
             long p = buf + len;
-            p = QwpVarint.encode(p, 300L); // > 127 => 2-byte varint
+            p = QwpVarint.encode(p, 0x18FL); // > 127 => 2-byte varint
+            Assert.assertEquals(buf + len + 2, p);
             decoder.decodeQueryRequest(buf, (int) (p - buf), bindVars);
-            Assert.assertEquals(300L, decoder.queryFlags);
+            Assert.assertEquals(0x18FL, decoder.queryFlags);
         });
     }
 
@@ -683,9 +710,9 @@ public class QwpEgressRequestDecoderTest {
         runWithBuf(64, (buf, bindVars, decoder) -> {
             int len = writeBindScaffold(buf, 0);
             long p = buf + len;
-            p = QwpVarint.encode(p, 0x02L); // a reserved bit, NOT RESET_DICT
+            p = QwpVarint.encode(p, 0x40L); // a reserved bit, NOT RESET_DICT
             decoder.decodeQueryRequest(buf, (int) (p - buf), bindVars);
-            Assert.assertEquals(0x02L, decoder.queryFlags);
+            Assert.assertEquals(0x40L, decoder.queryFlags);
             Assert.assertEquals("RESET_DICT must read clear when only other bits are set",
                     0, decoder.queryFlags & QwpEgressMsgKind.QUERY_FLAG_RESET_DICT);
         });
@@ -701,10 +728,10 @@ public class QwpEgressRequestDecoderTest {
         runWithBuf(64, (buf, bindVars, decoder) -> {
             int len = writeBindScaffold(buf, 0);
             long p = buf + len;
-            // bit0 (RESET_DICT) + bit2 (reserved/unknown) = 0x05
-            p = QwpVarint.encode(p, 0x05L);
+            // bit0 (RESET_DICT) + bit6 (reserved/unknown) = 0x41
+            p = QwpVarint.encode(p, 0x41L);
             decoder.decodeQueryRequest(buf, (int) (p - buf), bindVars);
-            Assert.assertEquals(0x05L, decoder.queryFlags);
+            Assert.assertEquals(0x41L, decoder.queryFlags);
             Assert.assertTrue("RESET_DICT bit must be detectable alongside unknown bits",
                     (decoder.queryFlags & QwpEgressMsgKind.QUERY_FLAG_RESET_DICT) != 0);
         });
@@ -764,19 +791,25 @@ public class QwpEgressRequestDecoderTest {
     }
 
     /**
-     * {@link QwpEgressRequestDecoder#reset()} clears the staged flags so a
-     * recycled decoder starts clean.
+     * {@link QwpEgressRequestDecoder#reset()} clears the staged flags and the
+     * row window so a recycled decoder starts clean.
      */
     @Test
     public void testResetClearsQueryFlags() throws Exception {
         runWithBuf(64, (buf, bindVars, decoder) -> {
             int len = writeBindScaffold(buf, 0);
             long p = buf + len;
-            p = QwpVarint.encode(p, QwpEgressMsgKind.QUERY_FLAG_RESET_DICT);
+            p = QwpVarint.encode(p, QwpEgressMsgKind.QUERY_FLAG_RESET_DICT
+                    | QwpEgressMsgKind.QUERY_FLAG_SKIP_ROWS | QwpEgressMsgKind.QUERY_FLAG_MAX_ROWS);
+            p = QwpVarint.encode(p, 5L);
+            p = QwpVarint.encode(p, 6L);
             decoder.decodeQueryRequest(buf, (int) (p - buf), bindVars);
-            Assert.assertEquals(QwpEgressMsgKind.QUERY_FLAG_RESET_DICT, decoder.queryFlags);
+            Assert.assertEquals(5L, decoder.skipRows);
+            Assert.assertEquals(6L, decoder.maxRows);
             decoder.reset();
             Assert.assertEquals(0L, decoder.queryFlags);
+            Assert.assertEquals(0L, decoder.skipRows);
+            Assert.assertEquals(Long.MAX_VALUE, decoder.maxRows);
         });
     }
 
@@ -947,6 +980,184 @@ public class QwpEgressRequestDecoderTest {
     }
 
     /**
+     * The row-window fields follow the flags, which follow the bind section:
+     * the decoder reads them from where the last bind body ends.
+     */
+    @Test
+    public void testRowWindowAfterBinds() throws Exception {
+        runWithBuf(128, (buf, bindVars, decoder) -> {
+            int len = writeBindScaffold(buf, 2);
+            long p = buf + len;
+            p = writeNonNullBind(p, QwpConstants.TYPE_LONG);
+            Unsafe.putLong(p, 100L);
+            p += 8;
+            p = writeNullBind(p, QwpConstants.TYPE_LONG);
+            p = QwpVarint.encode(p, QwpEgressMsgKind.QUERY_FLAG_SKIP_ROWS | QwpEgressMsgKind.QUERY_FLAG_MAX_ROWS);
+            p = QwpVarint.encode(p, 1_000L);
+            p = QwpVarint.encode(p, 50L);
+            decoder.decodeQueryRequest(buf, (int) (p - buf), bindVars);
+            Assert.assertEquals(100L, bindVars.getFunction(0).getLong(null));
+            Assert.assertEquals(Numbers.LONG_NULL, bindVars.getFunction(1).getLong(null));
+            Assert.assertEquals(1_000L, decoder.skipRows);
+            Assert.assertEquals(50L, decoder.maxRows);
+        });
+    }
+
+    /**
+     * {@code max_rows} alone follows the flags directly; zero is a valid limit
+     * (schema only), distinct from the absent flag, which leaves the stream
+     * unbounded.
+     */
+    @Test
+    public void testRowWindowMaxRowsOnly() throws Exception {
+        runWithBuf(64, (buf, bindVars, decoder) -> {
+            for (long maxRows : new long[]{0L, 1L, 127L, 128L, 1_000_000L, Long.MAX_VALUE - 1, Long.MAX_VALUE}) {
+                int len = writeBindScaffold(buf, 0);
+                long p = buf + len;
+                p = QwpVarint.encode(p, QwpEgressMsgKind.QUERY_FLAG_MAX_ROWS);
+                p = QwpVarint.encode(p, maxRows);
+                decoder.decodeQueryRequest(buf, (int) (p - buf), bindVars);
+                Assert.assertEquals(QwpEgressMsgKind.QUERY_FLAG_MAX_ROWS, decoder.queryFlags);
+                Assert.assertEquals(0L, decoder.skipRows);
+                Assert.assertEquals(maxRows, decoder.maxRows);
+            }
+        });
+    }
+
+    /**
+     * A {@code max_rows} varint of 2^63 or more decodes negative and is
+     * rejected rather than read as an empty or unbounded window. 2^63 - 1 is
+     * the largest accepted value, see {@link #testRowWindowMaxRowsOnly}.
+     */
+    @Test
+    public void testRowWindowRejectsNegativeMaxRows() throws Exception {
+        assertRowWindowRejected(QwpEgressMsgKind.QUERY_FLAG_MAX_ROWS, Long.MIN_VALUE,
+                "QUERY_REQUEST: max_rows exceeds 9223372036854775807");
+        assertRowWindowRejected(QwpEgressMsgKind.QUERY_FLAG_MAX_ROWS, -1L,
+                "QUERY_REQUEST: max_rows exceeds 9223372036854775807");
+    }
+
+    @Test
+    public void testRowWindowRejectsNegativeSkipRows() throws Exception {
+        assertRowWindowRejected(QwpEgressMsgKind.QUERY_FLAG_SKIP_ROWS, Long.MIN_VALUE,
+                "QUERY_REQUEST: skip_rows exceeds 9223372036854775807");
+        assertRowWindowRejected(QwpEgressMsgKind.QUERY_FLAG_SKIP_ROWS, -1L,
+                "QUERY_REQUEST: skip_rows exceeds 9223372036854775807");
+    }
+
+    /**
+     * A flag whose field is missing or cut short is a protocol error: the
+     * decoder must not read past the frame, nor take the window as absent.
+     */
+    @Test
+    public void testRowWindowRejectsTruncatedFields() throws Exception {
+        runWithBuf(64, (buf, bindVars, decoder) -> {
+            final int skipAndMax = QwpEgressMsgKind.QUERY_FLAG_SKIP_ROWS | QwpEgressMsgKind.QUERY_FLAG_MAX_ROWS;
+            // flags, then: nothing; a lone continuation byte; a complete skip_rows
+            // and no max_rows; a complete skip_rows and a cut max_rows
+            final long[][] fields = {{}, {-128}, {7}, {7, -128}};
+            for (long[] trailer : fields) {
+                for (int flags : new int[]{QwpEgressMsgKind.QUERY_FLAG_SKIP_ROWS, QwpEgressMsgKind.QUERY_FLAG_MAX_ROWS, skipAndMax}) {
+                    int len = writeBindScaffold(buf, 0);
+                    long p = buf + len;
+                    p = QwpVarint.encode(p, flags);
+                    for (long b : trailer) {
+                        if (b == -128) {
+                            Unsafe.putByte(p++, (byte) 0x80);
+                        } else {
+                            p = QwpVarint.encode(p, b);
+                        }
+                    }
+                    // One flag needs one complete field, and the bytes after it are
+                    // ignored; both flags need two.
+                    final boolean isComplete = flags != skipAndMax && trailer.length > 0 && trailer[0] == 7;
+                    try {
+                        decoder.decodeQueryRequest(buf, (int) (p - buf), bindVars);
+                        Assert.assertTrue("truncated row window must throw [flags=" + flags
+                                + ", fields=" + java.util.Arrays.toString(trailer) + ']', isComplete);
+                        Assert.assertEquals(7L, flags == QwpEgressMsgKind.QUERY_FLAG_SKIP_ROWS ? decoder.skipRows : decoder.maxRows);
+                    } catch (QwpParseException e) {
+                        Assert.assertFalse("complete row window must decode [flags=" + flags
+                                + ", fields=" + java.util.Arrays.toString(trailer) + ']', isComplete);
+                        TestUtils.assertEquals("incomplete varint: buffer underflow", e.getFlyweightMessage());
+                    }
+                }
+            }
+        });
+    }
+
+    /**
+     * The decoder is pooled: a windowed request must not leave its window to
+     * the next request on the connection, which may carry no flags at all, or
+     * flags without the window bits.
+     */
+    @Test
+    public void testRowWindowResetBetweenDecodes() throws Exception {
+        runWithBuf(64, (buf, bindVars, decoder) -> {
+            int len = writeBindScaffold(buf, 0);
+            long p = buf + len;
+            p = QwpVarint.encode(p, QwpEgressMsgKind.QUERY_FLAG_SKIP_ROWS | QwpEgressMsgKind.QUERY_FLAG_MAX_ROWS);
+            p = QwpVarint.encode(p, 9L);
+            p = QwpVarint.encode(p, 10L);
+            decoder.decodeQueryRequest(buf, (int) (p - buf), bindVars);
+            Assert.assertEquals(9L, decoder.skipRows);
+            Assert.assertEquals(10L, decoder.maxRows);
+
+            int len2 = writeBindScaffold(buf, 0);
+            decoder.decodeQueryRequest(buf, len2, bindVars);
+            Assert.assertEquals("skip_rows must not bleed across pooled decodes", 0L, decoder.skipRows);
+            Assert.assertEquals("max_rows must not bleed across pooled decodes", Long.MAX_VALUE, decoder.maxRows);
+
+            int len3 = writeBindScaffold(buf, 0);
+            p = buf + len3;
+            p = QwpVarint.encode(p, QwpEgressMsgKind.QUERY_FLAG_STATS);
+            decoder.decodeQueryRequest(buf, (int) (p - buf), bindVars);
+            Assert.assertEquals(0L, decoder.skipRows);
+            Assert.assertEquals(Long.MAX_VALUE, decoder.maxRows);
+        });
+    }
+
+    /**
+     * Both row-window fields follow the flags in ascending bit order:
+     * {@code skip_rows} before {@code max_rows}. Bytes after them are ignored,
+     * as bytes after the flags of a baseline request are.
+     */
+    @Test
+    public void testRowWindowSkipAndMaxRows() throws Exception {
+        runWithBuf(64, (buf, bindVars, decoder) -> {
+            int len = writeBindScaffold(buf, 0);
+            long p = buf + len;
+            p = QwpVarint.encode(p, QwpEgressMsgKind.QUERY_FLAG_SKIP_ROWS | QwpEgressMsgKind.QUERY_FLAG_MAX_ROWS
+                    | QwpEgressMsgKind.QUERY_FLAG_COUNT_ROWS);
+            p = QwpVarint.encode(p, 300L);
+            p = QwpVarint.encode(p, 20L);
+            Unsafe.putByte(p++, (byte) 0x7F); // trailing byte of a future field
+            decoder.decodeQueryRequest(buf, (int) (p - buf), bindVars);
+            Assert.assertEquals(300L, decoder.skipRows);
+            Assert.assertEquals(20L, decoder.maxRows);
+        });
+    }
+
+    /**
+     * {@code skip_rows} alone follows the flags directly, and leaves the stream
+     * unbounded.
+     */
+    @Test
+    public void testRowWindowSkipRowsOnly() throws Exception {
+        runWithBuf(64, (buf, bindVars, decoder) -> {
+            for (long skipRows : new long[]{0L, 1L, 127L, 128L, Long.MAX_VALUE}) {
+                int len = writeBindScaffold(buf, 0);
+                long p = buf + len;
+                p = QwpVarint.encode(p, QwpEgressMsgKind.QUERY_FLAG_SKIP_ROWS);
+                p = QwpVarint.encode(p, skipRows);
+                decoder.decodeQueryRequest(buf, (int) (p - buf), bindVars);
+                Assert.assertEquals(skipRows, decoder.skipRows);
+                Assert.assertEquals(Long.MAX_VALUE, decoder.maxRows);
+            }
+        });
+    }
+
+    /**
      * Same SQL with a different bind type must produce a different composite key,
      * so a factory compiled for {@code WHERE x = $1::INT} is never reused for
      * {@code WHERE x = $1::VARCHAR}.
@@ -998,6 +1209,21 @@ public class QwpEgressRequestDecoderTest {
                     key1, key2);
             Assert.assertTrue("composite key must carry a type prefix [...] on bound queries: " + key1,
                     key1.startsWith("["));
+        });
+    }
+
+    private static void assertRowWindowRejected(int flag, long value, String expectedMessage) throws Exception {
+        runWithBuf(64, (buf, bindVars, decoder) -> {
+            int len = writeBindScaffold(buf, 0);
+            long p = buf + len;
+            p = QwpVarint.encode(p, flag);
+            p = QwpVarint.encode(p, value);
+            try {
+                decoder.decodeQueryRequest(buf, (int) (p - buf), bindVars);
+                Assert.fail("negative row window value must be rejected: " + value);
+            } catch (QwpParseException e) {
+                TestUtils.assertEquals(expectedMessage, e.getFlyweightMessage());
+            }
         });
     }
 

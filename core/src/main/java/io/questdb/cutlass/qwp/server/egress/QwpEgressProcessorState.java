@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cutlass.http.ConnectionAware;
 import io.questdb.cutlass.http.HttpException;
@@ -56,6 +57,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Zstd;
+import io.questdb.std.datetime.NanosecondClock;
 import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.atomic.AtomicLong;
@@ -96,6 +98,11 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     // DDL operations. Subscribed to the engine's message bus on first use;
     // cleared between queries (the sequence object itself is reused).
     private final SCSequence eventSubSequence = new SCSequence();
+    // Measures the QUERY_FLAG_STATS durations. The egress processor passes the
+    // HTTP clock, the one /exec times its queries with.
+    private final NanosecondClock nanosecondClock;
+    // Receives the rows calculateSize() counts past the end of a row window.
+    private final RecordCursor.Counter rowCounter = new RecordCursor.Counter();
     /**
      * Remaining send-ahead credit in bytes, under byte-based flow control.
      * <p>
@@ -188,7 +195,29 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      * framework park + resume the remainder properly.
      */
     private int pendingHandshakeBytes;
+    // Per-query details: the query_flags of the request being served, the row
+    // window, and what QUERY_FLAG_STATS and QUERY_FLAG_COUNT_ROWS report. Reset
+    // by beginQuery() when a QUERY_REQUEST is accepted, and kept past
+    // endStreaming(), because the terminator frames are written after the
+    // cursor is released. Cleared with the connection.
+    private long queryClientWaitNanos;
+    // Start of the open client-wait interval, -1 when the query is not parked.
+    private long queryClientWaitStartNanos = -1;
+    private long queryCompileNanos;
+    private long queryCountNanos;
+    private long queryFlags;
+    private boolean queryJitCompiled;
+    // Rows in the whole result set, -1 until counted.
+    private long queryRowCount = -1;
+    private long queryStartNanos;
     private int recvBufferLen;
+    // Rows the stream has taken from the cursor, into the batch buffer.
+    private long rowWindowAppended;
+    // Rows the stream may still take from the cursor before the row window
+    // ends: max_rows minus rowWindowAppended.
+    private long rowWindowRemaining = Long.MAX_VALUE;
+    // Rows skipped at the start of the result set.
+    private long rowWindowSkipped;
     private SecurityContext securityContext;
     /**
      * Streaming-state for an in-flight query. Populated when the query starts; cleared
@@ -292,13 +321,26 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     private int zstdCompressScratchCapacity;
 
     public QwpEgressProcessorState(CairoConfiguration cairoConfiguration) {
+        this(cairoConfiguration, cairoConfiguration.getNanosecondClock());
+    }
+
+    public QwpEgressProcessorState(CairoConfiguration cairoConfiguration, NanosecondClock nanosecondClock) {
         this.cairoConfiguration = cairoConfiguration;
+        this.nanosecondClock = nanosecondClock;
         this.bindVariableService = new BindVariableServiceImpl(cairoConfiguration);
         // Pick up any test-only default overrides active at construction time
         // so tests that need tiny soft caps don't have to reach into every
         // per-connection state instance.
         this.maxDictEntriesOverride = defaultMaxDictEntriesOverrideForTest;
         this.maxDictHeapBytesOverride = defaultMaxDictHeapBytesOverrideForTest;
+    }
+
+    /**
+     * Adds the time one compilation of the current query took. A query that
+     * recompiles after a stale plan pays for every compilation.
+     */
+    public void addQueryCompileNanos(long nanos) {
+        queryCompileNanos += nanos;
     }
 
     /**
@@ -378,6 +420,17 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
             connSymbolDict.clear();
             batchBuffer.clearConnKeyMaps();
         }
+    }
+
+    /**
+     * Starts the per-query details of a newly accepted {@code QUERY_REQUEST}:
+     * starts its execution clock and drops the previous query's flags, row
+     * window, statistics and row count. Must not run for a request that is
+     * rejected while another query streams: that query still needs its own.
+     */
+    public void beginQuery() {
+        clearQueryDetails();
+        queryStartNanos = nanosecondClock.getTicks();
     }
 
     public void beginSqlExecutionOwner(
@@ -511,6 +564,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         maxBatchRows = 0;  // reset to "unset"; will be set per-connection in onHeadersReady
         batchBuffer.reset();
         bindVariableService.clear();
+        clearQueryDetails();
         // Connection dropped/reset -- client cannot reuse the delta dict on a
         // new connection so we discard it too. On a clean close() this is idempotent.
         connSymbolDict.clear();
@@ -575,6 +629,36 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
             mask |= QwpEgressMsgKind.RESET_MASK_DICT;
         }
         return mask;
+    }
+
+    /**
+     * Counts the rows of the whole result set for
+     * {@link QwpEgressMsgKind#QUERY_FLAG_COUNT_ROWS} once the stream has taken
+     * its last row from the cursor, and times the count. A drained cursor
+     * yielded every row, so the count is what was skipped plus what was
+     * streamed. A row window that ended first leaves rows in the cursor: the
+     * cursor's size when it knows it, otherwise what was skipped and streamed
+     * plus the rows {@code calculateSize} counts from the current position.
+     * The row window is only open on the {@link RecordCursor} path, see
+     * {@code QwpEgressUpgradeProcessor.handleQueryRequest}.
+     */
+    public void computeQueryRowCount(boolean isCursorDrained, SqlExecutionCircuitBreaker circuitBreaker) {
+        final long startNanos = nanosecondClock.getTicks();
+        long rowCount = rowWindowSkipped + rowWindowAppended;
+        if (!isCursorDrained) {
+            final RecordCursor cursor = streamingCursor;
+            assert cursor != null : "row window ended on the page-frame path";
+            final long size = cursor.size();
+            if (size > -1) {
+                rowCount = size;
+            } else {
+                rowCounter.clear();
+                cursor.calculateSize(circuitBreaker, rowCounter);
+                rowCount += rowCounter.get();
+            }
+        }
+        queryRowCount = rowCount;
+        queryCountNanos = nanosecondClock.getTicks() - startNanos;
     }
 
     /**
@@ -764,8 +848,42 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         return pendingHandshakeBytes;
     }
 
+    public long getQueryClientWaitNanos() {
+        return queryClientWaitNanos;
+    }
+
+    public long getQueryCompileNanos() {
+        return queryCompileNanos;
+    }
+
+    public long getQueryCountNanos() {
+        return queryCountNanos;
+    }
+
+    /**
+     * Time since {@link #beginQuery()} accepted the current request.
+     */
+    public long getQueryElapsedNanos() {
+        return nanosecondClock.getTicks() - queryStartNanos;
+    }
+
+    /**
+     * Rows in the whole result set, counted by {@link #computeQueryRowCount};
+     * -1 until then.
+     */
+    public long getQueryRowCount() {
+        return queryRowCount;
+    }
+
     public int getRecvBufferLen() {
         return recvBufferLen;
+    }
+
+    /**
+     * Rows the stream may still take from the cursor before the row window ends.
+     */
+    public long getRowWindowRemaining() {
+        return rowWindowRemaining;
     }
 
     public SecurityContext getSecurityContext() {
@@ -831,6 +949,13 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         return streamingPageFrameCursor != null ? streamingPageFrameCursor : streamingCursor;
     }
 
+    /**
+     * True when the current request set {@link QwpEgressMsgKind#QUERY_FLAG_ERROR_POSITION}.
+     */
+    public boolean isErrorPositionRequested() {
+        return (queryFlags & QwpEgressMsgKind.QUERY_FLAG_ERROR_POSITION) != 0;
+    }
+
     public boolean isHandshakeFlushPending() {
         return handshakeFlushPending;
     }
@@ -844,6 +969,32 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      */
     public boolean isPendingDisconnectAfterFlush() {
         return pendingDisconnectAfterFlush;
+    }
+
+    public boolean isQueryJitCompiled() {
+        return queryJitCompiled;
+    }
+
+    /**
+     * True when the current request asked for the row count and the stream has
+     * not counted it yet.
+     */
+    public boolean isRowCountPending() {
+        return isRowCountRequested() && queryRowCount < 0;
+    }
+
+    /**
+     * True when the current request set {@link QwpEgressMsgKind#QUERY_FLAG_COUNT_ROWS}.
+     */
+    public boolean isRowCountRequested() {
+        return (queryFlags & QwpEgressMsgKind.QUERY_FLAG_COUNT_ROWS) != 0;
+    }
+
+    /**
+     * True when the current request set {@link QwpEgressMsgKind#QUERY_FLAG_STATS}.
+     */
+    public boolean isStatsRequested() {
+        return (queryFlags & QwpEgressMsgKind.QUERY_FLAG_STATS) != 0;
     }
 
     public boolean isStreamingActive() {
@@ -935,6 +1086,22 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     }
 
     /**
+     * Records rows the stream took from the cursor into the batch buffer, and
+     * narrows the row window by as many.
+     */
+    public void onRowWindowRowsAppended(int rows) {
+        rowWindowAppended += rows;
+        rowWindowRemaining -= rows;
+    }
+
+    /**
+     * Records how many rows the cursor skipped at the start of the result set.
+     */
+    public void onRowWindowRowsSkipped(long rows) {
+        rowWindowSkipped = rows;
+    }
+
+    /**
      * Marks the current batch's seq as incremented and its rows as counted.
      * Must be called exactly once per batch, BEFORE the network send commits
      * bytes to the response sink -- so that if the send parks mid-flight, the
@@ -953,6 +1120,11 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     }
 
     public void parkSqlExecutionOwner() {
+        // The query now waits for the client: to read the parked bytes or to
+        // grant credit. QUERY_FLAG_STATS reports that time as client_wait_ns.
+        if (queryClientWaitStartNanos == -1) {
+            queryClientWaitStartNanos = nanosecondClock.getTicks();
+        }
         try {
             suspendStreamingTimer();
         } finally {
@@ -965,6 +1137,10 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     }
 
     public void resumeSqlExecutionOwner() {
+        if (queryClientWaitStartNanos != -1) {
+            queryClientWaitNanos += nanosecondClock.getTicks() - queryClientWaitStartNanos;
+            queryClientWaitStartNanos = -1;
+        }
         resumeStreamingTimer();
         sqlExecutionOwner.mount();
     }
@@ -1033,6 +1209,20 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
 
     public void setPendingHandshakeBytes(int bytes) {
         this.pendingHandshakeBytes = bytes;
+    }
+
+    /**
+     * Takes the {@code query_flags} and the row-window limit of the decoded
+     * request. Until this runs, {@link #beginQuery()} leaves the flags at 0, so
+     * a request that fails to decode is answered with the baseline frames.
+     */
+    public void setQueryDetails(long queryFlags, long maxRows) {
+        this.queryFlags = queryFlags;
+        this.rowWindowRemaining = maxRows;
+    }
+
+    public void setQueryJitCompiled(boolean isJitCompiled) {
+        this.queryJitCompiled = isJitCompiled;
     }
 
     public void setRecvBufferLen(int recvBufferLen) {
@@ -1104,4 +1294,17 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         return zstdCompressScratchAddr;
     }
 
+    private void clearQueryDetails() {
+        queryFlags = 0;
+        queryStartNanos = 0;
+        queryCompileNanos = 0;
+        queryCountNanos = 0;
+        queryClientWaitNanos = 0;
+        queryClientWaitStartNanos = -1;
+        queryJitCompiled = false;
+        queryRowCount = -1;
+        rowWindowAppended = 0;
+        rowWindowRemaining = Long.MAX_VALUE;
+        rowWindowSkipped = 0;
+    }
 }

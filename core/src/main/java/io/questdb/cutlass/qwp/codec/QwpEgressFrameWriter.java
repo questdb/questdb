@@ -48,6 +48,11 @@ import io.questdb.std.Unsafe;
 public final class QwpEgressFrameWriter {
 
     /**
+     * Upper bound of the bytes {@link #writeQueryStats} writes: four varints and
+     * the {@code stats_flags} byte.
+     */
+    public static final int QUERY_STATS_MAX_BYTES = 4 * QwpVarint.MAX_VARINT_BYTES + 1;
+    /**
      * Reservation for the outbound WebSocket frame header. Enough for an
      * unmasked 64-bit extended-length binary frame (2-byte base header +
      * 8-byte extended length).
@@ -123,6 +128,50 @@ public final class QwpEgressFrameWriter {
         int written = writeUtf8Truncated(bytesStart, msg, cap);
         Unsafe.putShort(bufAddr + 10, (short) written);
         return bytesStart + written;
+    }
+
+    /**
+     * Writes a QUERY_ERROR frame body that ends with the {@code position:i32}
+     * trailer of {@link QwpEgressMsgKind#QUERY_FLAG_ERROR_POSITION}. The caller
+     * reserves 4 bytes beyond {@code msgCapBytes} for the trailer.
+     *
+     * @return address just past the body
+     */
+    public static long writeQueryError(
+            long bufAddr,
+            long requestId,
+            byte status,
+            CharSequence msg,
+            int msgCapBytes,
+            int position
+    ) {
+        long p = writeQueryError(bufAddr, requestId, status, msg, msgCapBytes);
+        Unsafe.putInt(p, position);
+        return p + Integer.BYTES;
+    }
+
+    /**
+     * Writes the statistics block of {@link QwpEgressMsgKind#QUERY_FLAG_STATS}:
+     * {@code compile_ns, execute_ns, count_ns, client_wait_ns} as varints and the
+     * {@code stats_flags} byte. The durations must be non-negative: the varints
+     * are unsigned on the wire. Writes at most {@link #QUERY_STATS_MAX_BYTES}.
+     *
+     * @return address just past the block
+     */
+    public static long writeQueryStats(
+            long bufAddr,
+            long compileNanos,
+            long executeNanos,
+            long countNanos,
+            long clientWaitNanos,
+            boolean isJitCompiled
+    ) {
+        long p = QwpVarint.encode(bufAddr, compileNanos);
+        p = QwpVarint.encode(p, executeNanos);
+        p = QwpVarint.encode(p, countNanos);
+        p = QwpVarint.encode(p, clientWaitNanos);
+        Unsafe.putByte(p, isJitCompiled ? QwpEgressMsgKind.STATS_FLAG_JIT_COMPILED : 0);
+        return p + 1;
     }
 
     /**
