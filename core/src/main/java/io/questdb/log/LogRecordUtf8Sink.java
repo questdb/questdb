@@ -250,29 +250,6 @@ public class LogRecordUtf8Sink implements Utf8Sink, DirectUtf8Sequence, Sinkable
         return Utf8s.stringFromUtf8Bytes(address, _wptr);
     }
 
-    static int utf8ByteClass(byte b) {
-        // Reference the table at:
-        // https://en.wikipedia.org/wiki/UTF-8#Encoding
-        if (b >= 0) {
-            // ASCII
-            return 1;
-        } else if ((b & 0xC0) == 0x80) {
-            // 0xC0 = 1100 0000, 0x80 = 1000 0000, check if starts with 10
-            return UTF8_BYTE_CLASS_CONTINUATION;
-        } else if ((b & 0xE0) == 0xC0) {
-            // 0xE0 = 1110 0000, 0xC0 = 1100 0000, check if starts with 110
-            return 2;
-        } else if ((b & 0xF0) == 0xE0) {
-            // 0xF0 = 1111 0000, 0xE0 = 1110 0000m, check if starts with 1110
-            return 3;
-        } else if ((b & 0xF8) == 0xF0) {
-            // 0xF8 = 1111 1000, 0xF0 = 1111 0000, check if starts with 1111 0
-            return 4;
-        } else {
-            return UTF8_BYTE_CLASS_BAD;
-        }
-    }
-
     private int utf8CharNeeded(byte b) {
         final int byteClass = utf8ByteClass(b);
         switch (byteClass) {
@@ -313,4 +290,28 @@ public class LogRecordUtf8Sink implements Utf8Sink, DirectUtf8Sequence, Sinkable
                 return byteClass;
         }
     }
+
+    static int utf8ByteClass(byte b) {
+        // Reference the table at:
+        // https://en.wikipedia.org/wiki/UTF-8#Encoding
+        if (b >= 0) {
+            // ASCII
+            return 1;
+        } else if ((b & 0xC0) == 0x80) {
+            // 0xC0 = 1100 0000, 0x80 = 1000 0000, check if starts with 10
+            return UTF8_BYTE_CLASS_CONTINUATION;
+        } else if ((b & 0xE0) == 0xC0) {
+            // 0xE0 = 1110 0000, 0xC0 = 1100 0000, check if starts with 110
+            return 2;
+        } else if ((b & 0xF0) == 0xE0) {
+            // 0xF0 = 1111 0000, 0xE0 = 1110 0000m, check if starts with 1110
+            return 3;
+        } else if ((b & 0xF8) == 0xF0) {
+            // 0xF8 = 1111 1000, 0xF0 = 1111 0000, check if starts with 1111 0
+            return 4;
+        } else {
+            return UTF8_BYTE_CLASS_BAD;
+        }
+    }
+
 }

@@ -171,10 +171,54 @@ public class BitXorGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testBitXorConstant() throws Exception {
         assertQuery("select bit_xor(42::long) from tab")
                 .ddl("create table tab as (select x from long_sequence(5))")
+                .noRandomAccess()
                 .expectSize()
                 .returns("""
                         bit_xor
                         42
+                        """);
+    }
+
+    @Test
+    public void testBitXorConstantEmptyTable() throws Exception {
+        assertQuery("SELECT count() c, bit_xor(5::byte) b, bit_xor(5::short) s, bit_xor(5) i, bit_xor(5::long) l FROM tab")
+                .ddl("CREATE TABLE tab (x LONG)")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        c\tb\ts\ti\tl
+                        0\t0\t0\tnull\tnull
+                        """);
+    }
+
+    @Test
+    public void testBitXorConstantEvenCount() throws Exception {
+        assertQuery("SELECT bit_xor(5::byte) b, bit_xor(5::short) s, bit_xor(5) i, bit_xor(5::long) l FROM tab")
+                .ddl("CREATE TABLE tab AS (SELECT x FROM long_sequence(4))")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        b\ts\ti\tl
+                        0\t0\t0\t0
+                        """);
+    }
+
+    @Test
+    public void testBitXorConstantWithGroupBy() throws Exception {
+        assertQuery("SELECT sym, bit_xor(5::byte) b, bit_xor(5::short) s, bit_xor(5) i, bit_xor(5::long) l FROM tab ORDER BY sym")
+                .ddl("CREATE TABLE tab AS (SELECT CASE WHEN x <= 2 THEN 'a' ELSE 'b' END::SYMBOL sym FROM long_sequence(3))")
+                .expectSize()
+                .returns("""
+                        sym\tb\ts\ti\tl
+                        a\t0\t0\t0\t0
+                        b\t5\t5\t5\t5
+                        """);
+        assertQuery("SELECT bit_xor(5) b FROM tab GROUP BY sym ORDER BY b")
+                .expectSize()
+                .returns("""
+                        b
+                        0
+                        5
                         """);
     }
 

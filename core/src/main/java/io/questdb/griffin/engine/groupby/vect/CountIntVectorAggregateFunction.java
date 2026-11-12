@@ -27,9 +27,6 @@ package io.questdb.griffin.engine.groupby.vect;
 import io.questdb.std.Rosti;
 import io.questdb.std.Vect;
 
-import static io.questdb.griffin.SqlCodeGenerator.GKK_MICRO_HOUR_INT;
-import static io.questdb.griffin.SqlCodeGenerator.GKK_NANO_HOUR_INT;
-
 public class CountIntVectorAggregateFunction extends AbstractCountVectorAggregateFunction {
 
     public CountIntVectorAggregateFunction(int keyKind, int columnIndex, int timestampIndex, int workerCount) {

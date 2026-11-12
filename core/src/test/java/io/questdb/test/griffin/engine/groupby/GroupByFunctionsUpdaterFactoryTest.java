@@ -78,6 +78,10 @@ public class GroupByFunctionsUpdaterFactoryTest {
             Assert.assertEquals(1 + functionCount, value.getLong(0));
             Assert.assertEquals(43, value.getLong(1));
 
+            updater.updateRetained(value, record, 44);
+            Assert.assertEquals(1 + 3 * functionCount, value.getLong(0));
+            Assert.assertEquals(44, value.getLong(1));
+
             updater.updateEmpty(value);
             Assert.assertEquals(-1, value.getLong(0));
             Assert.assertEquals(-1, value.getLong(1));
@@ -115,6 +119,10 @@ public class GroupByFunctionsUpdaterFactoryTest {
             updater.updateExisting(value, record, 43);
             Assert.assertEquals(1 + functions.size(), value.getLong(0));
             Assert.assertEquals(43, value.getLong(1));
+
+            updater.updateRetained(value, record, 44);
+            Assert.assertEquals(1 + 3 * functions.size(), value.getLong(0));
+            Assert.assertEquals(44, value.getLong(1));
 
             updater.updateEmpty(value);
             Assert.assertEquals(-1, value.getLong(0));
@@ -174,6 +182,12 @@ public class GroupByFunctionsUpdaterFactoryTest {
             long value = srcValue.getLong(0);
             destValue.putLong(0, value);
             destValue.putLong(1, Math.min(srcValue.getLong(1), destValue.getLong(1)));
+        }
+
+        @Override
+        public void recomputeFirst(MapValue mapValue, Record record, long rowId) {
+            mapValue.putLong(0, mapValue.getLong(0) + 2);
+            mapValue.putLong(1, rowId);
         }
 
         @Override

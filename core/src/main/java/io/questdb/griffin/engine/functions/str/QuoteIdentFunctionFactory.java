@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.str;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -43,6 +44,11 @@ import io.questdb.std.str.StringSink;
 public class QuoteIdentFunctionFactory implements FunctionFactory {
 
     private static final String NAME = "quote_ident";
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.STRING;
+    }
 
     @Override
     public String getSignature() {

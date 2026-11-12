@@ -26,7 +26,7 @@ package io.questdb.test.griffin.engine.table;
 
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
-import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.AbstractAsyncFilteredRecordCursorFactory;
 import io.questdb.std.Misc;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -111,7 +111,7 @@ public class AsyncFilteredRecordCursorFactoryCleanupTest extends AbstractCairoTe
             TrackingRecordFreer negativeLimitCursor
     ) {
         try {
-            AsyncFilteredRecordCursorFactory.halfCloseForTesting(sequence, cursor, negativeLimitCursor);
+            AbstractAsyncFilteredRecordCursorFactory.freeExecutionStateForTesting(sequence, cursor, negativeLimitCursor);
             Assert.fail();
         } catch (RuntimeException e) {
             Assert.assertSame(expected, e);
@@ -137,13 +137,13 @@ public class AsyncFilteredRecordCursorFactoryCleanupTest extends AbstractCairoTe
         sequence.isFailureEnabled = false;
         cursor.isFailureEnabled = false;
         negativeLimitCursor.isFailureEnabled = false;
-        AsyncFilteredRecordCursorFactory.halfCloseForTesting(sequence, cursor, negativeLimitCursor);
+        AbstractAsyncFilteredRecordCursorFactory.freeExecutionStateForTesting(sequence, cursor, negativeLimitCursor);
         Assert.assertEquals(2, sequence.closeCount);
         Assert.assertEquals(2, cursor.freeRecordsCount);
         Assert.assertEquals(2, negativeLimitCursor.freeRecordsCount);
     }
 
-    private static class TrackingRecordFreer implements AsyncFilteredRecordCursorFactory.RecordFreer {
+    private static class TrackingRecordFreer implements AbstractAsyncFilteredRecordCursorFactory.RecordFreer {
         private final RuntimeException failure;
         private final PageFrameMemoryPool frameMemoryPool;
         private final PageFrameMemoryRecord record;

@@ -576,7 +576,7 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
         //
         // A lazy getter that derived a value outside init() would mutate state after init() and
         // force isThreadSafe()=false. BinaryFunction.isThreadSafe() ANDs its children, so a single
-        // false anywhere in a predicate makes SqlCodeGenerator.compileWorkerFiltersConditionally
+        // false anywhere in a predicate makes FunctionInstantiator.instantiateWorkers
         // re-parse and re-compile the *whole* filter once per shared query worker - an ordinary
         // prepared statement like "WHERE i = :x + 1" wraps ":x + 1" as an INT runtime constant and
         // would pay N compiles on an N-worker box.

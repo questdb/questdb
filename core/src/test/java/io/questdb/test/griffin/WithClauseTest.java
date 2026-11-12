@@ -25,7 +25,6 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.CairoEngine;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlParser;
 import io.questdb.test.AbstractCairoTest;
@@ -62,6 +61,65 @@ public class WithClauseTest extends AbstractCairoTest {
                             x
                             a
                             a
+                            """);
+        });
+    }
+
+    @Test
+    public void testCteReadTwiceWithFromLessUnionBranch() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE y (x SYMBOL)");
+            execute("INSERT INTO y VALUES ('t')");
+            assertQuery("""
+                    WITH a AS (SELECT 'a'::SYMBOL x),
+                         c AS (SELECT x FROM a UNION ALL SELECT 'b'::SYMBOL x)
+                    SELECT * FROM c UNION ALL SELECT * FROM c""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            x
+                            a
+                            b
+                            a
+                            b
+                            """);
+            assertQuery("""
+                    WITH a AS (SELECT 'a'::SYMBOL x),
+                         c AS (SELECT x FROM a UNION ALL SELECT x FROM y)
+                    SELECT * FROM c UNION ALL SELECT * FROM c""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            x
+                            a
+                            t
+                            a
+                            t
+                            """);
+            assertQuery("""
+                    WITH a AS (SELECT 'a'::SYMBOL x),
+                         c AS (SELECT 'b'::SYMBOL x UNION ALL SELECT x FROM a)
+                    SELECT * FROM c UNION ALL SELECT * FROM c""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            x
+                            b
+                            a
+                            b
+                            a
+                            """);
+            assertQuery("SELECT * FROM (SELECT x FROM (SELECT 1 x) UNION ALL SELECT 2 x)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            x
+                            1
+                            2
                             """);
         });
     }
@@ -197,13 +255,12 @@ public class WithClauseTest extends AbstractCairoTest {
 
     @Test
     public void testCteLiteralChainHasCharacterBudgetWithExpressionAliases() throws Exception {
-        // The server's default configuration names a column without an alias after its expression,
-        // so each such column in c0 writes the whole 800-character literal to the character store,
-        // and a parse of c0 writes about 50,000 characters.
+        // The server's default configuration names a column without an alias after its expression.
+        // The parser renders only as much of the expression as the 64-character alias depends on,
+        // so each such column in c0 writes about 70 characters of the 800-character literal to the
+        // character store, not all of it.
         setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
         assertMemoryLeak(() -> {
-            // One level that reads c0 four times writes 200,173 of the 753,500 characters its text
-            // allows.
             assertQuery(declaredLiteralCteChain(1))
                     .noLeakCheck()
                     .noRandomAccess()
@@ -213,11 +270,12 @@ public class WithClauseTest extends AbstractCairoTest {
                             1
                             """);
             // Seven levels used to write 25.8 million characters, about 90 MB, before the node
-            // budget refused the statement.
+            // budget refused the statement. The parser now refuses it at the same read of c0 as
+            // without expression aliases.
             final String sevenLevels = declaredLiteralCteChain(7);
             assertTooComplexToParse(
                     sevenLevels,
-                    sevenLevels.indexOf("c0 b"),
+                    sevenLevels.indexOf("c0 d"),
                     "chars",
                     864_500
             );
@@ -724,6 +782,39 @@ public class WithClauseTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCteShadowsView() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE)");
+            execute("INSERT INTO trades VALUES ('AAPL', 100.5), ('MSFT', 300.75)");
+            execute("CREATE TABLE allowed (symbol SYMBOL)");
+            execute("INSERT INTO allowed VALUES ('AAPL')");
+            execute("CREATE VIEW v_cap AS (SELECT symbol, price FROM trades WHERE symbol IN (SELECT symbol FROM allowed))");
+            drainWalAndViewQueues();
+            assertQuery("""
+                    WITH v_cap AS (SELECT 'X'::SYMBOL symbol, 1.0 price)
+                    SELECT * FROM v_cap""")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            symbol\tprice
+                            X\t1.0
+                            """);
+            assertQuery("""
+                    WITH v_cap AS (SELECT 'X'::SYMBOL symbol, 1.0 price)
+                    SELECT * FROM trades t JOIN v_cap c ON t.symbol = c.symbol""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("symbol\tprice\tsymbol1\tprice1\n");
+            assertQuery("SELECT * FROM v_cap")
+                    .noLeakCheck()
+                    .returns("""
+                            symbol\tprice
+                            AAPL\t100.5
+                            """);
+        });
+    }
+
+    @Test
     public void testWithAliasOverridingTable1() throws Exception {
         assertMemoryLeak(() -> assertQuery("WITH balance as ( SELECT * FROM balance WHERE address = 1 ) " +
                 "SELECT * FROM balance ")
@@ -952,7 +1043,7 @@ public class WithClauseTest extends AbstractCairoTest {
     // CTE twice in a statement that parses, which leaves nothing stashed either. Both statements
     // read the table t.
     private void assertRefusalLeavesNoLexerStash(String sql, int position, String error) throws Exception {
-        try (StashProbeCompiler compiler = new StashProbeCompiler(engine)) {
+        try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
             assertQuery(sql)
                     .withCompiler(compiler)
                     .noLeakCheck()
@@ -971,18 +1062,6 @@ public class WithClauseTest extends AbstractCairoTest {
                             2
                             """);
             Assert.assertEquals(0, compiler.getLexerStashSize());
-        }
-    }
-
-    // Reads the stash of the lexer the compiler parses statements with. The compiler does not
-    // expose that lexer, but a subclass reaches it.
-    private static class StashProbeCompiler extends SqlCompilerImpl {
-        private StashProbeCompiler(CairoEngine engine) {
-            super(engine);
-        }
-
-        private int getLexerStashSize() {
-            return lexer.getStashSize();
         }
     }
 }

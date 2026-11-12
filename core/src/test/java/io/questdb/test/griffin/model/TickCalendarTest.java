@@ -545,7 +545,7 @@ public class TickCalendarTest {
         // 2025-03#XNYS - March 2025, XNYS trading days only
         LongList out = new LongList();
         TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP);
-        IntervalUtils.parseTickExpr(driver, configuration, "2025-03#XNYS", 0, 12, 0, out, IntervalOperation.INTERSECT, sink, true);
+        IntervalUtils.parseTickExpr(driver, configuration, "2025-03#XNYS", 0, 12, 0, out, IntervalOperation.INTERSECT, sink);
 
         // Should have an even number of elements (pairs)
         Assert.assertEquals("Should have interval pairs", 0, out.size() % 2);
@@ -574,7 +574,7 @@ public class TickCalendarTest {
         // 2025-03#XHKG
         LongList out = new LongList();
         TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP);
-        IntervalUtils.parseTickExpr(driver, configuration, "2025-03#XHKG", 0, 12, 0, out, IntervalOperation.INTERSECT, sink, true);
+        IntervalUtils.parseTickExpr(driver, configuration, "2025-03#XHKG", 0, 12, 0, out, IntervalOperation.INTERSECT, sink);
 
         // Each trading day produces 2 intervals (morning + afternoon due to lunch break)
         Assert.assertEquals("Should have interval pairs", 0, out.size() % 2);
@@ -601,7 +601,7 @@ public class TickCalendarTest {
         // 2025#XNYS - all trading days in 2025
         LongList out = new LongList();
         TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP);
-        IntervalUtils.parseTickExpr(driver, configuration, "2025#XNYS", 0, 9, 0, out, IntervalOperation.INTERSECT, sink, true);
+        IntervalUtils.parseTickExpr(driver, configuration, "2025#XNYS", 0, 9, 0, out, IntervalOperation.INTERSECT, sink);
 
         // Should have interval pairs
         Assert.assertEquals("Should have interval pairs", 0, out.size() % 2);
@@ -1225,8 +1225,8 @@ public class TickCalendarTest {
         String expr1 = "2025-01-[02..8,10..19,21..31]T09:30@America/New_York#workday;6h30m";
         String expr2 = "2025-01-[01..31]#XNYS";
 
-        IntervalUtils.parseTickExpr(driver, configuration, expr1, 0, expr1.length(), 0, out1, IntervalOperation.INTERSECT, sink, true);
-        IntervalUtils.parseTickExpr(driver, configuration, expr2, 0, expr2.length(), 0, out2, IntervalOperation.INTERSECT, sink, true);
+        IntervalUtils.parseTickExpr(driver, configuration, expr1, 0, expr1.length(), 0, out1, IntervalOperation.INTERSECT, sink);
+        IntervalUtils.parseTickExpr(driver, configuration, expr2, 0, expr2.length(), 0, out2, IntervalOperation.INTERSECT, sink);
 
         Assert.assertEquals(intervalToString(driver, out1), intervalToString(driver, out2));
     }
@@ -1253,21 +1253,21 @@ public class TickCalendarTest {
     private void assertTickInterval(String expected, String interval) throws SqlException {
         LongList out = new LongList();
         TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP);
-        IntervalUtils.parseTickExpr(driver, configuration, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, sink, true);
+        IntervalUtils.parseTickExpr(driver, configuration, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, sink);
         Assert.assertEquals(expected, intervalToString(driver, out));
     }
 
     private void assertTickIntervalNanos(String expected, String interval) throws SqlException {
         LongList out = new LongList();
         TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP_NANO);
-        IntervalUtils.parseTickExpr(driver, configuration, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, sink, true);
+        IntervalUtils.parseTickExpr(driver, configuration, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, sink);
         Assert.assertEquals(expected, intervalToString(driver, out));
     }
 
     private void assertTickIntervalWithNow(String expected, String interval, long nowTimestamp) throws SqlException {
         LongList out = new LongList();
         TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP);
-        IntervalUtils.parseTickExpr(driver, configuration, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, sink, true, nowTimestamp);
+        IntervalUtils.parseTickExpr(driver, configuration, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, sink, nowTimestamp);
         Assert.assertEquals(expected, intervalToString(driver, out));
     }
 }

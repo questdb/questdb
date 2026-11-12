@@ -45,13 +45,17 @@ import org.jetbrains.annotations.TestOnly;
  * honor the same zero-pointer convention before dereferencing these buffers.
  */
 public class RowGroupBuffers implements QuietCloseable, Reopenable {
+    /**
+     * The native bytes of the descriptor of a decoded column chunk. The buffers keep a descriptor for each column they
+     * decoded until they are closed, however many columns a later decode into them fills.
+     */
+    public static final long CHUNK_STRUCT_SIZE;
     private static final long CHUNKS_PTR_OFFSET;
     private static final long CHUNK_AUX_PTR_OFFSET;
     private static final long CHUNK_AUX_SIZE_OFFSET;
     private static final long CHUNK_DATA_PTR_OFFSET;
     private static final long CHUNK_DATA_SIZE_OFFSET;
     private static final long CHUNK_PAGE_BUFFERS_SIZE_OFFSET;
-    private static final long CHUNK_STRUCT_SIZE;
     private static final long CHUNK_TOP_ROWS_COUNT_OFFSET;
     private static final long CHUNK_TOP_ROWS_PTR_OFFSET;
     // bytes of one [lo, hi) run of column-top rows

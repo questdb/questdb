@@ -26,10 +26,14 @@ package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-class SampleByFillNoneNotKeyedRecordCursor extends AbstractVirtualRecordSampleByCursor {
+class SampleByFillNoneNotKeyedRecordCursor extends AbstractVirtualRecordSampleByCursor implements SampleByFillSource {
     private final SimpleMapValue value;
 
     public SampleByFillNoneNotKeyedRecordCursor(
@@ -49,7 +53,7 @@ class SampleByFillNoneNotKeyedRecordCursor extends AbstractVirtualRecordSampleBy
             int sampleFromFuncPos,
             Function sampleToFunc,
             int sampleToFuncPos,
-            boolean isFromToUtc
+            char samplingIntervalUnit
     ) {
         super(
                 configuration,
@@ -67,7 +71,7 @@ class SampleByFillNoneNotKeyedRecordCursor extends AbstractVirtualRecordSampleBy
                 sampleFromFuncPos,
                 sampleToFunc,
                 sampleToFuncPos,
-                isFromToUtc
+                samplingIntervalUnit
         );
         this.value = value;
         record.of(value);
@@ -75,12 +79,61 @@ class SampleByFillNoneNotKeyedRecordCursor extends AbstractVirtualRecordSampleBy
 
     @Override
     public boolean hasNext() {
-        // initTimestamps() returns true when it aggregated the NULL bucket into the value: that bucket goes out first
         return initTimestamps() || (baseRecord != null && notKeyedLoop(value));
+    }
+
+    /**
+     * Moves to the row {@link #peekNextTimestamp()} reported and returns the timestamp
+     * of the row after it, or LONG_NULL when no row is left.
+     */
+    public long nextRowAndPeek() {
+        notKeyedLoop(value);
+        return baseRecord != null ? localEpoch - tzOffset : Numbers.LONG_NULL;
+    }
+
+    @Override
+    public void of(RecordCursor base, SqlExecutionContext executionContext) throws SqlException {
+        super.of(base, executionContext);
+        setNullValue();
+    }
+
+    @Override
+    public long peekNextTimestamp() {
+        if (initTimestamps()) {
+            throw nullTimestampException();
+        }
+        return baseRecord != null ? localEpoch - tzOffset : Numbers.LONG_NULL;
+    }
+
+    @Override
+    public void toTop() {
+        super.toTop();
+        setNullValue();
+    }
+
+    boolean hasNextWithPrev() {
+        if (baseRecord == null || localEpoch == Numbers.LONG_NULL) {
+            return false;
+        }
+        final long next = timestampSampler.nextTimestamp(nextSampleLocalEpoch);
+        if (next < localEpoch) {
+            sampleLocalEpoch = nextSampleLocalEpoch = next;
+            return true;
+        }
+        if (localEpoch < next) {
+            throw SampleByFillGrid.dataRowBeforeBucket(localEpoch, next);
+        }
+        return next < Long.MAX_VALUE && notKeyedLoop(value);
     }
 
     @Override
     protected boolean aggregateNullTimestampRows() {
         return notKeyedNullLoop(value);
+    }
+
+    private void setNullValue() {
+        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+            groupByFunctions.getQuick(i).setNull(value);
+        }
     }
 }

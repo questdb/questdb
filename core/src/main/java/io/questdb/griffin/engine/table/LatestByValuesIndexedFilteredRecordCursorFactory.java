@@ -53,12 +53,12 @@ public class LatestByValuesIndexedFilteredRecordCursorFactory extends AbstractDe
         super(configuration, metadata, partitionFrameCursorFactory, columnIndex, keyValueFuncs, columnIndexes, columnSizeShifts);
 
         try {
+            this.filter = filter;
             if (filter != null) {
                 cursor = new LatestByValuesIndexedFilteredRecordCursor(configuration, metadata, columnIndex, rows, symbolKeys, filter);
             } else {
                 cursor = new LatestByValuesIndexedRecordCursor(configuration, metadata, columnIndex, symbolKeys, rows);
             }
-            this.filter = filter;
         } catch (Throwable th) {
             close();
             throw th;

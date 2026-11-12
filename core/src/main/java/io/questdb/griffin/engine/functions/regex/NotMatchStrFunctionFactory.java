@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.regex;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -36,6 +37,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 import java.util.regex.Matcher;
@@ -43,6 +45,11 @@ import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
 public class NotMatchStrFunctionFactory implements FunctionFactory {
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
+    }
+
     @Override
     public String getSignature() {
         return "!~(Ss)";
@@ -60,6 +67,7 @@ public class NotMatchStrFunctionFactory implements FunctionFactory {
         CharSequence regex = args.getQuick(1).getStrA(null);
 
         if (regex == null) {
+            Misc.freeObjList(args);
             return BooleanConstant.FALSE;
         }
 

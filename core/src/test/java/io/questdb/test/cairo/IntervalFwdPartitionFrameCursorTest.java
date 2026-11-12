@@ -71,6 +71,7 @@ import java.util.Arrays;
 import java.util.Collection;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 
 @RunWith(Parameterized.class)
 public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
@@ -288,6 +289,16 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
             );
             Assert.assertFalse(reader.isOpen());
         });
+    }
+
+    @Test
+    public void testFactoryActivatesUnprojectedTimestampBackward() throws Exception {
+        assertFactoryActivatesUnprojectedTimestamp(ORDER_DESC);
+    }
+
+    @Test
+    public void testFactoryActivatesUnprojectedTimestampForward() throws Exception {
+        assertFactoryActivatesUnprojectedTimestamp(ORDER_ASC);
     }
 
     @Test
@@ -559,11 +570,9 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
             long timestamp = timestampType.getDriver().parseFloorLiteral("1980-01-01T00:00:00.000Z");
 
             GenericRecordMetadata metadata;
-            final int timestampIndex;
 
             final SqlExecutionContext executionContext = new SqlExecutionContextStub(engine);
             try (TableReader reader = engine.getReader(x)) {
-                timestampIndex = reader.getMetadata().getTimestampIndex();
                 metadata = GenericRecordMetadata.copyOf(reader.getMetadata());
             }
             final TestTableReaderRecord record = new TestTableReaderRecord();
@@ -579,8 +588,7 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
                                     partitionBy,
                                     intervals
                             ),
-                            timestampIndex,
-                            metadata,
+                            TestUtils.tableDescriptor(metadata),
                             ORDER_ASC,
                             null,
                             0,
@@ -785,6 +793,63 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
         TestUtils.assertEquals(expected, sink);
     }
 
+    private void assertFactoryActivatesUnprojectedTimestamp(int order) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (k INT, unused VARCHAR, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, 'a', '2024-01-01T00:00:00Z'),
+                    (2, 'b', '2024-01-01T01:00:00Z'),
+                    (3, 'c', '2024-01-01T02:00:00Z'),
+                    (4, 'd', '2024-01-02T00:00:00Z'),
+                    (5, 'e', '2024-01-02T01:00:00Z'),
+                    (6, 'f', '2024-01-02T02:00:00Z')
+                    """);
+            if (convertToParquet) {
+                execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            }
+            final TableToken tableToken = engine.verifyTableName("x");
+            final GenericRecordMetadata metadata;
+            try (TableReader reader = engine.getReader(tableToken)) {
+                metadata = GenericRecordMetadata.copyOf(reader.getMetadata());
+            }
+            intervals.clear();
+            intervals.add(timestampType.getDriver().parseFloorLiteral("2024-01-01T00:30:00Z"));
+            intervals.add(timestampType.getDriver().parseFloorLiteral("2024-01-02T01:30:00Z"));
+            final IntList columnIndexes = new IntList();
+            columnIndexes.add(0);
+            try (IntervalPartitionFrameCursorFactory factory = new IntervalPartitionFrameCursorFactory(
+                    tableToken,
+                    0,
+                    new RuntimeIntervalModel(timestampType.getDriver(), PartitionBy.DAY, intervals),
+                    TestUtils.tableDescriptor(metadata),
+                    order,
+                    null,
+                    0,
+                    false
+            )) {
+                for (int open = 0; open < 2; open++) {
+                    try (PartitionFrameCursor cursor = factory.getCursor(sqlExecutionContext, columnIndexes, order)) {
+                        for (int pass = 0; pass < 2; pass++) {
+                            for (int i = 0; i < 2; i++) {
+                                final int partition = order == ORDER_ASC ? i : 1 - i;
+                                final PartitionFrame frame = cursor.next();
+                                Assert.assertNotNull(frame);
+                                Assert.assertEquals(partition, frame.getPartitionIndex());
+                                Assert.assertEquals(partition == 0 ? 1 : 0, frame.getRowLo());
+                                Assert.assertEquals(partition == 0 ? 3 : 2, frame.getRowHi());
+                            }
+                            Assert.assertNull(cursor.next());
+                            cursor.toTop();
+                        }
+                    }
+                    Assert.assertEquals(1, columnIndexes.size());
+                    Assert.assertEquals(0, columnIndexes.getQuick(0));
+                }
+            }
+        });
+    }
+
     private void collectTimestamps(PartitionFrameCursor cursor, TestTableReaderRecord record) {
         try (
                 RowGroupBuffers parquetBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
@@ -923,11 +988,9 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
             long timestamp = timestampType.getDriver().parseFloorLiteral("1980-01-01T00:00:00.000Z");
 
             GenericRecordMetadata metadata;
-            final int timestampIndex;
 
             final SqlExecutionContext executionContext = new SqlExecutionContextStub(engine);
             try (TableReader reader = engine.getReader(x)) {
-                timestampIndex = reader.getMetadata().getTimestampIndex();
                 metadata = GenericRecordMetadata.copyOf(reader.getMetadata());
             }
             final TestTableReaderRecord record = new TestTableReaderRecord();
@@ -944,8 +1007,7 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
                                     PartitionBy.DAY,
                                     intervals
                             ),
-                            timestampIndex,
-                            metadata,
+                            TestUtils.tableDescriptor(metadata),
                             ORDER_ASC,
                             null,
                             0,

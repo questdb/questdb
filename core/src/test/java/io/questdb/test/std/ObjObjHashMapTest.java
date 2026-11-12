@@ -116,4 +116,29 @@ public class ObjObjHashMapTest {
             }
         }
     }
+
+    @Test
+    public void testClearAndReuse() {
+        final ObjObjHashMap<String, String> map = new ObjObjHashMap<>();
+        for (int i = 0; i < 100; i++) {
+            map.put("k" + i, "v" + i);
+        }
+        map.clear();
+        Assert.assertEquals(0, map.size());
+        Assert.assertNull(map.get("k1"));
+        Assert.assertFalse(map.iterator().hasNext());
+
+        map.put("k1", "v1");
+        map.put("k2", "v2");
+        Assert.assertEquals(2, map.size());
+        Assert.assertTrue(map.remove("k1") > -1);
+        Assert.assertTrue(map.excludes("k1"));
+        Assert.assertEquals("v2", map.get("k2"));
+        int count = 0;
+        for (ObjObjHashMap.Entry<String, String> e : map) {
+            Assert.assertEquals("k2", e.key);
+            count++;
+        }
+        Assert.assertEquals(1, count);
+    }
 }

@@ -42,6 +42,11 @@ import org.jetbrains.annotations.Nullable;
 
 public class CastTimestampToStrFunctionFactory implements FunctionFactory {
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.STRING;
+    }
+
+    @Override
     public String getSignature() {
         return "cast(Ns)";
     }

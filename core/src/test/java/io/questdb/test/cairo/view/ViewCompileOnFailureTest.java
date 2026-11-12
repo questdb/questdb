@@ -56,9 +56,9 @@ public class ViewCompileOnFailureTest extends AbstractViewTest {
     private static final int DEPTH = 16;
     private static final String FAILING_SELECT_PREFIX = "SELECT no_such_col FROM (";
     private static final String NO_SUCH_COL = "Invalid column: no_such_col";
-    // Every shape gets through the optimiser, which is as far as these tests compile. Code
-    // generation rejects EXISTS and a sub-query LIMIT, so no materialized view carries those two
-    // shapes; a failing statement does.
+    // Every shape but EXISTS and a sub-query LIMIT gets through binding, which is as far as these
+    // tests compile. Binding rejects those two, at the innermost level it reaches first, so no
+    // materialized view carries them; a failing statement does.
     private static final Shape[] SHAPES = {
             new Shape("IN", "", ViewCompileOnFailureTest::wrapIn, "SELECT s FROM v"),
             new Shape("NOT IN", "", q -> "SELECT s FROM t WHERE s NOT IN (" + q + ")", "SELECT s FROM v"),
@@ -218,7 +218,13 @@ public class ViewCompileOnFailureTest extends AbstractViewTest {
             createFixture();
             for (Shape shape : SHAPES) {
                 final String sql = shape.prefix() + FAILING_SELECT_PREFIX + nest(shape.wrap(), shape.innermost(), DEPTH) + ")";
-                assertExceptionNoLeakCheck(sql, shape.prefix().length() + 7, NO_SUCH_COL);
+                if ("EXISTS".equals(shape.name())) {
+                    assertExceptionNoLeakCheck(sql, sql.lastIndexOf("EXISTS"), "unknown function name: EXISTS(CURSOR)");
+                } else if ("LIMIT".equals(shape.name())) {
+                    assertExceptionNoLeakCheck(sql, sql.lastIndexOf("LIMIT (") + "LIMIT (".length(), "LIMIT expressions must be convertible to INT");
+                } else {
+                    assertExceptionNoLeakCheck(sql, shape.prefix().length() + 7, NO_SUCH_COL);
+                }
                 Assert.assertEquals("shape " + shape.name(), "v=1\n", drainCompileTasks());
             }
             assertViewServesRows();
@@ -367,6 +373,9 @@ public class ViewCompileOnFailureTest extends AbstractViewTest {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 final ObjList<CharSequence> names = new ObjList<>();
                 for (Shape shape : SHAPES) {
+                    if ("EXISTS".equals(shape.name()) || "LIMIT".equals(shape.name())) {
+                        continue;
+                    }
                     // the statement text names v once, so the walk reads it once at any depth
                     for (int depth : new int[]{1, DEPTH}) {
                         final String sql = shape.prefix() + nest(shape.wrap(), shape.innermost(), depth);

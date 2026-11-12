@@ -772,9 +772,9 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
         // row carries the key that keyOf() does not return. A fused SYMBOL-key join that builds
         // the view would keep that key and look y up through keyOf(), so it would miss the row.
         // The planner keeps the ordinary join for such a build, which matches the view's keys by
-        // their texts. A LEFT join builds its right input, and an INNER join builds the input
-        // with fewer table rows: dim2 holds more rows than the view's table, so the fused plan
-        // would swap the inputs of lv JOIN dim2 to build the view.
+        // their texts. A LEFT join builds its right input, and so does an INNER join with the view
+        // on either side, since the view's table does not bound the rows the view returns: the
+        // fused plan of lv JOIN dim2 probes the view, and reads the text of each of its keys.
         assertMemoryLeak(() -> {
             replayLeadTextAway();
             execute("CREATE TABLE dim (sym SYMBOL, v INT, w INT)");
@@ -800,10 +800,10 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
                     {"SELECT d.w, count(l.val) m, sum(l.val) s FROM dim d LEFT JOIN lv l ON d.sym = l.sym AND d.v = l.val ORDER BY d.w", matchOnly},
                     // A filter over the view stays the build's input, with the view beneath it.
                     {"SELECT d.w, count(l.val) m, sum(l.val) s FROM dim d LEFT JOIN (SELECT sym, val FROM lv WHERE val > 0) l ON d.sym = l.sym ORDER BY d.w", matchOnly},
-                    {"SELECT d.w, count(l.val) m, sum(l.val) s FROM lv l JOIN dim2 d ON l.sym = d.sym ORDER BY d.w", matchOnly},
                     {"SELECT d.w, count(l.val) m, sum(l.val) s FROM dim2 d LEFT JOIN lv l ON d.sym = l.sym ORDER BY d.w", matchAndMiss},
                     {"SELECT d.w, count(l.val) m, sum(l.val) s FROM dim2 d JOIN lv l ON d.sym = l.sym ORDER BY d.w", matchOnly}
             };
+            final String probedViewSql = "SELECT d.w, count(l.val) m, sum(l.val) s FROM lv l JOIN dim2 d ON l.sym = d.sym ORDER BY d.w";
             // An INT key compares no dictionary keys, so the fused plan still builds the view.
             final String intKeySql = "SELECT d.w, count(l.val) m, sum(l.val) s FROM dim d LEFT JOIN lv l ON d.w = l.val ORDER BY d.w";
             final String intKeyExpected = """
@@ -826,6 +826,16 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
                                     .withPlanNotContaining("Hash Join Group By")
                                     .returns(query[1]);
                         }
+                        final QueryAssertion probed = assertQuery(probedViewSql)
+                                .withContext(context)
+                                .noLeakCheck()
+                                .expectSize();
+                        if (isFused) {
+                            probed.withPlanContaining("Async Hash Join Group By", "Probe\n            LiveView", "inMemory: true");
+                        } else {
+                            probed.withPlanNotContaining("Hash Join Group By");
+                        }
+                        probed.returns(matchOnly);
                         final QueryAssertion assertion = assertQuery(intKeySql)
                                 .withContext(context)
                                 .noLeakCheck()

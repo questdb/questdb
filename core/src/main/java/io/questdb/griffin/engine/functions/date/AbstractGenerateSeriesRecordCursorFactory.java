@@ -33,6 +33,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 
 
 /**
@@ -97,6 +98,13 @@ public abstract class AbstractGenerateSeriesRecordCursorFactory extends Abstract
                 .meta("start").val(startFunc)
                 .meta("end").val(endFunc)
                 .meta("step").val(stepFunc);
+    }
+
+    @Override
+    protected void _close() {
+        Misc.free(startFunc);
+        Misc.free(endFunc);
+        Misc.free(stepFunc);
     }
 
     /**

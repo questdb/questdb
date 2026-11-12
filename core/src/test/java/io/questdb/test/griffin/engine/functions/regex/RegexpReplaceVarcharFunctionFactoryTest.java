@@ -74,6 +74,23 @@ public class RegexpReplaceVarcharFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNullRegexOrReplacementFreesNestedValue() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v VARCHAR)");
+            execute("INSERT INTO t VALUES ('abc')");
+            for (String patternAndReplacement : new String[]{"NULL, 'x'", "'a', NULL", "NULL::STRING, 'x'", "'a', NULL::VARCHAR"}) {
+                assertQuery("SELECT regexp_replace(regexp_replace(v, '^(\\w+)$', '$1')::VARCHAR, " + patternAndReplacement + ") r FROM t")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                r
+                                
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testNullReplacement() throws Exception {
         assertQuery("select regexp_replace('abc'::varchar, 'a', null)")
                 .expectSize()

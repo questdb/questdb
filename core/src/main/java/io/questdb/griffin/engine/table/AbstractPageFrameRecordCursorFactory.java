@@ -29,7 +29,6 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.MetadataCacheReader;
-import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursor;
@@ -88,7 +87,7 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
 
     @Override
     public String getBaseColumnName(int columnIndex) {
-        return partitionFrameCursorFactory.getMetadata().getColumnName(columnIndexes.getQuick(columnIndex));
+        return partitionFrameCursorFactory.getTableDescriptor().getColumnName(columnIndexes.getQuick(columnIndex));
     }
 
     @Override
@@ -118,17 +117,7 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
                 return false;
             }
         }
-        // A column re-keyed by ALTER COLUMN TYPE has writerIndex != originalWriterIndex.
-        // The reader metadata held by partitionFrameCursorFactory carries the chain head
-        // (originalWriterIndex), unlike the projected query metadata seen downstream.
-        final RecordMetadata metadata = partitionFrameCursorFactory.getMetadata();
-        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            final TableColumnMetadata columnMetadata = metadata.getColumnMetadata(i);
-            if (columnMetadata.getWriterIndex() != columnMetadata.getOriginalWriterIndex()) {
-                return true;
-            }
-        }
-        return false;
+        return partitionFrameCursorFactory.getTableDescriptor().hasConvertedColumns();
     }
 
     @Override

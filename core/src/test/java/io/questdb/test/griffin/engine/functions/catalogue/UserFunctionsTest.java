@@ -116,7 +116,9 @@ public class UserFunctionsTest extends AbstractCairoTest {
                             Assert.assertFalse(cursor.hasNext());
                         }
                     }
-                    assertIdentityReadCounts(securityContext, "parallel group by", 1, 2);
+                    // The projection reads the grouped key column instead of recomputing session_user() over it,
+                    // so it holds one fewer instance to resolve.
+                    assertIdentityReadCounts(securityContext, "parallel group by", 1, 1);
                 },
                 configuration,
                 LOG

@@ -70,6 +70,27 @@ public class HydrateTableMetadataFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTableNameMustBeNonNullTextConstant() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (bo BOOLEAN, c CHAR, s STRING, sym SYMBOL, vc VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            for (String column : new String[]{"bo", "c", "s", "sym", "vc"}) {
+                assertException("SELECT hydrate_table_metadata(" + column + ") FROM a", 30, "STRING constant expected");
+            }
+            assertException("SELECT hydrate_table_metadata('a', s) FROM a", 35, "STRING constant expected");
+            assertException("SELECT hydrate_table_metadata(1)", 30, "STRING constant expected");
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "a");
+            assertException("SELECT hydrate_table_metadata($1)", 30, "STRING constant expected");
+            assertException("SELECT hydrate_table_metadata(null)", 30, "table name cannot be NULL");
+            assertException("SELECT hydrate_table_metadata('a', null::string)", 39, "table name cannot be NULL");
+            assertQuery("SELECT hydrate_table_metadata('a'::varchar, 'a'::symbol)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("hydrate_table_metadata\ntrue\n");
+        });
+    }
+
+    @Test
     public void testWildcardMustBeSolo() throws Exception {
         assertMemoryLeak(() -> assertException("select hydrate_table_metadata('foo', '*')", 7, "cannot use wildcard alongside other table names"));
     }

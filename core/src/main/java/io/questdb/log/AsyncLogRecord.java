@@ -468,29 +468,6 @@ final class AsyncLogRecord implements LogRecord {
         return this;
     }
 
-    /**
-     * Returns the carrier's record, creating it on the carrier's first chain with
-     * a staging buffer sized to match the destination ring's slots. All rings of
-     * a LogFactory share one slot size, so the buffer never needs to grow.
-     */
-    static AsyncLogRecord forCarrier(RingQueue<LogRecordUtf8Sink> ring) {
-        AsyncLogRecord rec = CARRIER_RECORD.getIfPresent();
-        if (rec == null) {
-            rec = new AsyncLogRecord(ring.get(0).capacity());
-            CARRIER_RECORD.set(rec);
-        }
-        return rec;
-    }
-
-    private static @NotNull LogError createAbandonedLogError() {
-        if (LOG_PARANOIA_MODE == LOG_PARANOIA_MODE_AGGRESSIVE) {
-            return new LogError("Abandoned log record");
-        } else {
-            return new LogError("Abandoned log record detected. Use LOG_PARANOIA_MODE_AGGRESSIVE to diagnose.",
-                    false);
-        }
-    }
-
     private static void put(
             Utf8Sink sink,
             Throwable throwable,
@@ -561,36 +538,6 @@ final class AsyncLogRecord implements LogRecord {
         sink.put(Misc.EOL);
     }
 
-    private static void put0(Utf8Sink sink, Throwable e) {
-        sink.putAscii(e.getClass().getName());
-        if (e.getMessage() != null) {
-            sink.putAscii(": ").put(e.getMessage());
-        }
-    }
-
-    private static void validateUtf8(HeapLogRecordUtf8Sink sink) {
-        if (Utf8s.validateUtf8(sink) < 0) {
-            LogError e = new LogError("Invalid UTF-8, partial message: \n"
-                    + Utf8s.stringFromUtf8BytesSafe(sink) + "\nEND partial message");
-            sink.clear();
-            e.printStackTrace(System.out);
-            throw e;
-        }
-    }
-
-    // Publishes the partial message up to the failure point, so that the log
-    // still shows which chain failed. The staged record never holds a ring slot,
-    // so failing to publish it cannot block the log queue either.
-    private void releaseOnFailure(Throwable failure) {
-        try {
-            $();
-        } catch (Throwable releaseFailure) {
-            if (releaseFailure != failure) {
-                failure.addSuppressed(releaseFailure);
-            }
-        }
-    }
-
     // Handles a chain that started while the previous one on this carrier never
     // reached $(). The previous chain was either abandoned (e.g. an exception
     // skipped its $()) or the new chain is nested inside it (e.g. a toString()
@@ -635,6 +582,59 @@ final class AsyncLogRecord implements LogRecord {
             slot.copyFrom(sink);
             slot.setLevel(level);
             seq.done(cursor);
+        }
+    }
+
+    /**
+     * Returns the carrier's record, creating it on the carrier's first chain with
+     * a staging buffer sized to match the destination ring's slots. All rings of
+     * a LogFactory share one slot size, so the buffer never needs to grow.
+     */
+    static AsyncLogRecord forCarrier(RingQueue<LogRecordUtf8Sink> ring) {
+        AsyncLogRecord rec = CARRIER_RECORD.getIfPresent();
+        if (rec == null) {
+            rec = new AsyncLogRecord(ring.get(0).capacity());
+            CARRIER_RECORD.set(rec);
+        }
+        return rec;
+    }
+
+    private static @NotNull LogError createAbandonedLogError() {
+        if (LOG_PARANOIA_MODE == LOG_PARANOIA_MODE_AGGRESSIVE) {
+            return new LogError("Abandoned log record");
+        } else {
+            return new LogError("Abandoned log record detected. Use LOG_PARANOIA_MODE_AGGRESSIVE to diagnose.",
+                    false);
+        }
+    }
+
+    private static void put0(Utf8Sink sink, Throwable e) {
+        sink.putAscii(e.getClass().getName());
+        if (e.getMessage() != null) {
+            sink.putAscii(": ").put(e.getMessage());
+        }
+    }
+
+    private static void validateUtf8(HeapLogRecordUtf8Sink sink) {
+        if (Utf8s.validateUtf8(sink) < 0) {
+            LogError e = new LogError("Invalid UTF-8, partial message: \n"
+                    + Utf8s.stringFromUtf8BytesSafe(sink) + "\nEND partial message");
+            sink.clear();
+            e.printStackTrace(System.out);
+            throw e;
+        }
+    }
+
+    // Publishes the partial message up to the failure point, so that the log
+    // still shows which chain failed. The staged record never holds a ring slot,
+    // so failing to publish it cannot block the log queue either.
+    private void releaseOnFailure(Throwable failure) {
+        try {
+            $();
+        } catch (Throwable releaseFailure) {
+            if (releaseFailure != failure) {
+                failure.addSuppressed(releaseFailure);
+            }
         }
     }
 

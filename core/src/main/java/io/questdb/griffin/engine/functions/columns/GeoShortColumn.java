@@ -62,11 +62,6 @@ public class GeoShortColumn extends GeoShortFunction implements ColumnFunction {
         return rec.getGeoShort(columnIndex);
     }
 
-    @Override
-    public boolean isThreadSafe() {
-        return true;
-    }
-
     static {
         int bits = ColumnType.GEOSHORT_MAX_BITS - ColumnType.GEOSHORT_MIN_BITS + 1;
         COLUMNS = new GeoShortColumn[STATIC_COLUMN_COUNT * bits];

@@ -31,15 +31,13 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.IQueryModel;
-import io.questdb.griffin.model.InsertModel;
+import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Transient;
-import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 public interface SqlCompiler extends QuietCloseable, Mutable {
@@ -60,17 +58,7 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
      */
     boolean execute(final Operation op, SqlExecutionContext executionContext) throws SqlException, CairoException;
 
-    /**
-     * Closes the table-name-function factories the compiler attached to its query models and never
-     * transferred to a returned {@link RecordCursorFactory}. Code generation empties the model's slot
-     * as it takes ownership, so a factory the caller still holds is invisible here.
-     * <p>
-     * This is the narrow alternative to {@link #clear()} for a lifecycle boundary: it releases what
-     * the compiler still owns without dropping the SQL text or the flyweight {@link CompiledQuery} a
-     * caller may still be reading. It reports a close failure rather than throwing, so a caller can
-     * always finish returning or disposing of the compiler.
-     */
-    void freeUntransferredTableNameFunctions();
+    void freeResourcesInFlight();
 
     /**
      * Returns the upper bound T, in the unit of the designated timestamp column, when {@code predicate} is
@@ -129,27 +117,12 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
     ExpressionNode parseExpression(CharSequence expression) throws SqlException;
 
     /**
-     * Generates the plan of a query model. When a table the plan reads is out of date, this
-     * method recompiles the model from this compiler's own SQL text and tries again, so the model
-     * must come from the statement this compiler is compiling. For any other model, use
-     * {@link #generateSelectWithoutRetries}.
+     * Generates the query this compiler prepared last, which {@code queryModel} is the model of: the statement
+     * {@link #generateExecutionModel} or {@code compile} returned. Recompiles the statement when a table it reads
+     * changed since it was prepared.
      */
     RecordCursorFactory generateSelectWithRetries(
-            @Transient IQueryModel queryModel,
-            @Nullable @Transient InsertModel insertModel,
-            @Transient SqlExecutionContext executionContext,
-            boolean generateProgressLogger
-    ) throws SqlException;
-
-    /**
-     * Generates the plan of a query model once. When a table the plan reads is out of date, this
-     * method throws {@link io.questdb.cairo.sql.TableReferenceOutOfDateException} and leaves the
-     * retry to the caller. Use it for a model this compiler did not parse, such as a sub-query
-     * another compiler's optimiser produced: {@link #generateSelectWithRetries} would replace that
-     * model with whatever statement this compiler parsed last.
-     */
-    RecordCursorFactory generateSelectWithoutRetries(
-            @Transient IQueryModel queryModel,
+            @Transient QueryModel queryModel,
             @Transient SqlExecutionContext executionContext,
             boolean generateProgressLogger
     ) throws SqlException;
@@ -159,6 +132,13 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
     CairoEngine getEngine();
 
     QueryBuilder query();
+
+    /**
+     * Brings every structure the compiler keeps between statements back to its configured floor, as if the compiler
+     * had cleared through two windows of empty statements, see {@link io.questdb.std.RetainedCapacity}. The compiler
+     * pool calls it on a compiler that has been idle past the pool's inactive TTL, which no statement ages.
+     */
+    void releaseRetainedCapacity();
 
     /**
      * Validates an EXPIRE ROWS predicate structurally by parsing and binding it against {@code metadata}
@@ -180,7 +160,7 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
     void setFullFatJoins(boolean fullFatJoins);
 
     @TestOnly
-    ExpressionNode testParseExpression(CharSequence expression, IQueryModel model) throws SqlException;
+    ExpressionNode testParseExpression(CharSequence expression, QueryModel model) throws SqlException;
 
     @TestOnly
     void testParseExpression(CharSequence expression, ExpressionParserListener listener) throws SqlException;

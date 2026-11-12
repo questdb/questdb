@@ -118,9 +118,11 @@ public class LastNotNullLongGroupByFunction extends FirstLongGroupByFunction {
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        if (arg.getLong(record) != Numbers.LONG_NULL) {
+        long val = arg.getLong(record);
+        if (val != Numbers.LONG_NULL) {
             if (mapValue.getLong(valueIndex + 1) == Numbers.LONG_NULL || rowId > mapValue.getLong(valueIndex)) {
-                computeFirst(mapValue, record, rowId);
+                mapValue.putLong(valueIndex, rowId);
+                mapValue.putLong(valueIndex + 1, val);
             }
         }
     }

@@ -43,6 +43,7 @@ import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.griffin.SqlException;
 import io.questdb.mp.Job;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
@@ -263,6 +264,26 @@ public class CairoEngineTest extends AbstractCairoTest {
                 TestUtils.assertContains(e.getFlyweightMessage(), "table exists");
             }
         });
+    }
+
+    @Test
+    public void testExecuteAndUpdateFreeRejectedStatements() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k (l LONG)");
+            execute("INSERT INTO k VALUES (1), (2), (3)");
+            assertRejected(() -> engine.execute("SELECT * FROM k WHERE l > 100", sqlExecutionContext), "use select()");
+            assertRejected(() -> engine.execute("EXPLAIN SELECT * FROM k WHERE l > 100", sqlExecutionContext), "use select()");
+            assertRejected(() -> engine.update("SELECT * FROM k WHERE l > 100", sqlExecutionContext), "use select()");
+            assertRejected(() -> engine.update("INSERT INTO k VALUES (4)", sqlExecutionContext), "use insert()");
+            assertRejected(() -> engine.update("ALTER TABLE k ADD COLUMN c INT", sqlExecutionContext), "use execute()");
+            assertRejected(() -> engine.update("DROP TABLE k", sqlExecutionContext), "use drop()");
+            assertQuery("SELECT * FROM k").noLeakCheck().expectSize().returns("l\n1\n2\n3\n");
+        });
+    }
+
+    @Test
+    public void testExecuteRunsPseudoSelectStatements() throws Exception {
+        assertMemoryLeak(() -> engine.execute("COPY '0000000000000001' CANCEL", sqlExecutionContext));
     }
 
     @Test
@@ -682,6 +703,16 @@ public class CairoEngineTest extends AbstractCairoTest {
             } finally {
                 Files.close(fd);
             }
+        }
+    }
+
+    private static void assertRejected(TestUtils.LeakProneCode code, String message) throws Exception {
+        try {
+            code.run();
+            Assert.fail();
+        } catch (SqlException e) {
+            Assert.assertEquals(0, e.getPosition());
+            TestUtils.assertEquals(message, e.getFlyweightMessage());
         }
     }
 

@@ -51,6 +51,37 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateAsSelectCastRejectsPairNoCopierConverts() throws Exception {
+        assertMemoryLeak(() -> {
+            final String ctas = "CREATE TABLE dest AS (SELECT x::int i, x l, rnd_float() f, x::double d, x::date dt, x::timestamp t, x::long256 h, "
+                    + "'11111111-1111-1111-1111-111111111111'::uuid u, ##101 g FROM long_sequence(1)), CAST(";
+            assertQuery(ctas + "i AS CHAR)").fails(ctas.length(), "unsupported cast [column=i, from=INT, to=CHAR]");
+            assertQuery(ctas + "l AS CHAR)").fails(ctas.length(), "unsupported cast [column=l, from=LONG, to=CHAR]");
+            assertQuery(ctas + "f AS CHAR)").fails(ctas.length(), "unsupported cast [column=f, from=FLOAT, to=CHAR]");
+            assertQuery(ctas + "d AS CHAR)").fails(ctas.length(), "unsupported cast [column=d, from=DOUBLE, to=CHAR]");
+            assertQuery(ctas + "dt AS CHAR)").fails(ctas.length(), "unsupported cast [column=dt, from=DATE, to=CHAR]");
+            assertQuery(ctas + "t AS CHAR)").fails(ctas.length(), "unsupported cast [column=t, from=TIMESTAMP, to=CHAR]");
+            assertQuery(ctas + "h AS UUID)").fails(ctas.length(), "unsupported cast [column=h, from=LONG256, to=UUID]");
+            assertQuery(ctas + "u AS IPV4)").fails(ctas.length(), "unsupported cast [column=u, from=UUID, to=IPv4]");
+            assertQuery(ctas + "g AS GEOHASH(1c))").fails(ctas.length(), "unsupported cast [column=g, from=GEOHASH(3b), to=GEOHASH(1c)]");
+        });
+    }
+
+    @Test
+    public void testCreateAsSelectCastStoresByteAndShortAsCharCodePoint() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE dest AS (SELECT 65::byte b, 66::short s FROM long_sequence(1)), CAST(b AS CHAR), CAST(s AS CHAR)");
+            assertQuery("SELECT b, typeOf(b), s, typeOf(s) FROM dest")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            b\ttypeOf\ts\ttypeOf1
+                            A\tCHAR\tB\tCHAR
+                            """);
+        });
+    }
+
+    @Test
     public void testCreateAsSelectDoesNotPropagateParquetConfig() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE src (ts TIMESTAMP, v LONG PARQUET(delta_binary_packed, zstd(3))) TIMESTAMP(ts) PARTITION BY DAY;");

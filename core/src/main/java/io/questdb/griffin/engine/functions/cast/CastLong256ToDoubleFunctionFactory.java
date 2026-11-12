@@ -24,9 +24,43 @@
 
 package io.questdb.griffin.engine.functions.cast;
 
-public class CastLong256ToDoubleFunctionFactory extends CastLongToDoubleFunctionFactory {
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.Long256Util;
+import io.questdb.std.ObjList;
+
+public class CastLong256ToDoubleFunctionFactory implements FunctionFactory {
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.DOUBLE;
+    }
+
     @Override
     public String getSignature() {
         return "cast(Hd)";
+    }
+
+    @Override
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new Func(args.getQuick(0));
+    }
+
+    private static class Func extends AbstractCastToDoubleFunction {
+        public Func(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public double getDouble(Record rec) {
+            final Long256 value = arg.getLong256A(rec);
+            return Long256Impl.isNull(value) ? Double.NaN : Long256Util.toDouble(value);
+        }
     }
 }

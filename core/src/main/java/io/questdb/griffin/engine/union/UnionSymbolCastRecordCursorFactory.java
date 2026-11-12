@@ -92,7 +92,12 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
         this.base = base;
         this.columnToFunctionIndex = columnToFunctionIndex;
         this.functions = functions;
-        this.cursor = new UnionSymbolCastRecordCursor(columnToFunctionIndex, functions);
+        try {
+            this.cursor = new UnionSymbolCastRecordCursor(columnToFunctionIndex, functions);
+        } catch (Throwable th) {
+            Misc.free(this, th);
+            throw th;
+        }
     }
 
     @Override
@@ -144,12 +149,6 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
         return base.implementsLimit();
     }
 
-    // Deliberately does NOT override supportsPageFrameCursor / supportsFilterStealing /
-    // supportsTimeFrameCursor: they must stay false (inherited) because the re-symbolising
-    // CastStrToSymbol.Func is not thread-safe (isThreadSafe() == false) and holds a lazily-built,
-    // per-cursor native dictionary. Delegating any of those capabilities to base would let a parallel
-    // operator clone/snapshot this projection and corrupt that dictionary. maybeResymboliseUnion enforces
-    // the same invariant on the base at construction time.
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;

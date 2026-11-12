@@ -803,7 +803,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                             sendException(response, e.getPosition(), e.getFlyweightMessage(), state);
                             break OUT;
                         } catch (Throwable e) {
-                            sendException(response, 0, e.getMessage(), state);
+                            sendException(response, 0, Misc.getMessageOrClassName(e), state);
                             break OUT;
                         }
                         state.queryState = QUERY_PARQUET_SEND_HEADER;
@@ -849,7 +849,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         } catch (PeerIsSlowToReadException | PeerDisconnectedException e) {
                             throw e;
                         } catch (Throwable e) {
-                            sendException(response, 0, e.getMessage(), state);
+                            sendException(response, 0, Misc.getMessageOrClassName(e), state);
                             break OUT;
                         }
                         state.queryState = QUERY_PARQUET_FILE_SEND_COMPLETE;
@@ -1353,10 +1353,10 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             CharSequence errorMessage,
             ExportQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        if (state.parquetFileOffset > 0) {
+        if (state.parquetFileOffset > 0 || state.getHttpConnectionContext().getLastRequestBytesSent() > 0) {
             // We already sent a partial response to the client.
             // Give up and close the connection.
-            LOG.error().$("partial parquet response sent, closing connection on error [fd=").$(state.getFd())
+            LOG.error().$("partial response sent, closing connection on error [fd=").$(state.getFd())
                     .$(", parquetFileOffset=").$(state.parquetFileOffset)
                     .$(", errorMessage=").$safe(errorMessage)
                     .I$();

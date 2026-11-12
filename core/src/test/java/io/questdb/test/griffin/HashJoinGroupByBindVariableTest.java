@@ -226,41 +226,37 @@ public class HashJoinGroupByBindVariableTest extends AbstractCairoTest {
 
     @Test
     public void testRuntimeConstantOnConjunct() throws Exception {
-        // $1 = 1 reads no column, so the analysis takes an outer join's conjunct as a condition on
-        // the build. False, it drops every build row, and the join keeps each probe row unmatched.
-        // An INNER join's conjunct becomes a filter above the join, a gate that the ordinary plan
-        // evaluates once per execution, so the analysis keeps the ordinary plan for it.
-        final String[] fusedQueries = {
+        // $1 = 1 reads no column. An outer join applies it as a condition on the build alone: false,
+        // it drops every build row, and the join keeps each probe row unmatched. An INNER join
+        // applies it with its post-join filter, a gate the ordinary plan evaluates once per execution
+        // over the join, so the fused plan gates both of its inputs on it.
+        final String[] outerQueries = {
                 "SELECT r.g, count() n, count(p.id) m, sum(p.kwp) w FROM r LEFT JOIN p ON r.id = p.id AND $1 = 1 ORDER BY r.g",
                 "SELECT count() n, count(p.id) m, sum(p.kwp) w FROM p RIGHT JOIN r ON r.id = p.id AND $1 = 1",
                 "SELECT count() n, count(p.id) m, sum(p.kwp) w FROM r LEFT JOIN p ON r.id = p.id AND p.kwp > $2 AND $1 = 1"
         };
-        final String[] ordinaryQueries = {
+        final String[] innerQueries = {
                 "SELECT count() n, sum(p.kwp) w FROM r JOIN p ON r.id = p.id AND $1 = 1",
                 "SELECT count() n, sum(p.kwp) w FROM r JOIN p ON r.id = p.id AND p.kwp > $2 AND $1 = 1"
         };
         forEachMode((db, context, label) -> {
-            for (String sql : fusedQueries) {
-                bindGate(1, 20);
-                try (RecordCursorFactory factory = db.select(sql, context)) {
-                    final String text = label + '\n' + sql + '\n' + plan(factory, context);
-                    Assert.assertTrue(text, text.contains("Hash Join Group By"));
-                    Assert.assertTrue(text, text.contains("buildOnFilter: "));
-                    final String open = assertExecution(db, sql, factory, context, text);
-                    bindGate(2, 20);
-                    final String closed = assertExecution(db, sql, factory, context, text);
-                    Assert.assertNotEquals(text, open, closed);
-                    bindGate(1, 60);
-                    assertExecution(db, sql, factory, context, text);
+            for (String[] queries : new String[][]{outerQueries, innerQueries}) {
+                for (String sql : queries) {
                     bindGate(1, 20);
-                    Assert.assertEquals(text, open, assertExecution(db, sql, factory, context, text));
-                }
-            }
-            for (String sql : ordinaryQueries) {
-                bindGate(1, 20);
-                try (RecordCursorFactory factory = db.select(sql, context)) {
-                    final String text = label + '\n' + sql + '\n' + plan(factory, context);
-                    Assert.assertFalse(text, text.contains("Hash Join Group By"));
+                    try (RecordCursorFactory factory = db.select(sql, context)) {
+                        final String text = label + '\n' + sql + '\n' + plan(factory, context);
+                        Assert.assertTrue(text, text.contains("Hash Join Group By"));
+                        Assert.assertTrue(text, text.contains(queries == outerQueries ? "buildOnFilter: " : "Filter filter: "));
+                        final String open = assertExecution(db, sql, factory, context, text);
+                        bindGate(2, 20);
+                        // A closed gate serves no build rows, so no build runs in rounds.
+                        final String closed = assertExecution(db, sql, factory, context, text, queries == outerQueries);
+                        Assert.assertNotEquals(text, open, closed);
+                        bindGate(1, 60);
+                        assertExecution(db, sql, factory, context, text);
+                        bindGate(1, 20);
+                        Assert.assertEquals(text, open, assertExecution(db, sql, factory, context, text));
+                    }
                 }
             }
         });
@@ -318,10 +314,21 @@ public class HashJoinGroupByBindVariableTest extends AbstractCairoTest {
             SqlExecutionContextImpl context,
             String label
     ) throws Exception {
+        return assertExecution(db, sql, factory, context, label, true);
+    }
+
+    private String assertExecution(
+            CairoEngine db,
+            String sql,
+            RecordCursorFactory factory,
+            SqlExecutionContextImpl context,
+            String label,
+            boolean isBuildRead
+    ) throws Exception {
         final String expected = ordinary(db, sql, context);
         try (RecordCursor cursor = factory.getCursor(context)) {
             Assert.assertEquals(label, expected, rows(cursor, factory));
-            Assert.assertEquals(label, isParallelBuild, fused(factory).getAtom().isBuiltInRounds());
+            Assert.assertEquals(label, isParallelBuild && isBuildRead, fused(factory).getAtom().isBuiltInRounds());
         }
         Assert.assertNull(label, context.getMemoryTracker());
         return expected;

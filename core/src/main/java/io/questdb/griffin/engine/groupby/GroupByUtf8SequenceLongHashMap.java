@@ -169,7 +169,7 @@ public class GroupByUtf8SequenceLongHashMap {
             setValueAtRaw(-index - 1, value);
         } else {
             keyIndexSink.of(0).put(key);
-            setKeyAtRaw(index, keyIndexSink.ptr());
+            setKeyAtRaw(index, keyIndexSink.headerPtr());
             setValueAtRaw(index, value);
             int size = size();
             int sizeLimit = sizeLimit();

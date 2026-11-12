@@ -143,6 +143,11 @@ public class TimeZoneIntervalIterator extends SampleByIntervalIterator {
     private long adjustLoBoundary(long localTs) {
         final int idx = IntervalUtils.findInterval(localShifts, localTs);
         if (idx != -1) {
+            final long shiftHi = IntervalUtils.decodeIntervalHi(localShifts, idx << 1);
+            if (localTs == shiftHi) {
+                // We're precisely at the right of the shift interval. No need to adjust.
+                return localTs;
+            }
             final long shiftLo = IntervalUtils.decodeIntervalLo(localShifts, idx << 1);
             return sampler.round(shiftLo);
         }
@@ -188,9 +193,8 @@ public class TimeZoneIntervalIterator extends SampleByIntervalIterator {
         // advances localTimestampHi by `step` buckets from the snapped point.
         // We also reset shiftLoIndex / shiftOffset so subsequent shift-tracking
         // resumes from the correct position.
-        long localTs = clusterLoUtc + tzRules.getOffset(clusterLoUtc);
-        localTs = adjustLoBoundary(localTs);
-        final long snappedLocal = Math.min(sampler.round(localTs), localMaxTimestamp);
+        final long localTs = clusterLoUtc + tzRules.getOffset(clusterLoUtc);
+        final long snappedLocal = Math.min(adjustLoBoundary(sampler.round(localTs)), localMaxTimestamp);
 
         shiftLoIndex = 0;
         shiftOffset = tzRules.getLocalOffset(snappedLocal);

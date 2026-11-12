@@ -40,7 +40,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
-import io.questdb.griffin.model.IntrinsicModel;
+import io.questdb.griffin.model.RuntimeIntervalModelBuilder;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
@@ -197,18 +197,18 @@ public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
     }
 
     @Override
-    public void overrideWhereIntrinsics(TableToken tableToken, IntrinsicModel intrinsicModel, int timestampType) {
+    public void overrideWhereIntervals(TableToken tableToken, RuntimeIntervalModelBuilder intervals, int timestampType) {
         if (tableToken != baseTableReader.getTableToken()) {
             return;
         }
         // The refresh range always narrows the base table scan, so its boundaries go in as a
         // positive BETWEEN. A NOT BETWEEN on the designated timestamp in the view query leaves
         // the model's BETWEEN polarity negated, which would subtract the range instead.
-        intrinsicModel.setBetweenNegated(false);
+        intervals.setBetweenNegated(false);
         // Cannot re-use function instances, they will be cached in the query plan
         // and then can be re-used in another execution context.
-        intrinsicModel.setBetweenBoundary(new IndexedParameterLinkFunction(1, timestampType, 0), 0);
-        intrinsicModel.setBetweenBoundary(new IndexedParameterLinkFunction(2, timestampType, 0), 0);
+        intervals.setBetweenBoundary(new IndexedParameterLinkFunction(1, timestampType, 0), 0);
+        intervals.setBetweenBoundary(new IndexedParameterLinkFunction(2, timestampType, 0), 0);
     }
 
     public void resetTopLevelProjectionWildcard() {

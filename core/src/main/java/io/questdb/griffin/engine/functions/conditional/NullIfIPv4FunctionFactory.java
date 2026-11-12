@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.conditional;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -37,6 +38,11 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class NullIfIPv4FunctionFactory implements FunctionFactory {
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.IPv4;
+    }
+
     @Override
     public String getSignature() {
         return "nullif(XS)";
@@ -51,6 +57,11 @@ public class NullIfIPv4FunctionFactory implements FunctionFactory {
             SqlExecutionContext sqlExecutionContext
     ) {
         return new NullIfIPv4FunctionFactory.NullIfIPv4Function(args.getQuick(0), args.getQuick(1));
+    }
+
+    @Override
+    public boolean supportImplicitCastCharToStr() {
+        return false;
     }
 
     private static class NullIfIPv4Function extends IPv4Function implements BinaryFunction {

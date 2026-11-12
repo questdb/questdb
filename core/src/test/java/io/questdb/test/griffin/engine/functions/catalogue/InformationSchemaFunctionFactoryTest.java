@@ -30,6 +30,20 @@ import org.junit.Test;
 public class InformationSchemaFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
+    public void testArrayArgumentIsReleased() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQuery("SELECT (information_schema._pg_expandarray(ARRAY[1.0, 2.0])).x FROM long_sequence(1)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("column\n");
+            assertQuery("SELECT k FROM (SELECT information_schema._pg_expandarray(ARRAY[1.0, 2.0]) k FROM long_sequence(1))")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("k\n");
+        });
+    }
+
+    @Test
     public void testInformationSchemaPivotFunc() throws Exception {
         assertQuery("information_schema._pg_expandarray(5);")
                 .ddl("create table x(a int)")

@@ -39,6 +39,11 @@ public class SystimestampFunctionFactory implements FunctionFactory {
     private static final String SIGNATURE = "systimestamp()";
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.TIMESTAMP_MICRO;
+    }
+
+    @Override
     public String getSignature() {
         return SIGNATURE;
     }

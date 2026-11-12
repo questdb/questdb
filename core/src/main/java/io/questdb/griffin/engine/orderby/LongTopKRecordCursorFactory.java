@@ -58,7 +58,12 @@ public class LongTopKRecordCursorFactory extends AbstractRecordCursorFactory {
         this.columnIndex = columnIndex;
         this.lo = lo;
         this.ascending = ascending;
-        this.cursor = new LongTopKRecordCursor(columnIndex, lo, ascending);
+        try {
+            this.cursor = new LongTopKRecordCursor(columnIndex, lo, ascending);
+        } catch (Throwable th) {
+            Misc.free(this, th);
+            throw th;
+        }
     }
 
     @Override
@@ -70,11 +75,6 @@ public class LongTopKRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public boolean isNonDeterministic() {
         return base.isNonDeterministic();
-    }
-
-    @Override
-    public boolean isStableWithinExecution() {
-        return base.isStableWithinExecution();
     }
 
     @Override

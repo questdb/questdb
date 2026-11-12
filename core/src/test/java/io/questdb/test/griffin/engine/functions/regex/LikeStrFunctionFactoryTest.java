@@ -121,6 +121,13 @@ public class LikeStrFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLikeEscapeAtEndInUnusedProjection() throws Exception {
+        assertQuery("SELECT id FROM (SELECT id, s LIKE 'abc\\' AS unused FROM lp)")
+                .ddl("CREATE TABLE lp (id INT, s STRING)")
+                .fails(3, "found [tok='abc\\', len=4] LIKE pattern must not end with escape character");
+    }
+
+    @Test
     public void testLikeEscapeAtEndRegConstFunc() throws Exception {
         String createTable = "CREATE TABLE myTable (name string)";
         String query = "SELECT * FROM myTable WHERE name LIKE '%docs\\';";

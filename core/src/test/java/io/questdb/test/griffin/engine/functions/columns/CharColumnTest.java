@@ -24,13 +24,35 @@
 
 package io.questdb.test.griffin.engine.functions.columns;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.FunctionResolver;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.columns.BindableColumn;
 import io.questdb.griffin.engine.functions.columns.CharColumn;
+import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.std.str.Utf8Sequence;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class CharColumnTest {
+
+    @Test
+    public void testBindableAndBuiltColumnsAgreeOnThreadSafety() throws SqlException {
+        final int[] types = {
+                ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.SHORT, ColumnType.CHAR, ColumnType.INT, ColumnType.LONG,
+                ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.STRING,
+                ColumnType.SYMBOL, ColumnType.VARCHAR, ColumnType.LONG256, ColumnType.UUID, ColumnType.IPv4,
+                ColumnType.getGeoHashTypeWithBits(5), ColumnType.getGeoHashTypeWithBits(40),
+                ColumnType.encodeArrayType(ColumnType.DOUBLE, 1)
+        };
+        for (int type : types) {
+            final boolean isThreadSafe = ColumnFunction.isThreadSafeType(type);
+            Assert.assertEquals(ColumnType.nameOf(type), isThreadSafe, BindableColumn.newInstance(1, type, false).isThreadSafe());
+            Assert.assertEquals(ColumnType.nameOf(type), isThreadSafe, FunctionResolver.createColumn(0, 0, type, false).isThreadSafe());
+        }
+        Assert.assertFalse(BindableColumn.newInstance(1, ColumnType.CHAR, false).isThreadSafe());
+    }
 
     @Test
     public void testGetStrNullChar() {

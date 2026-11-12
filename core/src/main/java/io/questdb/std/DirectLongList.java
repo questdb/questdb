@@ -181,6 +181,9 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
     }
 
     public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        if (tracker != memoryTracker && address != 0) {
+            Unsafe.chargeHeldMemory(capacity, memoryTag, tracker);
+        }
         this.memoryTracker = tracker;
     }
 

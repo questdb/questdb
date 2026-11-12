@@ -259,11 +259,17 @@ public class SubsampleOrderByColumnTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTable();
             final String source = " FROM (SELECT ts, v, x AS \"sort.key\", x AS \"in\", x AS \"sort key\" FROM t) q";
-            // Match ordinary ORDER BY resolution: dotted names need qualification in this scope.
-            assertError("SELECT ts, v" + source + " ORDER BY ^\"sort.key\"", "Invalid table name or alias");
-            assertError("SELECT ts, v" + source + " SUBSAMPLE uniform(3) ORDER BY ^\"sort.key\"", "Invalid table name or alias");
+            assertQuery("SELECT ts, v" + source + " ORDER BY \"sort.key\"").expectSize().returns("""
+                    ts\tv
+                    1970-01-01T01:00:00.000000Z\t50
+                    1970-01-01T03:00:00.000000Z\t40
+                    1970-01-01T04:00:00.000000Z\t30
+                    1970-01-01T02:00:00.000000Z\t20
+                    1970-01-01T00:00:00.000000Z\t10
+                    """);
             for (int mode = 0; mode < 2; mode++) {
                 setWindowMode(mode);
+                assertQuery("SELECT ts, v" + source + " SUBSAMPLE uniform(3) ORDER BY \"sort.key\"").returns(SAMPLED_X_ORDER);
                 assertQuery("SELECT ts, v" + source + " SUBSAMPLE uniform(3) ORDER BY q.\"sort.key\"").returns(SAMPLED_X_ORDER);
                 assertQuery("SELECT ts, v" + source + " SUBSAMPLE uniform(3) ORDER BY \"in\"").returns(SAMPLED_X_ORDER);
                 assertQuery("SELECT ts, v" + source + " SUBSAMPLE uniform(3) ORDER BY \"sort key\"").returns(SAMPLED_X_ORDER);

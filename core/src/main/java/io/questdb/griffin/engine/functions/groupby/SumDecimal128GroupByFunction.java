@@ -30,12 +30,12 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.decimal.Decimal256Function;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
-import io.questdb.std.Decimals;
 import io.questdb.std.NumericException;
 import org.jetbrains.annotations.NotNull;
 
@@ -50,7 +50,7 @@ class SumDecimal128GroupByFunction extends Decimal256Function implements GroupBy
     private int valueIndex;
 
     public SumDecimal128GroupByFunction(@NotNull Function arg, int position) {
-        super(ColumnType.getDecimalType(Decimals.MAX_PRECISION, ColumnType.getDecimalScale(arg.getType())));
+        super(ResultTypes.decimalSum(arg.getType()));
         this.arg = arg;
         this.position = position;
         final int scale = ColumnType.getDecimalScale(type);

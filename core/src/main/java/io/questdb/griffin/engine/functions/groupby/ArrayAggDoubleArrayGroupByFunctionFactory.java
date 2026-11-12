@@ -30,11 +30,22 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
 public class ArrayAggDoubleArrayGroupByFunctionFactory implements FunctionFactory {
+
+    @Override
+    public OrderDependence getOrderDependence() {
+        return OrderDependence.TABLE_ORDER;
+    }
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.encodeArrayType(ColumnType.DOUBLE, 1);
+    }
 
     @Override
     public String getSignature() {
@@ -54,12 +65,9 @@ public class ArrayAggDoubleArrayGroupByFunctionFactory implements FunctionFactor
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
+        SqlUtil.checkArrayDimensionsKnown(args.getQuick(0).getType(), argPositions.getQuick(0));
         final Function arg = args.getQuick(0);
-        final int dims = ColumnType.decodeWeakArrayDimensionality(arg.getType());
-        if (dims == -1) {
-            throw SqlException.position(argPositions.getQuick(0)).put("array bind variable argument is not supported");
-        }
-        if (dims != 1) {
+        if (ColumnType.decodeWeakArrayDimensionality(arg.getType()) != 1) {
             throw SqlException.position(argPositions.getQuick(0)).put("array is not one-dimensional");
         }
         return new ArrayAggDoubleArrayGroupByFunction(arg, configuration);

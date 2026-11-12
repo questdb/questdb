@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.ShortConstant;
@@ -67,6 +68,11 @@ public class CastDecimalToShortFunctionFactory implements FunctionFactory {
             case ColumnType.DECIMAL128 -> new ScaledDecimal128Function(arg, position);
             default -> new ScaledDecimal256Function(arg, position);
         };
+    }
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ResultTypes.castTarget(argTypes);
     }
 
     @Override

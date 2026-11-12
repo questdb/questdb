@@ -30,6 +30,7 @@ import io.questdb.griffin.engine.groupby.GroupByUtf8Sink;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -52,6 +53,19 @@ public class GroupByUtf8SinkTest extends AbstractCairoTest {
 
                 sink.put("barbaz");
                 TestUtils.assertEquals("barbaz", sink);
+            }
+        });
+    }
+
+    @Test
+    public void testPtr() throws Exception {
+        assertMemoryLeak(() -> {
+            try (GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1MB)) {
+                GroupByUtf8Sink sink = new GroupByUtf8Sink();
+                sink.setAllocator(allocator);
+                sink.put("żółć-żółć");
+                TestUtils.assertEquals("żółć-żółć", new DirectUtf8String().of(sink.ptr(), sink.ptr() + sink.size()));
+                Assert.assertEquals(-1, sink.of(0).ptr());
             }
         });
     }

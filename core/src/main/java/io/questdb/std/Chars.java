@@ -454,10 +454,6 @@ public final class Chars {
         return r != null && equals(l, r);
     }
 
-    public static boolean equalsNc(CharSequence l, CharSequence r, int rLo, int rHi) {
-        return l != null && equals(l, r, rLo, rHi);
-    }
-
     public static boolean equalsNullable(@Nullable CharSequence l, @Nullable CharSequence r) {
         if (l == null && r == null) {
             return true;

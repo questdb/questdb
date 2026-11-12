@@ -38,8 +38,10 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
+import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -59,6 +61,11 @@ public class WithinGeohashFunctionFactory implements FunctionFactory {
             default:
                 throw new UnsupportedOperationException();
         }
+    }
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
     }
 
     @Override
@@ -95,6 +102,11 @@ public class WithinGeohashFunctionFactory implements FunctionFactory {
             if (func.isRuntimeConstant()) {
                 runtimeConstCount++;
             }
+        }
+
+        if (ColumnType.isNull(firstArg.getType())) {
+            Misc.freeObjList(args);
+            return BooleanConstant.FALSE;
         }
 
         // have to copy, args is mutable

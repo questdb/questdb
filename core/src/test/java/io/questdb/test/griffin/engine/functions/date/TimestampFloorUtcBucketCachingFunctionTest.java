@@ -56,8 +56,6 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.lang.reflect.Field;
-import java.lang.reflect.Modifier;
 
 /**
  * timestamp_floor_utc() with a constant named time zone caches the bucket of the last floored
@@ -466,26 +464,9 @@ public class TimestampFloorUtcBucketCachingFunctionTest extends AbstractCairoTes
         return shuffled;
     }
 
-    // The values of the function's primitive instance fields and the identities of the objects
-    // that its other instance fields refer to, the inherited ones included. The state of those
-    // objects is out of reach.
-    private static String stateOf(Function func) throws IllegalAccessException {
+    private static String stateOf(Function func) {
         final StringSink sink = new StringSink();
-        for (Class<?> c = func.getClass(); c != Object.class; c = c.getSuperclass()) {
-            for (Field field : c.getDeclaredFields()) {
-                if (!Modifier.isStatic(field.getModifiers())) {
-                    field.setAccessible(true);
-                    final Object value = field.get(func);
-                    sink.put(field.getName()).put('=');
-                    if (field.getType().isPrimitive()) {
-                        sink.put(String.valueOf(value));
-                    } else {
-                        sink.put(System.identityHashCode(value));
-                    }
-                    sink.put(';');
-                }
-            }
-        }
+        TimestampFloorFromOffsetUtcFunctionFactory.toBucketCacheState(func, sink);
         return sink.toString();
     }
 
@@ -500,9 +481,11 @@ public class TimestampFloorUtcBucketCachingFunctionTest extends AbstractCairoTes
             boolean returnUtc
     ) {
         if (returnUtc) {
-            final long tzOff = CommonUtils.getFloorUtcTzOffset(rules, timestamp, unit);
-            final long floored = floor.floor(timestamp + tzOff, stride, effectiveOffset);
-            return CommonUtils.offsetFlooredUtcResult(floored, tzOff, 0, rules, unit);
+            final long local = CommonUtils.floorUtcToLocal(rules, timestamp, unit);
+            return CommonUtils.floorLocalToUtc(rules, floor.floor(local, stride, effectiveOffset), unit);
+        }
+        if (!CommonUtils.isSubDayUnit(unit)) {
+            return floor.floor(CommonUtils.floorUtcToLocal(rules, timestamp, unit), stride, effectiveOffset);
         }
         long floored = floor.floor(timestamp + rules.getOffset(timestamp), stride, effectiveOffset);
         final long gapDuration = rules.getDstGapOffset(floored);

@@ -48,7 +48,6 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.async.UnorderedPageFrameReducer;
 import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
-import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -100,23 +99,20 @@ public class AsyncGroupingSetsRecordCursorFactory extends AbstractRecordCursorFa
             @NotNull ObjList<GroupByFunction> groupByFunctions,
             @Nullable ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions,
             @NotNull ObjList<Function> keyFunctions,
-            @NotNull ObjList<ObjList<Function>> perWorkerKeyFunctions,
+            @Nullable ObjList<ObjList<Function>> perWorkerKeyFunctions,
             @NotNull ObjList<Function> recordFunctions,
-            @Nullable CompiledFilter compiledFilter,
-            @Nullable MemoryCARW bindVarMemory,
-            @Nullable ObjList<Function> bindVarFunctions,
-            @Nullable Function filter,
-            @Nullable ObjList<Function> perWorkerFilters,
+            @NotNull AsyncFilterResources filterResources,
             @NotNull ObjList<IntList> groupingSets,
             @NotNull IntList keyColumnIndices,
             int workerCount
-    ) throws SqlException {
+    ) {
         super(metadata);
         try {
             this.base = base;
             this.recordFunctions = recordFunctions;
             this.workerCount = workerCount;
             this.keyColumnCount = keyColumnIndices.size();
+            final boolean hasFilter = filterResources.getFilter() != null;
             final AsyncGroupingSetsAtom atom = new AsyncGroupingSetsAtom(
                     asm,
                     configuration,
@@ -128,11 +124,7 @@ public class AsyncGroupingSetsRecordCursorFactory extends AbstractRecordCursorFa
                     perWorkerGroupByFunctions,
                     keyFunctions,
                     perWorkerKeyFunctions,
-                    compiledFilter,
-                    bindVarMemory,
-                    bindVarFunctions,
-                    filter,
-                    perWorkerFilters,
+                    filterResources,
                     groupingSets,
                     keyColumnIndices,
                     workerCount
@@ -142,7 +134,7 @@ public class AsyncGroupingSetsRecordCursorFactory extends AbstractRecordCursorFa
                     configuration,
                     messageBus,
                     atom,
-                    filter != null ? FILTER_AND_AGGREGATE : AGGREGATE,
+                    hasFilter ? FILTER_AND_AGGREGATE : AGGREGATE,
                     workerCount
             );
             this.cursor = new AsyncGroupingSetsCursor(
@@ -151,11 +143,10 @@ public class AsyncGroupingSetsRecordCursorFactory extends AbstractRecordCursorFa
                     base.getMetadata().getColumnCount(),
                     keyColumnCount
             );
-            // Validates GROUPING() arguments, so it runs only after the atom owns the key and
-            // per-worker functions: close() then frees them when the validation throws.
-            initGroupingFunctions(groupByFunctions, perWorkerGroupByFunctions, groupingSets, keyColumnIndices);
+            initGroupingFunctions(groupByFunctions, perWorkerGroupByFunctions, groupingSets);
         } catch (Throwable th) {
             Misc.free(this, th);
+            Misc.free(filterResources, th);
             throw th;
         }
     }
@@ -203,23 +194,6 @@ public class AsyncGroupingSetsRecordCursorFactory extends AbstractRecordCursorFa
             }
         }
         return base.isNonDeterministic();
-    }
-
-    @Override
-    public boolean isStableWithinExecution() {
-        AsyncGroupingSetsAtom atom = frameSequence.getAtom();
-        ObjList<Function> keyFunctions = atom.getOwnerKeyFunctions();
-        for (int i = 0, n = keyFunctions.size(); i < n; i++) {
-            if (!keyFunctions.getQuick(i).isStableWithinExecution()) {
-                return false;
-            }
-        }
-        for (int i = 0, n = recordFunctions.size(); i < n; i++) {
-            if (!recordFunctions.getQuick(i).isStableWithinExecution()) {
-                return false;
-            }
-        }
-        return base.isStableWithinExecution();
     }
 
     @Override
@@ -398,26 +372,24 @@ public class AsyncGroupingSetsRecordCursorFactory extends AbstractRecordCursorFa
     private static void initGroupingFunctions(
             ObjList<GroupByFunction> ownerFunctions,
             @Nullable ObjList<ObjList<GroupByFunction>> workerFunctions,
-            ObjList<IntList> groupingSets,
-            IntList keyColumnIndices
-    ) throws SqlException {
-        initGroupingFunctions(ownerFunctions, groupingSets, keyColumnIndices);
+            ObjList<IntList> groupingSets
+    ) {
+        initGroupingFunctions(ownerFunctions, groupingSets);
         if (workerFunctions != null) {
             for (int i = 0, n = workerFunctions.size(); i < n; i++) {
-                initGroupingFunctions(workerFunctions.getQuick(i), groupingSets, keyColumnIndices);
+                initGroupingFunctions(workerFunctions.getQuick(i), groupingSets);
             }
         }
     }
 
     private static void initGroupingFunctions(
             ObjList<GroupByFunction> functions,
-            ObjList<IntList> groupingSets,
-            IntList keyColumnIndices
-    ) throws SqlException {
+            ObjList<IntList> groupingSets
+    ) {
         for (int i = 0, n = functions.size(); i < n; i++) {
             GroupByFunction function = functions.getQuick(i);
             if (function instanceof GroupingFunction groupingFunction) {
-                groupingFunction.init(groupingSets, keyColumnIndices);
+                groupingFunction.init(groupingSets);
             }
         }
     }

@@ -209,13 +209,6 @@ public class CursorFunction implements Function {
     // "non-deterministic function: >". Consumers that genuinely need the factory's determinism hold
     // their own factory reference (see ScalarSubQueryTimestampFunction) and read it directly.
 
-    // Stability is only ever used to *disable* optimizations, so the fail-safe direction is correct
-    // here and this delegation is safe.
-    @Override
-    public boolean isStableWithinExecution() {
-        return factory.isStableWithinExecution();
-    }
-
     @Override
     public final short getShort(Record rec) {
         throw new UnsupportedOperationException();

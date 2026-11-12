@@ -37,7 +37,7 @@ import io.questdb.griffin.engine.table.parquet.ParquetEncoding;
 import io.questdb.griffin.engine.table.ShowCreateTableRecordCursorFactory;
 import io.questdb.griffin.model.CreateTableColumnModel;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.IQueryModel;
+import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
@@ -66,7 +66,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     private long o3MaxLag = -1;
     private ExpressionNode partitionByExpr;
     // transient field, unoptimized AS SELECT model, used in toSink()
-    private IQueryModel selectModel;
+    private QueryModel selectModel;
     private CharSequence selectText;
     private int selectTextPosition;
     private int tableFormat = TableUtils.TABLE_FORMAT_NATIVE;
@@ -80,6 +80,21 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     private CharSequence volumeAlias;
     private int volumePosition;
     private boolean walEnabled;
+
+    /**
+     * Whether a CAST clause of CREATE TABLE ... AS SELECT may store a column of type {@code from} as type
+     * {@code to}: types of one cast group cast to each other, and every other pair follows
+     * {@link ColumnType#isConvertibleFrom}. The record copier implements every pair this accepts.
+     */
+    public static boolean isCompatibleCast(int from, int to) {
+        if (from == to || isIPv4Cast(from, to)) {
+            return true;
+        }
+        if (!hasCastGroup(from) || !hasCastGroup(to)) {
+            return ColumnType.isConvertibleFrom(from, to);
+        }
+        return castGroups.getQuick(ColumnType.tagOf(from)) == castGroups.getQuick(ColumnType.tagOf(to));
+    }
 
     public void addColumnModel(CharSequence columnName, CreateTableColumnModel model) throws SqlException {
         if (columnModels.get(columnName) != null) {
@@ -231,7 +246,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     }
 
     @Override
-    public IQueryModel getQueryModel() {
+    public QueryModel getQueryModel() {
         return selectModel;
     }
 
@@ -326,7 +341,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     }
 
     @Override
-    public void setSelectModel(IQueryModel selectModel) {
+    public void setSelectModel(QueryModel selectModel) {
         this.selectModel = selectModel;
     }
 
@@ -466,7 +481,8 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     }
 
     private static boolean hasCastGroup(int columnType) {
-        return ColumnType.tagOf(columnType) < castGroups.size();
+        final int tag = ColumnType.tagOf(columnType);
+        return tag < castGroups.size() && castGroups.getQuick(tag) != 0;
     }
 
     private static boolean isIPv4Cast(int from, int to) {
@@ -519,25 +535,10 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         }
     }
 
-    static boolean isCompatibleCast(int from, int to) {
-        if (from == to || isIPv4Cast(from, to)) {
-            return true;
-        }
-        if (!hasCastGroup(from) || !hasCastGroup(to)) {
-            // The group table stops at VARCHAR, so the decimal, array and NULL tags have no entry,
-            // and no single group could express a decimal's precision and scale or an array's
-            // dimensionality. Defer to isConvertibleFrom, the rule INSERT ... SELECT applies before it
-            // runs the same record copier.
-            return ColumnType.isConvertibleFrom(from, to);
-        }
-        return castGroups.getQuick(ColumnType.tagOf(from)) == castGroups.getQuick(ColumnType.tagOf(to));
-    }
-
     static {
         castGroups.extendAndSet(ColumnType.BOOLEAN, 2);
         castGroups.extendAndSet(ColumnType.BYTE, 1);
         castGroups.extendAndSet(ColumnType.SHORT, 1);
-        castGroups.extendAndSet(ColumnType.CHAR, 1);
         castGroups.extendAndSet(ColumnType.INT, 1);
         castGroups.extendAndSet(ColumnType.LONG, 1);
         castGroups.extendAndSet(ColumnType.FLOAT, 1);

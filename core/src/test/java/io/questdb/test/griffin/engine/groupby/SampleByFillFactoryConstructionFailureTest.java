@@ -34,34 +34,20 @@ import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SingleSymbolFilter;
-import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.sql.SymbolTableSource;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.EmptyTableRandomRecordCursor;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.functions.LongFunction;
-import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.SampleByFillNoneNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByFillNoneRecordCursorFactory;
-import io.questdb.griffin.engine.groupby.SampleByFillNullNotKeyedRecordCursorFactory;
-import io.questdb.griffin.engine.groupby.SampleByFillNullRecordCursorFactory;
-import io.questdb.griffin.engine.groupby.SampleByFillPrevNotKeyedRecordCursorFactory;
-import io.questdb.griffin.engine.groupby.SampleByFillPrevRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByFillRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByFillValueNotKeyedRecordCursorFactory;
-import io.questdb.griffin.engine.groupby.SampleByFillValueRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByFirstLastRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByInterpolateRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SimpleTimestampSampler;
-import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -70,8 +56,8 @@ import org.junit.Test;
 /**
  * The SAMPLE BY factories run fallible work after their superclass constructor adopted the
  * record functions, the base factory, the map (keyed variants), and the temporal parameter
- * functions: record-sink and group-by updater bytecode generation, placeholder-function
- * assembly, and cursor construction. Java cannot run close() on the unreturned partial object,
+ * functions: record-sink and group-by updater bytecode generation and cursor construction.
+ * Java cannot run close() on the unreturned partial object,
  * and the generator has already transferred ownership, so the constructors themselves must free
  * every adopted resource exactly once when that post-super work throws. Every fill variant
  * (none/null/prev/value), keyed and not-keyed, plus the interpolation and index-backed
@@ -108,7 +94,8 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
                         fixture.sampleFromFunc,
                         0,
                         fixture.sampleToFunc,
-                        0
+                        0,
+                        'h'
                 )
         );
     }
@@ -135,8 +122,7 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
                         0,
                         fixture.sampleToFunc,
                         0,
-                        false,
-                        false
+                        'h'
                 )
         );
     }
@@ -174,8 +160,7 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
                             0,
                             fixture.sampleToFunc,
                             0,
-                            false,
-                            false
+                            'h'
                     )
             );
 
@@ -198,190 +183,33 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
     }
 
     @Test
-    public void testFillNullConstructorFailureClosesAdoptedResources() throws Exception {
-        assertConstructionFailureClosesAdoptedResources(UPDATER_FAILURE, true, fixture ->
-                new SampleByFillNullRecordCursorFactory(
-                        new TargetFailingAssembler(GroupByFunctionsUpdater.class, UPDATER_FAILURE),
-                        configuration,
-                        fixture.base(),
-                        fixture.sampler(),
-                        fixture.listColumnFilter,
-                        fixture.keyTypes,
-                        fixture.valueTypes,
-                        fixture.groupByMetadata,
-                        new ObjList<>(),
-                        fixture.recordFunctions,
-                        fixture.recordFunctionPositions,
-                        1,
-                        ColumnType.TIMESTAMP,
-                        fixture.timezoneNameFunc,
-                        0,
-                        fixture.offsetFunc,
-                        0,
-                        fixture.sampleFromFunc,
-                        0,
-                        fixture.sampleToFunc,
-                        0
-                )
-        );
-    }
-
-    @Test
-    public void testFillNullNotKeyedConstructorFailureClosesAdoptedResources() throws Exception {
-        assertConstructionFailureClosesAdoptedResources(UPDATER_FAILURE, true, fixture ->
-                new SampleByFillNullNotKeyedRecordCursorFactory(
-                        new TargetFailingAssembler(GroupByFunctionsUpdater.class, UPDATER_FAILURE),
-                        configuration,
-                        fixture.base(),
-                        fixture.sampler(),
-                        fixture.groupByMetadata,
-                        new ObjList<>(),
-                        fixture.recordFunctions,
-                        fixture.recordFunctionPositions,
-                        1,
-                        1,
-                        ColumnType.TIMESTAMP,
-                        fixture.timezoneNameFunc,
-                        0,
-                        fixture.offsetFunc,
-                        0,
-                        fixture.sampleFromFunc,
-                        0,
-                        fixture.sampleToFunc,
-                        0,
-                        false,
-                        false,
-                        false
-                )
-        );
-    }
-
-    @Test
-    public void testFillPrevConstructorFailureClosesAdoptedResources() throws Exception {
-        assertConstructionFailureClosesAdoptedResources(UPDATER_FAILURE, true, fixture ->
-                new SampleByFillPrevRecordCursorFactory(
-                        new TargetFailingAssembler(GroupByFunctionsUpdater.class, UPDATER_FAILURE),
-                        configuration,
-                        fixture.base(),
-                        fixture.sampler(),
-                        fixture.listColumnFilter,
-                        fixture.keyTypes,
-                        fixture.valueTypes,
-                        fixture.groupByMetadata,
-                        new ObjList<>(),
-                        fixture.recordFunctions,
-                        1,
-                        ColumnType.TIMESTAMP,
-                        fixture.timezoneNameFunc,
-                        0,
-                        fixture.offsetFunc,
-                        0,
-                        fixture.sampleFromFunc,
-                        0,
-                        fixture.sampleToFunc,
-                        0
-                )
-        );
-    }
-
-    @Test
-    public void testFillPrevNotKeyedConstructorFailureClosesAdoptedResources() throws Exception {
-        assertConstructionFailureClosesAdoptedResources(UPDATER_FAILURE, true, fixture ->
-                new SampleByFillPrevNotKeyedRecordCursorFactory(
-                        new TargetFailingAssembler(GroupByFunctionsUpdater.class, UPDATER_FAILURE),
-                        configuration,
-                        fixture.base(),
-                        fixture.sampler(),
-                        fixture.groupByMetadata,
-                        new ObjList<>(),
-                        fixture.recordFunctions,
-                        1,
-                        ColumnType.TIMESTAMP,
-                        1,
-                        fixture.timezoneNameFunc,
-                        0,
-                        fixture.offsetFunc,
-                        0,
-                        fixture.sampleFromFunc,
-                        0,
-                        fixture.sampleToFunc,
-                        0,
-                        false,
-                        false,
-                        false
-                )
-        );
-    }
-
-    @Test
-    public void testFillRecordFunctionInitFailureReleasesMapAndAllowsRetry() throws Exception {
-        assertFillRecordFunctionInitFailureReleasesMapAndAllowsRetry(false);
-    }
-
-    @Test
-    public void testFillRecordFunctionInitFailureWithThrowingCloseReleasesMapAndAllowsRetry() throws Exception {
-        assertFillRecordFunctionInitFailureReleasesMapAndAllowsRetry(true);
-    }
-
-    @Test
-    public void testFillValueConstructorFailureClosesAdoptedResources() throws Exception {
-        assertConstructionFailureClosesAdoptedResources(UPDATER_FAILURE, true, fixture ->
-                new SampleByFillValueRecordCursorFactory(
-                        new TargetFailingAssembler(GroupByFunctionsUpdater.class, UPDATER_FAILURE),
-                        configuration,
-                        fixture.base(),
-                        fixture.sampler(),
-                        fixture.listColumnFilter,
-                        new ObjList<>(),
-                        fixture.keyTypes,
-                        fixture.valueTypes,
-                        fixture.groupByMetadata,
-                        new ObjList<>(),
-                        fixture.recordFunctions,
-                        fixture.recordFunctionPositions,
-                        1,
-                        ColumnType.TIMESTAMP,
-                        fixture.timezoneNameFunc,
-                        0,
-                        fixture.offsetFunc,
-                        0,
-                        fixture.sampleFromFunc,
-                        0,
-                        fixture.sampleToFunc,
-                        0
-                )
-        );
-    }
-
-    @Test
     public void testFillValueNotKeyedConstructorFailureClosesAdoptedResources() throws Exception {
-        assertConstructionFailureClosesAdoptedResources(UPDATER_FAILURE, true, fixture ->
-                new SampleByFillValueNotKeyedRecordCursorFactory(
-                        new TargetFailingAssembler(GroupByFunctionsUpdater.class, UPDATER_FAILURE),
-                        configuration,
-                        fixture.base(),
-                        fixture.sampler(),
-                        new ObjList<>(),
-                        fixture.groupByMetadata,
-                        new ObjList<>(),
-                        fixture.recordFunctions,
-                        fixture.recordFunctionPositions,
-                        1,
-                        1,
-                        ColumnType.TIMESTAMP,
-                        fixture.timezoneNameFunc,
-                        0,
-                        fixture.offsetFunc,
-                        0,
-                        fixture.sampleFromFunc,
-                        0,
-                        fixture.sampleToFunc,
-                        0,
-                        false,
-                        false,
-                        false
-                )
-        );
+        assertConstructionFailureClosesAdoptedResources(UPDATER_FAILURE, true, fixture -> {
+            fixture.fillValues.add(fixture.fillValue);
+            new SampleByFillValueNotKeyedRecordCursorFactory(
+                    new TargetFailingAssembler(GroupByFunctionsUpdater.class, UPDATER_FAILURE),
+                    configuration,
+                    fixture.base(),
+                    fixture.sampler(),
+                    new ObjList<>(fixture.recordFunctions),
+                    fixture.fillValues,
+                    fixture.groupByMetadata,
+                    new ObjList<>(),
+                    fixture.recordFunctions,
+                    1,
+                    1,
+                    ColumnType.TIMESTAMP,
+                    fixture.timezoneNameFunc,
+                    0,
+                    fixture.offsetFunc,
+                    0,
+                    fixture.sampleFromFunc,
+                    0,
+                    fixture.sampleToFunc,
+                    0,
+                    'h'
+            );
+        });
     }
 
     @Test
@@ -394,7 +222,9 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
                         fixture.base(),
                         fixture.sampler(),
                         fixture.groupByMetadata,
-                        new ObjList<>(),
+                        new IntList(),
+                        new IntList(),
+                        new IntList(),
                         fixture.baseMetadata,
                         fixture.timezoneNameFunc,
                         0,
@@ -416,7 +246,8 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
                         fixture.sampleFromFunc,
                         0,
                         fixture.sampleToFunc,
-                        0
+                        0,
+                        'U'
                 )
         );
     }
@@ -436,7 +267,9 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
                             base,
                             fixture.sampler(),
                             fixture.groupByMetadata,
-                            new ObjList<>(),
+                            new IntList(),
+                            new IntList(),
+                            new IntList(),
                             fixture.baseMetadata,
                             throwingTimezoneFunc,
                             0,
@@ -458,7 +291,8 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
                             throwingSampleFromFunc,
                             0,
                             fixture.sampleToFunc,
-                            0
+                            0,
+                            'U'
                     )
             );
 
@@ -497,7 +331,7 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
                     new ObjList<>(),
                     fixture.recordFunctions,
                     fixture.sampler(),
-                    QueryModel.FACTORY.newInstance(),
+                    'd',
                     fixture.listColumnFilter,
                     fixture.keyTypes,
                     fixture.valueTypes,
@@ -535,7 +369,7 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
                     new ObjList<>(),
                     aliasedFixture.recordFunctions,
                     aliasedFixture.sampler(),
-                    QueryModel.FACTORY.newInstance(),
+                    'd',
                     aliasedFixture.listColumnFilter,
                     aliasedFixture.keyTypes,
                     aliasedFixture.valueTypes,
@@ -568,7 +402,7 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
                         new ObjList<>(),
                         fixture.recordFunctions,
                         fixture.sampler(),
-                        QueryModel.FACTORY.newInstance(),
+                        'd',
                         fixture.listColumnFilter,
                         new ArrayColumnTypes(),
                         new ArrayColumnTypes(),
@@ -582,36 +416,6 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
                         0,
                         fixture.sampleFromFunc,
                         fixture.sampleToFunc
-                )
-        );
-    }
-
-    @Test
-    public void testKeyedSuperConstructorSinkFailureClosesAdoptedResources() throws Exception {
-        // the shared keyed-fill superclass generates the record sink itself; when that throws,
-        // its own catch - not the leaf constructor's - must free the adopted resources
-        assertConstructionFailureClosesAdoptedResources(SINK_FAILURE, true, fixture ->
-                new SampleByFillPrevRecordCursorFactory(
-                        new TargetFailingAssembler(RecordSink.class, SINK_FAILURE),
-                        configuration,
-                        fixture.base(),
-                        fixture.sampler(),
-                        fixture.listColumnFilter,
-                        fixture.keyTypes,
-                        fixture.valueTypes,
-                        fixture.groupByMetadata,
-                        new ObjList<>(),
-                        fixture.recordFunctions,
-                        1,
-                        ColumnType.TIMESTAMP,
-                        fixture.timezoneNameFunc,
-                        0,
-                        fixture.offsetFunc,
-                        0,
-                        fixture.sampleFromFunc,
-                        0,
-                        fixture.sampleToFunc,
-                        0
                 )
         );
     }
@@ -658,6 +462,7 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
                     new IntList(),
                     new IntList(),
                     new IntList(),
+                    false,
                     false
             );
 
@@ -700,6 +505,7 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
                     new IntList(),
                     new IntList(),
                     new IntList(),
+                    false,
                     false
             );
             Assert.assertSame(aliased.failure, Assert.assertThrows(Throwable.class, aliasedFactory::close));
@@ -754,6 +560,7 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
                     new IntList(),
                     new IntList(),
                     new IntList(),
+                    false,
                     false
             );
 
@@ -793,103 +600,11 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
                 Assert.assertEquals("record functions must close exactly once", 1, fixture.recordFunc.closeCount);
             }
             Assert.assertEquals("adopted base factory must be closed", 1, fixture.baseFactory.closeCount);
+            Assert.assertEquals("adopted fill values must close exactly once", fixture.fillValues.size(), fixture.fillValue.closeCount);
             Assert.assertEquals("timezone function must close exactly once", 1, fixture.timezoneNameFunc.closeCount);
             Assert.assertEquals("offset function must close exactly once", 1, fixture.offsetFunc.closeCount);
             Assert.assertEquals("FROM function must close exactly once", 1, fixture.sampleFromFunc.closeCount);
             Assert.assertEquals("TO function must close exactly once", 1, fixture.sampleToFunc.closeCount);
-        });
-    }
-
-    private void assertFillRecordFunctionInitFailureReleasesMapAndAllowsRetry(boolean isCloseFailing) throws Exception {
-        assertMemoryLeak(() -> {
-            final GenericRecordMetadata baseMetadata = new GenericRecordMetadata();
-            baseMetadata.add(new TableColumnMetadata("k", ColumnType.INT));
-            baseMetadata.add(new TableColumnMetadata("ts", ColumnType.TIMESTAMP));
-            baseMetadata.setTimestampIndex(1);
-
-            final GenericRecordMetadata groupByMetadata = new GenericRecordMetadata();
-            groupByMetadata.add(new TableColumnMetadata("value", ColumnType.LONG));
-            final ObjList<Function> recordFunctions = new ObjList<>();
-            final ToggleFailingInitFunction recordFunction = new ToggleFailingInitFunction();
-            recordFunctions.add(recordFunction);
-            final IntList recordFunctionPositions = new IntList();
-            recordFunctionPositions.add(0);
-            final ListColumnFilter keyColumnFilter = new ListColumnFilter();
-            keyColumnFilter.add(1);
-            final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
-            keyTypes.add(ColumnType.INT);
-            final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
-            valueTypes.add(ColumnType.LONG);
-            final Function timestampNull = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP).getTimestampConstantNull();
-
-            final CloseThrowingBaseFactory baseFactory = new CloseThrowingBaseFactory(baseMetadata);
-            try (SampleByFillNullRecordCursorFactory factory = new SampleByFillNullRecordCursorFactory(
-                    new BytecodeAssembler(),
-                    configuration,
-                    baseFactory,
-                    new SimpleTimestampSampler(100L, ColumnType.TIMESTAMP),
-                    keyColumnFilter,
-                    keyTypes,
-                    valueTypes,
-                    groupByMetadata,
-                    new ObjList<>(),
-                    recordFunctions,
-                    recordFunctionPositions,
-                    1,
-                    ColumnType.TIMESTAMP,
-                    StrConstant.NULL,
-                    0,
-                    StrConstant.NULL,
-                    0,
-                    timestampNull,
-                    0,
-                    timestampNull,
-                    0
-            )) {
-                // Establish the reused-cursor state: one successful open and close leaves the
-                // lazy map closed, ready for getCursor() to reopen it on the next execution.
-                try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
-                    // no rows required
-                }
-
-                final long memoryBeforeFailure = Unsafe.getMemUsed();
-                final int closeCountBeforeFailure = baseFactory.cursor.closeCount;
-                baseFactory.cursor.isCloseFailing = isCloseFailing;
-                recordFunction.isFailing = true;
-                try {
-                    factory.getCursor(sqlExecutionContext);
-                    Assert.fail("record-function init failure expected");
-                } catch (SqlException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "injected record-function init failure");
-                    Assert.assertEquals(isCloseFailing ? 1 : 0, e.getSuppressed().length);
-                    if (isCloseFailing) {
-                        TestUtils.assertContains(e.getSuppressed()[0].getMessage(), "injected base-cursor close failure");
-                    }
-                } finally {
-                    baseFactory.cursor.isCloseFailing = false;
-                    recordFunction.isFailing = false;
-                }
-                Assert.assertEquals(
-                        "base cursor close must be attempted",
-                        closeCountBeforeFailure + 1,
-                        baseFactory.cursor.closeCount
-                );
-                Assert.assertEquals(
-                        "failed post-reopen init must release the map",
-                        memoryBeforeFailure,
-                        Unsafe.getMemUsed()
-                );
-
-                // A later execution of the same cached factory must reopen and close normally.
-                try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
-                    // no rows required
-                }
-                Assert.assertEquals(
-                        "successful retry must keep native memory balanced",
-                        memoryBeforeFailure,
-                        Unsafe.getMemUsed()
-                );
-            }
         });
     }
 
@@ -934,78 +649,11 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
         }
     }
 
-    private static class CloseThrowingBaseFactory extends EmptyTableRecordCursorFactory {
-        private final CloseThrowingCursor cursor = new CloseThrowingCursor();
-
-        CloseThrowingBaseFactory(GenericRecordMetadata metadata) {
-            super(metadata);
-        }
-
-        @Override
-        public RecordCursor getCursor(SqlExecutionContext executionContext) {
-            return cursor;
-        }
-    }
-
-    private static class CloseThrowingCursor implements RecordCursor {
-        private int closeCount;
-        private boolean isCloseFailing;
-
-        @Override
-        public void close() {
-            closeCount++;
-            if (isCloseFailing) {
-                throw new RuntimeException("injected base-cursor close failure");
-            }
-        }
-
-        @Override
-        public Record getRecord() {
-            return EmptyTableRandomRecordCursor.INSTANCE.getRecord();
-        }
-
-        @Override
-        public Record getRecordB() {
-            return EmptyTableRandomRecordCursor.INSTANCE.getRecordB();
-        }
-
-        @Override
-        public SymbolTable getSymbolTable(int columnIndex) {
-            return EmptyTableRandomRecordCursor.INSTANCE.getSymbolTable(columnIndex);
-        }
-
-        @Override
-        public boolean hasNext() {
-            return false;
-        }
-
-        @Override
-        public SymbolTable newSymbolTable(int columnIndex) {
-            return EmptyTableRandomRecordCursor.INSTANCE.newSymbolTable(columnIndex);
-        }
-
-        @Override
-        public long preComputedStateSize() {
-            return 0;
-        }
-
-        @Override
-        public void recordAt(Record record, long atRowId) {
-        }
-
-        @Override
-        public long size() {
-            return 0;
-        }
-
-        @Override
-        public void toTop() {
-        }
-    }
-
     private static class Fixture {
         final GenericRecordMetadata baseMetadata = new GenericRecordMetadata();
         CloseCountingBaseFactory baseFactory;
+        final CloseCountingFunction fillValue = new CloseCountingFunction();
+        final ObjList<Function> fillValues = new ObjList<>();
         final GenericRecordMetadata groupByMetadata = new GenericRecordMetadata();
         final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
         final ListColumnFilter listColumnFilter = new ListColumnFilter();
@@ -1075,22 +723,6 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
         public void close() {
             super.close();
             throw failure;
-        }
-    }
-
-    private static class ToggleFailingInitFunction extends LongFunction {
-        private boolean isFailing;
-
-        @Override
-        public long getLong(Record rec) {
-            return 0;
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            if (isFailing) {
-                throw SqlException.$(0, "injected record-function init failure");
-            }
         }
     }
 }

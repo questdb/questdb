@@ -50,6 +50,19 @@ public class EqIntStrCFunctionFactory implements FunctionFactory {
     }
 
     @Override
+    public boolean isConstructionDeferrable(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration) {
+        final CharSequence value = args.getQuick(1).getStrA(null);
+        if (value != null) {
+            try {
+                Numbers.parseInt(value);
+            } catch (NumericException e) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         try {
             final CharSequence value = args.getQuick(1).getStrA(null);

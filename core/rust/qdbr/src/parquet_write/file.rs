@@ -11,6 +11,7 @@ use parquet2::write::{
     Compressor, DynIter, DynStreamingIterator, FileWriter, RowGroupIter, Version,
     WriteOptions as FileWriteOptions,
 };
+use qdb_parquet_meta::convert::QUESTDB_CREATED_BY;
 use qdb_parquet_meta::SeqTxn;
 
 use crate::parquet_write::encode::encode_column_chunk;
@@ -231,7 +232,7 @@ impl<W: Write> ParquetWriter<W> {
             bloom_filter_fpp: options.bloom_filter_fpp,
         };
 
-        let created_by = Some("QuestDB version 9.0".to_string());
+        let created_by = Some(QUESTDB_CREATED_BY.to_string());
         let writer = FileWriter::with_sorting_columns(
             self.writer,
             parquet_schema.clone(),

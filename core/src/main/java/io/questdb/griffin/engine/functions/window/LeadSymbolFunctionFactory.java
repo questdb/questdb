@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.window;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -34,6 +35,11 @@ import io.questdb.std.ObjList;
 public class LeadSymbolFunctionFactory extends AbstractWindowFunctionFactory {
 
     private static final String SIGNATURE = LeadLagWindowFunctionFactoryHelper.LEAD_NAME + "(KV)";
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.SYMBOL;
+    }
 
     @Override
     public String getSignature() {

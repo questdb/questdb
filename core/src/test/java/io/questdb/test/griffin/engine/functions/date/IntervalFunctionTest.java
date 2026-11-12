@@ -252,6 +252,24 @@ public class IntervalFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIntervalStartEndOfUntypedNull() throws Exception {
+        assertMemoryLeak(() -> {
+            final String expected = """
+                    s\te\tst\tet
+                    \t\tTIMESTAMP\tTIMESTAMP
+                    """;
+            assertQuery("SELECT interval_start(null) s, interval_end(null) e, typeOf(interval_start(null)) st, typeOf(interval_end(null)) et FROM long_sequence(1)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("SELECT interval_start(x) s, interval_end(x) e, typeOf(interval_start(x)) st, typeOf(interval_end(x)) et FROM (SELECT null x FROM long_sequence(1))")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+        });
+    }
+
+    @Test
     public void testIntrinsics1() throws Exception {
         testIntrinsics1(ColumnType.TIMESTAMP_MICRO);
     }

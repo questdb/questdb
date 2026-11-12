@@ -341,7 +341,7 @@ public class HashJoinGroupByHorizonTest extends AbstractCairoTest {
                         {
                                 "SELECT t.sym, sum(CASE WHEN t.qty * 50 > " + FUSED_SUBQUERY + " THEN r.w ELSE 0.0 END) a, sum(r.w) b"
                                         + " FROM trades t JOIN refs r ON t.k = r.k ORDER BY 1",
-                                "w,0.0])),sum(w)]"
+                                "r.w,0.0])),sum(r.w)]"
                         },
                         {
                                 "SELECT sym, t.qty * 50 > " + FUSED_SUBQUERY + " big, sum(CASE WHEN qty * 50 > " + FUSED_SUBQUERY

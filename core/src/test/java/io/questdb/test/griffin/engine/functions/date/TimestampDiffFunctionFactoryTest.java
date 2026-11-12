@@ -24,10 +24,24 @@
 
 package io.questdb.test.griffin.engine.functions.date;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.FunctionFactoryDescriptor;
+import io.questdb.griffin.FunctionParser;
+import io.questdb.griffin.engine.functions.StrFunction;
+import io.questdb.griffin.engine.functions.TimestampFunction;
+import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.griffin.engine.functions.date.TimestampDiffFunctionFactory;
+import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
+import io.questdb.test.tools.BindVarTuple;
+import io.questdb.test.tools.BindVariableTestSetter;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTest {
@@ -767,6 +781,45 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
     }
 
     @Test
+    public void testRuntimeConstantTextFailsAtQueryStart() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, v INT)");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00.000000Z', 1), ('2024-01-01T23:59:59.000000Z', 2)");
+            execute("CREATE TABLE e (ts TIMESTAMP, v INT)");
+            for (String textType : new String[]{"STRING", "VARCHAR"}) {
+                final String error = "inconvertible value: `abc` [" + textType + " -> TIMESTAMP_NS]";
+                final ObjList<BindVarTuple> cases = new ObjList<>();
+                cases.add(BindVarTuple.ok("valid text", """
+                        v\tdiff
+                        1\t86400
+                        2\t1
+                        """, text(textType, "2024-01-02")));
+                cases.add(BindVarTuple.fails("invalid text", 0, error, text(textType, "abc")));
+                assertQuery("SELECT v, datediff('s', ts, :e) diff FROM t").noLeakCheck().expectSize().assertBinds(cases);
+
+                cases.clear();
+                cases.add(BindVarTuple.fails("invalid text over no rows", 0, error, text(textType, "abc")));
+                assertQuery("SELECT v, datediff('s', ts, :e) diff FROM e").noLeakCheck().expectSize().assertBinds(cases);
+            }
+        });
+    }
+
+    @Test
+    public void testRuntimeConstantTextParsesOnce() throws Exception {
+        final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
+        final FunctionFactoryDescriptor descriptor = new FunctionFactoryDescriptor(getFunctionFactory());
+        final CountingTextFunction text = new CountingTextFunction("2021-01-01T00:00:01.000000Z");
+        final ObjList<Function> args = new ObjList<>(CharConstant.newInstance('s'), new ColumnFunction(1_609_459_200_000_000L), text);
+        try (Function function = parser.getFunctionResolver().createFunction(descriptor, 0, "datediff", args, new IntList(), sqlExecutionContext)) {
+            function.init(null, sqlExecutionContext);
+            for (int i = 0; i < 1_000; i++) {
+                Assert.assertEquals(1, function.getLong(null));
+            }
+            Assert.assertEquals(1, text.getStrACalls);
+        }
+    }
+
+    @Test
     public void testSecondConstantEndNaN() throws Exception {
         assertQuery("select datediff('s', to_timestamp(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);")
                 .expectSize()
@@ -1053,5 +1106,54 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
     @Override
     protected FunctionFactory getFunctionFactory() {
         return new TimestampDiffFunctionFactory();
+    }
+
+    private static BindVariableTestSetter text(String textType, String value) {
+        return bindVariableService -> {
+            if (textType.equals("STRING")) {
+                bindVariableService.setStr("e", value);
+            } else {
+                bindVariableService.setVarchar("e", new Utf8String(value));
+            }
+        };
+    }
+
+    private static class ColumnFunction extends TimestampFunction {
+        private final long value;
+
+        private ColumnFunction(long value) {
+            super(ColumnType.TIMESTAMP_MICRO);
+            this.value = value;
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            return value;
+        }
+    }
+
+    private static class CountingTextFunction extends StrFunction {
+        private final String value;
+        private int getStrACalls;
+
+        private CountingTextFunction(String value) {
+            this.value = value;
+        }
+
+        @Override
+        public CharSequence getStrA(Record rec) {
+            getStrACalls++;
+            return value;
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec) {
+            return getStrA(rec);
+        }
+
+        @Override
+        public boolean isRuntimeConstant() {
+            return true;
+        }
     }
 }

@@ -45,6 +45,11 @@ import org.jetbrains.annotations.Nullable;
 public class CastTimestampToVarcharFunctionFactory implements FunctionFactory {
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.VARCHAR;
+    }
+
+    @Override
     public String getSignature() {
         return "cast(Nø)";
     }

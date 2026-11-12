@@ -40,8 +40,9 @@ import org.junit.Test;
  * skips one serves the previous row's value with no fault to show for it - the shape of the live
  * view O3 replay bug that {@code ProjectingRecordCursor} shipped with.
  * <p>
- * DoubleFunctionMemoizer stands in for all eighteen: they differ only in the getter that fills the
- * cache, and every one of them clears through the same interface defaults.
+ * DoubleFunctionMemoizer stands in for the routing only: every memoizer reaches {@code clearMemo()}
+ * from {@code init()} and {@code toTop()} through the {@code MemoizerFunction} defaults. Each memoizer
+ * implements {@code clearMemo()} itself; {@code MemoizationTest} covers that for every type.
  */
 public class MemoizerFunctionTest {
 

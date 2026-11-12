@@ -48,8 +48,18 @@ public class ToTimestampVCFunctionFactory implements FunctionFactory {
     private static final String NAME = "to_timestamp";
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.TIMESTAMP_MICRO;
+    }
+
+    @Override
     public String getSignature() {
         return "to_timestamp(Ss)";
+    }
+
+    @Override
+    public boolean isConstructionDeferrable(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration) throws SqlException {
+        return isDeferrable(args, argPositions, ColumnType.TIMESTAMP_MICRO);
     }
 
     @Override
@@ -61,10 +71,7 @@ public class ToTimestampVCFunctionFactory implements FunctionFactory {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         final Function arg = args.getQuick(0);
-        final CharSequence pattern = args.getQuick(1).getStrA(null);
-        if (pattern == null) {
-            throw SqlException.$(argPositions.getQuick(1), "pattern is required");
-        }
+        final CharSequence pattern = pattern(args.getQuick(1), argPositions);
         if (arg.isConstant()) {
             return evaluateConstant(arg, pattern, configuration.getDefaultDateLocale(), ColumnType.TIMESTAMP_MICRO);
         } else {
@@ -84,6 +91,26 @@ public class ToTimestampVCFunctionFactory implements FunctionFactory {
         }
 
         return driver.getTimestampConstantNull();
+    }
+
+    /**
+     * Whether a call with a non-constant value builds a parsing function, after the errors its construction raises
+     * for the pattern.
+     */
+    static boolean isDeferrable(ObjList<Function> args, IntList argPositions, int timestampType) throws SqlException {
+        ColumnType.getTimestampDriver(timestampType).getTimestampDateFormatFactory().get(pattern(args.getQuick(1), argPositions));
+        return !args.getQuick(0).isConstant();
+    }
+
+    /**
+     * The pattern a constant pattern argument spells; raises the error for a NULL pattern.
+     */
+    static CharSequence pattern(Function patternFunc, IntList argPositions) throws SqlException {
+        final CharSequence pattern = patternFunc.getStrA(null);
+        if (pattern == null) {
+            throw SqlException.$(argPositions.getQuick(1), "pattern is required");
+        }
+        return pattern;
     }
 
     protected static final class Func extends TimestampFunction implements UnaryFunction {

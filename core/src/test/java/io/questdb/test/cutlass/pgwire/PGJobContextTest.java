@@ -5621,6 +5621,43 @@ if __name__ == "__main__":
         });
     }
 
+    @Test
+    public void testIndexedSymbolIntegerBindVariable() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
+            connection.prepareStatement("CREATE TABLE x (s SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY").execute();
+            connection.prepareStatement("""
+                    INSERT INTO x VALUES
+                    ('7', 1, '2024-01-01T01'),
+                    ('10', 2, '2024-01-01T02'),
+                    ('07', 3, '2024-01-01T03'),
+                    (NULL, 4, '2024-01-01T04'),
+                    ('7', 5, '2024-01-01T05'),
+                    ('-7', 6, '2024-01-01T06')
+                    """).execute();
+            mayDrainWalQueue();
+            try (PreparedStatement ps = connection.prepareStatement("SELECT v FROM x WHERE s = ? ORDER BY v")) {
+                ps.setLong(1, 7);
+                assertIndexedSymbolBind(ps, "v[BIGINT]\n1\n5\n");
+                ps.setInt(1, 10);
+                assertIndexedSymbolBind(ps, "v[BIGINT]\n2\n");
+                ps.setInt(1, -7);
+                assertIndexedSymbolBind(ps, "v[BIGINT]\n6\n");
+                ps.setNull(1, Types.BIGINT);
+                assertIndexedSymbolBind(ps, "v[BIGINT]\n4\n");
+            }
+            try (PreparedStatement ps = connection.prepareStatement("EXPLAIN SELECT v FROM x WHERE s = ?")) {
+                ps.setLong(1, 7);
+                sink.clear();
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        sink.put(rs.getString(1)).put('\n');
+                    }
+                }
+                TestUtils.assertContains(sink, "Index forward scan on: s");
+            }
+        });
+    }
+
     // Test odd queries that should not be transformed into cursor-based fetches.
     @Test
     public void testInsert() throws Exception {
@@ -7695,6 +7732,42 @@ nodejs code:
                 script,
                 new Port0PGConfiguration()
         );
+    }
+
+    @Test
+    public void testLongSequenceBindCount() throws Exception {
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
+            try (PreparedStatement statement = connection.prepareStatement("SELECT x FROM long_sequence(?)")) {
+                statement.setLong(1, 3);
+                try (ResultSet rs = statement.executeQuery()) {
+                    assertResultSet("x[BIGINT]\n1\n2\n3\n", sink, rs);
+                }
+                statement.setLong(1, 1);
+                try (ResultSet rs = statement.executeQuery()) {
+                    assertResultSet("x[BIGINT]\n1\n", sink, rs);
+                }
+            }
+            try (PreparedStatement statement = connection.prepareStatement("SELECT count() FROM long_sequence(?, ?, ?)")) {
+                statement.setInt(1, 4);
+                statement.setLong(2, 1);
+                statement.setLong(3, 2);
+                try (ResultSet rs = statement.executeQuery()) {
+                    assertResultSet("count[BIGINT]\n4\n", sink, rs);
+                }
+            }
+            final Properties properties = new Properties();
+            properties.setProperty("user", "admin");
+            properties.setProperty("password", "quest");
+            properties.setProperty("sslmode", "disable");
+            properties.setProperty("binaryTransfer", Boolean.toString(binary));
+            properties.setProperty("preferQueryMode", mode.value);
+            properties.setProperty("stringtype", "unspecified");
+            try (Connection untyped = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:" + port + "/qdb", properties)) {
+                assertTextBind(untyped, "SELECT x FROM long_sequence(?)", "SELECT x FROM long_sequence(2)", "x[BIGINT]\n1\n2\n", "2");
+                assertTextBind(untyped, "SELECT max(x) FROM long_sequence(?, ?, ?)", "SELECT max(x) FROM long_sequence(3, 1, 2)",
+                        "max[BIGINT]\n3\n", "3", "1", "2");
+            }
+        });
     }
 
     @Test
@@ -11772,6 +11845,44 @@ create table tab as (
     }
 
     @Test
+    public void testTimestampTextBindsUseIntervalScan() throws Exception {
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, _, _, _) -> {
+            for (String type : new String[]{"TIMESTAMP", "TIMESTAMP_NS"}) {
+                final String fraction = "TIMESTAMP".equals(type) ? "000000" : "000000000";
+                final String last = "TIMESTAMP".equals(type) ? "999999" : "999999999";
+                final String next = "TIMESTAMP".equals(type) ? "000001" : "000000001";
+                execute("DROP TABLE IF EXISTS tab");
+                execute("CREATE TABLE tab (x INT, ts " + type + ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                execute("""
+                        INSERT INTO tab VALUES
+                        (1, '2024-01-01T12:00:00.000000Z'),
+                        (2, '2024-01-02T00:00:00.000000Z'),
+                        (3, '2024-01-02T12:00:00.000000Z'),
+                        (4, '2024-01-03T00:00:00.000000Z')
+                        """);
+                assertTimestampTextBind(connection, "ts = ?", "(\"2024-01-02T12:00:00." + fraction + "Z\",\"2024-01-02T12:00:00." + fraction + "Z\")",
+                        "3\n", "2024-01-02T12:00:00.000000Z");
+                assertTimestampTextBind(connection, "ts > ?", "(\"2024-01-02T00:00:00." + next + "Z\",\"MAX\")",
+                        "3\n4\n", "2024-01-02T00:00:00.000000Z");
+                assertTimestampTextBind(connection, "ts >= ?", "(\"2024-01-02T00:00:00." + fraction + "Z\",\"MAX\")",
+                        "2\n3\n4\n", "2024-01-02T00:00:00.000000Z");
+                assertTimestampTextBind(connection, "ts < ?", "(\"MIN\",\"2024-01-02T11:59:59." + last + "Z\")",
+                        "1\n2\n", "2024-01-02T12:00:00.000000Z");
+                assertTimestampTextBind(connection, "ts <= ?", "(\"MIN\",\"2024-01-02T12:00:00." + fraction + "Z\")",
+                        "1\n2\n3\n", "2024-01-02T12:00:00.000000Z");
+                assertTimestampTextBind(connection, "? < ts", "(\"2024-01-02T12:00:00." + next + "Z\",\"MAX\")",
+                        "4\n", "2024-01-02T12:00:00.000000Z");
+                assertTimestampTextBind(connection, "ts != ?", "(\"MIN\",\"2024-01-02T11:59:59." + last + "Z\"),(\"2024-01-02T12:00:00." + next + "Z\",\"MAX\")",
+                        "1\n2\n4\n", "2024-01-02T12:00:00.000000Z");
+                assertTimestampTextBind(connection, "ts >= ? AND ts < ?", "(\"2024-01-02T00:00:00." + fraction + "Z\",\"2024-01-02T23:59:59." + last + "Z\")",
+                        "2\n3\n", "2024-01-02T00:00:00.000000Z", "2024-01-03T00:00:00.000000Z");
+                assertTimestampTextBind(connection, "ts < ?", "(\"MIN\",\"2024-01-02T00:00:00." + fraction + "Z\")",
+                        "1\n2\n", "2024-01-02T00:00:00.000000001Z");
+            }
+        });
+    }
+
+    @Test
     public void testTransaction() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             connection.setAutoCommit(false);
@@ -11875,6 +11986,25 @@ create table tab as (
                 assertQueryAgainstIndexedSymbol(values, "s in (#X1) and s in (#X2)", new String[]{"#X1", "#X2"}, connection, tsOption, sameValIfParamsTheSame);
             });
         }
+    }
+
+    @Test
+    public void testUnexpectedErrorWithoutMessage() throws Exception {
+        final String[] queries = {
+                "SELECT * FROM long_sequence(1) WHERE npe()",
+                "SELECT npe() FROM long_sequence(1)",
+                "CREATE TABLE npe_tab AS (SELECT * FROM long_sequence(1) WHERE npe())"
+        };
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
+            for (String query : queries) {
+                try (Statement statement = connection.createStatement()) {
+                    statement.execute(query);
+                    Assert.fail(query);
+                } catch (PSQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "ERROR: java.lang.NullPointerException");
+                }
+            }
+        });
     }
 
     @Test
@@ -11997,6 +12127,110 @@ create table tab as (
                             rs
                     );
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testUntypedBindProjectedAsValue() throws Exception {
+        assertWithPgServer(CONN_AWARE_EXTENDED, (_, binary, mode, port) -> {
+            execute("CREATE TABLE tab (k SYMBOL, l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO tab VALUES
+                    ('a', 1, '2024-01-01T00:00:00.000000Z'),
+                    ('b', 2, '2024-01-01T12:00:00.000000Z'),
+                    ('a', 3, '2024-01-02T00:00:00.000000Z')
+                    """);
+            execute("CREATE TABLE dst (c LONG, k SYMBOL, tag SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            final Properties properties = new Properties();
+            properties.setProperty("user", "admin");
+            properties.setProperty("password", "quest");
+            properties.setProperty("sslmode", "disable");
+            properties.setProperty("binaryTransfer", Boolean.toString(binary));
+            properties.setProperty("preferQueryMode", mode.value);
+            properties.setProperty("stringtype", "unspecified");
+            try (Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:" + port + "/qdb", properties)) {
+                assertTextBind(connection, "SELECT ? x, count() FROM tab", "SELECT 'abc' x, count() FROM tab",
+                        "x[VARCHAR],count[BIGINT]\nabc,3\n", "abc");
+                assertTextBind(connection, "SELECT ?::varchar(10) x, count() FROM tab", "SELECT 'abc'::varchar(10) x, count() FROM tab",
+                        "x[VARCHAR],count[BIGINT]\nabc,3\n", "abc");
+                assertTextBind(connection, "SELECT count(), ? x FROM tab", "SELECT count(), 'abc' x FROM tab",
+                        "count[BIGINT],x[VARCHAR]\n3,abc\n", "abc");
+                assertTextBind(connection, "SELECT max(l), ? x FROM tab", "SELECT max(l), 'abc' x FROM tab",
+                        "max[BIGINT],x[VARCHAR]\n3,abc\n", "abc");
+                assertTextBind(connection, "SELECT ? x, sum(l) FROM tab WHERE l > ?", "SELECT 'abc' x, sum(l) FROM tab WHERE l > 1",
+                        "x[VARCHAR],sum[BIGINT]\nabc,5\n", "abc", "1");
+                assertTextBind(connection, "SELECT ? x, k, count() FROM tab GROUP BY k ORDER BY k", "SELECT 'abc' x, k, count() FROM tab GROUP BY k ORDER BY k",
+                        "x[VARCHAR],k[VARCHAR],count[BIGINT]\nabc,a,2\nabc,b,1\n", "abc");
+                assertTextBind(connection, "SELECT ? x, k, count() FROM tab ORDER BY k", "SELECT 'abc' x, k, count() FROM tab ORDER BY k",
+                        "x[VARCHAR],k[VARCHAR],count[BIGINT]\nabc,a,2\nabc,b,1\n", "abc");
+                assertTextBind(connection, "SELECT ? x, count() FROM tab SAMPLE BY 1d", "SELECT 'abc' x, count() FROM tab SAMPLE BY 1d",
+                        "x[VARCHAR],count[BIGINT]\nabc,2\nabc,1\n", "abc");
+                assertTextBind(connection, "SELECT DISTINCT ? x FROM tab", "SELECT DISTINCT 'abc' x FROM tab",
+                        "x[VARCHAR]\nabc\n", "abc");
+                assertTextBind(connection, "SELECT DISTINCT ? x, k FROM tab ORDER BY k", "SELECT DISTINCT 'abc' x, k FROM tab ORDER BY k",
+                        "x[VARCHAR],k[VARCHAR]\nabc,a\nabc,b\n", "abc");
+                assertTextBind(connection, "SELECT ? x, sum(l) OVER () s FROM tab ORDER BY l", "SELECT 'abc' x, sum(l) OVER () s FROM tab ORDER BY l",
+                        "x[VARCHAR],s[DOUBLE]\nabc,6.0\nabc,6.0\nabc,6.0\n", "abc");
+                assertTextBind(connection, "SELECT ? x, count() FROM tab UNION ALL SELECT ? x, count() FROM tab",
+                        "SELECT 'abc' x, count() FROM tab UNION ALL SELECT 'def' x, count() FROM tab",
+                        "x[VARCHAR],count[BIGINT]\nabc,3\ndef,3\n", "abc", "def");
+                try (PreparedStatement statement = connection.prepareStatement("INSERT INTO dst SELECT count(), k, ?, max(ts) FROM tab GROUP BY k")) {
+                    statement.setString(1, "t");
+                    Assert.assertEquals(2, statement.executeUpdate());
+                }
+                try (Statement statement = connection.createStatement(); ResultSet rs = statement.executeQuery("SELECT c, k, tag FROM dst ORDER BY k")) {
+                    assertResultSet("c[BIGINT],k[VARCHAR],tag[VARCHAR]\n2,a,t\n1,b,t\n", sink, rs);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testUntypedNanosecondTimestampBindsKeepPrecision() throws Exception {
+        assertWithPgServer(CONN_AWARE_EXTENDED, (_, binary, mode, port) -> {
+            execute("CREATE TABLE tab (x INT, k INT, ts TIMESTAMP_NS, ts2 TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO tab VALUES
+                    (1, 1, '2024-01-01T00:30:00.000000778Z', '2024-01-01T00:30:00.000000778Z'),
+                    (2, 2, '2024-01-01T01:00:00.000001556Z', '2024-01-01T01:00:00.000001556Z'),
+                    (3, 3, '2024-01-01T01:30:00.000002334Z', '2024-01-01T01:30:00.000002334Z')
+                    """);
+            final Properties properties = new Properties();
+            properties.setProperty("user", "admin");
+            properties.setProperty("password", "quest");
+            properties.setProperty("sslmode", "disable");
+            properties.setProperty("binaryTransfer", Boolean.toString(binary));
+            properties.setProperty("preferQueryMode", mode.value);
+            properties.setProperty("stringtype", "unspecified");
+            try (Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:" + port + "/qdb", properties)) {
+                final String point = "'2024-01-01T00:30:00.000000778'";
+                assertUntypedTimestampBind(connection, "SELECT x FROM tab WHERE ts = ?", point, "x[INTEGER]\n1\n");
+                assertUntypedTimestampBind(connection, "SELECT x FROM tab WHERE ts > ?", point, "x[INTEGER]\n2\n3\n");
+                assertUntypedTimestampBind(connection, "SELECT x FROM tab WHERE ts < ?", "'2024-01-01T00:30:00.000000779'", "x[INTEGER]\n1\n");
+                assertUntypedTimestampBind(connection, "SELECT x FROM tab WHERE ts BETWEEN ? AND ?", point, "x[INTEGER]\n1\n");
+                assertUntypedTimestampBind(connection, "SELECT x FROM tab WHERE ts != ? AND x < 3", point, "x[INTEGER]\n2\n");
+                assertUntypedTimestampBind(connection, "SELECT x FROM tab WHERE ts = ?", "1704069000000000778", "x[INTEGER]\n1\n");
+                assertUntypedTimestampBind(connection, "SELECT x FROM tab WHERE ts = ? OR k = -1", point, "x[INTEGER]\n1\n");
+                assertUntypedTimestampBind(connection, "SELECT x FROM (SELECT * FROM tab LIMIT 3) WHERE ts = ?", point, "x[INTEGER]\n1\n");
+                assertUntypedTimestampBind(connection, "SELECT x FROM tab WHERE ts2 = ?", point, "x[INTEGER]\n1\n");
+                assertUntypedTimestampBind(connection, "SELECT x, ts = ? eq FROM tab", point, "x[INTEGER],eq[BIT]\n1,true\n2,false\n3,false\n");
+                assertUntypedTimestampBind(connection, "EXPLAIN SELECT x FROM tab WHERE ts = ?", point, """
+                        QUERY PLAN[VARCHAR]
+                        SelectedRecord
+                            PageFrame
+                                Row forward scan
+                                Interval forward scan on: tab
+                                  intervals: [("2024-01-01T00:30:00.000000778Z","2024-01-01T00:30:00.000000778Z")]
+                        """);
+                assertUntypedTimestampBind(connection, "EXPLAIN SELECT x FROM tab WHERE ts > ?", point, """
+                        QUERY PLAN[VARCHAR]
+                        SelectedRecord
+                            PageFrame
+                                Row forward scan
+                                Interval forward scan on: tab
+                                  intervals: [("2024-01-01T00:30:00.000000779Z","MAX")]
+                        """);
             }
         });
     }
@@ -12617,7 +12851,7 @@ create table tab as (
     @Test
     @Ignore("""
             Legacy server's error message: 'bind variable at 18 is defined as unknown and cannot accept STRING'
-            Modern server's error message: 'Internal error. Exception type: UnsupportedOperationException'
+            Modern server's error message: 'java.lang.UnsupportedOperationException'
             thrown from ShortFunction.getByte()""")
     public void testVarargBindVariables() throws Exception {
         skipOnWalRun();
@@ -13166,6 +13400,13 @@ create table tab as (
         assertHexScript(NetworkFacadeImpl.INSTANCE, script, getStdPgWireConfigAltCreds());
     }
 
+    private void assertIndexedSymbolBind(PreparedStatement ps, String expected) throws SQLException {
+        sink.clear();
+        try (ResultSet rs = ps.executeQuery()) {
+            assertResultSet(expected, sink, rs);
+        }
+    }
+
     private void assertQueryAgainstIndexedSymbol(
             String[] values,
             String whereClause,
@@ -13258,6 +13499,43 @@ create table tab as (
              ResultSet rs = stmt.executeQuery(sql)) {
             BasePGTest.assertResultSet(expectedResult, sink, rs);
         }
+    }
+
+    private void assertTextBind(Connection connection, String sql, String literalSql, String expected, String... values) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            for (int i = 0; i < values.length; i++) {
+                statement.setString(i + 1, values[i]);
+            }
+            try (ResultSet rs = statement.executeQuery()) {
+                assertResultSet(expected, sink, rs);
+            }
+        }
+        try (Statement statement = connection.createStatement(); ResultSet rs = statement.executeQuery(literalSql)) {
+            assertResultSet(expected, sink, rs);
+        }
+    }
+
+    private void assertTimestampTextBind(Connection connection, String predicate, String intervals, String rows, String... values) throws SQLException {
+        final String sql = "SELECT x FROM tab WHERE " + predicate;
+        String literalSql = sql;
+        for (String value : values) {
+            literalSql = literalSql.replaceFirst("\\?", "'" + value + "'");
+        }
+        assertTextBind(connection, "EXPLAIN " + sql, "EXPLAIN " + literalSql, """
+                QUERY PLAN[VARCHAR]
+                SelectedRecord
+                    PageFrame
+                        Row forward scan
+                        Interval forward scan on: tab
+                          intervals: [""" + intervals + "]\n", values);
+        assertTextBind(connection, sql, literalSql, "x[INTEGER]\n" + rows, values);
+    }
+
+    private void assertUntypedTimestampBind(Connection connection, String sql, String literal, String expected) throws SQLException {
+        final String value = literal.charAt(0) == '\'' ? literal.substring(1, literal.length() - 1) : literal;
+        final String[] values = new String[(int) sql.chars().filter(c -> c == '?').count()];
+        Arrays.fill(values, value);
+        assertTextBind(connection, sql, sql.replace("?", literal), expected, values);
     }
 
     private PGServer createPGServer(SOCountDownLatch queryScheduledCount) {

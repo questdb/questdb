@@ -40,11 +40,12 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.SymbolTranslatingRecord;
-import io.questdb.griffin.model.IQueryModel;
-import io.questdb.griffin.model.JoinContext;
+import io.questdb.griffin.plan.logical.BuildSide;
+import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
@@ -53,8 +54,9 @@ import static io.questdb.griffin.engine.join.HashOuterJoinFilteredLightRecordCur
 
 public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFactory {
 
+    private final BuildSide buildSide;
     private final int columnSplit;
-    private final int joinType;
+    private final JoinKind joinType;
     private final RecordSink masterKeySink;
     private final int @Nullable [] masterSymbolKeyColumnIndices;
     private final RecordSink slaveKeySink;
@@ -74,22 +76,26 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
             RecordSink masterKeySink,
             RecordSink slaveKeySink,
             int columnSplit,
-            JoinContext context,
-            int joinType,
+            Plannable context,
+            JoinKind joinType,
             int @Nullable [] masterSymbolKeyColumnIndices,
-            int @Nullable [] slaveSymbolKeyColumnIndices
+            int @Nullable [] slaveSymbolKeyColumnIndices,
+            @Nullable BuildSide buildSide
     ) {
         super(metadata, context, masterFactory, slaveFactory);
+        assert buildSide != BuildSide.SMALLER || joinType == JoinKind.FULL_OUTER && masterFactory.recordCursorSupportsRandomAccess()
+                : "hashed master lacks random access";
+        this.buildSide = buildSide;
         this.masterSymbolKeyColumnIndices = masterSymbolKeyColumnIndices;
         this.slaveSymbolKeyColumnIndices = slaveSymbolKeyColumnIndices;
-        this.symbolTranslatingRecord = masterSymbolKeyColumnIndices != null
-                ? new SymbolTranslatingRecord(
-                configuration,
-                Math.max(masterFactory.getMetadata().getColumnCount(), slaveFactory.getMetadata().getColumnCount()),
-                masterSymbolKeyColumnIndices.length
-        )
-                : null;
         try {
+            this.symbolTranslatingRecord = masterSymbolKeyColumnIndices != null
+                    ? new SymbolTranslatingRecord(
+                    configuration,
+                    Math.max(masterFactory.getMetadata().getColumnCount(), slaveFactory.getMetadata().getColumnCount()),
+                    masterSymbolKeyColumnIndices.length
+            )
+                    : null;
             this.masterKeySink = masterKeySink;
             this.slaveKeySink = slaveKeySink;
             this.joinKeyMap = MapFactory.createUnorderedMap(configuration, joinColumnTypes, valueTypes, false, false);
@@ -104,14 +110,14 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
 
     @Override
     public boolean followedOrderByAdvice() {
-        return joinType == IQueryModel.JOIN_LEFT_OUTER && masterFactory.followedOrderByAdvice();
+        return joinType == JoinKind.LEFT_OUTER && masterFactory.followedOrderByAdvice();
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         if (cursor == null) {
             switch (joinType) {
-                case IQueryModel.JOIN_LEFT_OUTER:
+                case LEFT_OUTER:
                     cursor = new HashLeftOuterJoinLightRecordCursor(
                             columnSplit,
                             NullRecordFactory.getInstance(slaveFactory.getMetadata()),
@@ -119,7 +125,7 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
                             slaveChain
                     );
                     break;
-                case IQueryModel.JOIN_RIGHT_OUTER:
+                case RIGHT_OUTER:
                     cursor = new HashRightOuterJoinLightRecordCursor(
                             columnSplit,
                             NullRecordFactory.getInstance(masterFactory.getMetadata()),
@@ -127,7 +133,7 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
                             slaveChain
                     );
                     break;
-                case IQueryModel.JOIN_FULL_OUTER:
+                case FULL_OUTER:
                     cursor = new HashFullOuterJoinLightRecordCursor(
                             columnSplit,
                             NullRecordFactory.getInstance(masterFactory.getMetadata()),
@@ -147,24 +153,14 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
         RecordCursor masterCursor = null;
         try {
             masterCursor = masterFactory.getCursor(executionContext);
-            if (joinType == IQueryModel.JOIN_FULL_OUTER) {
-                boolean swapped = false;
-                if (masterFactory.recordCursorSupportsRandomAccess()) {
-                    long masterSize = masterCursor.size();
-                    long slaveSize = slaveCursor.size();
-
-                    if (masterSize > 0 && slaveSize > 0 && masterSize < slaveSize) {
-                        RecordCursor temp = masterCursor;
-                        masterCursor = slaveCursor;
-                        slaveCursor = temp;
-                        swapped = true;
-                    }
-                }
-                if (swapped) {
-                    slaveCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
-                    ((HashFullOuterJoinLightRecordCursor) cursor).of(masterCursor, slaveCursor, executionContext, true);
-                    return cursor;
-                }
+            if (buildSide == BuildSide.SMALLER
+                    && BuildSide.smaller(masterCursor.size(), slaveCursor.size(), BuildSide.SLAVE) == BuildSide.MASTER) {
+                final RecordCursor temp = masterCursor;
+                masterCursor = slaveCursor;
+                slaveCursor = temp;
+                slaveCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
+                ((HashFullOuterJoinLightRecordCursor) cursor).of(masterCursor, slaveCursor, executionContext, true);
+                return cursor;
             }
             slaveCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
             cursor.of(masterCursor, slaveCursor, executionContext);
@@ -181,7 +177,7 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
 
     @Override
     public int getScanDirection() {
-        return joinType == IQueryModel.JOIN_LEFT_OUTER ? masterFactory.getScanDirection() : SCAN_DIRECTION_OTHER;
+        return joinType == JoinKind.LEFT_OUTER ? masterFactory.getScanDirection() : SCAN_DIRECTION_OTHER;
     }
 
     @Override
@@ -192,7 +188,7 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Hash ").val(outerJoinTypeToString(joinType)).val(" Outer Join Light");
-        sink.optAttr("condition", joinContext);
+        sink.optAttr("condition", joinCondition);
         if (symbolTranslatingRecord != null) {
             sink.attr("symbolKeyJoin").val(true);
         }

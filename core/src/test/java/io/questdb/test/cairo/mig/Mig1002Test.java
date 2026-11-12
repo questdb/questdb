@@ -56,6 +56,7 @@ import org.junit.Test;
 
 public class Mig1002Test extends AbstractCairoTest {
     private static final int LARGE_SYMBOL_COUNT = 10_000;
+    private static final int MIG1002_VERSION = 430;
 
     @Test
     public void testEngineMigrationRepairsNullFlagOfConvertedColumn() throws Exception {
@@ -100,7 +101,7 @@ public class Mig1002Test extends AbstractCairoTest {
             Assert.assertEquals(nextMigrationVersion, readMigrationVersion());
             Assert.assertFalse(containsSymbolNullValue("t", "s"));
 
-            writeMigrationVersion(ColumnType.MIGRATION_VERSION - 1);
+            writeMigrationVersion(MIG1002_VERSION - 1);
             engine.clear();
             EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, nextMigrationVersion, false);
             Assert.assertEquals(nextMigrationVersion, readMigrationVersion());
@@ -115,7 +116,7 @@ public class Mig1002Test extends AbstractCairoTest {
         final NullFlagWriteFailingFilesFacade ff = new NullFlagWriteFailingFilesFacade();
         assertMemoryLeak(ff, () -> {
             createTableWithStaleNullFlag();
-            final int previousMigrationVersion = ColumnType.MIGRATION_VERSION - 1;
+            final int previousMigrationVersion = MIG1002_VERSION - 1;
             writeMigrationVersion(previousMigrationVersion);
 
             engine.clear();

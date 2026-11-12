@@ -156,10 +156,23 @@ public class BitOrGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testBitOrConstant() throws Exception {
         assertQuery("select bit_or(42::long) from tab")
                 .ddl("create table tab as (select x from long_sequence(5))")
+                .noRandomAccess()
                 .expectSize()
                 .returns("""
                         bit_or
                         42
+                        """);
+    }
+
+    @Test
+    public void testBitOrConstantEmptyTable() throws Exception {
+        assertQuery("SELECT count() c, bit_or(5::byte) b, bit_or(5::short) s, bit_or(5) i, bit_or(5::long) l FROM tab")
+                .ddl("CREATE TABLE tab (x LONG)")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        c\tb\ts\ti\tl
+                        0\t0\t0\tnull\tnull
                         """);
     }
 

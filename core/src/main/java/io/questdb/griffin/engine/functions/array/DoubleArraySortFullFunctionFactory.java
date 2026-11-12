@@ -36,6 +36,11 @@ import io.questdb.std.Transient;
 public class DoubleArraySortFullFunctionFactory implements FunctionFactory {
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return argTypes.getQuick(0);
+    }
+
+    @Override
     public String getSignature() {
         return "array_sort(D[]tt)";
     }

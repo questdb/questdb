@@ -119,9 +119,11 @@ public class LastNotNullTimestampGroupByFunction extends FirstTimestampGroupByFu
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        if (arg.getTimestamp(record) != Numbers.LONG_NULL) {
+        long val = arg.getTimestamp(record);
+        if (val != Numbers.LONG_NULL) {
             if (mapValue.getTimestamp(valueIndex + 1) == Numbers.LONG_NULL || rowId > mapValue.getLong(valueIndex)) {
-                computeFirst(mapValue, record, rowId);
+                mapValue.putLong(valueIndex, rowId);
+                mapValue.putLong(valueIndex + 1, val);
             }
         }
     }

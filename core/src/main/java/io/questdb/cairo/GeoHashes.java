@@ -71,14 +71,12 @@ public class GeoHashes {
     };
 
     public static void addNormalizedGeoPrefix(long hash, int prefixType, int columnType, final LongList prefixes) throws NumericException {
+        if (!isNormalizableGeoPrefix(hash, prefixType, columnType)) {
+            throw NumericException.INSTANCE;
+        }
         final int bits = ColumnType.getGeoHashBits(prefixType);
         final int columnSize = ColumnType.sizeOf(columnType);
         final int columnBits = ColumnType.getGeoHashBits(columnType);
-
-        if (hash == NULL || bits > columnBits) {
-            throw NumericException.INSTANCE;
-        }
-
         final int shift = columnBits - bits;
         long norm = hash << shift;
         long mask = GeoHashes.bitmask(bits, shift);
@@ -271,6 +269,13 @@ public class GeoHashes {
             default:
                 return func.getGeoLong(rec);
         }
+    }
+
+    /**
+     * Whether {@link #addNormalizedGeoPrefix} accepts the prefix: a non-null hash no more precise than the column.
+     */
+    public static boolean isNormalizableGeoPrefix(long hash, int prefixType, int columnType) {
+        return hash != NULL && ColumnType.getGeoHashBits(prefixType) <= ColumnType.getGeoHashBits(columnType);
     }
 
     public static boolean isValidBits(CharSequence tok, int start) {

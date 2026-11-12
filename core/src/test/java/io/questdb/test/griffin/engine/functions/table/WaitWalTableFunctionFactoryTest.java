@@ -148,13 +148,18 @@ public class WaitWalTableFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNullCharTableName() throws Exception {
+        assertMemoryLeak(() -> assertException("select wait_wal_table(null::char)", 26, "table name cannot be NULL"));
+    }
+
+    @Test
     public void testNullTableNameOneArg() throws Exception {
         assertMemoryLeak(() -> {
             try {
                 select("select wait_wal_table(null::string)").close();
                 Assert.fail("expected SqlException");
             } catch (SqlException e) {
-                Assert.assertTrue(e.getMessage(), e.getMessage().contains("tableName cannot be NULL"));
+                Assert.assertTrue(e.getMessage(), e.getMessage().contains("table name cannot be NULL"));
             }
         });
     }
@@ -166,7 +171,7 @@ public class WaitWalTableFunctionFactoryTest extends AbstractCairoTest {
                 select("select wait_wal_table(null::string, 1)").close();
                 Assert.fail("expected SqlException");
             } catch (SqlException e) {
-                Assert.assertTrue(e.getMessage(), e.getMessage().contains("tableName cannot be NULL"));
+                Assert.assertTrue(e.getMessage(), e.getMessage().contains("table name cannot be NULL"));
             }
         });
     }
@@ -200,6 +205,32 @@ public class WaitWalTableFunctionFactoryTest extends AbstractCairoTest {
                     .returns("""
                             waited
                             true
+                            """);
+        });
+    }
+
+    @Test
+    public void testSeqTxnFromSubquery() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE notwal AS (SELECT x v FROM long_sequence(1_000))");
+            execute("CREATE TABLE t2 (k INT, y INT)");
+            execute("INSERT INTO t2 VALUES (1, 300), (2, 100)");
+            assertQuery("SELECT count() FROM notwal WHERE wait_wal_table('notwal', CASE WHEN (SELECT max(y) > 200 FROM t2 WHERE k = 1) THEN 1 ELSE 2 END) AND v > 0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("Async Filter", "[state-shared]")
+                    .returns("""
+                            count
+                            1000
+                            """);
+            assertQuery("SELECT wait_wal_table('notwal', CASE WHEN (SELECT max(y) > 200 FROM t2 WHERE k = 1) THEN 1 ELSE 2 END) w, count() FROM notwal GROUP BY w")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("Async Group By", "[state-shared]")
+                    .returns("""
+                            w\tcount
+                            true\t1000
                             """);
         });
     }

@@ -335,10 +335,21 @@ public class MatViewTimerJob extends SynchronizedJob {
                                 }
                                 break;
                             case Timer.PERIOD_REFRESH_TYPE:
-                                // range hi boundary is inclusive
                                 final MatViewDefinition viewDefinition = state.getViewDefinition();
-                                final long periodHi = viewDefinition.getBaseTableTimestampDriver().fromMicros(timer.getPeriodHiUs()) - 1;
-                                matViewStateStore.enqueueRangeRefresh(viewToken, Numbers.LONG_NULL, periodHi);
+                                if (viewDefinition.getRefreshType() == MatViewDefinition.REFRESH_TYPE_IMMEDIATE && state.getLastRefreshBaseTxn() != -1) {
+                                    // An incremental refresh of a built period view also refreshes the periods
+                                    // that completed since the last refresh, and it consumes the base table
+                                    // transactions it reads. A range refresh would leave those transactions to
+                                    // the refresh their commit enqueued, which would compute their buckets in
+                                    // the completed period again. A view that was never built, as a DEFERRED
+                                    // one is until its first base commit, keeps the range refresh, which leaves
+                                    // it unbuilt: an incremental refresh would run its first build.
+                                    matViewStateStore.enqueueIncrementalRefresh(viewToken);
+                                } else {
+                                    // range hi boundary is inclusive
+                                    final long periodHi = viewDefinition.getBaseTableTimestampDriver().fromMicros(timer.getPeriodHiUs()) - 1;
+                                    matViewStateStore.enqueueRangeRefresh(viewToken, Numbers.LONG_NULL, periodHi);
+                                }
                                 reportFiring(timer, viewToken);
                                 break;
                             case Timer.UPDATE_REFRESH_INTERVALS_TYPE:

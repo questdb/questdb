@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.rnd;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -39,6 +40,11 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 
 public class RndIntCCFunctionFactory implements FunctionFactory {
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.INT;
+    }
 
     @Override
     public String getSignature() {

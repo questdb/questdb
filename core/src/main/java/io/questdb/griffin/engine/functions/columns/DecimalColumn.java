@@ -78,11 +78,6 @@ public class DecimalColumn extends DecimalFunction implements ColumnFunction {
     }
 
     @Override
-    public boolean isThreadSafe() {
-        return true;
-    }
-
-    @Override
     public void toPlan(PlanSink sink) {
         sink.putColumnName(columnIndex);
     }

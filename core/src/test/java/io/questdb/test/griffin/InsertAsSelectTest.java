@@ -42,6 +42,53 @@ import static io.questdb.test.tools.TestUtils.createSqlExecutionCtx;
 
 public class InsertAsSelectTest extends AbstractCairoTest {
     @Test
+    public void testInsertAsSelectLateralOverTableFunctionWithSubqueryArgument() throws Exception {
+        assertMemoryLeak(() -> {
+            final String query = """
+                    SELECT s.generate_series g, l.c
+                    FROM generate_series(1, CASE WHEN NOT (SELECT false) THEN 3 ELSE 4 END, 1) s
+                    CROSS JOIN LATERAL (SELECT count(*) AS c FROM long_sequence(3) WHERE x < s.generate_series) l
+                    """;
+            final String expected = """
+                    g\tc
+                    1\t0
+                    2\t1
+                    3\t2
+                    """;
+            execute("CREATE TABLE dst (g LONG, c LONG)");
+            execute("INSERT INTO dst " + query);
+            assertQuery("dst").noLeakCheck().expectSize().returns(expected);
+            execute("CREATE TABLE ctas AS (" + query + ")");
+            assertQuery("ctas").noLeakCheck().expectSize().returns(expected);
+        });
+    }
+
+    @Test
+    public void testInsertAsSelectNumberIntoCharColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE src (b BYTE, s SHORT, l LONG, f FLOAT, d DOUBLE, dt DATE, ts TIMESTAMP)");
+            execute("INSERT INTO src VALUES (65, 66, 67, 68.0, 69.0, 70, 71)");
+            execute("CREATE TABLE dst (c CHAR)");
+            execute("INSERT INTO dst SELECT b FROM src");
+            execute("INSERT INTO dst SELECT s FROM src");
+            assertQuery("SELECT c FROM dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            c
+                            A
+                            B
+                            """);
+            final String insert = "INSERT INTO dst SELECT ";
+            assertQuery(insert + "l FROM src").fails(insert.length(), "inconvertible types: LONG -> CHAR [from=l, to=c]");
+            assertQuery(insert + "f FROM src").fails(insert.length(), "inconvertible types: FLOAT -> CHAR [from=f, to=c]");
+            assertQuery(insert + "d FROM src").fails(insert.length(), "inconvertible types: DOUBLE -> CHAR [from=d, to=c]");
+            assertQuery(insert + "dt FROM src").fails(insert.length(), "inconvertible types: DATE -> CHAR [from=dt, to=c]");
+            assertQuery(insert + "ts FROM src").fails(insert.length(), "inconvertible types: TIMESTAMP -> CHAR [from=ts, to=c]");
+        });
+    }
+
+    @Test
     public void testInsertAsSelectStrToDecimal() throws Exception {
         try {
             ColumnType.makeUtf16DefaultString();
@@ -129,6 +176,25 @@ public class InsertAsSelectTest extends AbstractCairoTest {
         } finally {
             ColumnType.resetStringToDefault();
         }
+    }
+
+    @Test
+    public void testInsertAsSelectSymbolIntoTimestampColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE src (s SYMBOL)");
+            execute("INSERT INTO src VALUES ('2024-01-01T00:00:00.000000Z'), (null), ('2024-01-02T03:04:05.000006Z')");
+            execute("CREATE TABLE dst (ts TIMESTAMP)");
+            execute("INSERT INTO dst SELECT s FROM src");
+            assertQuery("SELECT ts FROM dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts
+                            2024-01-01T00:00:00.000000Z
+                            
+                            2024-01-02T03:04:05.000006Z
+                            """);
+        });
     }
 
     @Test

@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.window;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
@@ -65,6 +66,11 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     private static final String SIGNATURE = NAME + "(D)";
     private static final ArrayColumnTypes SUM_COLUMN_TYPES;
     private static final ArrayColumnTypes SUM_COLUMN_TYPES_LV;
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.DOUBLE;
+    }
 
     @Override
     public String getSignature() {
@@ -198,6 +204,7 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     );
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsHi == 0) {
+                    CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, partitionByRecord.getFunctions()));
                     return new SumOverCurrentRowFunction(args.get(0));
                 } // whole partition
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {

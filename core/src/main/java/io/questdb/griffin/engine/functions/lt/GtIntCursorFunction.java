@@ -46,7 +46,7 @@ class GtIntCursorFunction extends AbstractScalarCursorFunction {
 
     @Override
     public boolean getBool(Record rec) {
-        return Numbers.lessThan(value, leftFunc.getInt(rec), negated);
+        return isComplemented ? !isMatch(rec) : isMatch(rec);
     }
 
     @Override
@@ -72,5 +72,9 @@ class GtIntCursorFunction extends AbstractScalarCursorFunction {
     @Override
     protected void setNullValue() {
         value = Numbers.INT_NULL;
+    }
+
+    private boolean isMatch(Record rec) {
+        return Numbers.lessThan(value, leftFunc.getInt(rec), negated);
     }
 }

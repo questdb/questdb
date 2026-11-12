@@ -36,4 +36,60 @@ public class QuoteIdentifierTest extends AbstractCairoTest {
                 .expectSize()
                 .returns("id\tname\n");
     }
+
+    @Test
+    public void testQuotedDottedAliasInGroupBy() throws Exception {
+        assertQuery("SELECT x % 2 AS \"a.b\", count() c FROM long_sequence(4) GROUP BY \"a.b\" ORDER BY 1")
+                .expectSize()
+                .returns("""
+                        a.b\tc
+                        0\t2
+                        1\t2
+                        """);
+    }
+
+    @Test
+    public void testQuotedDottedAliasInOrderBy() throws Exception {
+        assertQuery("SELECT x AS \"a.b\" FROM long_sequence(3) ORDER BY \"a.b\" DESC")
+                .expectSize()
+                .returns("""
+                        a.b
+                        3
+                        2
+                        1
+                        """);
+    }
+
+    @Test
+    public void testQuotedDottedAliasInSampleBy() throws Exception {
+        assertQuery("""
+                SELECT ts, x % 2 AS "a.b", count() c
+                FROM (SELECT timestamp_sequence(0, 1_800_000_000) ts, x FROM long_sequence(4)) TIMESTAMP(ts)
+                SAMPLE BY 1h
+                ORDER BY ts, "a.b"
+                """)
+                .timestamp("ts")
+                .expectSize()
+                .returns("""
+                        ts\ta.b\tc
+                        1970-01-01T00:00:00.000000Z\t0\t1
+                        1970-01-01T00:00:00.000000Z\t1\t1
+                        1970-01-01T01:00:00.000000Z\t0\t1
+                        1970-01-01T01:00:00.000000Z\t1\t1
+                        """);
+    }
+
+    @Test
+    public void testQuotedDottedColumnAsJoinKey() throws Exception {
+        assertQuery("""
+                SELECT t1.x, t2.y
+                FROM (SELECT x, x AS "a.b" FROM long_sequence(3)) t1
+                JOIN (SELECT x y, x + 1 AS "t1.x" FROM long_sequence(3)) t2 ON "a.b" = "t1.x"
+                ORDER BY t1.x""")
+                .returns("""
+                        x\ty
+                        2\t1
+                        3\t2
+                        """);
+    }
 }

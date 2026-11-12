@@ -50,6 +50,7 @@ import io.questdb.cairo.lv.LiveViewStatePageReader;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.groupby.AvgDecimalRescaleGroupByFunctionFactory;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.WindowExpression;
@@ -101,27 +102,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         long rowsLo = windowContext.getRowsLo();
         long rowsHi = windowContext.getRowsHi();
 
-        final int targetScale = args.getQuick(1).getInt(null);
-        final int scalePosition = argPositions.getQuick(1);
-        if (targetScale < 0) {
-            throw SqlException.$(scalePosition, "non-negative scale required: ").put(targetScale);
-        }
-        if (targetScale > Decimals.MAX_SCALE) {
-            throw SqlException.$(scalePosition, "scale exceeds maximum of ").put(Decimals.MAX_SCALE).put(": ").put(targetScale);
-        }
         Function arg = args.getQuick(0);
         int argType = arg.getType();
-        final int argPrecision = ColumnType.getDecimalPrecision(argType);
-        final int argScale = ColumnType.getDecimalScale(argType);
-        final int targetPrecision = argPrecision - argScale + targetScale;
-        if (targetPrecision < 1) {
-            throw SqlException.$(scalePosition, "rescaled decimal has invalid precision: ").put(targetPrecision);
-        }
-        if (targetPrecision > Decimals.MAX_PRECISION) {
-            throw SqlException.$(scalePosition, "rescaled decimal has precision that exceeds maximum of ")
-                    .put(Decimals.MAX_PRECISION).put(": ").put(targetPrecision);
-        }
-        final int targetType = ColumnType.getDecimalType(targetPrecision, targetScale);
+        final int targetType = AvgDecimalRescaleGroupByFunctionFactory.getRescaledType(argType, args.getQuick(1), argPositions.getQuick(1));
         int tag = ColumnType.tagOf(argType);
         int argPos = argPositions.getQuick(0);
 
@@ -236,6 +219,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                         throw th;
                     }
                 } else if (rowsLo == 0 && rowsHi == 0) {
+                    CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, partitionByRecord.getFunctions()));
                     return new Decimal128Rescale256AvgOverCurrentRowFunction(arg, argType, targetType, argPos);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_RESCALE_DECIMAL64_TYPES);
@@ -358,6 +342,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                         throw th;
                     }
                 } else if (rowsLo == 0 && rowsHi == 0) {
+                    CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, partitionByRecord.getFunctions()));
                     return new Decimal16Rescale256AvgOverCurrentRowFunction(arg, argType, targetType, argPos);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_RESCALE_DECIMAL64_TYPES);
@@ -480,6 +465,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                         throw th;
                     }
                 } else if (rowsLo == 0 && rowsHi == 0) {
+                    CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, partitionByRecord.getFunctions()));
                     return new Decimal256Rescale256AvgOverCurrentRowFunction(arg, argType, targetType, argPos);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_RESCALE_DECIMAL64_TYPES);
@@ -602,6 +588,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                         throw th;
                     }
                 } else if (rowsLo == 0 && rowsHi == 0) {
+                    CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, partitionByRecord.getFunctions()));
                     return new Decimal32Rescale256AvgOverCurrentRowFunction(arg, argType, targetType, argPos);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_RESCALE_DECIMAL64_TYPES);
@@ -724,6 +711,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                         throw th;
                     }
                 } else if (rowsLo == 0 && rowsHi == 0) {
+                    CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, partitionByRecord.getFunctions()));
                     return new Decimal64Rescale256AvgOverCurrentRowFunction(arg, argType, targetType, argPos);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_RESCALE_DECIMAL64_TYPES);
@@ -846,6 +834,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                         throw th;
                     }
                 } else if (rowsLo == 0 && rowsHi == 0) {
+                    CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, partitionByRecord.getFunctions()));
                     return new Decimal8Rescale256AvgOverCurrentRowFunction(arg, argType, targetType, argPos);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_RESCALE_DECIMAL64_TYPES);

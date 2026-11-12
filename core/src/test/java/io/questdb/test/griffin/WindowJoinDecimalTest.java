@@ -56,16 +56,26 @@ public class WindowJoinDecimalTest extends AbstractCairoTest {
 
     @Test
     public void testConstantFalseJoinDelegatesMasterDecimals() throws Exception {
-        assertQuery("select t.d8, t.d16, t.d32, t.d64, t.d128, t.d256, count(p.ts) cnt " +
+        assertQuery("select t.d8, t.d16, t.d32, t.d64, t.d128, t.d256, max(p.ts) mx " +
                 "from trades t " +
                 "window join prices p on (1 = 0) " +
                 "range between 1 minute preceding and 1 minute following")
                 .ddl(TRADES_DDL, PRICES_DDL, TRADES_INSERT, PRICES_INSERT)
                 .expectSize()
+                .returns("d8\td16\td32\td64\td128\td256\tmx\n" +
+                        "1.1\t2.1\t3.11\t4.11\t5.11\t6.11\t\n" +
+                        "1.2\t2.2\t3.22\t4.22\t5.22\t6.22\t\n" +
+                        "1.3\t2.3\t3.33\t4.33\t5.33\t6.33\t\n");
+
+        assertQuery("select t.d8, t.d16, t.d32, t.d64, t.d128, t.d256, count(p.ts) cnt " +
+                "from trades t " +
+                "window join prices p on (1 = 0) " +
+                "range between 1 minute preceding and 1 minute following")
+                .expectSize()
                 .returns("d8\td16\td32\td64\td128\td256\tcnt\n" +
-                        "1.1\t2.1\t3.11\t4.11\t5.11\t6.11\tnull\n" +
-                        "1.2\t2.2\t3.22\t4.22\t5.22\t6.22\tnull\n" +
-                        "1.3\t2.3\t3.33\t4.33\t5.33\t6.33\tnull\n");
+                        "1.1\t2.1\t3.11\t4.11\t5.11\t6.11\t0\n" +
+                        "1.2\t2.2\t3.22\t4.22\t5.22\t6.22\t0\n" +
+                        "1.3\t2.3\t3.33\t4.33\t5.33\t6.33\t0\n");
     }
 
     @Test

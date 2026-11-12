@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
@@ -34,6 +35,11 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class CastStrToStrArrayFunctionFactory implements FunctionFactory {
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.ARRAY_STRING;
+    }
 
     @Override
     public String getSignature() {
@@ -48,6 +54,11 @@ public class CastStrToStrArrayFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        return new StringToStringArrayFunction(argPositions.getQuick(0), args.getQuick(0).getStrA(null));
+        final Function arg = args.getQuick(0);
+        final int argPosition = argPositions.getQuick(0);
+        if (!arg.isConstant()) {
+            throw SqlException.$(argPosition, "constant expected");
+        }
+        return new StringToStringArrayFunction(argPosition, arg.getStrA(null));
     }
 }

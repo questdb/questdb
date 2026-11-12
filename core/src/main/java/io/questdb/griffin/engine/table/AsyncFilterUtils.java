@@ -39,7 +39,6 @@ import io.questdb.jit.CompiledFilter;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 /**
  * Utils for filtering page frames.
@@ -49,42 +48,6 @@ import org.jetbrains.annotations.Nullable;
 public class AsyncFilterUtils {
 
     private AsyncFilterUtils() {
-    }
-
-    public static void applyCompiledFilter(
-            @NotNull CompiledFilter compiledFilter,
-            @NotNull MemoryCARW bindVarMemory,
-            @NotNull ObjList<Function> bindVarFunctions,
-            @NotNull PageFrameReduceTask task
-    ) {
-        applyCompiledFilter(null, compiledFilter, bindVarMemory, bindVarFunctions, task);
-    }
-
-    public static void applyCompiledFilter(
-            @Nullable PageFrameMemory frameMemory,
-            @NotNull CompiledFilter compiledFilter,
-            @NotNull MemoryCARW bindVarMemory,
-            @NotNull ObjList<Function> bindVarFunctions,
-            @NotNull PageFrameReduceTask task
-    ) {
-        if (frameMemory == null) {
-            task.populateJitData();
-        } else {
-            task.populateJitData(frameMemory);
-        }
-        final DirectLongList data = task.getDataAddresses();
-        final DirectLongList varSizeAux = task.getAuxAddresses();
-        final DirectLongList rows = task.getFilteredRows();
-        long hi = compiledFilter.call(
-                data.getAddress(),
-                data.size(),
-                varSizeAux.getAddress(),
-                bindVarMemory.getAddress(),
-                bindVarFunctions.size(),
-                rows.getAddress(),
-                task.getFrameRowCount()
-        );
-        rows.setPos(hi);
     }
 
     public static void applyCompiledFilter(

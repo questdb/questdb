@@ -141,6 +141,14 @@ public interface RecordCursor extends RecordRandomAccess, Closeable, SymbolTable
     void close();
 
     /**
+     * Signals the cursor that the outer cursor reads only its last {@code rowCount} rows, as a negative LIMIT does.
+     * From its next {@link #toTop()} the cursor may return only those rows, in its order, when it finds them without
+     * reading the rows before them, so that it counts, skips and returns no more than {@code rowCount} rows.
+     */
+    default void expectLastRows(long rowCount) {
+    }
+
+    /**
      * Signals the cursor that outer code/cursor will do a limited iteration through
      * the rows, e.g. it implements LIMIT N. In such a case, some parallel cursors
      * like async filtered cursor may optimize their execution by limiting the number
@@ -301,6 +309,16 @@ public interface RecordCursor extends RecordRandomAccess, Closeable, SymbolTable
      * a memory size in bytes, but a stable value used to detect state changes.
      */
     long preComputedStateSize();
+
+    /**
+     * The number of rows the cursor returns, after the row {@link #hasNext()} returned last, that come from the same
+     * row of its innermost master: the cursor at the bottom of the master inputs of its joins. A cursor whose rows are
+     * their own master rows returns 0; one that cannot tell without reading those rows returns -1, the default.
+     * {@link #skipRows(Counter, long)} skips exactly those rows without positioning any record.
+     */
+    default long remainingMasterRowCount() {
+        return -1;
+    }
 
     /**
      * Declares which projected column indexes the parent cursor will read during forward

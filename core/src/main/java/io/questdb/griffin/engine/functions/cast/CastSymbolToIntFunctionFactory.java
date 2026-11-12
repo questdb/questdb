@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -35,6 +36,11 @@ import io.questdb.std.ObjList;
 
 public class CastSymbolToIntFunctionFactory implements FunctionFactory {
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.INT;
+    }
+
+    @Override
     public String getSignature() {
         return "cast(Ki)";
     }
@@ -44,7 +50,7 @@ public class CastSymbolToIntFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
-    private static class Func extends AbstractCastToIntFunction {
+    public static class Func extends AbstractCastToIntFunction {
         public Func(Function arg) {
             super(arg);
         }

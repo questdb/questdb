@@ -155,6 +155,13 @@ public interface MonotonicTimestampFunction {
     }
 
     /**
+     * The {@link #shiftInputCeiling(int)} of a shift whose timestamp argument is or is not itself monotonic.
+     */
+    static long shiftInputCeiling(boolean isTimestampArgMonotonic, int timestampType) {
+        return isTimestampArgMonotonic ? Long.MAX_VALUE : ColumnType.getTimestampDriver(timestampType).getMaxDesignatedTimestamp();
+    }
+
+    /**
      * Returns true when the forward function {@code arg + shift} can overflow the {@code long}
      * boundary into {@code [lo, hi]} in a way that splits the preimage. The designated timestamp is
      * non-negative, so only a positive shift can overflow (a negative one stays well above
@@ -249,9 +256,7 @@ public interface MonotonicTimestampFunction {
      * prune and drop matching rows.
      */
     default long shiftInputCeiling(int timestampType) {
-        return getTimestampArg() instanceof MonotonicTimestampFunction
-                ? Long.MAX_VALUE
-                : ColumnType.getTimestampDriver(timestampType).getMaxDesignatedTimestamp();
+        return shiftInputCeiling(getTimestampArg() instanceof MonotonicTimestampFunction, timestampType);
     }
 
     /**

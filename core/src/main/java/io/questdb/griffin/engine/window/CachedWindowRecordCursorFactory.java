@@ -97,12 +97,13 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
         // Adopted before anything below can throw, so a failed construction frees the groups
         // through this factory's own close() rather than leaving them to the compiler's catch.
         this.windowMapGroups = windowMapGroups;
+        this.base = base;
+        this.orderedFunctions = orderedFunctions;
+        this.unorderedFunctions = unorderedFunctions;
         try {
-            this.base = base;
             this.windowSymbolFunctions = windowSymbolFunctions;
             this.orderedGroupCount = comparators.size();
             assert orderedGroupCount == orderedFunctions.size();
-            this.orderedFunctions = orderedFunctions;
             recordChain = new RecordArray(
                     chainTypes,
                     recordSink,
@@ -188,11 +189,10 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
             this.forwardUnorderedFunctions = forwardTmp;
             this.backwardUnorderedFunctions = backwardTmp;
 
-            this.unorderedFunctions = unorderedFunctions;
         } catch (Throwable th) {
-            Misc.free(recordChain);
-            Misc.freeObjList(sortBuffers);
-            close();
+            Misc.free(recordChain, th);
+            Misc.freeObjList(sortBuffers, th);
+            Misc.free(this, th);
             throw th;
         }
     }
@@ -336,7 +336,6 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
             return;
         }
         isClosed = true;
-        final ObjList<WindowFunction> allFunctions = this.allFunctions;
         this.allFunctions = null;
         final RecordCursorFactory base = this.base;
         this.base = null;
@@ -348,7 +347,10 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
         // projection over chain columns, so freeing it touches nothing a function owns - but
         // ordering it first keeps that independence obvious rather than incidental.
         failure = Misc.freeBestEffort(failure, windowMapGroups);
-        failure = Misc.freeObjListBestEffort(failure, allFunctions);
+        for (int i = 0, n = orderedFunctions.size(); i < n; i++) {
+            failure = Misc.freeObjListBestEffort(failure, orderedFunctions.getQuick(i));
+        }
+        failure = Misc.freeObjListBestEffort(failure, unorderedFunctions);
         CairoException.rethrowCleanupFailure(failure);
     }
 
