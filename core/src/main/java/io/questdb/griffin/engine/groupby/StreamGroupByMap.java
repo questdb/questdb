@@ -68,7 +68,6 @@ public final class StreamGroupByMap implements QuietCloseable {
     private static final long SHARD_PAGE_SIZE = 4 * 1024;
     // A map shrinks once its capacity exceeds this many slots per key the segment needs.
     public static final int SHRINK_RATIO = 8;
-    private final DirectLongList batchRows;
     private final int batchSize;
     private final IntList columnCrossIndex;
     private final CairoConfiguration configuration;
@@ -185,7 +184,6 @@ public final class StreamGroupByMap implements QuietCloseable {
             record = new SegmentRecord(columnCrossIndex, segmentIndex + streamKeyIndex);
             map = MapFactory.createUnorderedMap(configuration, mapKeyTypes, mapValueTypes, 1, configuration.getSqlSmallMapPageSize(), true, false);
             mergeMemory = new DirectLongList((value.getSizeInBytes() + 7) / 8, MemoryTag.NATIVE_FAST_MAP, true);
-            batchRows = new DirectLongList(batchSize, MemoryTag.NATIVE_FAST_MAP, true);
         } catch (Throwable th) {
             Misc.free(this, th);
             throw th;
@@ -218,18 +216,17 @@ public final class StreamGroupByMap implements QuietCloseable {
             record = new SegmentRecord(columnCrossIndex, prototype.record.keyColumn);
             map = MapFactory.createUnorderedMap(configuration, mapKeyTypes, mapValueTypes, 1, configuration.getSqlSmallMapPageSize(), true, false);
             mergeMemory = new DirectLongList((value.getSizeInBytes() + 7) / 8, MemoryTag.NATIVE_FAST_MAP, true);
-            batchRows = new DirectLongList(batchSize, MemoryTag.NATIVE_FAST_MAP, true);
         } catch (Throwable th) {
             Misc.free(this, th);
             throw th;
         }
     }
 
-    public void aggregate(PageFrameMemoryRecord record, DirectLongList rows, long lo, long hi, long baseRowId, boolean isBatch, SqlExecutionCircuitBreaker circuitBreaker) {
+    public void aggregate(PageFrameMemoryRecord record, DirectLongList rows, long lo, long hi, long baseRowId, @Nullable DirectLongList batchRows, SqlExecutionCircuitBreaker circuitBreaker) {
         long row = lo;
         if (!isSharded) {
-            row = isBatch
-                    ? aggregateBatch(record, rows, lo, hi, baseRowId, circuitBreaker)
+            row = batchRows != null
+                    ? aggregateBatch(record, rows, lo, hi, baseRowId, batchRows, circuitBreaker)
                     : aggregateRows(record, rows, lo, hi, baseRowId, circuitBreaker);
         }
         if (row < hi) {
@@ -291,15 +288,11 @@ public final class StreamGroupByMap implements QuietCloseable {
         }
         isSharded = false;
         th = Misc.freeBestEffort(th, mergeMemory);
-        th = Misc.freeBestEffort(th, batchRows);
         if (map != null) {
             map.setMemoryTracker(null);
         }
         if (mergeMemory != null) {
             mergeMemory.setMemoryTracker(null);
-        }
-        if (batchRows != null) {
-            batchRows.setMemoryTracker(null);
         }
         CairoException.rethrowCleanupFailure(th);
     }
@@ -417,7 +410,6 @@ public final class StreamGroupByMap implements QuietCloseable {
         memoryTracker = tracker;
         map.setMemoryTracker(tracker);
         mergeMemory.setMemoryTracker(tracker);
-        batchRows.setMemoryTracker(tracker);
         map.reopen();
         initialKeyCapacity = map.getKeyCapacity();
         map.setBatchEmptyValue(updater);
@@ -464,7 +456,7 @@ public final class StreamGroupByMap implements QuietCloseable {
     }
 
     // Returns the first row left once the map shards, so that at most a batch moves into the shards.
-    private long aggregateBatch(PageFrameMemoryRecord record, DirectLongList rows, long lo, long hi, long baseRowId, SqlExecutionCircuitBreaker circuitBreaker) {
+    private long aggregateBatch(PageFrameMemoryRecord record, DirectLongList rows, long lo, long hi, long baseRowId, DirectLongList batchRows, SqlExecutionCircuitBreaker circuitBreaker) {
         batchRows.ensureCapacity(batchSize);
         final long batchAddress = batchRows.getAddress();
         reservedKeys = Math.max(reservedKeys, Math.min(hi - lo, batchSize));

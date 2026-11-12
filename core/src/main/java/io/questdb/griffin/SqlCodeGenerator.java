@@ -7415,6 +7415,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     } else {
                         // not the root, join to "master"
                         final int joinType = slaveModel.getJoinType();
+                        if (isLatestByInput && isRandomAccessLostToStream(master)) {
+                            final RecordCursorFactory masterToMaterialize = master;
+                            master = null;
+                            master = materialize(masterToMaterialize, true);
+                        }
                         final RecordMetadata masterMetadata = master.getMetadata();
                         final RecordMetadata slaveMetadata = slaveToFree.getMetadata();
 
@@ -7548,10 +7553,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 final boolean isFullFatUnsupported = !fullFatJoins
                                         && !slaveToFree.recordCursorSupportsRandomAccess()
                                         && findUnsupportedFullFatJoinColumn(slaveMetadata, listColumnFilterA) != -1;
-                                if ((isFullFatUnsupported || (isLatestByInput && isRandomAccessLostToStream(slaveToFree)))
-                                        && isCopySupported(slaveMetadata)) {
+                                final boolean isStreamCopied = isRandomAccessLostToStream(slaveToFree)
+                                        && (isLatestByInput || (!fullFatJoins && hasMixedJoinKeyTypes(masterMetadata, slaveMetadata)));
+                                if ((isFullFatUnsupported || isStreamCopied) && isCopySupported(slaveMetadata)) {
                                     // Light temporal joins retain row IDs. Copy only inputs that the full-fat
-                                    // value sink cannot store; compatible inputs keep their per-key state.
+                                    // value sink cannot store, or whose keys it would expose in their partner's
+                                    // type; compatible inputs keep their per-key state.
                                     final RecordCursorFactory slaveToMaterialize = slaveToFree;
                                     slaveToFree = null;
                                     slaveToFree = materialize(slaveToMaterialize, true);
@@ -15329,6 +15336,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (isFromTo) {
             throw SqlException.$(0, "FROM-TO intervals are not supported for keyed SAMPLE BY queries");
         }
+    }
+
+    private boolean hasMixedJoinKeyTypes(RecordMetadata masterMetadata, RecordMetadata slaveMetadata) {
+        for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
+            if (slaveMetadata.getColumnType(listColumnFilterA.getColumnIndexFactored(i))
+                    != masterMetadata.getColumnType(listColumnFilterB.getColumnIndexFactored(i))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean isKeyedTemporalJoin(RecordMetadata masterMetadata, RecordMetadata slaveMetadata) {

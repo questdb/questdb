@@ -916,12 +916,17 @@ public class StreamGroupByTest extends AbstractCairoTest {
         run((engine, compiler, context) -> {
             engine.execute("CREATE TABLE trades AS (SELECT timestamp_sequence('2024-01-01', 7_000_000) ts, ('S' || (x % 5))::SYMBOL sym, x % 97 price "
                     + "FROM long_sequence(600)) TIMESTAMP(ts) PARTITION BY DAY", context);
+            engine.execute("CREATE TABLE notes AS (SELECT ('S' || (x % 5))::SYMBOL sym, x note FROM long_sequence(20))", context);
             final String bars = "SELECT ts, sym, sum(price) total FROM trades SAMPLE BY 1m";
             for (boolean isFullFat : new boolean[]{false, true}) {
                 compiler.setFullFatJoins(isFullFat);
                 for (String input : new String[]{
                         "SELECT t.ts, t.sym, t.price, s.total FROM trades t ASOF JOIN (" + bars + ") s ON (sym)",
                         "SELECT t.ts, t.sym, t.price, s.total FROM trades t LT JOIN (" + bars + ") s ON (sym)",
+                        "SELECT s.ts, s.sym, s.total, t.price FROM (" + bars + ") s ASOF JOIN trades t ON (sym)",
+                        "SELECT s.ts, s.sym, s.total, n.note FROM (" + bars + ") s JOIN notes n ON s.sym = n.sym",
+                        "SELECT s.ts, s.sym, s.total, n.note FROM (" + bars + ") s LEFT JOIN notes n ON s.sym = n.sym",
+                        "SELECT s.ts, s.sym, s.total, n.note FROM (" + bars + ") s CROSS JOIN notes n",
                         "SELECT ts, sym, price FROM trades UNION ALL " + bars,
                         bars + " UNION ALL SELECT ts, sym, price FROM trades"
                 }) {
@@ -929,9 +934,9 @@ public class StreamGroupByTest extends AbstractCairoTest {
                     context.setStreamGroupByEnabled(false);
                     final String expected = compileAndRead(compiler, context, sql);
                     context.setStreamGroupByEnabled(true);
-                    final String inputPlan = TestUtils.printSqlToString(engine, context, "EXPLAIN " + input, new StringSink());
+                    final String inputPlan = compileAndRead(compiler, context, "EXPLAIN " + input);
                     Assert.assertFalse(inputPlan, inputPlan.contains("Materialize"));
-                    final String plan = TestUtils.printSqlToString(engine, context, "EXPLAIN " + sql, new StringSink());
+                    final String plan = compileAndRead(compiler, context, "EXPLAIN " + sql);
                     Assert.assertTrue(plan, plan.matches("(?s).*\n( *)Materialize\n\\1  +(Async )?Stream Group By.*") && !plan.matches("(?s).*LatestBy\n *Materialize.*"));
                     try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()) {
                         for (int pass = 0; pass < 2; pass++) {
@@ -1240,6 +1245,42 @@ public class StreamGroupByTest extends AbstractCairoTest {
                 assertMatchesHash(compiler, context,
                         "select timestamp_floor_utc('" + bucket + "', ts, null, '00:00', 'America/New_York') bucket, "
                                 + "count(*), sum(v), first(v), last(v) from $table order by bucket");
+            }
+        });
+    }
+
+    @Test
+    public void testTemporalJoinKeepsMixedKeyTypes() throws Exception {
+        run((engine, compiler, context) -> {
+            engine.execute("CREATE TABLE q AS (SELECT timestamp_sequence('2024-01-01', 7_000_000) ts, ('S' || (x % 5))::SYMBOL sym, "
+                    + "timestamp_sequence('2024-01-01', 60_000_000) kts, x::DOUBLE bid FROM long_sequence(600)) TIMESTAMP(ts) PARTITION BY DAY", context);
+            engine.execute("CREATE TABLE t AS (SELECT timestamp_sequence('2024-01-01', 11_000_000) ts, ('S' || (x % 7))::VARCHAR v, ('S' || (x % 7))::STRING s, "
+                    + "timestamp_sequence('2024-01-01', 60_000_000)::TIMESTAMP_NS kns FROM long_sequence(400)) TIMESTAMP(ts) PARTITION BY DAY", context);
+            for (boolean isFullFat : new boolean[]{false, true}) {
+                compiler.setFullFatJoins(isFullFat);
+                for (String join : new String[]{"ASOF", "LT"}) {
+                    for (String[] key : new String[][]{{"sym", "v", "SYMBOL"}, {"sym", "s", "SYMBOL"}, {"kts", "kns", "TIMESTAMP"}}) {
+                        final String bars = "SELECT ts, " + key[0] + ", last(bid) bid FROM q SAMPLE BY 1m";
+                        final String sql = "SELECT t.ts, b." + key[0] + ", b.bid FROM t " + join + " JOIN (" + bars + ") b ON b." + key[0] + " = t." + key[1];
+                        context.setStreamGroupByEnabled(false);
+                        final String expected;
+                        final String expectedType;
+                        try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()) {
+                            expected = read(factory, context);
+                            expectedType = ColumnType.nameOf(factory.getMetadata().getColumnType(1));
+                        }
+                        context.setStreamGroupByEnabled(true);
+                        // Full-fat joins expose the key in its partner's type either way, so they copy nothing.
+                        final String plan = compileAndRead(compiler, context, "EXPLAIN " + sql);
+                        Assert.assertEquals(plan, !isFullFat, plan.contains("Materialize"));
+                        try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()) {
+                            Assert.assertEquals(sql, isFullFat ? expectedType : key[2], ColumnType.nameOf(factory.getMetadata().getColumnType(1)));
+                            for (int pass = 0; pass < 2; pass++) {
+                                Assert.assertEquals(sql, expected, read(factory, context));
+                            }
+                        }
+                    }
+                }
             }
         });
     }
@@ -1570,6 +1611,31 @@ public class StreamGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBatchBuffersStayOffQueryMemoryLimit() throws Exception {
+        // A batch of 131_072 rows takes a 1 MiB buffer, as much as the query may use.
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_BATCH_SIZE, 131_072);
+        run((engine, compiler, context) -> {
+            engine.execute("CREATE TABLE t AS (SELECT timestamp_sequence('2024-01-01', 1_000_000L) ts, ('k' || (x % 10))::SYMBOL k, x v "
+                    + "FROM long_sequence(200_000)) TIMESTAMP(ts) PARTITION BY DAY", context);
+            setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 1L << 20);
+            try {
+                // 200_000 seconds span 56 hours, each with all 10 keys, and v adds up to 200_000 * 200_001 / 2.
+                assertQuery("SELECT count() n, sum(s) s FROM (SELECT k, timestamp_floor('1h', ts) b, sum(v) s FROM t)")
+                        .withEngine(engine).withContext(context)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                n\ts
+                                560\t20000100000
+                                """);
+            } finally {
+                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
+            }
+        });
+    }
+
+    @Test
     public void testBatchNSumKeepsCancellingOverflow() throws Exception {
         // One frame holds every row, so the x86 kernel's eight lanes overflow: rows 0 and 8 to +Infinity, rows 1 and 9 to -Infinity.
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 1_000);
@@ -1785,6 +1851,12 @@ public class StreamGroupByTest extends AbstractCairoTest {
                         ts\tc
                         2024-01-01T01:20:00.000000Z\t2
                         """);
+                // Neither a copy nor the full-fat join can hold the RECORD of a slave without random access.
+                try (RecordCursorFactory ignored = compiler.compile("SELECT a.ts, (b.r).oid o FROM t a ASOF JOIN ((SELECT ts, v, pg_catalog.pg_database() r FROM t) TIMESTAMP(ts)) b ON (v)", context).getRecordCursorFactory()) {
+                    Assert.fail();
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "right side column 'r' is of unsupported type");
+                }
                 final String streamMaster = "SELECT a.c FROM (SELECT x, count() c FROM long_sequence(2) GROUP BY x) a JOIN long_sequence(2) b ON a.x = b.x LIMIT -1";
                 assertRows(compiler, context, streamMaster, """
                         c

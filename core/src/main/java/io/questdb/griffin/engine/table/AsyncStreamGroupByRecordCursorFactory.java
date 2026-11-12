@@ -247,6 +247,7 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
             final boolean isBatch = !(record instanceof PageFrameFilteredMemoryRecord);
             if (atom.getCollectorMap() != null) {
                 final StreamGroupByMap map = atom.getMap(slot);
+                final DirectLongList batchRows = isBatch ? atom.getBatchRows(slot) : null;
                 final RecordChain results = atom.getResultRecords(task);
                 long previous = -1;
                 long segmentCount = 0;
@@ -278,10 +279,10 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
                         task.setGroupByLastKeyInSpan(isSpan);
                     }
                     if (isSpan) {
-                        atom.acquireSpanMap(slot, key).aggregate(record, rows, start, end, baseRowId, isBatch, circuitBreaker);
+                        atom.acquireSpanMap(slot, key).aggregate(record, rows, start, end, baseRowId, batchRows, circuitBreaker);
                     } else {
                         map.clear(key);
-                        map.aggregate(record, rows, start, end, baseRowId, isBatch, circuitBreaker);
+                        map.aggregate(record, rows, start, end, baseRowId, batchRows, circuitBreaker);
                         final boolean isChainStart = previous == -1;
                         previous = map.appendTo(results, previous, circuitBreaker);
                         sampleRows += end - start;

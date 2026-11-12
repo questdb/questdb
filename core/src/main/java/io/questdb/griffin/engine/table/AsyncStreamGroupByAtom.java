@@ -83,7 +83,9 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner,
     private final ObjList<Function> keyFunctions;
     private final PerWorkerLocks locks;
     private final ObjList<StreamGroupByMap> mergeSources = new ObjList<>();
+    private final DirectLongList ownerBatchRows;
     private final StreamGroupByMap ownerMap;
+    private final ObjList<DirectLongList> perWorkerBatchRows;
     private final ObjList<ObjList<GroupByFunction>> perWorkerFunctions;
     private final ObjList<ObjList<Function>> perWorkerKeys;
     private final ObjList<StreamGroupByMap> perWorkerMaps;
@@ -158,6 +160,12 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner,
                         : GroupByFunctionsUpdaterFactory.getInstance(updaterClass, perWorkerFunctions.getQuick(i)));
             }
             if (keyTypes.getColumnCount() > 1) {
+                final int batchSize = configuration.getGroupByBatchSize();
+                ownerBatchRows = new DirectLongList(batchSize, MemoryTag.NATIVE_DEFAULT, true);
+                perWorkerBatchRows = new ObjList<>(workerCount);
+                for (int i = 0; i < workerCount; i++) {
+                    perWorkerBatchRows.add(new DirectLongList(batchSize, MemoryTag.NATIVE_DEFAULT, true));
+                }
                 ownerMap = new StreamGroupByMap(configuration, asm, baseMetadata, columnFilter, keyTypes, valueTypes,
                         streamKeyIndex, keyFunctions, groupByFunctions, updater, null);
                 collectorMap = new StreamGroupByMap(configuration, asm, baseMetadata, columnFilter, keyTypes, valueTypes,
@@ -173,6 +181,8 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner,
                     spanMaps.add(new SpanMaps(map));
                 }
             } else {
+                ownerBatchRows = null;
+                perWorkerBatchRows = null;
                 ownerMap = collectorMap = null;
                 perWorkerMaps = null;
                 spanMaps = null;
@@ -254,6 +264,10 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner,
 
     public ObjList<Function> getKeyFunctions() {
         return keyFunctions;
+    }
+
+    public DirectLongList getBatchRows(int slot) {
+        return slot < 0 ? ownerBatchRows : perWorkerBatchRows.getQuick(slot);
     }
 
     public StreamGroupByMap getMap(int slot) {
@@ -536,6 +550,8 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner,
         }
         th = Misc.freeBestEffort(th, ownerMap);
         th = Misc.freeBestEffort(th, collectorMap);
+        th = Misc.freeBestEffort(th, ownerBatchRows);
+        th = Misc.freeObjListAndKeepObjectsBestEffort(th, perWorkerBatchRows);
         if (perWorkerMaps != null) {
             for (int i = 0, n = perWorkerMaps.size(); i < n; i++) {
                 th = Misc.freeBestEffort(th, perWorkerMaps.getQuick(i));
