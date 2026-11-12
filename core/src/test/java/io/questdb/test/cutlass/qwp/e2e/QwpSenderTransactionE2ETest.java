@@ -33,6 +33,7 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 /**
@@ -186,6 +187,38 @@ public class QwpSenderTransactionE2ETest extends AbstractQwpWebSocketTest {
             }
             drainWalQueue();
             assertQuery("SELECT count() FROM t").noLeakCheck().noRandomAccess().expectSize().returns("count\n999\n");
+        });
+    }
+
+    @Test
+    public void testTransactionalModeCommitsInPartsPastClientBuffer() throws Exception {
+        // The client holds a transaction until the server commits it. transaction=on
+        // used to block the row that took its transaction past sf_max_total_bytes for
+        // sf_append_deadline_millis (30 s) and then throw, and closing the sender
+        // committed the rows already sent and dropped the rest. Now the sender commits
+        // the rows already sent and carries on, so every row lands, in parts.
+        runInContext(port -> {
+            try (Sender sender = Sender.fromConfig(conf(port) + "transaction=on;"
+                    + "sf_max_segment_bytes=64k;sf_max_total_bytes=256k;")) {
+                long start = System.nanoTime();
+                // ~1 MB over two tables, four times the client buffer.
+                for (int i = 0; i < 10_000; i++) {
+                    sender.table(i % 2 == 0 ? "t" : "u").longColumn("v", i).stringColumn("s", PAD).atNow();
+                }
+                sender.flush();
+                Assert.assertTrue("must not wait for sf_append_deadline_millis",
+                        System.nanoTime() - start < TimeUnit.SECONDS.toNanos(20));
+                Assert.assertTrue(sender.drain(60_000));
+            }
+            drainWalQueue();
+            for (String table : new String[]{"t", "u"}) {
+                Assert.assertTrue(table + " committed in parts",
+                        engine.getTableSequencerAPI().lastTxn(engine.verifyTableName(table)) >= 2);
+            }
+            assertQuery("SELECT count(), count_distinct(v), min(v), max(v) FROM t").noLeakCheck().noRandomAccess()
+                    .expectSize().returns("count\tcount_distinct\tmin\tmax\n5000\t5000\t0\t9998\n");
+            assertQuery("SELECT count(), count_distinct(v), min(v), max(v) FROM u").noLeakCheck().noRandomAccess()
+                    .expectSize().returns("count\tcount_distinct\tmin\tmax\n5000\t5000\t1\t9999\n");
         });
     }
 
