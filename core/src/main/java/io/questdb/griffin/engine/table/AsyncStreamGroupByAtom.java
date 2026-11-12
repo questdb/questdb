@@ -183,6 +183,7 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner,
 
     @Override
     public void clear() {
+        releaseAllResults();
         CairoException.rethrowCleanupFailure(closeMaps(null));
         if (filterContext != null) {
             filterContext.clear();

@@ -55,6 +55,7 @@ import io.questdb.jit.JitUtil;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.MemoryTrackerWorkload;
 import io.questdb.std.Os;
@@ -63,6 +64,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.QueryAssertion;
 import io.questdb.test.mp.TestWorkerPool;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.CountingSqlExecutionCircuitBreaker;
 import io.questdb.test.tools.LimitedMemoryTracker;
 import io.questdb.test.tools.TestUtils;
@@ -2172,6 +2174,57 @@ public class StreamGroupByTest extends AbstractCairoTest {
             assertMatchesHash(compiler, context,
                     "select timestamp_floor('1m', ts) bucket, count(*), sum(v), avg(d), first(v), last(v) from $table order by bucket");
         });
+    }
+
+    @Test
+    public void testFailedCloseReleasesFrameResults() throws Exception {
+        Assume.assumeTrue(parallel && workers > 0);
+        setProperty(PropertyKey.CAIRO_INACTIVE_READER_MAX_OPEN_PARTITIONS, 1);
+        final AtomicBoolean isArmed = new AtomicBoolean();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public void munmap(long address, long size, int memoryTag) {
+                if (isArmed.compareAndSet(true, false)) {
+                    throw CairoException.critical(0).put("injected munmap failure");
+                }
+                super.munmap(address, size, memoryTag);
+            }
+        };
+        assertMemoryLeak(ff, () -> TestUtils.execute(new TestWorkerPool(workers), (engine, compiler, context) -> {
+            engine.execute("CREATE TABLE t AS (SELECT timestamp_sequence('2024-01-01', 600_000_000L) ts, ('s' || (x % 5))::SYMBOL s, x v "
+                    + "FROM long_sequence(288)) TIMESTAMP(ts) PARTITION BY DAY", context);
+            engine.execute("CREATE TABLE hash_input AS (SELECT * FROM t)", context);
+            final String sql = "SELECT timestamp_floor('1h', ts) b, s, count(), sum(v) FROM $table ORDER BY b, s";
+            final String expected = compileAndRead(compiler, context, sql.replace("$table", "hash_input"));
+            try (
+                    LimitedMemoryTracker tracker = new LimitedMemoryTracker(0);
+                    RecordCursorFactory factory = compiler.compile(sql.replace("$table", "t"), context).getRecordCursorFactory()
+            ) {
+                final AsyncStreamGroupByRecordCursorFactory stream = (AsyncStreamGroupByRecordCursorFactory) getGroupBy(factory);
+                context.setMemoryTracker(tracker);
+                try {
+                    final RecordCursor cursor = stream.getCursor(context);
+                    Assert.assertTrue(cursor.hasNext());
+                    final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+                    while (stream.getReducedFrameCount() < stream.getDispatchedFrameCount()) {
+                        Assert.assertTrue("workers did not reduce the dispatched frames", System.nanoTime() < deadline);
+                        Os.pause();
+                    }
+                    isArmed.set(true);
+                    try {
+                        cursor.close();
+                        Assert.fail("expected close() to fail");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "injected munmap failure");
+                    }
+                    engine.releaseCrashOrphanedReaders();
+                    Assert.assertEquals(0, tracker.getUsed());
+                    Assert.assertEquals(expected, read(factory, context));
+                } finally {
+                    context.setMemoryTracker(null);
+                }
+            }
+        }, configuration, LOG));
     }
 
     @Test

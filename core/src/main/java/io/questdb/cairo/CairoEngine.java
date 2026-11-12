@@ -3694,6 +3694,11 @@ public class CairoEngine implements Closeable, WriterSource {
         writerPool.releaseAll();
     }
 
+    @TestOnly
+    public int releaseCrashOrphanedReaders() {
+        return readerPool.releaseCrashOrphanedTenants();
+    }
+
     /**
      * Force-reclaims writers the calling thread left checked out or locked. No-op on a healthy engine.
      */

@@ -140,7 +140,6 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
                     frameSequence.await();
                 }
                 frameSequence.reset();
-                frameSequence.getAtom().releaseAllResults();
             }
         } finally {
             frameSequence = null;
