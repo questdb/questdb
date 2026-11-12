@@ -34,6 +34,7 @@ import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 
@@ -55,7 +56,7 @@ public class NSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
             final double prevC = mapValue.getDouble(valueIndex + 1);
             final double batchSum = Vect.sumDoubleNeumaier(dataAddr, rowCount, cPtr);
             final double batchC = mapValue.getDouble(valueIndex + 1);
-            if (batchSum == batchSum) {
+            if (Numbers.isFinite(batchSum)) {
                 final long count = mapValue.getLong(valueIndex + 2);
                 if (count > 0) {
                     sum(mapValue, batchSum, batchC, mapValue.getDouble(valueIndex), prevC);
@@ -65,6 +66,19 @@ public class NSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
                 mapValue.putLong(valueIndex + 2, count + 1);
             } else {
                 mapValue.putDouble(valueIndex + 1, prevC);
+                // The sum is not finite without finite values, and when SIMD lanes overflow where row order does not.
+                for (long p = dataAddr, hi = dataAddr + ((long) rowCount << 3); p < hi; p += Double.BYTES) {
+                    final double value = Unsafe.getDouble(p);
+                    if (Numbers.isFinite(value)) {
+                        if (mapValue.getLong(valueIndex + 2) > 0) {
+                            sum(mapValue, value, 0, mapValue.getDouble(valueIndex), mapValue.getDouble(valueIndex + 1));
+                            mapValue.addLong(valueIndex + 2, 1);
+                        } else {
+                            sum(mapValue, value, 0, 0, 0);
+                            mapValue.putLong(valueIndex + 2, 1);
+                        }
+                    }
+                }
             }
         }
     }

@@ -61,8 +61,9 @@ import java.util.Collection;
 
 /**
  * Parents that rewind their input, nested loop joins and negative LIMIT, read a stream GROUP BY through a copy,
- * so the aggregation runs once per cursor. Splice and serial horizon joins read it through a strict copy, which
- * gives them random access. The expected rows come from the same aggregation over a table without a designated
+ * so the aggregation runs once per cursor. Nested loop, splice and serial horizon joins read it through a strict
+ * copy, which fails at the memory limit rather than rerun the aggregation, and gives splice and horizon joins random
+ * access. The expected rows come from the same aggregation over a table without a designated
  * timestamp, which runs a hash GROUP BY. The test_match() filter under each stream GROUP BY counts the rewinds that
  * reach the aggregation.
  */
@@ -485,30 +486,38 @@ public class MaterializedRecordCursorFactoryTest extends AbstractCairoTest {
                     context
             );
             final String sub = "SELECT ts, count() c, sum(v) s FROM big WHERE test_match() GROUP BY ts";
+            final String crossJoin = "SELECT count() FROM m CROSS JOIN (" + sub + ")";
+            final int topCount = TestMatchFunctionFactory.getTopCounter();
             try (MemoryTracker tracker = engine.getMemoryTrackerProvider().acquire(context.getSecurityContext(), 42, MemoryTrackerWorkload.MAT_VIEW_REFRESH)) {
                 context.setMemoryTracker(tracker);
                 try {
-                    final int topCount = TestMatchFunctionFactory.getTopCounter();
-                    assertQuery("SELECT count() FROM m CROSS JOIN (" + sub + ")")
-                            .withEngine(engine)
-                            .withContext(context)
-                            .noLeakCheck()
-                            .noRandomAccess()
-                            .expectSize()
-                            .withPlanContaining("Materialize")
-                            .returns("count\n50000\n");
-                    // The copy released its rows and streamed the aggregation, which the join rewinds.
-                    Assert.assertTrue(TestMatchFunctionFactory.getTopCounter() > topCount);
-                    assertQuery("SELECT m.x, s.* FROM m FULL JOIN (" + sub + ") s ON s.s < m.x")
-                            .withEngine(engine)
-                            .withContext(context)
-                            .noLeakCheck()
-                            .failsWith("query memory limit exceeded [workload=MAT_VIEW_REFRESH");
-                    Assert.assertEquals(0, tracker.getUsed());
+                    for (String join : new String[]{
+                            crossJoin,
+                            "SELECT m.x, s.* FROM m LEFT JOIN (" + sub + ") s ON s.s < m.x",
+                            "SELECT m.x, s.* FROM (" + sub + ") s RIGHT JOIN m ON s.s < m.x",
+                            "SELECT m.x, s.* FROM m FULL JOIN (" + sub + ") s ON s.s < m.x"
+                    }) {
+                        assertQuery(join)
+                                .withEngine(engine)
+                                .withContext(context)
+                                .noLeakCheck()
+                                .failsWith("query memory limit exceeded [workload=MAT_VIEW_REFRESH");
+                        Assert.assertEquals(join, 0, tracker.getUsed());
+                    }
                 } finally {
                     context.setMemoryTracker(null);
                 }
             }
+            Assert.assertEquals(topCount, TestMatchFunctionFactory.getTopCounter());
+            assertQuery(crossJoin)
+                    .withEngine(engine)
+                    .withContext(context)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("Materialize")
+                    .returns("count\n50000\n");
+            Assert.assertEquals(topCount, TestMatchFunctionFactory.getTopCounter());
         });
     }
 
@@ -533,13 +542,8 @@ public class MaterializedRecordCursorFactoryTest extends AbstractCairoTest {
                             .withEngine(engine)
                             .withContext(context)
                             .noLeakCheck()
-                            .noRandomAccess()
-                            .expectSize()
-                            .withPlanContaining("Materialize")
-                            .returns("""
-                                    n\tc\ts\tlo\thi\toffsets
-                                    50000\t50000\t250025000\t2024-01-01T00:00:00.000000Z\t2024-01-01T02:46:39.000000Z\t249975000000000
-                                    """);
+                            .failsWith("query memory limit exceeded [workload=QUERY");
+                    Assert.assertEquals(0, tracker.getUsed());
                     assertQuery("SELECT count() n, sum(c) c, sum(s) s, min(ts) lo, max(ts) hi FROM (" + sub + " ORDER BY ts LIMIT -9000)")
                             .withEngine(engine)
                             .withContext(context)
@@ -561,7 +565,7 @@ public class MaterializedRecordCursorFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testMemoryTrackerBalanced() throws Exception {
-        // The single-key SAMPLE BY copy fits in 1024 bytes, the others stream or, under FULL JOIN, fail.
+        // Copies of stream GROUP BY rows ignore the 1024-byte join budget, and every join balances the tracker.
         setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE, 256);
         setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_MAX_PAGES, 4);
         run((engine, compiler, context) -> {

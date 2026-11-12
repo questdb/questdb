@@ -585,6 +585,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private boolean fullFatJoins = false;
     // Only this RHS leaf must retain a time-frame-capable scan beneath its residual filter.
     private IQueryModel horizonJoinSlaveModel;
+    // Set while the input of LATEST ON generates, so joins and set operations copy their stream inputs at the source.
+    private boolean isLatestByInput;
     // Used to pass ORDER BY context from outer query down to join generation for markout horizon optimization
     // Tracks the last model with non-empty ORDER BY as we descend through nested models
     private IQueryModel lastSeenOrderByModel;
@@ -1616,7 +1618,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return false;
     }
 
-    // The microsecond sampler steps through whole microseconds, so the buckets of an uneven stride above one fall between its steps.
     private static void coerceRuntimeConstantType(Function func, int type, SqlExecutionContext context, CharSequence message, int pos) throws SqlException {
         if (isUndefined(func.getType())) {
             func.assignType(type, context.getBindVariableService());
@@ -7435,14 +7436,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     if (master.isRewindRecomputing()) {
                                         final RecordCursorFactory masterToMaterialize = master;
                                         master = null;
-                                        master = materialize(masterToMaterialize, false);
+                                        master = materialize(masterToMaterialize, true);
                                     }
                                 } else if (joinType == IQueryModel.JOIN_CROSS_FULL
                                         ? !slaveToFree.recordCursorSupportsRandomAccess()
                                         : slaveToFree.isRewindRecomputing()) {
                                     final RecordCursorFactory slaveToMaterialize = slaveToFree;
                                     slaveToFree = null;
-                                    slaveToFree = materialize(slaveToMaterialize, joinType == IQueryModel.JOIN_CROSS_FULL);
+                                    slaveToFree = materialize(slaveToMaterialize, true);
                                 }
                                 master = switch (joinType) {
                                     case IQueryModel.JOIN_CROSS_LEFT -> new NestedLoopLeftJoinRecordCursorFactory(
@@ -7515,7 +7516,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     if (slaveToFree.isRewindRecomputing()) {
                                         final RecordCursorFactory slaveToMaterialize = slaveToFree;
                                         slaveToFree = null;
-                                        slaveToFree = materialize(slaveToMaterialize, false);
+                                        slaveToFree = materialize(slaveToMaterialize, true);
                                     }
                                     // Nothing above the join can copy a slave value such as a RECORD, so the master
                                     // gives back the random access and cheap rewind of a hash GROUP BY.
@@ -7544,9 +7545,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 boolean isSelfJoin = isSameTable(master, slaveToFree);
                                 processJoinContext(index == 1, isSelfJoin, slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
                                 validateTimestampNotInJoinKeys(slaveModel, masterMetadata, slaveMetadata);
-                                if (!fullFatJoins
+                                final boolean isFullFatUnsupported = !fullFatJoins
                                         && !slaveToFree.recordCursorSupportsRandomAccess()
-                                        && findUnsupportedFullFatJoinColumn(slaveMetadata, listColumnFilterA) != -1
+                                        && findUnsupportedFullFatJoinColumn(slaveMetadata, listColumnFilterA) != -1;
+                                if ((isFullFatUnsupported || (isLatestByInput && isRandomAccessLostToStream(slaveToFree)))
                                         && isCopySupported(slaveMetadata)) {
                                     // Light temporal joins retain row IDs. Copy only inputs that the full-fat
                                     // value sink cannot store; compatible inputs keep their per-key state.
@@ -10265,6 +10267,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 ? functionParser.enterExecutionRequirementPosition(originatingViewNameExpr.position)
                 : -1;
         final IQueryModel savedOrderByModel = lastSeenOrderByModel;
+        final boolean wasLatestByInput = isLatestByInput;
         try {
             final ObjList<ExpressionNode> orderBy = model.getOrderBy();
             if (orderBy != null && orderBy.size() > 0) {
@@ -10277,7 +10280,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
             RecordCursorFactory factory;
 
+            isLatestByInput = wasLatestByInput || model.getLatestBy().size() > 0;
             factory = generateSelect(model, executionContext, processJoins);
+            isLatestByInput = wasLatestByInput;
             factory = generateFilter(factory, model, executionContext);
             factory = generateLatestBy(factory, model);
             factory = generateOrderBy(factory, model, executionContext);
@@ -10290,6 +10295,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 functionParser.restoreExecutionRequirementPosition(previousExecutionRequirementPosition);
             }
             lastSeenOrderByModel = savedOrderByModel;
+            isLatestByInput = wasLatestByInput;
             if (pushed) {
                 executionContext.popTimestampRequiredFlag();
             }
@@ -13646,6 +13652,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 factoryB = generateQuery0(model.getUnionModel(), executionContext, true);
             } finally {
                 generationState.exitRegion(hasEntered);
+            }
+            if (isLatestByInput && isRandomAccessLostToStream(factoryA)) {
+                final RecordCursorFactory streamFactory = factoryA;
+                factoryA = null;
+                factoryA = materialize(streamFactory, true);
+            }
+            if (isLatestByInput && isRandomAccessLostToStream(factoryB)) {
+                final RecordCursorFactory streamFactory = factoryB;
+                factoryB = null;
+                factoryB = materialize(streamFactory, true);
             }
 
             if (setOperationType != IQueryModel.SET_OPERATION_UNION_ALL) {

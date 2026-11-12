@@ -912,6 +912,38 @@ public class StreamGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestOnCopiesOnlyStreamInputs() throws Exception {
+        run((engine, compiler, context) -> {
+            engine.execute("CREATE TABLE trades AS (SELECT timestamp_sequence('2024-01-01', 7_000_000) ts, ('S' || (x % 5))::SYMBOL sym, x % 97 price "
+                    + "FROM long_sequence(600)) TIMESTAMP(ts) PARTITION BY DAY", context);
+            final String bars = "SELECT ts, sym, sum(price) total FROM trades SAMPLE BY 1m";
+            for (boolean isFullFat : new boolean[]{false, true}) {
+                compiler.setFullFatJoins(isFullFat);
+                for (String input : new String[]{
+                        "SELECT t.ts, t.sym, t.price, s.total FROM trades t ASOF JOIN (" + bars + ") s ON (sym)",
+                        "SELECT t.ts, t.sym, t.price, s.total FROM trades t LT JOIN (" + bars + ") s ON (sym)",
+                        "SELECT ts, sym, price FROM trades UNION ALL " + bars,
+                        bars + " UNION ALL SELECT ts, sym, price FROM trades"
+                }) {
+                    final String sql = "SELECT * FROM ((" + input + ") LATEST ON ts PARTITION BY sym) ORDER BY sym";
+                    context.setStreamGroupByEnabled(false);
+                    final String expected = compileAndRead(compiler, context, sql);
+                    context.setStreamGroupByEnabled(true);
+                    final String inputPlan = TestUtils.printSqlToString(engine, context, "EXPLAIN " + input, new StringSink());
+                    Assert.assertFalse(inputPlan, inputPlan.contains("Materialize"));
+                    final String plan = TestUtils.printSqlToString(engine, context, "EXPLAIN " + sql, new StringSink());
+                    Assert.assertTrue(plan, plan.matches("(?s).*\n( *)Materialize\n\\1  +(Async )?Stream Group By.*") && !plan.matches("(?s).*LatestBy\n *Materialize.*"));
+                    try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()) {
+                        for (int pass = 0; pass < 2; pass++) {
+                            Assert.assertEquals(sql, expected, read(factory, context));
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testLatestOnOverSampleByFeedsTimeSeriesJoins() throws Exception {
         run((engine, compiler, context) -> {
             engine.execute("CREATE TABLE t (ts TIMESTAMP, k SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY", context);
@@ -1532,6 +1564,41 @@ public class StreamGroupByTest extends AbstractCairoTest {
                             }
                         }
                     }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testBatchNSumKeepsCancellingOverflow() throws Exception {
+        // One frame holds every row, so the x86 kernel's eight lanes overflow: rows 0 and 8 to +Infinity, rows 1 and 9 to -Infinity.
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 1_000);
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS, 1_000);
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1_000);
+        run((engine, compiler, context) -> {
+            engine.execute("CREATE TABLE t (ts TIMESTAMP, d DOUBLE) TIMESTAMP(ts) PARTITION BY DAY", context);
+            engine.execute("""
+                    INSERT INTO t SELECT '2024-01-01'::TIMESTAMP + x, CASE x - 1
+                        WHEN 0 THEN 1.7976931348623157E308
+                        WHEN 8 THEN 1.7976931348623157E308
+                        WHEN 1 THEN -1.7976931348623157E308
+                        WHEN 9 THEN -1.7976931348623157E308
+                        WHEN 2 THEN 5.0
+                        ELSE 0.0 END
+                    FROM long_sequence(16)""", context);
+            engine.execute("CREATE TABLE n AS (SELECT ts, NULL::DOUBLE d FROM t) TIMESTAMP(ts) PARTITION BY DAY", context);
+            for (String table : new String[]{"t", "n"}) {
+                final double expected = "t".equals(table) ? 5.0 : Double.NaN;
+                for (String[] query : new String[][]{
+                        {"SELECT nsum(d) v FROM " + table, "vectorized: true"},
+                        {"SELECT ts, nsum(d) v FROM " + table + " SAMPLE BY 1d", "Async Stream Group By"}
+                }) {
+                    if (parallel) {
+                        try (RecordCursorFactory factory = compiler.compile(query[0], context).getRecordCursorFactory()) {
+                            Assert.assertTrue(query[0], plan(factory, context).contains(query[1]));
+                        }
+                    }
+                    assertValues(compiler, context, query[0], "v", new double[]{expected});
                 }
             }
         });
