@@ -27,9 +27,11 @@ package io.questdb.test.cairo.fuzz;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnPurgeJob;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.DebugUtils;
+import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.O3PartitionPurgeJob;
@@ -63,7 +65,6 @@ import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
-import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
@@ -166,6 +167,7 @@ public class FuzzRunner {
     private FailureFileFacade ff;
     private int fuzzRowCount;
     private boolean hasApplySeeds;
+    private boolean hasPoolColumnPurgeJob;
     private int ioFailureCount;
     private int ioFailureCreatedCount;
     private boolean isNoSentinelTypeChangeEnabled;
@@ -372,7 +374,10 @@ public class FuzzRunner {
 
         calculateReplaceRanges(transactions);
 
-        try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1)) {
+        try (
+                O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1);
+                ColumnPurgeJob columnPurgeJob = openColumnPurgeJob()
+        ) {
             int transactionSize = transactions.size();
             Rnd rnd = newApplyRnd();
             int failuresObserved = 0;
@@ -469,7 +474,7 @@ public class FuzzRunner {
                 }
 
                 try {
-                    purgeAndReloadReaders(reloadRnd, rdr1, rdr2, purgeJob, reloadProbability);
+                    purgeAndReloadReaders(reloadRnd, rdr1, rdr2, purgeJob, columnPurgeJob, reloadProbability);
                 } catch (CairoException | CairoError e) {
                     int failures = ff.failureGenerated();
                     if (failures > failuresObserved) {
@@ -489,6 +494,7 @@ public class FuzzRunner {
                     }
                 }
             }
+            runColumnPurgeJob(columnPurgeJob);
         } finally {
             // Don't mess simulating failures anymore, we are done here.
             ff.clearFailures();
@@ -711,7 +717,7 @@ public class FuzzRunner {
         }
     }
 
-    public FilesFacade getFileFacade() {
+    public FailureFileFacade getFileFacade() {
         return ff;
     }
 
@@ -751,9 +757,17 @@ public class FuzzRunner {
         return MicrosTimestampDriver.floor("2022-02-24") + Micros.HOUR_MICROS * 17 / getPartitionsPerDay();
     }
 
-    public void purgeAndReloadReaders(Rnd reloadRnd, TableReader rdr1, TableReader rdr2, O3PartitionPurgeJob purgeJob, double realoadThreashold) {
+    public void purgeAndReloadReaders(
+            Rnd reloadRnd,
+            TableReader rdr1,
+            TableReader rdr2,
+            O3PartitionPurgeJob purgeJob,
+            @Nullable ColumnPurgeJob columnPurgeJob,
+            double realoadThreashold
+    ) {
         if (reloadRnd.nextDouble() < realoadThreashold) {
             purgeJob.run();
+            runColumnPurgeJob(columnPurgeJob);
             reloadReader(reloadRnd, rdr1, "1");
             reloadReader(reloadRnd, rdr2, "2");
         }
@@ -1021,6 +1035,14 @@ public class FuzzRunner {
      */
     public void setDropIndexProbability(double dropIndexProb) {
         this.dropIndexProb = dropIndexProb;
+    }
+
+    /**
+     * Tells the applies that a worker pool runs a {@link ColumnPurgeJob}. A pool job that fails to save a purge frees
+     * the purge log but keeps draining the queue, so the purge log cannot tell.
+     */
+    public void setHasPoolColumnPurgeJob(boolean hasPoolColumnPurgeJob) {
+        this.hasPoolColumnPurgeJob = hasPoolColumnPurgeJob;
     }
 
     /**
@@ -2088,6 +2110,7 @@ public class FuzzRunner {
         final Rnd drainRnd = new Rnd(applyRnd.getSeed0(), applyRnd.getSeed1());
         try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 0);
              O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1);
+             ColumnPurgeJob columnPurgeJob = openColumnPurgeJob();
              PartitionCompactionScanJob compactionJob = new PartitionCompactionScanJob(engine);
              TableReader rdr1 = getReaderWithRetries(tableName, null);
              TableReader rdr2 = getReaderWithRetries(tableName, null)
@@ -2105,13 +2128,14 @@ public class FuzzRunner {
                     break;
                 }
                 committedAtRelease = forceReleaseTableWriter(drainRnd, tableTokenBucket, committedAtRelease);
-                purgeAndReloadReaders(drainRnd, rdr1, rdr2, purgeJob, 0.25);
+                purgeAndReloadReaders(drainRnd, rdr1, rdr2, purgeJob, columnPurgeJob, 0.25);
             }
             // This path is the ONLY compaction coverage for single-writer tables driven through
             // applyWal() -> applyToWal() (walWriterCount=1 never goes through
             // applyManyWalParallel()'s waitApply thread pool below), so it needs its own sweep,
             // not just the threaded one.
             compactionJob.drain(0);
+            runColumnPurgeJob(columnPurgeJob);
         }
     }
 
@@ -2215,6 +2239,23 @@ public class FuzzRunner {
             hasApplySeeds = true;
         }
         return new Rnd(applySeed0, applySeed1);
+    }
+
+    /**
+     * Opens the column purge job of an apply, or returns null when another job drains the queue, which takes one
+     * consumer: the job of a worker pool, see {@link #setHasPoolColumnPurgeJob}, or a job that holds the purge log.
+     */
+    private @Nullable ColumnPurgeJob openColumnPurgeJob() {
+        if (hasPoolColumnPurgeJob) {
+            return null;
+        }
+        try {
+            return new ColumnPurgeJob(engine);
+        } catch (EntryUnavailableException e) {
+            return null;
+        } catch (SqlException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     private String printReaderRows(TableReader reader, LongList rowIds) {
@@ -2412,6 +2453,17 @@ public class FuzzRunner {
         }
     }
 
+    /**
+     * Runs the column purge job, which purges the column versions that the queue holds and no reader uses. The job
+     * swallows the failures of its file operations, so it does not run while a planted failure is pending: the failure
+     * belongs to the operation it was planted for.
+     */
+    private void runColumnPurgeJob(@Nullable ColumnPurgeJob columnPurgeJob) {
+        if (columnPurgeJob != null && !ff.isArmed()) {
+            columnPurgeJob.run();
+        }
+    }
+
     private void runPartitionCompactionJob(AtomicInteger done, ConcurrentLinkedQueue<Throwable> errors) {
         try {
             try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine)) {
@@ -2435,7 +2487,10 @@ public class FuzzRunner {
         // another worker fails first; this lets the open give up instead of stranding the thread.
         BooleanSupplier isRunOver = () -> done.get() != 0 || !errors.isEmpty();
         try {
-            try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1)) {
+            try (
+                    O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1);
+                    ColumnPurgeJob columnPurgeJob = openColumnPurgeJob()
+            ) {
                 int forceReloadNum = forceReaderReload.get();
                 for (int i = 0; i < tableCount; i++) {
                     String tableNameWal = multiTable ? getWalParallelApplyTableName(tableNameBase, i) : tableNameBase;
@@ -2462,15 +2517,17 @@ public class FuzzRunner {
                         }
                     }
                     int reader = runRnd.nextInt(tableCount);
-                    purgeAndReloadReaders(runRnd, readers.get(reader * 2), readers.get(reader * 2 + 1), purgeJob, 0.25);
+                    purgeAndReloadReaders(runRnd, readers.get(reader * 2), readers.get(reader * 2 + 1), purgeJob, columnPurgeJob, 0.25);
                     Os.sleep(50);
                 }
+                runColumnPurgeJob(columnPurgeJob);
             }
         } catch (Throwable e) {
             errors.add(e);
         } finally {
             Misc.freeObjList(readers);
             Path.clearThreadLocals();
+            Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
         }
     }
 
