@@ -226,14 +226,20 @@ public class CharFunctionTest {
         Assert.assertEquals(TableUtils.NULL_LEN, zeroFunc.getStrLen(null));
     }
 
-    @Test(expected = UnsupportedOperationException.class)
+    @Test
     public void testGetSym() {
-        function.getSymbol(null);
+        TestUtils.assertEquals("4", function.getSymbol(null));
     }
 
-    @Test(expected = UnsupportedOperationException.class)
+    @Test
+    public void testGetSymZ() {
+        Assert.assertNull(zeroFunc.getSymbol(null));
+        Assert.assertNull(zeroFunc.getSymbolB(null));
+    }
+
+    @Test
     public void testGetSymbolB() {
-        function.getSymbolB(null);
+        TestUtils.assertEquals("4", function.getSymbolB(null));
     }
 
     @Test(expected = UnsupportedOperationException.class)
