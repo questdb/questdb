@@ -251,6 +251,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // MetadataCache hydration. Null in production; the fire site is a single volatile read and null check.
     @TestOnly
     private static volatile Runnable metadataVersionPublishedBarrier;
+    // Test hook: fires in truncate0() right before it stores the code of its _todo_ entry, so that a test can take
+    // a process-kill image there. Null in production; firing it is one volatile read and a null check.
+    @TestOnly
+    private static volatile Runnable truncateTodoCodeBarrier;
     /*
         The most recent logical partition is allowed to have up to cairo.o3.last.partition.max.splits (20 by default) splits.
         Any other partition is allowed to have cairo.o3.mid.partition.max.splits (1 by default) splits.
@@ -984,6 +988,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     @TestOnly
     public static void setMetadataVersionPublishedBarrier(@Nullable Runnable barrier) {
         metadataVersionPublishedBarrier = barrier;
+    }
+
+    /**
+     * Installs a one-shot test barrier that fires in a TRUNCATE right before it stores the code of its _todo_ entry.
+     * Pass null to uninstall.
+     */
+    @TestOnly
+    public static void setTruncateTodoCodeBarrier(@Nullable Runnable barrier) {
+        truncateTodoCodeBarrier = barrier;
     }
 
     @Override
@@ -5810,6 +5823,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final Runnable barrier = metadataVersionPublishedBarrier;
         if (barrier != null) {
             metadataVersionPublishedBarrier = null;
+            barrier.run();
+        }
+    }
+
+    private static void fireTruncateTodoCodeBarrier() {
+        final Runnable barrier = truncateTodoCodeBarrier;
+        if (barrier != null) {
+            truncateTodoCodeBarrier = null;
             barrier.run();
         }
     }
@@ -21976,6 +21997,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return;
         }
 
+        // The writer open, and recovery at start, act on the code at offset 40 once the txn pair matches the live txn
+        // and the count is set. Until the store below, offset 40 may hold the code of an earlier entry, such as the
+        // TODO_RESTORE_META of an ALTER: clearTodoLog() leaves it in place. This truncate stores its code first, so
+        // that a process killed while it arms the entry never leaves the stamps and the count next to that code.
+        fireTruncateTodoCodeBarrier();
+        // The repair keeps the symbol maps only when this truncate keeps them: otherwise it has emptied them above
+        todoMem.putLong(40, keepSymbolTables ? TODO_TRUNCATE_KEEP_SYMBOL_MAPS : TODO_TRUNCATE);
+        Unsafe.storeFence();
         // The writer open acts on a _todo_ entry only when its txn is the live _txn txn (see openTodoMem()). Stamped
         // with the txn this truncate starts from, the entry makes the next open complete a truncate that stopped
         // before it published the empty _txn, and the open ignores it once that _txn, or a later one, is published.
@@ -21986,8 +22015,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         Unsafe.storeFence();
         todoMem.putLong(24, txWriter.txn);
         todoMem.putLong(32, 1);
-        // The repair keeps the symbol maps only when this truncate keeps them: otherwise it has emptied them above
-        todoMem.putLong(40, keepSymbolTables ? TODO_TRUNCATE_KEEP_SYMBOL_MAPS : TODO_TRUNCATE);
         // ensure file is closed with correct length
         todoMem.jumpTo(48);
 
