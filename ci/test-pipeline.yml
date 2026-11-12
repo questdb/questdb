@@ -202,6 +202,7 @@ stages:
         steps:
           - checkout: self
             fetchDepth: 1
+            fetchTags: false
             lfs: false
             submodules: false
             persistCredentials: true

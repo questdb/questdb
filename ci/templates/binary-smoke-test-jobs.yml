@@ -49,6 +49,7 @@ jobs:
     steps:
       - checkout: self
         fetchDepth: 1
+        fetchTags: false
         lfs: false
         submodules: true
       # C++ glibc check: confirm the committed libquestdb.so loads on the oldest

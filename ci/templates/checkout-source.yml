@@ -15,6 +15,10 @@ steps:
       git config --global http.lowSpeedTime 120
     displayName: "Set git low-speed abort thresholds"
   - checkout: self
+    # fetchTags: false: the agent otherwise fetches with --tags, and fetchDepth applies to every
+    # fetched ref, so each job downloaded a depth-1 snapshot of all release tags: 835 MiB
+    # instead of 53 MiB, about 1.5 minutes per job. Nothing in the test pipelines reads tags.
     fetchDepth: 1
+    fetchTags: false
     lfs: false
     submodules: false
