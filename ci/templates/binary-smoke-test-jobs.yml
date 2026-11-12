@@ -42,7 +42,6 @@ jobs:
       name: $(poolName)
     timeoutInMinutes: 60
     # IsFork is unset on merge-queue and scheduled runs, so test for 'true' only.
-    # succeeded(): a condition with no status function ignores a canceled run.
     condition: and(succeeded(), ne(variables['System.PullRequest.IsFork'], 'true'))
     variables:
       jdk: "1.25"

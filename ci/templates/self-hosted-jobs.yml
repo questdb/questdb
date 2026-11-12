@@ -6,9 +6,6 @@ jobs:
     pool:
       name: "hetzner-incus-arm"
     timeoutInMinutes: 60
-    # succeeded(): an explicit condition replaces the implicit succeeded(), and a condition with
-    # no status function ignores cancellation: the leg keeps running, and a queued leg still
-    # starts, after the run is canceled (build 285946). Fork PRs run no code on these pools.
     condition: and(succeeded(), ne(variables['System.PullRequest.IsFork'], 'true'))
     variables:
       SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.SOURCE_CODE_CHANGED']]
@@ -38,7 +35,6 @@ jobs:
     pool:
       name: "hetzner-incus-zfs"
     timeoutInMinutes: 60
-    # succeeded(): see linux_arm64_jdk25.
     condition: and(succeeded(), ne(variables['System.PullRequest.IsFork'], 'true'))
     variables:
       SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.SOURCE_CODE_CHANGED']]
@@ -68,7 +64,6 @@ jobs:
     pool:
       name: "hetzner-incus"
     timeoutInMinutes: 60
-    # succeeded(): see linux_arm64_jdk25.
     condition: and(succeeded(), ne(variables['System.PullRequest.IsFork'], 'true'))
     variables:
       SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.SOURCE_CODE_CHANGED']]

@@ -186,7 +186,6 @@ stages:
           jobName: RunContinuousSoak
           displayName: "continuous soak"
           # Exclude every dedicated schedule and manual durability run from the soak.
-          # succeeded(): a condition with no status function ignores a canceled run.
           condition: and(succeeded(), ne(variables['Build.CronSchedule.DisplayName'], 'Run adaptive crash nightly'), ne(variables['Build.CronSchedule.DisplayName'], 'Run durability sweep'), ne('${{ parameters.forceDurability }}', 'true'))
           timeoutInMinutes: 90
           testSets:

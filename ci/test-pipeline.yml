@@ -85,7 +85,6 @@ stages:
   - stage: BuildRustLibrary
     displayName: "Build Rust library"
     dependsOn: []
-    # succeeded(): without a status function the stage ignores a canceled run.
     condition: and(succeeded(), ne(variables['System.PullRequest.IsFork'], 'true'))
     jobs:
       - template: templates/rust-build-job.yml
