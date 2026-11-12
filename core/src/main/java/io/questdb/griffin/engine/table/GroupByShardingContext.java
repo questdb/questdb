@@ -391,7 +391,8 @@ public class GroupByShardingContext implements GroupByShardMerger, QuietCloseabl
                 postAggregationCircuitBreaker,
                 postAggregationDoneLatch,
                 postAggregationStartedCounter,
-                false
+                false,
+                NUM_SHARDS
         );
         if (!postAggregationCircuitBreaker.checkIfTrippedOrYield()) {
             finalizeShardStats();

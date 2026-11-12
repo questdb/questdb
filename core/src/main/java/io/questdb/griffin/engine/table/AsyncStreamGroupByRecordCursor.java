@@ -37,6 +37,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.cairo.sql.async.AlwaysWorkStealingStrategy;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.cairo.sql.async.QueryParallelOwnerLoop;
@@ -58,6 +59,8 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 
 import java.util.concurrent.atomic.AtomicInteger;
+
+import static io.questdb.griffin.engine.table.GroupByMapFragment.NUM_SHARDS;
 
 class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
     private final boolean isIntKey;
@@ -239,10 +242,17 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
                 return;
             }
             int largest = 0;
+            long size = spanMaps.getQuick(0).size();
             for (int i = 1; i < n; i++) {
+                size += spanMaps.getQuick(i).size();
                 if (spanMaps.getQuick(i).size() > spanMaps.getQuick(largest).size()) {
                     largest = i;
                 }
+            }
+            // A pair costs a task, which pays once the maps average a quarter of the sharding threshold.
+            if (n > 2 && size - spanMaps.getQuick(largest).size() > (n - 1) * (long) atom.getSpanRowThreshold() / 4) {
+                mergeSpanMapsInParallel(atom);
+                largest = 0;
             }
             final StreamGroupByMap dest = spanMaps.getQuick(largest);
             spanMaps.setQuick(largest, spanMaps.getQuick(0));
@@ -250,7 +260,7 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
             final int destSlot = spanSlots.getQuick(largest);
             spanSlots.setQuick(largest, spanSlots.getQuick(0));
             spanSlots.setQuick(0, destSlot);
-            for (int i = n - 1; i > 0; i--) {
+            for (int i = spanMaps.size() - 1; i > 0; i--) {
                 final StreamGroupByMap map = spanMaps.getQuick(i);
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 dest.merge(map, updater);
@@ -279,6 +289,44 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
         return false;
     }
 
+    // The span maps of a bucket with many keys merge pairwise in parallel, which halves their number each round.
+    private void mergeSpanMapsInParallel(AsyncStreamGroupByAtom atom) {
+        for (int n = spanMaps.size(); n > 1; n = spanMaps.size()) {
+            for (int i = 1; i < n; i++) {
+                final StreamGroupByMap map = spanMaps.getQuick(i);
+                final int slot = spanSlots.getQuick(i);
+                int j = i;
+                for (; j > 0 && spanMaps.getQuick(j - 1).size() < map.size(); j--) {
+                    spanMaps.setQuick(j, spanMaps.getQuick(j - 1));
+                    spanSlots.setQuick(j, spanSlots.getQuick(j - 1));
+                }
+                spanMaps.setQuick(j, map);
+                spanSlots.setQuick(j, slot);
+            }
+            final int half = (n + 1) / 2;
+            GroupByMergeShardJob.mergeShards(
+                    atom.openSpanMapMerge(spanMaps, half),
+                    ownerLoop,
+                    messageBus,
+                    AlwaysWorkStealingStrategy.INSTANCE,
+                    circuitBreaker,
+                    postAggregationCircuitBreaker,
+                    postAggregationDoneLatch,
+                    postAggregationStartedCounter,
+                    true,
+                    n - half
+            );
+            if (postAggregationCircuitBreaker.checkIfTrippedOrYield()) {
+                throwPostAggregationException();
+            }
+            for (int i = n - 1; i >= half; i--) {
+                atom.releaseSpanMap(spanSlots.getQuick(i), spanMaps.getQuick(i));
+                spanMaps.setPos(i);
+                spanSlots.setPos(i);
+            }
+        }
+    }
+
     // The span maps of a high-cardinality bucket merge shard by shard in parallel.
     private void mergeShards(AsyncStreamGroupByAtom atom) {
         for (int i = 0, n = spanMaps.size(); i < n; i++) {
@@ -299,7 +347,8 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
                 postAggregationDoneLatch,
                 postAggregationStartedCounter,
                 // The workers may stay busy reducing later frames, so the owner must not wait for them.
-                true
+                true,
+                NUM_SHARDS
         );
         if (postAggregationCircuitBreaker.checkIfTrippedOrYield()) {
             throwPostAggregationException();

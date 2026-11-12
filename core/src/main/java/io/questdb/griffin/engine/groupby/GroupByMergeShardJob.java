@@ -78,7 +78,8 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
             PostAggregationCircuitBreaker postAggregationCircuitBreaker,
             SOUnboundedCountDownLatch postAggregationDoneLatch,
             AtomicInteger postAggregationStartedCounter,
-            boolean isOwnerHelping
+            boolean isOwnerHelping,
+            int taskCount
     ) {
         postAggregationCircuitBreaker.reset();
         postAggregationStartedCounter.set(0);
@@ -93,7 +94,7 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
         ownerLoop.tryAcquirePublication();
 
         if (!ownerLoop.hasPublication()) {
-            for (int shardIndex = 0; shardIndex < NUM_SHARDS; shardIndex++) {
+            for (int shardIndex = 0; shardIndex < taskCount; shardIndex++) {
                 ownerLoop.checkBeforeHelping();
                 merger.mergeShard(-1, shardIndex);
             }
@@ -107,7 +108,7 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
         int mergedCount = 0; // positive completed-task count; the latch counts down from zero
 
         try {
-            for (int shardIndex = 0; shardIndex < NUM_SHARDS; shardIndex++) {
+            for (int shardIndex = 0; shardIndex < taskCount; shardIndex++) {
                 while (true) {
                     ownerLoop.observeProgress();
                     long cursor = pubSeq.next();

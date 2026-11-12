@@ -79,6 +79,9 @@ import org.junit.runners.Parameterized;
 
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -609,6 +612,47 @@ public class StreamGroupByTest extends AbstractCairoTest {
                 Assert.assertTrue("breaker checks while emitting: " + (counting.getCheckCount() - checks), counting.getCheckCount() - checks < 1_000);
             } finally {
                 impl.with(breaker);
+            }
+        });
+    }
+
+    @Test
+    public void testSpanMapsMergeInParallel() throws Exception {
+        Assume.assumeTrue(parallel && workers > 1);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 64);
+        run((engine, compiler, context) -> {
+            engine.execute("CREATE TABLE trades AS (SELECT timestamp_sequence('2024-01-01', 1_000_000L) ts, ('k' || (x % 60))::VARCHAR s, x v "
+                    + "FROM long_sequence(10_800)) TIMESTAMP(ts) PARTITION BY DAY", context);
+            engine.execute("CREATE TABLE hash_input AS (SELECT * FROM trades)", context);
+            final String sql = "SELECT timestamp_floor('1h', ts) bucket, s, count(*), sum(v), first(v), last(v) FROM $table WHERE test_latched_counter() ORDER BY bucket, s";
+            final String expected = compileAndRead(compiler, context, sql.replace("$table", "hash_input"));
+            try (RecordCursorFactory factory = compiler.compile(sql.replace("$table", "trades"), context).getRecordCursorFactory()) {
+                final AsyncStreamGroupByAtom atom = ((AsyncStreamGroupByRecordCursorFactory) getGroupBy(factory)).getAtom();
+                for (int run = 0; run < 2; run++) {
+                    final CountDownLatch threads = new CountDownLatch(3);
+                    final Set<Long> arrived = ConcurrentHashMap.newKeySet();
+                    TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
+                        @Override
+                        public boolean onGet(Record rec, int count) {
+                            if (arrived.add(Thread.currentThread().threadId())) {
+                                threads.countDown();
+                                try {
+                                    Assert.assertTrue("three threads did not read the first bucket", threads.await(30, TimeUnit.SECONDS));
+                                } catch (InterruptedException e) {
+                                    throw new RuntimeException(e);
+                                }
+                            }
+                            return true;
+                        }
+                    });
+                    try {
+                        Assert.assertEquals(expected, read(factory, context));
+                    } finally {
+                        TestLatchedCounterFunctionFactory.reset(null);
+                    }
+                    Assert.assertTrue(atom.getSpanMapMergeCount() > run);
+                    Assert.assertEquals(0, atom.getShardMergeCount());
+                }
             }
         });
     }

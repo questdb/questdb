@@ -90,12 +90,14 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner,
     private final ObjList<GroupByFunctionsUpdater> perWorkerUpdaters;
     private final ObjList<FlyweightPackedMapValue> perWorkerValues;
     private final AsyncQueryProgressState progressState = new AsyncQueryProgressState();
+    private final SpanMapMerger spanMapMerger = new SpanMapMerger();
     private final ObjList<SpanMaps> spanMaps;
     private final ArrayColumnTypes stateTypes;
     private final GroupByFunctionsUpdater updater;
     private final FlyweightPackedMapValue value;
     private MemoryTracker memoryTracker;
     private int shardMergeCount;
+    private int spanMapMergeCount;
 
     public AsyncStreamGroupByAtom(
             CairoConfiguration configuration,
@@ -340,6 +342,11 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner,
         return shardMergeCount;
     }
 
+    @TestOnly
+    public int getSpanMapMergeCount() {
+        return spanMapMergeCount;
+    }
+
     @Override
     public AsyncQueryProgressState getProgressState() {
         return progressState;
@@ -430,6 +437,13 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner,
             dest.merge(source, updater);
             source.close();
         }
+    }
+
+    public GroupByShardMerger openSpanMapMerge(ObjList<StreamGroupByMap> maps, int half) {
+        spanMapMergeCount++;
+        spanMapMerger.maps = maps;
+        spanMapMerger.half = half;
+        return spanMapMerger;
     }
 
     // The span maps must be sharded.
@@ -540,6 +554,32 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner,
             if (PerWorkerFunctionList.isOwned(functions, i)) {
                 functions.getQuick(i).cursorClosed();
             }
+        }
+    }
+
+    // Merges the second half of a bucket's span maps, which the caller sorts largest first, into the first half, a pair per task.
+    private class SpanMapMerger implements GroupByShardMerger {
+        private int half;
+        private ObjList<StreamGroupByMap> maps;
+
+        @Override
+        public AsyncQueryProgressState getProgressState() {
+            return progressState;
+        }
+
+        @Override
+        public int maybeAcquire(int carrierId, boolean owner, ExecutionCircuitBreaker circuitBreaker) {
+            return AsyncStreamGroupByAtom.this.maybeAcquire(carrierId, owner, circuitBreaker);
+        }
+
+        @Override
+        public void mergeShard(int slotId, int pairIndex) {
+            maps.getQuick(pairIndex).merge(maps.getQuick(half + pairIndex), getUpdater(slotId));
+        }
+
+        @Override
+        public void release(int slotId) {
+            AsyncStreamGroupByAtom.this.release(slotId);
         }
     }
 
