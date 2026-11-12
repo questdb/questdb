@@ -2463,6 +2463,9 @@ public class FuzzRunner {
         } finally {
             Misc.freeObjList(readers);
             Path.clearThreadLocals();
+            // The column purge job commits O3 rows to its log table, and the commit steals O3 partition tasks
+            // of the other tables, which allocate the O3 job's per-thread contexts on this thread.
+            Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
         }
     }
 
