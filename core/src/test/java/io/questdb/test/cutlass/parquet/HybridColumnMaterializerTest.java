@@ -38,6 +38,7 @@ import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.cutlass.parquet.HybridColumnMaterializer;
 import io.questdb.griffin.engine.functions.columns.SymbolColumn;
+import io.questdb.griffin.engine.groupby.MapSymbolColumn;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
@@ -47,6 +48,45 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class HybridColumnMaterializerTest extends AbstractCairoTest {
+
+    @Test
+    public void testColumnReferenceWithoutStaticSymbolTableExportsSymbolAsString() throws Exception {
+        // The export keeps a SYMBOL column that column references serve only when each reference on the way to the
+        // table's symbol map has a static symbol table. Each case runs twice over t's symbol map, with static symbol
+        // tables and without, so only the static flag decides between SYMBOL and STRING.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL)");
+            execute("INSERT INTO t VALUES ('a'), ('b')");
+            try (
+                    RecordCursorFactory factory = select("SELECT sym FROM t");
+                    RecordCursor tableCursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                final SymbolTable tableSymbolMap = tableCursor.getSymbolTable(0);
+                for (boolean isStatic : new boolean[]{true, false}) {
+                    final SymbolColumn column = new SymbolColumn(0, isStatic);
+                    column.init(tableCursor, sqlExecutionContext);
+                    final MapSymbolColumn mapColumn = new MapSymbolColumn(0, 0, isStatic);
+                    mapColumn.init(tableCursor, sqlExecutionContext);
+                    // a column reference with a static symbol table over the column reference
+                    final SymbolColumn staticReference = staticReferenceTo(column);
+                    if (isStatic) {
+                        assertSymbolKept(column, tableSymbolMap);
+                        assertSymbolKept(mapColumn, tableSymbolMap);
+                        assertSymbolKept(staticReference, tableSymbolMap);
+                    } else {
+                        // Each reference reaches t's symbol map, so only the static flag keeps the export from
+                        // resolving keys through it.
+                        Assert.assertSame(tableSymbolMap, column.getSourceSymbolTable());
+                        assertSymbolWrittenAsText(column);
+                        Assert.assertSame(tableSymbolMap, mapColumn.getSourceSymbolTable());
+                        assertSymbolWrittenAsText(mapColumn);
+                        Assert.assertSame(column, staticReference.getSourceSymbolTable());
+                        assertSymbolWrittenAsText(staticReference);
+                    }
+                }
+            }
+        });
+    }
 
     @Test
     public void testCursorWithoutSymbolTablesExportsSymbolAsString() throws Exception {
@@ -90,9 +130,8 @@ public class HybridColumnMaterializerTest extends AbstractCairoTest {
 
     @Test
     public void testSymbolTableWithoutTableSymbolMapExportsSymbolAsString() throws Exception {
-        // The export keeps a SYMBOL column only when its keys resolve through a table's symbol map with mapped memory,
-        // which the cursor serves itself or through column references with static symbol tables. Otherwise it writes
-        // the text of each row.
+        // The export keeps a SYMBOL column only when its keys resolve through a table's symbol map with mapped memory.
+        // When the cursor serves a symbol map without that memory, the export writes the text of each row.
         assertMemoryLeak(() -> {
             try (MemoryCARWImpl valuesMemory = new MemoryCARWImpl(1024, 1, MemoryTag.NATIVE_DEFAULT)) {
                 final SymbolTable[] symbolTables = {
@@ -104,9 +143,7 @@ public class HybridColumnMaterializerTest extends AbstractCairoTest {
                             }
                         },
                         // a symbol map without memory
-                        EmptySymbolMapReader.INSTANCE,
-                        // a column reference whose symbol table is not static
-                        new SymbolColumn(0, false)
+                        EmptySymbolMapReader.INSTANCE
                 };
                 for (SymbolTable symbolTable : symbolTables) {
                     assertSymbolWrittenAsText(symbolTable);
@@ -135,17 +172,29 @@ public class HybridColumnMaterializerTest extends AbstractCairoTest {
         }
     }
 
+    // Exports a static SYMBOL column whose cursor serves symbolTable and asserts that the export keeps it as SYMBOL,
+    // with its keys resolved through tableSymbolMap. It runs only setUp(), because the cursor's record does not serve
+    // the keys that a kept column reads.
+    private static void assertSymbolKept(SymbolTable symbolTable, SymbolTable tableSymbolMap) {
+        try (
+                HybridColumnMaterializer materializer = new HybridColumnMaterializer();
+                SymbolTextCursor cursor = new SymbolTextCursor(symbolTable)
+        ) {
+            materializer.setUp(staticSymbolMetadata(), cursor);
+            Assert.assertEquals(ColumnType.SYMBOL, materializer.getAdjustedMetadata().getColumnType(0));
+            Assert.assertSame(tableSymbolMap, materializer.getCursorSymbolMap(0));
+        }
+    }
+
     // Exports a static SYMBOL column whose cursor serves symbolTable, or no symbol table when it is null, and asserts
     // that the export writes it as STRING, from the text of each row.
     private static void assertSymbolWrittenAsText(SymbolTable symbolTable) {
-        final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("sym", ColumnType.SYMBOL, IndexType.NONE, 0, true, null));
         try (
                 HybridColumnMaterializer materializer = new HybridColumnMaterializer();
                 DirectLongList columnData = new DirectLongList(7, MemoryTag.NATIVE_PARQUET_EXPORTER);
                 SymbolTextCursor cursor = new SymbolTextCursor(symbolTable, "abc", null, "de")
         ) {
-            materializer.setUp(metadata, cursor);
+            materializer.setUp(staticSymbolMetadata(), cursor);
             Assert.assertEquals(ColumnType.STRING, materializer.getAdjustedMetadata().getColumnType(0));
 
             Assert.assertEquals(3, materializer.buildColumnDataFromCursor(cursor, columnData, 10));
@@ -179,6 +228,22 @@ public class HybridColumnMaterializerTest extends AbstractCairoTest {
             Assert.assertEquals(Integer.BYTES + 3 * Character.BYTES, Unsafe.getLong(columnData.get(3) + Long.BYTES));
             Assert.assertEquals(2 * Integer.BYTES + 3 * Character.BYTES, Unsafe.getLong(columnData.get(3) + 2 * Long.BYTES));
         }
+    }
+
+    // A column reference with a static symbol table, whose source serves symbolTable for its column.
+    private static SymbolColumn staticReferenceTo(SymbolTable symbolTable) {
+        final SymbolColumn reference = new SymbolColumn(0, true);
+        try (SymbolTextCursor source = new SymbolTextCursor(symbolTable)) {
+            reference.init(source, sqlExecutionContext);
+        }
+        return reference;
+    }
+
+    // The metadata of one SYMBOL column with a static symbol table.
+    private static GenericRecordMetadata staticSymbolMetadata() {
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata("sym", ColumnType.SYMBOL, IndexType.NONE, 0, true, null));
+        return metadata;
     }
 
     // A cursor over one SYMBOL column that serves the given symbol table, or, when that is null, keeps RecordCursor's
