@@ -518,6 +518,65 @@ public class QueryFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFpTolerantRowSetComparison() {
+        final boolean[] fpMask = {false, true};
+        // Last-digit drift in the FP column, rows in a different order.
+        Assert.assertTrue(QueryRunner.rowsetEqualsWithFpTolerance(
+                line("a", "1.0") + '\n' + line("b", "2.0") + '\n',
+                line("b", "2.0000000000000004") + '\n' + line("a", "1.0000000000000002") + '\n',
+                fpMask
+        ));
+        // An exact cell differs.
+        Assert.assertFalse(QueryRunner.rowsetEqualsWithFpTolerance(
+                line("a", "1.0") + '\n' + line("b", "2.0") + '\n',
+                line("a", "1.0") + '\n' + line("c", "2.0") + '\n',
+                fpMask
+        ));
+        // The FP cell differs by more than drift.
+        Assert.assertFalse(QueryRunner.rowsetEqualsWithFpTolerance(
+                line("a", "1.0") + '\n',
+                line("a", "1.5") + '\n',
+                fpMask
+        ));
+        // Different row counts.
+        Assert.assertFalse(QueryRunner.rowsetEqualsWithFpTolerance(
+                line("a", "1.0") + '\n',
+                line("a", "1.0") + '\n' + line("a", "1.0") + '\n',
+                fpMask
+        ));
+        // Rows that share their exact cells pair up by their FP cells, in any order...
+        Assert.assertTrue(QueryRunner.rowsetEqualsWithFpTolerance(
+                line("a", "1.0") + '\n' + line("a", "2.0") + '\n',
+                line("a", "2.0000000000000004") + '\n' + line("a", "1.0000000000000002") + '\n',
+                fpMask
+        ));
+        // ...and each row pairs once: two different rows cannot both take the same row.
+        Assert.assertFalse(QueryRunner.rowsetEqualsWithFpTolerance(
+                line("a", "1.0") + '\n' + line("a", "2.0") + '\n',
+                line("a", "1.0") + '\n' + line("a", "1.0") + '\n',
+                fpMask
+        ));
+    }
+
+    // Comparing every row with every other row took over a minute at 125k rows and stalled
+    // testConcurrentFiberQueryFuzz. The timeout turns a return of that into a failure, not a hang.
+    @Test(timeout = 120_000)
+    public void testFpTolerantRowSetComparisonOfLargeResult() {
+        final int rowCount = 300_000;
+        final StringSink forward = new StringSink();
+        final StringSink reversed = new StringSink();
+        for (int i = 0; i < rowCount; i++) {
+            forward.put(line("k" + i, "1.0")).put('\n');
+            reversed.put(line("k" + (rowCount - 1 - i), "1.0000000000000002")).put('\n');
+        }
+        Assert.assertTrue(QueryRunner.rowsetEqualsWithFpTolerance(forward, reversed, new boolean[]{false, true}));
+        // One exact cell off in the last row.
+        reversed.put(line("k0", "1.0")).put('\n');
+        forward.put(line("k1", "1.0")).put('\n');
+        Assert.assertFalse(QueryRunner.rowsetEqualsWithFpTolerance(forward, reversed, new boolean[]{false, true}));
+    }
+
+    @Test
     public void testSeparatorCellsKeepFpToleranceAligned() {
         // Found by the fused on/off axis: in SELECT (l.lk)::CHAR e0, count(*), stddev_samp(...),
         // count(), count(r.k) FROM l LEFT JOIN r ON l.vk = r.vk, one group's CHAR key was code 9. Printed raw, the tab split its row into one more cell, so
@@ -970,7 +1029,8 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 config.isHorizonJoinEnabled(),
                 config.isWindowJoinEnabled(),
                 config.isHashJoinEnabled(),
-                config.isGroupingSetsEnabled()
+                config.isGroupingSetsEnabled(),
+                config
         );
     }
 
@@ -1224,7 +1284,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 boolean injectFaultFn = faultType == FaultType.FUNCTION;
                 long preGenS0 = rnd.getSeed0();
                 long preGenS1 = rnd.getSeed1();
-                GeneratedQuery query = QueryGenerator.generate(rnd, tables, null, injectFaultFn, config.isWindowEnabled(), config.isLatestOnEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled(), config.isHashJoinEnabled(), config.isGroupingSetsEnabled());
+                GeneratedQuery query = QueryGenerator.generate(rnd, tables, null, injectFaultFn, config.isWindowEnabled(), config.isLatestOnEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled(), config.isHashJoinEnabled(), config.isGroupingSetsEnabled(), config);
                 QueryRunner.Result result;
                 if (faultType != null) {
                     // Fault queries use a crash-and-recover oracle, not the
@@ -1287,7 +1347,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                         long bindS1 = rnd.nextLong();
                         rnd.reset(preGenS0, preGenS1);
                         BindContext ctx = new BindContext(new Rnd(bindS0, bindS1), CONSTANT_BIND_PROBABILITY_PCT);
-                        GeneratedQuery bindForm = QueryGenerator.generate(rnd, tables, ctx, injectFaultFn, config.isWindowEnabled(), config.isLatestOnEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled(), config.isHashJoinEnabled(), config.isGroupingSetsEnabled());
+                        GeneratedQuery bindForm = QueryGenerator.generate(rnd, tables, ctx, injectFaultFn, config.isWindowEnabled(), config.isLatestOnEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled(), config.isHashJoinEnabled(), config.isGroupingSetsEnabled(), config);
                         if (ctx.getBindValues().size() > 0) {
                             query = query.withBind(bindForm.sql(), ctx.getBindNames(), ctx.getBindValues());
                             bindGen++;
