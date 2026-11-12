@@ -363,7 +363,8 @@ public class SqlOptimiser implements Mutable {
     private boolean isKeptWholeDryRun;
     // True when the execution-order anchors are valid (ordered join models are a full permutation).
     private boolean isNullingExecOrderValid;
-    // True once optimiseOrderBy() has dropped the ORDER BY of a model, see isOrderByCleared().
+    // True once optimiseOrderBy() has dropped the ORDER BY of a model outside the sub-queries of expressions, see
+    // isOrderByCleared().
     private boolean isOrderByCleared;
     // True while optimiseOrderBy() keeps the ORDER BY of every model, see setOrderByKept().
     private boolean isOrderByKept;
@@ -5053,11 +5054,17 @@ public class SqlOptimiser implements Mutable {
         keptWholeColumnOrigins.clear();
         for (int i = 0; i < columnCount; i++) {
             final QueryColumn column = columns.getQuick(i);
-            keptWholeColumnOrigins.add(
-                    isOutputLayer
-                            ? keptWholeOutputOrigins(model, column)
-                            : recordedKeptWholeOrigins(model, column.getAlias())
-            );
+            final IntHashSet origins;
+            if (isOutputLayer) {
+                origins = keptWholeOutputOrigins(model, column);
+            } else if (isGroupingKey(model, column)) {
+                // A read that gives the model no column keeps every column of it, so every read computes its keys,
+                // see retainGroupByKeysAsTopDownColumns().
+                origins = null;
+            } else {
+                origins = recordedKeptWholeOrigins(model, column.getAlias());
+            }
+            keptWholeColumnOrigins.add(origins);
         }
         addSameModelReaderOrigins(model, nested, columns, columnCount);
         keptWholeWithheldJoins.clear();
@@ -6887,6 +6894,24 @@ public class SqlOptimiser implements Mutable {
         return false;
     }
 
+    // Whether the column is a key of a model that groups its rows: a column of a SELECT that groups other than an
+    // aggregate, or a grouping column of a HORIZON JOIN. Every read of the model needs the keys, see
+    // retainGroupByKeysAsTopDownColumns().
+    private boolean isGroupingKey(IQueryModel model, QueryColumn column) {
+        if (model.getSelectModelType() == IQueryModel.SELECT_MODEL_GROUP_BY) {
+            return column.getAst().type != FUNCTION || !functionParser.getFunctionFactoryCache().isGroupBy(column.getAst().token);
+        }
+        if (model.getSelectModelType() == IQueryModel.SELECT_MODEL_HORIZON_JOIN) {
+            final ObjList<QueryColumn> groupingColumns = model.getHorizonJoinContext().getGroupingColumns();
+            for (int i = 0, n = groupingColumns.size(); i < n; i++) {
+                if (Chars.equalsIgnoreCase(groupingColumns.getQuick(i).getAlias(), column.getAlias())) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     private boolean isGroupingSetsPushdownSafe(
             IQueryModel model,
             ExpressionNode node,
@@ -7336,17 +7361,8 @@ public class SqlOptimiser implements Mutable {
         // the columns of a SELECT, those its own clauses keep included, are the ones it selects
         final int index = model.getColumnAliasIndex(column.getAlias());
         assert index > -1;
-        if (model.getSelectModelType() == IQueryModel.SELECT_MODEL_GROUP_BY) {
-            if (column.getAst().type != FUNCTION || !functionParser.getFunctionFactoryCache().isGroupBy(column.getAst().token)) {
-                return null;
-            }
-        } else if (model.getSelectModelType() == IQueryModel.SELECT_MODEL_HORIZON_JOIN) {
-            final ObjList<QueryColumn> groupingColumns = model.getHorizonJoinContext().getGroupingColumns();
-            for (int i = 0, n = groupingColumns.size(); i < n; i++) {
-                if (Chars.equalsIgnoreCase(groupingColumns.getQuick(i).getAlias(), column.getAlias())) {
-                    return null;
-                }
-            }
+        if (isGroupingKey(model, column)) {
+            return null;
         }
         final IntHashSet origins = intHashSetPool.next();
         origins.add(index);
@@ -8625,11 +8641,15 @@ public class SqlOptimiser implements Mutable {
                         node.tableFunctionView = executionContext.getTableFunctionView();
                         final boolean outerViewText = optimisingViewText;
                         optimisingViewText = viewText;
+                        // An ORDER BY the sub-query drops changes no read of a view, which reads the tables of the
+                        // sub-query as the reader, see isOrderByCleared().
+                        final boolean wasOrderByCleared = isOrderByCleared;
                         final IQueryModel optimised;
                         try {
                             optimised = optimise(node.queryModel, executionContext, sqlParserCallback);
                         } finally {
                             optimisingViewText = outerViewText;
+                            isOrderByCleared = wasOrderByCleared;
                         }
                         if (optimised != node.queryModel) {
                             node.queryModel = optimised;
@@ -17321,7 +17341,9 @@ public class SqlOptimiser implements Mutable {
      * Returns whether an optimise() since the last {@link #setOrderByKept} dropped the ORDER BY of a model whose
      * parent does not need its rows ordered, such as the ORDER BY of a sub-query the parent orders again. The plan
      * of a read that places the query on a side of a join other than the first keeps such an ORDER BY, see
-     * {@code SqlCompilerImpl.optimiseViewQuery()}.
+     * {@code SqlCompilerImpl.optimiseViewQuery()}. The ORDER BY of a sub-query of an expression does not count: a
+     * read of a view reads the tables of such a sub-query as the reader, see
+     * {@code SqlUtil.collectTableColumnReads()}.
      */
     boolean isOrderByCleared() {
         return isOrderByCleared;

@@ -999,6 +999,41 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
     }
 
     @Test
+    public void testSubQueryGroupedByKeysKeptWholeByNoRead() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // Every read of the view passes the keys of the SELECT that groups to the sub-query under it, also a read
+            // that names only the constant output or the count, or counts the rows, which keeps every column of the
+            // SELECT that groups. No read scans a, so the view lends no form of it, and a principal that may not read a
+            // records the view.
+            final String[] viewSqls = {
+                    "SELECT k, 1 one, count() c FROM (SELECT k, a FROM x) GROUP BY k",
+                    "SELECT k, 'z' one, count() c FROM (SELECT * FROM x)",
+                    "SELECT ts, k, 1 one, count() c FROM (SELECT ts, k, a FROM x) SAMPLE BY 1h",
+                    "DECLARE @p := 7 WITH s AS (SELECT k, a FROM x) SELECT k, @p one, count() c FROM s GROUP BY k"
+            };
+            final String[] expectedDependencies = {"{x=[k]}", "{x=[k]}", "{x=[k, ts]}", "{x=[k]}"};
+            try (SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(new ColumnDenyingSecurityContext("x", "a"), bindVariableService, null, -1, null)) {
+                for (int i = 0; i < viewSqls.length; i++) {
+                    final String expected = expectedDependencies[i];
+                    forEachViewStatement(viewSqls[i], context, statement -> Assert.assertEquals(statement, expected, dependenciesOf("v")));
+                }
+                // Without keys, a read that names only the constant or the count gives the sub-query no column, and
+                // scans a, as the plan of the SELECT itself does.
+                TestUtils.assertContains(
+                        denialOf("CREATE VIEW v AS (SELECT 1 one, count() c FROM (SELECT k, a FROM x))", context),
+                        "permission denied [table=x, column=a]"
+                );
+                Assert.assertNull(engine.getTableTokenIfExists("v"));
+            }
+            for (int i = 0; i < viewSqls.length; i++) {
+                assertReads(viewSqls[i], expectedDependencies[i], "SELECT one FROM v", "SELECT c FROM v", "SELECT count() FROM v");
+            }
+            assertReads("SELECT 1 one, count() c FROM (SELECT k, a FROM x)", "{x=[a, k]}", "SELECT one FROM v");
+        });
+    }
+
+    @Test
     public void testSubQueryInExpression() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
@@ -2085,8 +2120,11 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
             // again when a read of the view may plan it otherwise, and only then: when it joins a sub-query without a
             // key, but not when a join condition names a column of the sub-queries on both of its sides; when it
             // selects from a sub-query alone, the plan leaves a column of the sub-query out, and the SELECT has a
-            // column that reads no column of the sub-query; and when a temporal join takes its timestamp from the
-            // ORDER BY of a sub-query, which a read that counts the rows of the view drops.
+            // column that reads no column of the sub-query; when a temporal join takes its timestamp from the
+            // ORDER BY of a sub-query, which a read that counts the rows of the view drops; and when the plan drops
+            // the ORDER BY of a sub-query the SELECT orders again, which a read that joins the view to something
+            // before it keeps, but not the ORDER BY of a sub-query of an expression, whose tables a read of the view
+            // reads as the reader.
             final AlteringSecurityContext securityContext = new AlteringSecurityContext();
             try (SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(securityContext, bindVariableService, null, -1, null)) {
                 final String[] viewSqls = {
@@ -2103,8 +2141,10 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
                         "SELECT count() n, max(c) m FROM y",
                         "SELECT t.a, u.c FROM x t ASOF JOIN (SELECT k, c, ts FROM y ORDER BY ts) u ON (k)",
                         "SELECT t.a, u.c FROM x t ASOF JOIN (SELECT k, c, ts FROM y) u ON (k)",
+                        "SELECT c FROM (SELECT c, d FROM y ORDER BY d) ORDER BY c",
+                        "SELECT a FROM x WHERE a < (SELECT max(c) FROM (SELECT c, d FROM y ORDER BY d))",
                 };
-                final int[] expectedCompiles = {1, 1, 1, 1, 2, 2, 2, 2, 1, 1, 1, 2, 1};
+                final int[] expectedCompiles = {1, 1, 1, 1, 2, 2, 2, 2, 1, 1, 1, 2, 1, 2, 1};
                 for (int i = 0; i < viewSqls.length; i++) {
                     execute("CREATE VIEW v AS (" + viewSqls[i] + ")", context);
                     Assert.assertEquals(viewSqls[i], expectedCompiles[i], securityContext.takeCheckCount());
