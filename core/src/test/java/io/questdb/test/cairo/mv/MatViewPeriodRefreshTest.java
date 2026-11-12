@@ -403,6 +403,24 @@ public class MatViewPeriodRefreshTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDstStartBehindUtcKeepsOpenPeriodOutWhenTimerStartsInSkippedHour() throws Exception {
+        // DST starts in America/New_York on 2022-03-13 at 07:00Z (02:00 EST -> 03:00 EDT). The 80m grid points in
+        // local time around it are 01:20, 02:40 and 04:00. The clock skips 02:40, so the period that would start there
+        // starts at the change and ends at 04:00 EDT, 08:00Z. Created at 07:10Z, 03:10 EDT, the view starts the grid of
+        // its periods at 02:40 local and creates its period timer in that period. At the EST offset, 02:40 local falls
+        // at 07:40Z, before the period ends.
+        testRowReachesViewAtPeriodEnd(
+                "period (length 80m time zone 'America/New_York')",
+                "2022-03-13T07:10",
+                "2022-03-13T07:30",
+                "2022-03-13T07:20",
+                "2022-03-13T07:00",
+                "2022-03-13T08:00",
+                "2022-03-13T08:00"
+        );
+    }
+
+    @Test
     public void testDstStartBehindUtcRefreshesRowAfterDelay() throws Exception {
         // DST starts in America/New_York on 2022-03-13 at 07:00Z (02:00 EST -> 03:00 EDT). The period [06:00Z, 07:00Z)
         // ends at the change, and the 30m delay completes it at 07:30Z.
@@ -414,6 +432,22 @@ public class MatViewPeriodRefreshTest extends AbstractCairoTest {
                 "2022-03-13T06:00",
                 "2022-03-13T07:30",
                 "2022-03-13T07:00"
+        );
+    }
+
+    @Test
+    public void testDstStartBehindUtcRefreshesRowAfterTimerCreatedPastChange() throws Exception {
+        // DST starts in America/New_York on 2022-03-13 at 07:00Z (02:00 EST -> 03:00 EDT). Created at 08:30Z, 04:30
+        // EDT, the view creates its period timer after the change, in the period [04:00, 06:00) local, [08:00Z,
+        // 10:00Z). At the EST offset, the start of that period falls at 09:00Z, before the period ends.
+        testRowReachesViewAtPeriodEnd(
+                "period (length 2h time zone 'America/New_York')",
+                "2022-03-13T08:30",
+                "2022-03-13T08:40",
+                "2022-03-13T08:20",
+                "2022-03-13T08:00",
+                "2022-03-13T10:00",
+                "2022-03-13T10:00"
         );
     }
 
