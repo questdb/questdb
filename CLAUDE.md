@@ -346,10 +346,14 @@ qdbr toolchain; the script prints the command when it is missing.
 - **A PR may ship with known bugs whose risk is low.** `review-pr` rates each
   bug a change introduces by what a user who hits it loses and how likely
   users are to hit it (its `risk-assessor` agent); only Critical and High
-  risk hold up the PR. File each Medium or Low risk bug in
-  `questdb/questdb-enterprise` with the labels `bug` and `deferred`, and keep
-  it out of the PR body, comments and every other public place. A tradeoff
-  the PR makes on purpose, such as a measured slowdown, still gets its bullet.
+  risk hold up the PR. Each Medium or Low risk bug belongs in
+  `questdb/questdb-enterprise` with the labels `bug` and `deferred`; keep it
+  out of the PR body, comments and every other public place. A tradeoff the
+  PR makes on purpose, such as a measured slowdown, still gets its bullet.
+- **Agents never file issues on their own.** A skill or agent drafts each
+  issue, tells the user which drafts need attention, and files only the ones
+  the user approves. A user-invoked skill may still act on the current PR -
+  post a review, approve, request changes, comment, label - as its steps say.
 - Commit titles do NOT use Conventional Commits prefixes. Keep them short (up to
   50 chars) and descriptive in plain English.
 - When committing, always include a full long-form description in the commit

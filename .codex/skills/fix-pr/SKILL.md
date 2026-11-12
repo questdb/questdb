@@ -1,6 +1,6 @@
 ---
 name: fix-pr
-description: Develop features and fix bugs or review findings from a list, one item at a time, with exhaustive tests enforced while developing - design the change and its test plan against CLAUDE.md "Testing" and have both challenged independently, build test-first, run the item's tests with coverage (ci/diff_coverage.py) and add tests until every changed line, branch and condition runs, have the tests reviewed independently and close the gaps; commit. When the queue is empty, run review-pr at level 3 over the whole PR, as before approval, and treat what blocks it the same way until a review finds nothing that blocks. Bugs this PR caused that an independent risk rating finds unlikely to hurt users ship as private issues, and bugs found on the way that the PR base already has become GitHub issues; neither is work for the run. Use when the user invokes $fix-pr or asks to develop or fix items with it.
+description: Develop features and fix bugs or review findings from a list, one item at a time, with exhaustive tests enforced while developing - design the change and its test plan against CLAUDE.md "Testing" and have both challenged independently, build test-first, run the item's tests with coverage (ci/diff_coverage.py) and add tests until every changed line, branch and condition runs, have the tests reviewed independently and close the gaps; commit. When the queue is empty, run review-pr at level 3 over the whole PR, as before approval, and treat what blocks it the same way until a review finds nothing that blocks. Bugs this PR caused that an independent risk rating finds unlikely to hurt users ship with a private issue draft, and bugs found on the way that the PR base already has get a GitHub issue draft; the user decides which to file, and neither is work for the run. Use when the user invokes $fix-pr or asks to develop or fix items with it.
 ---
 
 # Develop and fix with exhaustive tests
@@ -39,8 +39,9 @@ helper runs `review-pr` at level 3 over the whole PR - the review the user
 runs before approving it. Its Blocking findings, and Adjacent ones this PR
 introduced, become new items: each is a test that should have existed.
 Deferred findings - real bugs, but rare enough for the PR to ship with them -
-become private issues in `questdb/questdb-enterprise`, and the other Adjacent
-findings GitHub issues; Moderate and Minor ones are listed for the user. The
+become private issue drafts for `questdb/questdb-enterprise`, and the other
+Adjacent findings GitHub issue drafts; the user decides which to file.
+Moderate and Minor ones are listed for the user. The
 review runs again after those items, until it finds nothing that blocks or
 `--max-review-rounds` is reached.
 
@@ -49,7 +50,7 @@ review-pr's "Keep the blast radius of the PR small": the items given, the
 review's Blocking findings, and the bugs this PR caused, this run's commits
 included, whose risk blocks the PR ("Risk gate"); `--include-adjacent` adds
 the review's Adjacent findings. Any other bug the PR base already has becomes
-an issue, even when an item's trigger reaches it: each fix in old code turns
+an issue draft, even when an item's trigger reaches it: each fix in old code turns
 up more old bugs, so a run that chases them doesn't end. CLAUDE.md's "Bundle
 related fixes into one PR" says where a fix goes, not which bugs to fix. A
 blocking bug in this run's own commits sends the item that made it back to
@@ -77,7 +78,6 @@ it contains no items, ask for them.
 - `--decisions=<file>`: design decisions every item follows, such as "make
   outer-to-inner column substitution type-safe". The answers to the
   analysis's questions join them.
-- `--no-issues`: list Adjacent and Deferred bugs instead of filing them.
 - `--review-level=N`: `review-pr` level of each backstop review; default `3`,
   the level of the review before approval.
 - `--max-review-rounds=N`: default `2`. A level-3 round takes hours.
@@ -171,8 +171,8 @@ difference. Record `ITEM_START=$(git rev-parse HEAD)` before the build.
    line that names the item under check counts as `REDESIGN`: its own
    commits are part of its design.
    - `ADJACENT` lines, whatever else the reply says: handle them like OTHER
-     lines in step 1, but list a `PRE-EXISTING` one for the user instead of
-     filing it; the check can't write an issue body.
+     lines in step 1, but list a `PRE-EXISTING` one for the user without an
+     issue draft; the check can't write an issue body.
    - `OK`, or no `REDESIGN` line: replace `<state>/<ID>/amendments.md` with
      the `ADD` lines, verbatim (an empty file if there are none), and go to
      the build. The amendments are part of the plan from here on.
@@ -216,7 +216,7 @@ difference. Record `ITEM_START=$(git rev-parse HEAD)` before the build.
 
 Shipping is part of the job. A bug this PR caused that few users will ever
 meet costs them less than the feature it holds up, so it ships, with a
-private issue that tracks it. Its risk decides whether it becomes work for
+private issue draft for the user to file. Its risk decides whether it becomes work for
 the run: what a user who hits it loses, and how likely users are to hit it,
 as `.claude/agents/risk-assessor.md` rates them. A bug rated at or above
 `--block-at` blocks the PR; one rated below it is Deferred.
@@ -263,8 +263,7 @@ START, not only this run's. Number the rounds from 1.
    DEFERRED lines to the issue list, with their drafts in
    `<state>/review<N>/deferred-<ID>.md`, and the ISSUE lines, with their
    bodies in `<state>/review<N>/issue-<slug>.md`, or queue the ISSUE lines
-   under `--include-adjacent`; invoking this skill is the user's request to
-   file them.
+   under `--include-adjacent`.
 4. If a finding concerns an item this run already built or skipped, don't loop
    on it: list it for the user with both views.
 5. Repeat until a round queues no item, or `--max-review-rounds` rounds have
@@ -275,7 +274,8 @@ START, not only this run's. Number the rounds from 1.
 
 The issue list holds Adjacent bugs - pre-existing on the PR base and not
 made worse by this PR - and Deferred ones: caused by this PR, but rated
-below `--block-at`. Unless `--no-issues`, file each one:
+below `--block-at`. File none: the final summary lists each one as needing
+the user's attention, and the user decides which to file. Prepare each one:
 
 - Repository: for an Adjacent bug, the one that owns the affected file. Run
   `gh repo view --json nameWithOwner -q .nameWithOwner` in that file's
@@ -286,20 +286,19 @@ below `--block-at`. Unless `--no-issues`, file each one:
   missing, and a crash with `--label crash`. Never describe either anywhere
   public (CLAUDE.md "Git & PR Conventions" and "Failure paths and misuse").
   When `gh repo view questdb/questdb-enterprise` fails, as it does for OSS
-  contributors, show the issue body in the final summary instead of filing
-  it.
+  contributors, print the issue body in the final summary.
 - Search first:
   `gh issue list --repo <repo> --state all --search "<key words>" --limit 5`.
-  If an issue already covers it, record that issue instead of filing.
-- `gh issue create --repo <repo> --title "<one-line problem>" --body-file <file>`.
-  The body covers impact, location (file:line), symptom, how it's reached,
+  If an issue already covers it, record that issue.
+- Only for a draft the user names: `gh issue create --repo <repo> --title
+  "<one-line problem>" --body-file <file>`. The body covers impact, location (file:line), symptom, how it's reached,
   suggested fix, and where it was found (PR or branch). A Deferred bug's
   body opens with its risk: tier, impact, likelihood and the rarest
   condition. For a bug a helper found, the body is its bug file followed by
   the risk helper's rating file.
-- Never auto-file security-sensitive bugs (authentication or access-control
-  bypass, data exposed across users, memory corruption). List them for the
-  user instead.
+- A security-sensitive bug (authentication or access-control bypass, data
+  exposed across users, memory corruption) goes to `questdb/questdb-enterprise`
+  with the label `security`.
 
 ## Rules
 
@@ -344,12 +343,13 @@ lines and branches covered, e.g. `42/42 L, 18/18 B`.
 Then one line each: review rounds, each with its verdict, what it found and
 the PR's measured coverage, and the path of the last round's report, which
 holds its Minor findings and the never-run lines it judged low-exposure;
-issues filed or matched (links), each Deferred one with its risk tier;
-Moderate findings left open; items left for the user (blocked,
-security-sensitive, unfiled `ADJACENT` bugs, disagreements, items not
+the issue drafts that need the user's attention, one line each with its
+repository, labels, draft file and any issue that already covers it, each
+Deferred one with its risk tier; Moderate findings left open; items left for
+the user (blocked, `ADJACENT` bugs without a draft, disagreements, items not
 reviewed); and `git log --oneline <START>..HEAD`. State that nothing was
-pushed. Then print in full each crash or Deferred issue the Issue list
-could not file.
+pushed and no issue was filed. Ask which drafts to file, and file only those
+the user names.
 
 End with the PR body, per CLAUDE.md "Git & PR Conventions". With a PR, print
 the last round's `<state>/review<N>/pr-body.md` plus the EFFECT bullet and
@@ -481,9 +481,9 @@ from what it wrote in <state>/<ID>/; don't repeat its probes.]
    it PRE-EXISTING when the PR base gives the same result - run the trigger
    there unless the base code settles it - even when this item's trigger
    reaches it. PR bugs that block the PR become items of this run or reopen
-   the item named, and the others private issues, so keep them out of this
-   plan unless the item can't be done without them. PRE-EXISTING bugs
-   become issues, not work for this run: fix one in this plan only when the
+   the item named, and the others private issue drafts, so keep them out of
+   this plan unless the item can't be done without them. PRE-EXISTING bugs
+   become issue drafts, not work for this run: fix one in this plan only when the
    item can't be done without it; otherwise leave its input out of this
    plan's tests, with a comment naming the bug. Write each bug to
    <state>/<ID>/bug-<slug>.md, ready to file as an issue: the trigger, what

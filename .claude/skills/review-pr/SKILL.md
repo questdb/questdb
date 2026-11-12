@@ -940,7 +940,7 @@ Critical findings that Step 3c rates below `--block-at`: real defects this PR in
 - **Suggested fix:** one or two lines
 - **Found in:** the PR or range, and the reviewed revision
 
-Offer to file them; do not file anything without being asked. `approve-pr` files them when it approves the PR, and `fix-pr` during its run, with the labels `bug` and `deferred` (`deferred` alone for a coverage gap). When `gh repo view questdb/questdb-enterprise` fails, as it does for OSS contributors, keep the drafts in the console report and file nothing.
+Offer to file them; do not file anything without being asked. A filed one gets the labels `bug` and `deferred` (`deferred` alone for a coverage gap). When `gh repo view questdb/questdb-enterprise` fails, as it does for OSS contributors, keep the drafts in the console report and file nothing.
 
 ### Moderate
 Non-blocking admitted issues worth fixing. Number them M1, M2, ... Every item must still include the three summary lines and its decisive evidence. Dynamic behavioral speculation is not allowed here.
@@ -948,7 +948,7 @@ Non-blocking admitted issues worth fixing. Number them M1, M2, ... Every item mu
 ### Minor
 Concrete cosmetics on changed lines. Non-blocking, optional.
 
-### Adjacent findings (not blocking — file as GitHub issues)
+### Adjacent findings (not blocking — issue drafts)
 
 Bugs that already exist on the merge base, found in code this review visited (changed files, callers from the callsite inventory, cross-context exposures), which this PR does not introduce, break, or worsen, and failures the hostile-input rule covers, whether or not this PR introduced them. Number them A1, A2, ... They are **not findings against this PR**: they never appear under Blocking/Deferred/Moderate/Minor, never influence the verdict, and are never proposed as changes to this PR. Discarding them instead is pure waste — the investigation is already paid for, and nobody re-finds them later.
 
@@ -965,7 +965,7 @@ Report each as a ready-to-file issue draft, so it can move to GitHub without re-
 - **Suggested fix:** one or two lines
 - **Severity if filed standalone:** Critical / Moderate / Minor per the rubric above
 
-Offer to file them; do not file anything without being asked. File a draft the hostile-input rule covers only in `questdb/questdb-enterprise` with the label `crash`, and a security-sensitive draft (authentication or access-control bypass, data exposed across users, memory corruption) only there with the label `security`, as `approve-pr` does when it approves the PR. Keep both out of anything public, PR comments included. When `gh repo view questdb/questdb-enterprise` fails, as it does for OSS contributors, keep the draft in the console report and file nothing. Their count and severity sit outside the finding-proportionality budget. If one is severe enough that shipping this PR without it is genuinely unsafe — because this PR moves code onto a path where the pre-existing bug now fires — then it is not adjacent: it is out-of-diff-breakage, Step 3c rates it like any other Critical finding, and you state that argument explicitly. This never applies to a failure the hostile-input rule covers.
+Offer to file them; do not file anything without being asked. A filed draft the hostile-input rule covers goes only to `questdb/questdb-enterprise` with the label `crash`, and a security-sensitive draft (authentication or access-control bypass, data exposed across users, memory corruption) only there with the label `security`. Keep both out of anything public, PR comments included. When `gh repo view questdb/questdb-enterprise` fails, as it does for OSS contributors, keep the draft in the console report and file nothing. Their count and severity sit outside the finding-proportionality budget. If one is severe enough that shipping this PR without it is genuinely unsafe — because this PR moves code onto a path where the pre-existing bug now fires — then it is not adjacent: it is out-of-diff-breakage, Step 3c rates it like any other Critical finding, and you state that argument explicitly. This never applies to a failure the hostile-input rule covers.
 
 ### Coverage map
 State the test-gate result, the number of **admitted** coverage gaps, and the measured coverage: changed lines and branches covered (e.g. `118/124 L, 40/46 B`), the tests run and the revision, or that coverage was not measured and why. Render admitted gap rows with their recorded search and failure link, except a gap rated Deferred, which appears only in the Deferred section; then list the never-run lines that became no finding, each with its reason, such as low exposure or an exotic path, except the lines of a failure the hostile-input rule covers, which stay private (Step 2.6). The list records what no test runs and asks for no test. Keep the full Step 2.6 matrix private unless the user asks to see it.

@@ -89,3 +89,7 @@ Report back in one or two lines:
 - PR number + title, author tagged, "changes requested" posted (or the fallback used).
 - Whether the `READY` label was removed or was already absent.
 - The PR URL.
+- The issue drafts that need the user's attention: each Deferred finding,
+  crash draft and security draft the post left out, one line each. Ask which
+  to file, and file only those the user names, in `questdb/questdb-enterprise`
+  with the labels review-pr's Deferred and Adjacent sections name.
