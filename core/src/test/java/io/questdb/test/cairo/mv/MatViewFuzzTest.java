@@ -670,8 +670,9 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     @Test
     public void testViewAndBaseOperations() throws Exception {
         // Ingestion mixed with base partition operations (DROP, DETACH and ATTACH PARTITION), TRUNCATE, UPDATE, TTL,
-        // base replacements, view ADD and DROP COLUMN, view DROP PARTITION, ALTER MATERIALIZED VIEW ... AS, RANGE,
-        // FULL and RESUME, forced invalidations, backlog updates, WAL purges and restarts of the view states, among
+        // base replacements, view ADD and DROP COLUMN, view DROP PARTITION, ALTER MATERIALIZED VIEW ... AS, SET and
+        // DROP EXPIRE of policies that hide no row, RANGE, FULL and RESUME, forced invalidations, backlog updates, WAL
+        // purges and restarts of the view states, among
         // them restarts right after a base replacement followed by FULL or RESUME. The WAL apply and the refresh job
         // run at random points in between. The view is IMMEDIATE, so its own refreshes must keep up. Oracle: a twin
         // view with every column the view's SQL can produce, created and fully refreshed at each check, which the view
@@ -842,6 +843,11 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             }
         }
         Assert.assertEquals(context.toString(), MatViewFuzzOpGenerator.viewSql(generator.getSqlColumns()), state.getViewDefinition().getMatViewSql());
+        // the view's EXPIRE ROWS policy is the fuzzer's, and every read of the view below goes through it
+        generator.onViewWalApplied();
+        final StringSink expireClause = new StringSink();
+        printSql("SELECT expire_clause FROM materialized_views() WHERE view_name = 'mv'", expireClause);
+        TestUtils.assertEquals(context.toString(), "expire_clause\n" + (generator.getExpireClause() != null ? generator.getExpireClause() : "") + '\n', expireClause);
 
         // The twin lives for the check only, so that it holds back no base WAL purge between the checks.
         final ObjList<String> allColumns = new ObjList<>(MatViewFuzzOpGenerator.TS, MatViewFuzzOpGenerator.SYM);
@@ -1059,6 +1065,10 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         }
     }
 
+    private static long opsViewSeqTxn() {
+        return engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("mv"));
+    }
+
     private static MatViewState opsViewState(String viewName) {
         return engine.getMatViewStateStore().getViewState(engine.verifyTableName(viewName));
     }
@@ -1247,11 +1257,54 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             }
             case VIEW_ADD_COLUMN -> {
                 execute("ALTER MATERIALIZED VIEW mv ADD COLUMN " + op.column + ' ' + op.columnType);
+                generator.onColumnChangeIssued();
                 oracle.onViewColumnAdded(op.column, generator.getSqlColumns());
             }
             case VIEW_DROP_COLUMN -> {
-                execute("ALTER MATERIALIZED VIEW mv DROP COLUMN " + op.column);
-                oracle.onViewColumnDropped(op.column);
+                if (generator.isPolicyChangePending()) {
+                    // DROP COLUMN checks the EXPIRE ROWS policy the view has applied, see
+                    // MatViewFuzzOpGenerator.isPolicyChangePending()
+                    drainWalQueue();
+                    generator.onViewWalApplied();
+                }
+                final long viewSeqTxn = opsViewSeqTxn();
+                try {
+                    execute("ALTER MATERIALIZED VIEW mv DROP COLUMN " + op.column);
+                    Assert.assertFalse("DROP COLUMN must refuse a column the EXPIRE ROWS policy reads [column=" + op.column
+                            + ", policy=" + generator.getExpireClause() + ']', op.isRefused);
+                    generator.onColumnChangeIssued();
+                    oracle.onViewColumnDropped(op.column);
+                } catch (SqlException e) {
+                    if (!op.isRefused) {
+                        throw e;
+                    }
+                    TestUtils.assertContains(e.getFlyweightMessage(), "the EXPIRE ROWS policy of the materialized view reads the column [column=" + op.column + ']');
+                    Assert.assertEquals("a refused DROP COLUMN wrote to the view's WAL", viewSeqTxn, opsViewSeqTxn());
+                }
+            }
+            case VIEW_SET_EXPIRE -> {
+                if (op.isProbed && generator.isColumnChangePending()) {
+                    // the read probe of a KEEP or window policy compiles against the view's applied columns
+                    drainWalQueue();
+                    generator.onViewWalApplied();
+                }
+                final long viewSeqTxn = opsViewSeqTxn();
+                try {
+                    execute("ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS " + op.policy);
+                    Assert.assertFalse("SET EXPIRE must refuse a policy over a column the view lacks: " + op.policy, op.isRefused);
+                    generator.onPolicyChangeIssued();
+                } catch (SqlException e) {
+                    if (!op.isRefused) {
+                        throw e;
+                    }
+                    TestUtils.assertContains(e.getFlyweightMessage(), "EXPIRE ROWS");
+                    TestUtils.assertContains(e.getFlyweightMessage(), op.column);
+                    Assert.assertEquals("a refused SET EXPIRE wrote to the view's WAL", viewSeqTxn, opsViewSeqTxn());
+                }
+            }
+            case VIEW_DROP_EXPIRE -> {
+                execute("ALTER MATERIALIZED VIEW mv DROP EXPIRE");
+                generator.onPolicyChangeIssued();
             }
             case VIEW_DROP_PARTITION_LIST -> {
                 sql.put("ALTER MATERIALIZED VIEW mv DROP PARTITION LIST ");

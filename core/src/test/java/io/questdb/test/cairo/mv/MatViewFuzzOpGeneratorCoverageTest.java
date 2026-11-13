@@ -45,7 +45,11 @@ import org.junit.Test;
  *     <li>an ATTACH of a partition the same round detached, and a row into a day whose base partition the round
  *     dropped, which recreates it;</li>
  *     <li>RESUME with and without SKIP BACKLOG;</li>
- *     <li>a base replacement that leaves out the first day, so the view keeps the old base's rows there.</li>
+ *     <li>a base replacement that leaves out the first day, so the view keeps the old base's rows there;</li>
+ *     <li>a SET EXPIRE of each policy shape, one that reads two columns, and one over a column the view lacks, which
+ *     the statement refuses;</li>
+ *     <li>a view DROP COLUMN of a column the EXPIRE ROWS policy reads, which the statement refuses, and one of a
+ *     column the policy does not read while the view has a policy.</li>
  * </ul>
  * The generator draws without an engine; the seed is fixed, so a failure reproduces.
  */
@@ -69,6 +73,11 @@ public class MatViewFuzzOpGeneratorCoverageTest {
         int resumePlain = 0;
         int replaceLeavesFirstDay = 0;
         int bulkInsert = 0;
+        int setExpireRefused = 0;
+        int setExpireTwoColumns = 0;
+        int dropColumnRefused = 0;
+        int dropColumnBesidePolicy = 0;
+        final int[] policyShapes = new int[5];
         final MatViewFuzzOpGenerator.Op op = new MatViewFuzzOpGenerator.Op();
         for (int round = 0; round < ROUNDS; round++) {
             final MatViewFuzzOpGenerator generator = new MatViewFuzzOpGenerator(DAY_COUNT);
@@ -120,6 +129,54 @@ public class MatViewFuzzOpGeneratorCoverageTest {
                             }
                             // a row recreates the partition, so its detached copy no longer attaches
                             isDetached[day] = false;
+                        }
+                    }
+                    case VIEW_SET_EXPIRE -> {
+                        if (op.isRefused) {
+                            setExpireRefused++;
+                            Assert.assertTrue("a refused SET EXPIRE reads a column the view lacks: " + op.policy,
+                                    generator.getViewColumns().indexOf(op.column) < 0);
+                        } else {
+                            for (int i = 0, n = op.policyColumns.size(); i < n; i++) {
+                                Assert.assertTrue("a policy reads a column the view has: " + op.policy,
+                                        generator.getViewColumns().indexOf(op.policyColumns.getQuick(i)) > -1);
+                            }
+                            Assert.assertEquals(op.policyColumns, generator.getPolicyColumns());
+                            Assert.assertEquals(op.expireClause, generator.getExpireClause());
+                        }
+                        if (op.policyColumns.size() == 2) {
+                            setExpireTwoColumns++;
+                        }
+                        if (op.policy.startsWith("WHEN ") && op.policy.contains(" OVER ")) {
+                            policyShapes[0]++;
+                        } else if (op.policy.startsWith("WHEN ")) {
+                            policyShapes[1]++;
+                        } else if (op.policy.startsWith("KEEP LATEST ")) {
+                            policyShapes[2]++;
+                        } else if (op.policy.startsWith("KEEP HIGHEST ") || op.policy.startsWith("KEEP LOWEST ")) {
+                            policyShapes[3]++;
+                        } else if (op.policy.matches("KEEP [0-9]+ (HIGHEST|LOWEST) .*")) {
+                            policyShapes[4]++;
+                        } else {
+                            Assert.fail("unexpected policy: " + op.policy);
+                        }
+                        if (op.isProbed != (op.policy.startsWith("KEEP ") || op.policy.contains(" OVER "))) {
+                            Assert.fail("a KEEP or window policy has a read probe: " + op.policy);
+                        }
+                    }
+                    case VIEW_DROP_EXPIRE -> {
+                        Assert.assertNull(generator.getExpireClause());
+                        Assert.assertEquals(0, generator.getPolicyColumns().size());
+                    }
+                    case VIEW_DROP_COLUMN -> {
+                        if (op.isRefused) {
+                            dropColumnRefused++;
+                            Assert.assertTrue("a refused DROP COLUMN keeps the column", generator.getViewColumns().indexOf(op.column) > -1);
+                        } else {
+                            Assert.assertTrue(generator.getViewColumns().indexOf(op.column) < 0);
+                            if (generator.getExpireClause() != null) {
+                                dropColumnBesidePolicy++;
+                            }
                         }
                     }
                     case VIEW_RESUME -> {
@@ -184,6 +241,15 @@ public class MatViewFuzzOpGeneratorCoverageTest {
         assertShare("plain RESUME", resumePlain, 100);
         assertShare("base replacement without the first day", replaceLeavesFirstDay, 50);
         assertShare("bulk INSERT", bulkInsert, 100);
+        assertShare("SET EXPIRE refused over a column the view lacks", setExpireRefused, 100);
+        assertShare("SET EXPIRE over two columns", setExpireTwoColumns, 50);
+        assertShare("SET EXPIRE of a window WHEN policy", policyShapes[0], 100);
+        assertShare("SET EXPIRE of a scalar WHEN policy", policyShapes[1], 100);
+        assertShare("SET EXPIRE of a KEEP LATEST policy", policyShapes[2], 100);
+        assertShare("SET EXPIRE of a KEEP HIGHEST or LOWEST policy", policyShapes[3], 100);
+        assertShare("SET EXPIRE of a KEEP N HIGHEST or LOWEST policy", policyShapes[4], 100);
+        assertShare("view DROP COLUMN refused by the EXPIRE ROWS policy", dropColumnRefused, 100);
+        assertShare("view DROP COLUMN of a column the EXPIRE ROWS policy does not read", dropColumnBesidePolicy, 100);
     }
 
     @Test

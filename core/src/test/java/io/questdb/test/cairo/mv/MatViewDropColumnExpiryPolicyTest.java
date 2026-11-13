@@ -24,9 +24,12 @@
 
 package io.questdb.test.cairo.mv;
 
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -139,6 +142,240 @@ public class MatViewDropColumnExpiryPolicyTest extends AbstractCairoTest {
             assertQuery("mv").timestamp("ts").noLeakCheck().returns("""
                     v\tnote\tts
                     1.0\tkeep\t2024-01-01T00:00:00.000000Z
+                    """);
+        });
+    }
+
+    @Test
+    public void testDropColumnLexicalCheckEdges() throws Exception {
+        // The check looks for the column's name among the policy's tokens and errs on the side of refusal (design
+        // section 11, rule 8): a name the policy uses as a type in a cast, as a keyword or as the view's prefix counts
+        // as read. A name followed by '(' is a function call, also with a comment or a line break before the
+        // parenthesis, and does not count.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (k SYMBOL, v DOUBLE, \"long\" DOUBLE, mv DOUBLE, \"and\" DOUBLE, abs DOUBLE, ts TIMESTAMP) "
+                    + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                    ('A', 1.0, 10.0, 20.0, 30.0, 40.0, '2024-01-01T00:00:00.000000Z'),
+                    ('B', -3.0, 11.0, 21.0, 31.0, 41.0, '2024-01-02T00:00:00.000000Z'),
+                    ('C', 5.0, 12.0, 22.0, 32.0, 42.0, '2024-01-03T00:00:00.000000Z')
+                    """);
+            drainWalQueue();
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base)");
+            drainWalAndMatViewQueues();
+            // the policy reads v and k: B and C expire, |v| is above 2 and k is not A
+            execute("ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS WHEN abs /* a call */ (v::long) > 2 AND k <> 'A'");
+            drainWalAndMatViewQueues();
+            assertQuery("mv").timestamp("ts").noLeakCheck().returns("""
+                    k\tv\tlong\tmv\tand\tabs\tts
+                    A\t1.0\t10.0\t20.0\t30.0\t40.0\t2024-01-01T00:00:00.000000Z
+                    """);
+            assertDropColumnRefused("mv", "v", 1);
+            assertDropColumnRefused("mv", "k", 1);
+            // a type name in a cast and a keyword count as read
+            assertDropColumnRefused("mv", "\"long\"", 1);
+            assertDropColumnRefused("mv", "\"and\"", 1);
+            // abs is a call, with a comment before its parenthesis
+            execute("ALTER MATERIALIZED VIEW mv DROP COLUMN abs");
+            drainWalAndMatViewQueues();
+            assertViewValid("mv");
+            assertQuery("mv").timestamp("ts").noLeakCheck().returns("""
+                    k\tv\tlong\tmv\tand\tts
+                    A\t1.0\t10.0\t20.0\t30.0\t2024-01-01T00:00:00.000000Z
+                    """);
+
+            // A window policy that reads v with the view's name as a prefix, and calls abs across a line break. No row
+            // has |v| below its key's maximum v, so every row stays.
+            execute("ALTER MATERIALIZED VIEW mv ADD COLUMN abs DOUBLE");
+            drainWalAndMatViewQueues();
+            execute("ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS WHEN abs\n(mv.v) < max(mv.v) OVER (PARTITION BY k)");
+            drainWalAndMatViewQueues();
+            assertQuery("mv").timestamp("ts").noLeakCheck().returns("""
+                    k\tv\tlong\tmv\tand\tts\tabs
+                    A\t1.0\t10.0\t20.0\t30.0\t2024-01-01T00:00:00.000000Z\tnull
+                    B\t-3.0\t11.0\t21.0\t31.0\t2024-01-02T00:00:00.000000Z\tnull
+                    C\t5.0\t12.0\t22.0\t32.0\t2024-01-03T00:00:00.000000Z\tnull
+                    """);
+            // the view's prefix counts as read
+            assertDropColumnRefused("mv", "mv", 3);
+            assertDropColumnRefused("mv", "v", 3);
+            assertDropColumnRefused("mv", "k", 3);
+            // the columns the new policy does not name drop
+            execute("ALTER MATERIALIZED VIEW mv DROP COLUMN abs");
+            execute("ALTER MATERIALIZED VIEW mv DROP COLUMN \"long\"");
+            execute("ALTER MATERIALIZED VIEW mv DROP COLUMN \"and\"");
+            drainWalAndMatViewQueues();
+            assertViewValid("mv");
+            assertQuery("mv").timestamp("ts").noLeakCheck().returns("""
+                    k\tv\tmv\tts
+                    A\t1.0\t20.0\t2024-01-01T00:00:00.000000Z
+                    B\t-3.0\t21.0\t2024-01-02T00:00:00.000000Z
+                    C\t5.0\t22.0\t2024-01-03T00:00:00.000000Z
+                    """);
+        });
+    }
+
+    @Test
+    public void testDropColumnNonAsciiNameMatchedIgnoringCase() throws Exception {
+        // The policy and the statement name the columns in any letter case, quoted or not; the error names the
+        // column as the view has it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (sym SYMBOL, \"Ärger\" DOUBLE, \"Ωmega\" DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                    ('a', 1.5, 1.0, '2024-01-01T00:10:00.000000Z'),
+                    ('b', 2.5, 3.0, '2024-01-01T00:20:00.000000Z')
+                    """);
+            drainWalQueue();
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+            execute("ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS WHEN \"ärger\" < 2.0 AND ωMEGA < 2.0");
+            drainWalAndMatViewQueues();
+            assertExpireClause("\"ärger\" < 2.0 AND ωMEGA < 2.0");
+            // a expires: 1.5 < 2.0 and 1.0 < 2.0
+            assertQuery("mv").timestamp("ts").noLeakCheck().returns("""
+                    sym\tÄrger\tΩmega\tts
+                    b\t2.5\t3.0\t2024-01-01T00:20:00.000000Z
+                    """);
+            for (String column : new String[]{"ÄRGER", "\"ÄRGER\"", "Ärger", "ärger", "\"ärger\""}) {
+                assertDropColumnRefused("mv", column, 1);
+                assertExceptionNoLeakCheck(
+                        "ALTER MATERIALIZED VIEW mv DROP COLUMN " + column,
+                        39,
+                        "the EXPIRE ROWS policy of the materialized view reads the column [column=Ärger]"
+                );
+            }
+            for (String column : new String[]{"ΩMEGA", "ωmega", "\"ωMEGA\"", "Ωmega"}) {
+                assertDropColumnRefused("mv", column, 1);
+                assertExceptionNoLeakCheck(
+                        "ALTER MATERIALIZED VIEW mv DROP COLUMN " + column,
+                        39,
+                        "the EXPIRE ROWS policy of the materialized view reads the column [column=Ωmega]"
+                );
+            }
+            execute("ALTER MATERIALIZED VIEW mv DROP COLUMN SYM");
+            drainWalAndMatViewQueues();
+            assertViewValid("mv");
+            assertQuery("mv").timestamp("ts").noLeakCheck().returns("""
+                    Ärger\tΩmega\tts
+                    2.5\t3.0\t2024-01-01T00:20:00.000000Z
+                    """);
+        });
+    }
+
+    @Test
+    public void testDropColumnRefusedAfterRestart() throws Exception {
+        // The check reads the policy from the metadata a restarted engine loads.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (sym SYMBOL, price DOUBLE, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                    ('a', 1.5, 10.0, '2024-01-01T00:10:00.000000Z'),
+                    ('b', 2.5, 20.0, '2024-01-01T00:20:00.000000Z'),
+                    ('a', 3.5, 30.0, '2024-01-01T00:30:00.000000Z')
+                    """);
+            drainWalQueue();
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+            execute("ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS KEEP LATEST PARTITION BY sym");
+            drainWalAndMatViewQueues();
+            engine.releaseInactive();
+            engine.releaseAllWriters();
+            try (
+                    CairoEngine restarted = new CairoEngine(configuration);
+                    SqlExecutionContext context = TestUtils.createSqlExecutionCtx(restarted)
+            ) {
+                restarted.load();
+                restarted.buildViewGraphs();
+                final String sql = "ALTER MATERIALIZED VIEW mv DROP COLUMN sym";
+                try {
+                    restarted.execute(sql, context);
+                    Assert.fail("the statement must fail: " + sql);
+                } catch (SqlException e) {
+                    Assert.assertEquals(sql.indexOf("sym", sql.indexOf("COLUMN")), e.getPosition());
+                    TestUtils.assertEquals(
+                            "the EXPIRE ROWS policy of the materialized view reads the column [column=sym], change the policy "
+                                    + "with SET EXPIRE or remove it with DROP EXPIRE first, and retry once that has applied",
+                            e.getFlyweightMessage()
+                    );
+                }
+                restarted.execute("ALTER MATERIALIZED VIEW mv DROP COLUMN amount", context);
+                drainWalAndMatViewQueues(restarted);
+                // the newest row of each sym: a at 3.5 and b at 2.5
+                assertQuery("mv ORDER BY ts").withEngine(restarted).withContext(context).timestamp("ts").noLeakCheck().expectSize().returns("""
+                        sym\tprice\tts
+                        b\t2.5\t2024-01-01T00:20:00.000000Z
+                        a\t3.5\t2024-01-01T00:30:00.000000Z
+                        """);
+                assertQuery("SELECT view_status, expire_clause FROM materialized_views()").withEngine(restarted).withContext(context)
+                        .noLeakCheck().noRandomAccess().returns("""
+                                view_status\texpire_clause
+                                valid\tKEEP LATEST PARTITION BY sym
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testKeepLatestKeyNoLongerProducedByBaseDropColumn() throws Exception {
+        // A passthrough view keeps a column the base drops, which reads NULL in the rows refreshed from then on. A
+        // KEEP LATEST policy over it treats NULL as one more key: of the new rows, only the newest stays visible. The
+        // design leaves the policy as it is.
+        assertKeepLatestKeyNoLongerProduced("ALTER TABLE base DROP COLUMN k");
+    }
+
+    @Test
+    public void testKeepLatestKeyNoLongerProducedBySqlChange() throws Exception {
+        // The same through ALTER ... AS: the new SQL does not produce k, so k reads NULL in the rows refreshed from
+        // then on.
+        assertKeepLatestKeyNoLongerProduced("ALTER MATERIALIZED VIEW mv AS (SELECT v, w, ts FROM base)");
+    }
+
+    @Test
+    public void testSetExpireOverPendingDropAndReAddWithOtherType() throws Exception {
+        // The view drops price and adds it back as LONG, and both statements wait in the view's WAL. SET EXPIRE checks a
+        // scalar policy against the column as the view's sequencer metadata has it, the LONG, and a KEEP policy's read
+        // probe against the applied DOUBLE; either way the column exists once the statements apply.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                    ('a', 1.5, '2024-01-01T00:10:00.000000Z'),
+                    ('b', 2.5, '2024-01-01T00:20:00.000000Z')
+                    """);
+            drainWalQueue();
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+            final TableToken viewToken = engine.verifyTableName("mv");
+            execute("ALTER MATERIALIZED VIEW mv DROP COLUMN price");
+            execute("ALTER MATERIALIZED VIEW mv ADD COLUMN price LONG");
+            try (TableMetadata metadata = engine.getTableMetadata(viewToken)) {
+                Assert.assertEquals(ColumnType.DOUBLE, metadata.getColumnType("price"));
+            }
+            // 'x' is a CHAR, which a DOUBLE takes and a LONG does not
+            assertSetExpireRefused("WHEN price = 'x'", "invalid EXPIRE ROWS predicate: inconvertible value: x [CHAR -> LONG]");
+            execute("ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS WHEN price < 2");
+            execute("ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS KEEP LATEST PARTITION BY price");
+            drainWalAndMatViewQueues();
+
+            assertWalApplied(viewToken);
+            assertViewValid("mv");
+            assertExpireClause("KEEP LATEST PARTITION BY price");
+            // the re-added price is NULL in both rows, so the newest row is the latest of the one key
+            assertQuery("mv").timestamp("ts").noLeakCheck().expectSize().returns("""
+                    sym\tts\tprice
+                    b\t2024-01-01T00:20:00.000000Z\tnull
+                    """);
+            // the refresh writes the base's DOUBLE price into the LONG column
+            execute("INSERT INTO base VALUES ('c', 7.0, '2024-01-01T00:30:00.000000Z')");
+            drainWalAndMatViewQueues();
+            assertWalApplied(viewToken);
+            assertViewValid("mv");
+            assertQuery("mv ORDER BY ts").timestamp("ts").noLeakCheck().expectSize().returns("""
+                    sym\tts\tprice
+                    b\t2024-01-01T00:20:00.000000Z\tnull
+                    c\t2024-01-01T00:30:00.000000Z\t7
                     """);
         });
     }
@@ -439,6 +676,37 @@ public class MatViewDropColumnExpiryPolicyTest extends AbstractCairoTest {
                     2.0\t2024-01-02T00:00:00.000000Z
                     3.0\t2024-01-03T00:00:00.000000Z
                     7.0\t2024-01-05T00:00:00.000000Z
+                    """);
+        });
+    }
+
+    private void assertKeepLatestKeyNoLongerProduced(String keyRemoval) throws Exception {
+        assertMemoryLeak(() -> {
+            createPassthroughView("EXPIRE ROWS KEEP LATEST PARTITION BY k");
+            drainWalAndMatViewQueues();
+            // the newest row of each key: A at 2.0 and B at 0.5
+            assertQuery("mv ORDER BY ts").timestamp("ts").noLeakCheck().expectSize().returns("""
+                    k\tv\tw\tts
+                    A\t2.0\t20.0\t2024-01-02T00:00:00.000000Z
+                    B\t0.5\t40.0\t2024-01-04T00:00:00.000000Z
+                    """);
+            execute(keyRemoval);
+            drainWalAndMatViewQueues();
+            execute("""
+                    INSERT INTO base (v, w, ts) VALUES
+                    (5.0, 50.0, '2024-01-05T00:00:00.000000Z'),
+                    (6.0, 60.0, '2024-01-06T00:00:00.000000Z')
+                    """);
+            drainWalAndMatViewQueues();
+            assertViewValid("mv");
+            assertExpireClause("KEEP LATEST PARTITION BY k");
+            assertWalApplied(engine.verifyTableName("mv"));
+            // A and B keep their newest rows; of the rows with a NULL k, the newest stays
+            assertQuery("mv ORDER BY ts").timestamp("ts").noLeakCheck().expectSize().returns("""
+                    k\tv\tw\tts
+                    A\t2.0\t20.0\t2024-01-02T00:00:00.000000Z
+                    B\t0.5\t40.0\t2024-01-04T00:00:00.000000Z
+                    \t6.0\t60.0\t2024-01-06T00:00:00.000000Z
                     """);
         });
     }

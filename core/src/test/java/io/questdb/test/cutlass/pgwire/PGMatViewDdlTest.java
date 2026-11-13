@@ -25,17 +25,23 @@
 package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.mv.MatViewState;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+import org.postgresql.PGConnection;
 import org.postgresql.util.PSQLException;
+import org.postgresql.util.ServerErrorMessage;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Statement;
 import java.sql.Timestamp;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * The materialized view statements of this feature over pg-wire, driven by the PostgreSQL JDBC driver: view ADD and
@@ -69,6 +75,147 @@ public class PGMatViewDdlTest extends BasePGTest {
             execute("INSERT INTO base VALUES ('a', 5.0, '2024-01-05T00:10:00.000000Z')");
             drainWalAndMatViewQueues();
             assertQueryResult(connection, "SELECT * FROM mv ORDER BY ts", VIEW_ROWS + "2024-01-05 00:00:00.0,a,10.0\n");
+        });
+    }
+
+    @Test
+    public void testAddColumnReExecutedAfterAlterAsChangedTypeInvalidatesAtRefresh() throws Exception {
+        // A prepared ADD COLUMN compiled while the view's SQL did not produce the column executes again after ALTER
+        // ... AS made the SQL produce it as a BOOLEAN, which has no cast to the column's DOUBLE. A fresh compile refuses
+        // the statement. pg-wire re-runs the statement it compiled, which skips ADD COLUMN's cast check; refresh
+        // then decides, as for a later base ALTER COLUMN TYPE (design section 4): the view goes invalid with the cast
+        // error, keeps its rows, and its WAL keeps applying.
+        assertWithPgServer(Mode.EXTENDED, true, -1, (connection, _, _, _) -> {
+            createBaseAndView();
+            final String addSql = "ALTER MATERIALIZED VIEW mv ADD COLUMN flag DOUBLE";
+            try (PreparedStatement add = connection.prepareStatement(addSql)) {
+                add.execute();
+                drainWalAndMatViewQueues();
+                execute("ALTER MATERIALIZED VIEW mv DROP COLUMN flag");
+                execute("ALTER MATERIALIZED VIEW mv AS (SELECT ts, sym, sum(price) AS price, sum(price) > 2.5 AS flag FROM base SAMPLE BY 1h)");
+                drainWalAndMatViewQueues();
+                assertQueryResult(connection, "SELECT view_status, ignored_query_columns FROM materialized_views()",
+                        "view_status[VARCHAR],ignored_query_columns[VARCHAR]\nvalid,flag\n");
+                assertQueryResult(connection, "SELECT * FROM mv ORDER BY ts", VIEW_ROWS);
+                TestUtils.assertEquals("inconvertible types: BOOLEAN -> DOUBLE [from=flag, to=flag]", freshError(connection, addSql).getMessage());
+                add.execute();
+                drainWalAndMatViewQueues();
+            }
+            assertQueryResult(connection, "SELECT \"column\", type FROM table_columns('mv')", """
+                    column[VARCHAR],type[VARCHAR]
+                    ts,TIMESTAMP
+                    sym,SYMBOL
+                    price,DOUBLE
+                    flag,DOUBLE
+                    """);
+            execute("INSERT INTO base VALUES ('a', 5.0, '2024-01-05T00:10:00.000000Z')");
+            drainWalAndMatViewQueues();
+            assertQueryResult(connection, "SELECT view_status, invalidation_reason, suspended FROM materialized_views() JOIN wal_tables() ON view_name = name",
+                    "view_status[VARCHAR],invalidation_reason[VARCHAR],suspended[BIT]\ninvalid,[-1]: inconvertible types: BOOLEAN -> DOUBLE [from=flag, to=flag],false\n");
+            assertQueryResult(connection, "SELECT * FROM mv ORDER BY ts", """
+                    ts[TIMESTAMP],sym[VARCHAR],price[DOUBLE],flag[DOUBLE]
+                    2024-01-01 00:00:00.0,a,1.0,null
+                    2024-01-02 00:00:00.0,a,2.0,null
+                    2024-01-03 00:00:00.0,a,3.0,null
+                    2024-01-04 00:00:00.0,a,4.0,null
+                    """);
+        });
+    }
+
+    @Test
+    public void testAlterAsReExecutedAfterViewColumnChangeRefused() throws Exception {
+        // ALTER ... AS executes when pg-wire compiles it, so a prepared one compiles again at each execution: after
+        // the view replaced the column at the SQL column's position, it fails as a fresh compile does, and writes
+        // nothing.
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
+            createBaseAndView();
+            execute("ALTER MATERIALIZED VIEW mv ADD COLUMN extra DOUBLE");
+            drainWalAndMatViewQueues();
+            final String newSql = "SELECT ts, sym, sum(price) AS price, max(price) AS extra FROM base SAMPLE BY 1h";
+            final String alterSql = "ALTER MATERIALIZED VIEW mv AS (" + newSql + ")";
+            try (PreparedStatement alter = connection.prepareStatement(alterSql)) {
+                alter.execute();
+                drainWalAndMatViewQueues();
+                execute("ALTER MATERIALIZED VIEW mv DROP COLUMN extra");
+                execute("ALTER MATERIALIZED VIEW mv ADD COLUMN note INT");
+                drainWalAndMatViewQueues();
+                final long viewSeqTxn = viewSeqTxn();
+                final ServerErrorMessage expected = freshError(connection, alterSql);
+                TestUtils.assertContains(expected.getMessage(), "materialized view column does not match the query column at the same position");
+                try {
+                    alter.execute();
+                    Assert.fail("the prepared ALTER ... AS must fail as a fresh compile does");
+                } catch (PSQLException e) {
+                    Assert.assertNotNull(e.getServerErrorMessage());
+                    TestUtils.assertEquals(expected.getMessage(), e.getServerErrorMessage().getMessage());
+                    Assert.assertEquals(expected.getPosition(), e.getServerErrorMessage().getPosition());
+                }
+                drainWalAndMatViewQueues();
+                Assert.assertEquals(viewSeqTxn, viewSeqTxn());
+            }
+            assertQueryResult(connection, "SELECT view_status, view_sql, suspended FROM materialized_views() JOIN wal_tables() ON view_name = name",
+                    "view_status[VARCHAR],view_sql[VARCHAR],suspended[BIT]\nvalid," + newSql + ",false\n");
+            execute("INSERT INTO base VALUES ('a', 5.0, '2024-01-05T00:10:00.000000Z')");
+            drainWalAndMatViewQueues();
+            assertQueryResult(connection, "SELECT * FROM mv ORDER BY ts", """
+                    ts[TIMESTAMP],sym[VARCHAR],price[DOUBLE],note[INTEGER]
+                    2024-01-01 00:00:00.0,a,1.0,null
+                    2024-01-02 00:00:00.0,a,2.0,null
+                    2024-01-03 00:00:00.0,a,3.0,null
+                    2024-01-04 00:00:00.0,a,4.0,null
+                    2024-01-05 00:00:00.0,a,5.0,null
+                    """);
+        });
+    }
+
+    @Test
+    public void testAlterWithBaseReExecutedAfterNewBaseGainsExpiryPolicyRefused() throws Exception {
+        // A materialized view cannot read a view that has an EXPIRE ROWS policy (#7263 rule 5). A prepared ALTER ...
+        // WITH BASE onto a view compiles again at each execution, so once that view has a policy it fails as a
+        // fresh compile does, and the view keeps its base.
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
+            createBaseAndView();
+            execute("CREATE TABLE base2 (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base2 VALUES ('b', 7.0, '2024-01-06T00:10:00.000000Z')");
+            drainWalQueue();
+            execute("CREATE MATERIALIZED VIEW mv2 AS (SELECT ts, sym, sum(price) AS price FROM base2 SAMPLE BY 1h) PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+            final String viewSql = "SELECT ts, sym, sum(price) AS price FROM base SAMPLE BY 1h";
+            final String alterSql = "ALTER MATERIALIZED VIEW mv WITH BASE mv2 AS (SELECT ts, sym, sum(price) AS price FROM mv2 SAMPLE BY 1h)";
+            try (PreparedStatement alter = connection.prepareStatement(alterSql)) {
+                alter.execute();
+                drainWalAndMatViewQueues();
+                assertQueryResult(connection, "SELECT base_table_name FROM materialized_views() WHERE view_name = 'mv'",
+                        "base_table_name[VARCHAR]\nmv2\n");
+                // a base change leaves the view invalid until RESUME SKIP BACKLOG positions it on the new base
+                execute("ALTER MATERIALIZED VIEW mv WITH BASE base AS (" + viewSql + ")");
+                drainWalAndMatViewQueues();
+                execute("REFRESH MATERIALIZED VIEW mv RESUME SKIP BACKLOG");
+                execute("ALTER MATERIALIZED VIEW mv2 SET EXPIRE ROWS WHEN price < 0.0");
+                drainWalAndMatViewQueues();
+                assertQueryResult(connection, "SELECT view_status, base_table_name FROM materialized_views() WHERE view_name = 'mv'",
+                        "view_status[VARCHAR],base_table_name[VARCHAR]\nvalid,base\n");
+                final long viewSeqTxn = viewSeqTxn();
+                final ServerErrorMessage expected = freshError(connection, alterSql);
+                TestUtils.assertContains(expected.getMessage(), "EXPIRE ROWS");
+                try {
+                    alter.execute();
+                    Assert.fail("the prepared ALTER ... WITH BASE must fail as a fresh compile does");
+                } catch (PSQLException e) {
+                    Assert.assertNotNull(e.getServerErrorMessage());
+                    TestUtils.assertEquals(expected.getMessage(), e.getServerErrorMessage().getMessage());
+                }
+                drainWalAndMatViewQueues();
+                Assert.assertEquals(viewSeqTxn, viewSeqTxn());
+            }
+            assertQueryResult(connection, "SELECT view_status, base_table_name, view_sql, suspended FROM materialized_views() JOIN wal_tables() ON view_name = name WHERE view_name = 'mv'",
+                    "view_status[VARCHAR],base_table_name[VARCHAR],view_sql[VARCHAR],suspended[BIT]\nvalid,base," + viewSql + ",false\n");
+            execute("INSERT INTO base VALUES ('a', 5.0, '2024-01-05T00:10:00.000000Z')");
+            drainWalAndMatViewQueues();
+            assertQueryResult(connection, "SELECT * FROM mv WHERE ts >= '2024-01-05' ORDER BY ts", """
+                    ts[TIMESTAMP],sym[VARCHAR],price[DOUBLE]
+                    2024-01-05 00:00:00.0,a,5.0
+                    """);
         });
     }
 
@@ -158,6 +305,83 @@ public class PGMatViewDdlTest extends BasePGTest {
     }
 
     @Test
+    public void testResumeCancelledWhileWaitingForViewWal() throws Exception {
+        // A PostgreSQL CancelRequest stops RESUME while it waits for the view's own WAL to apply: RESUME writes nothing,
+        // leaves the view invalid and its latch free, and the connection stays usable. Run again once the WAL has
+        // applied, RESUME catches the view up.
+        assertWithPgServer(Mode.EXTENDED, true, -1, (connection, _, _, _) -> {
+            createBaseAndView();
+            final TableToken viewToken = engine.verifyTableName("mv");
+            engine.getMatViewStateStore().enqueueInvalidate(viewToken, "test invalidation");
+            drainWalAndMatViewQueues();
+            execute("INSERT INTO base VALUES ('a', 5.0, '2024-01-05T00:10:00.000000Z')");
+            drainWalQueue();
+            // a view WAL transaction that RESUME waits for
+            execute("ALTER MATERIALIZED VIEW mv ADD COLUMN extra DOUBLE");
+            final long viewSeqTxn = viewSeqTxn();
+            final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
+            final CountDownLatch isWaiting = new CountDownLatch(1);
+            final CountDownLatch isCancelSent = new CountDownLatch(1);
+            final AtomicBoolean isFirstWait = new AtomicBoolean(true);
+            final AtomicBoolean isCancelled = new AtomicBoolean();
+            // the first wait round holds RESUME until the cancel request has gone out
+            state.setOnResumeWalWaitForTesting(() -> {
+                if (isFirstWait.compareAndSet(true, false)) {
+                    isWaiting.countDown();
+                    try {
+                        Assert.assertTrue(isCancelSent.await(30, TimeUnit.SECONDS));
+                    } catch (InterruptedException e) {
+                        throw new RuntimeException(e);
+                    }
+                }
+            });
+            final Thread canceller = new Thread(() -> {
+                try {
+                    if (isWaiting.await(30, TimeUnit.SECONDS)) {
+                        ((PGConnection) connection).cancelQuery();
+                        isCancelled.set(true);
+                    }
+                } catch (Throwable th) {
+                    LOG.error().$("cancellation failed [error=").$(th).I$();
+                } finally {
+                    isCancelSent.countDown();
+                }
+            }, "pg-canceller");
+            canceller.start();
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("REFRESH MATERIALIZED VIEW mv RESUME");
+                Assert.fail("RESUME must stop when cancelled");
+            } catch (PSQLException e) {
+                TestUtils.assertContains(e.getMessage(), "cancelled by user");
+            } finally {
+                canceller.join();
+                state.setOnResumeWalWaitForTesting(null);
+            }
+            Assert.assertTrue(isCancelled.get());
+            Assert.assertFalse(state.isLocked());
+            Assert.assertEquals(viewSeqTxn, viewSeqTxn());
+            drainWalAndMatViewQueues();
+            assertQueryResult(connection, "SELECT view_status, invalidation_reason FROM materialized_views()",
+                    "view_status[VARCHAR],invalidation_reason[VARCHAR]\ninvalid,test invalidation\n");
+
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("REFRESH MATERIALIZED VIEW mv RESUME");
+            }
+            drainWalAndMatViewQueues();
+            assertQueryResult(connection, "SELECT view_status, invalidation_reason FROM materialized_views()",
+                    "view_status[VARCHAR],invalidation_reason[VARCHAR]\nvalid,null\n");
+            assertQueryResult(connection, "SELECT * FROM mv ORDER BY ts", """
+                    ts[TIMESTAMP],sym[VARCHAR],price[DOUBLE],extra[DOUBLE]
+                    2024-01-01 00:00:00.0,a,1.0,null
+                    2024-01-02 00:00:00.0,a,2.0,null
+                    2024-01-03 00:00:00.0,a,3.0,null
+                    2024-01-04 00:00:00.0,a,4.0,null
+                    2024-01-05 00:00:00.0,a,5.0,null
+                    """);
+        });
+    }
+
+    @Test
     public void testResumeExecutedTwice() throws Exception {
         // RESUME on a valid view does nothing; RESUME SKIP BACKLOG on an invalid view makes it valid, and the second
         // execution finds it valid.
@@ -232,6 +456,22 @@ public class PGMatViewDdlTest extends BasePGTest {
         assertQueryResult(connection, "SELECT view_status, suspended FROM materialized_views() JOIN wal_tables() ON view_name = name",
                 "view_status[VARCHAR],suspended[BIT]\nvalid,false\n");
         assertQueryResult(connection, "SELECT * FROM mv ORDER BY ts", VIEW_ROWS + "2024-01-05 00:00:00.0,a,5.0\n");
+    }
+
+    // The error a fresh compile of the statement returns over the connection.
+    private static ServerErrorMessage freshError(Connection connection, String sql) throws Exception {
+        try (Statement statement = connection.createStatement()) {
+            statement.execute(sql);
+            Assert.fail("a fresh compile must refuse: " + sql);
+            return null;
+        } catch (PSQLException e) {
+            Assert.assertNotNull(e.getServerErrorMessage());
+            return e.getServerErrorMessage();
+        }
+    }
+
+    private static long viewSeqTxn() {
+        return engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("mv"));
     }
 
     private static void assertQueryResult(Connection connection, String sql, String expected) throws Exception {

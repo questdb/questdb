@@ -71,7 +71,7 @@ import java.util.concurrent.locks.ReentrantLock;
 /**
  * The view latch protocol under concurrency: statement threads issue RESUME, RESUME SKIP BACKLOG, ALTER
  * MATERIALIZED VIEW ... AS with and without WITH BASE, REFRESH FULL, INCREMENTAL and RANGE, view ADD and DROP COLUMN,
- * view DROP PARTITION, base TRUNCATE, DETACH and ATTACH, UPDATE, base column DDL, base drop and re-create, forced
+ * view DROP PARTITION, SET and DROP EXPIRE of EXPIRE ROWS policies that hide no row, base TRUNCATE, DETACH and ATTACH, UPDATE, base column DDL, base drop and re-create, forced
  * invalidations and backlog updates at random, while an ingest thread inserts into the base tables, and free-running
  * refresh workers, a WAL apply worker, the timer job and the WAL purge job run on their own threads. The view is
  * IMMEDIATE, and each round picks microsecond or nanosecond timestamps.
@@ -422,7 +422,7 @@ public class MatViewConcurrentOperationsFuzzTest extends AbstractCairoTest {
     // Runs one statement or action, weighted towards the statements that take or wait for the view latch.
     private void runStatement(Rnd rnd, SqlExecutionContextImpl context, StringSink sql) throws SqlException {
         sql.clear();
-        switch (rnd.nextInt(26)) {
+        switch (rnd.nextInt(28)) {
             case 0, 1, 2 -> sql.put("REFRESH MATERIALIZED VIEW mv RESUME");
             case 3, 4 -> sql.put("REFRESH MATERIALIZED VIEW mv RESUME SKIP BACKLOG");
             case 5, 6 -> sql.put("ALTER MATERIALIZED VIEW mv AS (").put(rnd.nextBoolean() ? VIEW_SQL : VIEW_SQL_MAX).put(')');
@@ -566,6 +566,18 @@ public class MatViewConcurrentOperationsFuzzTest extends AbstractCairoTest {
                 engine.getMatViewStateStore().enqueueUpdateRefreshIntervals(engine.verifyTableName("mv"));
                 return;
             }
+            // An EXPIRE ROWS policy that hides no row and reads only columns no statement drops from the view, so every
+            // read of the view, the final comparison's included, goes through the policy's rewrite while the twin
+            // stays its oracle. A policy that reads extra would race its view DROP COLUMN, which design section 11
+            // rule 8 lists as a known limitation (questdb-enterprise#1479, #1480).
+            case 25 -> sql.put("ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS ").put(switch (rnd.nextInt(5)) {
+                case 0 -> "WHEN price < -1";
+                case 1 -> "WHEN qty < min(qty) OVER ()";
+                case 2 -> "KEEP HIGHEST ON price PARTITION BY ts, sym";
+                case 3 -> "KEEP 2 LOWEST ON qty PARTITION BY ts, sym";
+                default -> "KEEP LATEST PARTITION BY sym, ts, price";
+            });
+            case 26 -> sql.put("ALTER MATERIALIZED VIEW mv DROP EXPIRE");
             default -> {
                 // a base table that a replacement dropped and then failed to re-create comes back
                 if (engine.getTableTokenIfExists("base") == null) {

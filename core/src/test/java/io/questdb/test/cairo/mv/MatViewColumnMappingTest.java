@@ -101,6 +101,43 @@ public class MatViewColumnMappingTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCaseInsensitiveNonAsciiNamesOfReAddedColumns() throws Exception {
+        // View columns dropped and added back under another letter case, quoted and unquoted, map to the SQL's
+        // columns of those names ignoring case: rows refreshed from then on carry the values, the rows from before
+        // the re-add read NULL until FULL rebuilds them.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (\"Ärger\" DOUBLE, \"Ωmega\" DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base VALUES (1.5, 1.0, '2024-01-01T00:10:00.000000Z')");
+            drainWalQueue();
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT ts, max(\"Ärger\") \"Ärger\", max(\"Ωmega\") \"Ωmega\" FROM base SAMPLE BY 1h) PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+            execute("ALTER MATERIALIZED VIEW mv DROP COLUMN \"ärger\"");
+            execute("ALTER MATERIALIZED VIEW mv ADD COLUMN \"äRGER\" DOUBLE");
+            execute("ALTER MATERIALIZED VIEW mv DROP COLUMN ΩMEGA");
+            execute("ALTER MATERIALIZED VIEW mv ADD COLUMN ωMEGA DOUBLE");
+            drainWalAndMatViewQueues();
+            execute("INSERT INTO base VALUES (2.5, 3.0, '2024-01-02T00:10:00.000000Z')");
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT view_status, invalidation_reason, unmapped_view_columns, ignored_query_columns FROM materialized_views()")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("view_status\tinvalidation_reason\tunmapped_view_columns\tignored_query_columns\nvalid\t\t\t\n");
+            assertQuery("mv ORDER BY ts").timestamp("ts").noLeakCheck().expectSize().returns("""
+                    ts\täRGER\tωMEGA
+                    2024-01-01T00:00:00.000000Z\tnull\tnull
+                    2024-01-02T00:00:00.000000Z\t2.5\t3.0
+                    """);
+            execute("REFRESH MATERIALIZED VIEW mv FULL");
+            drainWalAndMatViewQueues();
+            assertQuery("mv ORDER BY ts").timestamp("ts").noLeakCheck().expectSize().returns("""
+                    ts\täRGER\tωMEGA
+                    2024-01-01T00:00:00.000000Z\t1.5\t1.0
+                    2024-01-02T00:00:00.000000Z\t2.5\t3.0
+                    """);
+        });
+    }
+
+    @Test
     public void testCastsByName() throws Exception {
         // Each query column goes to the view column of its name and is cast to the view column's type, NULLs included.
         Assert.assertTrue(RecordToRowCopierUtils.isCopierConvertible(ColumnType.INT, ColumnType.LONG));
