@@ -1,0 +1,21 @@
+# case_id	input	expected
+null	<NULL>	<NULL>
+empty		<INVALID>
+nil	00000000-0000-0000-0000-000000000000	00000000-0000-0000-0000-000000000000
+all_fs	ffffffff-ffff-ffff-ffff-ffffffffffff	ffffffff-ffff-ffff-ffff-ffffffffffff
+upper_mixed	01234567-89AB-cDeF-0123-456789aBCDef	01234567-89ab-cdef-0123-456789abcdef
+distinct_limbs	01234567-89ab-cdef-fedc-ba9876543210	01234567-89ab-cdef-fedc-ba9876543210
+both_min_null	80000000-0000-0000-8000-000000000000	<NULL>
+high_min_only	80000000-0000-0000-0000-000000000000	80000000-0000-0000-0000-000000000000
+low_min_only	00000000-0000-0000-8000-000000000000	00000000-0000-0000-8000-000000000000
+bad_hex_high_first	g1234567-89ab-cdef-0123-456789abcdef	<INVALID>
+bad_hex_high_second	01234567-x9ab-cdef-0123-456789abcdef	<INVALID>
+bad_hex_high_third	01234567-89ab-xdef-0123-456789abcdef	<INVALID>
+bad_hex_low_first	01234567-89ab-cdef-x123-456789abcdef	<INVALID>
+bad_hex_low_second	01234567-89ab-cdef-0123-x56789abcdef	<INVALID>
+short_java_uuid	1-1-1-1-1	<INVALID>
+leading_space	 01234567-89ab-cdef-0123-456789abcdef	<INVALID>
+trailing_space	01234567-89ab-cdef-0123-456789abcdef 	<INVALID>
+unicode_hex	０1234567-89ab-cdef-0123-456789abcdef	<INVALID>
+wrong_dash	01234567_89ab-cdef-0123-456789abcdef	<INVALID>
+missing_dash	0123456789ab-cdef-0123-456789abcdef	<INVALID>

@@ -277,7 +277,8 @@ public class QwpWalAppender implements QuietCloseable {
     /**
      * Checks whether a fixed-width wire type can be coerced to the target column type.
      * Only types within the same family are allowed (e.g., integer↔integer, float↔float),
-     * plus integer→float/double cross-family coercion.
+     * plus integer→float/double cross-family coercion, and the conversions between DATE and
+     * the integer and floating-point types that ALTER COLUMN TYPE applies.
      * Other cross-family coercions (e.g., UUID→SHORT) are rejected to prevent silent data corruption.
      * <p>
      * TYPE_IPV4 is intentionally absent from every arm. The IPv4 column type has its
@@ -300,11 +301,11 @@ public class QwpWalAppender implements QuietCloseable {
                     || colTag == ColumnType.SHORT || colTag == ColumnType.INT || colTag == ColumnType.LONG
                     || colTag == ColumnType.FLOAT || colTag == ColumnType.DOUBLE
                     || colTag == ColumnType.DATE;
-            case TYPE_FLOAT, TYPE_DOUBLE -> colTag == ColumnType.BYTE
+            case TYPE_FLOAT, TYPE_DOUBLE, TYPE_DATE -> colTag == ColumnType.BYTE
                     || colTag == ColumnType.SHORT || colTag == ColumnType.INT || colTag == ColumnType.LONG
-                    || colTag == ColumnType.FLOAT || colTag == ColumnType.DOUBLE;
+                    || colTag == ColumnType.FLOAT || colTag == ColumnType.DOUBLE
+                    || colTag == ColumnType.DATE;
             case TYPE_UUID -> colTag == ColumnType.UUID;
-            case TYPE_DATE -> colTag == ColumnType.DATE;
             case TYPE_LONG256 -> colTag == ColumnType.LONG256;
             default -> false;
         };
@@ -323,6 +324,14 @@ public class QwpWalAppender implements QuietCloseable {
     private static boolean isIntegerWireType(byte qwpType) {
         return qwpType == TYPE_BYTE || qwpType == TYPE_SHORT
                 || qwpType == TYPE_INT || qwpType == TYPE_LONG;
+    }
+
+    private static boolean isNumericOrDate(int columnType) {
+        int colTag = ColumnType.tagOf(columnType);
+        return colTag == ColumnType.BYTE || colTag == ColumnType.SHORT
+                || colTag == ColumnType.INT || colTag == ColumnType.LONG
+                || colTag == ColumnType.FLOAT || colTag == ColumnType.DOUBLE
+                || colTag == ColumnType.DATE;
     }
 
     /**
@@ -584,17 +593,32 @@ public class QwpWalAppender implements QuietCloseable {
                                         fixedCursor.getValueCount(), fixedCursor.getValueSize(),
                                         fixedCursor.getNullBitmapAddress(), rowCount);
                             }
+                        } else if (cursor instanceof QwpStringColumnCursor strCursor && qwpType == TYPE_VARCHAR) {
+                            // ALTER COLUMN TYPE converts STRING, VARCHAR and SYMBOL to IPv4, so a
+                            // sender encodes text for an IPv4 column until it learns of the change.
+                            appender.putStringToIPv4Column(columnIndex, strCursor, rowCount);
+                        } else if (cursor instanceof QwpSymbolColumnCursor symCursor) {
+                            appender.putSymbolToParsedColumn(columnIndex, symCursor, rowCount, columnType);
                         } else {
                             throw coercionNotSupportedException(qwpType, columnType, tableBlock, col);
                         }
                     }
                     case ColumnType.BOOLEAN -> {
-                        if (cursor instanceof QwpBooleanColumnCursor boolCursor) {
-                            appender.putBooleanColumn(columnIndex, boolCursor, rowCount);
-                        } else if (cursor instanceof QwpStringColumnCursor strCursor) {
-                            appender.putStringToBooleanColumn(columnIndex, strCursor, rowCount);
-                        } else {
-                            throw typeMismatchException(qwpType, columnType, tableBlock, col);
+                        switch (cursor) {
+                            case QwpBooleanColumnCursor boolCursor ->
+                                    appender.putBooleanColumn(columnIndex, boolCursor, rowCount);
+                            case QwpStringColumnCursor strCursor ->
+                                    appender.putStringToBooleanColumn(columnIndex, strCursor, rowCount);
+                            // The cases below take the old type of a column that ALTER COLUMN TYPE
+                            // changed to BOOLEAN after the sender encoded the frame.
+                            case QwpFixedWidthColumnCursor fixedCursor
+                                    when isIntegerWireType(qwpType) || isFloatWireType(qwpType) || qwpType == TYPE_DATE ->
+                                    appender.putFixedToBooleanColumn(columnIndex, fixedCursor, rowCount);
+                            case QwpTimestampColumnCursor tsCursor ->
+                                    appender.putTimestampToFixedColumn(columnIndex, tsCursor, rowCount, qwpType, columnType);
+                            case QwpSymbolColumnCursor symCursor ->
+                                    appender.putSymbolToParsedColumn(columnIndex, symCursor, rowCount, columnType);
+                            case null, default -> throw typeMismatchException(qwpType, columnType, tableBlock, col);
                         }
                     }
                     case ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG,
@@ -619,11 +643,13 @@ public class QwpWalAppender implements QuietCloseable {
                                 int wireSize = fixedCursor.getValueSize();
                                 int columnSize = ColumnType.sizeOf(columnType);
                                 int colTag = ColumnType.tagOf(columnType);
-                                boolean isIntegerWire = isIntegerWireType(qwpType);
+                                // A DATE holds an integer: the epoch offset in milliseconds.
+                                boolean isIntegerWire = isIntegerWireType(qwpType) || qwpType == TYPE_DATE;
                                 boolean isFloatWire = isFloatWireType(qwpType);
                                 boolean isFloatTarget = colTag == ColumnType.FLOAT || colTag == ColumnType.DOUBLE;
                                 boolean isIntegerTarget = colTag == ColumnType.BYTE || colTag == ColumnType.SHORT
-                                        || colTag == ColumnType.INT || colTag == ColumnType.LONG;
+                                        || colTag == ColumnType.INT || colTag == ColumnType.LONG
+                                        || colTag == ColumnType.DATE;
                                 if (isIntegerWire && (isFloatTarget || wireSize != columnSize)) {
                                     // Integer → float/double, integer widening (INT → LONG), or
                                     // integer narrowing with overflow check (INT → BYTE, INT → SHORT)
@@ -642,11 +668,32 @@ public class QwpWalAppender implements QuietCloseable {
                                 }
                             }
                             case QwpBooleanColumnCursor boolCursor -> {
-                                int colTag = ColumnType.tagOf(columnType);
-                                if (colTag == ColumnType.BYTE || colTag == ColumnType.SHORT
-                                        || colTag == ColumnType.INT || colTag == ColumnType.LONG
-                                        || colTag == ColumnType.FLOAT || colTag == ColumnType.DOUBLE) {
+                                if (isNumericOrDate(columnType)) {
                                     appender.putBooleanToNumericColumn(columnIndex, boolCursor, rowCount, columnType);
+                                } else {
+                                    throw typeMismatchException(qwpType, columnType, tableBlock, col);
+                                }
+                            }
+                            // The three cases below take the old type of a column that ALTER COLUMN
+                            // TYPE changed after the sender encoded the frame.
+                            case QwpTimestampColumnCursor tsCursor -> {
+                                if (isNumericOrDate(columnType)) {
+                                    appender.putTimestampToFixedColumn(columnIndex, tsCursor, rowCount, qwpType, columnType);
+                                } else {
+                                    throw typeMismatchException(qwpType, columnType, tableBlock, col);
+                                }
+                            }
+                            case QwpDecimalColumnCursor decCursor -> {
+                                int colTag = ColumnType.tagOf(columnType);
+                                if (colTag == ColumnType.FLOAT || colTag == ColumnType.DOUBLE) {
+                                    appender.putDecimalToFloatColumn(columnIndex, decCursor, rowCount, columnType);
+                                } else {
+                                    throw typeMismatchException(qwpType, columnType, tableBlock, col);
+                                }
+                            }
+                            case QwpSymbolColumnCursor symCursor -> {
+                                if (isNumericOrDate(columnType) || ColumnType.tagOf(columnType) == ColumnType.UUID) {
+                                    appender.putSymbolToParsedColumn(columnIndex, symCursor, rowCount, columnType);
                                 } else {
                                     throw typeMismatchException(qwpType, columnType, tableBlock, col);
                                 }
@@ -689,12 +736,21 @@ public class QwpWalAppender implements QuietCloseable {
                                 if (isIntegerWireType(qwpType)) {
                                     // Integer → timestamp: raw epoch offset
                                     appender.putIntegerToNumericColumn(columnIndex, fixedCursor, rowCount, columnType);
+                                } else if (isFloatWireType(qwpType)) {
+                                    // A whole floating-point value → raw epoch offset, as ALTER converts it
+                                    appender.putFloatToNumericColumn(columnIndex, fixedCursor, rowCount, columnType);
+                                } else if (qwpType == TYPE_DATE) {
+                                    appender.putDateToTimestampColumn(columnIndex, fixedCursor, rowCount, columnType);
                                 } else {
                                     throw coercionNotSupportedException(qwpType, columnType, tableBlock, col);
                                 }
                             }
                             case QwpStringColumnCursor strCursor ->
                                     appender.putStringToTimestampColumn(columnIndex, strCursor, rowCount, columnType);
+                            case QwpBooleanColumnCursor boolCursor ->
+                                    appender.putBooleanToNumericColumn(columnIndex, boolCursor, rowCount, columnType);
+                            case QwpSymbolColumnCursor symCursor ->
+                                    appender.putSymbolToParsedColumn(columnIndex, symCursor, rowCount, columnType);
                             case null, default -> throw typeMismatchException(qwpType, columnType, tableBlock, col);
                         }
                     }
@@ -714,6 +770,8 @@ public class QwpWalAppender implements QuietCloseable {
                             appender.putFixedColumn(columnIndex, fixedCursor.getValuesAddress(),
                                     fixedCursor.getValueCount(), fixedCursor.getValueSize(),
                                     fixedCursor.getNullBitmapAddress(), rowCount);
+                        } else if (cursor instanceof QwpSymbolColumnCursor symCursor) {
+                            appender.putSymbolToParsedColumn(columnIndex, symCursor, rowCount, columnType);
                         } else {
                             throw typeMismatchException(qwpType, columnType, tableBlock, col);
                         }
@@ -831,12 +889,19 @@ public class QwpWalAppender implements QuietCloseable {
                                     appender.putFixedToSymbolColumn(columnIndex, fixedCursor, rowCount);
                                 } else if (isFloatWireType(qwpType)) {
                                     appender.putFloatToSymbolColumn(columnIndex, fixedCursor, rowCount);
+                                } else if (qwpType == TYPE_DATE || qwpType == TYPE_IPV4
+                                        || qwpType == TYPE_UUID || qwpType == TYPE_CHAR) {
+                                    appender.putFixedOtherToSymbolColumn(columnIndex, fixedCursor, rowCount, qwpType);
                                 } else {
                                     throw typeMismatchException(qwpType, columnType, tableBlock, col);
                                 }
                             }
                             case QwpStringColumnCursor strCursor ->
                                     appender.putStringToSymbolColumn(columnIndex, strCursor, rowCount);
+                            case QwpBooleanColumnCursor boolCursor ->
+                                    appender.putBooleanToSymbolColumn(columnIndex, boolCursor, rowCount);
+                            case QwpTimestampColumnCursor tsCursor ->
+                                    appender.putTimestampToSymbolColumn(columnIndex, tsCursor, rowCount, qwpType);
                             case null, default -> throw typeMismatchException(qwpType, columnType, tableBlock, col);
                         }
                     }

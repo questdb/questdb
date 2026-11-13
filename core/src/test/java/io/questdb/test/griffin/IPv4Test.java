@@ -73,6 +73,36 @@ public class IPv4Test extends AbstractCairoTest {
     }
 
     @Test
+    public void testAlterTextOfOnlyDotsToIPv4() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test (k INT, s STRING, v VARCHAR)");
+            execute("INSERT INTO test VALUES (0, '.', '.'), (1, '....', '....'), (2, '..1.2.3.4', '..1.2.3.4')");
+            // Casting a column parses each value quietly: text that is not an address is NULL.
+            assertQuery("SELECT k, s::IPV4 s, v::IPV4 v FROM test ORDER BY k")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            k\ts\tv
+                            0\t\t
+                            1\t\t
+                            2\t1.2.3.4\t1.2.3.4
+                            """);
+            execute("ALTER TABLE test ALTER COLUMN s TYPE IPV4");
+            execute("ALTER TABLE test ALTER COLUMN v TYPE IPV4");
+            assertQuery("test ORDER BY k")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            k\ts\tv
+                            0\t\t
+                            1\t\t
+                            2\t1.2.3.4\t1.2.3.4
+                            """);
+            assertException("SELECT '...'::IPV4", 7, "invalid IPv4 constant");
+        });
+    }
+
+    @Test
     public void testBindVariableInEqFilterInvalid() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (b ipv4)");

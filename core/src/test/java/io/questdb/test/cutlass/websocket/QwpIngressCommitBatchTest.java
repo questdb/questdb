@@ -32,6 +32,9 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.wal.DurableAckRegistry;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.client.cutlass.qwp.client.WebSocketResponse;
+import io.questdb.client.cutlass.qwp.protocol.QwpSchemaProtocol;
+import io.questdb.client.cutlass.qwp.protocol.QwpSchemaResponse;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
@@ -231,6 +234,44 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                     runCommitBatchFuzzIteration(rnd, hookEngine, iteration, readOnlyCalls, readOnlyFromCall, isReadOnlyTransient);
                 }
             }
+        });
+    }
+
+    /**
+     * A batched frame holds its schema feedback until the batch commits, as a
+     * deferred frame holds it until its group commits. The ack that covers the
+     * batch carries it.
+     */
+    @Test
+    public void testCommitBatchCarriesSchemaFeedbackOfItsFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("CREATE TABLE tab (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final TableToken token = engine.verifyTableName("tab");
+            final long txnBefore = engine.getTableSequencerAPI().lastTxn(token);
+            try (Connection connection = new Connection(
+                    engine,
+                    httpConfig,
+                    AllowAllSecurityContext.INSTANCE,
+                    false,
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(100L, 1_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(200L, 2_000_000L))
+            )) {
+                connection.getState().setSchemaEnabled(true);
+                connection.deliverFrames(2);
+                final ObjList<byte[]> sent = connection.sentFrames();
+                Assert.assertEquals("both frames share one commit", 1, engine.getTableSequencerAPI().lastTxn(token) - txnBefore);
+                final ObjList<WebSocketResponse> responses = readResponses(sent);
+                Assert.assertEquals("one ack covers the batch", 1, responses.size());
+                final WebSocketResponse ack = responses.getQuick(0);
+                Assert.assertTrue(ack.isSuccess());
+                Assert.assertEquals(1, ack.getSequence());
+                Assert.assertFalse(ack.isSchemaInvalidation());
+                Assert.assertEquals(1, ack.getSchemaUpdateCount());
+                Assert.assertEquals("tab", ack.getSchemaUpdateTableName(0));
+            }
+            drainWalQueue();
+            assertQuery("SELECT v FROM tab").noLeakCheck().expectSize().returns("v\n100\n200\n");
         });
     }
 
@@ -888,6 +929,69 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                 clientEncodedFrame(1, "a"));
     }
 
+    /**
+     * A schema control frame's reply send can block like an ack, so the receive loop
+     * commits a pending batch before the frame, as it does before a PING. The DESCRIBE
+     * therefore splits the batch: the frame before it commits and is acked on its own,
+     * the frame after it opens a new batch, and nothing is abandoned.
+     */
+    @Test
+    public void testSchemaControlFrameCommitsPendingBatchFirst() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("CREATE TABLE tab (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final TableToken token = engine.verifyTableName("tab");
+            final long txnBefore = engine.getTableSequencerAPI().lastTxn(token);
+            try (Connection connection = new Connection(
+                    engine,
+                    httpConfig,
+                    AllowAllSecurityContext.INSTANCE,
+                    false,
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(100L, 1_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, QwpSchemaProtocol.encodeDescribe(7, "tab")),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(200L, 2_000_000L))
+            )) {
+                connection.getState().setSchemaEnabled(true);
+                Assert.assertFalse(connection.deliverFrames(3));
+                final ObjList<byte[]> sent = connection.sentFrames();
+                Assert.assertEquals("the DESCRIBE splits the batch",
+                        2, engine.getTableSequencerAPI().lastTxn(token) - txnBefore);
+                // Each commit has its own ack: the DESCRIBE's reply flushes the first,
+                // the end of the pass the second.
+                final ObjList<WebSocketResponse> responses = readResponses(sent);
+                Assert.assertEquals(2, responses.size());
+                for (int i = 0; i < 2; i++) {
+                    Assert.assertTrue(responses.getQuick(i).isSuccess());
+                    Assert.assertEquals(i, responses.getQuick(i).getSequence());
+                }
+
+                QwpSchemaResponse reply = null;
+                for (int i = 0, n = sent.size(); i < n; i++) {
+                    final byte[] payload = framePayload(sent.getQuick(i));
+                    if (isSchemaControlReply(payload)) {
+                        Assert.assertNull("one DESCRIBE, one reply", reply);
+                        final long ptr = Unsafe.malloc(payload.length, MemoryTag.NATIVE_DEFAULT);
+                        try {
+                            for (int b = 0; b < payload.length; b++) {
+                                Unsafe.putByte(ptr + b, payload[b]);
+                            }
+                            reply = QwpSchemaProtocol.decodeResponse(ptr, payload.length);
+                        } finally {
+                            Unsafe.free(ptr, payload.length, MemoryTag.NATIVE_DEFAULT);
+                        }
+                    }
+                }
+                // The harness's HTTP context is not authenticated, so the reply is DENIED.
+                // The test checks only that the DESCRIBE is answered.
+                Assert.assertNotNull("the DESCRIBE must be answered", reply);
+                Assert.assertEquals(7, reply.getRequestId());
+                Assert.assertEquals(QwpSchemaProtocol.RESULT_DENIED, reply.getResult());
+            }
+            drainWalQueue();
+            assertQuery("SELECT v FROM tab").noLeakCheck().expectSize().returns("v\n100\n200\n");
+        });
+    }
+
     @Test
     public void testSingleBlockFramesRetainOneCommit() throws Exception {
         assertConservativeBoundaryTransactions(1, 3,
@@ -964,6 +1068,18 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         return index < 0 ? -1 : frames.getQuick(index)[2];
     }
 
+    // The payload of an unmasked server frame no larger than a 16-bit extended length.
+    private static byte[] framePayload(byte[] frame) {
+        int length = frame[1] & 0x7F;
+        Assert.assertNotEquals("unexpected 64-bit frame length", 127, length);
+        int offset = 2;
+        if (length == 126) {
+            length = ((frame[2] & 0xFF) << 8) | (frame[3] & 0xFF);
+            offset = 4;
+        }
+        return Arrays.copyOfRange(frame, offset, offset + length);
+    }
+
     private static HttpFullFatServerConfiguration httpConfigWithMaxUncommittedRows(long maxUncommittedRows) {
         final LineHttpProcessorConfiguration lineConfig = new DefaultLineHttpProcessorConfiguration(configuration) {
             @Override
@@ -999,6 +1115,13 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         return -1;
     }
 
+    private static boolean isSchemaControlReply(byte[] payload) {
+        return payload.length > QwpConstants.HEADER_OFFSET_FLAGS
+                && (readLeShort(payload, QwpConstants.HEADER_OFFSET_MAGIC)
+                | readLeShort(payload, QwpConstants.HEADER_OFFSET_MAGIC + 2) << 16) == QwpConstants.MAGIC_MESSAGE
+                && (payload[QwpConstants.HEADER_OFFSET_FLAGS] & QwpConstants.FLAG_CONTROL) != 0;
+    }
+
     private static byte[] oversizedFrameHeader(long len) {
         // BINARY, FIN, masked, 64-bit length above the configured receive buffer;
         // the payload never needs to arrive: the header alone is refused.
@@ -1010,6 +1133,35 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         }
         System.arraycopy(DEFAULT_MASK_KEY, 0, header, 10, 4);
         return header;
+    }
+
+    // Decodes every ack and error frame the server sent with the pinned client's
+    // decoder, on a connection that negotiated schema support, so schema feedback
+    // is decoded too. Skips schema control replies, which carry the QWP header.
+    private static ObjList<WebSocketResponse> readResponses(ObjList<byte[]> frames) {
+        final ObjList<WebSocketResponse> responses = new ObjList<>();
+        for (int i = 0, n = frames.size(); i < n; i++) {
+            final byte[] frame = frames.getQuick(i);
+            if ((frame[0] & 0x0F) != WebSocketOpcode.BINARY) {
+                continue;
+            }
+            final byte[] payload = framePayload(frame);
+            if (isSchemaControlReply(payload)) {
+                continue;
+            }
+            final long ptr = Unsafe.malloc(payload.length, MemoryTag.NATIVE_DEFAULT);
+            try {
+                for (int b = 0; b < payload.length; b++) {
+                    Unsafe.putByte(ptr + b, payload[b]);
+                }
+                final WebSocketResponse response = new WebSocketResponse();
+                Assert.assertTrue(response.readFrom(ptr, payload.length, true));
+                responses.add(response);
+            } finally {
+                Unsafe.free(ptr, payload.length, MemoryTag.NATIVE_DEFAULT);
+            }
+        }
+        return responses;
     }
 
     private static byte[][] toArray(ObjList<byte[]> frames) {

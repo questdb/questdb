@@ -1924,7 +1924,7 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                         }
                     } catch (ArithmeticException e) {
                         if (expected2 == null && protocolVersion == PROTOCOL_VERSION_V1) {
-                            TestUtils.assertContains(e.getMessage(), "long overflow");
+                            // HotSpot fast-throw can omit the exception message after repeated overflows.
                         } else {
                             throw e;
                         }

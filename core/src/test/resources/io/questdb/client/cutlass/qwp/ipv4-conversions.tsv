@@ -1,0 +1,17 @@
+# case_id	input_kind	input	outcome	expected_hex	expected_text
+typed_null	INT	0	NULL	00000000	<NULL>
+typed_low	INT	1	VALUE	00000001	0.0.0.1
+typed_int_min	INT	-2147483648	VALUE	80000000	128.0.0.0
+typed_high_bit	INT	-1062731519	VALUE	c0a80101	192.168.1.1
+typed_all_bits	INT	-1	VALUE	ffffffff	255.255.255.255
+text_private	TEXT	10.20.30.40	VALUE	0a141e28	10.20.30.40
+text_normalized	TEXT	.....1.2.3.4......	VALUE	01020304	1.2.3.4
+text_normalized_null	TEXT	.0.0.0.0.	NULL	00000000	<NULL>
+text_null_literal	TEXT	null	INVALID	-	-
+text_null_literal_upper	TEXT	NULL	INVALID	-	-
+text_zero_literal	TEXT	0.0.0.0	INVALID	-	-
+text_empty	TEXT		INVALID	-	-
+text_bad_octet	TEXT	1.2.3.256	INVALID	-	-
+text_bad_character	TEXT	1.2.3.x	INVALID	-	-
+text_single_dot	TEXT	.	INVALID	-	-
+text_only_dots	TEXT	....	INVALID	-	-

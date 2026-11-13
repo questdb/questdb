@@ -1,0 +1,8 @@
+case_id	target	input_kind	input	feature
+runtime_two_digit_year	TIMESTAMP	TEXT	24-01-02 03:04:05.006Z	reference_century
+runtime_greedy_negative_year	TIMESTAMP	TEXT	-1-01-01 00:00:00.000Z	greedy_year_reference
+runtime_zone_gap	TIMESTAMP	TEXT	2024-03-31T02:30:00Europe/Berlin	tzdb_gap
+runtime_zone_overlap	TIMESTAMP	TEXT	2024-10-27T02:30:00europe/berlin	tzdb_overlap_case
+runtime_zone_alias	TIMESTAMP	TEXT	2024-01-02T03:04:05EST	zone_alias
+runtime_historic_zone	TIMESTAMP	TEXT	1880-01-01T00:00:00Europe/Berlin	tzdb_history
+runtime_wrapped_zone	TIMESTAMP	TEXT	3509450-07-01 00:00:00.000Europe/Berlin	parsed_year_rules

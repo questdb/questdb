@@ -183,10 +183,13 @@ public class QwpAckSeqTxnCoverageBlackBoxTest extends AbstractQwpBootstrapTest {
                 server.execute("CREATE TABLE boundary_b (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 final List<byte[]> frames;
                 try (AckTee tee = new AckTee(HTTP_PORT, 0, 2)) {
+                    // schema_mode=off keeps schema lookups off the wire, so the tee's
+                    // first two client frames are the two data frames.
                     try (Sender sender = Sender.builder(Sender.Transport.WEBSOCKET)
                             .address("localhost:" + tee.localPort())
                             .autoFlushRows(0).autoFlushBytes(0)
-                            .autoFlushIntervalMillis(AUTO_FLUSH_INTERVAL_MILLIS).build()) {
+                            .autoFlushIntervalMillis(AUTO_FLUSH_INTERVAL_MILLIS)
+                            .schemaMode(Sender.SchemaMode.OFF).build()) {
                         sender.table("boundary_a").longColumn("val", 1).at(1_000_000L, ChronoUnit.MICROS);
                         sender.flush();
                         sender.table("boundary_a").longColumn("val", 2).at(2_000_000L, ChronoUnit.MICROS);
@@ -283,7 +286,9 @@ public class QwpAckSeqTxnCoverageBlackBoxTest extends AbstractQwpBootstrapTest {
                 final List<SenderError> errors = new CopyOnWriteArrayList<>();
                 // The tee hands the server the connection's first three frames in one write.
                 // They share one schema, so the second and third join the first's commit
-                // batch, and the third fails on its own value while joining.
+                // batch, and the third fails on its own value while joining. schema_mode=off
+                // ships the bad UUID text to the server, which a schema-aware sender would
+                // refuse locally, and keeps schema lookups out of the coalesced frames.
                 try (AckTee tee = new AckTee(HTTP_PORT, 0, 3)) {
                     final Sender sender = Sender.builder(Sender.Transport.WEBSOCKET)
                             .address("localhost:" + tee.localPort())
@@ -292,6 +297,7 @@ public class QwpAckSeqTxnCoverageBlackBoxTest extends AbstractQwpBootstrapTest {
                             .autoFlushIntervalMillis(AUTO_FLUSH_INTERVAL_MILLIS)
                             .closeFlushTimeoutMillis(CLOSE_FLUSH_TIMEOUT_MILLIS)
                             .errorHandler(errors::add)
+                            .schemaMode(Sender.SchemaMode.OFF)
                             .build();
                     try {
                         sender.table("u").stringColumn("id", "11111111-1111-1111-1111-111111111111").at(1_000_000L, ChronoUnit.MICROS);
@@ -520,14 +526,15 @@ public class QwpAckSeqTxnCoverageBlackBoxTest extends AbstractQwpBootstrapTest {
     }
 
     // Parses one server frame payload; readFrom copies what it keeps, so the native
-    // copy is freed before the caller reads the response.
+    // copy is freed before the caller reads the response. The real sender negotiates
+    // schema support, so its acks may carry schema feedback.
     private static boolean readResponse(WebSocketResponse response, byte[] payload) {
         final long ptr = Unsafe.malloc(payload.length, MemoryTag.NATIVE_DEFAULT);
         try {
             for (int i = 0; i < payload.length; i++) {
                 Unsafe.putByte(ptr + i, payload[i]);
             }
-            return response.readFrom(ptr, payload.length);
+            return response.readFrom(ptr, payload.length, true);
         } finally {
             Unsafe.free(ptr, payload.length, MemoryTag.NATIVE_DEFAULT);
         }

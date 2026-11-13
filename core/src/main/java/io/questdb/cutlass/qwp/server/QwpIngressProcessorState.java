@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitFailedException;
 import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.DurabilityTier;
 import io.questdb.cairo.wal.DurableAckRegistry;
 import io.questdb.cairo.wal.WalWriter;
@@ -48,6 +49,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.CharSequenceLongHashMap;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -123,6 +125,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     // emits the close response with pendingCloseResponseCode, then disconnects.
     static final int SEND_STATE_RESUME_ACK_THEN_CLOSE_RESPONSE = 12;
     static final int SEND_STATE_RESUME_DURABLE_ACK_THEN_CLOSE_RESPONSE = 13;
+    static final int SEND_STATE_RESUME_SCHEMA = 14;
     static final int SEND_STATE_RESUME_DRAIN_THEN_CLOSE = 10;
     static final int SEND_STATE_RESUME_DURABLE_ACK = 4;
     static final int SEND_STATE_RESUME_DURABLE_ACK_THEN_CLOSE = 8;
@@ -136,6 +139,13 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     private final ObjList<String> connectionSymbolDict = new ObjList<>();
     private final StringSink deferredCloseReason = new StringSink();
     private final StringSink deferredErrorMessage = new StringSink();
+    // The four *SchemaFeedback sets are bounded by QwpTudCache's configured
+    // distinct-table cap, plus at most the terminal table name whose TUD lookup
+    // exceeded that cap. deferredSchemaFeedback holds the feedback of frames whose
+    // rows are appended but not committed: the open FLAG_DEFER_COMMIT group's or
+    // the commit batch's. The two never coexist: a batch opens only with no
+    // deferred group open, and a deferred frame commits the batch first.
+    private final LowerCaseCharSequenceObjHashMap<String> deferredSchemaFeedback = new LowerCaseCharSequenceObjHashMap<>();
     private final CharSequenceLongHashMap durableProgressSnapshot = new CharSequenceLongHashMap();
     private final CairoEngine engine;
     private final StringSink error = new StringSink();
@@ -153,17 +163,22 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     private final CharSequenceLongHashMap localDurableProgressSnapshot = new CharSequenceLongHashMap();
     private final long maxBufferSize;
     private final int maxResponseErrorMessageLength;
+    private final LowerCaseCharSequenceObjHashMap<String> messageSchemaFeedback = new LowerCaseCharSequenceObjHashMap<>();
+    private final LowerCaseCharSequenceObjHashMap<String> pendingAckSchemaFeedback = new LowerCaseCharSequenceObjHashMap<>();
     private final CharSequenceLongHashMap pendingAckSeqTxns = new CharSequenceLongHashMap();
     // Wire seqTxn of the latest commit per table name that no durable ack has covered yet, for the
     // name's current incarnation (tableIncarnations). Older incarnations still owed an ack sit in
     // retiredIncarnations.
     private final CharSequenceLongHashMap pendingDurableSeqTxns = new CharSequenceLongHashMap();
+    private final LowerCaseCharSequenceObjHashMap<String> pendingErrorSchemaFeedback = new LowerCaseCharSequenceObjHashMap<>();
     private final StringSink rejectMsg = new StringSink();
     // Earlier incarnations of a table name (drop + re-create, or rename + re-create) whose commits this
     // connection still owes a durable ack, oldest first. Empty in steady state; see recordCommittedTable.
     private final ObjList<TableIncarnation> retiredIncarnations = new ObjList<>();
     private final StringSink roleChangeCloseReason = new StringSink();
     private final CharSequenceLongHashMap resumeAckSeqTxns = new CharSequenceLongHashMap();
+    // scratch for the table name decoded from a DESCRIBE control message
+    private final StringSink schemaControlTableName = new StringSink();
     private final ConnectionSymbolCache symbolCache = new ConnectionSymbolCache();
     // Per table name, the directory this connection last committed to and how that incarnation's
     // seqTxns map onto the wire. Kept for the connection's lifetime -- the client keeps its per-name
@@ -275,6 +290,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     // server never wrote. Enforced in setHighestProcessedSequence.
     private long firstUnresolvedSequence = -1;
     private SecurityContext securityContext;
+    private boolean schemaEnabled;
     // Lowest sequence of a FLAG_DEFER_COMMIT frame that appended NO rows and is
     // still uncovered; -1 when there is none. Survives per-message clear();
     // reset by a successful commitAll and by onDisconnected().
@@ -536,6 +552,8 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         markSequenceUnresolved(firstCommitBatchSequence);
         tudCache.setDistressed();
         resetCommitBatch();
+        // The batch's rows roll back, so its frames' schema feedback goes out with the error.
+        failUncommittedSchemaFeedback();
     }
 
     /**
@@ -591,6 +609,8 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         final long lastSeq = lastCommitBatchSequence;
         resetCommitBatch();
         setHighestProcessedSequence(lastSeq);
+        // The ack that covers the batch carries its frames' schema feedback.
+        promoteUncommittedSchemaFeedback();
         return true;
     }
 
@@ -736,6 +756,26 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             size += 2 + Utf8s.utf8Bytes(keys.getQuick(i)) + 8;
         }
         return size;
+    }
+
+    public void finishMessageSchemaFeedback(boolean success, boolean committed) {
+        if (!schemaEnabled) {
+            return;
+        }
+        if (success) {
+            if (committed) {
+                pendingAckSchemaFeedback.putAll(deferredSchemaFeedback);
+                pendingAckSchemaFeedback.putAll(messageSchemaFeedback);
+                deferredSchemaFeedback.clear();
+            } else {
+                deferredSchemaFeedback.putAll(messageSchemaFeedback);
+            }
+        } else {
+            pendingErrorSchemaFeedback.putAll(deferredSchemaFeedback);
+            pendingErrorSchemaFeedback.putAll(messageSchemaFeedback);
+            deferredSchemaFeedback.clear();
+        }
+        messageSchemaFeedback.clear();
     }
 
     public int computeLocalDurableAckPayloadSize() {
@@ -914,6 +954,10 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
 
     public boolean isOk() {
         return currentStatus == Status.OK;
+    }
+
+    public boolean isSchemaEnabled() {
+        return schemaEnabled;
     }
 
     /**
@@ -1255,6 +1299,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         resumeAckSeqTxns.clear();
         resumeAckSeqTxns.putAll(pendingAckSeqTxns);
         pendingAckSeqTxns.clear();
+        pendingAckSchemaFeedback.clear();
     }
 
     /**
@@ -1263,6 +1308,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     public void onAckSent(long sequence) {
         lastAckedSequence = sequence;
         pendingAckSeqTxns.clear();
+        pendingAckSchemaFeedback.clear();
     }
 
     /**
@@ -1428,12 +1474,17 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         firstUnresolvedSequence = -1;
         firstRowlessDeferredSequence = -1;
         wsHandshakeSent = false;
+        schemaEnabled = false;
 
         // Drop any durable-ack state; the connection is going away, so even if
         // uploads complete later, there is nobody left to notify.
         durableAckEnabled = false;
         durableAckTiers = DurabilityTier.NONE;
         pendingAckSeqTxns.clear();
+        pendingAckSchemaFeedback.clear();
+        pendingErrorSchemaFeedback.clear();
+        messageSchemaFeedback.clear();
+        deferredSchemaFeedback.clear();
         pendingDurableSeqTxns.clear();
         resumeAckSeqTxns.clear();
         lastDurableSeqTxns.clear();
@@ -1480,6 +1531,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
 
     public void onErrorSent() {
         clearDeferredError();
+        pendingErrorSchemaFeedback.clear();
         sendState = SEND_STATE_READY;
     }
 
@@ -1602,6 +1654,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
 
     public void onResumeErrorComplete() {
         clearDeferredError();
+        pendingErrorSchemaFeedback.clear();
         sendState = SEND_STATE_READY;
     }
 
@@ -1612,6 +1665,14 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      */
     public void onResumePongComplete() {
         sendState = SEND_STATE_READY;
+    }
+
+    public void onResumeSchemaComplete() {
+        sendState = SEND_STATE_READY;
+    }
+
+    public void onSchemaBlocked() {
+        sendState = SEND_STATE_RESUME_SCHEMA;
     }
 
     public void prepareMessage() {
@@ -1678,13 +1739,19 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             QwpTableBlockCursor tableBlock = preparedTableBlock;
             preparedTableBlock = null;
             while (tableBlock != null) {
-                WalTableUpdateDetails tud = tudCache.getTableUpdateDetails(
-                        securityContext,
-                        tableBlock.getTableNameUtf8(),
-                        tableBlock.getSchema(),
-                        tableBlock,
-                        configuration.getQwpMaxTablesPerConnection()
-                );
+                WalTableUpdateDetails tud;
+                try {
+                    tud = tudCache.getTableUpdateDetails(
+                            securityContext,
+                            tableBlock.getTableNameUtf8(),
+                            tableBlock.getSchema(),
+                            tableBlock,
+                            configuration.getQwpMaxTablesPerConnection()
+                    );
+                } catch (CairoException e) {
+                    captureFailedTableSchemaFeedback(tableBlock, e);
+                    throw e;
+                }
                 if (tud == null) {
                     rejectMsg.clear();
                     rejectMsg.put("failed to create table update details for: ").put(tableBlock.getTableName());
@@ -1695,7 +1762,11 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
                 // Read BEFORE the append: the cursor is consumed by it, and a
                 // metadata-change retry resets row iteration.
                 final boolean blockHasRows = tableBlock.getRowCount() > 0;
-                walAppender.appendToWalStreaming(securityContext, tableBlock, tud);
+                try {
+                    walAppender.appendToWalStreaming(securityContext, tableBlock, tud);
+                } finally {
+                    captureSchemaFeedback(tud);
+                }
                 if (blockHasRows) {
                     messageAppendedRows = true;
                     frameRowTud = tud;
@@ -1845,6 +1916,10 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         this.recvBufferLen = recvBufferLen;
     }
 
+    public void setSchemaEnabled(boolean schemaEnabled) {
+        this.schemaEnabled = schemaEnabled;
+    }
+
     public void setWsHandshakeSent(boolean wsHandshakeSent) {
         this.wsHandshakeSent = wsHandshakeSent;
     }
@@ -1895,6 +1970,22 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         return offset;
     }
 
+    LowerCaseCharSequenceObjHashMap<String> getPendingAckSchemaFeedback() {
+        return pendingAckSchemaFeedback;
+    }
+
+    LowerCaseCharSequenceObjHashMap<String> getPendingErrorSchemaFeedback() {
+        return pendingErrorSchemaFeedback;
+    }
+
+    StringSink getSchemaControlTableName() {
+        return schemaControlTableName;
+    }
+
+    SecurityContext getSecurityContext() {
+        return securityContext;
+    }
+
     private static Status cairoExceptionStatus(CairoException e) {
         if (e.isAuthorizationError()) {
             return Status.SECURITY_ERROR;
@@ -1906,6 +1997,71 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             return Status.PARSE_ERROR;
         }
         return e.isCritical() ? Status.INTERNAL_ERROR : Status.NOT_ACCEPTING_WRITES;
+    }
+
+    private void failUncommittedSchemaFeedback() {
+        if (schemaEnabled) {
+            pendingErrorSchemaFeedback.putAll(deferredSchemaFeedback);
+            deferredSchemaFeedback.clear();
+        }
+    }
+
+    private void promoteUncommittedSchemaFeedback() {
+        if (schemaEnabled) {
+            pendingAckSchemaFeedback.putAll(deferredSchemaFeedback);
+            deferredSchemaFeedback.clear();
+        }
+    }
+
+    private void captureSchemaFeedback(WalTableUpdateDetails tud) {
+        if (!schemaEnabled) {
+            return;
+        }
+        String tableName = tud.getTableToken().getTableName();
+        try {
+            long version = tud.getWriter().getMetadataVersion();
+            if (tud.getReportedSchemaVersion() == version) {
+                // Feedback only spares the client a DESCRIBE, so a table needs it
+                // once per schema version on this connection.
+                return;
+            }
+            tud.setReportedSchemaVersion(version);
+        } catch (CairoException e) {
+            LOG.info().$("could not read QWP schema version; scheduling schema feedback [table=")
+                    .$safe(tableName).$(", error=").$safe(e.getFlyweightMessage()).I$();
+        }
+        if (tableName != null) {
+            messageSchemaFeedback.put(tableName, tableName);
+        }
+    }
+
+    private void captureFailedTableSchemaFeedback(QwpTableBlockCursor tableBlock, CairoException failure) {
+        if (!schemaEnabled || failure.isAuthorizationError()) {
+            return;
+        }
+        String requestedName = tableBlock.getTableName().toString();
+        final String feedbackName;
+        final TableToken token;
+        try {
+            token = engine.getTableTokenIfExists(requestedName);
+        } catch (CairoException e) {
+            // Preserve the original ingestion failure. The response-time
+            // snapshot will either authorize and resolve this name or turn
+            // the whole feedback set into INVALIDATE_ALL.
+            messageSchemaFeedback.put(requestedName, requestedName);
+            return;
+        }
+        if (token == null) {
+            feedbackName = requestedName;
+        } else {
+            try {
+                securityContext.authorizeInsert(token);
+            } catch (CairoException e) {
+                return;
+            }
+            feedbackName = token.getTableName();
+        }
+        messageSchemaFeedback.put(feedbackName, feedbackName);
     }
 
     private static long readFrontier(DurableAckRegistry registry, boolean isReplicatedTier, CharSequence tableDirName) {
@@ -1998,14 +2154,14 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             if (e.getErrorCode() != QwpParseException.ErrorCode.DELTA_DICT_GAP) {
                 streamingDecoder.releaseCachedResources();
             }
-            LOG.error().$('[').$(fd).$("] QWP v1 parse error: ").$(e.getFlyweightMessage()).$();
+            LOG.error().$('[').$(fd).$("] QWP v1 parse error: ").$safe(e.getFlyweightMessage()).$();
             reject(statusForParseError(e.getErrorCode()), e.getFlyweightMessage(), fd);
         } else if (th instanceof CommitFailedException e) {
-            LOG.error().$('[').$(fd).$("] commit failed: ").$(e.getMessage()).$();
+            LOG.error().$('[').$(fd).$("] commit failed: ").$safe(e.getMessage()).$();
             tudCache.setDistressed();
             rejectCommitError(e.getReason());
         } else if (th instanceof CairoException e) {
-            LOG.error().$('[').$(fd).$("] cairo error: ").$(e.getFlyweightMessage()).$();
+            LOG.error().$('[').$(fd).$("] cairo error: ").$safe(e.getFlyweightMessage()).$();
             rejectCairoError(e);
         } else {
             LOG.critical().$('[').$(fd).$("] unexpected error: ").$(th).$();
