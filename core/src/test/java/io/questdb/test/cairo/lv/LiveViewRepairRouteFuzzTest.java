@@ -196,7 +196,9 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
         // one was steered onto it: the key budget declined the chains of runs 1, 4 and 8, the
         // count guard those of runs 2 and 5, and a repair the main loop parked took the passes of
         // runs 0, 3, 6, 7 and 9. The steered runs 0, 2, 4, 6 and 8 truncate whatever they drew,
-        // one each; the drawn ones still miss, run 1's on the key budget.
+        // one each; the drawn ones still miss, run 1's on the key budget. Run 2 drew the chain
+        // count 0 and the key budget 1, so its steered departure, whose repair runs under the
+        // defaults, also checks that the rest of the run gets those draws back.
         runBatch(STEER_ANCHORS, TestUtils.generateRandom(LOG, 6340059912079L, 1794566112891L));
         Assert.assertEquals(5, coverage.get(LiveViewRefreshStats.SPLICE_FRONTIER_TRUNCATE_COUNT));
         Assert.assertEquals(1, coverage.get(LiveViewRefreshStats.RESUME_CHAIN_KEY_BUDGET_DECLINE_COUNT));
@@ -780,7 +782,8 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
      * seals a root on its own, and runs the REPLACE_RANGE's repair under the configured chain
      * count and key budget: the repair truncates its splice at the new frontier, the late row or
      * the kept batch's newest row, and leaves the head on a root there, and the episode asserts
-     * both.
+     * both. It then gives the rest of the run its drawn chain count and key budget back, and
+     * asserts that too.
      */
     private void departureEpisode(
             Rnd rnd,
@@ -844,6 +847,21 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
             if (isTruncateSteered) {
                 knobs.apply(AbstractLiveViewTest::setProperty);
             }
+        }
+        if (isTruncateSteered) {
+            // The rest of the run - lateMode 2's late row, the passes past the duration cadence and
+            // a Berlin run's dstFrontierEpisode - repairs under the run's own draws again. A key
+            // budget drawn at DEFAULT reads the server default, 100,000.
+            Assert.assertEquals(
+                    "the steered departure gives the run its drawn chain count back",
+                    knobs.maxChainedBoundaries,
+                    engine.getConfiguration().getLiveViewCheckpointRepairMaxChainedBoundaries()
+            );
+            Assert.assertEquals(
+                    "and its drawn key budget",
+                    knobs.scanMaxKeys == LiveViewFuzzKnobs.DEFAULT ? 100_000L : knobs.scanMaxKeys,
+                    engine.getConfiguration().getLiveViewCheckpointRepairScanMaxKeys()
+            );
         }
         if (lateMode == 2) {
             insertSynthetic(lateTs);
