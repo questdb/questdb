@@ -25,14 +25,18 @@
 package io.questdb.test.cutlass.websocket;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.wal.DurableAckRegistry;
+import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.client.cutlass.qwp.client.GlobalSymbolDictionary;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketEncoder;
@@ -47,21 +51,30 @@ import io.questdb.cutlass.qwp.server.QwpIngressUpgradeProcessor;
 import io.questdb.cutlass.qwp.websocket.WebSocketCloseCode;
 import io.questdb.cutlass.qwp.websocket.WebSocketOpcode;
 import io.questdb.griffin.SqlException;
+import io.questdb.mp.continuation.SuspensionScope;
+import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.ServerDisconnectException;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import io.questdb.std.datetime.MicrosecondClock;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.QueryAssertion;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
+import io.questdb.test.cairo.Overrides;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
+import io.questdb.test.cairo.wal.WalFlushCountingFacade;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -107,6 +120,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     private static final long FUZZ_PINNED_SEED1 = 8_483_050L;
     private static final int FUZZ_PING = 11;
     private static final int FUZZ_PLAIN = 0;
+    // Seeds of testCommitBatchFuzzGeneratesPrepareFaults' fault Rnd.
+    private static final long FUZZ_PREPARE_FAULT_SEED0 = 12_345L;
+    private static final long FUZZ_PREPARE_FAULT_SEED1 = 67_890L;
     private static final int FUZZ_ROWLESS_DEFERRED = 10;
     private static final int FUZZ_SCHEMA_MISMATCH = 6;
     // Seeds of testCommitBatchFuzzGeneratesRewindShapes.
@@ -130,6 +146,21 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
             109
             """;
     private final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+
+    @Test
+    public void testBatchCommitFlushesNoPrivateFileUnderLockAdaptive() throws Exception {
+        assertBatchCommitFlushesNoPrivateFileUnderLock(CommitMode.ADAPTIVE, 50_000);
+    }
+
+    @Test
+    public void testBatchCommitFlushesNoPrivateFileUnderLockAdaptiveNoWindow() throws Exception {
+        assertBatchCommitFlushesNoPrivateFileUnderLock(CommitMode.ADAPTIVE, 0);
+    }
+
+    @Test
+    public void testBatchCommitFlushesNoPrivateFileUnderLockSync() throws Exception {
+        assertBatchCommitFlushesNoPrivateFileUnderLock(CommitMode.SYNC, 0);
+    }
 
     @Test
     public void testBatchCommitTakesRoleSwitchLockOnce() throws Exception {
@@ -360,15 +391,54 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
      * frames that add a column to t.
      */
     @Test
-    public void testCommitBatchAckContractFuzz() throws Exception {
-        assertMemoryLeak(() -> {
-            final Rnd rnd = TestUtils.generateRandom(LOG);
-            final ObjList<FuzzIteration> iterations = new ObjList<>();
-            for (int iteration = 0; iteration < 150; iteration++) {
-                iterations.add(generateCommitBatchFuzzIteration(rnd, iteration));
+    public void testCommitBatchAckContractFuzzAdaptive() throws Exception {
+        assertCommitBatchAckContractFuzz(CommitMode.ADAPTIVE, 50_000, 150);
+    }
+
+    @Test
+    public void testCommitBatchAckContractFuzzAdaptiveNoWindow() throws Exception {
+        assertCommitBatchAckContractFuzz(CommitMode.ADAPTIVE, 0, 60);
+    }
+
+    @Test
+    public void testCommitBatchAckContractFuzzAsync() throws Exception {
+        assertCommitBatchAckContractFuzz(CommitMode.ASYNC, 50_000, 150);
+    }
+
+    @Test
+    public void testCommitBatchAckContractFuzzNosync() throws Exception {
+        assertCommitBatchAckContractFuzz(CommitMode.NOSYNC, 50_000, 150);
+    }
+
+    @Test
+    public void testCommitBatchAckContractFuzzSync() throws Exception {
+        // SYNC fdatasyncs every commit: fewer iterations keep the leg within the CI budget.
+        assertCommitBatchAckContractFuzz(CommitMode.SYNC, 0, 60);
+    }
+
+    /**
+     * From fixed seeds of the fault Rnd, the fuzz draws prepare faults, transient and persistent, on iterations
+     * with a commit batch of more than one table, under a mode that prepares.
+     */
+    @Test
+    public void testCommitBatchFuzzGeneratesPrepareFaults() {
+        final Rnd rnd = new Rnd(FUZZ_SHAPES_SEED0, FUZZ_SHAPES_SEED1);
+        final Rnd faultRnd = new Rnd(FUZZ_PREPARE_FAULT_SEED0, FUZZ_PREPARE_FAULT_SEED1);
+        int transientFaults = 0;
+        int persistentFaults = 0;
+        for (int iteration = 0; iteration < 60; iteration++) {
+            final FuzzIteration it = generateCommitBatchFuzzIteration(rnd, iteration);
+            drawPrepareFault(faultRnd, it);
+            if (it.prepareFaultTable > -1 && it.hasPlainFrameOfOtherTableThan(it.prepareFaultTable)) {
+                if (it.isPrepareFaultTransient) {
+                    transientFaults++;
+                } else {
+                    persistentFaults++;
+                }
             }
-            runCommitBatchFuzz(iterations);
-        });
+        }
+        Assert.assertTrue("a transient prepare fault in a multi-table batch", transientFaults > 0);
+        Assert.assertTrue("a persistent prepare fault in a multi-table batch", persistentFaults > 0);
     }
 
     /**
@@ -413,13 +483,55 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
             Assert.assertTrue("test setup: the seed must generate the pinned rewind shape [" + it + ']', it.hasPinnedRewindShape());
             final ObjList<FuzzIteration> iterations = new ObjList<>();
             iterations.add(it);
-            runCommitBatchFuzz(iterations);
+            runCommitBatchFuzz(iterations, CommitMode.fromString(Overrides.getTestCommitMode()), 50_000);
         });
     }
 
     /**
      * Each table commits once, and one ack covers every frame.
      */
+    @Test
+    public void testCommitBatchPreparesOnlyUnderSyncAndAdaptive() throws Exception {
+        assertMemoryLeak(() -> {
+            final int[] modes = {CommitMode.SYNC, CommitMode.ADAPTIVE, CommitMode.ADAPTIVE, CommitMode.NOSYNC, CommitMode.ASYNC};
+            final long[] windows = {0, 50_000, 0, 0, 0};
+            for (int m = 0; m < modes.length; m++) {
+                final String a = "pa" + m;
+                final String b = "pb" + m;
+                createTables(a, b);
+                try (CairoEngine pinnedEngine = new CairoEngine(pinnedConfiguration(modes[m], windows[m], TestFilesFacadeImpl.INSTANCE))) {
+                    assertPinnedMode(pinnedEngine, modes[m], windows[m]);
+                    final boolean isPrepared = modes[m] == CommitMode.SYNC || modes[m] == CommitMode.ADAPTIVE;
+                    final boolean[] wasPreparedInHook = {false};
+                    final ObjList<byte[]> sent;
+                    try (Connection connection = new Connection(
+                            pinnedEngine,
+                            httpConfig,
+                            AllowAllSecurityContext.INSTANCE,
+                            false,
+                            createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(a, 100L, 1_000_000L)),
+                            createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(b, 200L, 2_000_000L)),
+                            createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(a, 300L, 3_000_000L))
+                    )) {
+                        final QwpIngressProcessorState state = connection.getState();
+                        state.setAfterPreparePhaseHook(() -> wasPreparedInHook[0] = state.getCommitBatchWriter(0).isCommitPrepared()
+                                && state.getCommitBatchWriter(1).isCommitPrepared());
+                        connection.deliverFrames(3);
+                        sent = connection.sentFrames();
+                        Assert.assertEquals(CommitMode.toString(modes[m]), isPrepared ? 1 : 0, state.getPreparePhaseCount());
+                        Assert.assertEquals(isPrepared, wasPreparedInHook[0]);
+                    }
+                    Assert.assertEquals("one ack covers the pass", 2, maxCumulativeOkAck(sent));
+                    Assert.assertEquals(1, lastTxn(pinnedEngine, a));
+                    Assert.assertEquals(1, lastTxn(pinnedEngine, b));
+                    drainWalQueue(pinnedEngine);
+                    assertHookQuery(pinnedEngine, "SELECT v FROM " + a).expectSize().returns("v\n100\n300\n");
+                    assertHookQuery(pinnedEngine, "SELECT v FROM " + b).expectSize().returns("v\n200\n");
+                }
+            }
+        });
+    }
+
     @Test
     public void testCommitBatchSpansInterleavedTables() throws Exception {
         assertMemoryLeak(() -> {
@@ -499,6 +611,26 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
      * The batch reads the role once, before any table commits: nothing commits or is acked, and the CLOSE follows.
      */
     @Test
+    public void testDemoteAfterPreparePhaseCommitsNothingAdaptive() throws Exception {
+        assertDemoteAfterPreparePhaseCommitsNothing(CommitMode.ADAPTIVE, 50_000, false);
+    }
+
+    @Test
+    public void testDemoteAfterPreparePhaseCommitsNothingAdaptiveWithDurableAck() throws Exception {
+        assertDemoteAfterPreparePhaseCommitsNothing(CommitMode.ADAPTIVE, 50_000, true);
+    }
+
+    @Test
+    public void testDemoteAfterPreparePhaseCommitsNothingSync() throws Exception {
+        assertDemoteAfterPreparePhaseCommitsNothing(CommitMode.SYNC, 0, false);
+    }
+
+    @Test
+    public void testDemoteAfterPreparePhaseCommitsNothingSyncWithDurableAck() throws Exception {
+        assertDemoteAfterPreparePhaseCommitsNothing(CommitMode.SYNC, 0, true);
+    }
+
+    @Test
     public void testDemoteAtBatchCommitCommitsNoTable() throws Exception {
         assertMemoryLeak(() -> {
             createTables("a", "b");
@@ -577,6 +709,45 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
      * Another session drops b while it waits in the batch: a commits, c does not, and b's first frame is NACKed.
      */
     @Test
+    public void testDemoteDuringPreparePhaseCommitsNothing() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables("a", "b", "c");
+            final EventFlushFaultFacade ff = new EventFlushFaultFacade();
+            try (DemotableEngine demotableEngine = new DemotableEngine(pinnedConfiguration(CommitMode.SYNC, 0, ff))) {
+                assertPinnedMode(demotableEngine, CommitMode.SYNC, 0);
+                final int[] walIds = warmWriters(demotableEngine, "a", "b", "c");
+                // The demote publishes REPLICA as table b's prepare flushes its event file.
+                ff.onEventFlush("b~", () -> demotableEngine.isReadOnly.set(true));
+                final ObjList<byte[]> sent;
+                try (Connection connection = new Connection(
+                        demotableEngine,
+                        httpConfig,
+                        AllowAllSecurityContext.INSTANCE,
+                        false,
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 200L, 2_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("c", 300L, 3_000_000L))
+                )) {
+                    final boolean[] isCPrepared = {false};
+                    connection.getState().setAfterPreparePhaseHook(() -> isCPrepared[0] = connection.getState().getCommitBatchWriter(2).isCommitPrepared());
+                    connection.deliverFrames(3);
+                    Assert.assertTrue("test setup: the demote must land in the prepare phase", ff.hasFired);
+                    Assert.assertTrue("the prepare phase finishes after the demote", isCPrepared[0]);
+                    sent = connection.sentFrames();
+                }
+                Assert.assertEquals("only the CLOSE", 1, sent.size());
+                Assert.assertEquals(WebSocketCloseCode.NORMAL_CLOSURE, closeCode(sent.getQuick(0)));
+                Assert.assertEquals(-1, maxCumulativeOkAck(sent));
+                demotableEngine.isReadOnly.set(false);
+                assertWritersReplaced(demotableEngine, walIds, "a", "b", "c");
+                for (String table : new String[]{"a", "b", "c"}) {
+                    Assert.assertEquals(table + " commits nothing", 0, lastTxn(demotableEngine, table));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testDroppedTableInBatchCommitsTablesBeforeIt() throws Exception {
         assertMemoryLeak(() -> {
             createTables("a", "b", "c");
@@ -631,6 +802,67 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                 Assert.assertFalse(hasErrorResponseForSeq(sent, 3));
                 Assert.assertTrue("the ack must precede the NACK",
                         indexOfBinaryFrame(sent, QwpConstants.STATUS_OK, 0) < indexOfErrorResponse(sent, 1));
+            }
+        });
+    }
+
+    @Test
+    public void testDueGroupFlushRunsAfterTheUnlock() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables("a", "b");
+            final WalFlushCountingFacade ff = new WalFlushCountingFacade();
+            final long[] frontierAtUnlock = {-2, -2};
+            setCurrentMicros(1_000_000_000L);
+            try (CairoEngine lockEngine = new CairoEngine(pinnedConfiguration(CommitMode.ADAPTIVE, 50_000, ff)) {
+                private Lock readLock;
+
+                @Override
+                public Lock getRoleSwitchReadLock() {
+                    if (readLock == null) {
+                        final Lock delegate = super.getRoleSwitchReadLock();
+                        final CairoEngine self = this;
+                        readLock = new ForwardingLock(delegate) {
+                            @Override
+                            public void unlock() {
+                                frontierAtUnlock[0] = self.getTableSequencerAPI().getTxnTracker(self.verifyTableName("a")).getLocalDurableSeqTxn();
+                                frontierAtUnlock[1] = self.getTableSequencerAPI().getTxnTracker(self.verifyTableName("b")).getLocalDurableSeqTxn();
+                                super.unlock();
+                            }
+                        };
+                    }
+                    return readLock;
+                }
+            }) {
+                assertPinnedMode(lockEngine, CommitMode.ADAPTIVE, 50_000);
+                final ObjList<byte[]> sent;
+                try (Connection connection = new Connection(
+                        lockEngine,
+                        httpConfig,
+                        AllowAllSecurityContext.INSTANCE,
+                        false,
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 200L, 2_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 300L, 3_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 400L, 4_000_000L))
+                )) {
+                    // The first pass starts each writer's batch; the second, a window later, makes it due.
+                    connection.deliverFrames(2);
+                    final long frontierBefore = lockEngine.getTableSequencerAPI().getTxnTracker(lockEngine.verifyTableName("a")).getLocalDurableSeqTxn();
+                    Assert.assertTrue("the first pass's batch is pending", frontierBefore < 1);
+                    setCurrentMicros(1_000_000_000L + 50_000);
+                    ff.arm();
+                    connection.deliverFrames(2);
+                    ff.disarm();
+                    sent = connection.sentFrames();
+                    Assert.assertEquals("the frontier waits for the flush after the unlock", frontierBefore, frontierAtUnlock[0]);
+                    Assert.assertEquals(frontierBefore, frontierAtUnlock[1]);
+                    Assert.assertEquals(2, lockEngine.getTableSequencerAPI().getTxnTracker(lockEngine.verifyTableName("a")).getLocalDurableSeqTxn());
+                    Assert.assertEquals(2, lockEngine.getTableSequencerAPI().getTxnTracker(lockEngine.verifyTableName("b")).getLocalDurableSeqTxn());
+                }
+                Assert.assertEquals(3, maxCumulativeOkAck(sent));
+                Assert.assertEquals(ff.getLog(), 0, ff.getCount(WalFlushCountingFacade.SEQUENCER, true));
+                Assert.assertEquals(ff.getLog(), 0, ff.getCount(WalFlushCountingFacade.PRIVATE, true));
+                Assert.assertEquals("one batch flush per table, after the unlock: " + ff.getLog(), 2, ff.getCount(WalFlushCountingFacade.SEQUENCER, false));
             }
         });
     }
@@ -778,6 +1010,66 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     /**
      * A failed block of VARCHAR, STRING, BINARY and DOUBLE[] values rewinds each column to the batch's rows.
      */
+    @Test
+    public void testFailedDueGroupFlushKeepsTheAckAndNacksTheTablesNextFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables("a", "b");
+            final SequencerFlushFaultFacade ff = new SequencerFlushFaultFacade();
+            final LogCapture capture = new LogCapture();
+            setCurrentMicros(1_000_000_000L);
+            try (CairoEngine pinnedEngine = new CairoEngine(pinnedConfiguration(CommitMode.ADAPTIVE, 50_000, ff))) {
+                assertPinnedMode(pinnedEngine, CommitMode.ADAPTIVE, 50_000);
+                final ObjList<byte[]> sent;
+                try (Connection connection = new Connection(
+                        pinnedEngine,
+                        httpConfig,
+                        AllowAllSecurityContext.INSTANCE,
+                        false,
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 200L, 2_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 300L, 3_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 400L, 4_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 500L, 5_000_000L))
+                )) {
+                    connection.deliverFrames(2);
+                    setCurrentMicros(1_000_000_000L + 50_000);
+                    // a's due flush, after the unlock, fails
+                    ff.failNextOutsideLock("a~");
+                    capture.start();
+                    try {
+                        connection.deliverFrames(2);
+                        capture.waitFor("group flush failed after a commit batch");
+                    } finally {
+                        capture.stop();
+                    }
+                    Assert.assertEquals(1, ff.failures);
+                    Assert.assertEquals("the sequenced rows are acked", 3, maxCumulativeOkAck(connection.sentFrames()));
+                    Assert.assertFalse(hasErrorResponseForSeq(connection.sentFrames(), 2));
+                    Assert.assertFalse(pinnedEngine.isDurabilityFailed());
+                    // The table's next frame finds the distressed writer and is refused retriably.
+                    connection.deliverFrames(1);
+                    Assert.assertEquals(QwpConstants.STATUS_INTERNAL_ERROR, errorStatusForSeq(connection.sentFrames(), 4));
+                    TestUtils.assertContains(errorMessageForSeq(connection.sentFrames(), 4), "WAL writer is distressed");
+                }
+                // The client's replay of the frame gets a fresh writer.
+                try (Connection connection = new Connection(
+                        pinnedEngine,
+                        httpConfig,
+                        AllowAllSecurityContext.INSTANCE,
+                        false,
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 500L, 5_000_000L))
+                )) {
+                    connection.deliverFrames(1);
+                    sent = connection.sentFrames();
+                }
+                Assert.assertEquals(0, maxCumulativeOkAck(sent));
+                drainWalQueue(pinnedEngine);
+                assertHookQuery(pinnedEngine, "SELECT v FROM a").expectSize().returns("v\n100\n300\n500\n");
+                assertHookQuery(pinnedEngine, "SELECT v FROM b").expectSize().returns("v\n200\n400\n");
+            }
+        });
+    }
+
     @Test
     public void testFailedFirstBlockAppendRewindsEveryColumnType() throws Exception {
         assertFailedFrameRewindsEveryColumnType(false);
@@ -958,6 +1250,52 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     /**
      * The failed block's cancel cannot remap the column's first page: the batch is lost, the frame NACKed.
      */
+    @Test
+    public void testFatalPrepareFailurePoisonsEngineAndReplayStoresRowsOnce() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables("a", "b", "c");
+            final EventFlushFaultFacade ff = new EventFlushFaultFacade();
+            try (CairoEngine pinnedEngine = new CairoEngine(pinnedConfiguration(CommitMode.SYNC, 0, ff))) {
+                assertPinnedMode(pinnedEngine, CommitMode.SYNC, 0);
+                final byte[][] frames = {
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 200L, 2_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("c", 300L, 3_000_000L))
+                };
+                warmWriters(pinnedEngine, "a", "b", "c");
+                ff.failEventFlush("b~", true);
+                try (Connection connection = new Connection(pinnedEngine, httpConfig, AllowAllSecurityContext.INSTANCE, false, frames)) {
+                    connection.deliverFrames(3);
+                    Assert.assertTrue(ff.hasFired);
+                    Assert.assertTrue("a data-sync failure under SYNC stops the engine", pinnedEngine.isDurabilityFailed());
+                    Assert.assertEquals(-1, maxCumulativeOkAck(connection.sentFrames()));
+                }
+                for (String table : new String[]{"a", "b", "c"}) {
+                    Assert.assertEquals(table + " sequences nothing", 0, lastTxn(pinnedEngine, table));
+                }
+            }
+            // A new engine on the root, as after the restart that follows the halt, takes the client's replay.
+            try (CairoEngine restarted = new CairoEngine(pinnedConfiguration(CommitMode.SYNC, 0, TestFilesFacadeImpl.INSTANCE))) {
+                try (Connection connection = new Connection(
+                        restarted,
+                        httpConfig,
+                        AllowAllSecurityContext.INSTANCE,
+                        false,
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 200L, 2_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("c", 300L, 3_000_000L))
+                )) {
+                    connection.deliverFrames(3);
+                    Assert.assertEquals(2, maxCumulativeOkAck(connection.sentFrames()));
+                }
+                drainWalQueue(restarted);
+                assertHookQuery(restarted, "SELECT v FROM a").expectSize().returns("v\n100\n");
+                assertHookQuery(restarted, "SELECT v FROM b").expectSize().returns("v\n200\n");
+                assertHookQuery(restarted, "SELECT v FROM c").expectSize().returns("v\n300\n");
+            }
+        });
+    }
+
     @Test
     public void testFirstBlockCancelFailureLosesBatch() throws Exception {
         assertMemoryLeak(() -> {
@@ -2056,6 +2394,57 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
      * A frame appends to a, then its lookup of a new table meets a demote: the batch is acked before the CLOSE.
      */
     @Test
+    public void testPrepareFailureAfterDemoteClosesForTheRoleChange() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables("a", "b", "c");
+            final EventFlushFaultFacade ff = new EventFlushFaultFacade();
+            try (DemotableEngine demotableEngine = new DemotableEngine(pinnedConfiguration(CommitMode.ADAPTIVE, 50_000, ff))) {
+                assertPinnedMode(demotableEngine, CommitMode.ADAPTIVE, 50_000);
+                warmWriters(demotableEngine, "a", "b", "c");
+                // A demote publishes REPLICA, then b's prepare fails with an error that is not fatal there.
+                ff.onEventFlush("b~", () -> demotableEngine.isReadOnly.set(true));
+                ff.failEventFlush("b~", false);
+                final ObjList<byte[]> sent;
+                try (Connection connection = new Connection(
+                        demotableEngine,
+                        httpConfig,
+                        AllowAllSecurityContext.INSTANCE,
+                        false,
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 200L, 2_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("c", 300L, 3_000_000L))
+                )) {
+                    connection.deliverFrames(3);
+                    Assert.assertTrue(ff.hasFired);
+                    sent = connection.sentFrames();
+                }
+                Assert.assertEquals("the role-change close, not the error NACK", 1, sent.size());
+                Assert.assertEquals(WebSocketCloseCode.NORMAL_CLOSURE, closeCode(sent.getQuick(0)));
+                Assert.assertFalse(hasErrorResponseForSeq(sent, 0));
+                for (String table : new String[]{"a", "b", "c"}) {
+                    Assert.assertEquals(table + " commits nothing", 0, lastTxn(demotableEngine, table));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPrepareFailureAtFirstTableRefusesWholeBatch() throws Exception {
+        assertPrepareFailureRefusesWholeBatch(0, "test: prepare failed");
+    }
+
+    @Test
+    public void testPrepareFailureAtLastTableRefusesWholeBatch() throws Exception {
+        // a message the NACK truncates
+        assertPrepareFailureRefusesWholeBatch(2, "test: " + "x".repeat(100_000));
+    }
+
+    @Test
+    public void testPrepareFailureAtMiddleTableRefusesWholeBatch() throws Exception {
+        assertPrepareFailureRefusesWholeBatch(1, "test: prepare failed");
+    }
+
+    @Test
     public void testReadOnlyRefusalAfterAppendCommitsBatchBeforeClose() throws Exception {
         assertMemoryLeak(() -> {
             createTables("a", "c");
@@ -2328,6 +2717,46 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     /**
      * Cap 4: three frames of a, then [b, a], whose block of a would reach the cap: b's row goes back out.
      */
+    @Test
+    public void testRevokeAfterJoinAbandonsPreparedWriterWithoutFileWorkUnderLock() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables("a", "b", "c");
+            final WalFlushCountingFacade ff = new WalFlushCountingFacade();
+            try (CairoEngine pinnedEngine = new CairoEngine(pinnedConfiguration(CommitMode.SYNC, 0, ff))) {
+                assertPinnedMode(pinnedEngine, CommitMode.SYNC, 0);
+                final int[] walIds = warmWriters(pinnedEngine, "a", "b", "c");
+                ff.arm();
+                final ObjList<byte[]> sent;
+                try (Connection connection = new Connection(
+                        pinnedEngine,
+                        httpConfig,
+                        denyCommitUnderLockTo(pinnedEngine, "b"),
+                        false,
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 200L, 2_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("c", 300L, 3_000_000L))
+                )) {
+                    connection.deliverFrames(3);
+                    sent = connection.sentFrames();
+                }
+                ff.disarm();
+                Assert.assertEquals("the ack covers a's frame", 0, maxCumulativeOkAck(sent));
+                Assert.assertEquals(QwpConstants.STATUS_WRITE_ERROR, errorStatusForSeq(sent, 1));
+                TestUtils.assertContains(errorMessageForSeq(sent, 1), "test: commit denied for b");
+                // Under the lock only the sequencer log flushes: a's sequencing; b's abandon does no file work.
+                Assert.assertEquals(ff.getLog(), 0, ff.getCount(WalFlushCountingFacade.PRIVATE, true));
+                Assert.assertEquals(1, lastTxn(pinnedEngine, "a"));
+                Assert.assertEquals(0, lastTxn(pinnedEngine, "b"));
+                Assert.assertEquals(0, lastTxn(pinnedEngine, "c"));
+                // a's writer sequenced and goes back to the pool; b's and c's were prepared and are discarded.
+                try (WalWriter w = pinnedEngine.getWalWriter(pinnedEngine.verifyTableName("a"))) {
+                    Assert.assertEquals(walIds[0], w.getWalId());
+                }
+                assertWritersReplaced(pinnedEngine, new int[]{walIds[1], walIds[2]}, "b", "c");
+            }
+        });
+    }
+
     @Test
     public void testRewindAtCapBoundary() throws Exception {
         assertMemoryLeak(() -> {
@@ -2916,6 +3345,116 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
      * An unexpected lookup failure distresses the cache: nothing commits, and the NACK names this frame.
      */
     @Test
+    public void testUnexpectedErrorAfterPreparePhaseAtBoundaryLosesBatch() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables("a", "b");
+            try (CairoEngine pinnedEngine = new CairoEngine(pinnedConfiguration(CommitMode.SYNC, 0, TestFilesFacadeImpl.INSTANCE))) {
+                final int[] walIds = warmWriters(pinnedEngine, "a", "b");
+                final ObjList<byte[]> sent;
+                try (Connection connection = new Connection(
+                        pinnedEngine,
+                        httpConfig,
+                        AllowAllSecurityContext.INSTANCE,
+                        false,
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 200L, 2_000_000L)),
+                        // a new column of a batch table cannot join: a boundary commit inside the frame's handling
+                        createMaskedFrame(WebSocketOpcode.BINARY, qwpMessage(tableBlockWithColumn("a", 300L, "w", 1, 3_000_000L)))
+                )) {
+                    connection.getState().setAfterPreparePhaseHook(() -> {
+                        throw new IllegalStateException("test: unexpected error after the prepare phase");
+                    });
+                    connection.deliverFrames(3);
+                    sent = connection.sentFrames();
+                    Assert.assertEquals(1, connection.getState().getPreparePhaseCount());
+                    Assert.assertFalse(connection.getState().isCommitBatchPending());
+                }
+                Assert.assertEquals(-1, maxCumulativeOkAck(sent));
+                Assert.assertEquals(QwpConstants.STATUS_INTERNAL_ERROR, errorStatusForSeq(sent, 0));
+                assertWritersReplaced(pinnedEngine, walIds, "a", "b");
+                Assert.assertEquals(0, lastTxn(pinnedEngine, "a"));
+                Assert.assertEquals(0, lastTxn(pinnedEngine, "b"));
+            }
+        });
+    }
+
+    @Test
+    public void testUnexpectedErrorAfterPreparePhaseOnReceivePathDisconnects() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables("a", "b");
+            try (CairoEngine pinnedEngine = new CairoEngine(pinnedConfiguration(CommitMode.SYNC, 0, TestFilesFacadeImpl.INSTANCE))) {
+                final int[] walIds = warmWriters(pinnedEngine, "a", "b");
+                try (Connection connection = new Connection(
+                        pinnedEngine,
+                        httpConfig,
+                        AllowAllSecurityContext.INSTANCE,
+                        false,
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 200L, 2_000_000L))
+                )) {
+                    connection.getState().setAfterPreparePhaseHook(() -> {
+                        throw new IllegalStateException("test: unexpected error after the prepare phase");
+                    });
+                    Assert.assertTrue("the error disconnects", connection.deliverFrames(2));
+                    Assert.assertFalse("the frame loop abandons the batch", connection.getState().isCommitBatchPending());
+                    connection.onConnectionClosed();
+                    Assert.assertEquals(-1, maxCumulativeOkAck(connection.sentFrames()));
+                }
+                assertWritersReplaced(pinnedEngine, walIds, "a", "b");
+                Assert.assertEquals(0, lastTxn(pinnedEngine, "a"));
+                Assert.assertEquals(0, lastTxn(pinnedEngine, "b"));
+            }
+        });
+    }
+
+    @Test
+    public void testUnexpectedErrorAfterPreparePhaseOnSendPathDisconnects() throws Exception {
+        final LogCapture capture = new LogCapture();
+        assertMemoryLeak(() -> {
+            createTables("a", "b");
+            try (CairoEngine pinnedEngine = new CairoEngine(pinnedConfiguration(CommitMode.SYNC, 0, TestFilesFacadeImpl.INSTANCE))) {
+                final int[] walIds = warmWriters(pinnedEngine, "a", "b");
+                try (Connection connection = new Connection(
+                        pinnedEngine,
+                        httpConfig,
+                        AllowAllSecurityContext.INSTANCE,
+                        false,
+                        // the PONG's send parks, so the frames behind it wait for resumeSend
+                        createMaskedFrame(WebSocketOpcode.PING, new byte[0]),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 200L, 2_000_000L))
+                )) {
+                    connection.blockSend(1);
+                    Assert.assertTrue("test setup: the PONG must park", connection.deliverFramesUntilSendParks(3));
+                    Assert.assertEquals("test setup: the frames wait behind the PONG", 0, connection.getState().getPreparePhaseCount());
+                    connection.getState().setAfterPreparePhaseHook(() -> {
+                        throw new IllegalStateException("test: unexpected error on the send path");
+                    });
+                    capture.start();
+                    try {
+                        try {
+                            connection.resumeSend();
+                            Assert.fail("the error must disconnect");
+                        } catch (ServerDisconnectException expected) {
+                            // the dispatcher disconnects
+                        }
+                        capture.waitFor("test: unexpected error on the send path");
+                    } finally {
+                        capture.stop();
+                    }
+                    capture.assertLogged("WebSocket send error");
+                    Assert.assertEquals(1, connection.getState().getPreparePhaseCount());
+                    connection.onConnectionClosed();
+                    Assert.assertEquals(-1, maxCumulativeOkAck(connection.sentFrames()));
+                }
+                assertWritersReplaced(pinnedEngine, walIds, "a", "b");
+                Assert.assertEquals(0, lastTxn(pinnedEngine, "a"));
+                Assert.assertEquals(0, lastTxn(pinnedEngine, "b"));
+            }
+        });
+    }
+
+    @Test
     public void testUnexpectedLookupErrorLosesBatch() throws Exception {
         assertMemoryLeak(() -> {
             createTables("a", "b");
@@ -3068,6 +3607,62 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
 
     private static byte[] clientCloseFrame() {
         return createMaskedFrame(WebSocketOpcode.CLOSE, new byte[]{0x03, (byte) 0xE8});
+    }
+
+    private static void assertPinnedMode(CairoEngine engine, int commitMode, long groupWindowUs) {
+        Assert.assertEquals(commitMode, engine.getConfiguration().getCommitMode());
+        Assert.assertEquals(groupWindowUs, engine.getConfiguration().getAdaptiveCommitGroupWindowUs());
+    }
+
+    // Each table's next writer from the pool is a new one: the batch discarded the writers of walIds.
+    private static void assertWritersReplaced(CairoEngine engine, int[] walIds, String... tables) {
+        for (int i = 0; i < tables.length; i++) {
+            try (WalWriter w = engine.getWalWriter(engine.verifyTableName(tables[i]))) {
+                Assert.assertNotEquals(tables[i] + "'s writer must be discarded", walIds[i], w.getWalId());
+                Assert.assertFalse(w.isCommitPrepared());
+                Assert.assertFalse(w.isDistressed());
+            }
+        }
+    }
+
+    private static SecurityContext denyCommitUnderLockTo(CairoEngine engine, String tableName) {
+        // A REVOKE that lands between the join and the commit: the check under the role-switch lock refuses.
+        return new AllowAllSecurityContext() {
+            @Override
+            public void authorizeInsert(TableToken tableToken) {
+                if (tableToken.getTableName().equals(tableName) && engine.getRoleSwitchReadLockCount() > 0) {
+                    throw CairoException.nonCritical().put("test: commit denied for ").put(tableName);
+                }
+            }
+        };
+    }
+
+    // Acquires and returns each table's writer, so that the pool holds one; returns their walIds.
+    private static int[] warmWriters(CairoEngine engine, String... tables) {
+        final int[] walIds = new int[tables.length];
+        for (int i = 0; i < tables.length; i++) {
+            try (WalWriter w = engine.getWalWriter(engine.verifyTableName(tables[i]))) {
+                walIds[i] = w.getWalId();
+            }
+        }
+        return walIds;
+    }
+
+    // The payload of the error response for seq, [status][seq LE][length u16 LE][message], or null. Reads the
+    // extended payload length of a frame above 125 bytes.
+    private static byte[] errorPayloadForSeq(ObjList<byte[]> frames, long seq) {
+        for (int i = 0, n = frames.size(); i < n; i++) {
+            final byte[] f = frames.getQuick(i);
+            if ((f[0] & 0x0F) != WebSocketOpcode.BINARY) {
+                continue;
+            }
+            final int len7 = f[1] & 0x7F;
+            final int offset = len7 < 126 ? 2 : len7 == 126 ? 4 : 10;
+            if (f[offset] != QwpConstants.STATUS_OK && readLeLong(f, offset + 1) == seq) {
+                return Arrays.copyOfRange(f, offset, f.length);
+            }
+        }
+        return null;
     }
 
     private static int closeCode(byte[] serverCloseFrame) {
@@ -3286,6 +3881,35 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     }
 
     /**
+     * A configuration of the shared root that pins the commit mode and the group window, which
+     * DefaultTestCairoConfiguration takes from the CI shard, and reads the test clock and ff.
+     */
+    private static DefaultTestCairoConfiguration pinnedConfiguration(int commitMode, long groupWindowUs, FilesFacade ff) {
+        return new DefaultTestCairoConfiguration(root) {
+            @Override
+            public long getAdaptiveCommitGroupWindowUs() {
+                return groupWindowUs;
+            }
+
+            @Override
+            public int getCommitMode() {
+                return commitMode;
+            }
+
+            @Override
+            public @NotNull FilesFacade getFilesFacade() {
+                return ff;
+            }
+
+            @Override
+            public @NotNull MicrosecondClock getMicrosecondClock() {
+                return testMicrosClock;
+            }
+        };
+    }
+
+
+    /**
      * A one-row delta-dictionary frame of s, v and ts; {@code badTable} adds a block with v as a VARCHAR.
      */
     private static byte[] symbolFrame(
@@ -3419,6 +4043,85 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     /**
      * Frames a0 b1 a2 b3, then [a, bad b]: each table commits once, frames 0-3 are acked, and frame 4 is NACKed.
      */
+    /**
+     * A batch commit of three tables flushes no writer-private WAL file under the role-switch lock, and, under SYNC
+     * and with no group window, only the sequencer files there. Per pass it flushes what the same rows cost when
+     * committed table by table through plain WalWriter commits on the same build, under the same clock: the first
+     * pass opens the writers, the second runs a window later, when the group flush falls due.
+     */
+    private void assertBatchCommitFlushesNoPrivateFileUnderLock(int commitMode, long groupWindowUs) throws Exception {
+        assertMemoryLeak(() -> {
+            final String[] batchTables = {"a", "b", "c"};
+            final String[] oracleTables = {"oa", "ob", "oc"};
+            createTables(batchTables);
+            createTables(oracleTables);
+            final WalFlushCountingFacade ff = new WalFlushCountingFacade();
+            final long t0 = 1_000_000_000L;
+            try (CairoEngine pinnedEngine = new CairoEngine(pinnedConfiguration(commitMode, groupWindowUs, ff))) {
+                assertPinnedMode(pinnedEngine, commitMode, groupWindowUs);
+                final int[][] batchCounts = new int[2][];
+                try (Connection connection = new Connection(
+                        pinnedEngine,
+                        httpConfig,
+                        AllowAllSecurityContext.INSTANCE,
+                        false,
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 200L, 2_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("c", 300L, 3_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 400L, 4_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 500L, 5_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("c", 600L, 6_000_000L))
+                )) {
+                    for (int pass = 0; pass < 2; pass++) {
+                        setCurrentMicros(t0 + pass * groupWindowUs);
+                        ff.arm();
+                        connection.deliverFrames(3);
+                        ff.disarm();
+                        Assert.assertEquals("no writer-private flush under the lock: " + ff.getLog(), 0, ff.getCount(WalFlushCountingFacade.PRIVATE, true));
+                        if (groupWindowUs > 0) {
+                            Assert.assertEquals("the group flush runs after the unlock: " + ff.getLog(), 0, ff.getCount(WalFlushCountingFacade.SEQUENCER, true));
+                        } else {
+                            Assert.assertTrue("the sequencer log flushes per table under the lock: " + ff.getLog(), ff.getCount(WalFlushCountingFacade.SEQUENCER, true) >= batchTables.length);
+                        }
+                        Assert.assertTrue("the prepares flush the writers' files: " + ff.getLog(), ff.getCount(WalFlushCountingFacade.PRIVATE, false) >= batchTables.length);
+                        batchCounts[pass] = new int[]{ff.getCount(WalFlushCountingFacade.PRIVATE), ff.getCount(WalFlushCountingFacade.SEQUENCER)};
+                    }
+                    Assert.assertEquals(5, maxCumulativeOkAck(connection.sentFrames()));
+                }
+                // The oracle: the same rows, committed table by table.
+                final WalWriter[] writers = new WalWriter[oracleTables.length];
+                try {
+                    for (int pass = 0; pass < 2; pass++) {
+                        setCurrentMicros(t0 + pass * groupWindowUs);
+                        ff.arm();
+                        for (int t = 0; t < oracleTables.length; t++) {
+                            if (writers[t] == null) {
+                                writers[t] = pinnedEngine.getWalWriter(pinnedEngine.verifyTableName(oracleTables[t]));
+                            }
+                            final TableWriter.Row row = writers[t].newRow((pass * 3 + t + 1) * 1_000_000L);
+                            row.putLong(0, (pass * 3 + t + 1) * 100L);
+                            row.append();
+                            writers[t].commit();
+                        }
+                        ff.disarm();
+                        Assert.assertEquals(
+                                "pass " + pass + " flushes what plain commits of the same rows flush: " + ff.getLog(),
+                                Arrays.toString(batchCounts[pass]),
+                                Arrays.toString(new int[]{ff.getCount(WalFlushCountingFacade.PRIVATE), ff.getCount(WalFlushCountingFacade.SEQUENCER)})
+                        );
+                    }
+                } finally {
+                    for (WalWriter w : writers) {
+                        Misc.free(w);
+                    }
+                }
+                drainWalQueue(pinnedEngine);
+                assertHookQuery(pinnedEngine, "SELECT v FROM a").expectSize().returns("v\n100\n400\n");
+                assertHookQuery(pinnedEngine, "SELECT v FROM oa").expectSize().returns("v\n100\n400\n");
+            }
+        });
+    }
+
     private void assertBatchCommitsBeforeFrameFailingAfterAppend(boolean isDurableAck) throws Exception {
         assertMemoryLeak(() -> {
             createTables("a", "b");
@@ -3640,6 +4343,114 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     // frame commits both tables on the normal path. The demote lands at b's commit, after a committed: a's row sits
     // above the ack, and only the role-change CLOSE tells the client to replay. A durable-ack connection defers that
     // CLOSE until its committed work is durable, which the lagging registry never reports, so nothing goes out yet.
+    private void assertDemoteAfterPreparePhaseCommitsNothing(int commitMode, long groupWindowUs, boolean isDurableAck) throws Exception {
+        assertMemoryLeak(() -> {
+            final String a = "a";
+            final String b = "b";
+            createTables(a, b);
+            try (DemotableEngine demotableEngine = new DemotableEngine(pinnedConfiguration(commitMode, groupWindowUs, TestFilesFacadeImpl.INSTANCE))) {
+                assertPinnedMode(demotableEngine, commitMode, groupWindowUs);
+                final int[] walIds = warmWriters(demotableEngine, a, b);
+                // the demote takes the lock right after the prepare phase: the batch's lock() then finds REPLICA
+                demotableEngine.demoteAtNextCommit();
+                final boolean[] isPrepared = {false};
+                final ObjList<byte[]> sent;
+                try (Connection connection = new Connection(
+                        demotableEngine,
+                        httpConfig,
+                        AllowAllSecurityContext.INSTANCE,
+                        isDurableAck,
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(a, 100L, 1_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(b, 200L, 2_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(a, 300L, 3_000_000L))
+                )) {
+                    final QwpIngressProcessorState state = connection.getState();
+                    state.setAfterPreparePhaseHook(() -> isPrepared[0] = state.getCommitBatchWriter(0).isCommitPrepared()
+                            && state.getCommitBatchWriter(1).isCommitPrepared() && !demotableEngine.isReadOnlyMode());
+                    connection.deliverFrames(3);
+                    Assert.assertTrue("test setup: the demote must land after the prepare phase", isPrepared[0] && demotableEngine.isReadOnlyMode());
+                    sent = connection.sentFrames();
+                }
+                Assert.assertEquals("only the CLOSE", 1, sent.size());
+                Assert.assertEquals(WebSocketCloseCode.NORMAL_CLOSURE, closeCode(sent.getQuick(0)));
+                Assert.assertEquals(-1, maxCumulativeOkAck(sent));
+                demotableEngine.isReadOnly.set(false);
+                assertWritersReplaced(demotableEngine, walIds, a, b);
+                Assert.assertEquals(0, lastTxn(demotableEngine, a));
+                Assert.assertEquals(0, lastTxn(demotableEngine, b));
+            }
+        });
+    }
+
+    private void assertPrepareFailureRefusesWholeBatch(int failedTable, String failure) throws Exception {
+        assertMemoryLeak(() -> {
+            final String[] tables = {"a", "b", "c"};
+            createTables(tables);
+            final EventFlushFaultFacade ff = new EventFlushFaultFacade();
+            final byte[][] frames = {
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 200L, 2_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("c", 300L, 3_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 400L, 4_000_000L))
+            };
+            try (CairoEngine pinnedEngine = new CairoEngine(pinnedConfiguration(CommitMode.SYNC, 0, ff))) {
+                assertPinnedMode(pinnedEngine, CommitMode.SYNC, 0);
+                final int[] walIds = warmWriters(pinnedEngine, tables);
+                ff.failEventFlush(tables[failedTable] + "~", false, failure);
+                final ObjList<byte[]> sent;
+                // A small response limit, so that a long message is truncated in a frame the socket takes whole.
+                final HttpFullFatServerConfiguration smallSendConfig = new DefaultHttpServerConfiguration(configuration) {
+                    @Override
+                    public int getSendBufferSize() {
+                        return SEND_BUFFER_SIZE;
+                    }
+                };
+                try (Connection connection = new Connection(pinnedEngine, smallSendConfig, AllowAllSecurityContext.INSTANCE, false, frames)) {
+                    connection.deliverFrames(frames.length);
+                    sent = connection.sentFrames();
+                }
+                Assert.assertTrue(ff.hasFired);
+                Assert.assertFalse("not a data-sync failure: the engine runs on", pinnedEngine.isDurabilityFailed());
+                // Head committed the tables before the failed one and the client's replay stored their rows twice;
+                // the batch now commits nothing.
+                for (String table : tables) {
+                    Assert.assertEquals(table + " commits nothing", 0, lastTxn(pinnedEngine, table));
+                }
+                Assert.assertEquals(-1, maxCumulativeOkAck(sent));
+                final byte[] nack = errorPayloadForSeq(sent, 0);
+                Assert.assertNotNull("the NACK names the batch's first frame", nack);
+                Assert.assertEquals(QwpConstants.STATUS_INTERNAL_ERROR, nack[0]);
+                final String expectedText = "commit batch prepare failed [table=" + tables[failedTable] + "]: " + failure;
+                final int maxErrorLength = Math.max(0, (int) ((smallSendConfig.getSendBufferSize() - 100) / 1.5));
+                Assert.assertEquals(expectedText.substring(0, Math.min(expectedText.length(), maxErrorLength)),
+                        new String(nack, 11, readLeShort(nack, 9), StandardCharsets.UTF_8));
+                // The tables up to the failed one were prepared or failed in their prepare: discarded. The tables after
+                // it go back to the pool, healthy, with their rows rolled back.
+                for (int t = 0; t < tables.length; t++) {
+                    try (WalWriter w = pinnedEngine.getWalWriter(pinnedEngine.verifyTableName(tables[t]))) {
+                        if (t <= failedTable) {
+                            Assert.assertNotEquals(tables[t] + "'s writer must be discarded", walIds[t], w.getWalId());
+                        } else {
+                            Assert.assertEquals(tables[t] + "'s writer goes back to the pool", walIds[t], w.getWalId());
+                        }
+                        Assert.assertFalse(w.isCommitPrepared());
+                        Assert.assertFalse(w.isDistressed());
+                        Assert.assertEquals(0, w.getUncommittedRowCount());
+                    }
+                }
+                // The client's replay on a fresh connection stores every row once.
+                try (Connection connection = new Connection(pinnedEngine, httpConfig, AllowAllSecurityContext.INSTANCE, false, frames)) {
+                    connection.deliverFrames(frames.length);
+                    Assert.assertEquals(3, maxCumulativeOkAck(connection.sentFrames()));
+                }
+                drainWalQueue(pinnedEngine);
+                assertHookQuery(pinnedEngine, "SELECT v FROM a").expectSize().returns("v\n100\n400\n");
+                assertHookQuery(pinnedEngine, "SELECT v FROM b").expectSize().returns("v\n200\n");
+                assertHookQuery(pinnedEngine, "SELECT v FROM c").expectSize().returns("v\n300\n");
+            }
+        });
+    }
+
     private void assertDemoteBetweenTablesOfGroupClosingFrame(boolean isDurableAck) throws Exception {
         assertMemoryLeak(() -> {
             createTables("a", "b");
@@ -4682,6 +5493,22 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         return it;
     }
 
+    // Draws the iteration's prepare fault from faultRnd. A prepare fault is a commit fault, which the
+    // generator keeps out of an iteration whose only faults are data errors, checked for I3 and I4, and away
+    // from deferred groups, whose commitAll commits the group's tables one by one, see
+    // generateCommitBatchFuzzIteration(). Draws the same values either way, so a seed draws the same faults.
+    private static void drawPrepareFault(Rnd faultRnd, FuzzIteration it) {
+        final boolean isFaulty = faultRnd.nextInt(3) == 0;
+        final int table = faultRnd.nextInt(it.tables.length);
+        final long fromCall = 1 + faultRnd.nextInt(3);
+        final boolean isTransient = faultRnd.nextBoolean();
+        if (isFaulty && !it.isDataErrorsOnly && !it.frameKinds.contains(FUZZ_DEFERRED)) {
+            it.prepareFaultTable = table;
+            it.prepareFaultFromCall = fromCall;
+            it.isPrepareFaultTransient = isTransient;
+        }
+    }
+
     // A one-row block of the iteration's table with v = value, as the table takes v, and
     // its record in blocks.
     private static byte[] fuzzBlock(FuzzIteration it, int tableIndex, long value, long tsMicros, IntList blocks) {
@@ -4695,10 +5522,29 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         return tableBlock(it.tables[tableIndex], value, tsMicros);
     }
 
+    private void assertCommitBatchAckContractFuzz(int commitMode, long groupWindowUs, int iterationCount) throws Exception {
+        assertMemoryLeak(() -> {
+            final Rnd rnd = TestUtils.generateRandom(LOG);
+            // A separate Rnd for the prepare faults keeps the frames each seed of rnd generates.
+            final Rnd faultRnd = TestUtils.generateRandom(LOG);
+            final ObjList<FuzzIteration> iterations = new ObjList<>();
+            // A local run raises the budget, see CLAUDE.md's fuzzing rule.
+            final int budget = Integer.getInteger("questdb.fuzz.qwp.batch.iterations", iterationCount);
+            for (int iteration = 0; iteration < budget; iteration++) {
+                final FuzzIteration it = generateCommitBatchFuzzIteration(rnd, iteration);
+                drawPrepareFault(faultRnd, it);
+                iterations.add(it);
+            }
+            runCommitBatchFuzz(iterations, commitMode, groupWindowUs);
+        });
+    }
+
     /**
-     * Runs the fuzz iterations through an engine whose read-only checks and writer acquisitions fail as scripted.
+     * Runs the fuzz iterations through an engine of the commit mode and group window whose read-only checks, writer
+     * acquisitions and commit prepares fail as scripted. A prepare fails at the flush of the table's WAL column file,
+     * which only a commit makes, and only under SYNC and ADAPTIVE: the modes that prepare.
      */
-    private void runCommitBatchFuzz(ObjList<FuzzIteration> iterations) throws Exception {
+    private void runCommitBatchFuzz(ObjList<FuzzIteration> iterations, int commitMode, long groupWindowUs) throws Exception {
         // The hook engine below shares the root but cannot create tables: create them first.
         for (int i = 0, n = iterations.size(); i < n; i++) {
             for (String table : iterations.getQuick(i).tables) {
@@ -4706,7 +5552,8 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
             }
         }
         final AtomicReference<FuzzIteration> current = new AtomicReference<>();
-        try (CairoEngine hookEngine = new CairoEngine(new DefaultTestCairoConfiguration(root)) {
+        final PrepareFaultFacade ff = new PrepareFaultFacade(current);
+        try (CairoEngine hookEngine = new CairoEngine(pinnedConfiguration(commitMode, groupWindowUs, ff)) {
             @Override
             public WalWriter getWalWriter(TableToken tableToken) {
                 final FuzzIteration it = current.get();
@@ -4954,8 +5801,36 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
             }
         }
 
+        // Makes the server's send numbered sendNumber, counted from 1, park as a slow peer's does.
+        void blockSend(int sendNumber) {
+            rawSocket.blockedSends.add(sendNumber);
+        }
+
+        /**
+         * Delivers the client's next {@code count} frames in one receive pass, in which a send may park.
+         * Returns true when one did: the frames behind it wait in the receive buffer for {@link #resumeSend()}.
+         */
+        boolean deliverFramesUntilSendParks(int count) throws Exception {
+            try {
+                deliverFrames(count);
+                return false;
+            } catch (PeerIsSlowToReadException e) {
+                return true;
+            }
+        }
+
         QwpIngressProcessorState getState() {
             return state;
+        }
+
+        // What the dispatcher does once the connection is gone.
+        void onConnectionClosed() {
+            processor.onConnectionClosed(context);
+        }
+
+        // What the dispatcher does once the parked send's peer reads.
+        void resumeSend() throws Exception {
+            processor.resumeSend(context);
         }
 
         ObjList<byte[]> sentFrames() {
@@ -4998,7 +5873,12 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         private Lock roleSwitchReadLock;
 
         DemotableEngine() {
-            super(new DefaultTestCairoConfiguration(root));
+            this(new DefaultTestCairoConfiguration(root));
+        }
+
+        // An engine of configuration, such as one of pinnedConfiguration(), whose commit mode the test chooses.
+        DemotableEngine(CairoConfiguration configuration) {
+            super(configuration);
         }
 
         @Override
@@ -5083,6 +5963,302 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     }
 
     /**
+     * Acts at the first flush of a table's WAL event file while armed: runs an action, or fails the flush, once.
+     * A table is named by its directory prefix, such as {@code "b~"}. Arm it after the table's writer is open, so
+     * that the flush is a commit's, not the segment open's.
+     */
+    private static final class EventFlushFaultFacade extends TestFilesFacadeImpl {
+        private final java.util.Map<Long, String> eventFds = new java.util.concurrent.ConcurrentHashMap<>();
+        // mapping address -> {length, fd} of the event files
+        private final java.util.concurrent.ConcurrentSkipListMap<Long, long[]> eventMappings = new java.util.concurrent.ConcurrentSkipListMap<>();
+        private volatile Runnable action;
+        private volatile String actionTable;
+        private volatile String failedTable;
+        private volatile String failure;
+        volatile boolean hasFired;
+        private volatile boolean isDataSyncFailure;
+
+        @Override
+        public void barrierFsync(long fd) {
+            onFlush(fd);
+            super.barrierFsync(fd);
+        }
+
+        @Override
+        public boolean close(long fd) {
+            eventFds.remove(fd);
+            return super.close(fd);
+        }
+
+        @Override
+        public void fdatasync(long fd) {
+            onFlush(fd);
+            super.fdatasync(fd);
+        }
+
+        void failEventFlush(String table, boolean isDataSyncFailure) {
+            failEventFlush(table, isDataSyncFailure, "test: prepare failed");
+        }
+
+        void failEventFlush(String table, boolean isDataSyncFailure, String failure) {
+            this.isDataSyncFailure = isDataSyncFailure;
+            this.failure = failure;
+            this.failedTable = table;
+        }
+
+        @Override
+        public void fsync(long fd) {
+            onFlush(fd);
+            super.fsync(fd);
+        }
+
+        @Override
+        public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+            final long addr = super.mmap(fd, len, offset, flags, memoryTag);
+            if (eventFds.containsKey(fd)) {
+                eventMappings.put(addr, new long[]{len, fd});
+            }
+            return addr;
+        }
+
+        @Override
+        public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+            final long newAddr = super.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
+            if (eventFds.containsKey(fd)) {
+                eventMappings.remove(addr);
+                eventMappings.put(newAddr, new long[]{newSize, fd});
+            }
+            return newAddr;
+        }
+
+        @Override
+        public void msync(long addr, long len, boolean async) {
+            if (!async) {
+                final java.util.Map.Entry<Long, long[]> mapping = eventMappings.floorEntry(addr);
+                if (mapping != null && addr < mapping.getKey() + mapping.getValue()[0]) {
+                    onFlush(mapping.getValue()[1]);
+                }
+            }
+            super.msync(addr, len, async);
+        }
+
+        @Override
+        public void munmap(long address, long size, int memoryTag) {
+            eventMappings.remove(address);
+            super.munmap(address, size, memoryTag);
+        }
+
+        void onEventFlush(String table, Runnable action) {
+            this.action = action;
+            this.actionTable = table;
+        }
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            final long fd = super.openRW(name, opts);
+            if (fd > -1 && Utf8s.endsWithAscii(name, WalUtils.EVENT_FILE_NAME)) {
+                eventFds.put(fd, Utf8s.stringFromUtf8BytesSafe(name));
+            }
+            return fd;
+        }
+
+        private void onFlush(long fd) {
+            final String path = eventFds.get(fd);
+            if (path == null) {
+                return;
+            }
+            final String sep = java.io.File.separator;
+            final String actionTable = this.actionTable;
+            if (actionTable != null && path.contains(sep + actionTable)) {
+                this.actionTable = null;
+                hasFired = true;
+                action.run();
+            }
+            final String failedTable = this.failedTable;
+            if (failedTable != null && path.contains(sep + failedTable)) {
+                this.failedTable = null;
+                hasFired = true;
+                if (isDataSyncFailure) {
+                    throw CairoException.dataSyncFailure(this, 5, "msync", failure);
+                }
+                throw CairoException.critical(0).put(failure);
+            }
+        }
+    }
+
+    /**
+     * Fails the commit prepares of the current fuzz iteration's prepare-fault table, as the iteration scripts: at
+     * the flush of the table's WAL column file v.d, which a commit makes and a writer's open does not.
+     */
+    private static final class PrepareFaultFacade extends TestFilesFacadeImpl {
+        private final AtomicReference<FuzzIteration> current;
+        private final java.util.Map<Long, String> fds = new java.util.concurrent.ConcurrentHashMap<>();
+        // mapping address -> {length, fd} of the column files
+        private final java.util.concurrent.ConcurrentSkipListMap<Long, long[]> mappings = new java.util.concurrent.ConcurrentSkipListMap<>();
+
+        PrepareFaultFacade(AtomicReference<FuzzIteration> current) {
+            this.current = current;
+        }
+
+        @Override
+        public void barrierFsync(long fd) {
+            onFlush(fd);
+            super.barrierFsync(fd);
+        }
+
+        @Override
+        public boolean close(long fd) {
+            fds.remove(fd);
+            return super.close(fd);
+        }
+
+        @Override
+        public void fdatasync(long fd) {
+            onFlush(fd);
+            super.fdatasync(fd);
+        }
+
+        @Override
+        public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+            final long addr = super.mmap(fd, len, offset, flags, memoryTag);
+            if (fds.containsKey(fd)) {
+                mappings.put(addr, new long[]{len, fd});
+            }
+            return addr;
+        }
+
+        @Override
+        public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+            final long newAddr = super.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
+            if (fds.containsKey(fd)) {
+                mappings.remove(addr);
+                mappings.put(newAddr, new long[]{newSize, fd});
+            }
+            return newAddr;
+        }
+
+        @Override
+        public void msync(long addr, long len, boolean async) {
+            if (!async) {
+                final java.util.Map.Entry<Long, long[]> mapping = mappings.floorEntry(addr);
+                if (mapping != null && addr < mapping.getKey() + mapping.getValue()[0]) {
+                    onFlush(mapping.getValue()[1]);
+                }
+            }
+            super.msync(addr, len, async);
+        }
+
+        @Override
+        public void munmap(long address, long size, int memoryTag) {
+            mappings.remove(address);
+            super.munmap(address, size, memoryTag);
+        }
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            final long fd = super.openRW(name, opts);
+            if (fd > -1 && Utf8s.endsWithAscii(name, java.io.File.separator + "v.d") && Utf8s.containsAscii(name, java.io.File.separator + "wal")) {
+                fds.put(fd, Utf8s.stringFromUtf8BytesSafe(name));
+            }
+            return fd;
+        }
+
+        private void onFlush(long fd) {
+            final String path = fds.get(fd);
+            final FuzzIteration it = current.get();
+            if (path == null || it == null || it.prepareFaultTable < 0
+                    || !path.contains(java.io.File.separator + it.tables[it.prepareFaultTable] + "~")) {
+                return;
+            }
+            final long call = ++it.prepareCalls;
+            if (it.isPrepareFaultTransient ? call == it.prepareFaultFromCall : call >= it.prepareFaultFromCall) {
+                throw CairoException.critical(0).put("fuzz: prepare fails");
+            }
+        }
+    }
+
+    // A Lock that forwards every call to its delegate, for a test to override one of them.
+    private static class ForwardingLock implements Lock {
+        private final Lock delegate;
+
+        ForwardingLock(Lock delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public void lock() {
+            delegate.lock();
+        }
+
+        @Override
+        public void lockInterruptibly() throws InterruptedException {
+            delegate.lockInterruptibly();
+        }
+
+        @Override
+        public @NotNull Condition newCondition() {
+            return delegate.newCondition();
+        }
+
+        @Override
+        public boolean tryLock() {
+            return delegate.tryLock();
+        }
+
+        @Override
+        public boolean tryLock(long time, @NotNull TimeUnit unit) throws InterruptedException {
+            return delegate.tryLock(time, unit);
+        }
+
+        @Override
+        public void unlock() {
+            delegate.unlock();
+        }
+    }
+
+    /**
+     * Fails, once, the next flush of a table's sequencer file that a thread makes outside the role-switch lock,
+     * with an error that is not a data-sync failure.
+     */
+    private static final class SequencerFlushFaultFacade extends WalFlushCountingFacade {
+        private final java.util.Map<Long, String> paths = new java.util.concurrent.ConcurrentHashMap<>();
+        volatile int failures;
+        private volatile String failedTable;
+
+        @Override
+        public boolean close(long fd) {
+            paths.remove(fd);
+            return super.close(fd);
+        }
+
+        @Override
+        public void fdatasync(long fd) {
+            final String path = paths.get(fd);
+            final String failedTable = this.failedTable;
+            if (failedTable != null && path != null && path.contains(java.io.File.separator + failedTable)
+                    && path.contains(WalUtils.SEQ_DIR) && !SuspensionScope.hasAnyRoleSwitchLock()) {
+                this.failedTable = null;
+                failures++;
+                throw CairoException.critical(5).put("test: group flush failed");
+            }
+            super.fdatasync(fd);
+        }
+
+        void failNextOutsideLock(String table) {
+            this.failedTable = table;
+        }
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            final long fd = super.openRW(name, opts);
+            if (fd > -1) {
+                paths.put(fd, Utf8s.stringFromUtf8BytesSafe(name));
+            }
+            return fd;
+        }
+    }
+
+    /**
      * One fuzz iteration: its faults, frames and expected outcome. A value is its frame's sequence * 10 + its row.
      */
     private static final class FuzzIteration {
@@ -5101,11 +6277,16 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         long cap;
         boolean isDataErrorsOnly;
         boolean isDurable;
+        boolean isPrepareFaultTransient;
         boolean isReadOnlyTransient;
         boolean isRefusalPersistent;
         boolean isWriterFaultTransient;
         boolean isWriterFaultUnexpected;
         int iteration;
+        long prepareCalls;
+        long prepareFaultFromCall;
+        // The index of the table whose prepares fail, or -1. Drawn from the fault Rnd, see drawPrepareFault().
+        int prepareFaultTable = -1;
         long readOnlyCalls;
         long readOnlyFromCall;
         int refusedInsertCall;
@@ -5122,7 +6303,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                     + ", readOnlyTransient=" + isReadOnlyTransient + ", refusedInsert=" + refusedInsertCall
                     + ", refusalPersistent=" + isRefusalPersistent + ", writerFaultTable=" + writerFaultTable
                     + ", writerFaultFrom=" + writerFaultFromCall + ", writerFaultTransient=" + isWriterFaultTransient
-                    + ", writerFaultUnexpected=" + isWriterFaultUnexpected + ", kinds=" + kinds;
+                    + ", writerFaultUnexpected=" + isWriterFaultUnexpected + ", prepareFaultTable=" + prepareFaultTable
+                    + ", prepareFaultFrom=" + prepareFaultFromCall + ", prepareFaultTransient=" + isPrepareFaultTransient
+                    + ", kinds=" + kinds;
         }
 
         // I4's bound on a table's commits in an iteration whose only faults are data errors,
@@ -5157,6 +6340,21 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         }
 
         // The first frame that fails on its own data, or -1.
+        // Whether a frame with rows of a table other than table and one with rows of table exist: a batch of
+        // the two can form.
+        boolean hasPlainFrameOfOtherTableThan(int table) {
+            boolean hasTable = false;
+            boolean hasOther = false;
+            for (int s = 0, n = frameValueTables.size(); s < n; s++) {
+                final IntList valueTables = frameValueTables.getQuick(s);
+                for (int i = 0, m = valueTables.size(); i < m; i++) {
+                    hasTable |= valueTables.getQuick(i) == table;
+                    hasOther |= valueTables.getQuick(i) != table;
+                }
+            }
+            return hasTable && hasOther;
+        }
+
         int firstBadFrame() {
             for (int s = 0, n = frameErrorStatus.size(); s < n; s++) {
                 if (frameErrorStatus.getQuick(s) >= 0) {
@@ -5257,7 +6455,7 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         }
 
         boolean isCommitFaulty() {
-            return refusedInsertCall > 0 || readOnlyFromCall > 0;
+            return refusedInsertCall > 0 || readOnlyFromCall > 0 || prepareFaultTable > -1;
         }
 
         // The number of frames before the first bad frame, or of all frames.
