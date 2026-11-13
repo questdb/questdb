@@ -1645,8 +1645,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 timestampColumnName = meta.getColumnName(meta.getTimestampIndex());
             }
 
-            long start = MicrosTimestampDriver.floor("2022-02-24T17");
-            long end = start + fuzzer.partitionCount * Micros.DAY_MICROS;
+            long start = fuzzer.getTransactionStartMicros();
+            long end = start + fuzzer.partitionCount * fuzzer.getPartitionDurationMicros();
             ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableNameDedup, rnd, start, end);
 
             try {

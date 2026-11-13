@@ -92,6 +92,11 @@ public class MicrosTimestampDriver implements TimestampDriver {
 
     private static final DateFormat PARTITION_DAY_FORMAT = new IsoDatePartitionFormat(MicrosTimestampDriver::partitionFloorDD, DAY_FORMAT);
     private static final DateFormat PARTITION_HOUR_FORMAT = new IsoDatePartitionFormat(MicrosTimestampDriver::partitionFloorHH, HOUR_FORMAT);
+    private static final DateFormat PARTITION_MINUTE_10_FORMAT = new IsoDatePartitionFormat(MicrosTimestampDriver::partitionFloorMI10, MINUTE_FORMAT);
+    private static final DateFormat PARTITION_MINUTE_15_FORMAT = new IsoDatePartitionFormat(MicrosTimestampDriver::partitionFloorMI15, MINUTE_FORMAT);
+    private static final DateFormat PARTITION_MINUTE_20_FORMAT = new IsoDatePartitionFormat(MicrosTimestampDriver::partitionFloorMI20, MINUTE_FORMAT);
+    private static final DateFormat PARTITION_MINUTE_30_FORMAT = new IsoDatePartitionFormat(MicrosTimestampDriver::partitionFloorMI30, MINUTE_FORMAT);
+    private static final DateFormat PARTITION_MINUTE_5_FORMAT = new IsoDatePartitionFormat(MicrosTimestampDriver::partitionFloorMI5, MINUTE_FORMAT);
     private static final DateFormat PARTITION_MONTH_FORMAT = new IsoDatePartitionFormat(MicrosTimestampDriver::partitionFloorMM, MONTH_FORMAT);
     private static final DateFormat PARTITION_WEEK_FORMAT = new IsoWeekPartitionFormat();
     private static final DateFormat PARTITION_YEAR_FORMAT = new IsoDatePartitionFormat(MicrosTimestampDriver::partitionFloorYYYY, YEAR_FORMAT);
@@ -227,6 +232,8 @@ public class MicrosTimestampDriver implements TimestampDriver {
     public long approxPartitionDuration(int partitionBy) {
         return switch (partitionBy) {
             case PartitionBy.HOUR -> Micros.HOUR_MICROS;
+            case MINUTE_5, MINUTE_10, MINUTE_15, MINUTE_20, MINUTE_30 ->
+                    PartitionBy.getMinutes(partitionBy) * Micros.MINUTE_MICROS;
             case PartitionBy.DAY -> Micros.DAY_MICROS;
             case PartitionBy.WEEK -> Micros.WEEK_MICROS;
             case PartitionBy.MONTH -> Micros.MONTH_MICROS_APPROX;
@@ -581,6 +588,11 @@ public class MicrosTimestampDriver implements TimestampDriver {
             case YEAR -> Micros::addYears;
             case HOUR -> Micros::addHours;
             case WEEK -> Micros::addWeeks;
+            case MINUTE_5 -> (timestamp, increment) -> Micros.addMinutes(timestamp, increment * 5);
+            case MINUTE_10 -> (timestamp, increment) -> Micros.addMinutes(timestamp, increment * 10);
+            case MINUTE_15 -> (timestamp, increment) -> Micros.addMinutes(timestamp, increment * 15);
+            case MINUTE_20 -> (timestamp, increment) -> Micros.addMinutes(timestamp, increment * 20);
+            case MINUTE_30 -> (timestamp, increment) -> Micros.addMinutes(timestamp, increment * 30);
             default -> null;
         };
     }
@@ -593,6 +605,11 @@ public class MicrosTimestampDriver implements TimestampDriver {
             case YEAR -> MicrosTimestampDriver::partitionCeilYYYY;
             case HOUR -> MicrosTimestampDriver::partitionCeilHH;
             case WEEK -> MicrosTimestampDriver::partitionCeilWW;
+            case MINUTE_5 -> MicrosTimestampDriver::partitionCeilMI5;
+            case MINUTE_10 -> MicrosTimestampDriver::partitionCeilMI10;
+            case MINUTE_15 -> MicrosTimestampDriver::partitionCeilMI15;
+            case MINUTE_20 -> MicrosTimestampDriver::partitionCeilMI20;
+            case MINUTE_30 -> MicrosTimestampDriver::partitionCeilMI30;
             default -> null;
         };
     }
@@ -605,6 +622,11 @@ public class MicrosTimestampDriver implements TimestampDriver {
             case YEAR -> PARTITION_YEAR_FORMAT;
             case HOUR -> PARTITION_HOUR_FORMAT;
             case WEEK -> PARTITION_WEEK_FORMAT;
+            case MINUTE_5 -> PARTITION_MINUTE_5_FORMAT;
+            case MINUTE_10 -> PARTITION_MINUTE_10_FORMAT;
+            case MINUTE_15 -> PARTITION_MINUTE_15_FORMAT;
+            case MINUTE_20 -> PARTITION_MINUTE_20_FORMAT;
+            case MINUTE_30 -> PARTITION_MINUTE_30_FORMAT;
             case NONE, NOT_APPLICABLE -> DEFAULT_FORMAT;
             default ->
                     throw new UnsupportedOperationException("partition by " + partitionBy + " does not have date format");
@@ -619,6 +641,11 @@ public class MicrosTimestampDriver implements TimestampDriver {
             case MONTH -> MicrosTimestampDriver::partitionFloorMM;
             case YEAR -> MicrosTimestampDriver::partitionFloorYYYY;
             case HOUR -> MicrosTimestampDriver::partitionFloorHH;
+            case MINUTE_5 -> MicrosTimestampDriver::partitionFloorMI5;
+            case MINUTE_10 -> MicrosTimestampDriver::partitionFloorMI10;
+            case MINUTE_15 -> MicrosTimestampDriver::partitionFloorMI15;
+            case MINUTE_20 -> MicrosTimestampDriver::partitionFloorMI20;
+            case MINUTE_30 -> MicrosTimestampDriver::partitionFloorMI30;
             default -> null;
         };
     }
@@ -1576,6 +1603,26 @@ public class MicrosTimestampDriver implements TimestampDriver {
                     fmtMethod = PARTITION_WEEK_FORMAT;
                     yield CommonUtils.WEEK_PATTERN;
                 }
+                case MINUTE_5 -> {
+                    fmtMethod = PARTITION_MINUTE_5_FORMAT;
+                    yield CommonUtils.MINUTE_PATTERN;
+                }
+                case MINUTE_10 -> {
+                    fmtMethod = PARTITION_MINUTE_10_FORMAT;
+                    yield CommonUtils.MINUTE_PATTERN;
+                }
+                case MINUTE_15 -> {
+                    fmtMethod = PARTITION_MINUTE_15_FORMAT;
+                    yield CommonUtils.MINUTE_PATTERN;
+                }
+                case MINUTE_20 -> {
+                    fmtMethod = PARTITION_MINUTE_20_FORMAT;
+                    yield CommonUtils.MINUTE_PATTERN;
+                }
+                case MINUTE_30 -> {
+                    fmtMethod = PARTITION_MINUTE_30_FORMAT;
+                    yield CommonUtils.MINUTE_PATTERN;
+                }
                 case NONE, NOT_APPLICABLE -> {
                     fmtMethod = DEFAULT_FORMAT;
                     yield partitionName;
@@ -1585,6 +1632,9 @@ public class MicrosTimestampDriver implements TimestampDriver {
             };
             int limit = fmtStr.length();
             if (hi < 0) {
+                if (PartitionBy.isMinutePartitioned(partitionBy)) {
+                    return parseMinutePartitionName(partitionName, lo, partitionBy, fmtMethod);
+                }
                 // Automatic partition name trimming.
                 hi = lo + Math.min(limit, partitionName.length());
             }
@@ -1680,6 +1730,31 @@ public class MicrosTimestampDriver implements TimestampDriver {
         }
     }
 
+    /**
+     * Parses a sub-hour partition name a user wrote: any time within the partition picks it, written
+     * as a directory name, 2024-01-01T0917, or as a timestamp, 2024-01-01T09:17[:33.5].
+     */
+    private long parseMinutePartitionName(CharSequence name, int lo, int partitionBy, DateFormat dirFormat) {
+        final int len = name.length();
+        final int hourEnd = lo + CommonUtils.HOUR_PATTERN.length();
+        final boolean isTimestamp = len > hourEnd && name.charAt(hourEnd) == ':';
+        final int hi = isTimestamp ? len : lo + Math.min(CommonUtils.MINUTE_PATTERN.length(), len - lo);
+        try {
+            final long timestamp;
+            if (isTimestamp) {
+                timestamp = parseFloor(name, lo, hi);
+            } else {
+                if (hi - lo < CommonUtils.MINUTE_PATTERN.length()) {
+                    throw NumericException.instance();
+                }
+                timestamp = dirFormat.parse(name, lo, hi, EN_LOCALE);
+            }
+            return getPartitionFloorMethod(partitionBy).floor(timestamp);
+        } catch (NumericException e) {
+            throw TimestampDriver.expectedPartitionDirNameFormatCairoException(name, lo, hi, partitionBy);
+        }
+    }
+
     private static long checkTimezoneTail(CharSequence seq, int p, int lim) throws NumericException {
         if (lim == p) {
             return 0;
@@ -1752,6 +1827,31 @@ public class MicrosTimestampDriver implements TimestampDriver {
         return Micros.ceilHH(Math.max(micros, 0));
     }
 
+    private static long partitionCeilMI(long micros, int minutes) {
+        // Designated timestamp can't be negative.
+        return Micros.floorMI(Math.max(micros, 0), minutes) + minutes * Micros.MINUTE_MICROS;
+    }
+
+    private static long partitionCeilMI10(long micros) {
+        return partitionCeilMI(micros, 10);
+    }
+
+    private static long partitionCeilMI15(long micros) {
+        return partitionCeilMI(micros, 15);
+    }
+
+    private static long partitionCeilMI20(long micros) {
+        return partitionCeilMI(micros, 20);
+    }
+
+    private static long partitionCeilMI30(long micros) {
+        return partitionCeilMI(micros, 30);
+    }
+
+    private static long partitionCeilMI5(long micros) {
+        return partitionCeilMI(micros, 5);
+    }
+
     private static long partitionCeilMM(long micros) {
         // Designated timestamp can't be negative.
         return Micros.ceilMM(Math.max(micros, 0));
@@ -1775,6 +1875,31 @@ public class MicrosTimestampDriver implements TimestampDriver {
     private static long partitionFloorHH(long micros) {
         // Designated timestamp can't be negative.
         return Micros.floorHH(Math.max(micros, 0));
+    }
+
+    private static long partitionFloorMI(long micros, int minutes) {
+        // Designated timestamp can't be negative.
+        return Micros.floorMI(Math.max(micros, 0), minutes);
+    }
+
+    private static long partitionFloorMI10(long micros) {
+        return partitionFloorMI(micros, 10);
+    }
+
+    private static long partitionFloorMI15(long micros) {
+        return partitionFloorMI(micros, 15);
+    }
+
+    private static long partitionFloorMI20(long micros) {
+        return partitionFloorMI(micros, 20);
+    }
+
+    private static long partitionFloorMI30(long micros) {
+        return partitionFloorMI(micros, 30);
+    }
+
+    private static long partitionFloorMI5(long micros) {
+        return partitionFloorMI(micros, 5);
     }
 
     private static long partitionFloorMM(long micros) {

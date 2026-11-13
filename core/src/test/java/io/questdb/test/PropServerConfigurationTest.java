@@ -2245,6 +2245,20 @@ public class PropServerConfigurationTest {
         configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(PartitionBy.YEAR, configuration.getLineTcpReceiverConfiguration().getDefaultPartitionBy());
         Assert.assertEquals(PartitionBy.YEAR, configuration.getLineUdpReceiverConfiguration().getDefaultPartitionBy());
+
+        properties.setProperty("line.default.partition.by", "15 MINUTES");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(PartitionBy.MINUTE_15, configuration.getLineTcpReceiverConfiguration().getDefaultPartitionBy());
+        Assert.assertEquals(PartitionBy.MINUTE_15, configuration.getLineUdpReceiverConfiguration().getDefaultPartitionBy());
+
+        properties.setProperty("line.default.partition.by", "5minute");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(PartitionBy.MINUTE_5, configuration.getLineTcpReceiverConfiguration().getDefaultPartitionBy());
+
+        // an unsupported size falls back to DAY
+        properties.setProperty("line.default.partition.by", "7 MINUTES");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(PartitionBy.DAY, configuration.getLineTcpReceiverConfiguration().getDefaultPartitionBy());
     }
 
     @Test

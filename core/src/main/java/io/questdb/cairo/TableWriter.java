@@ -18965,28 +18965,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long maxTimestamp = txWriter.getMaxTimestamp();
             try {
                 final long tsLimit = txWriter.getPartitionTimestampByTimestamp(txWriter.getMaxTimestamp());
-                for (long ts = txWriter.getPartitionTimestampByTimestamp(txWriter.getMinTimestamp()); ts < tsLimit; ts = txWriter.getNextPartitionTimestamp(ts)) {
+                final long tsLo = txWriter.getPartitionTimestampByTimestamp(txWriter.getMinTimestamp());
+                // Walk the partitions recorded in the txn file rather than every partition-sized
+                // time slot between min and max: with fine-grained partitioning (e.g. MINUTE)
+                // and a wide timestamp range the slot walk is millions of file probes.
+                for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+                    final long ts = txWriter.getPartitionTimestampByIndex(i);
+                    if (ts < tsLo) {
+                        continue;
+                    }
+                    if (ts >= tsLimit) {
+                        break;
+                    }
                     path.trimTo(pathSize);
                     setStateForTimestamp(path, ts);
-                    int p = path.size();
-
-                    long partitionSize = txWriter.getPartitionRowCountByTimestamp(ts);
-                    if (partitionSize >= 0 && ff.exists(path.$())) {
-                        fixedRowCount += partitionSize;
+                    if (ff.exists(path.$())) {
+                        fixedRowCount += txWriter.getPartitionSize(i);
                         lastTimestamp = ts;
                     } else {
-                        Path other = Path.getThreadLocal2(path.trimTo(p));
-                        oldPartitionName(other, getTxn());
-                        if (ff.exists(other.$())) {
-                            if (ff.rename(other.$(), path.$()) != FILES_RENAME_OK) {
-                                LOG.error().$("could not rename [from=").$(other).$(", to=").$(path).I$();
-                                throw new CairoError("could not restore directory, see log for details");
-                            } else {
-                                LOG.info().$("restored [path=").$substr(pathRootSize, path).I$();
-                            }
-                        } else {
-                            LOG.debug().$("missing partition [name=").$(path.trimTo(p).$()).I$();
-                        }
+                        LOG.debug().$("missing partition [name=").$(path).I$();
                     }
                 }
 
@@ -18994,36 +18991,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     path.trimTo(pathSize);
                     setStateForTimestamp(path, tsLimit);
                     if (!ff.exists(path.$())) {
-                        Path other = Path.getThreadLocal2(path);
-                        oldPartitionName(other, getTxn());
-                        if (ff.exists(other.$())) {
-                            if (ff.rename(other.$(), path.$()) != FILES_RENAME_OK) {
-                                LOG.error().$("could not rename [from=").$(other).$(", to=").$(path).I$();
-                                throw new CairoError("could not restore directory, see log for details");
-                            } else {
-                                LOG.info().$("restored [path=").$substr(pathRootSize, path).I$();
-                            }
-                        } else {
-                            LOG.error().$("last partition does not exist [name=").$(path).I$();
-                            // ok, create last partition we discovered the active
-                            // 1. read its size
-                            path.trimTo(pathSize);
-                            setStateForTimestamp(path, lastTimestamp);
-                            int p = path.size();
-                            transientRowCount = txWriter.getPartitionRowCountByTimestamp(lastTimestamp);
+                        LOG.error().$("last partition does not exist [name=").$(path).I$();
+                        // ok, create last partition we discovered the active
+                        // 1. read its size
+                        path.trimTo(pathSize);
+                        setStateForTimestamp(path, lastTimestamp);
+                        int p = path.size();
+                        transientRowCount = txWriter.getPartitionRowCountByTimestamp(lastTimestamp);
 
-                            // 2. read max timestamp
-                            dFile(path.trimTo(p), metadata.getColumnName(metadata.getTimestampIndex()), COLUMN_NAME_TXN_NONE);
-                            maxTimestamp = readLongAtOffset(ff, path.$(), tempMem16b, (transientRowCount - 1) * Long.BYTES);
-                            fixedRowCount -= transientRowCount;
-                            removeAttachedPartitionsTracked(txWriter.getMaxTimestamp());
-                            LOG.info()
-                                    .$("updated active partition [name=").$(path.trimTo(p).$())
-                                    .$(", maxTimestamp=").$ts(timestampDriver, maxTimestamp)
-                                    .$(", transientRowCount=").$(transientRowCount)
-                                    .$(", fixedRowCount=").$(txWriter.getFixedRowCount())
-                                    .I$();
-                        }
+                        // 2. read max timestamp
+                        dFile(path.trimTo(p), metadata.getColumnName(metadata.getTimestampIndex()), COLUMN_NAME_TXN_NONE);
+                        maxTimestamp = readLongAtOffset(ff, path.$(), tempMem16b, (transientRowCount - 1) * Long.BYTES);
+                        fixedRowCount -= transientRowCount;
+                        removeAttachedPartitionsTracked(txWriter.getMaxTimestamp());
+                        LOG.info()
+                                .$("updated active partition [name=").$(path.trimTo(p).$())
+                                .$(", maxTimestamp=").$ts(timestampDriver, maxTimestamp)
+                                .$(", transientRowCount=").$(transientRowCount)
+                                .$(", fixedRowCount=").$(txWriter.getFixedRowCount())
+                                .I$();
                     }
                 }
             } finally {

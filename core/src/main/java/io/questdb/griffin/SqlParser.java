@@ -550,6 +550,39 @@ public class SqlParser {
     }
 
     /**
+     * Parses a sub-hour partition size, {@code <n> MINUTE[S]}, whose number is {@code tok}. Returns
+     * the PartitionBy constant, or -1, consuming no more tokens, when {@code tok} is not a number.
+     */
+    private static int parsePartitionByMinutes(GenericLexer lexer, CharSequence tok, int pos) throws SqlException {
+        final int len = tok.length();
+        if (len == 0) {
+            return -1;
+        }
+        for (int i = 0; i < len; i++) {
+            final char c = tok.charAt(i);
+            if (c < '0' || c > '9') {
+                return -1;
+            }
+        }
+        long minutes;
+        try {
+            minutes = Numbers.parseLong(tok);
+        } catch (NumericException e) {
+            // too many digits for a long
+            minutes = Long.MAX_VALUE;
+        }
+        final CharSequence unit = SqlUtil.fetchNext(lexer);
+        if (unit == null || !(isMinuteKeyword(unit) || isMinutesKeyword(unit))) {
+            throw SqlException.$(unit == null ? lexer.getPosition() : lexer.lastTokenPosition(), "'MINUTE' or 'MINUTES' expected");
+        }
+        final int partitionBy = PartitionBy.fromMinutes(minutes);
+        if (partitionBy == -1) {
+            throw SqlException.$(pos, "unsupported partition size, expected 5, 10, 15, 20 or 30 MINUTES");
+        }
+        return partitionBy;
+    }
+
+    /**
      * Rejects a line comment or an unterminated block comment inside captured EXPIRE ROWS text
      * ({@code [lo, hi)} of {@code content}). The captured text is stored verbatim and later embedded
      * into single-line generated SQL (the read filter, the cleanup survivor queries, SHOW CREATE
@@ -2368,6 +2401,22 @@ public class SqlParser {
         throw SqlException.$((lexer.lastTokenPosition()), "'offset' expected");
     }
 
+    /**
+     * Parses the partitioning unit after PARTITION BY: a single word, such as DAY, or a
+     * sub-hour size written as {@code <n> MINUTE[S]}, such as {@code 15 MINUTES}. The returned
+     * literal's token is a name {@link PartitionBy#fromString(CharSequence)} accepts.
+     */
+    private ExpressionNode expectPartitionByLiteral(GenericLexer lexer) throws SqlException {
+        final CharSequence tok = tok(lexer, "partition unit");
+        final int pos = lexer.lastTokenPosition();
+        final int partitionBy = parsePartitionByMinutes(lexer, tok, pos);
+        if (partitionBy != -1) {
+            return nextLiteral(PartitionBy.toString(partitionBy), pos);
+        }
+        lexer.unparseLast();
+        return expectLiteral(lexer);
+    }
+
     private void expectSample(GenericLexer lexer, IQueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
         final ExpressionNode n = expr(lexer, null, sqlParserCallback, model.getDecls());
         if (isFullSampleByPeriod(n)) {
@@ -3128,9 +3177,12 @@ public class SqlParser {
                     } else if (isPartitionKeyword(tok)) {
                         expectTok(lexer, "by");
                         tok = tok(lexer, "year month day hour none");
-                        int partitionBy = PartitionBy.fromString(tok);
+                        int partitionBy = parsePartitionByMinutes(lexer, tok, lexer.lastTokenPosition());
                         if (partitionBy < 0) {
-                            throw SqlException.$(lexer.getPosition(), "'NONE', 'HOUR', 'DAY', 'WEEK', 'MONTH' or 'YEAR' expected");
+                            partitionBy = PartitionBy.fromString(tok);
+                        }
+                        if (partitionBy < 0) {
+                            throw SqlException.$(lexer.getPosition(), "'NONE', 'HOUR', 'DAY', 'WEEK', 'MONTH', 'YEAR' or '<n> MINUTES' expected");
                         }
                         model.setPartitionBy(partitionBy);
                         tok = optTok(lexer);
@@ -3211,7 +3263,7 @@ public class SqlParser {
                         }
                         break;
                     case ExportModel.COPY_OPTION_PARTITION_BY:
-                        final ExpressionNode partitionByExpr = expectLiteral(lexer);
+                        final ExpressionNode partitionByExpr = expectPartitionByLiteral(lexer);
                         final int partitionBy = PartitionBy.fromString(partitionByExpr.token);
                         if (partitionBy < 0) {
                             throw SqlException.$(lexer.lastTokenPosition(), "invalid partition by option: ").put(partitionByExpr.token);
@@ -3422,9 +3474,12 @@ public class SqlParser {
                 expectTok(lexer, "by");
                 tok = tok(lexer, "year month week day hour");
                 int partPos = lexer.lastTokenPosition();
-                int partitionBy = PartitionBy.fromString(tok);
+                int partitionBy = parsePartitionByMinutes(lexer, tok, partPos);
                 if (partitionBy < 0) {
-                    throw SqlException.$(partPos, "'HOUR', 'DAY', 'WEEK', 'MONTH' or 'YEAR' expected");
+                    partitionBy = PartitionBy.fromString(tok);
+                }
+                if (partitionBy < 0) {
+                    throw SqlException.$(partPos, "'HOUR', 'DAY', 'WEEK', 'MONTH', 'YEAR' or '<n> MINUTES' expected");
                 }
                 // The LV's on-disk tier is a WAL-backed table, and WAL tables
                 // require a partition scheme. Explicit PARTITION BY NONE would
@@ -4852,7 +4907,7 @@ public class SqlParser {
         if (partitionByExpr != null) {
             partitionBy = PartitionBy.fromString(partitionByExpr.token);
             if (partitionBy == -1) {
-                throw SqlException.$(partitionByExpr.position, "'HOUR', 'DAY', 'WEEK', 'MONTH' or 'YEAR' expected");
+                throw SqlException.$(partitionByExpr.position, "'HOUR', 'DAY', 'WEEK', 'MONTH', 'YEAR' or '<n> MINUTES' expected");
             }
             if (!PartitionBy.isPartitioned(partitionBy)) {
                 throw SqlException.position(partitionByExpr.position).put("materialized view has to be partitioned");
@@ -5018,7 +5073,7 @@ public class SqlParser {
             }
             final int partitionBy = PartitionBy.fromString(partitionByExpr.token);
             if (partitionBy == -1) {
-                throw SqlException.$(partitionByExpr.position, "'NONE', 'HOUR', 'DAY', 'WEEK', 'MONTH' or 'YEAR' expected");
+                throw SqlException.$(partitionByExpr.position, "'NONE', 'HOUR', 'DAY', 'WEEK', 'MONTH', 'YEAR' or '<n> MINUTES' expected");
             }
             builder.setPartitionByExpr(partitionByExpr);
             tok = optTok(lexer);
@@ -5546,7 +5601,7 @@ public class SqlParser {
     private ExpressionNode parseCreateTablePartition(GenericLexer lexer, CharSequence tok) throws SqlException {
         if (tok != null && isPartitionKeyword(tok)) {
             expectTok(lexer, "by");
-            return expectLiteral(lexer);
+            return expectPartitionByLiteral(lexer);
         }
         return null;
     }

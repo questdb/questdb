@@ -35,6 +35,8 @@ import io.questdb.std.Rnd;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocaleFactory;
+import io.questdb.std.str.DirectUtf8Sink;
+import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.TestTimestampType;
@@ -53,6 +55,9 @@ import static io.questdb.test.tools.TestUtils.putWithLeadingZeroIfNeeded;
 
 @RunWith(Parameterized.class)
 public class PartitionByTest {
+    private static final int[] MINUTE_PARTITIONS = {
+            PartitionBy.MINUTE_5, PartitionBy.MINUTE_10, PartitionBy.MINUTE_15, PartitionBy.MINUTE_20, PartitionBy.MINUTE_30
+    };
     private static final StringSink sink = new StringSink();
     private final TestTimestampType timestampType;
 
@@ -110,6 +115,25 @@ public class PartitionByTest {
                 "2021-02-12T16:00:00.000000Z",
                 "2021-02-12T16:00:00.000000Z"
         );
+    }
+
+    @Test
+    public void testAddCeilFloorMinutes() throws NumericException {
+        testAddCeilFloor("2021-02-12T16:40:00.000000Z", PartitionBy.MINUTE_5, "2021-02-12T16:35:00.000000Z", "2021-02-12T16:38:59.999999Z");
+        testAddCeilFloor("2021-02-12T16:40:00.000000Z", PartitionBy.MINUTE_10, "2021-02-12T16:30:00.000000Z", "2021-02-12T16:38:00.000000Z");
+        testAddCeilFloor("2021-02-12T16:45:00.000000Z", PartitionBy.MINUTE_15, "2021-02-12T16:30:00.000000Z", "2021-02-12T16:38:00.000000Z");
+        testAddCeilFloor("2021-02-12T16:40:00.000000Z", PartitionBy.MINUTE_20, "2021-02-12T16:20:00.000000Z", "2021-02-12T16:38:00.000000Z");
+        testAddCeilFloor("2021-02-12T17:00:00.000000Z", PartitionBy.MINUTE_30, "2021-02-12T16:30:00.000000Z", "2021-02-12T16:38:00.000000Z");
+    }
+
+    @Test
+    public void testAddCeilFloorMinutesEdge() throws NumericException {
+        // last partition of a day, of a month and of a leap year rolls over to the next one
+        testAddCeilFloor("2021-02-13T00:00:00.000000Z", PartitionBy.MINUTE_15, "2021-02-12T23:45:00.000000Z", "2021-02-12T23:45:00.000000Z");
+        testAddCeilFloor("2021-03-01T00:00:00.000000Z", PartitionBy.MINUTE_5, "2021-02-28T23:55:00.000000Z", "2021-02-28T23:59:59.999999Z");
+        testAddCeilFloor("2021-01-01T00:00:00.000000Z", PartitionBy.MINUTE_30, "2020-12-31T23:30:00.000000Z", "2020-12-31T23:59:00.000000Z");
+        testAddCeilFloor("2020-03-01T00:00:00.000000Z", PartitionBy.MINUTE_20, "2020-02-29T23:40:00.000000Z", "2020-02-29T23:40:00.000000Z");
+        testAddCeilFloor("1970-01-01T00:10:00.000000Z", PartitionBy.MINUTE_10, "1970-01-01T00:00:00.000000Z", "1970-01-01T00:00:00.000000Z");
     }
 
     @Test
@@ -243,6 +267,17 @@ public class PartitionByTest {
     }
 
     @Test
+    public void testDirectoryFormattingMinutes() throws NumericException {
+        assertFormatAndParse("2014-09-03T2115", "2014-09-03T21:15:00.000000Z", PartitionBy.MINUTE_15);
+        assertFormatAndParse("2014-09-03T2100", "2014-09-03T21:00:00Z", PartitionBy.MINUTE_15);
+        assertFormatAndParse("2014-09-03T0005", "2014-09-03T00:05", PartitionBy.MINUTE_5);
+        assertFormatAndParse("2014-09-03T2350", "2014-09-03T23:50", PartitionBy.MINUTE_10);
+        assertFormatAndParse("2014-09-03T2340", "2014-09-03T23:40", PartitionBy.MINUTE_20);
+        assertFormatAndParse("2014-09-03T2330", "2014-09-03T23:30", PartitionBy.MINUTE_30);
+        assertFormatAndParse("2014-09-03T0000", "2014-09-03", PartitionBy.MINUTE_30);
+    }
+
+    @Test
     public void testDirectoryFormattingMonth() throws NumericException {
         assertFormatAndParse("2013-03", "2013-03-01T00:00:00.000000Z", PartitionBy.MONTH);
         assertFormatAndParse("2013-03", "2013-03-01T00:00:00Z", PartitionBy.MONTH);
@@ -290,6 +325,13 @@ public class PartitionByTest {
     @Test
     public void testDirectoryParseFailureByHour() {
         assertParseFailure("'yyyy-MM-ddTHH' expected, found [ts=2013-03-12]", "2013-03-12", PartitionBy.HOUR);
+    }
+
+    @Test
+    public void testDirectoryParseFailureByMinutes() {
+        assertParseFailure("'yyyy-MM-ddTHHmm' expected, found [ts=2013-03-12T17]", "2013-03-12T17", PartitionBy.MINUTE_15);
+        assertParseFailure("'yyyy-MM-ddTHHmm' expected, found [ts=2013-03-12]", "2013-03-12", PartitionBy.MINUTE_5);
+        assertParseFailure("'yyyy-MM-ddTHHmm' expected, found [ts=2013-03-12T1760]", "2013-03-12T1760", PartitionBy.MINUTE_30);
     }
 
     @Test
@@ -365,7 +407,94 @@ public class PartitionByTest {
         Assert.assertTrue(PartitionBy.isPartitioned(PartitionBy.YEAR));
         Assert.assertTrue(PartitionBy.isPartitioned(PartitionBy.HOUR));
         Assert.assertTrue(PartitionBy.isPartitioned(PartitionBy.WEEK));
+        for (int partitionBy : MINUTE_PARTITIONS) {
+            Assert.assertTrue(PartitionBy.isPartitioned(partitionBy));
+            Assert.assertTrue(PartitionBy.isMinutePartitioned(partitionBy));
+        }
         Assert.assertFalse(PartitionBy.isPartitioned(PartitionBy.NONE));
+        Assert.assertFalse(PartitionBy.isMinutePartitioned(PartitionBy.HOUR));
+        Assert.assertFalse(PartitionBy.isMinutePartitioned(PartitionBy.NONE));
+        Assert.assertFalse(PartitionBy.isMinutePartitioned(PartitionBy.NOT_APPLICABLE));
+    }
+
+    @Test
+    public void testMinutesPartitionNameOfUser() throws NumericException {
+        // hi = -1 parses a partition name from SQL: any time within the partition picks it
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final int timestampType = this.timestampType.getTimestampType();
+        final long expected = timestampDriver.parseFloorLiteral("2013-03-31T17:45");
+        for (String name : new String[]{"2013-03-31T1745", "2013-03-31T1759", "2013-03-31T17:45", "2013-03-31T17:52:01.123", "2013-03-31T17:59:59.999999Z"}) {
+            Assert.assertEquals(name, expected, PartitionBy.parsePartitionDirName(name, timestampType, PartitionBy.MINUTE_15, 0, -1));
+        }
+        Assert.assertEquals(
+                timestampDriver.parseFloorLiteral("2013-03-31T17:55"),
+                PartitionBy.parsePartitionDirName("2013-03-31T17:57:30", timestampType, PartitionBy.MINUTE_5, 0, -1)
+        );
+        assertParseFails("2013-03-31T17", PartitionBy.MINUTE_15);
+        try {
+            PartitionBy.parsePartitionDirName("2013-03-31T17:6", timestampType, PartitionBy.MINUTE_15, 0, -1);
+            Assert.fail();
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "'yyyy-MM-ddTHHmm' expected");
+        }
+    }
+
+    @Test
+    public void testMinutesSplit() throws NumericException {
+        assertFormatAndParse("2013-03-31T175500", "2013-03-31T17:55:00.000000Z", PartitionBy.MINUTE_15);
+        assertFormatAndParse("2013-03-31T175501", "2013-03-31T17:55:01.000000Z", PartitionBy.MINUTE_5);
+        assertFormatAndParse(ColumnType.isTimestampNano(timestampType.getTimestampType()) ? "2013-03-31T175501-123000101" : "2013-03-31T175501-123000", "2013-03-31T17:55:01.123000101Z", PartitionBy.MINUTE_10);
+        assertFormatAndParse(ColumnType.isTimestampNano(timestampType.getTimestampType()) ? "2013-03-31T174500-000000001" : "2013-03-31T174500-000001", ColumnType.isTimestampNano(timestampType.getTimestampType()) ? "2013-03-31T17:45:00.000000001Z" : "2013-03-31T17:45:00.000001Z", PartitionBy.MINUTE_15);
+        assertFormatAndParse("2013-03-31T1745", "2013-03-31T17:45:00.000000Z", PartitionBy.MINUTE_15);
+        assertFormatAndParse("2013-03-31T174600", "2013-03-31T17:46:00.000000Z", PartitionBy.MINUTE_15);
+        assertFormatAndParse("2013-03-31T172000", "2013-03-31T17:20:00.000000Z", PartitionBy.MINUTE_30);
+        assertFormatAndParse("2013-03-31T1720", "2013-03-31T17:20:00.000000Z", PartitionBy.MINUTE_20);
+        assertFormatAndParse("2013-03-31T0000", "2013-03-31T00:00:00.000000Z", PartitionBy.MINUTE_15);
+    }
+
+    @Test
+    public void testMinutesSplitFuzz() {
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        Rnd rnd = TestUtils.generateRandom(null);
+        for (int partitionBy : MINUTE_PARTITIONS) {
+            testDaySplitFuzz(partitionBy, 1, rnd);
+            testDaySplitFuzz(partitionBy, 1000, rnd);
+            testDaySplitFuzz(partitionBy, timestampDriver.fromSeconds(1), rnd);
+            testDaySplitFuzz(partitionBy, timestampDriver.fromMinutes(1), rnd);
+            testDaySplitFuzz(partitionBy, timestampDriver.fromMinutes(PartitionBy.getMinutes(partitionBy)), rnd);
+            testDaySplitFuzz(partitionBy, timestampDriver.fromHours(1), rnd);
+        }
+    }
+
+    @Test
+    public void testMinutesSplitOrdersBetweenPartitions() {
+        // a split directory name sorts after its partition's base name and before the next partition's
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        Rnd rnd = TestUtils.generateRandom(null);
+        StringSink base = new StringSink();
+        StringSink split = new StringSink();
+        StringSink next = new StringSink();
+        for (int partitionBy : MINUTE_PARTITIONS) {
+            DateFormat formatter = PartitionBy.getPartitionDirFormatMethod(timestampType.getTimestampType(), partitionBy);
+            TimestampDriver.TimestampFloorMethod floor = PartitionBy.getPartitionFloorMethod(timestampType.getTimestampType(), partitionBy);
+            TimestampDriver.TimestampCeilMethod ceil = PartitionBy.getPartitionCeilMethod(timestampType.getTimestampType(), partitionBy);
+            for (int i = 0; i < 1000; i++) {
+                long ts = rnd.nextLong(timestampDriver.fromDays(100 * 365));
+                long lo = floor.floor(ts);
+                if (lo == ts) {
+                    continue;
+                }
+                base.clear();
+                split.clear();
+                next.clear();
+                formatter.format(lo, DateLocaleFactory.EN_LOCALE, null, base);
+                formatter.format(ts, DateLocaleFactory.EN_LOCALE, null, split);
+                formatter.format(ceil.ceil(ts), DateLocaleFactory.EN_LOCALE, null, next);
+                Assert.assertTrue(base + " < " + split, Chars.compare(base, split) < 0);
+                Assert.assertTrue(split + " < " + next, Chars.compare(split, next) < 0);
+                Assert.assertEquals(lo, floor.floor(PartitionBy.parsePartitionDirName(split, timestampType.getTimestampType(), partitionBy)));
+            }
+        }
     }
 
     @Test
@@ -442,6 +571,56 @@ public class PartitionByTest {
     @Test
     public void testPartitionByNameHour() {
         testPartitionByName("HOUR", PartitionBy.HOUR);
+    }
+
+    @Test
+    public void testPartitionByNameMinutes() {
+        testPartitionByName("5 MINUTES", PartitionBy.MINUTE_5);
+        testPartitionByName("10 MINUTES", PartitionBy.MINUTE_10);
+        testPartitionByName("15 MINUTES", PartitionBy.MINUTE_15);
+        testPartitionByName("20 MINUTES", PartitionBy.MINUTE_20);
+        testPartitionByName("30 MINUTES", PartitionBy.MINUTE_30);
+
+        Assert.assertEquals(PartitionBy.MINUTE_15, PartitionBy.fromString("15 minute"));
+        Assert.assertEquals(PartitionBy.MINUTE_15, PartitionBy.fromString("15MINUTES"));
+        Assert.assertEquals(PartitionBy.MINUTE_15, PartitionBy.fromString("15  Minutes"));
+        Assert.assertEquals(PartitionBy.MINUTE_15, PartitionBy.fromUtf8String(new Utf8String("15minute")));
+        Assert.assertEquals(PartitionBy.MINUTE_30, PartitionBy.fromString("030 minutes"));
+
+        for (String invalid : new String[]{"", "minutes", "15", "15 ", "15 hours", "15 minutesx", "15 minutex", "15 minut", "-15 minutes", " 15 minutes",
+                "7 minutes", "1 minute", "60 minutes", "45 minutes", "99999999999999999999 minutes"}) {
+            Assert.assertEquals(invalid, -1, PartitionBy.fromString(invalid));
+            Assert.assertEquals(invalid, -1, PartitionBy.fromUtf8String(new Utf8String(invalid)));
+        }
+
+        for (int partitionBy : MINUTE_PARTITIONS) {
+            Assert.assertEquals(partitionBy, PartitionBy.fromMinutes(PartitionBy.getMinutes(partitionBy)));
+        }
+        Assert.assertEquals(0, PartitionBy.getMinutes(PartitionBy.HOUR));
+        Assert.assertEquals(-1, PartitionBy.fromMinutes(60));
+        Assert.assertEquals(-1, PartitionBy.fromMinutes(Long.MAX_VALUE));
+    }
+
+    @Test
+    public void testPartitionByNameMinutesNotFlaggedAscii() throws Exception {
+        // HTTP URL params are DirectUtf8String instances that never set the ASCII flag
+        TestUtils.assertMemoryLeak(() -> {
+            try (DirectUtf8Sink sink = new DirectUtf8Sink(16)) {
+                final DirectUtf8String name = new DirectUtf8String();
+                sink.put("15 MINUTES");
+                Assert.assertEquals(PartitionBy.MINUTE_15, PartitionBy.fromUtf8String(name.of(sink.ptr(), sink.ptr() + sink.size())));
+                Assert.assertFalse(name.isAscii());
+                sink.clear();
+                sink.put("5minute");
+                Assert.assertEquals(PartitionBy.MINUTE_5, PartitionBy.fromUtf8String(name.of(sink.ptr(), sink.ptr() + sink.size())));
+                sink.clear();
+                sink.put("15 minut\u00e9s");
+                Assert.assertEquals(-1, PartitionBy.fromUtf8String(name.of(sink.ptr(), sink.ptr() + sink.size())));
+                sink.clear();
+                sink.put("15\u00a0minutes");
+                Assert.assertEquals(-1, PartitionBy.fromUtf8String(name.of(sink.ptr(), sink.ptr() + sink.size())));
+            }
+        });
     }
 
     @Test
@@ -528,6 +707,13 @@ public class PartitionByTest {
                 "2021-04-01T18:00:00.000000Z",
                 PartitionBy.HOUR
         );
+    }
+
+    @Test
+    public void testSetPathByMinutes() throws NumericException {
+        setSetPath("a/b/2021-04-01T1845", "2021-04-01T18:45:00.000000Z", PartitionBy.MINUTE_15);
+        sink.clear();
+        setSetPath("a/b/2021-04-01T1805", "2021-04-01T18:05:00.000000Z", PartitionBy.MINUTE_5);
     }
 
     @Test
@@ -631,6 +817,13 @@ public class PartitionByTest {
         PartitionBy.validateTtlGranularity(PartitionBy.WEEK, 0, 0);
         PartitionBy.validateTtlGranularity(PartitionBy.MONTH, 0, 0);
         PartitionBy.validateTtlGranularity(PartitionBy.YEAR, 0, 0);
+        for (int partitionBy : MINUTE_PARTITIONS) {
+            PartitionBy.validateTtlGranularity(partitionBy, 0, 0);
+            // any whole number of hours is a multiple of a sub-hour partition
+            PartitionBy.validateTtlGranularity(partitionBy, 1, 0);
+            PartitionBy.validateTtlGranularity(partitionBy, 25, 0);
+            PartitionBy.validateTtlGranularity(partitionBy, -1, 0);
+        }
     }
 
     @Test

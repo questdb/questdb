@@ -93,6 +93,11 @@ public class NanosTimestampDriver implements TimestampDriver {
     private static final String MAX_NANO_TIMESTAMP_STR = "2261-12-31 23:59:59.999999999";
     private static final DateFormat PARTITION_DAY_FORMAT = new IsoDatePartitionFormat(NanosTimestampDriver::partitionFloorDD, NanosFormatUtils.DAY_FORMAT);
     private static final DateFormat PARTITION_HOUR_FORMAT = new IsoDatePartitionFormat(NanosTimestampDriver::partitionFloorHH, NanosFormatUtils.HOUR_FORMAT);
+    private static final DateFormat PARTITION_MINUTE_10_FORMAT = new IsoDatePartitionFormat(NanosTimestampDriver::partitionFloorMI10, NanosFormatUtils.MINUTE_FORMAT);
+    private static final DateFormat PARTITION_MINUTE_15_FORMAT = new IsoDatePartitionFormat(NanosTimestampDriver::partitionFloorMI15, NanosFormatUtils.MINUTE_FORMAT);
+    private static final DateFormat PARTITION_MINUTE_20_FORMAT = new IsoDatePartitionFormat(NanosTimestampDriver::partitionFloorMI20, NanosFormatUtils.MINUTE_FORMAT);
+    private static final DateFormat PARTITION_MINUTE_30_FORMAT = new IsoDatePartitionFormat(NanosTimestampDriver::partitionFloorMI30, NanosFormatUtils.MINUTE_FORMAT);
+    private static final DateFormat PARTITION_MINUTE_5_FORMAT = new IsoDatePartitionFormat(NanosTimestampDriver::partitionFloorMI5, NanosFormatUtils.MINUTE_FORMAT);
     private static final DateFormat PARTITION_MONTH_FORMAT = new IsoDatePartitionFormat(NanosTimestampDriver::partitionFloorMM, NanosFormatUtils.MONTH_FORMAT);
     private static final DateFormat PARTITION_WEEK_FORMAT = new IsoWeekPartitionFormat();
     private static final DateFormat PARTITION_YEAR_FORMAT = new IsoDatePartitionFormat(NanosTimestampDriver::partitionFloorYYYY, NanosFormatUtils.YEAR_FORMAT);
@@ -226,6 +231,8 @@ public class NanosTimestampDriver implements TimestampDriver {
     public long approxPartitionDuration(int partitionBy) {
         return switch (partitionBy) {
             case PartitionBy.HOUR -> Nanos.HOUR_NANOS;
+            case MINUTE_5, MINUTE_10, MINUTE_15, MINUTE_20, MINUTE_30 ->
+                    PartitionBy.getMinutes(partitionBy) * Nanos.MINUTE_NANOS;
             case PartitionBy.DAY -> Nanos.DAY_NANOS;
             case PartitionBy.WEEK -> Nanos.WEEK_NANOS;
             case PartitionBy.MONTH -> Nanos.MONTH_NANOS_APPROX;
@@ -590,6 +597,11 @@ public class NanosTimestampDriver implements TimestampDriver {
             case YEAR -> Nanos::addYears;
             case HOUR -> Nanos::addHours;
             case WEEK -> Nanos::addWeeks;
+            case MINUTE_5 -> (timestamp, increment) -> Nanos.addMinutes(timestamp, increment * 5);
+            case MINUTE_10 -> (timestamp, increment) -> Nanos.addMinutes(timestamp, increment * 10);
+            case MINUTE_15 -> (timestamp, increment) -> Nanos.addMinutes(timestamp, increment * 15);
+            case MINUTE_20 -> (timestamp, increment) -> Nanos.addMinutes(timestamp, increment * 20);
+            case MINUTE_30 -> (timestamp, increment) -> Nanos.addMinutes(timestamp, increment * 30);
             default -> null;
         };
     }
@@ -602,6 +614,11 @@ public class NanosTimestampDriver implements TimestampDriver {
             case YEAR -> NanosTimestampDriver::partitionCeilYYYY;
             case HOUR -> NanosTimestampDriver::partitionCeilHH;
             case WEEK -> NanosTimestampDriver::partitionCeilWW;
+            case MINUTE_5 -> NanosTimestampDriver::partitionCeilMI5;
+            case MINUTE_10 -> NanosTimestampDriver::partitionCeilMI10;
+            case MINUTE_15 -> NanosTimestampDriver::partitionCeilMI15;
+            case MINUTE_20 -> NanosTimestampDriver::partitionCeilMI20;
+            case MINUTE_30 -> NanosTimestampDriver::partitionCeilMI30;
             default -> null;
         };
     }
@@ -614,6 +631,11 @@ public class NanosTimestampDriver implements TimestampDriver {
             case YEAR -> PARTITION_YEAR_FORMAT;
             case HOUR -> PARTITION_HOUR_FORMAT;
             case WEEK -> PARTITION_WEEK_FORMAT;
+            case MINUTE_5 -> PARTITION_MINUTE_5_FORMAT;
+            case MINUTE_10 -> PARTITION_MINUTE_10_FORMAT;
+            case MINUTE_15 -> PARTITION_MINUTE_15_FORMAT;
+            case MINUTE_20 -> PARTITION_MINUTE_20_FORMAT;
+            case MINUTE_30 -> PARTITION_MINUTE_30_FORMAT;
             case NONE, NOT_APPLICABLE -> DEFAULT_FORMAT;
             default ->
                     throw new UnsupportedOperationException("partition by " + partitionBy + " does not have date format");
@@ -628,6 +650,11 @@ public class NanosTimestampDriver implements TimestampDriver {
             case MONTH -> NanosTimestampDriver::partitionFloorMM;
             case YEAR -> NanosTimestampDriver::partitionFloorYYYY;
             case HOUR -> NanosTimestampDriver::partitionFloorHH;
+            case MINUTE_5 -> NanosTimestampDriver::partitionFloorMI5;
+            case MINUTE_10 -> NanosTimestampDriver::partitionFloorMI10;
+            case MINUTE_15 -> NanosTimestampDriver::partitionFloorMI15;
+            case MINUTE_20 -> NanosTimestampDriver::partitionFloorMI20;
+            case MINUTE_30 -> NanosTimestampDriver::partitionFloorMI30;
             default -> null;
         };
     }
@@ -1548,6 +1575,26 @@ public class NanosTimestampDriver implements TimestampDriver {
                     fmtMethod = PARTITION_WEEK_FORMAT;
                     yield CommonUtils.WEEK_PATTERN;
                 }
+                case MINUTE_5 -> {
+                    fmtMethod = PARTITION_MINUTE_5_FORMAT;
+                    yield CommonUtils.MINUTE_PATTERN;
+                }
+                case MINUTE_10 -> {
+                    fmtMethod = PARTITION_MINUTE_10_FORMAT;
+                    yield CommonUtils.MINUTE_PATTERN;
+                }
+                case MINUTE_15 -> {
+                    fmtMethod = PARTITION_MINUTE_15_FORMAT;
+                    yield CommonUtils.MINUTE_PATTERN;
+                }
+                case MINUTE_20 -> {
+                    fmtMethod = PARTITION_MINUTE_20_FORMAT;
+                    yield CommonUtils.MINUTE_PATTERN;
+                }
+                case MINUTE_30 -> {
+                    fmtMethod = PARTITION_MINUTE_30_FORMAT;
+                    yield CommonUtils.MINUTE_PATTERN;
+                }
                 case NONE, NOT_APPLICABLE -> {
                     fmtMethod = DEFAULT_FORMAT;
                     yield partitionName;
@@ -1557,6 +1604,9 @@ public class NanosTimestampDriver implements TimestampDriver {
             };
             int limit = fmtStr.length();
             if (hi < 0) {
+                if (PartitionBy.isMinutePartitioned(partitionBy)) {
+                    return parseMinutePartitionName(partitionName, lo, partitionBy, fmtMethod);
+                }
                 // Automatic partition name trimming.
                 hi = lo + Math.min(limit, partitionName.length());
             }
@@ -1654,6 +1704,31 @@ public class NanosTimestampDriver implements TimestampDriver {
         }
     }
 
+    /**
+     * Parses a sub-hour partition name a user wrote: any time within the partition picks it, written
+     * as a directory name, 2024-01-01T0917, or as a timestamp, 2024-01-01T09:17[:33.5].
+     */
+    private long parseMinutePartitionName(CharSequence name, int lo, int partitionBy, DateFormat dirFormat) {
+        final int len = name.length();
+        final int hourEnd = lo + CommonUtils.HOUR_PATTERN.length();
+        final boolean isTimestamp = len > hourEnd && name.charAt(hourEnd) == ':';
+        final int hi = isTimestamp ? len : lo + Math.min(CommonUtils.MINUTE_PATTERN.length(), len - lo);
+        try {
+            final long timestamp;
+            if (isTimestamp) {
+                timestamp = parseFloor(name, lo, hi);
+            } else {
+                if (hi - lo < CommonUtils.MINUTE_PATTERN.length()) {
+                    throw NumericException.instance();
+                }
+                timestamp = dirFormat.parse(name, lo, hi, EN_LOCALE);
+            }
+            return getPartitionFloorMethod(partitionBy).floor(timestamp);
+        } catch (NumericException e) {
+            throw TimestampDriver.expectedPartitionDirNameFormatCairoException(name, lo, hi, partitionBy);
+        }
+    }
+
     private static long checkTimezoneTail(CharSequence seq, int p, int lim) throws NumericException {
         if (lim == p) {
             return 0;
@@ -1726,6 +1801,31 @@ public class NanosTimestampDriver implements TimestampDriver {
         return Nanos.ceilHH(Math.max(nanos, 0));
     }
 
+    private static long partitionCeilMI(long nanos, int minutes) {
+        // Designated timestamp can't be negative.
+        return Nanos.floorMI(Math.max(nanos, 0), minutes) + minutes * Nanos.MINUTE_NANOS;
+    }
+
+    private static long partitionCeilMI10(long nanos) {
+        return partitionCeilMI(nanos, 10);
+    }
+
+    private static long partitionCeilMI15(long nanos) {
+        return partitionCeilMI(nanos, 15);
+    }
+
+    private static long partitionCeilMI20(long nanos) {
+        return partitionCeilMI(nanos, 20);
+    }
+
+    private static long partitionCeilMI30(long nanos) {
+        return partitionCeilMI(nanos, 30);
+    }
+
+    private static long partitionCeilMI5(long nanos) {
+        return partitionCeilMI(nanos, 5);
+    }
+
     private static long partitionCeilMM(long nanos) {
         // Designated timestamp can't be negative.
         return Nanos.ceilMM(Math.max(nanos, 0));
@@ -1749,6 +1849,31 @@ public class NanosTimestampDriver implements TimestampDriver {
     private static long partitionFloorHH(long nanos) {
         // Designated timestamp can't be negative.
         return Nanos.floorHH(Math.max(nanos, 0));
+    }
+
+    private static long partitionFloorMI(long nanos, int minutes) {
+        // Designated timestamp can't be negative.
+        return Nanos.floorMI(Math.max(nanos, 0), minutes);
+    }
+
+    private static long partitionFloorMI10(long nanos) {
+        return partitionFloorMI(nanos, 10);
+    }
+
+    private static long partitionFloorMI15(long nanos) {
+        return partitionFloorMI(nanos, 15);
+    }
+
+    private static long partitionFloorMI20(long nanos) {
+        return partitionFloorMI(nanos, 20);
+    }
+
+    private static long partitionFloorMI30(long nanos) {
+        return partitionFloorMI(nanos, 30);
+    }
+
+    private static long partitionFloorMI5(long nanos) {
+        return partitionFloorMI(nanos, 5);
     }
 
     private static long partitionFloorMM(long nanos) {

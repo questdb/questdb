@@ -39,10 +39,10 @@ import io.questdb.std.Rnd;
 
 public class FuzzSetTtlOperation implements FuzzTransactionOperation {
 
-    private final int ttlDays;
+    private final int ttlHours;
 
-    public FuzzSetTtlOperation(int ttlDays) {
-        this.ttlDays = ttlDays;
+    public FuzzSetTtlOperation(int ttlHours) {
+        this.ttlHours = ttlHours;
     }
 
     @Override
@@ -51,7 +51,7 @@ public class FuzzSetTtlOperation implements FuzzTransactionOperation {
              SqlCompiler sqlCompiler = engine.getSqlCompiler()
         ) {
             context.with(AllowAllSecurityContext.INSTANCE);
-            String sql = String.format("ALTER TABLE %s SET TTL %d DAYS", wApi.getTableToken().getTableName(), ttlDays);
+            String sql = String.format("ALTER TABLE %s SET TTL %d HOURS", wApi.getTableToken().getTableName(), ttlHours);
 
             try {
                 CompiledQuery query = sqlCompiler.compile(sql, context);

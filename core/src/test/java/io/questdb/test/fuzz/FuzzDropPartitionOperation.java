@@ -42,9 +42,14 @@ import io.questdb.test.tools.TestUtils;
 public class FuzzDropPartitionOperation implements FuzzTransactionOperation {
 
     private final long cutoffTimestamp;
+    private final long partitionDuration;
 
-    public FuzzDropPartitionOperation(long cutoffTimestamp) {
+    /**
+     * Applies to the partitions starting in (cutoffTimestamp - partitionDuration, cutoffTimestamp).
+     */
+    public FuzzDropPartitionOperation(long cutoffTimestamp, long partitionDuration) {
         this.cutoffTimestamp = cutoffTimestamp;
+        this.partitionDuration = partitionDuration;
     }
 
     @Override
@@ -55,7 +60,7 @@ public class FuzzDropPartitionOperation implements FuzzTransactionOperation {
             context.with(AllowAllSecurityContext.INSTANCE);
             TableRecordMetadata metadata = wApi.getMetadata();
             String sql = "ALTER TABLE " + TestUtils.randomiseCase(tempRnd, wApi.getTableToken().getTableName())
-                    + " DROP PARTITION WHERE " + FuzzTransactionOperation.partitionDayBeforeFilter(metadata, cutoffTimestamp);
+                    + " DROP PARTITION WHERE " + FuzzTransactionOperation.partitionBeforeFilter(metadata, cutoffTimestamp, partitionDuration);
 
             try {
                 CompiledQuery query = sqlCompiler.compile(sql, context);

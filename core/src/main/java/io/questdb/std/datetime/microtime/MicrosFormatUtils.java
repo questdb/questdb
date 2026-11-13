@@ -44,6 +44,7 @@ public class MicrosFormatUtils {
     public static final DateFormat GREEDY_MILLIS1_UTC_FORMAT;
     public static final DateFormat GREEDY_MILLIS2_UTC_FORMAT;
     public static final DateFormat HOUR_FORMAT;
+    public static final DateFormat MINUTE_FORMAT;
     public static final DateFormat MONTH_FORMAT;
     public static final DateFormat NANOS_UTC_FORMAT;
     public static final DateFormat PG_TIMESTAMP_FORMAT;
@@ -436,6 +437,8 @@ public class MicrosFormatUtils {
         HOUR_FORMAT = dateFormats.get(CommonUtils.HOUR_PATTERN);
         DAY_FORMAT = dateFormats.get(CommonUtils.DAY_PATTERN);
         WEEK_FORMAT = dateFormats.get(CommonUtils.WEEK_PATTERN);
+        // not in FORMATS: partition directory names only, not a general timestamp input format
+        MINUTE_FORMAT = compiler.compile(CommonUtils.MINUTE_PATTERN);
         MONTH_FORMAT = dateFormats.get(CommonUtils.MONTH_PATTERN);
         YEAR_FORMAT = dateFormats.get(CommonUtils.YEAR_PATTERN);
     }
