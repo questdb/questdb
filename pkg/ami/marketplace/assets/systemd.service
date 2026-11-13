@@ -3,6 +3,9 @@ Description=QuestDB
 Documentation=https://www.questdb.io/docs/introduction
 Wants=network-online.target
 After=network-online.target
+# cloud-init's per-boot script seeds the generated pg.password into server.conf;
+# starting before it finishes would load the placeholder instead.
+After=cloud-final.service
 RequiresMountsFor=/var/lib/questdb
 
 [Service]
