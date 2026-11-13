@@ -262,6 +262,8 @@ public class NestedLoopFullJoinRecordCursorFactory extends AbstractJoinRecordCur
             filter.init(filterSymbolTableSource, executionContext);
             record.of(masterCursor.getRecord(), slaveCursor.getRecord());
             slaveRowIndex = 0;
+            // a reader can close the previous cursor right after a row, with the match of its master row still set
+            isMatch = false;
             isMasterHasNextPending = true;
             circuitBreaker = executionContext.getCircuitBreaker();
             this.masterCursor = masterCursor;

@@ -252,6 +252,8 @@ public class NestedLoopLeftJoinRecordCursorFactory extends AbstractJoinRecordCur
                 outerJoinCheck.of();
             }
             record.of(masterCursor.getRecord(), slaveCursor.getRecord());
+            // a reader can close the previous cursor right after a row, with the match of its master row still set
+            isMatch = false;
             isOuterJoinNullRow = false;
             isMasterHasNextPending = true;
             // not the slave's size: a parent may still be opening its other cursors, see JoinKeyFilterGate

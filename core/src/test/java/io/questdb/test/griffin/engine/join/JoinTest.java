@@ -14124,6 +14124,55 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNonEquiOuterJoinNewCursorAfterPartialRead() throws Exception {
+        // A reader stops a nested-loop outer join after a row and closes its cursor, as a PostgreSQL client
+        // with a fetch size does, and the next cursor of the same factory reads the join again. The first row
+        // the join reads on its outer side matches nothing: m = 1 for LEFT and FULL, s = 9 for RIGHT.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (x INT)");
+            execute("CREATE TABLE s (y INT)");
+            execute("INSERT INTO m VALUES (1), (4), (3), (2)");
+            execute("INSERT INTO s VALUES (9), (2), (3)");
+            assertNewCursorAfterPartialRead(
+                    "SELECT m.x, s.y FROM m LEFT JOIN s ON m.x > s.y",
+                    "Nested Loop Left Join",
+                    """
+                            x\ty
+                            1\tnull
+                            4\t2
+                            4\t3
+                            3\t2
+                            2\tnull
+                            """
+            );
+            assertNewCursorAfterPartialRead(
+                    "SELECT m.x, s.y FROM m RIGHT JOIN s ON m.x > s.y",
+                    "Nested Loop Right Join",
+                    """
+                            x\ty
+                            null\t9
+                            4\t2
+                            3\t2
+                            4\t3
+                            """
+            );
+            assertNewCursorAfterPartialRead(
+                    "SELECT m.x, s.y FROM m FULL JOIN s ON m.x > s.y",
+                    "Nested Loop Full Join",
+                    """
+                            x\ty
+                            1\tnull
+                            4\t2
+                            4\t3
+                            3\t2
+                            2\tnull
+                            null\t9
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testNonEquiOuterJoinReorderedFilterStaysPostJoin() throws Exception {
         // Companion to testNonEquiOuterJoinMasterFilterStaysPostJoin, which filters the directly
         // NULL-extended master. Here the WHERE predicate (c.v = 1) is on an INNER-joined table after a
@@ -21617,6 +21666,30 @@ public class JoinTest extends AbstractCairoTest {
                     }
                     Assert.assertEquals(query, expectedRowCount, rowCount);
                     Assert.assertEquals(query, expectedEvaluationCount, TestLatchedCounterFunctionFactory.getCount());
+                }
+            }
+        }
+    }
+
+    // For each k up to the row count, reads the first k rows of a cursor of the query and closes it, then reads a
+    // new cursor of the same factory in full.
+    private void assertNewCursorAfterPartialRead(String query, String joinFactory, String expected) throws Exception {
+        assertQuery(query)
+                .noLeakCheck()
+                .noRandomAccess()
+                .withPlanContaining(joinFactory)
+                .returns(expected);
+        final int rowCount = expected.split("\n").length - 1;
+        try (RecordCursorFactory factory = select(query)) {
+            for (int k = 1; k <= rowCount; k++) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    for (int i = 0; i < k; i++) {
+                        Assert.assertTrue(cursor.hasNext());
+                    }
+                }
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    CursorPrinter.println(cursor, factory.getMetadata(), sink);
+                    TestUtils.assertEquals(query + ", after a read of " + k + " rows", expected, sink);
                 }
             }
         }
