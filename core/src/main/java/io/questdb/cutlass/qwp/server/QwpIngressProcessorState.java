@@ -27,6 +27,7 @@ package io.questdb.cutlass.qwp.server;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitFailedException;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -336,15 +337,22 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     // ends the batch, the frames before it commit, and that frame gets the refusal.
     //
     // The tables commit one at a time, in the order they joined, under the role-switch
-    // read lock, held across all their commits and read for the node's role once: a batch
-    // pays little for a role switch, which is rare. A role switch that waits for the lock
-    // gets it after the batch's last table, never between two tables, whose rows the
-    // batch's frames can interleave. A read-only node refuses the whole batch. A failed
+    // read lock, held across all their sequencing and read for the node's role once: a
+    // batch pays little for a role switch, which is rare. A role switch that waits for the
+    // lock gets it after the batch's last table, never between two tables, whose rows the
+    // batch's frames can interleave. Under SYNC and ADAPTIVE each table's commit first
+    // runs its file syncs, the event append and the flush of its private WAL files,
+    // before the lock (WalWriter.prepareCommit), so the lock covers the role check and
+    // the sequencing only. That still includes the sequencer-log fdatasync of each table
+    // under SYNC or ADAPTIVE with no group window, about 1-2 ms per table, and the replay
+    // of a concurrent structure change. A failed prepare refuses the whole batch with
+    // nothing committed. A read-only node refuses the whole batch. A failed
     // commit -- a storage fault, or a DROP, RENAME, SUSPEND WAL or REVOKE that landed
     // while the table waited in the batch -- stops the commits. The frames before
     // the failed table's first frame hold rows of tables that committed and nothing else,
     // so the watermark covers them, and the client replays the rest: rows that those
-    // later frames added to the committed tables arrive a second time.
+    // later frames added to the committed tables arrive a second time. A prepared writer
+    // that a failed batch leaves behind is discarded with the table cache, never reused.
     //
     // A frame that fails or cannot join ends the batch, which commits as it stands before
     // the frame is answered. Before a frame's first block of a table appends, the table's
@@ -353,11 +361,15 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     // distressed, the batch cannot commit. The upgrade processor then abandons it with
     // nothing committed and NACKs the failed frame, and the client replays the batch.
     private int commitBatchEntryCount;
+    // Test hook run between the prepare phase of a batch commit and its lock; null in production.
+    private Runnable afterPreparePhaseHook;
     private long failedCommitBatchSequence = -1;
     private long firstCommitBatchSequence = -1;
     private long lastCommitBatchSequence = -1;
     private QwpMessageCursor preparedMessageCursor;
     private QwpTableBlockCursor preparedTableBlock;
+    // Batch commits that ran the prepare phase, for tests.
+    private int preparePhaseCount;
     private int sendState = SEND_STATE_READY;
     // Memory for a server frame larger than the send buffer, see stageFrame.
     private long stagedFrameAddress;
@@ -597,10 +609,16 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      * only while the table cache is healthy and the table's writer holds exactly its
      * batch rows.
      * <p>
-     * The commits run under the role-switch read lock, held across all of them, and the
-     * batch is refused as a whole, with nothing committed, when the node is read-only under
-     * it. A role switch that waits for the lock gets it only after the last table's commit,
-     * so a demote never splits the batch. QuestDB commits each table on its own, so a table
+     * The commits sequence under the role-switch read lock, held across all of them, and
+     * the batch is refused as a whole, with nothing committed, when the node is read-only
+     * under it. A role switch that waits for the lock gets it only after the last table's
+     * commit, so a demote never splits the batch. Under SYNC and ADAPTIVE every table first
+     * prepares its commit outside the lock ({@link WalWriter#prepareCommit()}): the event
+     * append and the flush of its private WAL files. The lock then covers only the role
+     * check and the sequencing, which under SYNC, or ADAPTIVE with no group window, still
+     * fdatasyncs the sequencer log per table. A failed prepare refuses the whole batch with
+     * nothing committed, at its first frame. A group flush that falls due while the tables
+     * sequence runs after the unlock, and its failure does not fail the batch. QuestDB commits each table on its own, so a table
      * that fails after an earlier one committed leaves rows the client replays twice: a
      * storage fault, or a DROP, RENAME, SUSPEND WAL or REVOKE that lands while the table
      * waits in the batch. Refusals that hold already as a table joins keep it out of the
@@ -645,6 +663,14 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     @TestOnly
     public int getCommitBatchTableCount() {
         return commitBatchEntryCount;
+    }
+
+    /**
+     * The number of batch commits that prepared their tables outside the role-switch lock.
+     */
+    @TestOnly
+    public int getPreparePhaseCount() {
+        return preparePhaseCount;
     }
 
     /**
@@ -1913,6 +1939,15 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         tudCache.releaseIdleWriters();
     }
 
+    /**
+     * Sets a hook that a batch commit runs after it prepared its tables and before it takes the role-switch
+     * lock. A throw from it leaves the commit as an unexpected error out of {@link #commitBatch()} would.
+     */
+    @TestOnly
+    public void setAfterPreparePhaseHook(Runnable afterPreparePhaseHook) {
+        this.afterPreparePhaseHook = afterPreparePhaseHook;
+    }
+
     public void setDurableAckEnabled(boolean durableAckEnabled) {
         this.durableAckEnabled = durableAckEnabled;
     }
@@ -2116,48 +2151,104 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     }
 
     // commitBatch() for a batch that holds tables: commits them one at a time under the
-    // role-switch read lock, held across every table's commit, and reads the node's role
+    // role-switch read lock, held across every table's sequencing, and reads the node's role
     // once under it. A role switch therefore lands before the batch or after it, never
     // between two tables: the batch's frames can carry rows of several tables, so a demote
     // there would leave committed rows in frames above the ack, which the client replays.
+    // Under SYNC and ADAPTIVE it first prepares every table outside the lock, so that no
+    // writer-private file sync runs under it.
     private boolean commitBatchEntries(int n) {
-        final Lock roleSwitchLock = engine.getRoleSwitchReadLock();
-        roleSwitchLock.lock();
-        try {
-            try {
-                throwIfReadOnlyUnderFence();
-            } catch (Throwable th) {
-                LOG.error().$('[').$(fd).$("] commit batch refused [firstSeq=").$(firstCommitBatchSequence)
-                        .$(", lastSeq=").$(lastCommitBatchSequence)
-                        .$("]: ").$(th).$();
-                rejectCommitError(th);
-                return onCommitBatchFailed(commitBatchEntries.getQuick(0));
-            }
+        // The configured mode, the one WalWriter commits by; not the resolved mode, which maps ADAPTIVE to
+        // NOSYNC on a replica. NOSYNC and ASYNC have no pre-sequencing sync worth moving out of the lock.
+        final int commitMode = engine.getConfiguration().getCommitMode();
+        final boolean isPreparePhaseEnabled = commitMode == CommitMode.SYNC || commitMode == CommitMode.ADAPTIVE;
+        if (isPreparePhaseEnabled) {
+            preparePhaseCount++;
             for (int i = 0; i < n; i++) {
                 final CommitBatchEntry entry = commitBatchEntries.getQuick(i);
                 if (!isCommitBatchEntryIntact(entry, i)) {
-                    LOG.error().$('[').$(fd).$("] commit batch rows are not intact [table=").$(entry.tud.getTableToken())
-                            .$(", cacheDistressed=").$(tudCache.isDistressed())
-                            .$(", firstSeq=").$(entry.firstSequence)
-                            .$(", lastSeq=").$(lastCommitBatchSequence).I$();
-                    reject(Status.INTERNAL_ERROR, "commit batch rows are not intact, cannot acknowledge", fd);
-                    return onCommitBatchFailed(entry);
+                    // The commit loop reports it, after it commits the tables before this one.
+                    break;
                 }
                 try {
-                    tudCache.commitBatch(entry.tud, committedTxnConsumer);
+                    entry.writer.prepareCommit();
                 } catch (Throwable th) {
+                    // Nothing is sequenced yet: refuse the whole batch, so the client's replay stores every row
+                    // once. The distressed cache frees every writer at the clear() the caller owes, which
+                    // discards the prepared ones.
                     tudCache.setDistressed();
-                    LOG.error().$('[').$(fd).$("] commit batch error [table=").$(entry.tud.getTableToken())
-                            .$(", firstSeq=").$(entry.firstSequence)
+                    LOG.error().$('[').$(fd).$("] commit batch prepare error [table=").$(entry.tud.getTableToken())
+                            .$(", firstSeq=").$(firstCommitBatchSequence)
                             .$("]: ").$(th).$();
-                    rejectCommitError(th);
-                    return onCommitBatchFailed(entry);
+                    rejectPrepareError(entry.tud.getTableToken(), th);
+                    return onCommitBatchFailed(commitBatchEntries.getQuick(0));
                 }
             }
-            return true;
+            final Runnable hook = afterPreparePhaseHook;
+            if (hook != null) {
+                hook.run();
+            }
+        }
+        boolean isCommitted = false;
+        final Lock roleSwitchLock = engine.getRoleSwitchReadLock();
+        roleSwitchLock.lock();
+        try {
+            isCommitted = commitBatchEntriesUnderFence(n);
         } finally {
             roleSwitchLock.unlock();
         }
+        if (isPreparePhaseEnabled) {
+            // The group flushes that fell due while the tables sequenced. Every entry: a table that sequenced
+            // and then failed later in its commit may hold one too. The rows are sequenced, so a failed flush
+            // does not fail the batch; a fatal one has poisoned the engine, and the frontier stays behind them.
+            for (int i = 0; i < n; i++) {
+                final WalWriter writer = commitBatchEntries.getQuick(i).writer;
+                try {
+                    writer.flushDueGroupCommit();
+                } catch (Throwable th) {
+                    LOG.critical().$('[').$(fd).$("] group flush failed after a commit batch [table=").$(writer.getTableToken())
+                            .$(", walId=").$(writer.getWalId())
+                            .$(", error=").$(th).I$();
+                }
+            }
+        }
+        return isCommitted;
+    }
+
+    // The part of commitBatchEntries() under the role-switch read lock: the role check, then each table's
+    // sequencing, in the order the tables joined.
+    private boolean commitBatchEntriesUnderFence(int n) {
+        try {
+            throwIfReadOnlyUnderFence();
+        } catch (Throwable th) {
+            LOG.error().$('[').$(fd).$("] commit batch refused [firstSeq=").$(firstCommitBatchSequence)
+                    .$(", lastSeq=").$(lastCommitBatchSequence)
+                    .$("]: ").$(th).$();
+            rejectCommitError(th);
+            return onCommitBatchFailed(commitBatchEntries.getQuick(0));
+        }
+        for (int i = 0; i < n; i++) {
+            final CommitBatchEntry entry = commitBatchEntries.getQuick(i);
+            if (!isCommitBatchEntryIntact(entry, i)) {
+                LOG.error().$('[').$(fd).$("] commit batch rows are not intact [table=").$(entry.tud.getTableToken())
+                        .$(", cacheDistressed=").$(tudCache.isDistressed())
+                        .$(", firstSeq=").$(entry.firstSequence)
+                        .$(", lastSeq=").$(lastCommitBatchSequence).I$();
+                reject(Status.INTERNAL_ERROR, "commit batch rows are not intact, cannot acknowledge", fd);
+                return onCommitBatchFailed(entry);
+            }
+            try {
+                tudCache.commitBatch(entry.tud, committedTxnConsumer);
+            } catch (Throwable th) {
+                tudCache.setDistressed();
+                LOG.error().$('[').$(fd).$("] commit batch error [table=").$(entry.tud.getTableToken())
+                        .$(", firstSeq=").$(entry.firstSequence)
+                        .$("]: ").$(th).$();
+                rejectCommitError(th);
+                return onCommitBatchFailed(entry);
+            }
+        }
+        return true;
     }
 
     // The batch entry of the named table, or null when the table is not in the batch.
@@ -2495,12 +2586,39 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      * lands mid-demote.
      */
     private void rejectCairoError(CairoException e) {
+        rejectCairoError(e, e.getFlyweightMessage());
+    }
+
+    // rejectCairoError(CairoException) with errorText for the exception's own message.
+    private void rejectCairoError(CairoException e, CharSequence errorText) {
         if (e.isReadOnlyAccessRefusal() && !isStaticReadOnlyInstance()) {
             roleChangeClosePending = true;
-            reject(Status.NOT_ACCEPTING_WRITES, e.getFlyweightMessage(), fd);
+            reject(Status.NOT_ACCEPTING_WRITES, errorText, fd);
             return;
         }
-        reject(cairoExceptionStatus(e), e.getFlyweightMessage(), fd);
+        reject(cairoExceptionStatus(e), errorText, fd);
+    }
+
+    // Rejects a batch whose prepare failed on the table: the text names the table and the failure.
+    private void rejectPrepareError(TableToken tableToken, Throwable th) {
+        // Unlike rejectCairoError(), this reads the live role. A demote that published REPLICA during the prepare
+        // phase can make a sync failure non-fatal there (a replica resolves ADAPTIVE to NOSYNC), and the batch
+        // was going to be refused under the fence anyway: the role-change refusal is the right answer. A demote
+        // that reverts between the failure and this read only turns the error NACK into a reconnect-eligible
+        // close, never into a terminal error, so reading the live role is safe here.
+        if (engine.isReadOnlyMode()) {
+            rejectCairoError(CairoException.readOnlyAccess());
+            return;
+        }
+        rejectMsg.clear();
+        rejectMsg.put("commit batch prepare failed [table=").put(tableToken.getTableName()).put("]: ");
+        if (th instanceof CairoException e) {
+            rejectMsg.put(e.getFlyweightMessage());
+            rejectCairoError(e, rejectMsg);
+            return;
+        }
+        rejectMsg.put(th.getMessage());
+        reject(Status.INTERNAL_ERROR, rejectMsg, fd);
     }
 
     private void rejectCommitError(Throwable th) {

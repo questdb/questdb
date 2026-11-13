@@ -173,6 +173,9 @@ public class QwpTudCache implements QwpSchemaCache, QuietCloseable {
             for (int i = 0, n = keys.size(); i < n; i++) {
                 Utf8Sequence tableName = keys.get(i);
                 WalTableUpdateDetails tud = tableUpdateDetails.get(tableName);
+                // Every path that leaves a prepared commit behind distresses the cache first, so the branch below
+                // discards its writer: a rollback would put the writer back in the pool distressed.
+                assert !(tud.getWriter() instanceof WalWriter w && w.isCommitPrepared()) : "a prepared WAL writer survived a healthy clear";
                 try {
                     tud.rollback();
                 } catch (Throwable th) {
