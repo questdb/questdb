@@ -24,8 +24,10 @@
 
 package io.questdb.test.cutlass.qwp.e2e;
 
+import io.questdb.client.LineSenderSchemaException;
 import io.questdb.client.Sender;
 import io.questdb.client.cutlass.http.client.WebSocketClient;
+import io.questdb.client.cutlass.qwp.client.QwpSchemaFreshness;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketEncoder;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
 import io.questdb.client.cutlass.qwp.client.WebSocketResponse;
@@ -613,6 +615,59 @@ public class QwpSchemaStaleAlterE2ETest extends AbstractQwpWebSocketTest {
                             2.5\t1970-01-02T00:00:00.000000Z\t42\t1.2.3.4
                             3.75\t1970-01-01T00:00:00.003000Z\t43\t5.6.7.8
                             """);
+        });
+    }
+
+    @Test
+    public void testSenderRecoversFromRowsRejectedAfterColumnTypeChange() throws Exception {
+        // The column changes type while the sender holds a pending row, and every row
+        // after the change needs the new type. No frame reaches the server to earn a
+        // reply that reports the change, so the sender learns of it only from the run
+        // of rows the cached schema rejects.
+        record Change(String from, String to, Consumer<Sender> write, String pending, String written) {
+        }
+        Change[] changes = {
+                new Change("INT", "DOUBLE", s -> s.doubleColumn("v", 1.5), "7.0", "1.5"),
+                new Change("INT", "LONG", s -> s.longColumn("v", 3_000_000_000L), "7", "3000000000"),
+                new Change("INT", "VARCHAR", s -> s.stringColumn("v", "abc"), "7", "abc"),
+                new Change("DECIMAL(5,2)", "DECIMAL(10,2)", s -> s.stringColumn("v", "123456.78"), "7.00", "123456.78"),
+        };
+        runInContext(port -> {
+            int tableIndex = 0;
+            for (String mode : new String[]{"auto", "strict"}) {
+                for (Change change : changes) {
+                    String table = "recover_" + tableIndex++;
+                    execute("CREATE TABLE " + table + " (v " + change.from + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";schema_mode=" + mode
+                            + ";auto_flush_rows=2147483647;auto_flush_bytes=0;auto_flush_interval=2147483646;"
+                            + "close_flush_timeout_millis=0;")) {
+                        QwpWebSocketSender ws = (QwpWebSocketSender) sender;
+                        // The frozen clock keeps the cached schema within the age limit,
+                        // so only the run of rejected rows can make the sender look again.
+                        ws.setNanoClockForTesting(() -> 0L);
+                        sender.table(table).longColumn("v", 7).at(1, ChronoUnit.MICROS);
+                        execute("ALTER TABLE " + table + " ALTER COLUMN v TYPE " + change.to);
+                        for (int i = 0; i < QwpSchemaFreshness.REJECTIONS_BEFORE_RECHECK; i++) {
+                            try {
+                                change.write.accept(sender.table(table));
+                                Assert.fail(mode + " " + change.to + ": expected rejection against the cached schema");
+                            } catch (LineSenderSchemaException e) {
+                                Assert.assertEquals(LineSenderSchemaException.Reason.INVALID_VALUE, e.getReason());
+                            }
+                        }
+                        change.write.accept(sender.table(table));
+                        sender.at(2, ChronoUnit.MICROS);
+                        sender.flush();
+                        Assert.assertTrue(sender.drain(10_000));
+                        Assert.assertEquals(0, ws.getTotalReconnectAttempts());
+                    }
+                    drainWalQueue();
+                    assertQuery("SELECT v FROM " + table + " ORDER BY ts")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("v\n" + change.pending + "\n" + change.written + "\n");
+                }
+            }
         });
     }
 
