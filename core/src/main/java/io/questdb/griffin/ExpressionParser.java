@@ -2026,10 +2026,8 @@ public class ExpressionParser {
 
                                         // we need to track argument consumption so that operators and functions
                                         // do no steal parameters outside of local 'case' scope
-                                        int argCount = 0;
                                         while ((node = opStack.pop()) != null && !SqlKeywords.isCaseKeyword(node.token)) {
                                             argStackDepth = onNode(listener, node, argStackDepth, prevBranch);
-                                            argCount++;
                                         }
 
                                         // Past the first keyword, the tokens before this one are the operand
@@ -2042,8 +2040,14 @@ public class ExpressionParser {
                                             throw missingArgs(lastPos);
                                         }
 
+                                        // Ahead of the first keyword, argStackDepth counts the operand values that
+                                        // reached the output since 'case' reset it. An operand that ends in ')' or
+                                        // 'end', as in 'case (b) when' or 'case abs(x) when', is already there, and
+                                        // the operator stack holds nothing above 'case' by now. A bracketed list,
+                                        // as in 'case (a, b) when', leaves more than one value.
+                                        final boolean isOperandList = paramCount == 0 && argStackDepth > 1;
                                         if (paramCount == 0) {
-                                            if (argCount == 0) {
+                                            if (argStackDepth == 0) {
                                                 // this is 'case when', we will indicate that this is regular 'case'
                                                 // to the rewrite logic
                                                 onNode(listener, expressionNodePool.next().of(ExpressionNode.LITERAL,
@@ -2075,6 +2079,10 @@ public class ExpressionParser {
                                         // replaces it, or once the AND of a BETWEEN has flushed it.
                                         if (node == null || scopeStack.peek() != Scope.CASE) {
                                             throw SqlException.$(node != null ? node.position : lastPos, "unbalanced 'case'");
+                                        }
+                                        // The CASE would take only the last value of a list operand.
+                                        if (isOperandList) {
+                                            throw SqlException.$(lastPos, "'case' operand must be a single value");
                                         }
                                         opStack.push(node);
 
