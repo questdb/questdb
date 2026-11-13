@@ -239,7 +239,12 @@ qdbr toolchain; the script prints the command when it is missing.
   a supported surface, add a small, documented test hook (an overridable
   method or a configuration property) or prove the path unreachable.
 - write all tests using assertMemoryLeak(). This isn't needed for narrow unit
-  tests that doesn't allocate native memory.
+  tests that doesn't allocate native memory. The `assertQuery(...)` builder
+  runs its own leak check, so a test made of one builder chain needs no
+  wrapper: put its DDL in `.ddl(...)` and set static state, such as the clock,
+  ahead of the chain. Wrap in `assertMemoryLeak()`, and add `.noLeakCheck()` to
+  the chains inside, only when several statements share one leak-check scope.
+  Outside a wrapper, `.noLeakCheck()` leaves the chain with no leak check.
 - resource leaks are a pain point in QuestDB. Always think carefully about all
   possible code paths, especially error paths, and write tests that ensure
   correct resource cleanup on each path.

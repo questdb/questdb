@@ -91,6 +91,30 @@ public class DateVariableExpr {
     }
 
     /**
+     * Returns whether an expression encoded by {@link #parseEncoded} denotes a whole day rather
+     * than a point in time. {@code $today}, {@code $yesterday} and {@code $tomorrow}, alone or
+     * shifted by whole days ({@code d}, {@code bd}, {@code w}, {@code M}, {@code y}), denote a
+     * day. {@code $now}, and any shift in {@code h}, {@code m}, {@code s}, {@code T}, {@code u}
+     * or {@code n}, denote a point in time, even when the value falls exactly on midnight.
+     * <p>
+     * Bits outside the expression encoding, such as the tag of a compiled IR element, are ignored.
+     */
+    public static boolean isDayLevel(long encoded) {
+        if (((encoded >>> 58) & 0x3) == VAR_NOW) {
+            return false;
+        }
+        if ((encoded & (1L << 57)) != 0) {
+            // business days
+            return true;
+        }
+        return switch ((char) ((encoded >>> 40) & 0xFFFF)) {
+            // 0 is no offset
+            case 0, 'd', 'D', 'w', 'M', 'y' -> true;
+            default -> false;
+        };
+    }
+
+    /**
      * Parses a date variable expression directly into the compiled IR encoding.
      * No object allocation.
      * <p>
