@@ -24,7 +24,16 @@
 
 package io.questdb.test.griffin.engine.functions;
 
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.PageFrameTouch;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.std.Files;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -32,6 +41,13 @@ import org.junit.Test;
 
 public class TouchTableFunctionTest extends AbstractCairoTest {
 
+    private static final DefaultSqlExecutionCircuitBreakerConfiguration BREAKER_CONFIGURATION = new DefaultSqlExecutionCircuitBreakerConfiguration() {
+        @Override
+        public int getCircuitBreakerThrottle() {
+            // The server default: a count-throttled check skips the 2M calls after its first.
+            return 2_000_000;
+        }
+    };
     private static final String DDL = "create table x as " +
             "(" +
             "  select" +
@@ -74,6 +90,76 @@ public class TouchTableFunctionTest extends AbstractCairoTest {
             sink.clear();
             TestUtils.printSql(engine, sqlExecutionContext, query, sink);
             TestUtils.assertContains(sink, "data_pages");
+        });
+    }
+
+    @Test
+    public void testTouchLocalParquetAndNativePartitions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x, 'value'::varchar s, 'a'::symbol sym, timestamp_sequence(0, 3_600_000_000) ts FROM long_sequence(30)), INDEX(sym) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '1970-01-01'");
+            execute("ALTER TABLE t ADD COLUMN added LONG");
+            sink.clear();
+            TestUtils.printSql(engine, sqlExecutionContext,
+                    "SELECT touch(SELECT x, s, sym, added, ts FROM t WHERE ts IN '1970-01-01')", sink);
+            TestUtils.assertContains(sink, "data_pages");
+            Assert.assertFalse("parquet chunks must be touched", sink.toString().contains("data_pages\": 0"));
+            Assert.assertFalse("parquet partition indexes must be touched", sink.toString().contains("index_key_pages\":0,"));
+            sink.clear();
+            TestUtils.printSql(engine, sqlExecutionContext, "SELECT touch(SELECT * FROM t)", sink);
+            TestUtils.assertContains(sink, "data_pages");
+        });
+    }
+
+    @Test
+    public void testTouchMemoryIncludesUnalignedTailAndChecksCancellation() throws Exception {
+        assertMemoryLeak(() -> {
+            // Room for two breaker checks, one per 64 pages.
+            final long size = 130 * Files.PAGE_SIZE;
+            final long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+            try {
+                final long boundary = address + Files.PAGE_SIZE - address % Files.PAGE_SIZE;
+                Assert.assertEquals(2, PageFrameTouch.touchMemory(boundary - 1, 2, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER));
+                Assert.assertEquals(1, PageFrameTouch.touchMemory(boundary, Files.PAGE_SIZE, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER));
+                Assert.assertEquals(0, PageFrameTouch.touchMemory(0, size, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER));
+                Assert.assertEquals(0, PageFrameTouch.touchMemory(address, 0, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER));
+                try (CancellingBreaker breaker = new CancellingBreaker(1)) {
+                    try {
+                        PageFrameTouch.touchMemory(address, size, breaker);
+                        Assert.fail("TOUCH must check cancellation within large chunks");
+                    } catch (CairoException e) {
+                        Assert.assertTrue(e.isCancellation());
+                        Assert.assertEquals(2, breaker.checks);
+                    }
+                }
+            } finally {
+                Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testTouchStopsAtTheNextCheckAfterCancel() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x, 'value'::varchar s, timestamp_sequence(0, 3_600_000_000) ts FROM long_sequence(30)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '1970-01-01'");
+            // The parquet frame, one check per parquet column chunk, then the native frame.
+            final int checks = 5;
+            try (CancellingBreaker breaker = new CancellingBreaker(0)) {
+                touchAll(breaker);
+                Assert.assertEquals("time-throttled checks", checks, breaker.checks);
+            }
+            for (int cancelAfter = 1; cancelAfter < checks; cancelAfter++) {
+                try (CancellingBreaker breaker = new CancellingBreaker(cancelAfter)) {
+                    try {
+                        touchAll(breaker);
+                        Assert.fail("TOUCH ignored a cancel after check " + cancelAfter);
+                    } catch (CairoException e) {
+                        Assert.assertTrue(e.isCancellation());
+                        Assert.assertEquals(cancelAfter + 1, breaker.checks);
+                    }
+                }
+            }
         });
     }
 
@@ -155,4 +241,37 @@ public class TouchTableFunctionTest extends AbstractCairoTest {
         });
     }
 
+    private static void touchAll(SqlExecutionCircuitBreaker breaker) throws SqlException {
+        final SqlExecutionCircuitBreaker originalBreaker = sqlExecutionContext.getCircuitBreaker();
+        ((SqlExecutionContextImpl) sqlExecutionContext).with(breaker);
+        try {
+            printSql("SELECT touch(SELECT * FROM t)");
+        } finally {
+            ((SqlExecutionContextImpl) sqlExecutionContext).with(originalBreaker);
+        }
+    }
+
+    /**
+     * Cancels just after its n-th time-throttled check passes. Count-throttled checks are not
+     * counted: at the server default they test once per 2M calls.
+     */
+    private static class CancellingBreaker extends NetworkSqlExecutionCircuitBreaker {
+        private final int cancelAfter;
+        private int checks;
+
+        CancellingBreaker(int cancelAfter) {
+            super(engine, BREAKER_CONFIGURATION);
+            this.cancelAfter = cancelAfter;
+        }
+
+        @Override
+        public void statefulThrowExceptionIfTrippedTimeThrottled() {
+            checks++;
+            super.statefulThrowExceptionIfTrippedTimeThrottled();
+            if (checks == cancelAfter) {
+                // A real CANCEL QUERY can land just after a check passes; the next check must see it.
+                cancel();
+            }
+        }
+    }
 }
