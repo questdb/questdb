@@ -36,6 +36,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8s;
 
 /**
  * A read-only view into a binary encoded VARCHAR array received from PGWire clients.
@@ -107,15 +108,6 @@ public final class PGNonNullVarcharArrayView extends ArrayView implements FlatAr
         return flatViewLength;
     }
 
-    private static boolean isAscii(long addr, int len) {
-        for (int i = 0; i < len; i++) {
-            if (Unsafe.getByte(addr + i) < 0) {
-                return false;
-            }
-        }
-        return true;
-    }
-
     private void defaultStrides() {
         final int nDims = shape.size();
         strides.clear();
@@ -146,12 +138,24 @@ public final class PGNonNullVarcharArrayView extends ArrayView implements FlatAr
         assert shape.size() > 0;
 
         final int elementCount = flatViewLength;
+        // Every element carries at least its 4-byte length, so the declared shape cannot hold more
+        // elements than that. Checked before the offset index is sized from the client's count.
+        if (elementCount > (hi - lo) / Integer.BYTES) {
+            throw PGMessageProcessingException.instance(pipelineEntry)
+                    .put("unexpected array size [expected=").put(hi - lo)
+                    .put(", elements=").put(elementCount).put(']');
+        }
         elementOffsets.clear();
         elementOffsets.setPos(elementCount);
         isAsciis.clear();
         isAsciis.setPos(elementCount);
         long ptr = lo;
         for (int i = 0; i < elementCount; i++) {
+            if (hi - ptr < Integer.BYTES) {
+                throw PGMessageProcessingException.instance(pipelineEntry)
+                        .put("unexpected array size [expected=").put(hi - lo)
+                        .put(", element=").put(i).put(']');
+            }
             int elementLenBE = Unsafe.getInt(ptr);
             // -1 indicates NULL element
             if (elementLenBE == -1) {
@@ -160,9 +164,24 @@ public final class PGNonNullVarcharArrayView extends ArrayView implements FlatAr
                 ptr += Integer.BYTES;
             } else {
                 int elementLen = Numbers.bswap(elementLenBE);
+                final long elementLo = ptr + Integer.BYTES;
+                if (elementLen < 0 || elementLen > hi - elementLo) {
+                    throw PGMessageProcessingException.instance(pipelineEntry)
+                            .put("unexpected array size [expected=").put(hi - lo)
+                            .put(", element=").put(i)
+                            .put(", elementSize=").put(elementLen).put(']');
+                }
+                // Validated here, as a scalar VARCHAR bind and a text-format array are: an element
+                // reaches IN filters and the view audit as UTF-8, and a filter that cannot decode
+                // it would match it as NULL.
+                final int sequenceType = Utf8s.getUtf8SequenceType(elementLo, elementLo + elementLen);
+                if (sequenceType < 0) {
+                    throw PGMessageProcessingException.instance(pipelineEntry)
+                            .put("invalid UTF8 encoding for array element [index=").put(i).put(']');
+                }
                 elementOffsets.setQuick(i, ptr);
-                isAsciis.setQuick(i, isAscii(ptr + Integer.BYTES, elementLen));
-                ptr += Integer.BYTES + elementLen;
+                isAsciis.setQuick(i, sequenceType == 0);
+                ptr = elementLo + elementLen;
             }
         }
 
