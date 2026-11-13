@@ -28,6 +28,9 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cutlass.http.ActiveConnectionTracker;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.ex.RetryOperationException;
@@ -36,6 +39,8 @@ import io.questdb.cutlass.http.processors.JsonQueryProcessorState;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.network.PlainSocketFactory;
+import io.questdb.std.AssociativeCache;
+import io.questdb.std.Misc;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.tools.TestUtils;
@@ -74,6 +79,81 @@ public class JsonQueryProcessorResourceLifecycleTest extends AbstractTest {
                     Assert.assertEquals(1, engine.mountCount);
                 }
                 Assert.assertEquals(1, engine.endCount);
+            }
+        });
+    }
+
+    @Test
+    public void testOwnerEndFailureFreesFactoryInsteadOfCachingIt() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final DefaultTestCairoConfiguration cairoConfiguration = new DefaultTestCairoConfiguration(root);
+            final DefaultHttpServerConfiguration httpConfiguration =
+                    new DefaultHttpServerConfiguration(cairoConfiguration);
+            try (TrackingCairoEngine engine = new TrackingCairoEngine(cairoConfiguration)) {
+                final TrackingSelectCache cache = new TrackingSelectCache(engine.events);
+                try (
+                        cache;
+                        HttpConnectionContext context = new HttpConnectionContext(
+                                httpConfiguration,
+                                PlainSocketFactory.INSTANCE,
+                                cache,
+                                ActiveConnectionTracker.NO_TRACKING
+                        )
+                ) {
+                    context.getOrCreateSqlExecutionContext(engine, 1);
+                    final TrackingRecordCursorFactory factory = new TrackingRecordCursorFactory(engine.events);
+                    try (JsonQueryProcessorState state = new JsonQueryProcessorState(context, cairoConfiguration.getNanosecondClock(), null)) {
+                        engine.nextOwnerId = 7;
+                        engine.isEndFailing = true;
+                        state.beginSqlExecutionOwner("SELECT 1", context.getSqlExecutionContext(), CompiledQuery.SELECT);
+                        state.setCursor(new TrackingRecordCursor(engine.events));
+                        state.setFactoryForTest(factory, true);
+                        try {
+                            state.clear();
+                            Assert.fail("owner end failure was expected");
+                        } catch (RuntimeException e) {
+                            Assert.assertEquals("owner end failed", e.getMessage());
+                        }
+                        Assert.assertEquals(List.of("cursor.close", "owner.end", "factory.close"), engine.events);
+                        Assert.assertNull(cache.factory);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testOwnerEndsBeforeFactoryIsCached() throws Exception {
+        // Ending the owner releases the execution's resources, which include state of the
+        // factory's functions. Another connection can take the factory from the shared select
+        // cache as soon as it is there, so the owner has to end first.
+        TestUtils.assertMemoryLeak(() -> {
+            final DefaultTestCairoConfiguration cairoConfiguration = new DefaultTestCairoConfiguration(root);
+            final DefaultHttpServerConfiguration httpConfiguration =
+                    new DefaultHttpServerConfiguration(cairoConfiguration);
+            try (TrackingCairoEngine engine = new TrackingCairoEngine(cairoConfiguration)) {
+                final TrackingSelectCache cache = new TrackingSelectCache(engine.events);
+                try (
+                        cache;
+                        HttpConnectionContext context = new HttpConnectionContext(
+                                httpConfiguration,
+                                PlainSocketFactory.INSTANCE,
+                                cache,
+                                ActiveConnectionTracker.NO_TRACKING
+                        )
+                ) {
+                    context.getOrCreateSqlExecutionContext(engine, 1);
+                    final TrackingRecordCursorFactory factory = new TrackingRecordCursorFactory(engine.events);
+                    try (JsonQueryProcessorState state = new JsonQueryProcessorState(context, cairoConfiguration.getNanosecondClock(), null)) {
+                        engine.nextOwnerId = 7;
+                        state.beginSqlExecutionOwner("SELECT 1", context.getSqlExecutionContext(), CompiledQuery.SELECT);
+                        state.setCursor(new TrackingRecordCursor(engine.events));
+                        state.setFactoryForTest(factory, true);
+                        state.clear();
+                        Assert.assertEquals(List.of("cursor.close", "owner.end", "cache.put"), engine.events);
+                        Assert.assertSame(factory, cache.factory);
+                    }
+                }
             }
         });
     }
@@ -225,6 +305,67 @@ public class JsonQueryProcessorResourceLifecycleTest extends AbstractTest {
         }
     }
 
+    private static final class TrackingRecordCursorFactory implements RecordCursorFactory {
+        private final List<String> events;
+
+        private TrackingRecordCursorFactory(List<String> events) {
+            this.events = events;
+        }
+
+        @Override
+        public void close() {
+            events.add("factory.close");
+        }
+
+        @Override
+        public RecordMetadata getMetadata() {
+            return null;
+        }
+
+        @Override
+        public boolean recordCursorSupportsRandomAccess() {
+            return false;
+        }
+    }
+
+    private static final class TrackingSelectCache implements AssociativeCache<RecordCursorFactory> {
+        private final List<String> events;
+        private RecordCursorFactory factory;
+
+        private TrackingSelectCache(List<String> events) {
+            this.events = events;
+        }
+
+        @Override
+        public int capacity() {
+            return 1;
+        }
+
+        @Override
+        public void clear() {
+            factory = Misc.free(factory);
+        }
+
+        @Override
+        public void close() {
+            clear();
+        }
+
+        @Override
+        public RecordCursorFactory poll(CharSequence key) {
+            final RecordCursorFactory polled = factory;
+            factory = null;
+            return polled;
+        }
+
+        @Override
+        public void put(CharSequence key, RecordCursorFactory value) {
+            events.add("cache.put");
+            Misc.free(factory);
+            factory = value;
+        }
+    }
+
     private static final class TrackingRecordCursor implements RecordCursor {
         private final List<String> events;
 
@@ -285,6 +426,7 @@ public class JsonQueryProcessorResourceLifecycleTest extends AbstractTest {
         private final List<String> events = new ArrayList<>();
         private int endCount;
         private long endedOwnerId = Long.MIN_VALUE;
+        private boolean isEndFailing;
         private int mountCount;
         private long nextOwnerId;
         private int unmountCount;
@@ -303,6 +445,9 @@ public class JsonQueryProcessorResourceLifecycleTest extends AbstractTest {
             endCount++;
             endedOwnerId = ownerId;
             events.add("owner.end");
+            if (isEndFailing) {
+                throw new RuntimeException("owner end failed");
+            }
         }
 
         @Override
