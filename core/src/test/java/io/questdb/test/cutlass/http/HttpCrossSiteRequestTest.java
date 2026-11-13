@@ -24,9 +24,12 @@
 
 package io.questdb.test.cutlass.http;
 
+import io.questdb.Bootstrap;
+import io.questdb.PropBootstrapConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
+import io.questdb.std.Misc;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.cutlass.qwp.QwpWireTestFixtures;
@@ -554,7 +557,7 @@ public class HttpCrossSiteRequestTest extends AbstractBootstrapTest {
         // links and embedded assets on other sites reach the web console's files
         assertMemoryLeak(() -> {
             try (
-                    TestServerMain ignore = startWithEnvVariables();
+                    TestServerMain ignore = startWithDummyWebConsole();
                     HttpClient client = HttpClientFactory.newPlainTextInstance()
             ) {
                 for (String[] headers : crossSiteHeaders(HOST)) {
@@ -655,6 +658,27 @@ public class HttpCrossSiteRequestTest extends AbstractBootstrapTest {
             request.withContent().putAscii(endpoint.body);
         }
         return request.send();
+    }
+
+    // starts the server without extracting the web console build, which CI tests carry on
+    // the classpath and which would replace the dummy web console
+    private static TestServerMain startWithDummyWebConsole() {
+        final TestServerMain serverMain = new TestServerMain(new Bootstrap(
+                new PropBootstrapConfiguration() {
+                    @Override
+                    public boolean useSite() {
+                        return false;
+                    }
+                },
+                getServerMainArgs()
+        ));
+        try {
+            serverMain.start();
+            return serverMain;
+        } catch (Throwable th) {
+            Misc.free(serverMain, th);
+            throw th;
+        }
     }
 
     // sends the request on a connection of its own and returns the status line of the response
