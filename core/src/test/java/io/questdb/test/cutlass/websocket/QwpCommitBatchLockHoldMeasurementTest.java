@@ -92,16 +92,28 @@ public class QwpCommitBatchLockHoldMeasurementTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testLockHold() throws Exception {
-        assertMemoryLeak(() -> {
-            for (int r = 0; r < REPEATS; r++) {
-                measureHold("sy" + r, CommitMode.SYNC, 0, TABLES, 1, false);
-                measureHold("sw" + r, CommitMode.SYNC, 0, 150, 64, false);
-                measureHold("aw" + r, CommitMode.ADAPTIVE, WINDOW_US, TABLES, 1, true);
-                measureHold("a0" + r, CommitMode.ADAPTIVE, 0, TABLES, 1, false);
-                measureHold("ns" + r, CommitMode.NOSYNC, 0, TABLES, 1, false);
-            }
-        });
+    public void testLockHoldAdaptiveNoWindow() throws Exception {
+        assertHold("a0", CommitMode.ADAPTIVE, 0, TABLES, 1, false);
+    }
+
+    @Test
+    public void testLockHoldAdaptiveWindow() throws Exception {
+        assertHold("aw", CommitMode.ADAPTIVE, WINDOW_US, TABLES, 1, true);
+    }
+
+    @Test
+    public void testLockHoldNosync() throws Exception {
+        assertHold("ns", CommitMode.NOSYNC, 0, TABLES, 1, false);
+    }
+
+    @Test
+    public void testLockHoldSync() throws Exception {
+        assertHold("sy", CommitMode.SYNC, 0, TABLES, 1, false);
+    }
+
+    @Test
+    public void testLockHoldSyncWideTables() throws Exception {
+        assertHold("sw", CommitMode.SYNC, 0, 150, 64, false);
     }
 
     @Test
@@ -161,6 +173,15 @@ public class QwpCommitBatchLockHoldMeasurementTest extends AbstractCairoTest {
                 Assert.assertFalse(ignore.isDistressed());
             }
         }
+    }
+
+    // One measureHold() per repeat, each on tables of its own.
+    private void assertHold(String prefix, int commitMode, long windowUs, int tableCount, int columnCount, boolean isDueFlush) throws Exception {
+        assertMemoryLeak(() -> {
+            for (int r = 0; r < REPEATS; r++) {
+                measureHold(prefix + r + "_", commitMode, windowUs, tableCount, columnCount, isDueFlush);
+            }
+        });
     }
 
     // A prepare (E1) or commit (base) failure at the last table, or a REVOKE at the first, under SYNC: the time the
