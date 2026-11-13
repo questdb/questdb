@@ -27,6 +27,7 @@ package io.questdb.test.cairo.lv;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.lv.LiveViewCheckpointAnchorPlan;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairMarker;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairRoute;
@@ -125,6 +126,12 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
     // The rows each batch of departureEpisode commits: above the largest row cadence the knobs
     // draw, so each batch seals a root of its own.
     private static final int DEPARTURE_BATCH_ROWS = 96;
+    // The rows of SYNTHETIC_TIE_KEY each step of sparsePublicationEpisode commits around its late row, so
+    // the keyed read of SYNTHETIC_KEY prices below the whole segment under every anchor and partitioning
+    // the arm draws. An hourly anchor over DAY partitions estimates the segment at 1/24 of the partition
+    // holding it, 16 rows here, against at most 8 for the keyed read: 3 or 4 postings, one index open and
+    // a seek per piece the late row's merge leaves in the partition.
+    private static final int SPARSE_EPISODE_FILL_ROWS = 384;
     // The variants before rank (see VARIANT_COUNT): their functions hold their state in the
     // fused anchor root. rank() and dense_rank() keep a partition map of their own, which the
     // keyed open-segment routes decline (LiveViewRefreshJob.isEveryFunctionDurablyGrouped).
@@ -144,10 +151,12 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
     private static final int STEER_SPARSE_FALLBACK = 2;
     private static final String[] SYMBOLS = {"AA", "BB", "CC", "DD", "EE", "FF", "GG", "HH"};
     // The key of the rows the episodes add beside the generated dataset. No generated row
-    // carries it, so the episodes keep (ts, key) unique by tracking only their own timestamps.
+    // carries it, so the episodes keep (ts, key) unique by tracking only their own timestamps,
+    // but for the exact copy sparsePublicationEpisode commits on purpose, last in its run.
     private static final String SYNTHETIC_KEY = "ZZ";
-    // The key of the second row of the tie tieInClosedSegmentEpisode builds. Only that episode
-    // inserts it, at a timestamp it claims for SYNTHETIC_KEY, so its (ts, key) stays unique too.
+    // The key of the second row of the tie tieInClosedSegmentEpisode builds, at a timestamp it
+    // claims for SYNTHETIC_KEY, and of rows other episodes put where it has none, so its
+    // (ts, key) stays unique too.
     private static final String SYNTHETIC_TIE_KEY = "YY";
     // sum, count, max, row_number, avg, rank, dense_rank
     private static final int VARIANT_COUNT = 7;
@@ -173,6 +182,10 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
     private int keyedOwedRootSeals;
     // The highest timestamp inserted into the base so far this run.
     private long maxInsertedTs;
+    // The keyed prices and keyed closed-segment repairs of sparsePublicationEpisode's steps this
+    // batch, which assertCoverage takes off the batch's totals: the drawn runs must reach both too.
+    private long sparseEpisodeKeyedPrices;
+    private long sparseEpisodeKeyedRepairs;
     private int tierReadRecomputeChecks;
     private int tierReadTableOnlyChecks;
     private int windowJoinChecks;
@@ -202,6 +215,37 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
         runBatch(STEER_ANCHORS, TestUtils.generateRandom(LOG, 6340059912079L, 1794566112891L));
         Assert.assertEquals(5, coverage.get(LiveViewRefreshStats.SPLICE_FRONTIER_TRUNCATE_COUNT));
         Assert.assertEquals(1, coverage.get(LiveViewRefreshStats.RESUME_CHAIN_KEY_BUDGET_DECLINE_COUNT));
+    }
+
+    @Test
+    public void testClosedSegmentStartAboveSkipsTheSegmentsBesideBerlinTransitions() throws Exception {
+        // The segments a step of sparsePublicationEpisode must not take, under the anchor of the arm's
+        // Berlin runs (LiveViewCheckpointAnchorPlan). Away from a transition the search takes the first
+        // segment start at or above its floor, 02:30 CET. The 2026 spring-forward skips 02:30 on
+        // 2026-03-29, so the segment from 2026-03-28 has no exact end and the next one starts half an
+        // hour below its own anchor value: the search lands on 02:30 CEST on 2026-03-30. The 2026
+        // fall-back gives the segment from 2026-10-24 a second part, 01:00Z to 01:30Z on 2026-10-25,
+        // which reads 02:00 to 02:29 CET again, so that segment has no exact end, and those rows sit
+        // above the segment starting at 02:30 CEST that day, which has no start of its own: the
+        // search lands on the day's second 02:30, in CET.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS SELECT " + viewProjection(0)
+                    + " FROM base WINDOW w AS (PARTITION BY sym ORDER BY ts " + BERLIN_REPEATED_ANCHOR_CLAUSE + ")");
+            job = newJob();
+            try {
+                // The view builds its anchor on its first refresh.
+                insertKeyBatch(ts("2026-01-01T12:00:00.000000Z"), 0, 1);
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                final LiveViewCheckpointAnchorPlan anchorPlan = viewInstance().getAnchorWindow().getCheckpointAnchorPlan();
+                Assert.assertEquals(ts("2026-01-10T01:30:00.000000Z"), closedSegmentStartAbove(anchorPlan, ts("2026-01-10T00:00:00.000000Z")));
+                Assert.assertEquals(ts("2026-03-30T00:30:00.000000Z"), closedSegmentStartAbove(anchorPlan, ts("2026-03-28T00:00:00.000000Z")));
+                Assert.assertEquals(ts("2026-10-25T01:30:00.000000Z"), closedSegmentStartAbove(anchorPlan, ts("2026-10-24T00:30:00.000000Z")));
+            } finally {
+                job = Misc.free(job);
+            }
+        });
     }
 
     @Test
@@ -313,6 +357,75 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
         // Exact duplicate rows. A keyed repair over a repeated (timestamp, key) pair cannot
         // upsert it without collapsing it, so it abandons its sparse publication.
         runBatch(STEER_SPARSE_FALLBACK);
+    }
+
+    @Test
+    public void testSparseFallbackWhereNoDrawnRunPublishesSparsely() throws Exception {
+        // A seed whose ten runs published no keyed repair sparsely before every other run was steered
+        // onto both publications: runs 0, 3 and 7 drew one key, runs 1, 2, 4 and 8 routed their late
+        // rows elsewhere, and the seven keyed closed-segment repairs of runs 5, 6 and 9 all met a
+        // duplicate and fell back. The steered runs 0, 2, 4, 6 and 8 publish sparsely once and fall
+        // back once each, and the drawn runs repair as they did. The steered runs draw nothing, so the
+        // batch ends on the random state it ended on before they were steered.
+        final Rnd rnd = TestUtils.generateRandom(LOG, 27607860535165L, 1794587380691L);
+        runBatch(STEER_SPARSE_FALLBACK, rnd);
+        Assert.assertEquals(5, coverage.get(LiveViewRefreshStats.SPARSE_PUBLICATION_COUNT));
+        Assert.assertEquals(12, coverage.get(LiveViewRefreshStats.SPARSE_PUBLICATION_FALLBACK_COUNT));
+        Assert.assertEquals(4_959_227_367_749_357_659L, rnd.getSeed0());
+        Assert.assertEquals(4_504_132_681_311_710_744L, rnd.getSeed1());
+    }
+
+    @Test
+    public void testSparsePublicationEpisodeUnderAnHourlyAnchorOverDayPartitions() throws Exception {
+        // The tightest price sparsePublicationEpisode meets in the sparse fallback arm: an hourly
+        // anchor over DAY partitions, where the estimate counts the late row's segment as 1/24 of the
+        // partition holding it, 16 of the 387 or 388 rows a step commits there, against at most 8 for
+        // the keyed read of the late row's key. Both steps still take the keyed closed-segment route, one
+        // publishing sparsely and one falling back. A row at 23:10 the day below puts the first step's
+        // segment on the next day's first hour, so neither step's partition is the table's first or
+        // last, whose span the table's extremes would narrow.
+        assertMemoryLeak(() -> {
+            final long firstTs = ts("2026-01-01T23:10:00.000000Z");
+            setCurrentMicros(firstTs - DAY_MICROS);
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_PER_SEGMENT_ENABLED, "true");
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_REPLAY_ENABLED, "true");
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
+            final String bucket = "timestamp_floor('1h', ts)";
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL INDEX, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS SELECT " + viewProjection(0)
+                    + " FROM base WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION " + bucket + ")");
+            runKeys.add(SYMBOLS[0]);
+            runKeys.add(SYNTHETIC_KEY);
+            runKeys.add(SYNTHETIC_TIE_KEY);
+            job = newJob();
+            try {
+                insertKeyBatch(firstTs, 0, 1);
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                sparsePublicationEpisode(new PassShape("SELECT " + oracleProjection(0, bucket) + " FROM base", orderByAll(0), 0, 0, 0, 0));
+                final LiveViewRefreshStats stats = job.getStatsForTest();
+                Assert.assertEquals(2, stats.getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_KEYED_CLOSED_SEGMENT));
+                Assert.assertEquals(1, stats.get(LiveViewRefreshStats.SPARSE_PUBLICATION_COUNT));
+                Assert.assertEquals(1, stats.get(LiveViewRefreshStats.SPARSE_PUBLICATION_FALLBACK_COUNT));
+            } finally {
+                job = Misc.free(job);
+            }
+        });
+    }
+
+    // The start of the first anchor segment at or above fromTs whose start is its own and whose end
+    // is exact, probing hour by hour: a segment beside a zone transition may have neither. A segment
+    // with no start of its own reads Long.MIN_VALUE, below every fromTs. No anchor the arms draw
+    // goes 40 days without one.
+    private static long closedSegmentStartAbove(LiveViewCheckpointAnchorPlan anchorPlan, long fromTs) {
+        for (int k = 0; k < 40 * 24; k++) {
+            final long start = anchorPlan.getSegmentStart(fromTs + k * HOUR_MICROS);
+            if (start >= fromTs && anchorPlan.getSegmentEndExclusive(start) != Numbers.LONG_NULL) {
+                return start;
+            }
+        }
+        throw new AssertionError("no closed anchor segment within 40 days above " + fromTs);
     }
 
     // The first Europe/Berlin transition above minTs that winds the clocks back, isFallBack, or
@@ -438,12 +551,12 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
 
     /**
      * Asserts the routes and counters the arm is steered toward. Each assertion covers a
-     * counter that every measured batch of the arm reached, most of them many times over: a
-     * later change to a route's gate or to the cost model must not move the fuzz off a route
-     * quietly. The rest of the table is logged, not asserted. No arm reaches
-     * {@code KEY_DOMAIN_SPLICE_DECLINE_COUNT}, which needs a root sealed under an older state
-     * format, and the keyed arm reaches {@code OPEN_SEGMENT_KEYED_CHEAPER_COUNT} in about one
-     * batch of ten, too rarely to assert.
+     * counter that every measured batch of the arm reached, or that an episode the batch runs
+     * steers onto, most of them many times over: a later change to a route's gate or to the
+     * cost model must not move the fuzz off a route quietly. The rest of the table is logged,
+     * not asserted. No arm reaches {@code KEY_DOMAIN_SPLICE_DECLINE_COUNT}, which needs a root
+     * sealed under an older state format, and the keyed arm reaches
+     * {@code OPEN_SEGMENT_KEYED_CHEAPER_COUNT} in about one batch of ten, too rarely to assert.
      */
     private void assertCoverage(int steer) {
         coverage.log(LOG, steerName(steer));
@@ -475,10 +588,21 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
                 Assert.assertTrue("no cycle without rows sealed the root a keyed resume owed", keyedOwedRootSeals > 0);
             }
             case STEER_SPARSE_FALLBACK -> {
-                coverage.assertReached(LiveViewCheckpointRepairRoute.ROUTE_KEYED_CLOSED_SEGMENT);
+                // Reached through sparsePublicationEpisode's steps, every other run's, each of which
+                // asserts its route and publication.
                 coverage.assertReachedStat(LiveViewRefreshStats.SPARSE_PUBLICATION_COUNT);
                 coverage.assertReachedStat(LiveViewRefreshStats.SPARSE_PUBLICATION_FALLBACK_COUNT);
-                coverage.assertReachedStat(LiveViewRefreshStats.KEYED_SCAN_PRICED_COUNT);
+                // The keyed price and the route are asserted on the drawn runs' share, apart from the
+                // steps', which replay one key alone in its commit: a gate only the drawn shapes trip -
+                // several keys, ties, a NULL key - must not hide behind the steps.
+                Assert.assertTrue(
+                        "no drawn run moved KEYED_SCAN_PRICED_COUNT\n" + coverage.table(),
+                        coverage.get(LiveViewRefreshStats.KEYED_SCAN_PRICED_COUNT) > sparseEpisodeKeyedPrices
+                );
+                Assert.assertTrue(
+                        "no drawn run published a repair on the keyed closed segment route\n" + coverage.table(),
+                        coverage.getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_KEYED_CLOSED_SEGMENT) > sparseEpisodeKeyedRepairs
+                );
             }
             case STEER_LEAD -> {
                 coverage.assertReached(LiveViewCheckpointRepairRoute.ROUTE_SEGMENT_REBUILD);
@@ -1070,13 +1194,117 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
         }
     }
 
-    // One row of the DST frontier episode on key, a comma ahead of it when isNext, appended to
-    // syntheticSink's INSERT. Its i passes the filtered view's predicate.
+    // One row of the DST frontier or sparse publication episode on key, a comma ahead of it when
+    // isNext, appended to syntheticSink's INSERT. Its i passes the filtered view's predicate.
     private void appendEpisodeRow(boolean isNext, long ts, String key) {
         if (isNext) {
             syntheticSink.put(", ");
         }
         syntheticSink.put('(').put(ts).put("::timestamp, '").put(key).put("', ").put(1 + (ts & 511)).put(", 1.0)");
+    }
+
+    /**
+     * Two late rows on {@link #SYNTHETIC_KEY}, each into a closed anchor segment of its own above
+     * every other row, which the keyed closed-segment route repairs under the run's anchor,
+     * variant and draws. The first segment's rows of the key are distinct, so its repair
+     * publishes sparsely; the second's carry an exact copy of the row above the late row - inside
+     * the repair's output, which starts at the late row - so its repair abandons the sparse
+     * attempt and publishes its whole range. A run of the arm reaches neither unless its draws
+     * line up: a late row in a closed segment, a keyed read priced below the segment, and a
+     * duplicate in the output or none. The arm forces every switch the route reads, so the
+     * episode keeps the run's knobs as drawn; it draws nothing, so the runs after it draw as they
+     * did before it existed. It counts the keyed prices and repairs of its steps, which
+     * {@link #assertCoverage} takes off the batch's totals.
+     */
+    private void sparsePublicationEpisode(PassShape shape) throws Exception {
+        driveRefreshToQuiescence(job);
+        final LiveViewRefreshStats stats = job.getStatsForTest();
+        final long pricesBefore = stats.get(LiveViewRefreshStats.KEYED_SCAN_PRICED_COUNT);
+        final long repairsBefore = stats.getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_KEYED_CLOSED_SEGMENT);
+        closedSegmentPublicationStep(shape, false);
+        closedSegmentPublicationStep(shape, true);
+        sparseEpisodeKeyedPrices += stats.get(LiveViewRefreshStats.KEYED_SCAN_PRICED_COUNT) - pricesBefore;
+        sparseEpisodeKeyedRepairs += stats.getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_KEYED_CLOSED_SEGMENT) - repairsBefore;
+    }
+
+    /**
+     * One step of {@link #sparsePublicationEpisode}, in a fresh frame above every row: in the
+     * first closed segment above them, one commit of {@link #SPARSE_EPISODE_FILL_ROWS} rows of
+     * {@link #SYNTHETIC_TIE_KEY} from the segment's middle up, two microseconds apart, and two
+     * rows of {@link #SYNTHETIC_KEY} among them, the upper one twice when
+     * {@code isDuplicatePair}; then one row in the middle of the first closed segment at least a
+     * day above it, which closes it and puts the head in a later partition; then the late row of
+     * SYNTHETIC_KEY between the two, each commit refreshed to quiescence. Asserts that the late
+     * row takes the keyed closed-segment route and publishes sparsely, or abandons its sparse
+     * publication over the duplicate pair, then the oracle.
+     */
+    private void closedSegmentPublicationStep(PassShape shape, boolean isDuplicatePair) throws Exception {
+        final LiveViewInstance instance = viewInstance();
+        final LiveViewCheckpointAnchorPlan anchorPlan = instance.getAnchorWindow().getCheckpointAnchorPlan();
+        Assert.assertNotNull("the view's anchor must plan segments", anchorPlan);
+        final long segmentStart = closedSegmentStartAbove(anchorPlan, Math.max(maxInsertedTs, instance.getLatestSeenTs()) + 1);
+        final long segmentEnd = anchorPlan.getSegmentEndExclusive(segmentStart);
+        final long midTs = segmentStart + (segmentEnd - segmentStart) / 2;
+        final long keyLowTs = midTs + 2L * (SPARSE_EPISODE_FILL_ROWS / 4) + 1;
+        final long lateTs = midTs + 2L * (SPARSE_EPISODE_FILL_ROWS / 2) + 1;
+        final long keyHighTs = midTs + 2L * (3 * SPARSE_EPISODE_FILL_ROWS / 4) + 1;
+        syntheticSink.clear();
+        syntheticSink.put("INSERT INTO base (ts, sym, i, x) VALUES ");
+        for (int k = 0; k < SPARSE_EPISODE_FILL_ROWS; k++) {
+            appendEpisodeRow(k > 0, midTs + 2L * k, SYNTHETIC_TIE_KEY);
+        }
+        appendEpisodeRow(true, keyLowTs, SYNTHETIC_KEY);
+        appendEpisodeRow(true, keyHighTs, SYNTHETIC_KEY);
+        if (isDuplicatePair) {
+            // Above the late row, so the repair's output, which starts at the late row, carries the pair.
+            appendEpisodeRow(true, keyHighTs, SYNTHETIC_KEY);
+        }
+        execute(syntheticSink);
+        syntheticTs.add(keyLowTs);
+        syntheticTs.add(keyHighTs);
+        maxInsertedTs = Math.max(maxInsertedTs, midTs + 2L * (SPARSE_EPISODE_FILL_ROWS - 1));
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+
+        final long headSegmentStart = closedSegmentStartAbove(anchorPlan, segmentEnd + DAY_MICROS);
+        final long headTs = headSegmentStart + (anchorPlan.getSegmentEndExclusive(headSegmentStart) - headSegmentStart) / 2;
+        syntheticSink.clear();
+        syntheticSink.put("INSERT INTO base (ts, sym, i, x) VALUES ");
+        appendEpisodeRow(false, headTs, SYNTHETIC_TIE_KEY);
+        execute(syntheticSink);
+        maxInsertedTs = Math.max(maxInsertedTs, headTs);
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+
+        final LiveViewRefreshStats stats = job.getStatsForTest();
+        final long repairsBefore = stats.getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_KEYED_CLOSED_SEGMENT);
+        final long sparseBefore = stats.get(LiveViewRefreshStats.SPARSE_PUBLICATION_COUNT);
+        final long fallbacksBefore = stats.get(LiveViewRefreshStats.SPARSE_PUBLICATION_FALLBACK_COUNT);
+        syntheticSink.clear();
+        syntheticSink.put("INSERT INTO base (ts, sym, i, x) VALUES ");
+        appendEpisodeRow(false, lateTs, SYNTHETIC_KEY);
+        execute(syntheticSink);
+        syntheticTs.add(lateTs);
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+        Assert.assertEquals(
+                "the late row takes the keyed closed-segment route",
+                repairsBefore + 1,
+                stats.getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_KEYED_CLOSED_SEGMENT)
+        );
+        if (isDuplicatePair) {
+            Assert.assertEquals(
+                    "and abandons its sparse publication over the duplicate pair",
+                    fallbacksBefore + 1,
+                    stats.get(LiveViewRefreshStats.SPARSE_PUBLICATION_FALLBACK_COUNT)
+            );
+            Assert.assertEquals("and publishes nothing sparsely", sparseBefore, stats.get(LiveViewRefreshStats.SPARSE_PUBLICATION_COUNT));
+            assertView(shape.oracleSql, shape.orderBy, "after the closed-segment fallback");
+        } else {
+            Assert.assertEquals("and publishes sparsely", sparseBefore + 1, stats.get(LiveViewRefreshStats.SPARSE_PUBLICATION_COUNT));
+            Assert.assertEquals("and falls back nowhere", fallbacksBefore, stats.get(LiveViewRefreshStats.SPARSE_PUBLICATION_FALLBACK_COUNT));
+            assertView(shape.oracleSql, shape.orderBy, "after the closed-segment sparse publication");
+        }
     }
 
     private long queryLong(String sql) throws SqlException {
@@ -1624,6 +1852,12 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
             }
             if (steer != STEER_FAULTS && BERLIN_REPEATED_ANCHOR_CLAUSE.equals(anchor.clause)) {
                 dstFrontierEpisode(rnd, knobs, shape, symCount);
+            }
+            if (steer == STEER_SPARSE_FALLBACK && run % 2 == 0) {
+                // Every other run steers two late rows onto the keyed closed-segment route, one that
+                // publishes sparsely and one that falls back, so the batch reaches both whatever the
+                // draws: see sparsePublicationEpisode.
+                sparsePublicationEpisode(shape);
             }
             if (faultPct > 0 && firedThisRun == 0) {
                 // No drawn fault fired. One in-order row above every other one, whose forward
