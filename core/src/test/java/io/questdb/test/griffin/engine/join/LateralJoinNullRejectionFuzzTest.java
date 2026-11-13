@@ -61,7 +61,8 @@ import java.util.Set;
  * The test counts the queries of each kind, so that a generator that stopped making one fails.
  * <p>
  * Some shapes put a correlated sub-query on the slave side of the RIGHT join, with no later join or
- * with a later INNER, LEFT, CROSS, RIGHT or FULL join.
+ * with a later INNER, LEFT, CROSS, RIGHT or FULL join, and some put an UNNEST between the rows that read
+ * the outer key, through an ON clause or a correlated FROM sub-query, and the RIGHT or FULL join.
  */
 public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
     // name, type, values of the column and constants of the filters, bind variable type and values
@@ -117,6 +118,14 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
     // The ON clause of xs reads the outer key, and WHERE keys it on refunds, which the RIGHT join
     // joins after xs, so no row before the RIGHT join holds the key
     private static final Shape SLAVE_KEY_READ_EARLIER = new Shape("{T} t JOIN xs x ON x.k = {K} RIGHT JOIN refunds r ON t.x = r.k WHERE r.k = {K} AND ({P})", true, false);
+    // An UNNEST between the rows that read the outer key and the RIGHT or FULL join repeats those rows,
+    // which carry the outer key, once per array element: after an ON clause that reads the key, and
+    // after a correlated FROM sub-query, whose table is the {T} of the other shapes
+    private static final Shape[] UNNEST_SHAPES = {
+            new Shape("{T} t JOIN xs x ON x.k = {K} CROSS JOIN UNNEST(ARRAY[1.0, 2.0]) n(e) RIGHT JOIN refunds r ON t.x = r.k WHERE {P}", false, false),
+            new Shape("{T} t JOIN xs x ON x.k = t.x AND x.k = {K} CROSS JOIN UNNEST(ARRAY[1.0, 2.0]) n(e) FULL JOIN refunds r ON t.x = r.k WHERE {P}", false, false),
+            new Shape("(SELECT * FROM {T} WHERE x = {K}) t CROSS JOIN UNNEST(ARRAY[1.0, 2.0]) n(e) RIGHT JOIN refunds r ON t.x = r.k WHERE {P}", false, false, false, false, true)
+    };
     // A FULL join whose ON clause reads the outer key on refunds also NULL-extends refunds, and no
     // filter on trades drops those rows.
     private static final Shape[] SHAPES = {
@@ -140,7 +149,10 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             correlatedSlaveShape(" LEFT JOIN xs x ON x.k = r.k", true),
             correlatedSlaveShape(" CROSS JOIN xs x", true),
             correlatedSlaveShape(" RIGHT JOIN xs x ON x.k = r.k", false),
-            correlatedSlaveShape(" FULL JOIN xs x ON x.k = r.k", false)
+            correlatedSlaveShape(" FULL JOIN xs x ON x.k = r.k", false),
+            UNNEST_SHAPES[0],
+            UNNEST_SHAPES[1],
+            UNNEST_SHAPES[2]
     };
     // queries whose LATERAL rows were compared with the reference rows
     private int comparedCount;
@@ -167,6 +179,8 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
     private int slaveKeyReadEarlierComparedCount;
     // queries of the TWO_RIGHT_JOINS shape whose LATERAL rows were compared with the reference rows
     private int twoRightJoinsComparedCount;
+    // queries of the UNNEST_SHAPES whose LATERAL rows were compared with the reference rows
+    private int unnestComparedCount;
     // queries whose filter is valid, so the reference ran and the query was checked against it
     private int validCount;
     // queries of a shape with WHERE t.x = o.k and another condition on the outer key, whose LATERAL
@@ -264,7 +278,8 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
                 true,
                 false,
                 true,
-                hasLaterJoin
+                hasLaterJoin,
+                false
         );
     }
 
@@ -321,6 +336,15 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             case "BOOLEAN", "BYTE", "SHORT" -> true;
             default -> false;
         };
+    }
+
+    private static boolean isUnnestShape(Shape shape) {
+        for (Shape unnestShape : UNNEST_SHAPES) {
+            if (shape == unnestShape) {
+                return true;
+            }
+        }
+        return false;
     }
 
     // passes each column through or computes it with a cast to its own type, and adds the names of
@@ -588,7 +612,7 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
         }
         Shape shape = SHAPES[rnd.nextInt(SHAPES.length)];
         while ((isMixedTypeCoverage && (shape.hasWhereKey || shape.hasKeyOnFullJoinedTable))
-                || (coverage == Coverage.REDUCED_JOIN && (shape.hasWhereKey || shape.hasCorrelatedSlave || shape.hasFullJoin()))) {
+                || (coverage == Coverage.REDUCED_JOIN && (shape.hasWhereKey || shape.hasCorrelatedSlave || shape.hasCorrelatedFromSubQuery || shape.hasFullJoin()))) {
             shape = SHAPES[rnd.nextInt(SHAPES.length)];
         }
         // t.x = o.k, in the shape or as the correlated conjunct, keys the rows by t.x, and = against a
@@ -679,6 +703,9 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             comparedCount++;
             if (shape == TWO_RIGHT_JOINS) {
                 twoRightJoinsComparedCount++;
+            }
+            if (isUnnestShape(shape)) {
+                unnestComparedCount++;
             }
             if (shape == SLAVE_KEY_READ_EARLIER) {
                 slaveKeyReadEarlierComparedCount++;
@@ -796,6 +823,7 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             mixedTypeVerdictCount = 0;
             nestedSubQueryComparedCount = 0;
             twoRightJoinsComparedCount = 0;
+            unnestComparedCount = 0;
             whereKeyCorrelatedComparedCount = 0;
             for (int round = 0; round < rounds; round++) {
                 createTables(rnd, nullRate, maxOuterRows, maxRows);
@@ -831,7 +859,8 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             final String counts = queryCount + " queries, " + validCount + " with a valid filter, " + comparedCount
                     + " compared, " + nullRejectingCount + " provably NULL-rejecting, "
                     + laterRuntimeVerdictCount + " by a later predicate against a runtime value, " + twoRightJoinsComparedCount
-                    + " compared with two RIGHT joins, " + laterJoinComparedCount
+                    + " compared with two RIGHT joins, " + unnestComparedCount
+                    + " compared with an UNNEST before the RIGHT or FULL join, " + laterJoinComparedCount
                     + " compared with a join after a RIGHT join to a correlated sub-query, " + mixedTypeVerdictCount
                     + " proven by a computed column next to a predicate against a runtime value, "
                     + nestedSubQueryComparedCount + " compared with a nested sub-query, " + whereKeyCorrelatedComparedCount
@@ -842,6 +871,7 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
                     .$(", compared=").$(comparedCount)
                     .$(", nullRejecting=").$(nullRejectingCount).$(", laterRuntimeVerdict=").$(laterRuntimeVerdictCount)
                     .$(", twoRightJoinsCompared=").$(twoRightJoinsComparedCount)
+                    .$(", unnestCompared=").$(unnestComparedCount)
                     .$(", laterJoinCompared=").$(laterJoinComparedCount)
                     .$(", mixedTypeVerdict=").$(mixedTypeVerdictCount)
                     .$(", nestedSubQueryCompared=").$(nestedSubQueryComparedCount)
@@ -863,6 +893,9 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             // query of each round makes one such verdict.
             Assert.assertTrue("fewer queries provably NULL-rejecting by a later predicate against a runtime value than rounds: " + counts, laterRuntimeVerdictCount >= rounds);
             Assert.assertTrue("no query with two RIGHT joins compared: " + counts, twoRightJoinsComparedCount > 0);
+            // A generator that never put an UNNEST between the rows that read the outer key and the RIGHT or
+            // FULL join would not show that the join keeps the rows that it NULL-extends once per outer row.
+            Assert.assertTrue("no query with an UNNEST before the RIGHT or FULL join compared: " + counts, unnestComparedCount > 0);
             // A generator that never followed the RIGHT join to a correlated sub-query with another join
             // would not show that the rows of that join keep their outer row through a later join.
             Assert.assertTrue("no query with a join after a RIGHT join to a correlated sub-query compared: " + counts, laterJoinComparedCount > 0);
@@ -1003,16 +1036,19 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
     }
 
     // hasCorrelatedSlave: the slave of the RIGHT join is a correlated sub-query, see correlatedSlaveShape();
-    // hasLaterJoin: an INNER, LEFT or CROSS join follows that RIGHT join
+    // hasLaterJoin: an INNER, LEFT or CROSS join follows that RIGHT join;
+    // hasCorrelatedFromSubQuery: the FROM clause of the body is a correlated sub-query, so the rewriter keeps
+    // its RIGHT join, see LateralJoinRewriter.reduceLayerOuterJoins()
     private record Shape(
             String body,
             boolean hasWhereKey,
             boolean hasKeyOnFullJoinedTable,
             boolean hasCorrelatedSlave,
-            boolean hasLaterJoin
+            boolean hasLaterJoin,
+            boolean hasCorrelatedFromSubQuery
     ) {
         Shape(String body, boolean hasWhereKey, boolean hasKeyOnFullJoinedTable) {
-            this(body, hasWhereKey, hasKeyOnFullJoinedTable, false, false);
+            this(body, hasWhereKey, hasKeyOnFullJoinedTable, false, false, false);
         }
 
         // a FULL join reduces only when the filter drops the rows that it NULL-extends on both sides

@@ -2699,6 +2699,31 @@ class LateralJoinRewriter implements Mutable {
         return alias;
     }
 
+    // Returns the name under which the projection of the FROM sub-query of a layer passes on the column of
+    // the copy of the outer-ref join that colExpr reads, the copy that terminateWithTaggedPrefix() gives the
+    // sub-query: the joins after the sub-query read the column as their tag. A bare wildcard passes the
+    // copy's columns on only while the copy is there, and Pass 3 removes a copy whose columns equal inner
+    // columns. tryEliminateOuterRefInBranch() then makes a column that a projection names read the inner
+    // equivalent, and keeps the names that a wildcard passed on only at the top of a join branch, which a
+    // FROM sub-query is not. So a projection with a bare wildcard names the column next to the wildcard,
+    // hidden from it, as wrapWithOuterRefCopy() names the columns of its copy. While the copy stays, the
+    // wildcard passes on a column of the same name, and rewriteSelectClause() renames the hidden column.
+    private CharSequence ensureBaseTagColumn(
+            IQueryModel projection,
+            ExpressionNode colExpr,
+            CharSequence preferredAlias
+    ) throws SqlException {
+        if (!hasBareWildcard(projection.getBottomUpColumns())) {
+            return ensureColumnInSelect(projection, colExpr, preferredAlias);
+        }
+        // each copy has columns of its own, so no column of the projection reads colExpr yet
+        final CharSequence alias = createColumnAlias(preferredAlias, projection);
+        final QueryColumn column = queryColumnPool.next().of(alias, ExpressionNode.deepClone(expressionNodePool, colExpr), false);
+        column.setGenerated(true);
+        projection.addBottomUpColumn(column);
+        return alias;
+    }
+
     // Inserts a synthetic key column by identity: existing columns match only
     // when they are themselves generated and their AST is exactly equal. There
     // is deliberately no basename fallback against user columns, so no user
@@ -3641,8 +3666,8 @@ class LateralJoinRewriter implements Mutable {
 
     // True when terminateWithTaggedPrefix() can give the joins of the data source layer up to its last
     // RIGHT, FULL or SPLICE join, at lastNullingJoin, the tag they need: no join there other than an
-    // INNER, CROSS, LEFT, RIGHT, FULL, ASOF or LT join reads the outer row, and a SPLICE join reads it
-    // neither on its sides nor in its ON clause.
+    // INNER, CROSS, LEFT, RIGHT, FULL, ASOF, LT or UNNEST join reads the outer row, and a SPLICE join
+    // reads it neither on its sides nor in its ON clause.
     // isBaseCorrelated says that the layer's own FROM clause is a sub-query that reads the outer row,
     // which then takes a copy as a correlated sub-query of a join does, unless it is a scalar
     // aggregate, whose row for an outer row without rows the copy does not provide.
@@ -3666,6 +3691,13 @@ class LateralJoinRewriter implements Mutable {
                 case IQueryModel.JOIN_INNER, IQueryModel.JOIN_CROSS, IQueryModel.JOIN_LEFT_OUTER,
                      IQueryModel.JOIN_RIGHT_OUTER, IQueryModel.JOIN_FULL_OUTER,
                      IQueryModel.JOIN_ASOF, IQueryModel.JOIN_LT -> {
+                }
+                // An UNNEST join emits each of its master rows once per element of its arrays, with
+                // the columns of the master row as they are, so its rows keep the tag of their master
+                // rows, and terminateWithTaggedPrefix() passes over it. Its arrays read the master
+                // row alone: Pass 1 collects no outer column from them, so one that reads the outer
+                // row fails to resolve.
+                case IQueryModel.JOIN_UNNEST -> {
                 }
                 case IQueryModel.JOIN_SPLICE -> {
                     // A SPLICE join needs a master and a slave with random access, which no join has,
@@ -4362,7 +4394,10 @@ class LateralJoinRewriter implements Mutable {
             ExpressionNode cloneColNode = expressionNodePool.next().of(
                     ExpressionNode.LITERAL, cloneColAlias, 0, 0
             );
-            CharSequence subAlias = ensureColumnInSelect(jmTop, cloneColNode, cloneColAlias);
+            // jm is the layer itself when its FROM clause is the sub-query, see terminateWithTaggedPrefix()
+            CharSequence subAlias = jm == current
+                    ? ensureBaseTagColumn(jmTop, cloneColNode, cloneColAlias)
+                    : ensureColumnInSelect(jmTop, cloneColNode, cloneColAlias);
             CharSequence qualifiedSubCol;
             if (jmAlias != null) {
                 characterStore.newEntry();

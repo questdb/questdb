@@ -3215,6 +3215,127 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    // A correlated FROM sub-query that a RIGHT or FULL join follows, written with a wildcard: bare, next to
+    // a computed column, over another wildcard sub-query and qualified, and with a correlation that is no
+    // equality, a LIMIT and DISTINCT, under a body that reads its columns, its wildcard or a bare wildcard.
+    // Per outer row, t2 holds the t rows whose oid equals o.id, or does not exceed it, and the RIGHT join
+    // NULL-extends each u row that matches no t2 row; the FULL join adds the t row of o.id 3, which matches
+    // no u row. DuckDB returns the rows of each body; it does not decorrelate the FULL join, whose rows it
+    // returns for the body run once per outer row.
+    @Test
+    public void testLateralCorrelatedWildcardSubQueryBeforeRightJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT)");
+            execute("CREATE TABLE t (oid INT, v INT)");
+            execute("CREATE TABLE u (k INT, w INT)");
+            execute("INSERT INTO o VALUES (1), (2), (3)");
+            execute("INSERT INTO t VALUES (1, 10), (2, 20), (2, 21), (3, 30)");
+            execute("INSERT INTO u VALUES (1, 100), (2, 200), (4, 400)");
+            final String equalityRows = """
+                    id\ttoid\ttv\tuk
+                    1\tnull\tnull\t2
+                    1\tnull\tnull\t4
+                    1\t1\t10\t1
+                    2\tnull\tnull\t1
+                    2\tnull\tnull\t4
+                    2\t2\t20\t2
+                    2\t2\t21\t2
+                    3\tnull\tnull\t1
+                    3\tnull\tnull\t2
+                    3\tnull\tnull\t4
+                    """;
+            final String[][] cases = {
+                    {"SELECT t2.oid toid, t2.v tv, u.k uk FROM (SELECT * FROM t WHERE t.oid = o.id) t2 RIGHT JOIN u ON t2.oid = u.k", equalityRows},
+                    {
+                            "SELECT t2.oid toid, t2.vv tv, u.k uk FROM (SELECT *, v + 1 vv FROM t WHERE t.oid = o.id) t2 RIGHT JOIN u ON t2.oid = u.k",
+                            """
+                                    id\ttoid\ttv\tuk
+                                    1\tnull\tnull\t2
+                                    1\tnull\tnull\t4
+                                    1\t1\t11\t1
+                                    2\tnull\tnull\t1
+                                    2\tnull\tnull\t4
+                                    2\t2\t21\t2
+                                    2\t2\t22\t2
+                                    3\tnull\tnull\t1
+                                    3\tnull\tnull\t2
+                                    3\tnull\tnull\t4
+                                    """
+                    },
+                    {"SELECT t2.oid toid, t2.v tv, u.k uk FROM (SELECT * FROM (SELECT * FROM t WHERE t.oid = o.id) s) t2 RIGHT JOIN u ON t2.oid = u.k", equalityRows},
+                    {"SELECT t2.oid toid, t2.v tv, u.k uk FROM (SELECT t.* FROM t WHERE t.oid = o.id) t2 RIGHT JOIN u ON t2.oid = u.k", equalityRows},
+                    {
+                            "SELECT t2.oid toid, t2.v tv, u.k uk FROM (SELECT * FROM t WHERE t.oid <= o.id) t2 RIGHT JOIN u ON t2.oid = u.k",
+                            """
+                                    id\ttoid\ttv\tuk
+                                    1\tnull\tnull\t2
+                                    1\tnull\tnull\t4
+                                    1\t1\t10\t1
+                                    2\tnull\tnull\t4
+                                    2\t1\t10\t1
+                                    2\t2\t20\t2
+                                    2\t2\t21\t2
+                                    3\tnull\tnull\t4
+                                    3\t1\t10\t1
+                                    3\t2\t20\t2
+                                    3\t2\t21\t2
+                                    """
+                    },
+                    {
+                            "SELECT t2.oid toid, t2.v tv, u.k uk FROM (SELECT * FROM t WHERE t.oid = o.id ORDER BY v DESC LIMIT 1) t2 RIGHT JOIN u ON t2.oid = u.k",
+                            """
+                                    id\ttoid\ttv\tuk
+                                    1\tnull\tnull\t2
+                                    1\tnull\tnull\t4
+                                    1\t1\t10\t1
+                                    2\tnull\tnull\t1
+                                    2\tnull\tnull\t4
+                                    2\t2\t21\t2
+                                    3\tnull\tnull\t1
+                                    3\tnull\tnull\t2
+                                    3\tnull\tnull\t4
+                                    """
+                    },
+                    {"SELECT t2.oid toid, t2.v tv, u.k uk FROM (SELECT DISTINCT * FROM t WHERE t.oid = o.id) t2 RIGHT JOIN u ON t2.oid = u.k", equalityRows},
+                    {
+                            "SELECT t2.*, u.k uk FROM (SELECT * FROM t WHERE t.oid = o.id) t2 RIGHT JOIN u ON t2.oid = u.k",
+                            equalityRows.replace("id\ttoid\ttv\tuk", "id\toid\tv\tuk")
+                    },
+                    {
+                            "SELECT * FROM (SELECT * FROM t WHERE t.oid = o.id) t2 RIGHT JOIN u ON t2.oid = u.k",
+                            """
+                                    id\toid\tv\tk\tw
+                                    1\tnull\tnull\t2\t200
+                                    1\tnull\tnull\t4\t400
+                                    1\t1\t10\t1\t100
+                                    2\tnull\tnull\t1\t100
+                                    2\tnull\tnull\t4\t400
+                                    2\t2\t20\t2\t200
+                                    2\t2\t21\t2\t200
+                                    3\tnull\tnull\t1\t100
+                                    3\tnull\tnull\t2\t200
+                                    3\tnull\tnull\t4\t400
+                                    """
+                    },
+                    {
+                            "SELECT t2.oid toid, t2.v tv, u.k uk FROM (SELECT * FROM t WHERE t.oid = o.id) t2 FULL JOIN u ON t2.oid = u.k",
+                            equalityRows + "3\t3\t30\tnull\n"
+                    },
+            };
+            for (String[] c : cases) {
+                final int columnCount = c[1].substring(0, c[1].indexOf('\n')).split("\t").length;
+                final StringBuilder orderBy = new StringBuilder(" ORDER BY 1");
+                for (int i = 2; i <= columnCount; i++) {
+                    orderBy.append(", ").append(i);
+                }
+                assertQuery("SELECT o.id, l.* FROM o JOIN LATERAL (" + c[0] + ") l" + orderBy)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns(c[1]);
+            }
+        });
+    }
+
     // Exercises the model-replacement flag transfer directly via a @TestOnly accessor.
     // The same regression is also covered black-box by the LATERAL-count assertQuery
     // tests; this pins the unit-level contract of replaceAndTransferDependents.
@@ -4436,6 +4557,229 @@ public class LateralJoinTest extends AbstractCairoTest {
                             id\tqty
                             1\t10.0
                             2\t20.0
+                            """);
+        });
+    }
+
+    // A RIGHT or FULL join of a LATERAL body keeps the rows that it NULL-extends once per outer row,
+    // also when the rows that it joins them with read the outer row ahead of an UNNEST: through a
+    // correlated FROM sub-query, written with a wildcard or with columns, an ON clause, or the
+    // correlated sub-query of a join. Per outer row, t2 holds the t rows whose oid equals o.id, as =
+    // matches NULL to NULL: u row 100 matches the t row of o.id 1, u row 200 the t rows of o.id 2, u
+    // row 500 the t row of the NULL o.id, and u row 400 no t row, so the RIGHT join NULL-extends every
+    // other u row of each outer row, the four of o.id 3 included. The FULL join adds the t row of
+    // o.id 3, which matches no u row, once per array element. DuckDB, with IS NOT DISTINCT FROM for =
+    // and an explicit CROSS JOIN for the comma, returns the rows of each body.
+    @Test
+    public void testLateralUnnestBeforeRightJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createUnnestBeforeRightJoinTables();
+            final String constantArrayRows = """
+                    id\ttoid\ttv\te\tuk\tuw
+                    null\tnull\tnull\tnull\t1\t100
+                    null\tnull\tnull\tnull\t2\t200
+                    null\tnull\tnull\tnull\t4\t400
+                    null\tnull\t30\t1.0\tnull\t500
+                    null\tnull\t30\t2.0\tnull\t500
+                    1\tnull\tnull\tnull\tnull\t500
+                    1\tnull\tnull\tnull\t2\t200
+                    1\tnull\tnull\tnull\t4\t400
+                    1\t1\t10\t1.0\t1\t100
+                    1\t1\t10\t2.0\t1\t100
+                    2\tnull\tnull\tnull\tnull\t500
+                    2\tnull\tnull\tnull\t1\t100
+                    2\tnull\tnull\tnull\t4\t400
+                    2\t2\t20\t1.0\t2\t200
+                    2\t2\t20\t2.0\t2\t200
+                    2\t2\t21\t1.0\t2\t200
+                    2\t2\t21\t2.0\t2\t200
+                    3\tnull\tnull\tnull\tnull\t500
+                    3\tnull\tnull\tnull\t1\t100
+                    3\tnull\tnull\tnull\t2\t200
+                    3\tnull\tnull\tnull\t4\t400
+                    """;
+            final String innerJoinRows = """
+                    id\ttv\tt3v\te\tuk
+                    null\tnull\tnull\tnull\t1
+                    null\tnull\tnull\tnull\t2
+                    null\tnull\tnull\tnull\t4
+                    null\t30\t30\t1.0\tnull
+                    null\t30\t30\t2.0\tnull
+                    1\tnull\tnull\tnull\tnull
+                    1\tnull\tnull\tnull\t2
+                    1\tnull\tnull\tnull\t4
+                    1\t10\t10\t1.0\t1
+                    1\t10\t10\t2.0\t1
+                    2\tnull\tnull\tnull\tnull
+                    2\tnull\tnull\tnull\t1
+                    2\tnull\tnull\tnull\t4
+                    2\t20\t20\t1.0\t2
+                    2\t20\t20\t2.0\t2
+                    2\t20\t21\t1.0\t2
+                    2\t20\t21\t2.0\t2
+                    2\t21\t20\t1.0\t2
+                    2\t21\t20\t2.0\t2
+                    2\t21\t21\t1.0\t2
+                    2\t21\t21\t2.0\t2
+                    3\tnull\tnull\tnull\tnull
+                    3\tnull\tnull\tnull\t1
+                    3\tnull\tnull\tnull\t2
+                    3\tnull\tnull\tnull\t4
+                    """;
+            final String[][] cases = {
+                    {
+                            "SELECT t2.oid toid, t2.v tv, x.e, u.k uk, u.w uw FROM (SELECT * FROM t WHERE t.oid = o.id) t2, UNNEST(ARRAY[1.0, 2.0]) x(e) RIGHT JOIN u ON t2.oid = u.k",
+                            constantArrayRows
+                    },
+                    {
+                            "SELECT t2.oid toid, t2.v tv, x.e, u.k uk, u.w uw FROM (SELECT oid, v FROM t WHERE t.oid = o.id) t2, UNNEST(ARRAY[1.0, 2.0]) x(e) RIGHT JOIN u ON t2.oid = u.k",
+                            constantArrayRows
+                    },
+                    {
+                            "SELECT t2.oid toid, t2.v tv, x.e, u.k uk, u.w uw FROM (SELECT oid, v FROM t WHERE t.oid = o.id) t2, UNNEST(ARRAY[1.0, 2.0]) x(e) FULL JOIN u ON t2.oid = u.k",
+                            constantArrayRows + """
+                                    3\t3\t31\t1.0\tnull\tnull
+                                    3\t3\t31\t2.0\tnull\tnull
+                                    """
+                    },
+                    {
+                            "SELECT t2.oid toid, t2.v tv, x.e, u.k uk, u.w uw FROM (SELECT oid, v, arr FROM t WHERE t.oid = o.id) t2, UNNEST(t2.arr) x(e) RIGHT JOIN u ON t2.oid = u.k",
+                            """
+                                    id\ttoid\ttv\te\tuk\tuw
+                                    null\tnull\tnull\tnull\t1\t100
+                                    null\tnull\tnull\tnull\t2\t200
+                                    null\tnull\tnull\tnull\t4\t400
+                                    null\tnull\t30\t6.0\tnull\t500
+                                    1\tnull\tnull\tnull\tnull\t500
+                                    1\tnull\tnull\tnull\t2\t200
+                                    1\tnull\tnull\tnull\t4\t400
+                                    1\t1\t10\t1.0\t1\t100
+                                    1\t1\t10\t2.0\t1\t100
+                                    2\tnull\tnull\tnull\tnull\t500
+                                    2\tnull\tnull\tnull\t1\t100
+                                    2\tnull\tnull\tnull\t4\t400
+                                    2\t2\t20\t3.0\t2\t200
+                                    2\t2\t21\t4.0\t2\t200
+                                    2\t2\t21\t5.0\t2\t200
+                                    3\tnull\tnull\tnull\tnull\t500
+                                    3\tnull\tnull\tnull\t1\t100
+                                    3\tnull\tnull\tnull\t2\t200
+                                    3\tnull\tnull\tnull\t4\t400
+                                    """
+                    },
+                    {
+                            "SELECT t2.oid toid, x.n, x.e, u.k uk FROM (SELECT * FROM t WHERE t.oid = o.id) t2, UNNEST(t2.arr) WITH ORDINALITY x(e, n) RIGHT JOIN u ON t2.oid = u.k",
+                            """
+                                    id\ttoid\tn\te\tuk
+                                    null\tnull\tnull\tnull\t1
+                                    null\tnull\tnull\tnull\t2
+                                    null\tnull\tnull\tnull\t4
+                                    null\tnull\t1\t6.0\tnull
+                                    1\tnull\tnull\tnull\tnull
+                                    1\tnull\tnull\tnull\t2
+                                    1\tnull\tnull\tnull\t4
+                                    1\t1\t1\t1.0\t1
+                                    1\t1\t2\t2.0\t1
+                                    2\tnull\tnull\tnull\tnull
+                                    2\tnull\tnull\tnull\t1
+                                    2\tnull\tnull\tnull\t4
+                                    2\t2\t1\t3.0\t2
+                                    2\t2\t1\t4.0\t2
+                                    2\t2\t2\t5.0\t2
+                                    3\tnull\tnull\tnull\tnull
+                                    3\tnull\tnull\tnull\t1
+                                    3\tnull\tnull\tnull\t2
+                                    3\tnull\tnull\tnull\t4
+                                    """
+                    },
+                    {
+                            "SELECT t2.v tv, t3.v t3v, x.e, u.k uk FROM t t2 JOIN t t3 ON t3.oid = t2.oid AND t3.oid = o.id, UNNEST(ARRAY[1.0, 2.0]) x(e) RIGHT JOIN u ON t2.oid = u.k",
+                            innerJoinRows
+                    },
+                    {
+                            "SELECT t2.v tv, t3.v t3v, x.e, u.k uk FROM t t2 JOIN (SELECT oid, v FROM t WHERE t.oid = o.id) t3 ON t3.oid = t2.oid, UNNEST(ARRAY[1.0, 2.0]) x(e) RIGHT JOIN u ON t2.oid = u.k",
+                            innerJoinRows
+                    },
+            };
+            for (String[] c : cases) {
+                final int columnCount = c[1].substring(0, c[1].indexOf('\n')).split("\t").length;
+                final StringBuilder orderBy = new StringBuilder(" ORDER BY 1");
+                for (int i = 2; i <= columnCount; i++) {
+                    orderBy.append(", ").append(i);
+                }
+                assertQuery("SELECT o.id, l.* FROM o JOIN LATERAL (" + c[0] + ") l" + orderBy)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns(c[1]);
+            }
+        });
+    }
+
+    // The tables of testLateralUnnestBeforeRightJoin() with an empty u, so that the RIGHT join keeps no
+    // row, LEFT JOIN LATERAL pads each outer row, and the FULL join keeps the t2 rows of each outer row once
+    // per element of their arrays; then with an empty t, so that the RIGHT join NULL-extends each of the
+    // four u rows once per outer row. DuckDB, with IS NOT DISTINCT FROM for =, returns these rows.
+    @Test
+    public void testLateralUnnestBeforeRightJoinEmptySides() throws Exception {
+        assertMemoryLeak(() -> {
+            createUnnestBeforeRightJoinTables();
+            execute("TRUNCATE TABLE u");
+            final String body = "SELECT t2.oid toid, x.e, u.k uk FROM (SELECT * FROM t WHERE t.oid = o.id) t2, UNNEST(t2.arr) x(e) %s JOIN u ON t2.oid = u.k";
+            assertQuery("SELECT o.id, l.* FROM o JOIN LATERAL (" + String.format(body, "RIGHT") + ") l ORDER BY 1, 2, 3, 4")
+                    .noLeakCheck()
+                    .returns("id\ttoid\te\tuk\n");
+            assertQuery("SELECT o.id, l.* FROM o LEFT JOIN LATERAL (" + String.format(body, "RIGHT") + ") l ORDER BY 1, 2, 3, 4")
+                    .noLeakCheck()
+                    .returns("""
+                            id\ttoid\te\tuk
+                            null\tnull\tnull\tnull
+                            1\tnull\tnull\tnull
+                            2\tnull\tnull\tnull
+                            3\tnull\tnull\tnull
+                            """);
+            assertQuery("SELECT o.id, l.* FROM o JOIN LATERAL (" + String.format(body, "FULL") + ") l ORDER BY 1, 2, 3, 4")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ttoid\te\tuk
+                            null\tnull\t6.0\tnull
+                            1\t1\t1.0\tnull
+                            1\t1\t2.0\tnull
+                            2\t2\t3.0\tnull
+                            2\t2\t4.0\tnull
+                            2\t2\t5.0\tnull
+                            3\t3\t7.0\tnull
+                            """);
+            execute("TRUNCATE TABLE t");
+            execute("INSERT INTO u VALUES (1, 100), (2, 200), (4, 400), (NULL, 500)");
+            assertQuery("SELECT o.id, l.n FROM o JOIN LATERAL (SELECT count(*) n FROM (SELECT * FROM t WHERE t.oid = o.id) t2, UNNEST(t2.arr) x(e) RIGHT JOIN u ON t2.oid = u.k) l ORDER BY 1")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tn
+                            null\t4
+                            1\t4
+                            2\t4
+                            3\t4
+                            """);
+        });
+    }
+
+    // count(*) counts, per outer row, the rows of the RIGHT join in testLateralUnnestBeforeRightJoin()
+    // with t2.arr unnested: the u rows that match no t2 row once each, and each matching u row once per
+    // element of the arrays of the t2 rows that it matches. DuckDB, with IS NOT DISTINCT FROM for =,
+    // returns these counts.
+    @Test
+    public void testLateralUnnestBeforeRightJoinCount() throws Exception {
+        assertMemoryLeak(() -> {
+            createUnnestBeforeRightJoinTables();
+            assertQuery("SELECT o.id, l.n FROM o JOIN LATERAL (SELECT count(*) n FROM (SELECT * FROM t WHERE t.oid = o.id) t2, UNNEST(t2.arr) x(e) RIGHT JOIN u ON t2.oid = u.k) l ORDER BY 1")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tn
+                            null\t4
+                            1\t5
+                            2\t6
+                            3\t4
                             """);
         });
     }
@@ -21476,6 +21820,25 @@ public class LateralJoinTest extends AbstractCairoTest {
 
     // createNullOuterKeyTables() and c, whose rows 100 and 101 match b rows 21 and 22, the rows that
     // testLateralCorrelatedRightJoinSubQueryWhereKey() returns, by sid.
+    // o.id 1 and 2 match t rows that match u rows, o.id 3 a t row that matches no u row, and the NULL
+    // o.id the t row with a NULL oid, which matches u row 500, as = matches NULL to NULL. u row 400
+    // matches no t row.
+    private void createUnnestBeforeRightJoinTables() throws Exception {
+        execute("CREATE TABLE o (id INT)");
+        execute("CREATE TABLE t (oid INT, v INT, arr DOUBLE[])");
+        execute("CREATE TABLE u (k INT, w INT)");
+        execute("INSERT INTO o VALUES (1), (2), (3), (NULL)");
+        execute("""
+                INSERT INTO t VALUES
+                (1, 10, ARRAY[1.0, 2.0]),
+                (2, 20, ARRAY[3.0]),
+                (2, 21, ARRAY[4.0, 5.0]),
+                (3, 31, ARRAY[7.0]),
+                (NULL, 30, ARRAY[6.0])
+                """);
+        execute("INSERT INTO u VALUES (1, 100), (2, 200), (4, 400), (NULL, 500)");
+    }
+
     private void createNullOuterKeyAndLaterJoinTables() throws Exception {
         createNullOuterKeyTables();
         execute("CREATE TABLE c (id INT, sid INT)");
