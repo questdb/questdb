@@ -860,6 +860,20 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
 
     @Override
     public void resumeSend(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+        try {
+            resumeSend0(context);
+        } catch (PeerDisconnectedException | PeerIsSlowToReadException | ServerDisconnectException e) {
+            throw e;
+        } catch (Throwable e) {
+            // As in resumeRecv: an unexpected error disconnects, and onConnectionClosed frees the connection's
+            // writers. Escaping, it would leave them checked out. The send path reaches the frame loop through
+            // drainBufferedFrames, so a failed batch commit can throw here.
+            LOG.error().$("WebSocket send error [fd=").$(context.getFd()).$(", error=").$(e).I$();
+            throw ServerDisconnectException.INSTANCE;
+        }
+    }
+
+    private void resumeSend0(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         RejectFlushTracker rejectTracker = REJECT_FLUSH.get(context);
         if (rejectTracker != null && rejectTracker.pendingBytes > 0) {
             // Residual bytes of a 4xx upgrade reject were parked mid-write.
