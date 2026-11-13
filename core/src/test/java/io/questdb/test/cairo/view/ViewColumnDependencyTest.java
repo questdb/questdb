@@ -181,6 +181,42 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
     }
 
     @Test
+    public void testComputedOutputNamedLikeUnreadColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // A filter on an output the SELECT computes stays with that SELECT, which gives the model under it the column
+            // of the same name too, although the filter reads the computed output: b of x here. The view lends that
+            // column to the reads that set none of its variables.
+            assertReads(
+                    "SELECT a * 10 b, k FROM (SELECT * FROM x)",
+                    "{x=[?b, a, k]}",
+                    "SELECT * FROM v WHERE b = 30", "SELECT k FROM v WHERE b > 20", "SELECT count() FROM v WHERE b IS NOT NULL"
+            );
+            assertReads("SELECT a * 10 b, k FROM (SELECT a, b, k FROM x)", "{x=[?b, a, k]}", "SELECT * FROM v WHERE b = 30");
+            assertReads("SELECT a * 10 b, k FROM x", "{x=[?b, a, k]}", "SELECT * FROM v WHERE b = 30");
+            assertReads("WITH s AS (SELECT * FROM x) SELECT a * 10 b, k FROM s", "{x=[?b, a, k]}", "SELECT * FROM v WHERE b = 30");
+            assertReads("SELECT k, count() b FROM (SELECT * FROM x) GROUP BY k", "{x=[?b, k]}", "SELECT * FROM v WHERE b = 2");
+            assertReads("SELECT ts, sum(a) b FROM (SELECT * FROM x) SAMPLE BY 1h", "{x=[?b, a, ts]}", "SELECT * FROM v WHERE b = 3");
+            assertReads(
+                    "SELECT 'g' g, count() c FROM (SELECT * FROM x) l JOIN (SELECT * FROM y) r ON (k) GROUP BY g",
+                    "{x=[k], y=[?c, k]}",
+                    "SELECT g FROM v WHERE c IS NOT NULL"
+            );
+            execute("CREATE VIEW v_all AS (SELECT * FROM x)");
+            drainWalAndViewQueues();
+            assertReads("SELECT a * 10 b, k FROM v_all", "{v_all=[], x=[?b, a, k]}", "SELECT * FROM v WHERE b = 30");
+            // a column the view reads anyway takes no mark
+            assertReads("SELECT k, max(a) a FROM (SELECT * FROM x) GROUP BY k", "{x=[a, k]}", "SELECT * FROM v WHERE a > 1");
+            // a read that sets a variable of the view reads such a column as the reader, as it does any column the view marks
+            assertOverrideDenied(
+                    "DECLARE OVERRIDABLE @c := a SELECT @c * 10 b, k FROM (SELECT * FROM x)",
+                    "DECLARE @c := b SELECT * FROM v",
+                    "permission denied [table=x, columns=b]"
+            );
+        });
+    }
+
+    @Test
     public void testCte() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
@@ -1721,6 +1757,48 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
                     "{x=[a, k]}",
                     "SELECT bucket FROM v WHERE bucket = 'all'"
             );
+        });
+    }
+
+    @Test
+    public void testSubQueryKeptWholeByAReadReadsColumnAddedLater() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // The SELECT names every column the wildcard under it selects, and an output that reads no column. A read
+            // that names only that output keeps the sub-query whole, which reads the columns x gains later too.
+            final String constantSql = "SELECT 'c' src, ts, k, a, b FROM (SELECT * FROM x)";
+            execute("CREATE VIEW v_created AS (" + constantSql + ")");
+            execute("CREATE VIEW v_cte AS (WITH s AS (SELECT * FROM x) SELECT 'c' src, ts, k, a, b FROM s)");
+            execute("CREATE VIEW v_window AS (SELECT ts, k, a, b, row_number() OVER () rn FROM (SELECT * FROM x))");
+            execute("CREATE VIEW x_all AS (SELECT * FROM x)");
+            execute("CREATE VIEW v_altered AS (SELECT a FROM x)");
+            execute("CREATE VIEW v_replaced AS (SELECT a FROM x)");
+            drainWalAndViewQueues();
+            execute("CREATE VIEW v_inner AS (SELECT 'c' src, ts, k, a, b FROM x_all)");
+            execute("ALTER VIEW v_altered AS (" + constantSql + ")");
+            execute("CREATE OR REPLACE VIEW v_replaced AS (" + constantSql + ")");
+            drainWalAndViewQueues();
+            final String[] viewNames = {"v_created", "v_cte", "v_window", "v_inner", "v_altered", "v_replaced"};
+            for (String viewName : viewNames) {
+                final String expectedDependencies = "v_inner".equals(viewName) ? "{x=[?*, a, b, k, ts], x_all=[]}" : "{x=[?*, a, b, k, ts]}";
+                Assert.assertEquals(viewName, expectedDependencies, dependenciesOf(viewName));
+            }
+
+            execute("ALTER TABLE x ADD COLUMN e INT");
+            execute("INSERT INTO x VALUES (7_200_000_000, 'k2', 5, 6, 42)");
+            drainWalAndViewQueues();
+            try (SqlExecutionContext context = denyBaseTableSelectContext()) {
+                for (String viewName : viewNames) {
+                    final boolean isWindow = "v_window".equals(viewName);
+                    assertQuery(isWindow ? "SELECT max(rn) FROM v_window" : "SELECT DISTINCT src FROM " + viewName)
+                            .withContext(context)
+                            .noLeakCheck()
+                            .inferTimestamp()
+                            .inferRandomAccess()
+                            .sizeMayVary()
+                            .returns(isWindow ? "max\n3\n" : "src\nc\n");
+                }
+            }
         });
     }
 

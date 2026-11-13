@@ -37,12 +37,40 @@ import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Mutable;
+import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 public interface SqlCompiler extends QuietCloseable, Mutable {
+
+    /**
+     * Adds to the dependency map of a view the columns that a read of the view that filters on its outputs scans and
+     * the plan of the view's own SELECT does not, see {@link SqlUtil.ViewWildcardSources#hasReadFilteredOtherwise()}.
+     * A filter on an output that a model of the SELECT computes stays with that model, and gives the model under it
+     * the column of the same name too, which the filter does not read: a read {@code SELECT * FROM v WHERE b > 0} of
+     * a view {@code SELECT a + 1 b, k FROM (SELECT * FROM x)} scans {@code b} of {@code x}. This compiles the SELECT
+     * again, as a sub-query of a read that counts its rows and filters on each of its outputs, which places each filter
+     * where a read that filters on that output alone places it. It collects what that plan reads and adds the columns
+     * marked, as {@link #collectOtherReadDependencies} does: the view lends them only to a read that sets none of its
+     * OVERRIDABLE variables, and the principal has to be allowed to read the ones of the tables the SELECT reads
+     * itself. Call it as {@link #collectOtherReadDependencies}, on a compiler of its own after the SELECT of the view
+     * is optimised and before its plan is generated, with what that compile recorded.
+     *
+     * @param viewSql          the SELECT of the view
+     * @param executionContext the context to compile the SELECT in, whose principal records the view
+     * @param dependencies     the dependency map of the view, which this adds to
+     * @param compileRecord    what the compile that optimised the SELECT of the view to plan it recorded
+     * @param outputNames      the names of the outputs of the view, the columns of the SELECT that compile optimised
+     */
+    void collectFilteredReadDependencies(
+            CharSequence viewSql,
+            SqlExecutionContext executionContext,
+            LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies,
+            SqlUtil.ViewCompileRecord compileRecord,
+            ObjList<CharSequence> outputNames
+    ) throws SqlException;
 
     /**
      * Adds to the dependency map of a view the columns that the reads of the view read and the plan of the view's

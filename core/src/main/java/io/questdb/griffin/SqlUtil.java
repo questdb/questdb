@@ -2673,6 +2673,11 @@ public class SqlUtil {
         if (model == null || !wildcardSources.isFirstVisit(model, isTimestampRequired)) {
             return;
         }
+        // A read that filters on a column the model computes gives the model under it the column of the same name,
+        // which the plan may not read, see ViewWildcardSources.hasReadFilteredOtherwise().
+        if (!wildcardSources.hasReadFilteredOtherwise) {
+            wildcardSources.hasReadFilteredOtherwise = isComputedColumnNamedLikeUnreadColumn(model);
+        }
         // The walk skips the sub-queries of expressions: they read their tables as the reader, and the
         // columns they read must not cover a scan that goes through the view.
         final ObjList<IQueryModel> joinModels = model.getJoinModels();
@@ -2712,7 +2717,7 @@ public class SqlUtil {
             // A read that counts the rows of the view drops the ORDER BY, and its plan takes the timestamp it
             // requires from the source instead. A read may leave the source without columns too.
             if (!wildcardSources.hasReadPlannedOtherwise) {
-                wildcardSources.hasReadPlannedOtherwise = (isTimestampRequired && isOrdered) || isSoleSourceKeptWholeBySomeRead(model);
+                wildcardSources.hasReadPlannedOtherwise = (isTimestampRequired && isOrdered) || isSoleSourceKeptWholeBySomeRead(model, wildcardSources);
             }
         }
         // every branch of a set operation compiles under the requirement of the first one
@@ -3063,6 +3068,37 @@ public class SqlUtil {
         return bareQuotedSibling == null || takenAliases.excludes(bareQuotedSibling);
     }
 
+    // Whether a read that filters on a column the model computes, by the name of the column, makes the plan scan a
+    // column the plan of the view does not. The filter stays with the model, and the optimiser gives the model under
+    // it the names the filter reads as well, see SqlOptimiser.propagateTopDownColumns0(), so a source of that model
+    // with a column of the same name, which the plan does not take from it, gets that column too. A source the plan
+    // keeps whole computes every column of it already.
+    private static boolean isComputedColumnNamedLikeUnreadColumn(@NotNull IQueryModel model) {
+        final IQueryModel nested = model.getNestedModel();
+        if (nested == null) {
+            return false;
+        }
+        final ObjList<QueryColumn> columns = model.getBottomUpColumns();
+        final ObjList<IQueryModel> sources = nested.getJoinModels();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final QueryColumn column = columns.getQuick(i);
+            final ExpressionNode ast = column.getAst();
+            if (ast == null || ast.type == ExpressionNode.LITERAL) {
+                continue;
+            }
+            final CharSequence alias = column.getAlias();
+            for (int j = 0, m = sources.size(); j < m; j++) {
+                final IQueryModel source = sources.getQuick(j);
+                if (source.getTopDownColumns().size() > 0
+                        && source.isTopDownNameMissing(alias)
+                        && source.getAliasToColumnMap().contains(alias)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     // Whether a name of the columns of a table is the marked name of a column, see
     // ViewDefinition.OTHER_READ_COLUMN_PREFIX, that the columns lend under another name as well: the unmarked name of
     // the column, which lends it to every read, or ViewDefinition.OTHER_READ_WILDCARD.
@@ -3179,8 +3215,10 @@ public class SqlUtil {
     // SqlCompiler.collectOtherReadDependencies(). The window of a window function may name one all the same.
     // The model may select from the sub-query through models that only filter its rows, see isRowFilterModel(): a
     // read that gives such a model no column gives the sub-query only the columns the filter names, which the
-    // compile of the reads planned otherwise finds.
-    private static boolean isSoleSourceKeptWholeBySomeRead(@NotNull IQueryModel model) {
+    // compile of the reads planned otherwise finds. A plan of the view that takes every column of the sub-query
+    // computes what such a read does, unless a wildcard selects the columns of the sub-query: a read that keeps
+    // it whole computes the columns its table gains later too, which no plan of the view takes.
+    private static boolean isSoleSourceKeptWholeBySomeRead(@NotNull IQueryModel model, @NotNull ViewWildcardSources wildcardSources) {
         IQueryModel source = model.getNestedModel();
         while (source != null && isRowFilterModel(source)) {
             source = source.getNestedModel();
@@ -3189,7 +3227,8 @@ public class SqlUtil {
             return false;
         }
         final int keptColumnCount = source.getTopDownColumns().size();
-        if (keptColumnCount == 0 || keptColumnCount >= source.getBottomUpColumns().size()) {
+        if (keptColumnCount == 0
+                || (keptColumnCount >= source.getBottomUpColumns().size() && !wildcardSources.isWildcardSource(source))) {
             return false;
         }
         final ObjList<QueryColumn> columns = model.getBottomUpColumns();
@@ -3463,6 +3502,9 @@ public class SqlUtil {
         // where the walk of an optimised SELECT records the tables it scans, or checks them against, while the
         // walk runs, see collectTableColumnReads()
         private ViewCompileRecord compileRecord;
+        // whether a read of the view that filters on its outputs may scan a column the plan of the view does not, see
+        // hasReadFilteredOtherwise()
+        private boolean hasReadFilteredOtherwise;
         // whether a read of the view may plan the optimised SELECT otherwise than the plan of the view, see
         // hasReadPlannedOtherwise()
         private boolean hasReadPlannedOtherwise;
@@ -3477,6 +3519,18 @@ public class SqlUtil {
             sources.clear();
             tableNames.clear();
             clearReads();
+        }
+
+        /**
+         * Returns whether a read of the view that filters on its outputs may scan a column of the tables of the
+         * optimised SELECT the last walk of the columns a view reads walked that the plan of the view's own SELECT
+         * does not read. A filter on an output that a model of the SELECT computes stays with that model, and gives
+         * the model under it the column of the same name too, such as {@code b} of {@code x} for a read
+         * {@code SELECT * FROM v WHERE b > 0} of a view {@code SELECT a + 1 b FROM (SELECT * FROM x)}, although the
+         * filter reads the computed output. See {@link SqlCompiler#collectFilteredReadDependencies}.
+         */
+        public boolean hasReadFilteredOtherwise() {
+            return hasReadFilteredOtherwise;
         }
 
         /**
@@ -3564,6 +3618,7 @@ public class SqlUtil {
             scans.clear();
             visitedModels.clear();
             visitedTimestampModels.clear();
+            hasReadFilteredOtherwise = false;
             hasReadPlannedOtherwise = false;
         }
 
@@ -3674,6 +3729,18 @@ public class SqlUtil {
                 isReachable0(root, null, rootReachableModels);
             }
             return rootReachableModels.contains(target);
+        }
+
+        // Whether a wildcard the walk of the parsed SELECT recorded selects the columns of the model: the model that
+        // provides the columns of a sub-query, a CTE or a view one of the holders holds, see
+        // collectKeptWildcardReferences(). Such a model computes the columns its table gains later too.
+        private boolean isWildcardSource(@NotNull IQueryModel model) {
+            for (int i = 0, n = holders.size(); i < n; i++) {
+                if (holders.getQuick(i).getNestedModel() == model) {
+                    return true;
+                }
+            }
+            return false;
         }
 
         // the columns the scans of the table read that no view lends to the SELECT, see authorizeOwnReads()

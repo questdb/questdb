@@ -241,6 +241,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final VacuumColumnVersions vacuumColumnVersions;
     // what the compile of a view's SELECT that plans it saw, for the compile collectOtherReadDependencies() runs
     private final SqlUtil.ViewCompileRecord viewCompileRecord = new SqlUtil.ViewCompileRecord();
+    // the outputs of a view's SELECT the compile that plans it optimised, for collectFilteredReadDependencies()
+    private final ObjList<CharSequence> viewOutputNames = new ObjList<>();
     private final SqlUtil.ViewWildcardSources viewWildcardSources = new SqlUtil.ViewWildcardSources();
     protected CharSequence sqlText;
     private boolean closed = false;
@@ -476,6 +478,18 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     @Override
+    public void collectFilteredReadDependencies(
+            CharSequence viewSql,
+            SqlExecutionContext executionContext,
+            LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies,
+            SqlUtil.ViewCompileRecord compileRecord,
+            ObjList<CharSequence> outputNames
+    ) throws SqlException {
+        // a read that filters on every output names every output, so no sub-query is kept whole for its sake
+        collectViewReadDependencies(viewSql, executionContext, dependencies, compileRecord, false, false, outputNames);
+    }
+
+    @Override
     public void collectOtherReadDependencies(
             CharSequence viewSql,
             SqlExecutionContext executionContext,
@@ -483,47 +497,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             SqlUtil.ViewCompileRecord compileRecord,
             boolean isOrderByKept
     ) throws SqlException {
-        clear();
-        try {
-            // The SELECT parses as the caller's compile parsed it, top-level DECLARE block and all, and only the
-            // model of the read around it is built here.
-            lexer.of(viewSql);
-            final ExecutionModel model = parser.parse(lexer, executionContext, this);
-            // the caller compiled the same SELECT before, and collected the objects and the wildcards it names
-            assert model.getModelType() == ExecutionModel.QUERY;
-            // The parse expands the views as they are now. A view altered since the caller's compile expanded it
-            // makes this another SELECT, whose PIVOT IN sub-queries the caller did not run, so the statement
-            // compiles again, before the replay of their values.
-            compileRecord.checkViews(((IQueryModel) model).getReferencedViews());
-            SqlUtil.collectTableAndColumnReferences(engine, (IQueryModel) model, otherReadDependencies, viewWildcardSources);
-            final IQueryModel queryModel;
-            optimiser.setSubQueryKeptWhole(true);
-            optimiser.setOrderByKept(isOrderByKept);
-            optimiser.setPivotInValueSource(compileRecord);
-            // the PIVOT IN sub-queries run as the caller's compile ran them, whichever compile of this SELECT ran before
-            compileRecord.restartPivotInReplay();
-            try {
-                // a throw closes the table functions optimise() opened
-                queryModel = optimiser.optimise(countRowsOf((IQueryModel) model), executionContext, this);
-            } finally {
-                optimiser.setSubQueryKeptWhole(false);
-                optimiser.setOrderByKept(false);
-                optimiser.setPivotInValueSource(null);
-            }
-            // Nothing generates the model, so nothing takes over the table functions optimise() opened. The
-            // walk below reads the expressions of the model, not its functions.
-            CairoException.rethrowCleanupFailure(optimiser.freeUnclaimedTableFactories(null));
-            // a table the caller's plan scans has to be the one this compile scans
-            SqlUtil.collectTableColumnReads(engine, queryModel, otherReadDependencies, viewWildcardSources, compileRecord, false);
-            // Nothing opens the plan of this compile, which would check that the principal may read the columns it
-            // scans in the tables the SELECT reads itself, and the view lends them to its readers.
-            viewWildcardSources.authorizeOwnReads(executionContext.getSecurityContext());
-            // the view lends these columns only to a read that sets none of its OVERRIDABLE variables
-            SqlUtil.addOtherReadDependencies(dependencies, otherReadDependencies);
-        } finally {
-            viewWildcardSources.clear();
-            otherReadDependencies.clear();
-        }
+        collectViewReadDependencies(viewSql, executionContext, dependencies, compileRecord, true, isOrderByKept, null);
     }
 
     @Override
@@ -3130,6 +3104,63 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         functionParser.clear();
         compiledQuery.clear();
         columnNames.clear();
+    }
+
+    // Compiles the SELECT of a view again, as a sub-query of a read that counts its rows and, given filteredOutputs,
+    // filters on each of those outputs, and adds the columns its plan scans to the dependencies of the view, marked,
+    // see collectOtherReadDependencies() and collectFilteredReadDependencies(). isSubQueryKeptWhole and
+    // isOrderByKept set the modes the optimiser compiles the read in, see SqlOptimiser.setSubQueryKeptWhole() and
+    // SqlOptimiser.setOrderByKept().
+    private void collectViewReadDependencies(
+            CharSequence viewSql,
+            SqlExecutionContext executionContext,
+            LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies,
+            SqlUtil.ViewCompileRecord compileRecord,
+            boolean isSubQueryKeptWhole,
+            boolean isOrderByKept,
+            @Nullable ObjList<CharSequence> filteredOutputs
+    ) throws SqlException {
+        clear();
+        try {
+            // The SELECT parses as the caller's compile parsed it, top-level DECLARE block and all, and only the
+            // model of the read around it is built here.
+            lexer.of(viewSql);
+            final ExecutionModel model = parser.parse(lexer, executionContext, this);
+            // the caller compiled the same SELECT before, and collected the objects and the wildcards it names
+            assert model.getModelType() == ExecutionModel.QUERY;
+            // The parse expands the views as they are now. A view altered since the caller's compile expanded it
+            // makes this another SELECT, whose PIVOT IN sub-queries the caller did not run, so the statement
+            // compiles again, before the replay of their values.
+            compileRecord.checkViews(((IQueryModel) model).getReferencedViews());
+            SqlUtil.collectTableAndColumnReferences(engine, (IQueryModel) model, otherReadDependencies, viewWildcardSources);
+            final IQueryModel queryModel;
+            optimiser.setSubQueryKeptWhole(isSubQueryKeptWhole);
+            optimiser.setOrderByKept(isOrderByKept);
+            optimiser.setPivotInValueSource(compileRecord);
+            // the PIVOT IN sub-queries run as the caller's compile ran them, whichever compile of this SELECT ran before
+            compileRecord.restartPivotInReplay();
+            try {
+                // a throw closes the table functions optimise() opened
+                queryModel = optimiser.optimise(countRowsOf((IQueryModel) model, filteredOutputs), executionContext, this);
+            } finally {
+                optimiser.setSubQueryKeptWhole(false);
+                optimiser.setOrderByKept(false);
+                optimiser.setPivotInValueSource(null);
+            }
+            // Nothing generates the model, so nothing takes over the table functions optimise() opened. The
+            // walk below reads the expressions of the model, not its functions.
+            CairoException.rethrowCleanupFailure(optimiser.freeUnclaimedTableFactories(null));
+            // a table the caller's plan scans has to be the one this compile scans
+            SqlUtil.collectTableColumnReads(engine, queryModel, otherReadDependencies, viewWildcardSources, compileRecord, false);
+            // Nothing opens the plan of this compile, which would check that the principal may read the columns it
+            // scans in the tables the SELECT reads itself, and the view lends them to its readers.
+            viewWildcardSources.authorizeOwnReads(executionContext.getSecurityContext());
+            // the view lends these columns only to a read that sets none of its OVERRIDABLE variables
+            SqlUtil.addOtherReadDependencies(dependencies, otherReadDependencies);
+        } finally {
+            viewWildcardSources.clear();
+            otherReadDependencies.clear();
+        }
     }
 
     private void compileAlter(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
@@ -5951,10 +5982,35 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     // The model of SELECT count() FROM (<query>), around a parsed query, as the parser builds it from that text: a
     // read that names none of the columns of the query, and needs neither its timestamp nor the order of its rows.
-    private IQueryModel countRowsOf(IQueryModel queryModel) throws SqlException {
+    // Given filteredOutputs, the model of SELECT count() FROM (<query>) WHERE o1 IS NOT NULL AND o2 IS NOT NULL ...
+    // for those outputs of the query instead, whose filters the optimiser places one by one.
+    private IQueryModel countRowsOf(IQueryModel queryModel, @Nullable ObjList<CharSequence> filteredOutputs) throws SqlException {
         final QueryModel fromModel = queryModelPool.next();
         fromModel.setNestedModel(queryModel);
         fromModel.setNestedModelIsSubQuery(true);
+        if (filteredOutputs != null) {
+            // the parser places the WHERE clause on the model of the FROM clause, and reads IS NOT NULL as != NULL
+            final OperatorRegistry operators = OperatorExpression.chooseRegistry(configuration.getCairoSqlLegacyOperatorPrecedence());
+            final OperatorExpression notEqual = operators.getOperatorDefinition("!=");
+            final OperatorExpression and = operators.getOperatorDefinition("and");
+            ExpressionNode filter = null;
+            for (int i = 0, n = filteredOutputs.size(); i < n; i++) {
+                final ExpressionNode isNotNull = sqlNodePool.next().of(ExpressionNode.OPERATION, notEqual.operator.token, notEqual.precedence, 0);
+                isNotNull.paramCount = 2;
+                isNotNull.lhs = sqlNodePool.next().of(ExpressionNode.LITERAL, filteredOutputs.getQuick(i), 0, 0);
+                isNotNull.rhs = sqlNodePool.next().of(ExpressionNode.CONSTANT, "null", 0, 0);
+                if (filter == null) {
+                    filter = isNotNull;
+                } else {
+                    final ExpressionNode conjunction = sqlNodePool.next().of(ExpressionNode.OPERATION, and.operator.token, and.precedence, 0);
+                    conjunction.paramCount = 2;
+                    conjunction.lhs = filter;
+                    conjunction.rhs = isNotNull;
+                    filter = conjunction;
+                }
+            }
+            fromModel.setWhereClause(filter);
+        }
         final QueryModel countModel = queryModelPool.next();
         countModel.addBottomUpColumn(queryColumnPool.next().of("count", sqlNodePool.next().of(ExpressionNode.FUNCTION, "count", 0, 0)));
         countModel.setSelectModelType(IQueryModel.SELECT_MODEL_CHOOSE);
@@ -7120,8 +7176,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     // the reads of the view the plan of the SELECT does not read come from other compiles of viewSql, see
     // collectOtherReadDependencies(): one for the reads that may leave a sub-query without columns or drop the
     // ORDER BY that gives a temporal join or a SAMPLE BY its timestamp, and one for the reads that keep an ORDER
-    // BY the plan of the SELECT drops, as a read that joins the view to something before it does. optimise()
-    // changes the model in place, so the parsed references are collected before it runs.
+    // BY the plan of the SELECT drops, as a read that joins the view to something before it does. Another one,
+    // collectFilteredReadDependencies(), collects the columns of the same name as an output a model computes,
+    // which a read that filters on that output scans. optimise() changes the model in place, so the parsed
+    // references are collected before it runs.
     private IQueryModel optimiseViewQuery(
             CharSequence viewSql,
             IQueryModel parsedModel,
@@ -7151,7 +7209,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             // filter an OVERRIDABLE variable makes false by default, scans nothing as it opens.
             viewWildcardSources.authorizeOwnReads(executionContext.getSecurityContext());
             final boolean isReadPlannedOtherwise = viewWildcardSources.hasReadPlannedOtherwise();
-            if (isReadPlannedOtherwise || isOrderByCleared) {
+            final boolean isReadFilteredOtherwise = viewWildcardSources.hasReadFilteredOtherwise();
+            if (isReadPlannedOtherwise || isOrderByCleared || isReadFilteredOtherwise) {
+                if (isReadFilteredOtherwise) {
+                    // A read filters on the outputs of the view by their names. The compile of the read builds its
+                    // filter in the pools of another compiler, so it takes copies of the names this compile resolved.
+                    final ObjList<QueryColumn> outputs = queryModel.getColumns();
+                    for (int i = 0, n = outputs.size(); i < n; i++) {
+                        viewOutputNames.add(Chars.toString(outputs.getQuick(i).getAlias()));
+                    }
+                }
                 // before generation, which then finds a table that changed meanwhile out of date
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
                     if (isReadPlannedOtherwise) {
@@ -7160,12 +7227,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     if (isOrderByCleared) {
                         compiler.collectOtherReadDependencies(viewSql, executionContext, dependencies, viewCompileRecord, true);
                     }
+                    if (isReadFilteredOtherwise) {
+                        compiler.collectFilteredReadDependencies(viewSql, executionContext, dependencies, viewCompileRecord, viewOutputNames);
+                    }
                 }
             }
             return queryModel;
         } finally {
             viewWildcardSources.clear();
             viewCompileRecord.clear();
+            viewOutputNames.clear();
         }
     }
 
