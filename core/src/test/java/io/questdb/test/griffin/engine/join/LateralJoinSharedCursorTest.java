@@ -641,6 +641,64 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoinGateFalseOverUnreadSharedGroupByOpensNothing() throws Exception {
+        // The LATERAL correlates on an equality, so it reads the GROUP BY of t through a join of its own, and no
+        // shared cursor reads the GROUP BY that the gate holds. While the gate is false, nothing reads the state of
+        // the GROUP BY, so the gate opens nothing: the scalar sub-query in the filter of the GROUP BY does not run.
+        assertMemoryLeak(() -> {
+            createGateTables();
+            final String query = """
+                    SELECT a.id, o.n, l.mv, d.id did
+                    FROM a
+                    JOIN (SELECT k, count() n FROM t WHERE v < (SELECT max(v) + 1 FROM t WHERE test_latched_counter()) GROUP BY k) o
+                      ON a.k = o.k AND $1
+                    CROSS JOIN LATERAL (SELECT max(u.v) mv FROM u WHERE u.k = o.k) l
+                    RIGHT JOIN d ON d.k = a.k
+                    ORDER BY did
+                    """;
+            bindVariableService.clear();
+            bindVariableService.setBoolean(0, false);
+            // the gate holds the GROUP BY, whose filter holds the scalar sub-query
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlanContaining(enableParallelGroupBy
+                            ? """
+                            Filter filter: $0::boolean
+                                                        Async Group By workers: 1
+                                                          keys: [k]
+                                                          values: [count(*)]
+                                                          filter: v [thread-safe] < cursor\s
+                            """
+                            : """
+                            Filter filter: $0::boolean
+                                                        GroupBy vectorized: false
+                                                          keys: [k]
+                                                          values: [count(*)]
+                                                            Async Filter workers: 1
+                                                              filter: v [thread-safe] < cursor\s
+                            """);
+            // a, u and d open, t does not
+            assertGateOpensNothingWhileFalse(
+                    query,
+                    """
+                            id\tn\tmv\tdid
+                            1\t2\t100\t1
+                            2\t2\t200\t2
+                            null\tnull\tnull\t3
+                            """,
+                    """
+                            id\tn\tmv\tdid
+                            null\tnull\tnull\t1
+                            null\tnull\tnull\t2
+                            null\tnull\tnull\t3
+                            """,
+                    3,
+                    5
+            );
+        });
+    }
+
+    @Test
     public void testJoinGateNotKeyedSharedGroupBy() throws Exception {
         // The gate of a not keyed GROUP BY: in parallel, the shared cursor read a primary cursor that was never
         // opened. A serial GROUP BY opened its base for the shared cursor itself and kept it open after the
@@ -2283,6 +2341,97 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
                             300\t0.2
                             """);
         });
+    }
+
+    @Test
+    public void testWhereGateFalseOverLateralOpensNothing() throws Exception {
+        // WHERE $1 gates the whole join level, which holds both the GROUP BY of t and the LATERAL that reads it
+        // through a shared cursor. While $1 is false, nothing reads the state of the GROUP BY, so the gate opens
+        // nothing, as it does for a query without a LATERAL: no table opens, and the scalar sub-query of the
+        // level does not run.
+        assertMemoryLeak(() -> {
+            createGateTables();
+            final String query = """
+                    SELECT a.id, o.n, l.mv
+                    FROM a
+                    JOIN (SELECT k, count() n FROM t GROUP BY k) o ON a.k = o.k
+                    CROSS JOIN LATERAL (SELECT max(u.v) mv FROM u WHERE u.k <= o.k) l
+                    WHERE $1 AND a.k <= (SELECT max(k) FROM t WHERE test_latched_counter())
+                    ORDER BY a.id
+                    """;
+            bindVariableService.clear();
+            bindVariableService.setBoolean(0, false);
+            // the gate holds the join level, whose filter of a holds the scalar sub-query
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlanContaining("""
+                            Filter filter: $0::boolean
+                                        Hash Left Outer Join Light
+                                          condition: l.__qdb_outer_ref__0_k=o.k
+                                            Hash Join Light
+                                              condition: o.k=a.k
+                                                Async Filter workers: 1
+                                                  filter: k [thread-safe] <= cursor\s
+                            """);
+            final String expectedTrue = """
+                    id\tn\tmv
+                    1\t2\t100
+                    2\t2\t200
+                    3\t1\t300
+                    """;
+            assertGateOpensNothingWhileFalse(query, expectedTrue, "id\tn\tmv\n", 0, 5);
+            // the gate of a query over the LATERAL query
+            assertGateOpensNothingWhileFalse(
+                    """
+                            SELECT * FROM (
+                                SELECT a.id, o.n, l.mv
+                                FROM a
+                                JOIN (SELECT k, count() n FROM t GROUP BY k) o ON a.k = o.k
+                                CROSS JOIN LATERAL (SELECT max(u.v) mv FROM u WHERE u.k <= o.k) l
+                            ) WHERE $1
+                            ORDER BY id
+                            """,
+                    expectedTrue,
+                    "id\tn\tmv\n",
+                    0,
+                    0
+            );
+        });
+    }
+
+    // Runs one factory of the query with $1 false, true, false and true. While $1 is false, the execution opens only
+    // the tables outside the gate, falseTableCount of them, and reads no row of test_latched_counter(); while it is
+    // true, it reads trueCounterRows of them.
+    private static void assertGateOpensNothingWhileFalse(
+            String query,
+            String expectedTrue,
+            String expectedFalse,
+            int falseTableCount,
+            int trueCounterRows
+    ) throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setBoolean(0, false);
+        try (RecordCursorFactory factory = select(query)) {
+            for (boolean flag : new boolean[]{false, true, false, true}) {
+                bindVariableService.setBoolean(0, flag);
+                TestLatchedCounterFunctionFactory.reset(null);
+                final String expected = flag ? expectedTrue : expectedFalse;
+                int rowCount = 0;
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    if (!flag) {
+                        Assert.assertEquals("tables that the execution opened", falseTableCount, engine.getBusyReaderCount());
+                    }
+                    while (cursor.hasNext()) {
+                        rowCount++;
+                    }
+                }
+                Assert.assertEquals(expected.split("\n").length - 1, rowCount);
+                Assert.assertEquals("rows of test_latched_counter() that the execution read", flag ? trueCounterRows : 0, TestLatchedCounterFunctionFactory.getCount());
+                new QueryAssertion(engine, factory)
+                        .withContext(sqlExecutionContext)
+                        .returns(expected);
+            }
+        }
     }
 
     // a INNER joins the GROUP BY of t, the LATERAL reads u for each key of t, and d is the side that a later

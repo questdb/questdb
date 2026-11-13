@@ -116,6 +116,17 @@ public final class SharedPrimary implements QuietCloseable {
         readers.add(reader);
     }
 
+    // Returns whether the tree holds a home of the factory, a place that holds the factory and reads its cursor, see
+    // addHome(), which the code generator has not dropped since
+    boolean hasHome() {
+        return homeCount > 0;
+    }
+
+    // Returns whether the tree holds the reader: the code generator has not dropped it
+    boolean hasReader(SharedRecordCursorFactory reader) {
+        return readers.indexOf(reader) > -1;
+    }
+
     void releaseReader(SharedRecordCursorFactory reader) {
         final int index = readers.indexOf(reader);
         // AbstractRecordCursorFactory closes a reader once

@@ -103,6 +103,12 @@ public class SharedRecordCursorFactory extends AbstractRecordCursorFactory {
         }
     }
 
+    // Returns whether this reader reads the cursor of the primary itself, which SharedPrimary.handOver() lets it do
+    // when the tree holds no other home
+    boolean isHome() {
+        return isHome;
+    }
+
     void promoteToHome() {
         isHome = true;
     }

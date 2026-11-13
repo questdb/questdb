@@ -65,12 +65,13 @@ import org.jetbrains.annotations.Nullable;
  * The gate owns both the base factory and the filter and frees each exactly once on close,
  * including on the record-cursor false path where the base cursor was never opened.
  * <p>
- * A base that holds a place that reads a shared primary, see
- * {@link io.questdb.griffin.engine.join.SharedPrimary}, has to open in every execution: the place
- * that reads the cursor of the primary opens and closes the state that the places outside the base
- * read, see {@link RecordCursorFactory#getSharedCursor(SqlExecutionContext, int)}. Over such a base
+ * A base that holds the place that reads the cursor of a shared primary, see
+ * {@link io.questdb.griffin.engine.join.SharedPrimary}, has to open in every execution when a place
+ * outside the base reads the state of the primary: the cursor of the primary opens and closes that
+ * state, see {@link RecordCursorFactory#getSharedCursor(SqlExecutionContext, int)}. Over such a base
  * the false record-cursor path opens the base cursor, without reading a row of it, and closes it
- * with the empty cursor that it returns.
+ * with the empty cursor that it returns. A base that holds every place of its primaries opens
+ * nothing while false, as nothing reads their state then.
  * <p>
  * The gate also preserves the base's page-frame capability: {@link #supportsPageFrameCursor()}
  * reports the base's value, so a parent parallel/vectorized operator (count/sum aggregation,
@@ -107,7 +108,7 @@ public class RuntimeConstGateRecordCursorFactory extends AbstractRecordCursorFac
     private EmptyTablePageFrameCursor emptyTablePageFrameCursor;
     private Function filter;
     private final ExpressionNode filterExpr;
-    private final boolean isBaseOpenRequired;
+    private boolean isBaseOpenRequired;
 
     public RuntimeConstGateRecordCursorFactory(RecordCursorFactory base, Function filter, @Nullable ExpressionNode filterExpr) {
         this(base, filter, filterExpr, false);
@@ -249,6 +250,15 @@ public class RuntimeConstGateRecordCursorFactory extends AbstractRecordCursorFac
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return base.recordCursorSupportsRandomAccess();
+    }
+
+    /**
+     * Sets whether the false record-cursor path opens the base, see the class comment. The code
+     * generator decides it once it has built the whole tree, which may read the state of a shared
+     * primary in the base through places that it builds after the gate.
+     */
+    public void setBaseOpenRequired(boolean isBaseOpenRequired) {
+        this.isBaseOpenRequired = isBaseOpenRequired;
     }
 
     // The gate is a pure filter over a base with identical metadata, so parents may steal the
