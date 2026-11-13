@@ -42,18 +42,7 @@ import io.questdb.std.Numbers;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Test;
-
-import java.net.URI;
-import java.net.URLEncoder;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.nio.charset.StandardCharsets;
-import java.time.Duration;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * The query-details flags of {@code QUERY_REQUEST} through the pinned
@@ -64,17 +53,7 @@ import java.util.regex.Pattern;
  * positions and JIT use. {@link QwpEgressQueryDetailsWireTest} pins the frames
  * byte by byte.
  */
-public class QwpEgressQueryDetailsClientTest extends AbstractQwpBootstrapTest {
-    private static final Pattern EXEC_JIT = Pattern.compile("\"jitCompiled\":(true|false)");
-    private static final Pattern EXEC_POSITION = Pattern.compile("\"(?:position|errorPos)\":(\\d+)");
-    private static final HttpClient httpClient = HttpClient.newHttpClient();
-
-    @Before
-    public void setUp() {
-        super.setUp();
-        TestUtils.unchecked(() -> createDummyConfiguration());
-        dbPath.parent().$();
-    }
+public class QwpEgressQueryDetailsClientTest extends AbstractQwpQueryDetailsTest {
 
     @Test
     public void testClientConstantsMatchServer() {
@@ -294,39 +273,6 @@ public class QwpEgressQueryDetailsClientTest extends AbstractQwpBootstrapTest {
         for (int i = 0; i < count; i++) {
             Assert.assertEquals(first + i * step, actual.getQuick(i));
         }
-    }
-
-    /**
-     * A table of {@code rows} rows with x = 0, 1, 2, ... in timestamp order, one
-     * microsecond apart.
-     */
-    private static void createWindowTable(TestServerMain serverMain, long rows) {
-        serverMain.execute("CREATE TABLE qd_window (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-        serverMain.execute("INSERT INTO qd_window SELECT x - 1, (x - 1)::TIMESTAMP FROM long_sequence(" + rows + ")");
-        serverMain.awaitTable("qd_window");
-    }
-
-    private static String exec(String sql, String params) throws Exception {
-        final HttpRequest request = HttpRequest.newBuilder(URI.create(
-                        "http://127.0.0.1:" + HTTP_PORT + "/exec?query=" + URLEncoder.encode(sql, StandardCharsets.UTF_8) + params
-                ))
-                .timeout(Duration.ofSeconds(60))
-                .build();
-        return httpClient.send(request, HttpResponse.BodyHandlers.ofString()).body();
-    }
-
-    private static boolean execJitCompiled(String sql) throws Exception {
-        return Boolean.parseBoolean(find(EXEC_JIT, exec(sql, "&limit=0,1&explain=true")));
-    }
-
-    private static int execPosition(String sql) throws Exception {
-        return Integer.parseInt(find(EXEC_POSITION, exec(sql, "")));
-    }
-
-    private static String find(Pattern pattern, String json) {
-        final Matcher m = pattern.matcher(json);
-        Assert.assertTrue(pattern + " not found in " + json, m.find());
-        return m.group(1);
     }
 
     private static QwpQueryClient newClient() {

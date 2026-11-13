@@ -36,7 +36,6 @@ import io.questdb.cutlass.qwp.codec.QwpEgressFrameWriter;
 import io.questdb.cutlass.qwp.codec.QwpEgressMsgKind;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpParseException;
-import io.questdb.cutlass.qwp.protocol.QwpVarint;
 import io.questdb.cutlass.qwp.server.egress.QwpEgressUpgradeProcessor;
 import io.questdb.cutlass.qwp.server.egress.QwpRowExceedsBufferException;
 import io.questdb.cutlass.qwp.websocket.WebSocketOpcode;
@@ -51,22 +50,13 @@ import io.questdb.std.Unsafe;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Test;
 
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.Socket;
-import java.net.URI;
-import java.net.URLEncoder;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
-import java.time.Duration;
 import java.util.Arrays;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * End-to-end coverage of the query-details flags of {@code QUERY_REQUEST}:
@@ -86,21 +76,10 @@ import java.util.regex.Pattern;
  * run with the randomised send and receive fragmentation of
  * {@link AbstractQwpBootstrapTest}, so the trailers also cross parked sends.
  */
-public class QwpEgressQueryDetailsWireTest extends AbstractQwpBootstrapTest {
+public class QwpEgressQueryDetailsWireTest extends AbstractQwpQueryDetailsTest {
     private static final int DETAILS = QwpEgressMsgKind.QUERY_FLAG_ERROR_POSITION
             | QwpEgressMsgKind.QUERY_FLAG_STATS | QwpEgressMsgKind.QUERY_FLAG_COUNT_ROWS;
-    private static final Pattern EXEC_COUNT = Pattern.compile("\"count\":(\\d+)");
-    private static final Pattern EXEC_JIT = Pattern.compile("\"jitCompiled\":(true|false)");
-    private static final Pattern EXEC_POSITION = Pattern.compile("\"(?:position|errorPos)\":(\\d+)");
     private static final int WINDOW = QwpEgressMsgKind.QUERY_FLAG_SKIP_ROWS | QwpEgressMsgKind.QUERY_FLAG_MAX_ROWS;
-    private static final HttpClient httpClient = HttpClient.newHttpClient();
-
-    @Before
-    public void setUp() {
-        super.setUp();
-        TestUtils.unchecked(() -> createDummyConfiguration());
-        dbPath.parent().$();
-    }
 
     @Test
     public void testCancelledQueryReportsNoPosition() throws Exception {
@@ -110,7 +89,7 @@ public class QwpEgressQueryDetailsWireTest extends AbstractQwpBootstrapTest {
                 // One byte of credit lets one batch out, then the stream waits for
                 // CREDIT; the CANCEL lands while it waits and takes effect when the
                 // CREDIT resumes it.
-                conn.send(queryRequest(5, "SELECT x FROM long_sequence(1000)", 1, QwpEgressMsgKind.QUERY_FLAG_ERROR_POSITION, 0, 0));
+                conn.send(QwpWireTestFixtures.buildQueryRequest(5, "SELECT x FROM long_sequence(1000)", 1, QwpEgressMsgKind.QUERY_FLAG_ERROR_POSITION, 0, 0));
                 byte[] first = conn.readFrame();
                 QwpWireTestFixtures.assertQwpMessageKind(first, QwpEgressMsgKind.RESULT_BATCH);
                 conn.send(cancelFrame(5));
@@ -278,7 +257,7 @@ public class QwpEgressQueryDetailsWireTest extends AbstractQwpBootstrapTest {
                  WireConnection conn = new WireConnection(maxBatchRows(7))) {
                 for (int flagged = 0; flagged < 2; flagged++) {
                     final long requestId = 10 + flagged;
-                    conn.send(queryRequest(requestId, "SELECT x FROM long_sequence(100)", 1,
+                    conn.send(QwpWireTestFixtures.buildQueryRequest(requestId, "SELECT x FROM long_sequence(100)", 1,
                             flagged == 1 ? QwpEgressMsgKind.QUERY_FLAG_ERROR_POSITION : 0, 0, 0));
                     final Response r = new Response();
                     final int batchBytes = conn.readBatch(r, requestId);
@@ -317,7 +296,7 @@ public class QwpEgressQueryDetailsWireTest extends AbstractQwpBootstrapTest {
                     final long requestId = 20 + flagged;
                     QwpEgressUpgradeProcessor.DEBUG_FORCE_INTERNAL_ERROR_ON_RESUME = 1;
                     try {
-                        conn.send(queryRequest(requestId, "SELECT x FROM long_sequence(1000)", 0,
+                        conn.send(QwpWireTestFixtures.buildQueryRequest(requestId, "SELECT x FROM long_sequence(1000)", 0,
                                 flagged == 1 ? QwpEgressMsgKind.QUERY_FLAG_ERROR_POSITION : 0, 0, 0));
                         final Response r = conn.readResponse(requestId);
                         Assert.assertEquals(1, r.batches);
@@ -520,14 +499,14 @@ public class QwpEgressQueryDetailsWireTest extends AbstractQwpBootstrapTest {
                  WireConnection conn = new WireConnection(maxBatchRows(7))) {
                 createWindowTable(serverMain, 100);
                 // the first query streams one batch, then waits for credit
-                conn.send(queryRequest(1, "SELECT x FROM qd_window", 1, DETAILS | WINDOW, 5, 50));
+                conn.send(QwpWireTestFixtures.buildQueryRequest(1, "SELECT x FROM qd_window", 1, DETAILS | WINDOW, 5, 50));
                 Response r = new Response();
                 conn.readBatch(r, 1);
                 Assert.assertEquals(7, r.longs.size());
 
                 // a second request while it waits: rejected with a baseline frame,
                 // although it asked for the position, as its flags are never read
-                conn.send(queryRequest(2, "SELECT x FROM qd_missing", 0, DETAILS, 0, 0));
+                conn.send(QwpWireTestFixtures.buildQueryRequest(2, "SELECT x FROM qd_missing", 0, DETAILS, 0, 0));
                 QueryError rejected = conn.readResponse(2).queryError();
                 Assert.assertEquals(QwpConstants.STATUS_PARSE_ERROR, rejected.status);
                 Assert.assertEquals("Phase 1 egress supports a single in-flight query per connection", rejected.message);
@@ -554,7 +533,7 @@ public class QwpEgressQueryDetailsWireTest extends AbstractQwpBootstrapTest {
                  WireConnection conn = new WireConnection("")) {
                 // the flags ask for the position, but skip_rows is cut short, so
                 // the request does not decode and its flags are not applied
-                byte[] request = queryRequest(7, "SELECT 1", 0, QwpEgressMsgKind.QUERY_FLAG_ERROR_POSITION, 0, 0);
+                byte[] request = QwpWireTestFixtures.buildQueryRequest(7, "SELECT 1", 0, QwpEgressMsgKind.QUERY_FLAG_ERROR_POSITION, 0, 0);
                 request = Arrays.copyOf(request, request.length + 1);
                 request[request.length - 2] = (byte) (QwpEgressMsgKind.QUERY_FLAG_ERROR_POSITION | QwpEgressMsgKind.QUERY_FLAG_SKIP_ROWS);
                 request[request.length - 1] = (byte) 0x80;
@@ -617,7 +596,7 @@ public class QwpEgressQueryDetailsWireTest extends AbstractQwpBootstrapTest {
         TestUtils.assertMemoryLeak(() -> {
             try (TestServerMain ignored = startFragmented(PropertyKey.HTTP_FROZEN_CLOCK.getEnvVarName(), "false");
                  WireConnection conn = new WireConnection(maxBatchRows(7))) {
-                conn.send(queryRequest(1, "SELECT x FROM long_sequence(100)", 1, QwpEgressMsgKind.QUERY_FLAG_STATS, 0, 0));
+                conn.send(QwpWireTestFixtures.buildQueryRequest(1, "SELECT x FROM long_sequence(100)", 1, QwpEgressMsgKind.QUERY_FLAG_STATS, 0, 0));
                 Response r = new Response();
                 conn.readBatch(r, 1);
                 // the query waits for credit from the moment it sent the batch
@@ -692,7 +671,7 @@ public class QwpEgressQueryDetailsWireTest extends AbstractQwpBootstrapTest {
                 createWindowTable(serverMain, 100);
                 // 20 rows from row 3 cross three 7-row batches, each released by
                 // its own CREDIT
-                conn.send(queryRequest(1, "SELECT x FROM qd_window", 1,
+                conn.send(QwpWireTestFixtures.buildQueryRequest(1, "SELECT x FROM qd_window", 1,
                         QwpEgressMsgKind.QUERY_FLAG_COUNT_ROWS | WINDOW, 3, 20));
                 Response r = new Response();
                 for (int batch = 1; batch <= 2; batch++) {
@@ -866,7 +845,7 @@ public class QwpEgressQueryDetailsWireTest extends AbstractQwpBootstrapTest {
                 };
                 long requestId = 1;
                 for (long[] c : cases) {
-                    conn.send(queryRequest(requestId, sql, 0, flags, c[2], c[3], c[0], c[1]));
+                    conn.send(QwpWireTestFixtures.buildQueryRequest(requestId, sql, 0, flags, c[2], c[3], c[0], c[1]));
                     Response r = conn.readResponse(requestId++);
                     final long matching = Math.max(0, Math.min(c[1], 1_000) - c[0]);
                     final long expectedRows = Math.max(0, Math.min(c[3], matching - c[2]));
@@ -1027,99 +1006,10 @@ public class QwpEgressQueryDetailsWireTest extends AbstractQwpBootstrapTest {
         };
     }
 
-    /**
-     * A table of {@code rows} rows with x = 0, 1, 2, ... in timestamp order, one
-     * microsecond apart.
-     */
-    private static void createWindowTable(TestServerMain serverMain, long rows) {
-        createWindowTable(serverMain, rows, true);
-    }
-
-    private static void createWindowTable(TestServerMain serverMain, long rows, boolean isWal) {
-        serverMain.execute("CREATE TABLE qd_window (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY "
-                + (isWal ? "WAL" : "BYPASS WAL"));
-        if (rows > 0) {
-            serverMain.execute("INSERT INTO qd_window SELECT x - 1, (x - 1)::TIMESTAMP FROM long_sequence(" + rows + ")");
-        }
-        serverMain.awaitTable("qd_window");
-    }
-
-    private static String exec(String sql, String params) throws Exception {
-        final HttpRequest request = HttpRequest.newBuilder(URI.create(
-                        "http://127.0.0.1:" + HTTP_PORT + "/exec?query=" + URLEncoder.encode(sql, StandardCharsets.UTF_8) + params
-                ))
-                .timeout(Duration.ofSeconds(60))
-                .build();
-        return httpClient.send(request, HttpResponse.BodyHandlers.ofString()).body();
-    }
-
-    private static long execCount(String sql) throws Exception {
-        return Long.parseLong(find(EXEC_COUNT, exec(sql, "&limit=0,1&count=true")));
-    }
-
-    private static boolean execJitCompiled(String sql) throws Exception {
-        return Boolean.parseBoolean(find(EXEC_JIT, exec(sql, "&limit=0,1&explain=true")));
-    }
-
-    private static int execPosition(String sql) throws Exception {
-        return Integer.parseInt(find(EXEC_POSITION, exec(sql, "")));
-    }
-
-    private static String find(Pattern pattern, String json) {
-        final Matcher m = pattern.matcher(json);
-        Assert.assertTrue(pattern + " not found in " + json, m.find());
-        return m.group(1);
-    }
-
     private static String maxBatchRows(int rows) {
         return "X-QWP-Max-Batch-Rows: " + rows + "\r\n";
     }
 
-    /**
-     * msg_kind + request_id + sql_len + sql + initial_credit + bind_count and a
-     * LONG bind per {@code longBinds} value, then, when {@code flags} is not 0,
-     * the flags and the row-window fields their bits call for.
-     */
-    private static byte[] queryRequest(
-            long requestId,
-            String sql,
-            long initialCredit,
-            long flags,
-            long skipRows,
-            long maxRows,
-            long... longBinds
-    ) {
-        final byte[] sqlBytes = sql.getBytes(StandardCharsets.UTF_8);
-        final byte[] p = new byte[1 + 8 + 10 + sqlBytes.length + 10 + 10 + longBinds.length * 10 + 30];
-        int i = 0;
-        p[i++] = QwpEgressMsgKind.QUERY_REQUEST;
-        for (int s = 0; s < 8; s++) {
-            p[i++] = (byte) (requestId >>> (8 * s));
-        }
-        i = QwpVarint.encode(p, i, sqlBytes.length);
-        System.arraycopy(sqlBytes, 0, p, i, sqlBytes.length);
-        i += sqlBytes.length;
-        i = QwpVarint.encode(p, i, initialCredit);
-        i = QwpVarint.encode(p, i, longBinds.length);
-        for (long bind : longBinds) {
-            // type, null_flag 0, the value
-            p[i++] = QwpConstants.TYPE_LONG;
-            p[i++] = 0;
-            for (int s = 0; s < 8; s++) {
-                p[i++] = (byte) (bind >>> (8 * s));
-            }
-        }
-        if (flags != 0) {
-            i = QwpVarint.encode(p, i, flags);
-            if ((flags & QwpEgressMsgKind.QUERY_FLAG_SKIP_ROWS) != 0) {
-                i = QwpVarint.encode(p, i, skipRows);
-            }
-            if ((flags & QwpEgressMsgKind.QUERY_FLAG_MAX_ROWS) != 0) {
-                i = QwpVarint.encode(p, i, maxRows);
-            }
-        }
-        return Arrays.copyOf(p, i);
-    }
 
     private static final class ExecDone extends Terminator {
         final short opType;
@@ -1248,7 +1138,7 @@ public class QwpEgressQueryDetailsWireTest extends AbstractQwpBootstrapTest {
         }
 
         Response query(long requestId, String sql, long flags, long skipRows, long maxRows) throws Exception {
-            send(queryRequest(requestId, sql, 0, flags, skipRows, maxRows));
+            send(QwpWireTestFixtures.buildQueryRequest(requestId, sql, 0, flags, skipRows, maxRows));
             return readResponse(requestId);
         }
 
