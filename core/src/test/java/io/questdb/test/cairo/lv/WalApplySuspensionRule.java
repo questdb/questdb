@@ -82,6 +82,7 @@ class WalApplySuspensionRule implements TestRule {
             @Override
             public void evaluate() throws Throwable {
                 final LogCapture capture = new LogCapture();
+                onCaptureCreated(capture);
                 capture.start();
                 final long window = WINDOW_SEQ.incrementAndGet();
                 final String startMarker = "WalApplySuspensionRule window " + window + " opens";
@@ -130,6 +131,12 @@ class WalApplySuspensionRule implements TestRule {
      */
     LogCapture getCapture() {
         return capture;
+    }
+
+    // A test hook: the rule calls it with its capture before it starts it. WalApplySuspensionRuleTest
+    // gives the capture a fake clock and sleeper here, so it holds a parked logging worker through the
+    // public constructor's 30 s waits with no real time passing.
+    void onCaptureCreated(LogCapture capture) {
     }
 
     // A test hook: the rule calls it right after it logs its end marker, ahead of the end wait.

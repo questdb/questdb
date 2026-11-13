@@ -78,6 +78,28 @@ public class WalApplySuspensionRuleTest extends AbstractLiveViewTest {
     private static final String SUSPENSION_LINE = "job failed, table suspended";
 
     @Test
+    public void testAnchoredRemovalCheckReportsALineAfterTheArmRunMarker() throws Exception {
+        // runAnchoredRemovalFuzz reads a run's live view lines from the marker
+        // logAnchoredRemovalRunMarker() logs on. The check passes a capture that lacks its marker, so
+        // that marker must reach the capture, or the check reads nothing.
+        assertMemoryLeak(() -> {
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            try {
+                final String runMarker = LiveViewFuzzTest.logAnchoredRemovalRunMarker();
+                LIVE_VIEW_LOG.critical().$(LIVE_VIEW_CRITICAL_LINE).$();
+                final AssertionError error = Assert.assertThrows(
+                        AssertionError.class,
+                        () -> LiveViewFuzzTest.assertNoLiveViewCriticalLineAfter(capture, runMarker)
+                );
+                assertReportsLine(error, " C i.q.c.l.", " C i.q.c.l.LiveViewRefreshJob " + LIVE_VIEW_CRITICAL_LINE);
+            } finally {
+                capture.stop();
+            }
+        });
+    }
+
+    @Test
     public void testAnchoredRemovalCheckSkipsLinesAheadOfItsRunMarker() throws Exception {
         // The rule's capture spans the whole test: the live view lines of setUp and of earlier runs
         // sit ahead of a run's marker, and are not the run's.
@@ -155,6 +177,27 @@ public class WalApplySuspensionRuleTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testFailsATestThatLeavesALogCaptureOfItsOwnRunning() throws Throwable {
+        // The test's own capture holds the console interceptor when the test ends. The rule reports
+        // the test and leaves that capture alone: a stop() of the rule's capture would wait out its
+        // bound for a sentinel only the test's capture receives, then take the interceptor away.
+        final LogCapture[] testCapture = new LogCapture[1];
+        try {
+            final AssertionError error = assertRuleThrows(new WalApplySuspensionRule(), () -> assertMemoryLeak(() -> {
+                testCapture[0] = new LogCapture();
+                testCapture[0].start();
+            }));
+            Assert.assertEquals(LOST_INTERCEPTOR_MESSAGE, error.getMessage());
+            Assert.assertEquals(0, error.getSuppressed().length);
+            Assert.assertTrue("the rule must leave the test's capture installed", testCapture[0].isInstalled());
+        } finally {
+            if (testCapture[0] != null) {
+                testCapture[0].stop();
+            }
+        }
+    }
+
+    @Test
     public void testFailsATestThatRestartsTheRuleCapture() throws Throwable {
         // start() clears the capture, the start marker with it: the rule cannot tell where the
         // test's lines begin.
@@ -162,6 +205,18 @@ public class WalApplySuspensionRuleTest extends AbstractLiveViewTest {
         final AssertionError error = assertRuleThrows(rule, () -> assertMemoryLeak(() -> rule.getCapture().start()));
         Assert.assertEquals(LOST_WINDOW_START_MESSAGE, error.getMessage());
         Assert.assertEquals(0, error.getSuppressed().length);
+    }
+
+    @Test
+    public void testFailsATestThatRestartsTheRuleCaptureAheadOfItsFailure() throws Throwable {
+        final WalApplySuspensionRule rule = new WalApplySuspensionRule();
+        final AssertionError symptom = new AssertionError("symptom");
+        final AssertionError error = assertRuleThrows(rule, () -> assertMemoryLeak(() -> {
+            rule.getCapture().start();
+            throw symptom;
+        }));
+        Assert.assertEquals(LOST_WINDOW_START_MESSAGE, error.getMessage());
+        assertSuppressedOnly(symptom, error);
     }
 
     @Test
@@ -258,6 +313,46 @@ public class WalApplySuspensionRuleTest extends AbstractLiveViewTest {
                 driveRefreshToQuiescence(job);
             }
         })), Description.EMPTY).evaluate();
+    }
+
+    @Test
+    public void testPublicRuleReportsASuspensionTheWorkerDeliversPastTheDrainBound() throws Throwable {
+        // The fuzz classes' rule, from the public constructor, waits for the test's lines as
+        // LogCapture.stop() does, well past drain()'s bound. The worker stays parked from before the
+        // rule's start until the rule's end wait has outlived drain()'s bound, and only then delivers
+        // the test's suspension line: the rule must still report it. The capture's fake clock runs the
+        // rule's waits, so no real time decides when the worker goes, and the 30 s start wait runs out
+        // at once.
+        final CountDownLatch release = parkTheLoggingWorker();
+        try {
+            final long[] nowMs = {0};
+            final long[] releaseAfterMs = {Long.MAX_VALUE};
+            final WalApplySuspensionRule rule = new WalApplySuspensionRule() {
+                @Override
+                void onCaptureCreated(LogCapture capture) {
+                    capture.setClockForTest(() -> nowMs[0]);
+                    capture.setSleeperForTest(ms -> {
+                        if (nowMs[0] > releaseAfterMs[0]) {
+                            release.countDown();
+                            Os.sleep(ms);
+                        }
+                        nowMs[0] += ms;
+                    });
+                }
+
+                @Override
+                void onEndMarkerLogged() {
+                    // the end wait starts now: the worker goes once it has outlived drain()'s bound
+                    releaseAfterMs[0] = nowMs[0] + LogCapture.DRAIN_TIMEOUT_MS;
+                }
+            };
+            final AssertionError error = assertRuleThrows(rule, () -> assertMemoryLeak(() -> LOG.critical().$(LATE_SUSPENSION_LINE).$()));
+            assertReportsLine(error, SUSPENSION_LINE, " C i.q.t.c.l.WalApplySuspensionRuleTest " + LATE_SUSPENSION_LINE);
+            Assert.assertEquals(0, error.getSuppressed().length);
+        } finally {
+            release.countDown();
+            consoleWriter().setInterceptor(null);
+        }
     }
 
     @Test

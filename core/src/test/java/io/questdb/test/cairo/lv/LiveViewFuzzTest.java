@@ -1271,6 +1271,14 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         capture.assertNotLoggedAfter(runMarker, " C i.q.c.l.");
     }
 
+    // Logs the marker a run of runAnchoredRemovalFuzz opens with, and returns it for
+    // assertNoLiveViewCriticalLineAfter, which reads the run's lines from it on.
+    static String logAnchoredRemovalRunMarker() {
+        final String runMarker = "anchored removal run " + ANCHORED_REMOVAL_RUN_SEQ.incrementAndGet() + " starts";
+        LOG.advisory().$(runMarker).$();
+        return runMarker;
+    }
+
     // Oracle (plain query over the base) for an anchored fuzz variant: the anchor
     // reset is replicated by adding the monotonic bucket to a regular window's
     // PARTITION BY, with the window's natural default frame (UNBOUNDED PRECEDING TO
@@ -6991,8 +6999,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         int phaseTwoFrom = splitPoint;
         boolean isRestartedAfterRemoval = false;
         LiveViewRefreshJob job = null;
-        final String runMarker = "anchored removal run " + ANCHORED_REMOVAL_RUN_SEQ.incrementAndGet() + " starts";
-        LOG.advisory().$(runMarker).$();
+        final String runMarker = logAnchoredRemovalRunMarker();
         try {
             if (preCount > 0) {
                 final int[] preOrder = segmentOrder(rnd, 0, preCount, true);
