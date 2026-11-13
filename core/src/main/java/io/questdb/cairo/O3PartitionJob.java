@@ -2192,7 +2192,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final int partitionIndex = tableWriter.getPartitionIndexByTimestamp(partitionTimestamp);
         final long parquetFileSize = tableWriter.getPartitionParquetFileSize(partitionIndex);
         long duplicateCount = 0;
-        long newParquetSize;
+        long newParquetSize = parquetFileSize;
         long newParquetMetaFileSize;
         boolean isRewrite = false;
         // Whether the merge opened its output, a new partition directory for a rewrite or the parquet
@@ -2991,13 +2991,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 ff.munmap(parquetMetaAddr, parquetMetaSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
             }
             if (isOutputOpen) {
-                path.of(pathToTable);
-                if (isRewrite) {
-                    setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, txn);
-                } else {
-                    setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, srcNameTxn);
-                }
-                final long fileSize = Files.length(path.$());
                 Unsafe.putLong(partitionUpdateSinkAddr, partitionTimestamp);
                 Unsafe.putLong(partitionUpdateSinkAddr + Long.BYTES, o3TimestampMin);
                 Unsafe.putLong(partitionUpdateSinkAddr + 2 * Long.BYTES, newPartitionSize - duplicateCount);
@@ -3006,7 +2999,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // highInt = the covering index state: the seal sweep rebuilds the covered sidecars
                 Unsafe.putLong(partitionUpdateSinkAddr + 4 * Long.BYTES, Numbers.encodeLowHighInts(isRewrite ? 0 : 1, COVERING_INDEX_REBUILD));
                 Unsafe.putLong(partitionUpdateSinkAddr + 5 * Long.BYTES, 0); // o3SplitPartitionSize
-                Unsafe.putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, fileSize); // update parquet partition file size
+                Unsafe.putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, newParquetSize); // update parquet partition file size
             } else {
                 // No file of the partition changed, as the native merge does when dedup drops every
                 // O3 row: o3ConsumePartitionUpdateSink() leaves the partition as it is.

@@ -20,6 +20,7 @@ jobs:
     steps:
       - checkout: self
         fetchDepth: 1
+        fetchTags: false
         lfs: false
         submodules: false
       - bash: |
@@ -97,6 +98,7 @@ jobs:
     steps:
       - checkout: self
         fetchDepth: 1
+        fetchTags: false
         lfs: false
         submodules: false
       - template: use-hetzner-apt-mirrors.yml
