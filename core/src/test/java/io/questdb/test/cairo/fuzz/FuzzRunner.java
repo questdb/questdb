@@ -38,6 +38,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.TableMetadata;
@@ -163,7 +164,7 @@ public class FuzzRunner {
     }
 
     public void applyManyWalParallel(ObjList<ObjList<FuzzTransaction>> fuzzTransactions, Rnd rnd, String tableNameBase, boolean multiTable, boolean waitApply) {
-        final ObjList<WalWriter> writers = new ObjList<>();
+        final ObjList<TableWriterAPI> writers = new ObjList<>();
         final int tableCount = fuzzTransactions.size();
         final AtomicInteger done = new AtomicInteger();
         final AtomicInteger forceReaderReload = new AtomicInteger();
@@ -470,6 +471,10 @@ public class FuzzRunner {
     public void clearSeeds() {
         s0 = 0;
         s1 = 0;
+    }
+
+    public TableToken createInitialTableDelta(String tableName, int rowCount) throws SqlException {
+        return createInitialTable(tableName, "DELTA", rowCount);
     }
 
     public TableToken createInitialTableEmptyNonWal(String tableName) throws SqlException {
@@ -1215,6 +1220,10 @@ public class FuzzRunner {
     }
 
     private TableToken createInitialTable(String tableName, boolean isWal, int rowCount) throws SqlException {
+        return createInitialTable(tableName, isWal ? (createWalAsParquet ? "FORMAT PARQUET WAL" : "WAL") : "BYPASS WAL", rowCount);
+    }
+
+    private TableToken createInitialTable(String tableName, String writeMode, int rowCount) throws SqlException {
         SharedRandom.RANDOM.set(new Rnd());
         TableToken tempTable = engine.getTableTokenIfExists("data_temp");
 
@@ -1237,22 +1246,19 @@ public class FuzzRunner {
         }
 
         if (engine.getTableTokenIfExists(tableName) == null) {
-            String tail;
-            if (isWal) {
-                tail = createWalAsParquet ? "FORMAT PARQUET WAL" : "WAL";
-            } else {
-                tail = "BYPASS WAL";
-            }
+            final boolean isDelta = "DELTA".equals(writeMode);
             engine.execute(
                     "create atomic table " + tableName + " as (" +
                             "select * from data_temp" +
-                            "), index(sym2 " + randomIndexTypeClause() + ") timestamp(ts) partition by DAY " + tail,
+                            "), index(sym2 " + randomIndexTypeClause() + ") timestamp(ts) partition by DAY " + writeMode,
                     sqlExecutionContext
             );
             // force few column tops
             engine.execute("alter table " + tableName + " add column long_top long", sqlExecutionContext);
             engine.execute("alter table " + tableName + " add column str_top long", sqlExecutionContext);
-            engine.execute("alter table " + tableName + " add column sym_top symbol index " + randomIndexTypeClause(), sqlExecutionContext);
+            // Delta can retain indexes declared at creation, but cannot add an index later.
+            engine.execute("alter table " + tableName + " add column sym_top symbol"
+                    + (isDelta ? "" : " index " + randomIndexTypeClause()), sqlExecutionContext);
             engine.execute("alter table " + tableName + " add column ip4 ipv4", sqlExecutionContext);
             engine.execute("alter table " + tableName + " add column var_top varchar", sqlExecutionContext);
         }
@@ -1319,7 +1325,7 @@ public class FuzzRunner {
     private Thread createWalWriteThread(
             ObjList<FuzzTransaction> transactions,
             String tableName,
-            ObjList<WalWriter> writers,
+            ObjList<TableWriterAPI> writers,
             AtomicLong waitBarrierVersion,
             AtomicLong doneCount,
             AtomicInteger forceReaderReload,
@@ -1328,7 +1334,7 @@ public class FuzzRunner {
     ) {
         final int writerIndex;
         synchronized (writers) {
-            writers.add((WalWriter) engine.getTableWriterAPI(tableName, "apply trans test"));
+            writers.add(engine.getTableWriterAPI(tableName, "apply trans test"));
             writerIndex = writers.size() - 1;
         }
 
@@ -1360,21 +1366,32 @@ public class FuzzRunner {
                         }
                     }
 
-                    WalWriter walWriter;
+                    TableWriterAPI writer;
                     synchronized (writers) {
-                        walWriter = writers.get(writerIndex);
+                        writer = writers.get(writerIndex);
                     }
 
-                    walWriter.goActive(transaction.structureVersion);
-                    if (walWriter.getMetadataVersion() != transaction.structureVersion) {
+                    if (writer instanceof WalWriter walWriter) {
+                        walWriter.goActive(transaction.structureVersion);
+                    } else if (writer.getMetadataVersion() != transaction.structureVersion) {
+                        // Delta schema transactions wait for prior writers. Reopen a stale handle
+                        // only at the next transaction boundary, with no buffered rows to lose.
+                        synchronized (writers) {
+                            writer.close();
+                            writers.setQuick(writerIndex, null);
+                            writer = engine.getTableWriterAPI(updatedTableName, "apply trans test");
+                            writers.setQuick(writerIndex, writer);
+                        }
+                    }
+                    if (writer.getMetadataVersion() != transaction.structureVersion) {
                         throw CairoException.critical(0)
-                                .put("cannot update wal writer to correct structure version");
+                                .put("cannot update writer to correct structure version");
                     }
 
                     boolean increment = false;
 
                     if (transaction.reopenTable) {
-                        TableToken updatedTableToken = engine.getTableTokenByDirName(walWriter.getTableToken().getDirName());
+                        TableToken updatedTableToken = engine.getTableTokenByDirName(writer.getTableToken().getDirName());
                         if (updatedTableToken == null) {
                             throw new IllegalStateException("table is missing after reopen [table=" + tableName + "]");
                         }
@@ -1383,15 +1400,16 @@ public class FuzzRunner {
 
                     for (int operationIndex = 0; operationIndex < transaction.operationList.size(); operationIndex++) {
                         FuzzTransactionOperation operation = transaction.operationList.getQuick(operationIndex);
-                        increment |= operation.apply(tempRnd, engine, walWriter, -1, null);
+                        increment |= operation.apply(tempRnd, engine, writer, -1, null);
                     }
 
                     if (transaction.reopenTable) {
                         synchronized (writers) {
-                            for (int ii = 0; ii < writers.size(); ii++) {
+                            for (int ii = 0, writerCount = writers.size(); ii < writerCount; ii++) {
                                 if (writers.get(ii).getTableToken().getTableName().equals(updatedTableName)) {
                                     writers.get(ii).close();
-                                    writers.setQuick(ii, (WalWriter) engine.getTableWriterAPI(updatedTableName, "apply trans test"));
+                                    writers.setQuick(ii, null);
+                                    writers.setQuick(ii, engine.getTableWriterAPI(updatedTableName, "apply trans test"));
                                 }
                             }
                         }
@@ -1400,17 +1418,17 @@ public class FuzzRunner {
                     } else {
                         if (transaction.rollback) {
                             assert !transaction.hasReplaceRange();
-                            walWriter.rollback();
+                            writer.rollback();
                         } else {
                             if (transaction.hasReplaceRange()) {
-                                walWriter.commitWithParams(
+                                ((WalWriter) writer).commitWithParams(
                                         transaction.getReplaceLoTs(),
                                         transaction.getReplaceHiTs(),
                                         WAL_DEDUP_MODE_REPLACE_RANGE
                                 );
                                 increment = true;
                             } else {
-                                walWriter.commit();
+                                writer.commit();
                             }
                         }
                     }

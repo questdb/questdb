@@ -56,4 +56,8 @@ public class FuzzAddColumnOperation implements FuzzTransactionOperation {
         wApi.addColumn(newColName, newType, 256, symbolTableStatic, indexType, indexValueBlockCapacity, false, AllowAllSecurityContext.INSTANCE);
         return true;
     }
+
+    public FuzzAddColumnOperation withoutIndex() {
+        return new FuzzAddColumnOperation(newColName, newType, IndexType.NONE, indexValueBlockCapacity, symbolTableStatic);
+    }
 }
