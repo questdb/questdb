@@ -1686,8 +1686,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
             cursor.advanceRow();
             DirectUtf8Sequence value = cursor.isNull() ? null : symbolUtf8(cursor);
             switch (columnTag) {
-                case ColumnType.BOOLEAN ->
-                        dataMem.putByte(value == null ? (byte) 0 : parseBoolean(value, columnIndex));
+                case ColumnType.BOOLEAN -> dataMem.putByte(value == null ? (byte) 0 : parseBoolean(value, columnIndex));
                 case ColumnType.BYTE -> {
                     if (value == null) {
                         dataMem.putByte((byte) 0);
