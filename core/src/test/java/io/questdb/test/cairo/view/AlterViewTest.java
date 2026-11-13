@@ -46,9 +46,13 @@ public class AlterViewTest extends AbstractViewTest {
                             1970-01-01T00:01:20.000000Z\tk8\t8
                             """,
                     VIEW1,
+                    null,
+                    false,
+                    false,
                     """
                             QUERY PLAN
-                            Async Group By workers: 1
+                            Async Stream Group By workers: 1
+                              segmentKey: ts
                               keys: [ts,k]
                               values: [max(v)]
                               filter: 5<v
@@ -79,9 +83,13 @@ public class AlterViewTest extends AbstractViewTest {
                             1970-01-01T00:01:20.000000Z\tk8\t8
                             """,
                     VIEW1,
+                    null,
+                    false,
+                    false,
                     """
                             QUERY PLAN
-                            Async Group By workers: 1
+                            Async Stream Group By workers: 1
+                              segmentKey: ts
                               keys: [ts,k]
                               values: [min(v)]
                               filter: 6<v
@@ -180,9 +188,13 @@ public class AlterViewTest extends AbstractViewTest {
                             1970-01-01T00:01:20.000000Z\tk8\t8
                             """,
                     VIEW1,
+                    null,
+                    false,
+                    false,
                     """
                             QUERY PLAN
-                            Async Group By workers: 1
+                            Async Stream Group By workers: 1
+                              segmentKey: ts
                               keys: [ts,k]
                               values: [max(v)]
                               filter: 5<v
@@ -213,9 +225,13 @@ public class AlterViewTest extends AbstractViewTest {
                             1970-01-01T00:01:20.000000Z\tk8\t8
                             """,
                     VIEW1,
+                    null,
+                    false,
+                    false,
                     """
                             QUERY PLAN
-                            Async Group By workers: 1
+                            Async Stream Group By workers: 1
+                              segmentKey: ts
                               keys: [ts,k]
                               values: [min(v)]
                               filter: 6<v

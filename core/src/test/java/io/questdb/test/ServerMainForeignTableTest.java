@@ -209,7 +209,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                 }, "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR")
                         .noLeakCheck()
                         .noMemoryUsageCheck()
-                        .expectSize()
+                        .noRandomAccess()
                         .returns(TABLE_START_CONTENT);
                 assertTableExists(tableToken, false, true);
             }
@@ -250,7 +250,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                 }, "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR")
                         .noLeakCheck()
                         .noMemoryUsageCheck()
-                        .expectSize()
+                        .noRandomAccess()
                         .returns(TABLE_START_CONTENT);
                 CairoEngine engine = qdb.getEngine();
                 TableToken tableToken = engine.verifyTableName(tableName);
@@ -364,7 +364,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                 }, "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR")
                         .noLeakCheck()
                         .noMemoryUsageCheck()
-                        .expectSize()
+                        .noRandomAccess()
                         .returns(TABLE_START_CONTENT);
                 dropTable(context, tableToken);
             }

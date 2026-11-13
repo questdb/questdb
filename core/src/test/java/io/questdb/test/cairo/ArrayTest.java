@@ -1132,19 +1132,16 @@ public class ArrayTest extends AbstractCairoTest {
                     "('2025-06-27', 25.0, ARRAY[21.0, 22.0, 23.0, 24.0, 25.0, 26.0, 27.0, 28.0, 29.0, 30.0])");
             assertQuery("select ts, max(array_position(arr, a)) as v from tango sample by 1d")
                     .withPlan("""
-                            Encode sort light
+                            Async Stream Group By workers: 1
                               keys: [ts]
-                                Async Group By workers: 1
-                                  keys: [ts]
-                                  keyFunctions: [timestamp_floor_utc('1d',ts)]
-                                  values: [max(array_position(arr, a))]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tango
+                              keyFunctions: [timestamp_floor_utc('1d',ts)]
+                              values: [max(array_position(arr, a))]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tango
                             """)
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .returns("""
                             ts\tv
                             2025-06-26T00:00:00.000000Z\t1
@@ -1153,19 +1150,16 @@ public class ArrayTest extends AbstractCairoTest {
 
             assertQuery("select ts, min(insertion_point(arr, a)) as v from tango sample by 1d")
                     .withPlan("""
-                            Encode sort light
+                            Async Stream Group By workers: 1
                               keys: [ts]
-                                Async Group By workers: 1
-                                  keys: [ts]
-                                  keyFunctions: [timestamp_floor_utc('1d',ts)]
-                                  values: [min(insertion_point(arr,a))]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tango
+                              keyFunctions: [timestamp_floor_utc('1d',ts)]
+                              values: [min(insertion_point(arr,a))]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tango
                             """)
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .returns("""
                             ts\tv
                             2025-06-26T00:00:00.000000Z\t2
@@ -1174,19 +1168,16 @@ public class ArrayTest extends AbstractCairoTest {
 
             assertQuery("select ts, sum(array_count(arr)) as v from tango sample by 1d")
                     .withPlan("""
-                            Encode sort light
+                            Async Stream Group By workers: 1
                               keys: [ts]
-                                Async Group By workers: 1
-                                  keys: [ts]
-                                  keyFunctions: [timestamp_floor_utc('1d',ts)]
-                                  values: [sum(array_count(arr))]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tango
+                              keyFunctions: [timestamp_floor_utc('1d',ts)]
+                              values: [sum(array_count(arr))]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tango
                             """)
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .returns("""
                             ts\tv
                             2025-06-26T00:00:00.000000Z\t10
@@ -1195,40 +1186,36 @@ public class ArrayTest extends AbstractCairoTest {
 
             assertQuery("select ts, sum(array_avg(arr)) as v from tango sample by 1d")
                     .withPlan("""
-                            Encode sort light
+                            Async Stream Group By workers: 1
                               keys: [ts]
-                                Async Group By workers: 1
-                                  keys: [ts]
-                                  keyFunctions: [timestamp_floor_utc('1d',ts)]
-                                  values: [sum(array_avg(arr))]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tango
+                              keyFunctions: [timestamp_floor_utc('1d',ts)]
+                              values: [sum(array_avg(arr))]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tango
                             """)
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .returns("""
                             ts\tv
                             2025-06-26T00:00:00.000000Z\t5.5
                             2025-06-27T00:00:00.000000Z\t41.0
                             """);
 
-            assertQuery("select ts, array_sum(array_cum_sum(arr)), sum(a) from tango sample by 1d")
+            assertQuery("select ts, array_sum(array_cum_sum(arr)), sum(a) from tango sample by 1d order by ts, sum")
                     .withPlan("""
-                            Encode sort light
-                              keys: [ts]
-                                Async Group By workers: 1
+                            Encode sort
+                              keys: [ts, sum]
+                                Async Stream Group By workers: 1
+                                  segmentKey: timestamp_floor_utc('1d',ts)
                                   keys: [ts,array_sum]
                                   keyFunctions: [timestamp_floor_utc('1d',ts),array_sum(array_cum_sum(arr))]
                                   values: [sum(a)]
-                                  filter: null
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: tango
                             """)
                     .timestamp("ts")
-                    .expectSize()
                     .returns("""
                             ts\tarray_sum\tsum
                             2025-06-26T00:00:00.000000Z\t220.0\t1.0
@@ -1237,21 +1224,20 @@ public class ArrayTest extends AbstractCairoTest {
                             2025-06-27T00:00:00.000000Z\t1320.0\t25.0
                             """);
 
-            assertQuery("select ts, dot_product(arr, 2), first(a) from tango sample by 1d")
+            assertQuery("select ts, dot_product(arr, 2), first(a) from tango sample by 1d order by ts, first")
                     .withPlan("""
-                            Encode sort light
-                              keys: [ts]
-                                Async Group By workers: 1
+                            Encode sort
+                              keys: [ts, first]
+                                Async Stream Group By workers: 1
+                                  segmentKey: timestamp_floor_utc('1d',ts)
                                   keys: [ts,dot_product]
                                   keyFunctions: [timestamp_floor_utc('1d',ts),dot_product(arr,2)]
                                   values: [first(a)]
-                                  filter: null
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: tango
                             """)
                     .timestamp("ts")
-                    .expectSize()
                     .returns("""
                             ts\tdot_product\tfirst
                             2025-06-26T00:00:00.000000Z\t110.0\t1.0
@@ -1262,19 +1248,16 @@ public class ArrayTest extends AbstractCairoTest {
 
             assertQuery("select ts, sum(array_sum((arr * 5 + 3 - 1)/2)) from tango sample by 1d")
                     .withPlan("""
-                            Encode sort light
+                            Async Stream Group By workers: 1
                               keys: [ts]
-                                Async Group By workers: 1
-                                  keys: [ts]
-                                  keyFunctions: [timestamp_floor_utc('1d',ts)]
-                                  values: [sum(array_sum(arr*5+3-1/2))]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tango
+                              keyFunctions: [timestamp_floor_utc('1d',ts)]
+                              values: [sum(array_sum(arr*5+3-1/2))]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tango
                             """)
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .returns("""
                             ts\tsum
                             2025-06-26T00:00:00.000000Z\t147.5
@@ -1546,6 +1529,28 @@ public class ArrayTest extends AbstractCairoTest {
                     .returns("""
                             array_sum\tarray_sum1
                             45.0\t45.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testArraySumSkipsInfinity() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE src (p DOUBLE, n DOUBLE)");
+            execute("INSERT INTO src VALUES ('Infinity', '-Infinity')");
+            execute("CREATE TABLE tango (arr DOUBLE[][])");
+            execute("""
+                    INSERT INTO tango
+                    SELECT ARRAY[[p, n, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, n, 15]] FROM src
+                    UNION ALL
+                    SELECT ARRAY[[p, n, null, p, n, null, p, n, null]] FROM src""");
+            assertQuery("SELECT array_sum(arr), array_sum(transpose(arr)) FROM tango")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            array_sum\tarray_sum1
+                            120.0\t120.0
+                            null\tnull
                             """);
         });
     }
@@ -4251,13 +4256,14 @@ public class ArrayTest extends AbstractCairoTest {
                     \t@avg_price := avg(l2price(0.1, asks[@size], asks[@price])),
                     \t@best_price := asks[@price, 1]
                     \tSELECT\s
-                    \t\ttimestamp,
+                    \t\ttimestamp_floor('1m', timestamp + 1) timestamp,
                     \t\t@avg_price as avg_price,
                     \t\t@best_price as best_price,
                     \t\t@avg_price - @best_price as drift
                     \tFROM AAPL_orderbook
-                    \tSAMPLE BY 1m) LIMIT 5;""")
+                    \tORDER BY timestamp) LIMIT 5;""")
                     .noLeakCheck()
+                    .withPlanContaining("Async Group By")
                     .timestamp("timestamp")
                     .returns("""
                             timestamp\tavg_price\tbest_price\tdrift

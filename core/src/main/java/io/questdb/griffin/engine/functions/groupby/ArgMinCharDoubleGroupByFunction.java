@@ -140,4 +140,9 @@ public class ArgMinCharDoubleGroupByFunction extends CharFunction implements Gro
     public boolean supportsParallelism() {
         return BinaryFunction.super.supportsParallelism();
     }
+
+    @Override
+    public boolean isStateSelfContained() {
+        return true;
+    }
 }

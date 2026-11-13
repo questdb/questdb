@@ -269,7 +269,7 @@ public class O3ParquetTieOrderTest extends AbstractCairoTest {
             // in the 03:00 bucket, the first row is row 4 and the last the O3 row
             assertQuery("SELECT first(v) f, last(v) l FROM " + t + " WHERE ts IN '2024-01-01T03' SAMPLE BY 1h")
                     .noLeakCheck()
-                    .expectSize()
+                    .noRandomAccess()
                     .returns("f\tl\n4\t50\n");
         }
     }

@@ -532,6 +532,9 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
 
         CairoEngine engine = sqlExecutionContext.getCairoEngine();
         try (TableMetadata baseTableMetadata = engine.getTableMetadata(baseTableToken)) {
+            if (!passthrough) {
+                TimestampSamplerFactory.validateStride(baseTableMetadata.getTimestampType(), samplingInterval, samplingIntervalUnit, selectTextPosition + intervalPos);
+            }
             final ObjList<String> passthroughColumnNames = new ObjList<>(baseTableMetadata.getColumnCount());
             if (passthrough) {
                 passthroughColumnNames.setPos(baseTableMetadata.getColumnCount());

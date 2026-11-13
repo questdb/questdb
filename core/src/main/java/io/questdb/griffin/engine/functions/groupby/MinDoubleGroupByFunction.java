@@ -64,7 +64,8 @@ public class MinDoubleGroupByFunction extends DoubleFunction implements GroupByF
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
-        mapValue.putDouble(valueIndex, arg.getDouble(record));
+        final double value = arg.getDouble(record);
+        mapValue.putDouble(valueIndex, Numbers.isFinite(value) ? value : Double.NaN);
     }
 
     @Override
@@ -76,9 +77,7 @@ public class MinDoubleGroupByFunction extends DoubleFunction implements GroupByF
             long rowCount,
             long baseRowId
     ) {
-        // Mirrors computeNext: replace the accumulator only when the new value is
-        // strictly less, or when the accumulator is still the null sentinel (NaN/inf).
-        // NaN arg values naturally short-circuit because NaN comparisons are always false.
+        // Mirrors computeNext: a finite value replaces an accumulator that it beats or that is still NULL.
         final long valueColumnOffset = mapValue.getOffset(valueIndex);
         // Fast path: arg is a direct double column with data on the current frame.
         // Zero page address means a column top; fall through to the record-based path.
@@ -90,7 +89,7 @@ public class MinDoubleGroupByFunction extends DoubleFunction implements GroupByF
                 final double value = Unsafe.getDouble(argAddr + (rowIndex << 3));
                 final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                 final double current = Unsafe.getDouble(addr);
-                if (value < current || Numbers.isNull(current)) {
+                if ((value < current || Numbers.isNull(current)) && Numbers.isFinite(value)) {
                     Unsafe.putDouble(addr, value);
                 }
             }
@@ -101,7 +100,7 @@ public class MinDoubleGroupByFunction extends DoubleFunction implements GroupByF
                 final double value = arg.getDouble(record);
                 final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                 final double current = Unsafe.getDouble(addr);
-                if (value < current || Numbers.isNull(current)) {
+                if ((value < current || Numbers.isNull(current)) && Numbers.isFinite(value)) {
                     Unsafe.putDouble(addr, value);
                 }
             }
@@ -112,7 +111,7 @@ public class MinDoubleGroupByFunction extends DoubleFunction implements GroupByF
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         double min = mapValue.getDouble(valueIndex);
         double next = arg.getDouble(record);
-        if (next < min || Numbers.isNull(min)) {
+        if ((next < min || Numbers.isNull(min)) && Numbers.isFinite(next)) {
             mapValue.putDouble(valueIndex, next);
         }
     }
@@ -190,5 +189,10 @@ public class MinDoubleGroupByFunction extends DoubleFunction implements GroupByF
     @Override
     public boolean supportsParallelism() {
         return UnaryFunction.super.supportsParallelism();
+    }
+
+    @Override
+    public boolean isStateSelfContained() {
+        return true;
     }
 }

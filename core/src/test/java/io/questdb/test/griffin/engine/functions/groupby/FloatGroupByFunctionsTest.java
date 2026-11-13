@@ -71,7 +71,7 @@ public class FloatGroupByFunctionsTest extends AbstractCairoTest {
             assertQuery("select ts, min(ch), max(ch), first(ch), last(ch), count() from tab sample by d align to calendar")
                     .noLeakCheck()
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .returns("""
                             ts\tmin\tmax\tfirst\tlast\tcount
                             2020-01-01T00:00:00.000000Z\t0.001\t0.05\t0.001\t0.05\t50

@@ -593,6 +593,84 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEmptyRowGroupKeepsDesignatedTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            final String fixture = "empty_row_group.parquet";
+            try (java.io.InputStream is = ReadParquetFunctionTest.class.getResourceAsStream("/parquet-unordered/" + fixture)) {
+                Assert.assertNotNull("missing test fixture on classpath", is);
+                java.nio.file.Files.write(java.nio.file.Paths.get(root, fixture), is.readAllBytes());
+            }
+            assertQuery("SELECT * FROM read_parquet('" + fixture + "')")
+                    .noLeakCheck()
+                    .supportsRandomAccess(parallel)
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            k\tts
+                            1\t2024-01-01T00:00:00.000000Z
+                            2\t2024-01-02T00:00:00.000000Z
+                            1\t2024-01-03T00:00:00.000000Z
+                            2\t2024-01-04T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testRowGroupsOutOfTimestampOrder() throws Exception {
+        // Each row group sorts by ts and declares it in sorting_columns, but the first row group holds the later rows.
+        assertMemoryLeak(() -> {
+            final String fixture = "row_groups_out_of_order.parquet";
+            try (java.io.InputStream is = ReadParquetFunctionTest.class.getResourceAsStream("/parquet-unordered/" + fixture)) {
+                Assert.assertNotNull("missing test fixture on classpath", is);
+                java.nio.file.Files.write(java.nio.file.Paths.get(root, fixture), is.readAllBytes());
+            }
+            final String file = "read_parquet('" + fixture + "')";
+            assertQuery("SELECT * FROM " + file)
+                    .noLeakCheck()
+                    .supportsRandomAccess(parallel)
+                    .expectSize()
+                    .returns("""
+                            k\tts
+                            1\t2024-01-03T00:00:00.000000Z
+                            2\t2024-01-04T00:00:00.000000Z
+                            1\t2024-01-01T00:00:00.000000Z
+                            2\t2024-01-02T00:00:00.000000Z
+                            """);
+            assertQuery("SELECT * FROM " + file + " ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            k\tts
+                            1\t2024-01-01T00:00:00.000000Z
+                            2\t2024-01-02T00:00:00.000000Z
+                            1\t2024-01-03T00:00:00.000000Z
+                            2\t2024-01-04T00:00:00.000000Z
+                            """);
+            assertExceptionNoLeakCheck("SELECT ts, count() FROM " + file + " SAMPLE BY 1d", 0, "base query does not provide designated TIMESTAMP column");
+            assertQuery("SELECT ts, count() c FROM (SELECT * FROM " + file + " ORDER BY ts) SAMPLE BY 1d")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tc
+                            2024-01-01T00:00:00.000000Z\t1
+                            2024-01-02T00:00:00.000000Z\t1
+                            2024-01-03T00:00:00.000000Z\t1
+                            2024-01-04T00:00:00.000000Z\t1
+                            """);
+            final String latestPlan = parallel ? "LatestBy light order_by_timestamp: false" : "LatestBy";
+            final String latest = """
+                    k\tts
+                    1\t2024-01-03T00:00:00.000000Z
+                    2\t2024-01-04T00:00:00.000000Z
+                    """;
+            assertQuery("SELECT * FROM " + file + " LATEST ON ts PARTITION BY k ORDER BY k").noLeakCheck().expectSize().withPlanContaining(latestPlan).returns(latest);
+            assertQuery("SELECT * FROM (SELECT * FROM " + file + ") LATEST ON ts PARTITION BY k ORDER BY k").noLeakCheck().expectSize().withPlanContaining(latestPlan).returns(latest);
+        });
+    }
+
+    @Test
     public void testDictionaryNumValuesOverBuffer() throws Exception {
         // A foreign parquet whose dictionary page header declares more values than its
         // buffer can hold (each var-width value needs at least a 4-byte length prefix)

@@ -303,37 +303,43 @@ public class Unordered4Map implements Map, Reopenable {
         }
 
         // Then we handle all non-zero keys.
-        OUTER:
-        for (long srcAddr = src4Map.memStart; srcAddr < src4Map.memLimit; srcAddr += entrySize) {
-            int key = Unsafe.getInt(srcAddr);
-            if (key == 0) {
-                continue;
-            }
-
-            long destAddr = getStartAddress(Hash.hashInt64(key) & mask);
-            for (; ; ) {
-                int k = Unsafe.getInt(destAddr);
-                if (k == 0) {
-                    break;
-                } else if (k == key) {
-                    // Match found, merge values.
-                    mergeFunc.merge(
-                            valueAt(destAddr),
-                            src4Map.valueAt(srcAddr)
-                    );
-                    continue OUTER;
+        final long blockSlots = Map.mergeBlockSlots(src4Map.keyCapacity, srcSize, keyCapacity, loadFactor);
+        final long blockCount = src4Map.keyCapacity / blockSlots;
+        final long blockSize = blockSlots * entrySize;
+        for (long block = 0; block < blockCount; block++) {
+            final long blockStart = src4Map.memStart + Map.mergeBlock(block, blockCount) * blockSize;
+            OUTER:
+            for (long srcAddr = blockStart, blockLimit = blockStart + blockSize; srcAddr < blockLimit; srcAddr += entrySize) {
+                int key = Unsafe.getInt(srcAddr);
+                if (key == 0) {
+                    continue;
                 }
-                destAddr = getNextAddress(destAddr);
-            }
 
-            Unsafe.copyMemory(srcAddr, destAddr, entrySize);
-            size++;
-            if (--free == 0) {
-                try {
-                    rehash();
-                } catch (CairoException e) {
-                    free = 1;
-                    throw e;
+                long destAddr = getStartAddress(Hash.hashInt64(key) & mask);
+                for (; ; ) {
+                    int k = Unsafe.getInt(destAddr);
+                    if (k == 0) {
+                        break;
+                    } else if (k == key) {
+                        // Match found, merge values.
+                        mergeFunc.merge(
+                                valueAt(destAddr),
+                                src4Map.valueAt(srcAddr)
+                        );
+                        continue OUTER;
+                    }
+                    destAddr = getNextAddress(destAddr);
+                }
+
+                Unsafe.copyMemory(srcAddr, destAddr, entrySize);
+                size++;
+                if (--free == 0) {
+                    try {
+                        rehash();
+                    } catch (CairoException e) {
+                        free = 1;
+                        throw e;
+                    }
                 }
             }
         }

@@ -212,14 +212,30 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
                         supervisor.onResourceReturned(this);
                         supervisor = null;
                     }
-                    goPassive();
                     final AbstractMultiTenantPool<R> pool = this.pool;
+                    try {
+                        goPassive();
+                    } catch (Throwable th) {
+                        try {
+                            super.close();
+                        } catch (Throwable closeFailure) {
+                            th.addSuppressed(closeFailure);
+                        } finally {
+                            if (pool != null) {
+                                pool.expelFromPool(this);
+                            }
+                        }
+                        throw th;
+                    }
                     if (pool == null || entry == null || !pool.returnToPool(this)) {
                         super.close();
                     }
                 } else {
-                    closeExcessPartitions();
-                    detachedRefCount--;
+                    try {
+                        closeExcessPartitions();
+                    } finally {
+                        detachedRefCount--;
+                    }
                 }
             }
         }

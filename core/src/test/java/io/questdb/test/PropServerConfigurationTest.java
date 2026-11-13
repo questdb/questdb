@@ -328,6 +328,7 @@ public class PropServerConfigurationTest {
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelWindowJoinEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelGroupByEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelHashJoinGroupByEnabled());
+        Assert.assertTrue(configuration.getCairoConfiguration().isSqlStreamGroupByEnabled());
         Assert.assertEquals(300_000, configuration.getCairoConfiguration().getSqlParallelHashJoinGroupByBuildParallelMinRows());
         Assert.assertEquals(32_768, configuration.getCairoConfiguration().getSqlParallelHashJoinGroupByBuildRowsPerPartition());
         Assert.assertEquals(128 * Numbers.SIZE_1MB, configuration.getCairoConfiguration().getSqlParallelHashJoinGroupByPayloadCopyMaxSize());
@@ -1197,6 +1198,18 @@ public class PropServerConfigurationTest {
         properties.setProperty(PropertyKey.CAIRO_PARQUET_EXPORT_TABLE_PREFIX.getPropertyPath(), "qdb.export.");
         PropServerConfiguration configuration = newPropServerConfiguration(properties);
         TestUtils.assertEquals("qdb.export.", configuration.getCairoConfiguration().getParquetExportTableNamePrefix());
+    }
+
+    @Test
+    public void testHashJoinValuePageSizeClampedToOne() throws Exception {
+        // hash.join.value.page.size is a RecordChain page like sort.value.page.size, which runs at 1 byte
+        // and has no fixed block. A page of 0 never extends, so its first write lands outside the chain.
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.hash.join.value.page.size", "0");
+
+        CairoConfiguration cairo = newPropServerConfiguration(properties).getCairoConfiguration();
+
+        Assert.assertEquals(1, cairo.getSqlHashJoinValuePageSize());
     }
 
     @Test
@@ -2484,6 +2497,17 @@ public class PropServerConfigurationTest {
         Properties properties = new Properties();
         properties.setProperty(PropertyKey.MEMORY_USAGE_LOG_INTERVAL.getPropertyPath(), "-1");
         assertInvalidConfiguration(properties, PropertyKey.MEMORY_USAGE_LOG_INTERVAL);
+    }
+
+    @Test
+    public void testStreamGroupByPropertyAndEnvironment() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.stream.groupby.enabled", "false");
+        Assert.assertFalse(newPropServerConfiguration(properties).getCairoConfiguration().isSqlStreamGroupByEnabled());
+        Map<String, String> env = new HashMap<>();
+        env.put("QDB_CAIRO_SQL_STREAM_GROUPBY_ENABLED", "true");
+        Assert.assertTrue(newPropServerConfiguration(root, properties, env, new BuildInformationHolder())
+                .getCairoConfiguration().isSqlStreamGroupByEnabled());
     }
 
     @Test

@@ -51,6 +51,7 @@ import org.jetbrains.annotations.Nullable;
 import static io.questdb.griffin.engine.join.AbstractHashOuterJoinRecordCursor.populateRecordHashMap;
 
 public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
+    private final boolean isMasterRewindRecomputing;
     private final RecordSink masterKeySink;
     private final RecordSink slaveKeySink;
     private HashJoinRecordCursor cursor;
@@ -72,6 +73,7 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
             int @Nullable [] slaveSymbolKeyColumnIndices
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
+        this.isMasterRewindRecomputing = masterFactory.isRewindRecomputing();
         Map joinKeyMap = null;
         RecordChain slaveChain = null;
         try {
@@ -178,6 +180,11 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
         CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
+    @Override
+    protected boolean isSlaveHashed() {
+        return true;
+    }
+
     private class HashJoinRecordCursor extends AbstractJoinCursor {
         private final Map joinKeyMap;
         private final JoinRecord recordA;
@@ -246,7 +253,7 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
 
         @Override
         public long size() {
-            if (size != -1) {
+            if (size != -1 || isMasterRewindRecomputing) {
                 return size;
             }
             buildMapOfSlaveRecords();

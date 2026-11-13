@@ -77,6 +77,21 @@ public class GroupByVectorizedOomTest extends AbstractOomSweepTest {
     }
 
     @Test
+    public void testVectorizedGroupByCompilationFreesFunctionsWhenOutOfMemory() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (k INT, a DOUBLE, b DOUBLE)");
+            execute("INSERT INTO tab SELECT (x % 16)::int, x, x FROM long_sequence(100)");
+            final String keyed = "SELECT k, nsum(a), nsum(b) FROM tab GROUP BY k";
+            assertQuery(keyed).noLeakCheck().assertsPlanContaining("GroupBy vectorized: true");
+            assertQuery("SELECT k FROM tab GROUP BY k").noLeakCheck().assertsPlanContaining("GroupBy vectorized: true");
+            // nsum() allocates as it is built, so a later function failing to build must free it.
+            for (String query : new String[]{keyed, "SELECT nsum(a), avg(a) FROM tab"}) {
+                assertOomSweep(CURSOR_OPEN_SLACK_MAX, CURSOR_OPEN_SLACK_STEP, null, () -> select(query).close());
+            }
+        });
+    }
+
+    @Test
     public void testWorkStolenEntryDoesNotOutliveFreedPoolsOverParquet() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (ts TIMESTAMP, k INT, v LONG) TIMESTAMP(ts) PARTITION BY DAY");

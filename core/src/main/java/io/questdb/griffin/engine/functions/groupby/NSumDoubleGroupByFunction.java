@@ -52,41 +52,34 @@ public class NSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
     @Override
     public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
         if (rowCount > 0) {
-            double batchSum = Vect.sumDoubleNeumaier(dataAddr, rowCount);
-            if (!Numbers.isFinite(batchSum)) {
-                // Native sumDoubleNeumaier only filters NaN. A single +/-Inf row poisons the
-                // whole batch sum (sum stays Inf or collapses to NaN when +Inf and -Inf cancel).
-                // computeNext skips both NaN and Inf via Numbers.isFinite; re-sum in Java to
-                // match that semantics for the batched path.
-                batchSum = 0;
-                double bc = 0;
-                boolean hasFinite = false;
-                for (int i = 0; i < rowCount; i++) {
-                    final double v = Unsafe.getDouble(dataAddr + ((long) i << 3));
-                    if (Numbers.isFinite(v)) {
-                        final double t = batchSum + v;
-                        if (Math.abs(batchSum) >= Math.abs(v)) {
-                            bc += (batchSum - t) + v;
+            final long cPtr = mapValue.getAddress(valueIndex + 1);
+            final double prevC = mapValue.getDouble(valueIndex + 1);
+            final double batchSum = Vect.sumDoubleNeumaier(dataAddr, rowCount, cPtr);
+            final double batchC = mapValue.getDouble(valueIndex + 1);
+            if (Numbers.isFinite(batchSum)) {
+                final long count = mapValue.getLong(valueIndex + 2);
+                if (count > 0) {
+                    sum(mapValue, batchSum, batchC, mapValue.getDouble(valueIndex), prevC);
+                } else {
+                    mapValue.putDouble(valueIndex, batchSum);
+                }
+                mapValue.putLong(valueIndex + 2, count + 1);
+            } else {
+                mapValue.putDouble(valueIndex + 1, prevC);
+                // The sum is not finite without finite values, and when SIMD lanes overflow where row order does not.
+                for (long p = dataAddr, hi = dataAddr + ((long) rowCount << 3); p < hi; p += Double.BYTES) {
+                    final double value = Unsafe.getDouble(p);
+                    if (Numbers.isFinite(value)) {
+                        if (mapValue.getLong(valueIndex + 2) > 0) {
+                            sum(mapValue, value, 0, mapValue.getDouble(valueIndex), mapValue.getDouble(valueIndex + 1));
+                            mapValue.addLong(valueIndex + 2, 1);
                         } else {
-                            bc += (v - t) + batchSum;
+                            sum(mapValue, value, 0, 0, 0);
+                            mapValue.putLong(valueIndex + 2, 1);
                         }
-                        batchSum = t;
-                        hasFinite = true;
                     }
                 }
-                if (!hasFinite) {
-                    return;
-                }
-                batchSum += bc;
             }
-            final long existingCount = mapValue.getLong(valueIndex + 2);
-            if (existingCount > 0) {
-                sum(mapValue, batchSum, mapValue.getDouble(valueIndex), mapValue.getDouble(valueIndex + 1));
-            } else {
-                mapValue.putDouble(valueIndex, batchSum);
-                mapValue.putDouble(valueIndex + 1, 0.0);
-            }
-            mapValue.addLong(valueIndex + 2, 1);
         }
     }
 
@@ -94,7 +87,7 @@ public class NSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final double value = arg.getDouble(record);
         if (Numbers.isFinite(value)) {
-            sum(mapValue, value, 0, 0);
+            sum(mapValue, value, 0, 0, 0);
             mapValue.putLong(valueIndex + 2, 1);
         } else {
             mapValue.putDouble(valueIndex, 0); // sum = 0
@@ -107,7 +100,7 @@ public class NSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final double value = arg.getDouble(record);
         if (Numbers.isFinite(value)) {
-            sum(mapValue, value, mapValue.getDouble(valueIndex), mapValue.getDouble(valueIndex + 1));
+            sum(mapValue, value, 0, mapValue.getDouble(valueIndex), mapValue.getDouble(valueIndex + 1));
             mapValue.addLong(valueIndex + 2, 1);
         }
     }
@@ -152,18 +145,17 @@ public class NSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
 
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
-        final double srcSum = srcValue.getDouble(valueIndex);
         final long srcCount = srcValue.getLong(valueIndex + 2);
         if (srcCount > 0) {
+            final double srcSum = srcValue.getDouble(valueIndex);
+            final double srcC = srcValue.getDouble(valueIndex + 1);
             final long destCount = destValue.getLong(valueIndex + 2);
             if (destCount > 0) {
-                final double destSum = destValue.getDouble(valueIndex);
-                final double destC = destValue.getDouble(valueIndex + 1);
-                sum(destValue, srcSum, destSum, destC);
+                sum(destValue, srcSum, srcC, destValue.getDouble(valueIndex), destValue.getDouble(valueIndex + 1));
                 destValue.putLong(valueIndex + 2, destCount + srcCount);
             } else {
                 destValue.putDouble(valueIndex, srcSum);
-                destValue.putDouble(valueIndex + 1, srcValue.getDouble(valueIndex + 1));
+                destValue.putDouble(valueIndex + 1, srcC);
                 destValue.putLong(valueIndex + 2, srcCount);
             }
         }
@@ -192,11 +184,16 @@ public class NSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
     }
 
     @Override
+    public boolean isStateSelfContained() {
+        return true;
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         sink.val("nsum(").val(arg).val(')');
     }
 
-    private void sum(MapValue mapValue, double value, double sum, double c) {
+    private void sum(MapValue mapValue, double value, double valueC, double sum, double c) {
         double t = sum + value;
         if (Math.abs(sum) >= Math.abs(value)) {
             c += (sum - t) + value;
@@ -204,6 +201,6 @@ public class NSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
             c += (value - t) + sum;
         }
         mapValue.putDouble(valueIndex, t);
-        mapValue.putDouble(valueIndex + 1, c);
+        mapValue.putDouble(valueIndex + 1, c + valueC);
     }
 }

@@ -152,6 +152,11 @@ public abstract class AbstractStdDevGroupByFunction extends DoubleFunction imple
         return UnaryFunction.super.supportsParallelism();
     }
 
+    @Override
+    public boolean isStateSelfContained() {
+        return true;
+    }
+
     protected void aggregate(MapValue mapValue, double value) {
         double mean = mapValue.getDouble(valueIndex);
         double sum = mapValue.getDouble(valueIndex + 1);

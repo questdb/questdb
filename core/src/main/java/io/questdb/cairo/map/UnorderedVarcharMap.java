@@ -327,62 +327,68 @@ public class UnorderedVarcharMap implements Map, Reopenable {
         }
         UnorderedVarcharMap srcVarcharMap = (UnorderedVarcharMap) srcMap;
 
-        OUTER:
-        for (long srcAddr = srcVarcharMap.memStart; srcAddr < srcVarcharMap.memLimit; srcAddr += entrySize) {
-            long srcHashSizeFlags = Unsafe.getLong(srcAddr);
-            if (srcHashSizeFlags == 0) {
-                continue;
-            }
-
-            long srcPtrWithUnstableFlags = Unsafe.getLong(srcAddr + 8);
-            int srcSize = unpackSize(srcHashSizeFlags);
-
-            // mask is guaranteed to have 32 or fewer bits sets -> we can use the stored 32 LSBs of the
-            // hash since the higher bits will be masked out and won't contribute to destAddr calculation
-            long srcHash = unpackHash(srcHashSizeFlags);
-            long destAddr = getStartAddress(srcHash & mask);
-
-            for (; ; ) {
-                long dstHashSizeFlags = Unsafe.getLong(destAddr);
-                if (dstHashSizeFlags == 0) {
-                    break;
-                } else if (makePackComparable(dstHashSizeFlags) == makePackComparable(srcHashSizeFlags)) {
-                    // lower 32 bits of hash, size, and flags match, let's compare keys.
-                    long dstPtrWithUnstableFlags = Unsafe.getLong(destAddr + 8);
-
-                    if (Vect.memeq(srcPtrWithUnstableFlags & PTR_MASK, dstPtrWithUnstableFlags & PTR_MASK, srcSize)) {
-                        // Match found, merge values.
-                        mergeFunc.merge(
-                                valueAt(destAddr),
-                                srcVarcharMap.valueAt(srcAddr)
-                        );
-                        continue OUTER;
-                    }
+        final long blockSlots = Map.mergeBlockSlots(srcVarcharMap.keyCapacity, srcMapSize, keyCapacity, loadFactor);
+        final long blockCount = srcVarcharMap.keyCapacity / blockSlots;
+        final long blockSize = blockSlots * entrySize;
+        for (long block = 0; block < blockCount; block++) {
+            final long blockStart = srcVarcharMap.memStart + Map.mergeBlock(block, blockCount) * blockSize;
+            OUTER:
+            for (long srcAddr = blockStart, blockLimit = blockStart + blockSize; srcAddr < blockLimit; srcAddr += entrySize) {
+                long srcHashSizeFlags = Unsafe.getLong(srcAddr);
+                if (srcHashSizeFlags == 0) {
+                    continue;
                 }
-                destAddr = getNextAddress(destAddr);
-            }
-            // dst key not found, insert src key-value pair
-            if ((srcPtrWithUnstableFlags & PTR_UNSTABLE_MASK) == 0) {
-                // stable pointer
-                Unsafe.copyMemory(srcAddr, destAddr, entrySize);
-            } else {
-                // unstable pointer, copy key to our memory
-                long arenaPtr = allocator.malloc(srcSize);
-                Unsafe.copyMemory(srcPtrWithUnstableFlags & PTR_MASK, arenaPtr, srcSize);
-                long arenaPtrWithUnstableFlags = arenaPtr | PTR_UNSTABLE_MASK;
-                Unsafe.putLong(destAddr, srcHashSizeFlags);
-                Unsafe.putLong(destAddr + 8, arenaPtrWithUnstableFlags);
 
-                // copy value
-                Unsafe.copyMemory(srcAddr + KEY_SIZE, destAddr + KEY_SIZE, entrySize - KEY_SIZE);
-            }
-            size++;
-            if (--free == 0) {
-                try {
-                    rehash();
-                } catch (CairoException e) {
-                    free = 1;
-                    throw e;
+                long srcPtrWithUnstableFlags = Unsafe.getLong(srcAddr + 8);
+                int srcSize = unpackSize(srcHashSizeFlags);
+
+                // mask is guaranteed to have 32 or fewer bits sets -> we can use the stored 32 LSBs of the
+                // hash since the higher bits will be masked out and won't contribute to destAddr calculation
+                long srcHash = unpackHash(srcHashSizeFlags);
+                long destAddr = getStartAddress(srcHash & mask);
+
+                for (; ; ) {
+                    long dstHashSizeFlags = Unsafe.getLong(destAddr);
+                    if (dstHashSizeFlags == 0) {
+                        break;
+                    } else if (makePackComparable(dstHashSizeFlags) == makePackComparable(srcHashSizeFlags)) {
+                        // lower 32 bits of hash, size, and flags match, let's compare keys.
+                        long dstPtrWithUnstableFlags = Unsafe.getLong(destAddr + 8);
+
+                        if (Vect.memeq(srcPtrWithUnstableFlags & PTR_MASK, dstPtrWithUnstableFlags & PTR_MASK, srcSize)) {
+                            // Match found, merge values.
+                            mergeFunc.merge(
+                                    valueAt(destAddr),
+                                    srcVarcharMap.valueAt(srcAddr)
+                            );
+                            continue OUTER;
+                        }
+                    }
+                    destAddr = getNextAddress(destAddr);
+                }
+                // dst key not found, insert src key-value pair
+                if ((srcPtrWithUnstableFlags & PTR_UNSTABLE_MASK) == 0) {
+                    // stable pointer
+                    Unsafe.copyMemory(srcAddr, destAddr, entrySize);
+                } else {
+                    // unstable pointer, copy key to our memory
+                    long arenaPtr = allocator.malloc(srcSize);
+                    Unsafe.copyMemory(srcPtrWithUnstableFlags & PTR_MASK, arenaPtr, srcSize);
+                    long arenaPtrWithUnstableFlags = arenaPtr | PTR_UNSTABLE_MASK;
+                    Unsafe.putLong(destAddr, srcHashSizeFlags);
+                    Unsafe.putLong(destAddr + 8, arenaPtrWithUnstableFlags);
+
+                    // copy value
+                    Unsafe.copyMemory(srcAddr + KEY_SIZE, destAddr + KEY_SIZE, entrySize - KEY_SIZE);
+                }
+                size++;
+                if (--free == 0) {
+                    try {
+                        rehash();
+                    } catch (CairoException e) {
+                        free = 1;
+                        throw e;
+                    }
                 }
             }
         }

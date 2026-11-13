@@ -137,6 +137,60 @@ public class GroupByAllocatorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testChunksGrowToDefaultSize() throws Exception {
+        final long defaultChunkSize = 32 * 1024;
+        final CairoConfiguration config = new DefaultCairoConfiguration(root) {
+            @Override
+            public long getGroupByAllocatorDefaultChunkSize() {
+                return defaultChunkSize;
+            }
+        };
+        assertMemoryLeak(() -> {
+            try (GroupByAllocator allocator = createAllocator(config)) {
+                allocator.malloc(16);
+                Assert.assertEquals(4 * 1024, allocator.allocated());
+                allocator.malloc(4 * 1024);
+                Assert.assertEquals((4 + 8) * 1024, allocator.allocated());
+                allocator.malloc(8 * 1024);
+                Assert.assertEquals((4 + 8 + 16) * 1024, allocator.allocated());
+                allocator.malloc(16 * 1024);
+                Assert.assertEquals((4 + 8 + 16 + 32) * 1024, allocator.allocated());
+                allocator.malloc(32 * 1024);
+                Assert.assertEquals((4 + 8 + 16 + 32 + 32) * 1024, allocator.allocated());
+
+                allocator.clear();
+                final long large = 3 * defaultChunkSize;
+                allocator.malloc(large);
+                Assert.assertEquals(large, allocator.allocated());
+
+                allocator.clear();
+                Assert.assertEquals(0, allocator.allocated());
+                allocator.malloc(16);
+                Assert.assertEquals(4 * 1024, allocator.allocated());
+            }
+        });
+    }
+
+    @Test
+    public void testChunksStayAtDefaultSizeBelowInitialSize() throws Exception {
+        final long defaultChunkSize = 64;
+        final CairoConfiguration config = new DefaultCairoConfiguration(root) {
+            @Override
+            public long getGroupByAllocatorDefaultChunkSize() {
+                return defaultChunkSize;
+            }
+        };
+        assertMemoryLeak(() -> {
+            try (GroupByAllocator allocator = createAllocator(config)) {
+                allocator.malloc(16);
+                Assert.assertEquals(defaultChunkSize, allocator.allocated());
+                allocator.malloc(defaultChunkSize);
+                Assert.assertEquals(2 * defaultChunkSize, allocator.allocated());
+            }
+        });
+    }
+
+    @Test
     public void testFree() throws Exception {
         final int N = 100;
         final int minChunkSize = 64;

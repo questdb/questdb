@@ -26,24 +26,35 @@ package io.questdb.griffin.engine.groupby;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.async.AsyncQueryProgressState;
 import io.questdb.cairo.sql.async.QueryParallelFiberDispatcher;
-import io.questdb.griffin.engine.table.GroupByShardingContext;
+import io.questdb.cairo.sql.async.QueryParallelOwnerLoop;
+import io.questdb.cairo.sql.async.WorkStealingStrategy;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.CountDownLatchSPI;
+import io.questdb.mp.MCSequence;
+import io.questdb.mp.MPSequence;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Sequence;
+import io.questdb.mp.continuation.CancellationBinding;
+import io.questdb.mp.continuation.FiberCancellationSignal;
+import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.Misc;
 import io.questdb.tasks.GroupByMergeShardTask;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static io.questdb.griffin.engine.table.GroupByMapFragment.NUM_SHARDS;
+
 /**
  * Handles parallel merge map shard tasks.
  *
- * @see GroupByShardingContext
+ * @see GroupByShardMerger
  */
 public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeShardTask> {
     private static final Log LOG = LogFactory.getLog(GroupByMergeShardJob.class);
@@ -54,24 +65,125 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
         this.messageBus = messageBus;
     }
 
-    public static void run(
-            int carrierId,
-            GroupByMergeShardTask task,
-            Sequence subSeq,
-            long cursor,
-            GroupByShardingContext stealingCtx
+    /**
+     * Publishes one task per shard, merges a shard on the owner thread when the queue is full or the owner may
+     * steal, and returns once every shard is merged or the merge is cancelled.
+     */
+    public static void mergeShards(
+            GroupByShardMerger merger,
+            QueryParallelOwnerLoop ownerLoop,
+            MessageBus messageBus,
+            WorkStealingStrategy workStealingStrategy,
+            SqlExecutionCircuitBreaker circuitBreaker,
+            PostAggregationCircuitBreaker postAggregationCircuitBreaker,
+            SOUnboundedCountDownLatch postAggregationDoneLatch,
+            AtomicInteger postAggregationStartedCounter,
+            boolean isOwnerHelping,
+            int taskCount
     ) {
-        final PostAggregationCircuitBreaker circuitBreaker = task.getCircuitBreaker();
-        final AtomicInteger startedCounter = task.getStartedCounter();
-        final CountDownLatchSPI doneLatch = task.getDoneLatch();
-        final GroupByShardingContext ctx = task.getShardingContext();
-        final int shardIndex = task.getShardIndex();
+        postAggregationCircuitBreaker.reset();
+        postAggregationStartedCounter.set(0);
+        postAggregationDoneLatch.reset();
 
-        task.clear();
-        subSeq.done(cursor);
+        final RingQueue<GroupByMergeShardTask> queue = messageBus.getGroupByMergeShardQueue();
+        final MPSequence pubSeq = messageBus.getGroupByMergeShardPubSeq();
+        final MCSequence subSeq = messageBus.getGroupByMergeShardSubSeq();
+        final WorkStealingStrategy strategy = workStealingStrategy.of(postAggregationStartedCounter);
+        final QueryParallelFiberDispatcher dispatcher = messageBus.getQueryParallelFiberDispatcher();
+        ownerLoop.of(dispatcher, circuitBreaker, merger.getProgressState());
+        ownerLoop.tryAcquirePublication();
 
-        final boolean owner = stealingCtx != null && stealingCtx == ctx;
-        runDetached(carrierId, circuitBreaker, startedCounter, doneLatch, ctx, shardIndex, owner);
+        if (!ownerLoop.hasPublication()) {
+            for (int shardIndex = 0; shardIndex < taskCount; shardIndex++) {
+                ownerLoop.checkBeforeHelping();
+                merger.mergeShard(-1, shardIndex);
+            }
+            return;
+        }
+
+        int queuedCount = 0;
+        int ownCount = 0;
+        int reclaimed = 0;
+        int total = 0;
+        int mergedCount = 0; // positive completed-task count; the latch counts down from zero
+
+        try {
+            for (int shardIndex = 0; shardIndex < taskCount; shardIndex++) {
+                while (true) {
+                    ownerLoop.observeProgress();
+                    long cursor = pubSeq.next();
+                    if (cursor < 0) {
+                        mergedCount = -postAggregationDoneLatch.getCount();
+                        if (mergedCount == queuedCount || strategy.shouldSteal(mergedCount)) {
+                            ownerLoop.checkBeforeHelping();
+                            merger.mergeShard(-1, shardIndex);
+                            ownCount++;
+                            total++;
+                            mergedCount = -postAggregationDoneLatch.getCount();
+                            break;
+                        }
+                        if (!ownerLoop.awaitProgress()) {
+                            ownerLoop.pause();
+                        }
+                    } else {
+                        queue.get(cursor).of(
+                                postAggregationCircuitBreaker,
+                                postAggregationStartedCounter,
+                                postAggregationDoneLatch,
+                                merger,
+                                shardIndex
+                        );
+                        pubSeq.done(cursor);
+                        queuedCount++;
+                        total++;
+                        break;
+                    }
+                }
+            }
+        } catch (Throwable th) {
+            postAggregationCircuitBreaker.cancel();
+            throw th;
+        } finally {
+            try {
+                ownerLoop.releasePublication();
+            } finally {
+                while (true) {
+                    ownerLoop.observeProgress();
+                    if (postAggregationDoneLatch.done(queuedCount)) {
+                        break;
+                    }
+                    final boolean isOwnerTripped = circuitBreaker.checkIfTrippedOrYield();
+                    if (isOwnerTripped) {
+                        postAggregationCircuitBreaker.cancel();
+                    }
+
+                    if (((isOwnerHelping && !isOwnerTripped) || !ownerLoop.isOwnerParkable()) && strategy.shouldSteal(mergedCount)) {
+                        long cursor = subSeq.next();
+                        if (cursor > -1) {
+                            GroupByMergeShardTask task = queue.get(cursor);
+                            // run() releases the slot
+                            if (dispatcher != null) {
+                                run(-1, task, subSeq, cursor, merger, dispatcher);
+                            } else {
+                                run(-1, task, subSeq, cursor, merger);
+                            }
+                            reclaimed++;
+                        } else if (!ownerLoop.awaitProgressWhileDraining(isOwnerTripped)) {
+                            ownerLoop.pause();
+                        }
+                    } else if (!ownerLoop.awaitProgressWhileDraining(isOwnerTripped)) {
+                        ownerLoop.pause();
+                    }
+                    mergedCount = -postAggregationDoneLatch.getCount();
+                }
+            }
+        }
+
+        LOG.debug().$("merge shards done [total=").$(total)
+                .$(", ownCount=").$(ownCount)
+                .$(", reclaimed=").$(reclaimed)
+                .$(", queuedCount=").$(queuedCount)
+                .I$();
     }
 
     public static void run(
@@ -79,16 +191,36 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
             GroupByMergeShardTask task,
             Sequence subSeq,
             long cursor,
-            GroupByShardingContext stealingCtx,
+            GroupByShardMerger stealingMerger
+    ) {
+        final PostAggregationCircuitBreaker circuitBreaker = task.getCircuitBreaker();
+        final AtomicInteger startedCounter = task.getStartedCounter();
+        final CountDownLatchSPI doneLatch = task.getDoneLatch();
+        final GroupByShardMerger merger = task.getMerger();
+        final int shardIndex = task.getShardIndex();
+
+        task.clear();
+        subSeq.done(cursor);
+
+        final boolean owner = stealingMerger != null && stealingMerger == merger;
+        runDetached(carrierId, circuitBreaker, startedCounter, doneLatch, merger, shardIndex, owner);
+    }
+
+    public static void run(
+            int carrierId,
+            GroupByMergeShardTask task,
+            Sequence subSeq,
+            long cursor,
+            GroupByShardMerger stealingMerger,
             @NotNull QueryParallelFiberDispatcher dispatcher
     ) {
         final PostAggregationCircuitBreaker circuitBreaker = task.getCircuitBreaker();
         final AtomicInteger startedCounter = task.getStartedCounter();
         final CountDownLatchSPI doneLatch = task.getDoneLatch();
-        final GroupByShardingContext ctx = task.getShardingContext();
+        final GroupByShardMerger merger = task.getMerger();
         final int shardIndex = task.getShardIndex();
-        final AsyncQueryProgressState ownerProgress = ctx.getProgressState();
-        final boolean isOwner = stealingCtx != null && stealingCtx == ctx;
+        final AsyncQueryProgressState ownerProgress = merger.getProgressState();
+        final boolean isOwner = stealingMerger != null && stealingMerger == merger;
 
         task.clear();
         Throwable failure = null;
@@ -97,10 +229,21 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
         } catch (Throwable th) {
             failure = th;
         }
+        // As on a worker fiber, only the task's own breaker may stop its wait for a slot.
+        final SuspensionScope.CarrierScope scope = SuspensionScope.scope();
+        final FiberCancellationSignal ownerSignal = SuspensionScope.getCancellationSignal(scope);
+        final long ownerSignalGeneration = SuspensionScope.getCancellationSignalGeneration(scope);
+        final FiberCancellationSignal ownerSupplementalSignal = SuspensionScope.getSupplementalCancellationSignal(scope);
+        final long ownerSupplementalSignalGeneration = SuspensionScope.getSupplementalCancellationSignalGeneration(scope);
+        SuspensionScope.enterCancellationSignal(null, CancellationBinding.NO_GENERATION);
+        SuspensionScope.enterSupplementalCancellationSignal(null, CancellationBinding.NO_GENERATION);
         try {
-            runDetached(carrierId, circuitBreaker, startedCounter, doneLatch, ctx, shardIndex, isOwner);
+            runDetached(carrierId, circuitBreaker, startedCounter, doneLatch, merger, shardIndex, isOwner);
         } catch (Throwable th) {
             failure = Misc.foldCleanupFailure(failure, th);
+        } finally {
+            SuspensionScope.restoreCancellationSignal(ownerSignal, ownerSignalGeneration);
+            SuspensionScope.enterSupplementalCancellationSignal(ownerSupplementalSignal, ownerSupplementalSignalGeneration);
         }
         try {
             dispatcher.signalOwnerProgress(ownerProgress);
@@ -115,19 +258,19 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
             PostAggregationCircuitBreaker circuitBreaker,
             AtomicInteger startedCounter,
             CountDownLatchSPI doneLatch,
-            GroupByShardingContext ctx,
+            GroupByShardMerger merger,
             int shardIndex,
             boolean owner
     ) {
         startedCounter.incrementAndGet();
         try {
-            final int slotId = ctx.maybeAcquire(carrierId, owner, circuitBreaker);
+            final int slotId = merger.maybeAcquire(carrierId, owner, circuitBreaker);
             try {
                 if (!circuitBreaker.checkIfTrippedOrYield()) {
-                    ctx.mergeShard(slotId, shardIndex);
+                    merger.mergeShard(slotId, shardIndex);
                 }
             } finally {
-                ctx.release(slotId);
+                merger.release(slotId);
             }
         } catch (Throwable th) {
             Throwable failure = null;

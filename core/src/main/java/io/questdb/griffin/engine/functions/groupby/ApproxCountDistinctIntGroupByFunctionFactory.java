@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
@@ -62,6 +63,8 @@ public class ApproxCountDistinctIntGroupByFunctionFactory implements FunctionFac
             throw SqlException.$(position, "precision must be between 4 and 18");
         }
 
-        return new ApproxCountDistinctIntGroupByFunction(exprFunc, precision);
+        return exprFunc.getType() == ColumnType.BYTE
+                ? new CountDistinctByteGroupByFunction(exprFunc, "approx_count_distinct")
+                : new ApproxCountDistinctIntGroupByFunction(exprFunc, precision);
     }
 }

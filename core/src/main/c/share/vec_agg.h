@@ -100,6 +100,41 @@ JNIEXPORT jdouble JNICALL Java_io_questdb_std_Vect_ ## func(JNIEnv *env, jclass 
 \
 }
 
+typedef double DoubleCompVecFuncType(double *, int64_t, double *);
+
+#define DOUBLE_COMP_DISPATCHER(func) \
+\
+DoubleCompVecFuncType F_SSE2(func), F_SSE41(func), F_AVX2(func), F_AVX512(func), F_DISPATCH(func); \
+\
+DoubleCompVecFuncType *POINTER_NAME(func) = &func ## _dispatch; \
+\
+double F_DISPATCH(func) (double *d, int64_t count, double *pC) { \
+    const int iset = instrset_detect();  \
+    if (iset >= 10) { \
+        POINTER_NAME(func) = &F_AVX512(func); \
+    } else if (iset >= 8) { \
+        POINTER_NAME(func) = &F_AVX2(func); \
+    } else if (iset >= 5) { \
+        POINTER_NAME(func) = &F_SSE41(func); \
+    } else if (iset >= 2) { \
+        POINTER_NAME(func) = &F_SSE2(func); \
+    } else { \
+        POINTER_NAME(func) = &F_VANILLA(func); \
+    }\
+    return (*POINTER_NAME(func))(d, count, pC); \
+} \
+\
+inline double func(double *d, int64_t count, double *pC) { \
+    return (*POINTER_NAME(func))(d, count, pC); \
+}\
+\
+extern "C" { \
+JNIEXPORT jdouble JNICALL Java_io_questdb_std_Vect_ ## func(JNIEnv *env, jclass cl, jlong pDouble, jlong size, jlong pC) { \
+    return func((double *) pDouble, size, (double *) pC); \
+}\
+\
+}
+
 typedef int64_t DoubleLongVecFuncType(double *, int64_t);
 
 #define DOUBLE_LONG_DISPATCHER(func) \

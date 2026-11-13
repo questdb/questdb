@@ -152,7 +152,7 @@ public class VectFuzzTest {
                                 Assert.assertTrue("double sum, count: 0", Double.isNaN(Vect.sumDouble(ptr, 0)));
                                 Assert.assertTrue("double sum acc, count: 0", Double.isNaN(Vect.sumDoubleAcc(ptr, 0, countPtr)));
                                 Assert.assertTrue("double Kahan sum, count: 0", Double.isNaN(Vect.sumDoubleKahan(ptr, 0)));
-                                Assert.assertTrue("double Neumaier sum, count: 0", Double.isNaN(Vect.sumDoubleNeumaier(ptr, 0)));
+                                Assert.assertTrue("double Neumaier sum, count: 0", Double.isNaN(Vect.sumDoubleNeumaier(ptr, 0, countPtr)));
                                 Assert.assertTrue("double min, count: 0", Double.isNaN(Vect.minDouble(ptr, 0)));
                                 Assert.assertTrue("double max, count: 0", Double.isNaN(Vect.maxDouble(ptr, 0)));
                                 Assert.assertEquals("double count, count: 0", 0, Vect.countDouble(ptr, 0));
@@ -160,7 +160,7 @@ public class VectFuzzTest {
                                 Assert.assertEquals("double sum, count: " + count, 0.0, Vect.sumDouble(ptr, count), 0.001);
                                 Assert.assertEquals("double sum acc, count: " + count, 0.0, Vect.sumDoubleAcc(ptr, count, countPtr), 0.001);
                                 Assert.assertEquals("double Kahan sum, count: " + count, 0.0, Vect.sumDoubleKahan(ptr, count), 0.001);
-                                Assert.assertEquals("double Neumaier sum, count: " + count, 0.0, Vect.sumDoubleNeumaier(ptr, count), 0.001);
+                                Assert.assertEquals("double Neumaier sum, count: " + count, 0.0, Vect.sumDoubleNeumaier(ptr, count, countPtr), 0.001);
                                 Assert.assertEquals("double min, count: " + count, 0.0, Vect.minDouble(ptr, count), 0.001);
                                 Assert.assertEquals("double max, count: " + count, 0.0, Vect.maxDouble(ptr, count), 0.001);
                                 Assert.assertEquals("double count, count: " + count, count, Vect.countDouble(ptr, count));
@@ -182,6 +182,68 @@ public class VectFuzzTest {
                         Unsafe.free(countPtr, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
                     }
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testCompensatedSumsSkipInfinity() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final int maxCount = 40;
+            final long size = maxCount * (long) Double.BYTES;
+            final long ptr = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+            final long cPtr = Unsafe.malloc(Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+            final double[] notFinite = {Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY, Double.NaN};
+            try {
+                for (int count = 1; count <= maxCount; count++) {
+                    double sum = Double.NaN;
+                    for (int i = 0; i < count; i++) {
+                        final boolean isFinite = i % 4 == 3;
+                        final double value = isFinite ? i : notFinite[i % 4];
+                        Unsafe.putDouble(ptr + i * (long) Double.BYTES, value);
+                        if (isFinite) {
+                            sum = Double.isNaN(sum) ? value : sum + value;
+                        }
+                    }
+                    Assert.assertEquals("Kahan, count: " + count, sum, Vect.sumDoubleKahan(ptr, count), 0);
+                    final double neumaier = Vect.sumDoubleNeumaier(ptr, count, cPtr);
+                    Assert.assertEquals("Neumaier, count: " + count, sum, neumaier + Unsafe.getDouble(cPtr), 0);
+                }
+            } finally {
+                Unsafe.free(ptr, size, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(cPtr, Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testMinMaxDoubleSkipInfinity() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final int maxCount = 40;
+            final long size = maxCount * (long) Double.BYTES;
+            final long ptr = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+            final double[] notFinite = {Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY, Double.NaN};
+            try {
+                // The lengths cover the SIMD body and the scalar tail, and the signs put each extreme in either.
+                for (int sign : new int[]{1, -1}) {
+                    for (int count = 1; count <= maxCount; count++) {
+                        double min = Double.NaN;
+                        double max = Double.NaN;
+                        for (int i = 0; i < count; i++) {
+                            final boolean isFinite = i % 4 == 3;
+                            final double value = isFinite ? sign * i : notFinite[i % 4];
+                            Unsafe.putDouble(ptr + i * (long) Double.BYTES, value);
+                            if (isFinite) {
+                                min = Double.isNaN(min) || value < min ? value : min;
+                                max = Double.isNaN(max) || value > max ? value : max;
+                            }
+                        }
+                        Assert.assertEquals("min, count: " + count, min, Vect.minDouble(ptr, count), 0);
+                        Assert.assertEquals("max, count: " + count, max, Vect.maxDouble(ptr, count), 0);
+                    }
+                }
+            } finally {
+                Unsafe.free(ptr, size, MemoryTag.NATIVE_DEFAULT);
             }
         });
     }

@@ -53,7 +53,7 @@ public class MapFactory {
     /**
      * Creates a Map pre-allocated to a small capacity to be used in SAMPLE BY, GROUP BY queries, but not only.
      */
-    public static Map createOrderedMap(
+    public static OrderedMap createOrderedMap(
             CairoConfiguration configuration,
             @Transient @NotNull ColumnTypes keyTypes
     ) {
@@ -71,7 +71,7 @@ public class MapFactory {
     /**
      * Creates a Map pre-allocated to a small capacity to be used in SAMPLE BY, GROUP BY queries, but not only.
      */
-    public static Map createOrderedMap(
+    public static OrderedMap createOrderedMap(
             CairoConfiguration configuration,
             @Transient @NotNull ColumnTypes keyTypes,
             @Transient @Nullable ColumnTypes valueTypes
@@ -89,7 +89,7 @@ public class MapFactory {
      *                   {@code MemoryTracker} before any allocation happens, so malloc and free are
      *                   charged symmetrically on the per-query counter from the first cursor.
      */
-    public static Map createOrderedMap(
+    public static OrderedMap createOrderedMap(
             CairoConfiguration configuration,
             @Transient @NotNull ColumnTypes keyTypes,
             @Transient @Nullable ColumnTypes valueTypes,

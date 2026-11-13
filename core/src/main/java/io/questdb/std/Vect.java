@@ -571,9 +571,9 @@ public final class Vect {
             long tgtAuxAdd
     );
 
-    public static native void sortEncodedEntries(long addr, long count, int keyLongs, long parallelThreshold);
+    public static native void sortEncodedEntries(long addr, long count, int keyLongs, long parallelThreshold, long scratchAddr, long scratchSize);
 
-    public static native void sortEncodedVarEntries(long addr, long count, long heapAddr, long parallelThreshold);
+    public static native void sortEncodedVarEntries(long addr, long count, long heapAddr, long parallelThreshold, long scratchAddr, long scratchSize);
 
     public static native void sortLongIndexAscInPlace(long pLongData, long count);
 
@@ -605,7 +605,7 @@ public final class Vect {
 
     public static native double sumDoubleKahan(long pDouble, long count);
 
-    public static native double sumDoubleNeumaier(long pDouble, long count);
+    public static native double sumDoubleNeumaier(long pDouble, long count, long pC);
 
     public static native long sumInt(long pInt, long count);
 

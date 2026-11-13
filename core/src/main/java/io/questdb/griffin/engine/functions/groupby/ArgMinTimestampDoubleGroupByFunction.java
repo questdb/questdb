@@ -144,4 +144,9 @@ public class ArgMinTimestampDoubleGroupByFunction extends TimestampFunction impl
     public boolean supportsParallelism() {
         return BinaryFunction.super.supportsParallelism();
     }
+
+    @Override
+    public boolean isStateSelfContained() {
+        return true;
+    }
 }

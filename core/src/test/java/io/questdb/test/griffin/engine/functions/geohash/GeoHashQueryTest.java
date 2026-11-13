@@ -477,7 +477,6 @@ public class GeoHashQueryTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("ts")
                     .noRandomAccess()
-                    .expectSize()
                     .returns("""
                             geo4\tgeo1\tx\tts\tgeo41\tgeo11\tx1\tts1
                             ques\tq\t1\t1970-01-01T00:00:00.000000Z\t\t\tnull\t

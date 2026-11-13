@@ -56,6 +56,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -281,6 +282,16 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         return sqlExecutionContext.getCircuitBreaker();
     }
 
+    @TestOnly
+    public int getDispatchedFrameCount() {
+        return dispatchStartFrameIndex;
+    }
+
+    @TestOnly
+    public int getReducedFrameCount() {
+        return reduceFinishedCounter.get();
+    }
+
     public int getFrameCount() {
         return frameCount;
     }
@@ -355,6 +366,36 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
 
     public long next() {
         return next(Integer.MAX_VALUE, false);
+    }
+
+    /**
+     * Publishes frames up to the limit without stealing, so that the workers keep reducing while the
+     * caller works through the frames it collected.
+     */
+    public void dispatchAhead(int dispatchLimit) {
+        final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
+        if (!isActive() || (dispatcher != null && !dispatcher.tryAcquirePublication())) {
+            return;
+        }
+        try {
+            final MPSequence reducePubSeq = messageBus.getPageFrameReducePubSeq(shard);
+            final int collectedFrameCount = collectedFrameIndex + 1;
+            while (dispatchStartFrameIndex < frameCount && dispatchStartFrameIndex - collectedFrameCount < dispatchLimit) {
+                final long cursor = reducePubSeq.next();
+                if (cursor == -1) {
+                    return;
+                }
+                if (cursor > -1) {
+                    reduceQueue.get(cursor).of(this, dispatchStartFrameIndex, false);
+                    reducePubSeq.done(cursor);
+                    dispatchStartFrameIndex++;
+                }
+            }
+        } finally {
+            if (dispatcher != null) {
+                dispatcher.releasePublication();
+            }
+        }
     }
 
     /**

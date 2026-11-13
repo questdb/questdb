@@ -4649,7 +4649,7 @@ public class CastTest extends AbstractCairoTest {
                     "order by ts")
                     .noLeakCheck()
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .returns("""
                             ts\ti\tsh\tb\td\tf\tl\tstr\tsym\tbool\tbin\tdat\tl256\tc\tu\tip\tv\tcount
                             1970-01-01T00:00:00.000000Z\t-1148479920\t24814\t27\t0.12966659791573354\t0.2845577597618103\t-7611843578141082998\tYR\tA\tfalse\t00000000 f1 59 88 c4 91 3b 72 db f3 04 1b c7 88 de a0 79
@@ -5635,7 +5635,6 @@ public class CastTest extends AbstractCairoTest {
                 "ORDER BY 1")
                 .ddl("create table trades (timestamp timestamp, symbol symbol, price double) timestamp(timestamp)")
                 .mutateWith("insert into trades select x::timestamp, x::string, x from long_sequence(10)")
-                .expectSize()
                 .returns("timestamp\tID\tEvt1\n", """
                         timestamp\tID\tEvt1
                         1\t1\t1
@@ -5724,11 +5723,10 @@ public class CastTest extends AbstractCairoTest {
     public void testSymbolColumnToSymbolInSampleBy() throws Exception {
         assertQuery("SELECT timestamp, symbol::SYMBOL AS \"ID\", round(avg(price))::LONG AS \"Evt1\" " +
                 "FROM 'trades'" +
-                "SAMPLE BY 1h")
+                "SAMPLE BY 1h ORDER BY timestamp, \"Evt1\"")
                 .ddl("create table trades (timestamp timestamp, symbol symbol, price double) timestamp(timestamp)")
                 .timestamp("timestamp")
                 .mutateWith("insert into trades select x::timestamp, x::string, x from long_sequence(10)")
-                .expectSize()
                 .returns("timestamp\tID\tEvt1\n", """
                         timestamp\tID\tEvt1
                         1970-01-01T00:00:00.000000Z\t1\t1

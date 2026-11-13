@@ -486,6 +486,8 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
         return false;
     }
 
+    boolean isStreamGroupByEnabled();
+
     boolean isTimestampRequired();
 
     default boolean isUninterruptible() {
@@ -681,6 +683,8 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
             throw new UnsupportedOperationException("table-valued functions in views require a view-aware execution context");
         }
     }
+
+    void setStreamGroupByEnabled(boolean isEnabled);
 
     // For a materialized view refresh, the compiler reports whether the SELECT it has just parsed has a wildcard
     // in its top-level select list, before the optimiser expands it. The refresh compares the query's column

@@ -490,7 +490,7 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
             String query = "SELECT distinct time FROM tango ORDER BY time";
             assertQuery(query)
                     .timestamp("time")
-                    .expectSize()
+                    .noRandomAccess()
                     .returns(expected);
         });
     }
@@ -819,7 +819,7 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
                     "FROM high_freq_data sample by 100n fill(none)";
             assertQuery(query)
                     .timestamp("nano_ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .returns(expected);
         });
     }

@@ -105,6 +105,11 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean preservesTimestampOrder() {
+            return arg.getType() == getType() && (ColumnType.isTimestampMicro(getType()) || symbol == 'n');
+        }
+
+        @Override
         public int invertTimestampInterval(Interval io) {
             if (fixedSize <= 0) {
                 return NONE;

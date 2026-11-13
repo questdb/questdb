@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.map;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
@@ -1352,6 +1353,21 @@ public class OrderedMapTest extends AbstractCairoTest {
 
                 Assert.assertEquals(N, map.size());
             }
+        });
+    }
+
+    @Test
+    public void testGroupByNullKeyWithSmallMapPage() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_SMALL_MAP_PAGE_SIZE, 13);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT timestamp_sequence('2024-01-01', 1_800_000_000L) ts FROM long_sequence(78)) TIMESTAMP(ts) PARTITION BY DAY");
+            assertQuery("SELECT null e, count() c FROM t GROUP BY e")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            e\tc
+                            null\t78
+                            """);
         });
     }
 
@@ -3189,7 +3205,7 @@ public class OrderedMapTest extends AbstractCairoTest {
             model.wal();
             AbstractCairoTest.create(model);
 
-            sink.put("SELECT t, ");
+            sink.put("SELECT timestamp_floor('1h', t + 1) t, ");
             for (int i = 0; i < columnCount; i++) {
                 sink.put("max(f").put(i).put("),");
                 sink.put("min(f").put(i).put("),");
@@ -3198,7 +3214,7 @@ public class OrderedMapTest extends AbstractCairoTest {
                     sink.put(',');
                 }
             }
-            sink.put(" FROM testUsefulErrorMessageWhenPageSizeExceeded SAMPLE BY 1h");
+            sink.put(" FROM testUsefulErrorMessageWhenPageSizeExceeded");
 
             try {
                 assertException(sink, 0, "page size is too small to fit a single key, consider increasing `cairo.sql.small.map.page.size` [expected=38408, actual=32768]");

@@ -152,7 +152,7 @@ public class BoolAndGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "from long_sequence(30)" +
                         ") timestamp(k) partition by HOUR")
                 .timestamp("k")
-                .expectSize()
+                .noRandomAccess()
                 .returns("""
                         k\tbool_and
                         1970-01-01T00:00:00.000000Z\ttrue
@@ -170,7 +170,7 @@ public class BoolAndGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "from long_sequence(30)" +
                         ") timestamp(k) partition by HOUR")
                 .timestamp("k")
-                .expectSize()
+                .noRandomAccess()
                 .returns("""
                         k\tbool_and
                         1970-01-01T00:00:00.000000Z\tfalse

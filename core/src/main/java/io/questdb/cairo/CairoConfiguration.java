@@ -1684,6 +1684,8 @@ public interface CairoConfiguration {
 
     boolean isSqlParquetRowGroupPruningEnabled();
 
+    boolean isSqlStreamGroupByEnabled();
+
     boolean isSqlWindowCachedLightEnabled();
 
     /**

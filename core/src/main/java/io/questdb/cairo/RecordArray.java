@@ -29,8 +29,12 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
+import io.questdb.std.Misc;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -50,15 +54,7 @@ public class RecordArray extends RecordChain {
     private long size = 0L;
 
     public RecordArray(@NotNull ColumnTypes columnTypes, RecordSink recordSink, long pageSize, int maxPages) {
-        super(columnTypes, recordSink, pageSize, maxPages);
-        try {
-            this.auxMem = varOffset > 0
-                    ? Vm.getCARWInstance(pageSize >> 4, maxPages, MemoryTag.NATIVE_RECORD_CHAIN)
-                    : null;
-        } catch (Throwable th) {
-            super.close();
-            throw th;
-        }
+        this(columnTypes, recordSink, pageSize, maxPages, null);
     }
 
     public RecordArray(
@@ -71,12 +67,17 @@ public class RecordArray extends RecordChain {
         super(columnTypes, recordSink, pageSize, maxPages, maxPagesConfigKey);
         try {
             this.auxMem = varOffset > 0
-                    ? Vm.getCARWInstance(pageSize >> 4, maxPages, MemoryTag.NATIVE_RECORD_CHAIN, maxPagesConfigKey)
+                    ? Vm.getCARWInstance(Math.max(pageSize >> 4, Long.BYTES), maxPages, MemoryTag.NATIVE_RECORD_CHAIN, maxPagesConfigKey)
                     : null;
         } catch (Throwable th) {
             super.close();
             throw th;
         }
+    }
+
+    protected RecordArray(@NotNull ColumnTypes columnTypes, RecordSink recordSink, MemoryCARW mem, MemoryARW auxMem) {
+        super(columnTypes, recordSink, mem);
+        this.auxMem = varOffset > 0 ? auxMem : Misc.free(auxMem);
     }
 
     public long beginRecord() {
@@ -148,8 +149,41 @@ public class RecordArray extends RecordChain {
         putArray(rowToOffset(rowIndex), columnIndex, value);
     }
 
+    /**
+     * Appends a row of an array with the same columns, byte for byte. A stored row passing through the generated sink
+     * would make the sink's reads polymorphic, which stops the compiler inlining them for the base record.
+     */
+    public void putRow(RecordArray source, long rowIndex) {
+        final long sourceOffset = source.rowToOffset(rowIndex);
+        final long sourceEnd = rowIndex + 1 < source.size ? source.rowToOffset(rowIndex + 1) : source.varAppendOffset;
+        final long length = sourceEnd - sourceOffset;
+        final long offset = beginRecord();
+        final long address = mem.appendAddressFor(offset, length);
+        Vect.memcpy(address, source.addressOf(sourceOffset), length);
+        for (long p = address, hi = address + varOffset; p < hi; p += Long.BYTES) {
+            final long varAddress = Unsafe.getLong(p);
+            if (varAddress != TableUtils.NULL_LEN) {
+                Unsafe.putLong(p, varAddress - sourceOffset + offset);
+            }
+        }
+        varAppendOffset = offset + length;
+    }
+
     public void recordAtRowIndex(Record record, long rowIndex) {
         recordAt(record, rowToOffset(rowIndex));
+    }
+
+    /**
+     * Empties the array like {@link #clear()}, but keeps its memory, so a caller
+     * that refills the array repeatedly does not reallocate it each time.
+     */
+    public void reset() {
+        varAppendOffset = 0L;
+        size = 0L;
+        nextRecordIndex = 0L;
+        if (auxMem != null) {
+            auxMem.jumpTo(0);
+        }
     }
 
     @Override

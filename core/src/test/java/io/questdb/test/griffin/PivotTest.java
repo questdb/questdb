@@ -3058,7 +3058,8 @@ public class PivotTest extends AbstractSqlParserTest {
                                             GroupBy vectorized: false
                                               keys: [timestamp,vehicle_id]
                                               values: [first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i000',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i001',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i002',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i003',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i004',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i005',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i006',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i007',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i008',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i009',avg(int_value),NaN)]))]
-                                                Async Group By workers: 1
+                                                Async Stream Group By workers: 1
+                                                  segmentKey: timestamp
                                                   keys: [timestamp,vehicle_id,sensor_name]
                                                   values: [avg(int_value)]
                                                   filter: sensor_name in [i000,i001,i002,i003,i004,i005,i006,i007,i008,i009]
@@ -4166,16 +4167,15 @@ public class PivotTest extends AbstractSqlParserTest {
                                     GroupBy vectorized: false
                                       keys: [timestamp,symbol,side]
                                       values: [sum(price)]
-                                        Encode sort light
-                                          keys: [timestamp]
-                                            Async JIT Group By workers: 1
-                                              keys: [timestamp,symbol,side]
-                                              keyFunctions: [timestamp_floor_utc('100T',timestamp)]
-                                              values: [avg(price)]
-                                              filter: (symbol in [ADA-USD,ADA-USDT,BTC-USD] and side in [buy,sell])
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: trades
+                                        Async JIT Stream Group By workers: 1
+                                          segmentKey: timestamp_floor_utc('100T',timestamp)
+                                          keys: [timestamp,symbol,side]
+                                          keyFunctions: [timestamp_floor_utc('100T',timestamp)]
+                                          values: [avg(price)]
+                                          filter: (symbol in [ADA-USD,ADA-USDT,BTC-USD] and side in [buy,sell])
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: trades
                             """)
                     .returns("""
                             timestamp	ADA-USD_buy	ADA-USD_sell	ADA-USDT_buy	ADA-USDT_sell	BTC-USD_buy	BTC-USD_sell
@@ -4322,16 +4322,15 @@ public class PivotTest extends AbstractSqlParserTest {
                                 GroupBy vectorized: false
                                   keys: [symbol,side]
                                   values: [sum(last)]
-                                    Encode sort light
-                                      keys: [timestamp]
-                                        Async JIT Group By workers: 1
-                                          keys: [symbol,side,timestamp]
-                                          keyFunctions: [timestamp_floor_utc('1d',timestamp)]
-                                          values: [last(price)]
-                                          filter: side in [buy,sell]
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: trades
+                                    Async JIT Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('1d',timestamp)
+                                      keys: [symbol,side,timestamp]
+                                      keyFunctions: [timestamp_floor_utc('1d',timestamp)]
+                                      values: [last(price)]
+                                      filter: side in [buy,sell]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: trades
                         """)
                 .returns("symbol\tbuy_price\tsell_price\n", """
                         symbol	buy_price	sell_price
@@ -4491,7 +4490,8 @@ public class PivotTest extends AbstractSqlParserTest {
                             GroupBy vectorized: false
                               keys: [timestamp]
                               values: [first_not_null(case([(symbol='ETH-USDT' and side='buy'),sum(price),null])),first_not_null(case([(symbol='ETH-USDT' and side='sell'),sum(price),null]))]
-                                Async Group By workers: 1
+                                Async Stream Group By workers: 1
+                                  segmentKey: timestamp
                                   keys: [timestamp,symbol,side]
                                   values: [sum(price)]
                                   filter: (symbol in [ETH-USDT] and symbol in [ETH-USDT] and side in [buy,sell])
@@ -4530,7 +4530,8 @@ public class PivotTest extends AbstractSqlParserTest {
                             GroupBy vectorized: false
                               keys: [timestamp]
                               values: [first_not_null(case([(symbol='ETH-USDT' and side='buy'),sum(price),null])),first_not_null(case([(symbol='ETH-USDT' and side='sell'),sum(price),null]))]
-                                Async JIT Group By workers: 1
+                                Async JIT Stream Group By workers: 1
+                                  segmentKey: timestamp
                                   keys: [timestamp,symbol,side]
                                   values: [sum(price)]
                                   filter: (symbol in [ETH-USDT] and side in [buy,sell])
@@ -4566,7 +4567,8 @@ public class PivotTest extends AbstractSqlParserTest {
                             GroupBy vectorized: false
                               keys: [timestamp]
                               values: [first_not_null(case([(symbol='ETH-USDT' and side='buy'),sum(price),null])),first_not_null(case([(symbol='ETH-USDT' and side='sell'),sum(price),null]))]
-                                Async JIT Group By workers: 1
+                                Async JIT Stream Group By workers: 1
+                                  segmentKey: timestamp
                                   keys: [timestamp,symbol,side]
                                   values: [sum(price)]
                                   filter: (symbol in [ETH-USDT] and side in [buy,sell])
@@ -4605,7 +4607,8 @@ public class PivotTest extends AbstractSqlParserTest {
                             GroupBy vectorized: false
                               keys: [timestamp]
                               values: [first_not_null(case([(symbol='ETH-USDT' and side='buy'),sum(price),null])),first_not_null(case([(symbol='ETH-USDT' and side='sell'),sum(price),null]))]
-                                Async JIT Group By workers: 1
+                                Async JIT Stream Group By workers: 1
+                                  segmentKey: timestamp
                                   keys: [timestamp,symbol,side]
                                   values: [sum(price)]
                                   filter: (symbol in [ETH-USDT] and side in [buy,sell])
@@ -4684,7 +4687,8 @@ public class PivotTest extends AbstractSqlParserTest {
                             GroupBy vectorized: false
                               keys: [timestamp,symbol,side]
                               values: [sum(price)]
-                                Async Group By workers: 1
+                                Async Stream Group By workers: 1
+                                  segmentKey: timestamp
                                   keys: [timestamp,symbol,side]
                                   values: [avg(price)]
                                   filter: (symbol in [BTC-USD] and symbol in [BTC-USD] and side in [buy,sell])
@@ -4739,16 +4743,15 @@ public class PivotTest extends AbstractSqlParserTest {
                                 GroupBy vectorized: false
                                   keys: [timestamp,symbol,side]
                                   values: [sum(price)]
-                                    Encode sort light
-                                      keys: [timestamp]
-                                        Async Group By workers: 1
-                                          keys: [timestamp,symbol,side]
-                                          keyFunctions: [timestamp_floor_utc('1m',timestamp)]
-                                          values: [avg(price)]
-                                          filter: (symbol in [BTC-USD] and symbol in [BTC-USD] and side in [buy,sell])
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: trades
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('1m',timestamp)
+                                      keys: [timestamp,symbol,side]
+                                      keyFunctions: [timestamp_floor_utc('1m',timestamp)]
+                                      values: [avg(price)]
+                                      filter: (symbol in [BTC-USD] and symbol in [BTC-USD] and side in [buy,sell])
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: trades
                         """)
                 .returns("timestamp\tBTC-USD_buy\tBTC-USD_sell\n", """
                         timestamp\tBTC-USD_buy\tBTC-USD_sell
@@ -4784,16 +4787,15 @@ public class PivotTest extends AbstractSqlParserTest {
                             GroupBy vectorized: false
                               keys: [timestamp,symbol,side]
                               values: [sum(price)]
-                                Encode sort light
-                                  keys: [timestamp]
-                                    Async Group By workers: 1
-                                      keys: [timestamp,symbol,side]
-                                      keyFunctions: [timestamp_floor_utc('1m',timestamp)]
-                                      values: [avg(price)]
-                                      filter: (symbol in [BTC-USD] and symbol in [BTC-USD] and side in [buy,sell])
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: trades
+                                Async Stream Group By workers: 1
+                                  segmentKey: timestamp_floor_utc('1m',timestamp)
+                                  keys: [timestamp,symbol,side]
+                                  keyFunctions: [timestamp_floor_utc('1m',timestamp)]
+                                  values: [avg(price)]
+                                  filter: (symbol in [BTC-USD] and symbol in [BTC-USD] and side in [buy,sell])
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: trades
                         """)
                 .returns("timestamp\tBTC-USD_buy\tBTC-USD_sell\n", """
                         timestamp\tBTC-USD_buy\tBTC-USD_sell
@@ -4875,7 +4877,8 @@ public class PivotTest extends AbstractSqlParserTest {
                                         GroupBy vectorized: false
                                           keys: [timestamp,vehicle_id]
                                           values: [first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i000',avg(int_value),NaN)]))]
-                                            Async JIT Group By workers: 1
+                                            Async JIT Stream Group By workers: 1
+                                              segmentKey: timestamp
                                               keys: [timestamp,vehicle_id,sensor_name]
                                               values: [avg(int_value)]
                                               filter: sensor_name in [i000]
@@ -4887,7 +4890,8 @@ public class PivotTest extends AbstractSqlParserTest {
                                         GroupBy vectorized: false
                                           keys: [timestamp,vehicle_id]
                                           values: [first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i000',avg(int_value),NaN)]))]
-                                            Async JIT Group By workers: 1
+                                            Async JIT Stream Group By workers: 1
+                                              segmentKey: timestamp
                                               keys: [timestamp,vehicle_id,sensor_name]
                                               values: [avg(int_value)]
                                               filter: sensor_name in [i000]

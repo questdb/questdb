@@ -418,6 +418,9 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             }
 
             final int rowGroupSize = decoder.metadata().getRowGroupSize(rowGroupIndex);
+            if (rowGroupSize == 0) {
+                continue;
+            }
             final int decodeHi;
             if (isInSkipRows) {
                 decodeHi = rowGroupSize;

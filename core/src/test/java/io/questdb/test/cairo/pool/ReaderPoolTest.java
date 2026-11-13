@@ -60,6 +60,7 @@ import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestFilesFacade;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -1183,6 +1184,66 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
             try (TableReader reader = pool.get(xyzTableToken)) {
                 Assert.assertNotNull(reader);
+            }
+        });
+    }
+
+    @Test
+    public void testFailedCloseReleasesReader() throws Exception {
+        execute("CREATE TABLE fp AS (SELECT timestamp_sequence('2024-01-01', 3_600_000_000L) ts, x v FROM long_sequence(48)) TIMESTAMP(ts) PARTITION BY DAY");
+        final TableToken tableToken = engine.verifyTableName("fp");
+        final AtomicBoolean isArmed = new AtomicBoolean();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public void munmap(long address, long size, int memoryTag) {
+                if (isArmed.compareAndSet(true, false)) {
+                    throw CairoException.critical(0).put("injected munmap failure");
+                }
+                super.munmap(address, size, memoryTag);
+            }
+        };
+        assertWithPool(pool -> {
+            final ReaderPool.R reader = pool.get(tableToken);
+            Assert.assertEquals(2, reader.getPartitionCount());
+            reader.openPartition(0);
+            reader.openPartition(1);
+            isArmed.set(true);
+            try {
+                reader.close();
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "injected munmap failure");
+            }
+            Assert.assertFalse(reader.isOpen());
+            Assert.assertEquals(0, pool.getBusyCount());
+
+            final ReaderPool.R detached = pool.get(tableToken);
+            Assert.assertNotSame(reader, detached);
+            Assert.assertEquals(48, detached.size());
+            pool.detach(detached);
+            detached.incrementDetachedRefCount();
+            detached.openPartition(0);
+            detached.openPartition(1);
+            isArmed.set(true);
+            try {
+                detached.close();
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "injected munmap failure");
+            }
+            Assert.assertEquals(0, detached.getDetachedRefCount());
+            pool.attach(detached);
+            detached.close();
+            Assert.assertEquals(0, pool.getBusyCount());
+        }, new DefaultTestCairoConfiguration(root) {
+            @Override
+            public @NotNull FilesFacade getFilesFacade() {
+                return ff;
+            }
+
+            @Override
+            public int getInactiveReaderMaxOpenPartitions() {
+                return 1;
             }
         });
     }
