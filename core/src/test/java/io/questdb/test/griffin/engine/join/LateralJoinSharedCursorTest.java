@@ -1354,4 +1354,40 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
                             """);
         });
     }
+
+    @Test
+    public void testLateralUnionAllSymbolOuterRefs() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, x SYMBOL)");
+            execute("CREATE TABLE a (id INT, x SYMBOL)");
+            execute("CREATE TABLE b (id INT, k SYMBOL)");
+            execute("""
+                    INSERT INTO o VALUES (1, '1'), (2, NULL), (3, '3')
+                    """);
+            execute("""
+                    INSERT INTO a VALUES (10, '1'), (11, '3'), (12, NULL), (0, '1')
+                    """);
+            execute("""
+                    INSERT INTO b VALUES (20, '5'), (21, '1'), (22, '7'), (23, '1'), (24, '3')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, l.v FROM o JOIN LATERAL (
+                        SELECT a.id v FROM a WHERE a.x = o.x AND a.id > o.id
+                        UNION ALL
+                        SELECT b.id v FROM b WHERE b.k = o.x AND b.id > o.id
+                    ) l ORDER BY 1, 2
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tv
+                            1\t10
+                            1\t21
+                            1\t23
+                            2\t12
+                            3\t11
+                            3\t24
+                            """);
+        });
+    }
 }
