@@ -48,6 +48,7 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -57,6 +58,7 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
+import java.io.File;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -532,6 +534,56 @@ public class WalWriterPreparedCommitTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * The plain commit path through the helpers commit0 is split into: a conditional commit the fence rejects
+     * rolls back and moves to a new segment, a replace-range commit without rows deletes the range, one with rows
+     * replaces it, and an enabled telemetry records the commits, a prepared one too.
+     */
+    @Test
+    public void testPlainCommitPathKeepsFenceAndReplaceRange() throws Exception {
+        node1.setProperty(PropertyKey.TELEMETRY_DISABLE_COMPLETELY, false);
+        assertMemoryLeak(() -> {
+            assertModeAndWindow();
+            final TableToken tt = createTable();
+            try (WalWriter w = engine.getWalWriter(tt)) {
+                appendRows(w, 1, 3);
+                w.prepareCommit();
+                w.commit();
+                Assert.assertEquals(1, w.getLastSeqTxn());
+
+                // the fence: a stale expected txn rejects the commit
+                appendRows(w, 10, 1);
+                final int segmentBefore = w.getSegmentId();
+                Assert.assertFalse(w.commitWithParamsIfSeqTxn(0, 0, 0, WalUtils.WAL_DEDUP_MODE_DEFAULT));
+                Assert.assertEquals("the rejected rows are rolled back", 0, w.getUncommittedRowCount());
+                Assert.assertEquals("a rejected commit moves to a new segment", segmentBefore + 1, w.getSegmentId());
+                Assert.assertEquals(1, engine.getTableSequencerAPI().lastTxn(tt));
+
+                // a replace range without rows deletes the range: the row at DAY_MICROS + 2
+                w.commitWithParams(DAY_MICROS + 2, DAY_MICROS + 3, WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE);
+                Assert.assertEquals(2, engine.getTableSequencerAPI().lastTxn(tt));
+
+                // a replace range with rows replaces it: the row at DAY_MICROS + 3 becomes 30
+                final TableWriter.Row row = w.newRow(DAY_MICROS + 3);
+                row.putLong(0, 30);
+                row.putSym(1, "a");
+                row.append();
+                w.commitWithParams(DAY_MICROS + 3, DAY_MICROS + 4, WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE);
+                Assert.assertEquals(3, engine.getTableSequencerAPI().lastTxn(tt));
+
+                // the conditional commit the fence accepts, and the unconditional variants without rows, which commit
+                // nothing
+                appendRows(w, 40, 1);
+                Assert.assertTrue(w.commitWithParamsIfSeqTxn(3, 0, 0, WalUtils.WAL_DEDUP_MODE_DEFAULT));
+                w.commitWithParams(0, 0, WalUtils.WAL_DEDUP_MODE_DEFAULT);
+                w.commitLiveView(0);
+                Assert.assertEquals(4, engine.getTableSequencerAPI().lastTxn(tt));
+            }
+            drainWalQueue();
+            assertRows("v\n1\n30\n40\n");
+        });
+    }
+
     @Test
     public void testPoisonAfterAssignmentAtNoWindow() throws Exception {
         Assume.assumeTrue(commitMode == CommitMode.ADAPTIVE && groupWindowUs == 0);
@@ -759,6 +811,18 @@ public class WalWriterPreparedCommitTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * A prepare that fails in what sequencing would flush first, the segment's _meta, which a new segment's first
+     * commit flushes: the writer is distressed and the record the prepare appended is not counted at close. A
+     * data-sync failure stops the engine under SYNC and ADAPTIVE; another failure does not.
+     */
+    @Test
+    public void testPrepareSegmentMetaFlushFailureIsNotCounted() throws Exception {
+        Assume.assumeTrue("only SYNC and ADAPTIVE flush the segment _meta before sequencing", CommitMode.isPowerLossDurable(commitMode));
+        assertPrepareSegmentMetaFlushFailure(false);
+        assertPrepareSegmentMetaFlushFailure(true);
+    }
+
     @Test
     public void testPreparedCommitEqualsPlainCommit() throws Exception {
         assertMemoryLeak(() -> {
@@ -969,6 +1033,41 @@ public class WalWriterPreparedCommitTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Sequencing a prepared commit flushes the sequencer log under SYNC and ADAPTIVE with no window; a data-sync
+     * failure there stops the engine and distresses the writer, whose record may be sequenced and stays counted.
+     */
+    @Test
+    public void testSequencerFlushDataSyncFailureOfPreparedCommitStopsEngine() throws Exception {
+        Assume.assumeTrue("only SYNC and ADAPTIVE without a window flush the sequencer log as they sequence",
+                CommitMode.isPowerLossDurable(commitMode) && groupWindowUs == 0);
+        final FileFlushFaultFacade ff = new FileFlushFaultFacade();
+        assertMemoryLeak(ff, () -> {
+            assertModeAndWindow();
+            final TableToken tt = createTable();
+            try {
+                try (WalWriter w = engine.getWalWriter(tt)) {
+                    appendRows(w, 1, 2);
+                    w.prepareCommit();
+                    ff.failNextFlush(File.separator + WalUtils.SEQ_DIR + File.separator, true);
+                    try {
+                        w.commit();
+                        Assert.fail("the sequencer flush must fail");
+                    } catch (CairoError e) {
+                        Assert.assertTrue(CairoException.isDataSyncFailure(e));
+                    }
+                    Assert.assertTrue(ff.hasFired);
+                    Assert.assertTrue(engine.isDurabilityFailed());
+                    Assert.assertTrue(w.isDistressed());
+                    Assert.assertFalse(w.isCommitPrepared());
+                }
+            } finally {
+                engine.releaseAllWriters();
+                engine.resetDurabilityFailure();
+            }
+        });
+    }
+
     private static void appendOutOfOrderRows(WalWriter w, int txn) {
         final long base = DAY_MICROS + txn * 10L;
         final long[] tsOffsets = {2, 1, 3};
@@ -1155,6 +1254,41 @@ public class WalWriterPreparedCommitTest extends AbstractCairoTest {
                 .noLeakCheck()
                 .expectSize()
                 .returns(expected);
+    }
+
+    private void assertPrepareSegmentMetaFlushFailure(boolean isDataSyncFailure) throws Exception {
+        final FileFlushFaultFacade ff = new FileFlushFaultFacade();
+        assertMemoryLeak(ff, () -> {
+            assertModeAndWindow();
+            final TableToken tt = createTable();
+            final ClosureRecorder recorder = new ClosureRecorder();
+            recorder.install();
+            try {
+                final int walId;
+                try (WalWriter w = engine.getWalWriter(tt)) {
+                    walId = w.getWalId();
+                    appendRows(w, 1, 2);
+                    ff.failNextFlush(File.separator + "wal" + walId + File.separator + "0" + File.separator + "_meta", isDataSyncFailure);
+                    try {
+                        w.prepareCommit();
+                        Assert.fail("the _meta flush must fail");
+                    } catch (CairoException | CairoError e) {
+                        Assert.assertEquals(isDataSyncFailure, CairoException.isDataSyncFailure(e));
+                    }
+                    Assert.assertTrue("the _meta flush must be the prepare's", ff.hasFired);
+                    Assert.assertEquals(isDataSyncFailure, engine.isDurabilityFailed());
+                    Assert.assertTrue(w.isDistressed());
+                    Assert.assertFalse(w.isCommitPrepared());
+                }
+                Assert.assertEquals("rollbackDirectory wal" + walId + "/0", recorder.closures(walId, 0));
+            } finally {
+                recorder.uninstall();
+                engine.releaseAllWriters();
+                engine.resetDurabilityFailure();
+            }
+            Assert.assertEquals(0, engine.getTableSequencerAPI().lastTxn(tt));
+            execute("DROP TABLE t");
+        });
     }
 
     private void assertRows(String expected) throws Exception {
@@ -1384,6 +1518,106 @@ public class WalWriterPreparedCommitTest extends AbstractCairoTest {
                 isFlushFailureArmed = false;
                 flushFailures++;
                 throw CairoException.critical(5).put("test: event file flush failed");
+            }
+        }
+    }
+
+    /**
+     * Fails, once, the next flush of a file whose path contains a fragment: with a data-sync failure, or with
+     * another.
+     */
+    private static final class FileFlushFaultFacade extends TestFilesFacadeImpl {
+        private final java.util.Map<Long, String> paths = new java.util.concurrent.ConcurrentHashMap<>();
+        // mapping address -> {length, fd}
+        private final java.util.concurrent.ConcurrentSkipListMap<Long, long[]> mappings = new java.util.concurrent.ConcurrentSkipListMap<>();
+        volatile boolean hasFired;
+        private volatile String fragment;
+        private volatile boolean isDataSyncFailure;
+
+        @Override
+        public void barrierFsync(long fd) {
+            onFlush(fd);
+            super.barrierFsync(fd);
+        }
+
+        @Override
+        public boolean close(long fd) {
+            paths.remove(fd);
+            return super.close(fd);
+        }
+
+        @Override
+        public void fdatasync(long fd) {
+            onFlush(fd);
+            super.fdatasync(fd);
+        }
+
+        @Override
+        public void fsync(long fd) {
+            onFlush(fd);
+            super.fsync(fd);
+        }
+
+        @Override
+        public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+            final long addr = super.mmap(fd, len, offset, flags, memoryTag);
+            if (paths.containsKey(fd)) {
+                mappings.put(addr, new long[]{len, fd});
+            }
+            return addr;
+        }
+
+        @Override
+        public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+            final long newAddr = super.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
+            if (paths.containsKey(fd)) {
+                mappings.remove(addr);
+                mappings.put(newAddr, new long[]{newSize, fd});
+            }
+            return newAddr;
+        }
+
+        @Override
+        public void msync(long addr, long len, boolean async) {
+            if (!async) {
+                final java.util.Map.Entry<Long, long[]> mapping = mappings.floorEntry(addr);
+                if (mapping != null && addr < mapping.getKey() + mapping.getValue()[0]) {
+                    onFlush(mapping.getValue()[1]);
+                }
+            }
+            super.msync(addr, len, async);
+        }
+
+        @Override
+        public void munmap(long address, long size, int memoryTag) {
+            mappings.remove(address);
+            super.munmap(address, size, memoryTag);
+        }
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            final long fd = super.openRW(name, opts);
+            if (fd > -1) {
+                paths.put(fd, Utf8s.stringFromUtf8BytesSafe(name));
+            }
+            return fd;
+        }
+
+        void failNextFlush(String fragment, boolean isDataSyncFailure) {
+            this.isDataSyncFailure = isDataSyncFailure;
+            this.fragment = fragment;
+        }
+
+        private void onFlush(long fd) {
+            final String path = paths.get(fd);
+            final String fragment = this.fragment;
+            if (path != null && fragment != null && path.contains(fragment)) {
+                this.fragment = null;
+                hasFired = true;
+                if (isDataSyncFailure) {
+                    throw CairoException.dataSyncFailure(this, 5, "fsync", "test: flush failed");
+                }
+                throw CairoException.critical(5).put("test: flush failed");
             }
         }
     }
