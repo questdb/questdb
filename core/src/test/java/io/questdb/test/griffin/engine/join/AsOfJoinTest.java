@@ -2080,6 +2080,44 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinOnKeysSharingSlaveColumnOfSubQueryJoin() throws Exception {
+        // The keys imply t.x = t.y. s reads v and w of b, the second table of the join in s. v is SHORT, which
+        // has no NULL: the join NULL-extends it to 0 for the unmatched t row (3, 4), which passes s.v < 5, so
+        // t.x = t.y must not filter t. a, the first table, holds v as INT, whose NULL fails s.v < 5: typed by
+        // a, the equality filtered t and dropped that row. w is INT, and a has no w: s.w < 5 drops every
+        // unmatched t row, so the equality filters t, which it did not while s.w had no type.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (id INT, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO a VALUES (1, 1, '2024-01-01T00:00:00.000000Z')");
+            execute("CREATE TABLE b (id INT, k SHORT, v SHORT, w INT)");
+            execute("INSERT INTO b VALUES (1, 3, 10, 1)");
+            execute("CREATE TABLE t (x SHORT, y SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (3, 3, '2024-01-01T01:00:00.000000Z'), (3, 4, '2024-01-01T02:00:00.000000Z')");
+            for (String join : new String[]{"ASOF JOIN", "LT JOIN"}) {
+                final String query = "SELECT t.x, t.y, s.k, s.v FROM t " + join
+                        + " ((SELECT a.ts, b.k, b.v, b.w FROM a JOIN b ON a.id = b.id) TIMESTAMP(ts)) s"
+                        + " ON t.x = s.k AND t.y = s.k WHERE ";
+                assertQuery(query + "s.v < 5")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanNotContaining("filter: x=y")
+                        .returns("""
+                                x\ty\tk\tv
+                                3\t4\t0\t0
+                                """);
+                assertQuery(query + "s.w < 5")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("filter: x=y")
+                        .returns("""
+                                x\ty\tk\tv
+                                3\t3\t3\t10
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testAsOfJoinOnKeysSharingSlaveColumnWhereDropsUnmatchedRows() throws Exception {
         // A WHERE conjunct that is false for a NULL slave column drops every unmatched master row, so the
         // join returns the rows of an INNER join: s1 = s2 filters m, and the join keeps a single key.

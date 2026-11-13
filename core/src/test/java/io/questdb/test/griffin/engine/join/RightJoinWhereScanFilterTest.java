@@ -923,6 +923,56 @@ public class RightJoinWhereScanFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSubQueryColumnOfJoinedTableWithNullFiltersScan() throws Exception {
+        // s reads u or w of b, the second table of the join in s. Both are INT, which has NULL, so s.u < 5
+        // and s.w < 5 are false on the row that the outer join NULL-extends, and filter the scan of b. a, the
+        // first table, holds u as SHORT, which has no NULL, and has no w: typed by a, neither conjunct
+        // filtered the scan. r 2 matches the b row with 3, which alone passes; r 1 matches the b row with
+        // 10, and r 9 none. When b is a sub-query, its column gives the type.
+        assertMemoryLeak(() -> {
+            createSubQueryJoinTables("SHORT", "10", "3");
+            for (String join : new String[]{"RIGHT", "FULL"}) {
+                for (String column : new String[]{"u", "w"}) {
+                    for (String joined : new String[]{"b", "(SELECT id, u, w, k FROM b) b"}) {
+                        assertSubQueryRows(
+                                "SELECT s.%1$s, s.k, r.k FROM (SELECT b.%1$s, b.k FROM a JOIN %2$s ON a.id = b.id) s %3$s JOIN r ON s.k = r.k"
+                                        .formatted(column, joined, join) + " WHERE s." + column + " < 5 ORDER BY r.k",
+                                true,
+                                column + "\tk\tk1\n3\t2\t2\n"
+                        );
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSubQueryColumnOfJoinedTableWithoutNullKeepsScan() throws Exception {
+        // s reads v of b, the second table of the join in s: SHORT, BYTE or BOOLEAN, which have no NULL, so
+        // the row that the outer join NULL-extends holds 0 or false. a, the first table, holds v as INT.
+        // Typed by a.v, a conjunct that passes 0 or false looked false on that row, and its copy dropped the
+        // b row that r 1 matches: the outer join then NULL-extended r 1, and the WHERE kept that row too.
+        // r 9 matches no b row, and r 2 matches the b row with 3 or false.
+        assertMemoryLeak(() -> {
+            for (String type : new String[]{"SHORT", "BYTE"}) {
+                createSubQueryJoinTables(type, "10", "3");
+                assertSubQueryForms("%s < 5", false, "%s\tk\tk1\n3\t2\t2\n0\tnull\t9\n");
+                assertSubQueryForms("%s = 0", false, "%s\tk\tk1\n0\tnull\t9\n");
+                // passes 0 for any positive value of $1
+                bindVariableService.clear();
+                bindVariableService.setInt(0, 5);
+                assertSubQueryForms("%s < $1", false, "%s\tk\tk1\n3\t2\t2\n0\tnull\t9\n");
+                // false on 0, so the copy filters b
+                assertSubQueryForms("%s > 5", true, "%s\tk\tk1\n10\t1\t1\n");
+            }
+            createSubQueryJoinTables("BOOLEAN", "true", "false");
+            assertSubQueryForms("%s::int = 0", false, "%s\tk\tk1\nfalse\t2\t2\nfalse\tnull\t9\n");
+            // false on false, so the copy filters b
+            assertSubQueryForms("%s::int = 1", true, "%s\tk\tk1\ntrue\t1\t1\n");
+        });
+    }
+
+    @Test
     public void testSubQueryCopiesConjunctTrueOnNullAlongWithNullRejecting() throws Exception {
         // c != 1 is true on the NULL row, but ts IN rejects it, so both filter the t0 scan:
         // r2 and r3 twice each; r1 fails c != 1, r4 and the NULL rows of t2 rows 2 and 9 fail ts IN
@@ -933,6 +983,23 @@ public class RightJoinWhereScanFilterTest extends AbstractCairoTest {
             final String belowJoin = planBelowCrossJoin(sql);
             Assert.assertTrue(belowJoin, belowJoin.contains("filter: c!=1\n"));
             Assert.assertTrue(belowJoin, belowJoin.contains("Interval forward scan on: t0"));
+        });
+    }
+
+    @Test
+    public void testSubQueryRenamedColumnFiltersScan() throws Exception {
+        // s names w of b x. Its projection maps the name w that it reads to x, which gives s.x the INT type of
+        // b.w: s.x < 5 is false on the row that the outer join NULL-extends, and filters the scan of b. r 2
+        // matches the b row with 3, which alone passes; r 1 matches the b row with 10, and r 9 none.
+        assertMemoryLeak(() -> {
+            createSubQueryJoinTables("SHORT", "10", "3");
+            for (String join : new String[]{"RIGHT", "FULL"}) {
+                assertSubQueryRows(
+                        "SELECT s.x, s.k, r.k FROM (SELECT w x, k FROM b) s " + join + " JOIN r ON s.k = r.k WHERE s.x < 5 ORDER BY r.k",
+                        true,
+                        "x\tk\tk1\n3\t2\t2\n"
+                );
+            }
         });
     }
 
@@ -1068,6 +1135,48 @@ public class RightJoinWhereScanFilterTest extends AbstractCairoTest {
         assertScanFiltered(sql, isScanFiltered);
     }
 
+    // Asserts the rows of s RIGHT JOIN r and s FULL JOIN r that the predicate on the column of s that reads b.v
+    // keeps, and whether the scan of b is filtered, for each way to write s
+    private void assertSubQueryForms(String predicate, boolean isScanFiltered, String expected) throws Exception {
+        // {WITH clause, s, the name of the column of s that reads b.v}
+        final String[][] forms = {
+                {"", "(SELECT b.v, b.k FROM a JOIN b ON a.id = b.id) s", "v"},
+                {"WITH s AS (SELECT b.v, b.k FROM a JOIN b ON a.id = b.id) ", "s", "v"},
+                {"", "sv s", "v"},
+                // SELECT * names b.v v1, as a.v comes first
+                {"", "(SELECT * FROM a JOIN b ON a.id = b.id) s", "v1"},
+                {"", "(SELECT b.v x, b.k FROM a JOIN b ON a.id = b.id) s", "x"},
+                // the prefix in upper case, and quoted
+                {"", "(SELECT B.v, B.k FROM a JOIN b ON a.id = B.id) s", "v"},
+                {"", "(SELECT \"b\".v, \"b\".k FROM a JOIN b ON a.id = \"b\".id) s", "v"},
+                {"", "(SELECT b.v, b.k FROM a JOIN b ON a.id = b.id JOIN r r2 ON r2.k = b.k) s", "v"},
+                // b a sub-query and a union, whose columns give the type
+                {"", "(SELECT b.v, b.k FROM a JOIN (SELECT id, v, k FROM b) b ON a.id = b.id) s", "v"},
+                {"", "(SELECT b.v, b.k FROM a JOIN (SELECT id, v, k FROM b UNION ALL SELECT id, v, k FROM b0) b ON a.id = b.id) s", "v"},
+                // s a union whose first branch is the join
+                {"", "(SELECT b.v, b.k FROM a JOIN b ON a.id = b.id UNION ALL SELECT v, k FROM b0) s", "v"}
+        };
+        for (String join : new String[]{"RIGHT", "FULL"}) {
+            for (String[] form : forms) {
+                final String column = form[2];
+                assertSubQueryRows(
+                        form[0] + "SELECT s." + column + ", s.k, r.k FROM " + form[1] + ' ' + join + " JOIN r ON s.k = r.k WHERE s."
+                                + predicate.formatted(column) + " ORDER BY r.k",
+                        isScanFiltered,
+                        expected.formatted(column)
+                );
+            }
+        }
+    }
+
+    private void assertSubQueryRows(String sql, boolean isScanFiltered, String expected) throws Exception {
+        assertQuery(sql)
+                .noLeakCheck()
+                .returns(expected);
+        final String belowJoin = planBelowOuterJoin(sql);
+        Assert.assertEquals(sql + '\n' + belowJoin, isScanFiltered, belowJoin.contains("ilter"));
+    }
+
     private void assertTypeCases(String type, String value, TypeCase... typeCases) throws Exception {
         execute("DROP TABLE IF EXISTS t0");
         execute("CREATE TABLE t0 (x " + type + ", k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -1123,6 +1232,25 @@ public class RightJoinWhereScanFilterTest extends AbstractCairoTest {
         execute("INSERT INTO t2 VALUES (0), (1), (2)");
     }
 
+    // a, the first table of the join in s, holds v as INT, which has NULL, u as SHORT, which has not, and no
+    // w. b, the second, holds v of the type, high in the row that r 1 matches and low in the row that r 2
+    // matches, and u and w as INT. b0 is an empty table of the columns of b.
+    private static void createSubQueryJoinTables(String type, String high, String low) throws SqlException {
+        execute("DROP VIEW IF EXISTS sv");
+        execute("DROP TABLE IF EXISTS a");
+        execute("DROP TABLE IF EXISTS b");
+        execute("DROP TABLE IF EXISTS b0");
+        execute("DROP TABLE IF EXISTS r");
+        execute("CREATE TABLE a (id INT, v INT, u SHORT)");
+        execute("INSERT INTO a VALUES (1, 100, 7), (2, 200, 8)");
+        execute("CREATE TABLE b (id INT, v " + type + ", u INT, w INT, k INT)");
+        execute("INSERT INTO b VALUES (1, " + high + ", 10, 10, 1), (2, " + low + ", 3, 3, 2)");
+        execute("CREATE TABLE b0 (id INT, v " + type + ", u INT, w INT, k INT)");
+        execute("CREATE TABLE r (k INT)");
+        execute("INSERT INTO r VALUES (1), (2), (9)");
+        execute("CREATE VIEW sv AS (SELECT b.v, b.k FROM a JOIN b ON a.id = b.id)");
+    }
+
     private static void createTables() throws SqlException {
         execute("CREATE TABLE t0 (c INT, k INT, s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
         insertT0Rows();
@@ -1147,6 +1275,16 @@ public class RightJoinWhereScanFilterTest extends AbstractCairoTest {
         final int crossJoin = plan.indexOf("Cross Join");
         Assert.assertTrue(plan, crossJoin > 0);
         return plan.substring(crossJoin);
+    }
+
+    // The plan from the RIGHT or FULL join down, which holds the scans of the tables of s and of r
+    private static String planBelowOuterJoin(String sql) throws SqlException {
+        sink.clear();
+        printSql("EXPLAIN " + sql);
+        final String plan = sink.toString();
+        final int outerJoin = plan.indexOf("Outer Join");
+        Assert.assertTrue(plan, outerJoin > 0);
+        return plan.substring(outerJoin);
     }
 
     private static TypeCase typeCase(String predicate, boolean isValueKept, boolean isNullKept) {

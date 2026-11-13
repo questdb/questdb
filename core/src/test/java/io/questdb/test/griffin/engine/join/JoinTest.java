@@ -15208,6 +15208,46 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOuterJoinInnerDerivedKeyOnSubQueryColumnOfJoinedTable() throws Exception {
+        // r's keys imply m.k = s.k. s reads v and w of b, the second table of the join in s. v is SHORT, which
+        // has no NULL: LEFT JOIN s NULL-extends it to 0, which passes s.v < 5, so the LEFT JOIN must not key on
+        // the implied equality. a, the first table, holds v as INT, whose NULL fails s.v < 5: typed by a, the
+        // LEFT JOIN keyed on m.k = s.k and NULL-extended m 1, which then matched r 0 through s.k, NULL-extended
+        // to 0 as well, and returned an extra row. w is INT, and a has no w: s.w < 5 drops every row that the
+        // LEFT JOIN NULL-extends, so the LEFT JOIN keys on m.k = s.k, which it did not while s.w had no type.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (id INT, k SHORT)");
+            execute("INSERT INTO m VALUES (1, 0), (2, 3)");
+            execute("CREATE TABLE a (id INT, k SHORT, v INT)");
+            execute("INSERT INTO a VALUES (1, 5, 1), (2, 6, 2)");
+            execute("CREATE TABLE b (id INT, k SHORT, v SHORT, w INT)");
+            execute("INSERT INTO b VALUES (1, 3, 10, 1), (2, 3, 2, 2)");
+            execute("CREATE TABLE r (k SHORT)");
+            execute("INSERT INTO r VALUES (0), (3)");
+            final String query = """
+                    SELECT m.id, s.k, s.v, r.k
+                    FROM m
+                    LEFT JOIN (SELECT b.id, b.k, b.v, b.w FROM a JOIN b ON a.id = b.id) s ON m.id = s.id
+                    JOIN r ON r.k = m.k AND r.k = s.k
+                    WHERE %s
+                    ORDER BY m.id
+                    """;
+            final String expected = """
+                    id\tk\tv\tk1
+                    2\t3\t2\t3
+                    """;
+            assertQuery(query.formatted("s.v < 5"))
+                    .noLeakCheck()
+                    .withPlanNotContaining("condition: s.k=m.k")
+                    .returns(expected);
+            assertQuery(query.formatted("s.w < 5"))
+                    .noLeakCheck()
+                    .withPlanContaining("condition: s.k=m.k")
+                    .returns(expected);
+        });
+    }
+
+    @Test
     public void testOuterJoinInnerDerivedKeyReplacesMixedTypeKey() throws Exception {
         // The ON key of each outer join compares types that a hash join cannot key together: DOUBLE with INT,
         // DATE with TIMESTAMP, LONG with INT. The INNER join implies a key of one type between the same two
@@ -18118,6 +18158,42 @@ public class JoinTest extends AbstractCairoTest {
                             2\t2\t2\t2\t2\t2\t2\t1\t5
                             2\t2\t2\t2\t2\t2\t2\t2\t6
                             """);
+        });
+    }
+
+    @Test
+    public void testRightJoinOverSubQueryJoinKeyConstantFollowsTypeOfJoinedTable() throws Exception {
+        // s reads k and j of b, the second table of the join in s. k is SHORT, which has no NULL: RIGHT and FULL
+        // JOIN r NULL-extend it to 0, which passes s.k = 0, so the constant must not filter r through the key.
+        // a, the first table, holds k as INT, whose NULL fails s.k = 0: typed by a, the constant filtered r and
+        // dropped the row of r (7), which matches no row of s. j is INT, and a has no j: s.j = 0 drops every row
+        // that the join NULL-extends, so the constant filters r, which it did not while s.j had no type.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (id INT, k INT)");
+            execute("INSERT INTO a VALUES (1, 1), (2, 2)");
+            execute("CREATE TABLE b (id INT, k SHORT, j INT)");
+            execute("INSERT INTO b VALUES (1, 0, 0), (2, 5, 5)");
+            execute("CREATE TABLE r (rk SHORT, rj INT)");
+            execute("INSERT INTO r VALUES (0, 0), (5, 5), (7, 7)");
+            for (String join : new String[]{"RIGHT", "FULL"}) {
+                assertQuery("SELECT s.k, r.rk FROM (SELECT b.k FROM a JOIN b ON a.id = b.id) s " + join
+                        + " JOIN r ON s.k = r.rk WHERE s.k = 0 ORDER BY r.rk")
+                        .noLeakCheck()
+                        .withPlanNotContaining("filter: rk=0")
+                        .returns("""
+                                k\trk
+                                0\t0
+                                0\t7
+                                """);
+                assertQuery("SELECT s.j, r.rj FROM (SELECT b.j FROM a JOIN b ON a.id = b.id) s " + join
+                        + " JOIN r ON s.j = r.rj WHERE s.j = 0 ORDER BY r.rj")
+                        .noLeakCheck()
+                        .withPlanContaining("filter: rj=0")
+                        .returns("""
+                                j\trj
+                                0\t0
+                                """);
+            }
         });
     }
 
