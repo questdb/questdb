@@ -1,0 +1,6 @@
+interface:
+  display_name: "Reject PR"
+  short_description: "Post a review-pr report as a change-request review"
+  default_prompt: "Use $reject-pr to request changes on the PR the last review-pr report covered."
+policy:
+  allow_implicit_invocation: false

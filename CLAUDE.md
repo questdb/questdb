@@ -388,6 +388,16 @@ when it is missing.
   different conclusion. Only after that proof can the issue be set aside,
   and the proof itself should be reported back so it can be verified.
 
+## Agent skills
+
+`ci/skills/render.py` generates the PR skills (`review-pr`, `fix-pr`,
+`approve-pr`, `reject-pr`) and their review agents for Claude Code
+(`.claude/`), Codex (`.codex/`) and pi (`.pi/`). Each skill and agent has one
+shared body in `ci/skills/`, `ci/skills/all/` holds the values every harness
+shares, such as descriptions, and each harness has a fragment file with only the
+text that harness needs. Edit the sources, never the generated files, then run
+`python3 ci/skills/render.py`; CI fails when a generated file is out of date.
+
 ## Build Commands
 
 ### Prerequisites

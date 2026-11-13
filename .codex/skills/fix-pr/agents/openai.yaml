@@ -2,3 +2,5 @@ interface:
   display_name: "QuestDB PR Fix"
   short_description: "Build features and fix bugs or review findings, test-first"
   default_prompt: "Use $fix-pr to fix these review findings: <paste the findings>"
+policy:
+  allow_implicit_invocation: false
