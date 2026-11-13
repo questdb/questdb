@@ -25,7 +25,7 @@
 //! `dense_symbol_dictionary` is set instead gets a dict page of only the
 //! symbols the chunk uses, and its DataPages hold indices into that page.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::ops::Range;
 use std::sync::{Arc, Mutex};
 
@@ -36,6 +36,7 @@ use parquet2::page::{DictPage, Page};
 use parquet2::schema::types::PrimitiveType;
 use parquet2::statistics::ParquetStatistics;
 use parquet2::write::DynIter;
+use rapidhash::RapidHashMap;
 
 use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 
@@ -105,7 +106,7 @@ pub fn encode(
     let mut max_key = 0u32;
     // Dense dictionary only: the index of each used key, and the key of each index in the
     // order the keys first appear.
-    let mut dense_indexes: HashMap<u32, i32> = HashMap::new();
+    let mut dense_indexes: RapidHashMap<u32, i32> = RapidHashMap::default();
     let mut dense_dict_keys: Vec<u32> = Vec::new();
     for (part_idx, column) in columns.iter().enumerate() {
         let chunk = partition_chunk_slice(
@@ -1251,6 +1252,69 @@ mod tests {
         assert_eq!(
             page_binary_stats(&pages[2]),
             (b"k000001".to_vec(), b"k060001".to_vec(), 1)
+        );
+    }
+
+    #[test]
+    fn symbol_dense_dictionary_repeats_keys_after_map_growth() {
+        // The key-to-index map grows through many resizes while frame 1 adds its 17_143
+        // distinct keys. Frame 2 then repeats every one of them in another order, interleaved
+        // with the 2_857 keys that frame 1's NULL rows skipped and the keys 20_000..20_099:
+        // each repeated key must find its entry. A model that tracks first appearances in a
+        // plain Vec, not a map, gives the dictionary order and every row's index.
+        const SYMBOL_COUNT: i32 = 20_100;
+        let names: Vec<String> = (0..SYMBOL_COUNT).map(|k| format!("s{k}")).collect();
+        let (chars, offsets) = serialize_as_symbols(names.iter().map(String::as_str).collect());
+        // 7_919 is prime and coprime with 20_000, so the non-NULL rows (i % 7 != 6) of frame 1
+        // hold distinct keys; gcd(12_347, 20_100) = 1, so frame 2 holds each key of the map once.
+        let keys1: Vec<i32> = (0..20_000)
+            .map(|i| if i % 7 == 6 { -1 } else { (i * 7_919) % 20_000 })
+            .collect();
+        let keys2: Vec<i32> = (0..SYMBOL_COUNT)
+            .map(|j| (j * 12_347) % SYMBOL_COUNT)
+            .collect();
+        let col1 = make_dense_symbol_column(&keys1, &chars, &offsets, 0);
+        let col2 = make_dense_symbol_column(&keys2, &chars, &offsets, 0);
+        let pages = encode(
+            &[col1, col2],
+            0,
+            keys2.len(),
+            &primitive_type(),
+            write_options(),
+            None,
+        )
+        .expect("encode");
+
+        // The model: a key takes the next index at its first appearance.
+        let mut model_index_of_key = vec![-1i32; SYMBOL_COUNT as usize];
+        let mut model_dictionary: Vec<&str> = Vec::new();
+        let mut model_indices: Vec<u32> = Vec::new();
+        for &key in keys1.iter().chain(&keys2) {
+            if key >= 0 {
+                let index = &mut model_index_of_key[key as usize];
+                if *index < 0 {
+                    *index = model_dictionary.len() as i32;
+                    model_dictionary.push(names[key as usize].as_str());
+                }
+                model_indices.push(*index as u32);
+            }
+        }
+
+        assert_eq!(pages.len(), 2); // 1 dict + 1 data: 40_100 rows fit a 1 MiB page
+        let dict = dict_page(&pages[0]);
+        assert_eq!(dict.num_values, 20_100);
+        assert_eq!(dict.buffer, dictionary_bytes(&model_dictionary));
+        assert_eq!(page_v2_num_values(&pages[1]), 40_100);
+        // frame 1's rows 6, 13, ..., 19_998
+        assert_eq!(page_v2_num_nulls(&pages[1]), 2_857);
+        // 37_243 non-NULL rows; the largest index, 20_099, takes 15 bits
+        assert_eq!(
+            data_page_dictionary_indices(&pages[1], 37_243),
+            (15, model_indices)
+        );
+        assert_eq!(
+            page_binary_stats(&pages[1]),
+            (b"s0".to_vec(), b"s9999".to_vec(), 2_857)
         );
     }
 

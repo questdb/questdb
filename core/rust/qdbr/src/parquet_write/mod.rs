@@ -5027,8 +5027,11 @@ mod tests {
         use rand::{RngExt, SeedableRng};
         use std::collections::HashSet;
 
-        // Raise for a long local run.
+        // Raise both for a long local run, MAX_ROW_COUNT past 100_000, the default
+        // cairo.parquet.export.row.group.size: row groups of that size fill the dense
+        // dictionary's key map to export scale, and with up to 200_000 symbols keys repeat.
         const ITERATIONS: usize = 8;
+        const MAX_ROW_COUNT: usize = 5_000;
         let seed: u64 = rand::rng().random();
         println!("symbol_dense_dictionary_random_round_trip seed: {seed}");
         let mut rng = StdRng::seed_from_u64(seed);
@@ -5036,7 +5039,7 @@ mod tests {
             let symbol_count: usize = rng.random_range(1..=200_000);
             let names: Vec<String> = (0..symbol_count).map(|k| format!("sym{k}")).collect();
             let (chars, offsets) = serialize_as_symbols(names.iter().map(String::as_str).collect());
-            let row_count: usize = rng.random_range(1..=5_000);
+            let row_count: usize = rng.random_range(1..=MAX_ROW_COUNT);
             let keys: Vec<i32> = (0..row_count)
                 .map(|_| {
                     if rng.random_range(0..10) == 0 {
