@@ -750,6 +750,33 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
+    public void testIndexesMatchScansDetectsLostEmptyStringKey() throws Exception {
+        // The empty string is a key of its own, which prints the way NULL does: the check must hold that key against a
+        // scan as well.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s SYMBOL INDEX TYPE POSTING, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('a', 1, '2024-01-01'), (NULL, 2, '2024-01-01T12:00'),
+                    ('', 3, '2024-01-02'), ('', 4, '2024-01-02T12:00')
+                    """);
+            engine.releaseAllWriters();
+            fuzzer.assertIndexesMatchScans("x");
+            // Readers map the index files, and Windows cannot remove a mapped file
+            engine.releaseAllReaders();
+
+            // 2024-01-02 holds only the empty string: the index loses that key and no other
+            final TableToken tableToken = engine.verifyTableName("x");
+            try (Path path = new Path(); MemoryCMARW keyMem = Vm.getCMARWInstance()) {
+                path.of(configuration.getDbRoot()).concat(tableToken).concat("2024-01-02");
+                Assert.assertTrue(PostingIndexUtils.resetIndex(configuration.getFilesFacade(), path, path.size(), "s", -1, keyMem));
+            }
+            final AssertionError e = Assert.assertThrows(AssertionError.class, () -> fuzzer.assertIndexesMatchScans("x"));
+            TestUtils.assertContains(e.getMessage(), "Actual cursor does not have record at 0");
+        });
+    }
+
+    @Test
     public void testIndexesMatchScansDetectsLostPostingKeys() throws Exception {
         // The check the fuzz runs after a restore must see the keys a posting index lost, so it cannot take them from
         // that index.

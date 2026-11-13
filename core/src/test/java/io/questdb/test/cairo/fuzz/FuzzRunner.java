@@ -47,6 +47,9 @@ import io.questdb.cairo.TxReader;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.PartitionFormat;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.api.MemoryR;
@@ -1483,24 +1486,32 @@ public class FuzzRunner {
     // Compares, key by key, the rows an equality filter on the indexed column reads through the index with those it
     // reads from a scan that uses no index. Each comparison is a single-key equality, which both plans emit in the
     // same order. The keys come from a scan too: a DISTINCT over a posting index reads them from that index, and so
-    // would never name a key the index lost.
+    // would never name a key the index lost. They come off the cursor rather than its printout, where the empty
+    // string, a key of its own, reads the same as NULL.
     private void checkIndexAgainstScan(SqlCompiler compiler, String tableName, String symbolColumnName) throws SqlException {
-        sink.clear();
-        TestUtils.printSql(compiler, sqlExecutionContext, "select /*+ no_index */ distinct \"" + symbolColumnName + "\" a from " + tableName + " order by 1", sink);
-        final String keys = sink.toString();
+        final ObjList<String> keys = new ObjList<>();
+        try (
+                RecordCursorFactory factory = compiler.compile(
+                        "select /*+ no_index */ distinct \"" + symbolColumnName + "\" a from " + tableName + " order by 1",
+                        sqlExecutionContext
+                ).getRecordCursorFactory();
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            final Record record = cursor.getRecord();
+            while (cursor.hasNext()) {
+                final CharSequence key = record.getSymA(0);
+                keys.add(key != null ? key.toString() : null);
+            }
+        }
         final StringSink plan = new StringSink();
         int checked = 0;
-        for (int lo = keys.indexOf('\n') + 1, hi; lo > 0 && lo < keys.length() && checked < MAX_COVERED_KEYS_CHECKED; lo = hi + 1) {
-            hi = keys.indexOf('\n', lo);
-            if (hi < 0) {
-                hi = keys.length();
-            }
-            final String key = keys.substring(lo, hi);
-            if (key.indexOf('\'') >= 0) {
+        for (int i = 0, n = keys.size(); i < n && checked < MAX_COVERED_KEYS_CHECKED; i++) {
+            final String key = keys.getQuick(i);
+            if (key != null && key.indexOf('\'') >= 0) {
                 continue; // a quote would need escaping; skip this key
             }
             checked++;
-            final String whereClause = " where \"" + symbolColumnName + "\" = " + (key.isEmpty() ? "null" : "'" + key + "'");
+            final String whereClause = " where \"" + symbolColumnName + "\" = " + (key != null ? "'" + key + "'" : "null");
             final String indexed = "select * from " + tableName + whereClause;
             plan.clear();
             TestUtils.printSql(compiler, sqlExecutionContext, "explain " + indexed, plan);
