@@ -321,6 +321,12 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // Numbers the marker each run of runAnchoredRemovalFuzz logs, so its check of the test's
     // capture starts at its own run.
     private static final AtomicLong ANCHORED_REMOVAL_RUN_SEQ = new AtomicLong();
+    // A line live view code logged that holds a date with a year of five digits or more: see
+    // assertNoLiveViewLineReadsNanosAsMicrosAfter.
+    private static final String LIVE_VIEW_LINE_WITH_A_FIVE_DIGIT_YEAR = "live view[^\\n]*\\d{5}-\\d\\d-\\d\\dT";
+    // Numbers the marker each run over a nanosecond base logs, so its check of the test's capture
+    // starts at its own run.
+    private static final AtomicLong NANOS_BASE_RUN_SEQ = new AtomicLong();
     // What the restart after failTheOwedSealOfALateRow meets: the repair marker still live over
     // the splice, a root at the frontier that reads it as stale, or no timeline, which a streak of
     // failed seals retired.
@@ -480,7 +486,26 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         }
         assertMemoryLeak(() -> {
             for (int v = 0; v < ANCHORED_VARIANT_COUNT; v++) {
-                runAnchoredFuzz(rnd, v, 120 + rnd.nextInt(180), rnd.nextBoolean(), rnd.nextBoolean());
+                runAnchoredFuzz(rnd, v, 120 + rnd.nextInt(180), rnd.nextBoolean(), rnd.nextBoolean(), false);
+            }
+        });
+    }
+
+    @Test
+    public void testFuzzAnchoredNanosBase() throws Exception {
+        // testFuzzAnchored's arm over a TIMESTAMP_NS base. Only an anchored view repairs one
+        // segment at a time, so this is the arm whose segment repairs, keyed scans and parked
+        // segment loops log their timestamps over a nanosecond base, and each run checks that
+        // every live view line printed them in nanoseconds. The recompute oracle holds as over
+        // a microsecond base.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
+        if (rnd.nextBoolean()) {
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1 + rnd.nextInt(8));
+        }
+        assertMemoryLeak(() -> {
+            for (int v = 0; v < ANCHORED_VARIANT_COUNT; v++) {
+                runAnchoredFuzz(rnd, v, 120 + rnd.nextInt(180), rnd.nextBoolean(), rnd.nextBoolean(), true);
             }
         });
     }
@@ -1271,10 +1296,28 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         capture.assertNotLoggedAfter(runMarker, " C i.q.c.l.");
     }
 
+    // The check of a run over a nanosecond base that every live view line printed its timestamps
+    // in nanoseconds. Such a run's dates fall in 2025 to 2026, and the largest nanosecond timestamp
+    // in 2262, so a date with a year of five digits or more is a nanosecond value printed as
+    // microseconds, some 56,000 years out. Waits for the run's lines and reads from its marker on,
+    // as assertNoLiveViewCriticalLineAfter does.
+    static void assertNoLiveViewLineReadsNanosAsMicrosAfter(LogCapture capture, String runMarker) {
+        capture.drain(LogCapture.STOP_DRAIN_TIMEOUT_MS);
+        capture.assertNotLoggedREAfter(runMarker, LIVE_VIEW_LINE_WITH_A_FIVE_DIGIT_YEAR);
+    }
+
     // Logs the marker a run of runAnchoredRemovalFuzz opens with, and returns it for
     // assertNoLiveViewCriticalLineAfter, which reads the run's lines from it on.
     static String logAnchoredRemovalRunMarker() {
         final String runMarker = "anchored removal run " + ANCHORED_REMOVAL_RUN_SEQ.incrementAndGet() + " starts";
+        LOG.advisory().$(runMarker).$();
+        return runMarker;
+    }
+
+    // Logs the marker a run over a nanosecond base opens with, and returns it for
+    // assertNoLiveViewLineReadsNanosAsMicrosAfter, which reads the run's lines from it on.
+    static String logNanosBaseRunMarker() {
+        final String runMarker = "nanosecond base run " + NANOS_BASE_RUN_SEQ.incrementAndGet() + " starts";
         LOG.advisory().$(runMarker).$();
         return runMarker;
     }
@@ -4206,13 +4249,17 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // SQL: the anchored live view vs. the equivalent (sym, bucket)-partitioned
     // regular window over the base. O3 is always on (segmentOrder shuffles), so
     // the anchor map is rebuilt on head-miss / head-hit replay and is verified to
-    // agree with the from-scratch recompute after quiescence.
+    // agree with the from-scratch recompute after quiescence. Over a TIMESTAMP_NS
+    // base when isNanos: the generated timestamps go in as nanoseconds, the START
+    // FROM boundary too, and every live view line the run logged must print its
+    // timestamps in nanoseconds, the segment repairs' included.
     private void runAnchoredFuzz(
             Rnd rnd,
             int variant,
             int rowCount,
             boolean restart,
-            boolean seed
+            boolean seed,
+            boolean isNanos
     ) throws Exception {
         // Pin the clock a day below the data, like runFuzz: START FROM NOW resolves the
         // CREATE-moment clock into the view's lower bound, and this harness wants that bound
@@ -4233,9 +4280,11 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final int baseStepMax = stepMode == 0 ? 5_000_000 : stepMode == 1 ? 60_000_000 : 900_000_000;
         final int dayJumpEvery = stepMode == 0 ? 20 : 12;
 
+        final String runMarker = isNanos ? logNanosBaseRunMarker() : null;
         execute("DROP LIVE VIEW IF EXISTS lv");
         execute("DROP TABLE IF EXISTS base");
-        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("CREATE TABLE base (ts " + (isNanos ? "TIMESTAMP_NS" : "TIMESTAMP")
+                + ", sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
         // Ascending timestamps with ties across keys: every anchored variant partitions by sym,
         // and (ts, sym) stays unique, so ts is a total order within each partition. Random
@@ -4246,6 +4295,12 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 baseStepMax, dayJumpEvery, tiePct
         );
         final long[] tsv = rows.tsv;
+        if (isNanos) {
+            // The same instants in the base's unit.
+            for (int k = 0; k < tsv.length; k++) {
+                tsv[k] *= 1000;
+            }
+        }
         final int[] symIdx = rows.symIdx;
         final long[] iv = rows.iv;
         final double[] xv = rows.xv;
@@ -4257,13 +4312,13 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // same bounded row set - a sub-boundary row leaking in would open its bucket early.
         final int preCount = seed ? rnd.nextInt(rowCount + 1) : 0;
         final int startMode = rnd.nextInt(START_FROM_MODES);
-        final long boundary = startBoundary(rnd, startMode, tsv, false);
+        final long boundary = startBoundary(rnd, startMode, tsv, isNanos);
         final String viewSql = "SELECT " + anchoredViewProjection(variant) + " FROM base "
                 + "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION " + bucket + ")";
         final String oracleSql = "SELECT " + anchoredOracleProjection(variant, bucket) + " FROM base"
                 + whereTail(false, boundary);
         final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
-                + startFromClause(startMode, boundary, false)
+                + startFromClause(startMode, boundary, isNanos)
                 + "AS " + viewSql;
 
         LOG.info().$("LV anchored fuzz: variant=").$(variant).$(", rows=").$(rowCount)
@@ -4271,6 +4326,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 .$(", tiePct=").$(tiePct).$(", ties=").$(rows.getTieCount())
                 .$(", restart=").$(restart).$(", preCount=").$(preCount)
                 .$(", startMode=").$(startMode).$(", boundary=").$(boundary)
+                .$(", nanos=").$(isNanos)
                 .$(", bucket=").$(bucket).$(", sql=").$(viewSql).$();
 
         final StringSink sink = new StringSink();
@@ -4280,7 +4336,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 final int[] preOrder = segmentOrder(rnd, 0, preCount, true);
                 final int[] cb = commitBounds(rnd, preOrder.length);
                 for (int c = 0; c + 1 < cb.length; c++) {
-                    insertCommit(sink, preOrder, cb[c], cb[c + 1], tsv, symIdx, iv, xv, xNull, null);
+                    insertAnchoredCommit(sink, preOrder, cb[c], cb[c + 1], tsv, symIdx, iv, xv, xNull, isNanos);
                     drainWalQueue();
                 }
             }
@@ -4297,7 +4353,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 final int[] postOrder = segmentOrder(rnd, preCount, rowCount, true);
                 final int[] cb = commitBounds(rnd, postOrder.length);
                 for (int c = 0; c + 1 < cb.length; c++) {
-                    insertCommit(sink, postOrder, cb[c], cb[c + 1], tsv, symIdx, iv, xv, xNull, null);
+                    insertAnchoredCommit(sink, postOrder, cb[c], cb[c + 1], tsv, symIdx, iv, xv, xNull, isNanos);
                     drainWalQueue();
                     if (restart && rnd.nextInt(4) == 0) {
                         // Holds the flush off, so the restart below can land on an un-flushed
@@ -4338,9 +4394,32 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 true
         );
         assertNoRefreshFaults("lv");
+        if (isNanos) {
+            assertNoLiveViewLineReadsNanosAsMicrosAfter(walApplySuspensionRule.getCapture(), runMarker);
+        }
 
         execute("DROP LIVE VIEW lv");
         execute("DROP TABLE base");
+    }
+
+    // One commit of runAnchoredFuzz's rows, whose timestamps are nanoseconds when isNanos.
+    private void insertAnchoredCommit(
+            StringSink sink,
+            int[] order,
+            int from,
+            int to,
+            long[] tsv,
+            int[] symIdx,
+            long[] iv,
+            double[] xv,
+            boolean[] xNull,
+            boolean isNanos
+    ) throws Exception {
+        if (isNanos) {
+            insertNsCommit(sink, order, from, to, tsv, symIdx, iv, xv, xNull);
+        } else {
+            insertCommit(sink, order, from, to, tsv, symIdx, iv, xv, xNull, null);
+        }
     }
 
     // Transparent-DDL fuzz (see testFuzzBaseDdlTransparent). Mirrors runFuzz's
@@ -6135,7 +6214,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // testFuzzNanosBase). Mirrors runFuzz's ingestion shape but with nanosecond
     // timestamps and an hour partition unit, exercising the driver-aware refresh
     // path. The recompute oracle is unchanged: the live view must equal the
-    // window query recomputed over the base.
+    // window query recomputed over the base, and every live view line the run
+    // logged must print its timestamps in nanoseconds.
     private void runNanosBaseFuzz(
             Rnd rnd,
             int variant,
@@ -6162,6 +6242,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final long hourNs = 3_600_000_000_000L;
         final boolean withWhere = rnd.nextInt(3) == 0;
 
+        final String runMarker = logNanosBaseRunMarker();
         execute("DROP LIVE VIEW IF EXISTS lv");
         execute("DROP TABLE IF EXISTS base");
         execute("CREATE TABLE base (ts TIMESTAMP_NS, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR WAL");
@@ -6265,6 +6346,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 true
         );
         assertNoRefreshFaults("lv");
+        assertNoLiveViewLineReadsNanosAsMicrosAfter(walApplySuspensionRule.getCapture(), runMarker);
 
         execute("DROP LIVE VIEW lv");
         execute("DROP TABLE base");

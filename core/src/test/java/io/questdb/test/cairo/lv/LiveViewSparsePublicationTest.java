@@ -44,6 +44,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
@@ -671,6 +672,18 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
                 assertColdKeyedRouteDeclined(job);
             }
         });
+    }
+
+    @Test
+    public void testAColdKeyedHeadMissLogsItsOpenHighBoundInTheViewsUnit() throws Exception {
+        assertAColdKeyedHeadMissLogsItsBounds("TIMESTAMP", "2026-01-05T05:00:00.000000Z", "294247-01-10T04:00:54.775807Z");
+    }
+
+    @Test
+    public void testAColdKeyedHeadMissLogsItsOpenHighBoundInTheViewsUnitOverANanosecondBase() throws Exception {
+        // The open high bound is the largest timestamp: over a nanosecond base it prints as the
+        // largest nanosecond one, Long.MAX_VALUE ns being 9_223_372_036 s and 854_775_807 ns.
+        assertAColdKeyedHeadMissLogsItsBounds("TIMESTAMP_NS", "2026-01-05T05:00:00.000000000Z", "2262-04-11T23:47:16.854775807Z");
     }
 
     @Test
@@ -2202,6 +2215,41 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
     }
 
     /**
+     * {@link #testAColdKeyedHeadMissWithoutARemovalStillPublishesSparsely}'s repair over a base
+     * whose created_at is of {@code timestampType}. The cold route replays acct-1 from the day's
+     * origin and emits its rows at 05:00, 10:00 and 12:00; the view held 10:00, 12:00 and acct-2's
+     * 13:00 at or above the correction, so with the one row the correction inserted it supersedes
+     * two of them and keeps one. Its influence reaches the end of the table, so the range it
+     * publishes has no high bound: the line prints the largest timestamp of the unit.
+     */
+    private void assertAColdKeyedHeadMissLogsItsBounds(String timestampType, String outputLowTs, String highTsExclusive) throws Exception {
+        armSparseRepair();
+        final LogCapture capture = new LogCapture();
+        try {
+            assertMemoryLeak(() -> {
+                createBase("tx", seedAnOpenDayWithALoneRowAtTen(), "", timestampType);
+                createViewOverBase("100ms");
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    driveRefreshToQuiescence(job);
+
+                    capture.start();
+                    commit(row(5, 5, 0, 0, "acct-1", 100.0), job);
+                    capture.drain();
+                    capture.stop();
+
+                    Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_REPLAY_COUNT));
+                    Assert.assertEquals(1, job.getStatsForTest().get(SPARSE_PUBLICATION_COUNT));
+                    capture.assertLogged("live view keyed repair published sparsely [view=lv, origin=segment start, replayedRows=3, "
+                            + "supersededRows=2, rowsKept=1, outputLowTs=" + outputLowTs + ", highTsExclusive=" + highTsExclusive + "]");
+                    assertViewMatchesRecompute();
+                }
+            });
+        } finally {
+            capture.stop();
+        }
+    }
+
+    /**
      * The differential the item 7 cases stand on: the two arms hold the same output, and
      * each holds the output its base says it should. The second half is not redundant - two
      * arms that lost the same row agree with each other and with nothing else - and the
@@ -2652,7 +2700,12 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
     }
 
     private void createBase(String tableName, String seedRows, String dedupClause) throws Exception {
-        execute("create table " + tableName + " (created_at timestamp, account_id symbol nocache index capacity 8, "
+        createBase(tableName, seedRows, dedupClause, "timestamp");
+    }
+
+    // As above, with created_at of timestampType.
+    private void createBase(String tableName, String seedRows, String dedupClause, String timestampType) throws Exception {
+        execute("create table " + tableName + " (created_at " + timestampType + ", account_id symbol nocache index capacity 8, "
                 + "amount double) timestamp(created_at) partition by hour wal" + dedupClause);
         execute("insert into " + tableName + " values " + seedRows);
         drainWalQueue();

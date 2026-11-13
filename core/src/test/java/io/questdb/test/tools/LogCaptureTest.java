@@ -108,6 +108,50 @@ public class LogCaptureTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAssertNotLoggedREAfterIgnoresMatchesBeforeTheMarker() {
+        final String forbidden = "log-capture-forbidden-" + System.nanoTime();
+        final String marker = "log-capture-marker-" + System.nanoTime();
+        LOG.info().$(forbidden).$(" year=57971-02-27T18:40").$();
+        LOG.info().$(marker).$();
+        LOG.info().$(forbidden).$(" year=2026-01-01T00:04").$();
+        capture.drain(LogCapture.STOP_DRAIN_TIMEOUT_MS);
+
+        capture.assertLoggedRE(forbidden + " year=\\d{5}-");
+        capture.assertNotLoggedREAfter(marker, forbidden + " year=\\d{5}-");
+    }
+
+    @Test
+    public void testAssertNotLoggedREAfterPassesWithoutTheMarker() {
+        final String forbidden = "log-capture-forbidden-" + System.nanoTime();
+        LOG.info().$(forbidden).$(" year=57971-02-27T18:40").$();
+        capture.drain(LogCapture.STOP_DRAIN_TIMEOUT_MS);
+
+        capture.assertLoggedRE(forbidden + " year=\\d{5}-");
+        capture.assertNotLoggedREAfter("log-capture-marker-never-logged-" + System.nanoTime(), forbidden + " year=\\d{5}-");
+    }
+
+    @Test
+    public void testAssertNotLoggedREAfterRejectsAMatchAfterTheMarker() {
+        final String marker = "log-capture-marker-" + System.nanoTime();
+        final String forbidden = "log-capture-forbidden-" + System.nanoTime();
+        LOG.info().$(marker).$();
+        LOG.info().$(forbidden).$(" year=2026-01-01T00:04").$();
+        LOG.info().$(forbidden).$(" year=57971-02-27T18:40").$();
+        capture.drain(LogCapture.STOP_DRAIN_TIMEOUT_MS);
+
+        final String regex = forbidden + " year=\\d{5}-";
+        final AssertionError error = Assert.assertThrows(AssertionError.class, () -> capture.assertNotLoggedREAfter(marker, regex));
+        // The whole line of the first match: the log timestamp, which no test can predict, then the
+        // level, the logger and the text, up to the '\n' of the record's "\r\n" (Misc.EOL).
+        final String prefix = "Message '" + regex + "' was logged: ";
+        final String lineAfterTimestamp = " I i.q.t.t.LogCaptureTest " + forbidden + " year=57971-02-27T18:40\r";
+        Assert.assertTrue(
+                "expected: " + prefix + "<timestamp>" + lineAfterTimestamp + ", actual: " + error.getMessage(),
+                Pattern.matches(Pattern.quote(prefix) + "\\S+" + Pattern.quote(lineAfterTimestamp), error.getMessage())
+        );
+    }
+
+    @Test
     public void testAssertNotLoggedFromIndexAcceptsMatchesAheadOfIt() {
         LogCapture.assertNotLogged("forbidden", "forbidden early\nafter\n", "forbidden early\n".length());
         // a match that starts ahead of fromIndex and ends past it is ahead of it too

@@ -83,6 +83,24 @@ public class LogCapture {
     }
 
     /**
+     * Fails as {@link #assertNotLoggedAfter(String, String)} does, for the first match of
+     * {@code regex} that starts after the end of the first occurrence of {@code marker}, and quotes
+     * that match's whole line. A capture that does not hold {@code marker} passes.
+     */
+    public void assertNotLoggedREAfter(String marker, String regex) {
+        final String snapshot = sink.toString();
+        final int markerIndex = snapshot.indexOf(marker);
+        if (markerIndex > -1) {
+            final Matcher matcher = Pattern.compile(regex).matcher(snapshot);
+            if (matcher.find(markerIndex + marker.length())) {
+                final int lo = snapshot.lastIndexOf('\n', matcher.start() - 1) + 1;
+                final int hi = snapshot.indexOf('\n', matcher.start());
+                Assert.fail("Message '" + regex + "' was logged: " + snapshot.substring(lo, hi > -1 ? hi : snapshot.length()));
+            }
+        }
+    }
+
+    /**
      * How many times {@code message} appears in the captured log, read off one stable snapshot.
      */
     public int countOccurrences(String message) {

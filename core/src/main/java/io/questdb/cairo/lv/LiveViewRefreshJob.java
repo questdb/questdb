@@ -992,12 +992,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             roleLock.unlock();
         }
         if (timelineResult.getDroppedCheckpointId() != Numbers.LONG_NULL) {
+            final TimestampDriver driver = ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType());
             LOG.info().$("live view seal replaced the previous root, whose timestamp group grew after it was sealed [view=")
                     .$(instance.getDefinition().getViewName())
                     .$(", droppedCheckpointId=").$(timelineResult.getDroppedCheckpointId())
                     .$(", checkpointId=").$(timelineResult.getCheckpointId())
-                    .$(", batchMinTs=").$ts(batchMinTs)
-                    .$(", maxTs=").$ts(batchMaxTs).I$();
+                    .$(", batchMinTs=").$ts(driver, batchMinTs)
+                    .$(", maxTs=").$ts(driver, batchMaxTs).I$();
         }
         // Only a published root moves the window the next seal measures over. A
         // failed append leaves it open, so the next attempt still sees every row
@@ -1303,11 +1304,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // splice and leave the truncate in place: its head seal images the whole
                 // runtime and converts the root, and the next repair splices again.
                 stats.inc(KEY_DOMAIN_SPLICE_DECLINE_COUNT);
+                final TimestampDriver driver = ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType());
                 LOG.info().$("live view checkpoint repair declined the key domain splice over an incompatible root, truncating instead [view=")
                         .$(instance.getDefinition().getViewName())
                         .$(", boundaries=").$(repairBoundaries.size())
-                        .$(", lowTsInclusive=").$ts(lowTsInclusive)
-                        .$(", highTsExclusive=").$ts(highTsExclusive).I$();
+                        .$(", lowTsInclusive=").$ts(driver, lowTsInclusive)
+                        .$(", highTsExclusive=").$ts(driver, highTsExclusive).I$();
                 Misc.free(capture);
                 repairBoundaries.clear();
                 return null;
@@ -2025,9 +2027,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // The marker is what makes the splice safe to publish, so a repair that
             // cannot write one must not splice unprotected. The caller reads the false,
             // drops its capture and retires the timeline ahead of its commit.
+            final TimestampDriver driver = ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType());
             LOG.error().$("could not write the live view checkpoint repair marker [view=")
                     .$(instance.getDefinition().getViewName())
-                    .$(", floorTs=").$ts(floorTs)
+                    .$(", floorTs=").$ts(driver, floorTs)
                     .$(", error=").$(t).I$();
             return false;
         }
@@ -4233,10 +4236,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * that no cycle without rows would release. The retire takes the marker with the timeline.
      */
     private void retireStrandedOwedRoot(LiveViewInstance instance, CharSequence viewName, long frontierTs) {
+        final TimestampDriver driver = ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType());
         LOG.info().$("live view O3 repair owes a root no seal can land before a newer row while its checkpoint "
                         + "seal backs off, retiring the timeline [view=").$(viewName)
-                .$(", frontier=").$ts(frontierTs)
-                .$(", latestSeenTs=").$ts(instance.getLatestSeenTs()).I$();
+                .$(", frontier=").$ts(driver, frontierTs)
+                .$(", latestSeenTs=").$ts(driver, instance.getLatestSeenTs()).I$();
         retireCheckpointStateOnO3(instance, true);
     }
 
@@ -4681,10 +4685,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (emittedRows == durableRows) {
             if (boundaryTs > durableMaxTs) {
                 stats.inc(SEAL_ABOVE_DURABLE_FRONTIER_DECLINE_COUNT);
+                final TimestampDriver driver = ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType());
                 LOG.debug().$("live view checkpoint boundary above the newest durable row, seal declined [view=")
                         .$(instance.getDefinition().getViewName())
-                        .$(", boundary=").$ts(boundaryTs)
-                        .$(", durableMaxTs=").$ts(durableMaxTs).I$();
+                        .$(", boundary=").$ts(driver, boundaryTs)
+                        .$(", durableMaxTs=").$ts(driver, durableMaxTs).I$();
                 return false;
             }
             return true;
@@ -5017,6 +5022,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             return;
         }
         final String viewName = instance.getDefinition().getViewName();
+        final TimestampDriver driver = ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType());
         final int readerColumnIndex = compiledPlan.getPageFrameFactory().getBaseColumnIndex(scanColumnIndex);
         final long indexOpenRows = engine.getConfiguration().getLiveViewCheckpointRepairKeyedScanIndexOpenRows();
         final long indexSeekRows = LiveViewCheckpointKeyedScanCost.indexSeekRows(indexOpenRows);
@@ -5101,7 +5107,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     keyedScanCheaperSegments.add(segmentStart);
                 }
                 LOG.info().$("live view segment keyed scan priced [view=").$(viewName)
-                        .$(", segmentStart=").$ts(segmentStart)
+                        .$(", segmentStart=").$ts(driver, segmentStart)
                         .$(", keys=").$(keyedScanKeys.size())
                         .$(", postingRows=").$(postingRows)
                         .$(", indexOpens=").$(keyedScanCost.getIndexOpens())
@@ -5195,6 +5201,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             return;
         }
         final String viewName = instance.getDefinition().getViewName();
+        final TimestampDriver driver = ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType());
         final int scanColumnIndex = keyedScanColumnIndex(instance, compiledPlan);
         if (scanColumnIndex < 0) {
             // The view admits no keyed replay at all - an unindexed, compound or
@@ -5371,7 +5378,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             openSegmentRepairPhases.wholeRangeRows = wholeRangeRows;
             LOG.info().$("live view open segment keyed scan priced [view=").$(viewName)
                     .$(", origin=").$(isColdHeadMiss ? "segment start" : "checkpoint")
-                    .$(", replayLowTs=").$ts(lowTsInclusive)
+                    .$(", replayLowTs=").$ts(driver, lowTsInclusive)
                     .$(", keys=").$(keyedScanKeys.size())
                     .$(", postingRows=").$(postingRows)
                     .$(", indexOpens=").$(keyedScanCost.getIndexOpens())
@@ -5381,7 +5388,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(", indexSeekRows=").$(indexSeekRows)
                     .$(", configuredIndexOpenRows=").$(configuredIndexOpenRows)
                     .$(", wholeRangeRows=").$(wholeRangeRows)
-                    .$(", outputLowTs=").$ts(outputLowTs)
+                    .$(", outputLowTs=").$ts(driver, outputLowTs)
                     .$(", selectedRootLogicalBytes=").$(selectedRootLogicalBytes)
                     .$(", runtimeAnchorReusable=").$(isRuntimeAnchorReusable)
                     .$(", keyedEstimateNanos=").$(elapsedCost.getLastKeyedEstimateNanos())
@@ -5521,12 +5528,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * other view it only records, and what it produces there is the fallback rate a sparse
      * publication would run at.
      *
+     * @param driver              the view's timestamp driver, which prints the first
+     *                            duplicate's timestamp in the view's own unit
      * @param isMeasuredCandidate whether the repair is keyed or a bounded localized
      *                            diagnostic candidate
      * @param isKeyedRoute        whether the replay followed its keys, which makes the
      *                            checked rows exactly the set a sparse commit would carry
      */
-    private void reportOutputUniqueness(CharSequence viewName, boolean isMeasuredCandidate, boolean isKeyedRoute) {
+    private void reportOutputUniqueness(
+            CharSequence viewName,
+            TimestampDriver driver,
+            boolean isMeasuredCandidate,
+            boolean isKeyedRoute
+    ) {
         if (!isMeasuredCandidate) {
             return;
         }
@@ -5546,7 +5560,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 .$(", rows=").$(outputUniqueness.getCheckedRows())
                 .$(", duplicateRows=").$(outputUniqueness.getDuplicateRows())
                 .$(", maxGroupRows=").$(outputUniqueness.getMaxGroupRows())
-                .$(", firstDuplicateTs=").$ts(outputUniqueness.getFirstDuplicateTs())
+                .$(", firstDuplicateTs=").$ts(driver, outputUniqueness.getFirstDuplicateTs())
                 .$(", unique=").$(outputUniqueness.isUnique()).I$();
     }
 
@@ -6150,6 +6164,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             long commitSeqTxn
     ) throws SqlException {
         final String viewName = instance.getDefinition().getViewName();
+        final TimestampDriver driver = ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType());
         if (!repairPlan.ofSegment(
                 segmentMinTs,
                 segmentMaxTs,
@@ -6161,7 +6176,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 loop.getRuntimeFrontierTs()
         )) {
             LOG.info().$("live view segment repair declined [view=").$(viewName)
-                    .$(", segmentStart=").$ts(segmentStart)
+                    .$(", segmentStart=").$ts(driver, segmentStart)
                     .$(", queued=").$(loop.size())
                     .$(", denial=").$(LiveViewCheckpointRepairPlan.denialReasonName(repairPlan.getDenialReason()))
                     .I$();
@@ -6169,12 +6184,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         }
         instance.recordCheckpointRepairOutcome(repairPlan.getDisposition(), repairPlan.getDenialReason());
         LOG.info().$("live view segment repair [view=").$(viewName)
-                .$(", segmentStart=").$ts(segmentStart)
+                .$(", segmentStart=").$ts(driver, segmentStart)
                 .$(", queued=").$(loop.size())
                 .$(", repaired=").$(loop.getSegmentsRepaired())
-                .$(", replayLowTs=").$ts(repairPlan.getReplayLowTs())
-                .$(", outputLowTs=").$ts(repairPlan.getOutputLowTs())
-                .$(", highTsExclusive=").$ts(repairPlan.getHighTsExclusive())
+                .$(", replayLowTs=").$ts(driver, repairPlan.getReplayLowTs())
+                .$(", outputLowTs=").$ts(driver, repairPlan.getOutputLowTs())
+                .$(", highTsExclusive=").$ts(driver, repairPlan.getHighTsExclusive())
                 .$(", commitSeqTxn=").$(repairPlan.getCommitSeqTxn())
                 .$(", pinnedSeqTxn=").$(pinnedSeqTxn).I$();
         try {
@@ -6358,9 +6373,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 && baseReader.size() - baseRowsBelow == storedRows - storedRowsBelow + insertedRowDelta) {
             return true;
         }
+        final TimestampDriver driver = ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType());
         LOG.info().$("live view open segment keyed replay declined, stored rows at or above its floor"
                         + " are not the base rows it consumed [view=").$(instance.getDefinition().getViewName())
-                .$(", outputLowTs=").$ts(outputLowTs)
+                .$(", outputLowTs=").$ts(driver, outputLowTs)
                 .$(", storedRows=").$(storedRows)
                 .$(", storedRowsBelow=").$(storedRowsBelow)
                 .$(", baseRows=").$(baseReader.size())
@@ -6634,9 +6650,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         } catch (Throwable t) {
             // Arming is not repairing: whatever went wrong here costs the localization and
             // nothing else, and the whole-segment route below is still correct.
+            final TimestampDriver driver = ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType());
             LOG.info().$("live view segment keyed replay could not be armed [view=")
                     .$(instance.getDefinition().getViewName())
-                    .$(", segmentStart=").$ts(segmentStart)
+                    .$(", segmentStart=").$ts(driver, segmentStart)
                     .$(", error=").$(t).I$();
             keyedReplay.clear();
             return false;
@@ -6868,9 +6885,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // later repair may read coordinates off a table that does not hold it, and the
             // watermark has not moved, so the loop stops here; the next turn re-drives the
             // apply before anything else.
+            final TimestampDriver driver = ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType());
             LOG.info().$("live view segment repair stopped on an unapplied replacement [view=")
                     .$(instance.getDefinition().getViewName())
-                    .$(", segmentStart=").$ts(segmentStart)
+                    .$(", segmentStart=").$ts(driver, segmentStart)
                     .$(", queued=").$(loop.size()).I$();
             return SEGMENT_STEP_UNAPPLIED;
         }
@@ -6890,9 +6908,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private void parkSegmentLoop(LiveViewInstance instance, LiveViewCheckpointSegmentLoop loop) {
         final LiveViewCheckpointRepairSession session = instance.getSuspendedRepair();
         session.getSegmentLoop().copyFrom(loop);
+        final TimestampDriver driver = ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType());
         LOG.info().$("live view segment loop parked with its repair [view=")
                 .$(instance.getDefinition().getViewName())
-                .$(", inFlightSegmentStart=").$ts(loop.getInFlightSegmentStart())
+                .$(", inFlightSegmentStart=").$ts(driver, loop.getInFlightSegmentStart())
                 .$(", queued=").$(loop.size())
                 .$(", repaired=").$(loop.getSegmentsRepaired()).I$();
     }
@@ -8229,6 +8248,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             LiveViewCheckpointRepairRoute route
     ) throws SqlException {
         final String viewName = instance.getDefinition().getViewName();
+        final TimestampDriver driver = ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType());
         final long anchorCheckpointId = plan.getAnchorCheckpointId();
         final long anchorMaxTs = plan.getAnchorMaxTs();
         // Replay starts strictly above anchorMaxTs because the anchor's state
@@ -8373,7 +8393,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         .$(viewName)
                         .$(", boundaries=").$(repairBoundaries.size())
                         .$(", max=").$(maxChainedBoundaries)
-                        .$(", anchorMaxTs=").$ts(anchorMaxTs).I$();
+                        .$(", anchorMaxTs=").$ts(driver, anchorMaxTs).I$();
                 timelineCapture = Misc.free(timelineCapture);
                 session.discardDescriptor();
                 repairBoundaries.clear();
@@ -8448,8 +8468,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     );
                     LOG.info().$("live view open segment resumed by key [view=").$(viewName)
                             .$(", keys=").$(keyedReplay.getBaseSymbolKeys().size())
-                            .$(", replayLowTs=").$ts(replayLowTs)
-                            .$(", anchorMaxTs=").$ts(anchorMaxTs).I$();
+                            .$(", replayLowTs=").$ts(driver, replayLowTs)
+                            .$(", anchorMaxTs=").$ts(driver, anchorMaxTs).I$();
                 }
                 try (RecordCursor pageCursor = openOpenSegmentBaseCursor(
                         pageFrameFactory,
@@ -8605,7 +8625,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             // failing does.
                             LOG.error().$("could not restore live view O3 resume anchor, retrying [view=")
                                     .$(viewName)
-                                    .$(", anchorMaxTs=").$ts(anchorMaxTs)
+                                    .$(", anchorMaxTs=").$ts(driver, anchorMaxTs)
                                     .$(", anchorCheckpointId=").$(anchorCheckpointId)
                                     .$(", keyed=").$(isKeyed)
                                     .$(", error=").$((Throwable) fault).I$();
@@ -8724,7 +8744,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                 discardedRoots = boundaryFreezingCursor.getCaptured();
                                 stats.inc(RESUME_CHAIN_KEY_BUDGET_DECLINE_COUNT);
                                 stats.add(RESUME_CHAIN_DISCARDED_ROOT_COUNT, discardedRoots);
-                                final TimestampDriver driver = ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType());
                                 LOG.info().$("live view O3 resume declined the checkpoint chain, truncating instead [view=")
                                         .$(viewName)
                                         .$(", boundaries=").$(repairBoundaries.size())
@@ -8780,7 +8799,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     // Before the commit, which is where the check has to finish: the
                     // publication chosen below stands on the pair, and a duplicate admitted
                     // to a sparse commit is collapsed silently.
-                    reportOutputUniqueness(viewName, isKeyed, isKeyed);
+                    reportOutputUniqueness(viewName, driver, isKeyed, isKeyed);
                     // The verdict, acted on. A keyed resume publishes only the rows it
                     // recomputed, upserted onto the view's upsert identity, and leaves every
                     // other stored row where it stands - see decidePublication for when that
@@ -8802,7 +8821,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                 .$(", replayedRows=").$(appendedRows)
                                 .$(", mergedRows=").$(keyedReplay.getMergedRows())
                                 .$(", duplicateRows=").$(outputUniqueness.getDuplicateRows())
-                                .$(", firstDuplicateTs=").$ts(outputUniqueness.getFirstDuplicateTs())
+                                .$(", firstDuplicateTs=").$ts(driver, outputUniqueness.getFirstDuplicateTs())
                                 .I$();
                     }
                     if (timelineCapture != null) {
@@ -8878,7 +8897,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                 .$(", replayedRows=").$(appendedRows)
                                 .$(", supersededRows=").$(supersededRows)
                                 .$(", rowsKept=").$(rowsKept)
-                                .$(", outputLowTs=").$ts(replaceLowTs).I$();
+                                .$(", outputLowTs=").$ts(driver, replaceLowTs).I$();
                         commitLiveViewWithUpsertFenced(instance, walWriter, committedSeqTxn);
                     } else {
                         commitLiveViewWithReplaceRangeFenced(instance, walWriter, committedSeqTxn, replaceLowTs, Long.MAX_VALUE);
@@ -9159,8 +9178,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 stats.inc(LiveViewRefreshStats.SPLICE_FRONTIER_TRUNCATE_COUNT);
                 LOG.info().$("live view O3 resume output ended below its spliced roots, truncating at the frontier [view=")
                         .$(viewName)
-                        .$(", frontier=").$ts(durableMaxTsAfterRepair)
-                        .$(", spliceHeadRootMaxTs=").$ts(timelineSplice.getHeadRootMaxTimestamp())
+                        .$(", frontier=").$ts(driver, durableMaxTsAfterRepair)
+                        .$(", spliceHeadRootMaxTs=").$ts(driver, timelineSplice.getHeadRootMaxTimestamp())
                         .$(", rowsEmitted=").$(appendedRows).I$();
                 final long truncateStart = System.nanoTime();
                 prefixMarkerLive = truncateOrRetireTimelineOnO3(instance, durableMaxTsAfterRepair + 1, true, truncatedHead);
@@ -9296,7 +9315,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     if (frontierTs < anchorMaxTs) {
                         // After the replacement commit, so the truncate's marker records no
                         // seqTxn: see truncateOrRetireTimelineOnO3.
-                        final TimestampDriver driver = ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType());
                         LOG.info().$("live view O3 resume emitted no row below a root above the frontier, truncating at the frontier [view=")
                                 .$(viewName)
                                 .$(", frontier=").$ts(driver, frontierTs)
@@ -9346,7 +9364,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // stays: the next seal that lands puts the root at the frontier, and its
                 // generation, two past the marker's, reads the marker as stale. Unless the
                 // seal failures spent their budget and no seal can land the root before a
-                // newer row: then the timeline retires, as the failures' verdict would.
+                // newer row: then the timeline retires, as the failures' verdict would. A
+                // closing seal whose own failure verdict retired the timeline took the marker
+                // with it, so no marker is left to keep.
                 if (isSpliceAboveFrontier) {
                     if (headSealed || isFrontierRootKept) {
                         clearCheckpointRepairMarker(instance);
@@ -9363,8 +9383,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     clearCheckpointRepairMarker(instance);
                 } else if (isOwedRootStrandedAtTheSealFailureBudget(instance, durableMaxTsAfterRepair)) {
                     retireStrandedOwedRoot(instance, viewName, durableMaxTsAfterRepair);
-                } else {
-                    logRepairMarkerKept(viewName, durableMaxTsAfterRepair, timelineSplice);
+                } else if (instance.getCheckpointTimelineWalPurgeFloor() != Numbers.LONG_NULL) {
+                    // The splice's publication recorded a WAL purge floor, and only a retire
+                    // clears it within a turn: a cleared floor means the closing seal's verdict
+                    // retired the timeline and the marker with it, and logged so itself.
+                    logRepairMarkerKept(viewName, driver, durableMaxTsAfterRepair, timelineSplice);
                 }
             }
             // The resume replay is "the win": bounded to the tail above the anchor.
@@ -9564,6 +9587,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             boolean mayYield
     ) throws SqlException {
         final String viewName = instance.getDefinition().getViewName();
+        final TimestampDriver driver = ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType());
         final LiveViewWindow anchorWindow = instance.getAnchorWindow();
         final long viewLowerBoundTimestamp = instance.getDefinition().getViewLowerBoundTimestamp();
         // C, the DATA trigger's authority to DELETE, expressed in the view's own
@@ -9713,7 +9737,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             .$(viewName)
                             .$(", boundaries=").$(session.getBoundaries().size())
                             .$(", max=").$(maxRepairedBoundaries)
-                            .$(", outputLowTs=").$ts(emitLowTs).I$();
+                            .$(", outputLowTs=").$ts(driver, emitLowTs).I$();
                     timelineCapture = Misc.free(timelineCapture);
                     session.discardDescriptor();
                     session.getBoundaries().clear();
@@ -10126,8 +10150,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                         .$(", origin=").$(route.isColdOpenSegment() ? "segment start" : "closed segment")
                                         .$(", keys=").$(repairKeyedReplay.getBaseSymbolKeys().size())
                                         .$(", sparseAttempt=").$(isSparseAttempt)
-                                        .$(", outputLowTs=").$ts(emitLowTs)
-                                        .$(", highTsExclusive=").$ts(plan.getHighTsExclusive()).I$();
+                                        .$(", outputLowTs=").$ts(driver, emitLowTs)
+                                        .$(", highTsExclusive=").$ts(driver, plan.getHighTsExclusive()).I$();
                             } else {
                                 // The replay's own factory does not admit the index substitution,
                                 // or the view's schema has moved out from under the scan built
@@ -10524,6 +10548,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                 // duplicate admitted to a sparse commit is collapsed silently.
                                 reportOutputUniqueness(
                                         viewName,
+                                        driver,
                                         route.isKeyedScan() || localized && finiteHighBound,
                                         route.isKeyedScan()
                                 );
@@ -10545,7 +10570,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                             .$(", replayedRows=").$(appendedRows)
                                             .$(", mergedRows=").$(repairKeyedReplay.getMergedRows())
                                             .$(", duplicateRows=").$(outputUniqueness.getDuplicateRows())
-                                            .$(", firstDuplicateTs=").$ts(outputUniqueness.getFirstDuplicateTs())
+                                            .$(", firstDuplicateTs=").$ts(driver, outputUniqueness.getFirstDuplicateTs())
                                             .$(", unpairedSupersededRows=").$(repairKeyedReplay.getUnpairedSupersededRows())
                                             .I$();
                                 }
@@ -10605,8 +10630,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                             .$(", replayedRows=").$(appendedRows)
                                             .$(", supersededRows=").$(supersededRows)
                                             .$(", rowsKept=").$(rowsKept)
-                                            .$(", outputLowTs=").$ts(emitLowTs)
-                                            .$(", highTsExclusive=").$ts(timelineHighTsExclusive).I$();
+                                            .$(", outputLowTs=").$ts(driver, emitLowTs)
+                                            .$(", highTsExclusive=").$ts(driver, timelineHighTsExclusive).I$();
                                     commitLiveViewWithUpsertFenced(instance, walWriter, effectiveSeqTxn);
                                 } else {
                                     commitLiveViewWithReplaceRangeFenced(instance, walWriter,
@@ -11116,8 +11141,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             stats.inc(HEAD_MISS_SPLICE_FRONTIER_TRUNCATE_COUNT);
                             LOG.info().$("live view O3 head miss output ended below its spliced roots, truncating at the frontier [view=")
                                     .$(viewName)
-                                    .$(", frontier=").$ts(durableMaxTsAfterRepair)
-                                    .$(", spliceHeadRootMaxTs=").$ts(headRootMaxTs)
+                                    .$(", frontier=").$ts(driver, durableMaxTsAfterRepair)
+                                    .$(", spliceHeadRootMaxTs=").$ts(driver, headRootMaxTs)
                                     .$(", rowsEmitted=").$(appendedRows).I$();
                             prefixMarkerLive = truncateOrRetireTimelineOnO3(
                                     instance,
@@ -11142,7 +11167,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         isFrontierStateSealOwed = !isFrontierRootRestorable && isFrontierStateHeld;
                         final long frontierTruncateTs = isFrontierRootRestorable ? durableMaxTsAfterRepair + 1 : durableMaxTsAfterRepair;
                         if (prefixMarkerLive && (isFrontierRootRestorable || isFrontierStateSealOwed) && truncatedHead.maxTs >= frontierTruncateTs) {
-                            final TimestampDriver driver = ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType());
                             LOG.info().$("live view O3 head miss emitted no row under a root at or above its frontier, truncating at the frontier [view=")
                                     .$(viewName)
                                     .$(", frontier=").$ts(driver, durableMaxTsAfterRepair)
@@ -11303,7 +11327,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // frontier, and its generation, two past the marker's, reads the marker as
                         // stale. Unless the seal failures spent their budget and no seal can land
                         // the root before a newer row: then the timeline retires, as the failures'
-                        // verdict would.
+                        // verdict would. A closing seal whose own failure verdict retired the
+                        // timeline took the marker with it, so no marker is left to keep.
                         //
                         // A truncate is not. It left the timeline headless, so a fresh head
                         // is what makes the preserved prefix restorable: the closing seal's, or,
@@ -11333,8 +11358,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                     clearCheckpointRepairMarker(instance);
                                 } else if (isOwedRootStrandedAtTheSealFailureBudget(instance, durableMaxTsAfterRepair)) {
                                     retireStrandedOwedRoot(instance, viewName, durableMaxTsAfterRepair);
-                                } else {
-                                    logRepairMarkerKept(viewName, durableMaxTsAfterRepair, timelineSplice);
+                                } else if (instance.getCheckpointTimelineWalPurgeFloor() != Numbers.LONG_NULL) {
+                                    // The splice's publication recorded a WAL purge floor, and only a
+                                    // retire clears it within a turn: a cleared floor means the closing
+                                    // seal's verdict retired the timeline and the marker with it, and
+                                    // logged so itself.
+                                    logRepairMarkerKept(viewName, driver, durableMaxTsAfterRepair, timelineSplice);
                                 }
                             } else if (isFrontierRootRestorable) {
                                 stats.inc(HEAD_MISS_SPLICE_ZERO_ROW_KEEP_COUNT);
@@ -11349,8 +11378,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                 stats.inc(HEAD_MISS_SPLICE_ZERO_ROW_RETIRE_COUNT);
                                 LOG.info().$("live view O3 head miss emitted no row and no root sits at the frontier, retiring the timeline [view=")
                                         .$(viewName)
-                                        .$(", frontier=").$ts(durableMaxTsAfterRepair)
-                                        .$(", spliceHeadRootMaxTs=").$ts(timelineSplice.getHeadRootMaxTimestamp()).I$();
+                                        .$(", frontier=").$ts(driver, durableMaxTsAfterRepair)
+                                        .$(", spliceHeadRootMaxTs=").$ts(driver, timelineSplice.getHeadRootMaxTimestamp()).I$();
                                 retireCheckpointTimeline(instance);
                             }
                         } else if (timelineCapture == null && (headSealed || isZeroRowHeadPublished)) {
@@ -11786,13 +11815,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
     private static void logRepairMarkerKept(
             CharSequence viewName,
+            TimestampDriver driver,
             long frontierTs,
             LiveViewCheckpointTimelineStoreWriter.RepairResult timelineSplice
     ) {
         LOG.info().$("live view O3 repair kept its repair marker, no root at the frontier [view=")
                 .$(viewName)
-                .$(", frontier=").$ts(frontierTs)
-                .$(", spliceHeadRootMaxTs=").$ts(timelineSplice.getHeadRootMaxTimestamp()).I$();
+                .$(", frontier=").$ts(driver, frontierTs)
+                .$(", spliceHeadRootMaxTs=").$ts(driver, timelineSplice.getHeadRootMaxTimestamp()).I$();
     }
 
     /**
@@ -12713,10 +12743,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // shares chunks against all stay where they are, and the next cycle to
             // reach a higher timestamp seals this cycle's rows along with its own. That
             // minimum sits on the head, so that seal also takes the head's place.
+            final TimestampDriver driver = ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType());
             LOG.debug().$("live view head checkpoint boundary not above head, seal skipped [view=")
                     .$(instance.getDefinition().getViewName())
-                    .$(", head=").$ts(instance.getHeadCheckpointMaxTs())
-                    .$(", candidate=").$ts(batchMaxTs).I$();
+                    .$(", head=").$ts(driver, instance.getHeadCheckpointMaxTs())
+                    .$(", candidate=").$ts(driver, batchMaxTs).I$();
         } catch (Throwable t) {
             // Derived state: the seal failed, so the head and the cadence counters
             // stay parked on the previous root and the next eligible cycle seals
@@ -13087,6 +13118,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             long durableFrontierTimestamp
     ) {
         final String viewName = instance.getDefinition().getViewName();
+        final TimestampDriver driver = ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType());
         final long predecessorMaxTs = restored.maxTimestamp;
         final long predecessorCheckpointId = restored.checkpointId;
         final long corruptCeilingMaxTs = restored.corruptCeilingMaxTs;
@@ -13176,7 +13208,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             //   the tie, so it describes the base as the view's table has applied it rather than as
             //   the generation's own base seqTxn left it, and the heal publishes it there instead.
             if (predecessorDurableRows > restored.effectiveLvRowPosition) {
-                logHealDeclined(viewName, predecessorMaxTs, restored.effectiveLvRowPosition, predecessorDurableRows);
+                logHealDeclined(viewName, driver, predecessorMaxTs, restored.effectiveLvRowPosition, predecessorDurableRows);
                 return false;
             }
             final LongList recordedPositions = new LongList();
@@ -13203,6 +13235,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 if (!isCeilingNewest || durableFrontierTimestamp < corruptCeilingMaxTs || frontierDurableRows < 0) {
                     logHealDeclined(
                             viewName,
+                            driver,
                             corruptCeilingMaxTs,
                             recordedPositions.getQuick(ceilingIndex),
                             positions.getQuick(ceilingIndex)
@@ -13338,6 +13371,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 if (foldedRows < durableRows) {
                     logHealDeclinedRows(
                             viewName,
+                            driver,
                             i == 0 ? predecessorMaxTs : boundaries.getQuick(i - 1).maxTimestamp,
                             i < boundaries.size() ? boundaries.getQuick(i).maxTimestamp : durableFrontierTimestamp,
                             durableRows,
@@ -13356,7 +13390,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // order, over a runtime the heal already folded its rows into, so the heal declines a
             // frontier group that does not hold exactly the rows the view's table does.
             if (isFrontierScanned && foldedFrontierGroupRows != durableFrontierGroupRows) {
-                logHealDeclinedFrontierRows(viewName, durableFrontierTimestamp, durableFrontierGroupRows, foldedFrontierGroupRows);
+                logHealDeclinedFrontierRows(viewName, driver, durableFrontierTimestamp, durableFrontierGroupRows, foldedFrontierGroupRows);
                 return false;
             }
             // Last, per timestamp, where an interval's count still hides a lost row behind rows the
@@ -13376,6 +13410,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         && (isBaseAhead || foldedIntervalRows.getQuick(i) > durableRows)
                         && !isHealFloorHeldAtEveryTimestamp(
                         viewName,
+                        driver,
                         lvReader,
                         pageFrameFactory,
                         filter,
@@ -13437,8 +13472,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
             LOG.info().$("reconstructed corrupt live view checkpoint roots [view=")
                     .$(viewName)
-                    .$(", predecessorMaxTs=").$ts(predecessorMaxTs)
-                    .$(", corruptCeilingMaxTs=").$ts(corruptCeilingMaxTs)
+                    .$(", predecessorMaxTs=").$ts(driver, predecessorMaxTs)
+                    .$(", corruptCeilingMaxTs=").$ts(driver, corruptCeilingMaxTs)
                     .$(", roots=").$(boundaries.size())
                     .$(", baseSeqTxn=").$(publishBaseSeqTxn)
                     .$(", sealedFrontier=").$(isFrontierSealed).I$();
@@ -13446,7 +13481,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         } catch (Throwable t) {
             LOG.critical().$("could not reconstruct corrupt live view checkpoint roots [view=")
                     .$(viewName)
-                    .$(", corruptCeilingMaxTs=").$ts(corruptCeilingMaxTs)
+                    .$(", corruptCeilingMaxTs=").$ts(driver, corruptCeilingMaxTs)
                     .$(", error=").$(t).I$();
             return false;
         } finally {
@@ -13476,11 +13511,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * is not native has no timestamp column to walk and leaves no evidence either way, so the
      * heal declines, as it does when it cannot position a root.
      *
+     * @param driver             the view's timestamp driver, which prints a declined timestamp
      * @param baseLowTsInclusive the heal scan's own lower bound, which also bounds the base rows here
      * @return true when the floor holds at every timestamp of the interval
      */
     private boolean isHealFloorHeldAtEveryTimestamp(
             String viewName,
+            TimestampDriver driver,
             TableReader lvReader,
             PageFrameRecordCursorFactory pageFrameFactory,
             @Nullable Function filter,
@@ -13536,7 +13573,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         }
                         if (viewTs != groupTs) {
                             if (baseGroupRows < viewGroupRows) {
-                                logHealDeclinedTimestampRows(viewName, groupTs, viewGroupRows, baseGroupRows);
+                                logHealDeclinedTimestampRows(viewName, driver, groupTs, viewGroupRows, baseGroupRows);
                                 return false;
                             }
                             groupTs = viewTs;
@@ -13555,7 +13592,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 }
             }
             if (baseGroupRows < viewGroupRows) {
-                logHealDeclinedTimestampRows(viewName, groupTs, viewGroupRows, baseGroupRows);
+                logHealDeclinedTimestampRows(viewName, driver, groupTs, viewGroupRows, baseGroupRows);
                 return false;
             }
             return true;
@@ -13723,6 +13760,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             long anchorCheckpointId,
             LiveViewCheckpointOutputKeyDomain keys
     ) {
+        final TimestampDriver driver = ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType());
         try (Path checkpointsDir = new Path()) {
             checkpointsDir.of(engine.getConfiguration().getDbRoot())
                     .concat(instance.getLiveViewToken())
@@ -13746,7 +13784,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     // can read.
                     LOG.info().$("live view O3 resume anchor cannot be restored key by key [view=")
                             .$(instance.getDefinition().getViewName())
-                            .$(", anchorMaxTs=").$ts(anchorMaxTs)
+                            .$(", anchorMaxTs=").$ts(driver, anchorMaxTs)
                             .$(", anchorCheckpointId=").$(anchorCheckpointId).I$();
                     return Numbers.LONG_NULL;
                 }
@@ -13761,14 +13799,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
             LOG.critical().$("could not restore live view O3 resume anchor by key [view=")
                     .$(instance.getDefinition().getViewName())
-                    .$(", anchorMaxTs=").$ts(anchorMaxTs)
+                    .$(", anchorMaxTs=").$ts(driver, anchorMaxTs)
                     .$(", anchorCheckpointId=").$(anchorCheckpointId)
                     .$(", error=").$safe(ce.getFlyweightMessage()).I$();
             return Numbers.LONG_NULL;
         } catch (Throwable t) {
             LOG.critical().$("could not restore live view O3 resume anchor by key [view=")
                     .$(instance.getDefinition().getViewName())
-                    .$(", anchorMaxTs=").$ts(anchorMaxTs)
+                    .$(", anchorMaxTs=").$ts(driver, anchorMaxTs)
                     .$(", anchorCheckpointId=").$(anchorCheckpointId)
                     .$(", error=").$(t).I$();
             return Numbers.LONG_NULL;
@@ -13804,6 +13842,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             long anchorCheckpointId,
             boolean isRepairBaseline
     ) {
+        final TimestampDriver driver = ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType());
         try (Path checkpointsDir = new Path()) {
             checkpointsDir.of(engine.getConfiguration().getDbRoot())
                     .concat(instance.getLiveViewToken())
@@ -13829,14 +13868,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
             LOG.critical().$("could not restore live view O3 resume anchor [view=")
                     .$(instance.getDefinition().getViewName())
-                    .$(", anchorMaxTs=").$ts(anchorMaxTs)
+                    .$(", anchorMaxTs=").$ts(driver, anchorMaxTs)
                     .$(", anchorCheckpointId=").$(anchorCheckpointId)
                     .$(", error=").$safe(ce.getFlyweightMessage()).I$();
             return Numbers.LONG_NULL;
         } catch (Throwable t) {
             LOG.critical().$("could not restore live view O3 resume anchor [view=")
                     .$(instance.getDefinition().getViewName())
-                    .$(", anchorMaxTs=").$ts(anchorMaxTs)
+                    .$(", anchorMaxTs=").$ts(driver, anchorMaxTs)
                     .$(", anchorCheckpointId=").$(anchorCheckpointId)
                     .$(", error=").$(t).I$();
             return Numbers.LONG_NULL;
@@ -13877,9 +13916,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 reader.detach();
             }
         } catch (Throwable t) {
+            final TimestampDriver driver = ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType());
             LOG.error().$("could not read the live view checkpoint root at the frontier [view=")
                     .$(instance.getDefinition().getViewName())
-                    .$(", frontier=").$ts(frontierTs)
+                    .$(", frontier=").$ts(driver, frontierTs)
                     .$(", error=").$(t).I$();
             return false;
         }
@@ -13918,6 +13958,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             WindowRecordCursorFactory windowFactory,
             long frontierTs
     ) {
+        final TimestampDriver driver = ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType());
         timelineAnchors.of(instance);
         if (frontierTs == Long.MAX_VALUE
                 || !timelineAnchors.findAnchorBelow(frontierTs + 1, timelineFrontierRoot)
@@ -13940,7 +13981,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // read, so this declines the same way and the repair goes on in this turn.
             LOG.error().$("could not restore live view runtime to the root at the frontier, repairing the union range [view=")
                     .$(instance.getDefinition().getViewName())
-                    .$(", boundary=").$ts(frontierTs)
+                    .$(", boundary=").$ts(driver, frontierTs)
                     .$(", checkpointId=").$(timelineFrontierRoot.checkpointId)
                     .$(", error=").$((Throwable) fault).I$();
             return false;
@@ -13955,7 +13996,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         windowStateDirty = false;
         LOG.info().$("live view restored its runtime to the root at the frontier ahead of a segment loop [view=")
                 .$(instance.getDefinition().getViewName())
-                .$(", boundary=").$ts(frontierTs)
+                .$(", boundary=").$ts(driver, frontierTs)
                 .$(", checkpointId=").$(timelineFrontierRoot.checkpointId).I$();
         return true;
     }
@@ -14562,6 +14603,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             long durableLvSeqTxn,
             @Nullable CharSequence runtimeRestoreCause
     ) throws SqlException {
+        final TimestampDriver driver = ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType());
         LiveViewCheckpointTimelineStoreReader.Result restored;
         final LiveViewCheckpointTimelineStoreReader timelineReader =
                 borrowCheckpointTimelineStoreReader(checkpointsDir);
@@ -14592,8 +14634,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // applied base.
             LOG.error().$("live view checkpoint restore fell back past corrupt roots, reconstructing [view=")
                     .$(instance.getDefinition().getViewName())
-                    .$(", predecessorMaxTs=").$ts(restored.maxTimestamp)
-                    .$(", corruptCeilingMaxTs=").$ts(restored.corruptCeilingMaxTs).I$();
+                    .$(", predecessorMaxTs=").$ts(driver, restored.maxTimestamp)
+                    .$(", corruptCeilingMaxTs=").$ts(driver, restored.corruptCeilingMaxTs).I$();
             if (!reconstructCorruptCheckpointRoots(
                     instance,
                     windowFactory,
@@ -14724,8 +14766,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(instance.getDefinition().getViewName())
                     .$(", generation=").$(restored.generation)
                     .$(", checkpointId=").$(restored.checkpointId)
-                    .$(", boundary=").$ts(restored.maxTimestamp)
-                    .$(", frontier=").$ts(durableFrontierTimestamp)
+                    .$(", boundary=").$ts(driver, restored.maxTimestamp)
+                    .$(", frontier=").$ts(driver, durableFrontierTimestamp)
                     .$(", baseSeqTxn=").$(durableBaseSeqTxn)
                     .$(", replayedRows=").$(replayedRows).I$();
         } else {
@@ -14734,8 +14776,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(", cause=").$(runtimeRestoreCause)
                     .$(", generation=").$(restored.generation)
                     .$(", checkpointId=").$(restored.checkpointId)
-                    .$(", boundary=").$ts(restored.maxTimestamp)
-                    .$(", frontier=").$ts(durableFrontierTimestamp)
+                    .$(", boundary=").$ts(driver, restored.maxTimestamp)
+                    .$(", frontier=").$ts(driver, durableFrontierTimestamp)
                     .$(", baseSeqTxn=").$(durableBaseSeqTxn)
                     .$(", replayedRows=").$(replayedRows).I$();
         }
@@ -16106,29 +16148,37 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         }
     }
 
-    private static void logHealDeclined(String viewName, long boundaryMaxTs, long recordedRows, long durableRows) {
+    private static void logHealDeclined(
+            String viewName,
+            TimestampDriver driver,
+            long boundaryMaxTs,
+            long recordedRows,
+            long durableRows
+    ) {
         LOG.info().$("live view checkpoint heal declined, a boundary's timestamp group grew after its seal [view=")
                 .$(viewName)
-                .$(", boundary=").$ts(boundaryMaxTs)
+                .$(", boundary=").$ts(driver, boundaryMaxTs)
                 .$(", recordedRows=").$(recordedRows)
                 .$(", durableRows=").$(durableRows).I$();
     }
 
     private static void logHealDeclinedFrontierRows(
             String viewName,
+            TimestampDriver driver,
             long frontierTs,
             long durableRows,
             long baseRows
     ) {
         LOG.info().$("live view checkpoint heal declined, the base table does not hold the rows the view materialized on its frontier [view=")
                 .$(viewName)
-                .$(", frontier=").$ts(frontierTs)
+                .$(", frontier=").$ts(driver, frontierTs)
                 .$(", durableRows=").$(durableRows)
                 .$(", baseRows=").$(baseRows).I$();
     }
 
     private static void logHealDeclinedRows(
             String viewName,
+            TimestampDriver driver,
             long lowTsExclusive,
             long highTsInclusive,
             long durableRows,
@@ -16136,21 +16186,22 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     ) {
         LOG.info().$("live view checkpoint heal declined, the base table does not hold the rows the view materialized [view=")
                 .$(viewName)
-                .$(", lowTsExclusive=").$ts(lowTsExclusive)
-                .$(", highTsInclusive=").$ts(highTsInclusive)
+                .$(", lowTsExclusive=").$ts(driver, lowTsExclusive)
+                .$(", highTsInclusive=").$ts(driver, highTsInclusive)
                 .$(", durableRows=").$(durableRows)
                 .$(", baseRows=").$(baseRows).I$();
     }
 
     private static void logHealDeclinedTimestampRows(
             String viewName,
+            TimestampDriver driver,
             long timestamp,
             long durableRows,
             long baseRows
     ) {
         LOG.info().$("live view checkpoint heal declined, the base table does not hold the rows the view materialized on a timestamp [view=")
                 .$(viewName)
-                .$(", timestamp=").$ts(timestamp)
+                .$(", timestamp=").$ts(driver, timestamp)
                 .$(", durableRows=").$(durableRows)
                 .$(", baseRows=").$(baseRows).I$();
     }
@@ -17147,9 +17198,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // sealedMaxTs gate above normally catches that, so reaching here means the
             // mirror trails the timeline; either way there is nothing to seal and the
             // next turn that reaches a higher timestamp seals this turn's rows too.
+            final TimestampDriver driver = ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType());
             LOG.debug().$("live view seed checkpoint boundary not above head, seal skipped [view=")
                     .$(instance.getDefinition().getViewName())
-                    .$(", candidate=").$ts(batchMaxTs).I$();
+                    .$(", candidate=").$ts(driver, batchMaxTs).I$();
         } catch (Throwable t) {
             LOG.critical().$("could not write live view seed checkpoint [view=")
                     .$(instance.getDefinition().getViewName())
@@ -19117,9 +19169,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         if (coversOwnTimestampGroup(out, lvRowPosition)) {
                             return true;
                         }
+                        final TimestampDriver driver = ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType());
                         LOG.info().$("live view resume anchor no longer covers its timestamp group, re-anchoring below it [view=")
                                 .$(instance.getDefinition().getViewName())
-                                .$(", anchorMaxTs=").$ts(out.maxTimestamp)
+                                .$(", anchorMaxTs=").$ts(driver, out.maxTimestamp)
                                 .$(", anchorCheckpointId=").$(out.checkpointId)
                                 .$(", lvRowPosition=").$(lvRowPosition).I$();
                         // Strictly below the boundary just rejected, which is the
@@ -19132,9 +19185,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     reader.detach();
                 }
             } catch (Throwable t) {
+                final TimestampDriver driver = ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType());
                 LOG.info().$("live view checkpoint timeline holds no resume anchor [view=")
                         .$(instance.getDefinition().getViewName())
-                        .$(", ceilTs=").$ts(ceilTs)
+                        .$(", ceilTs=").$ts(driver, ceilTs)
                         .$(", reason=").$(t).I$();
                 return false;
             }
@@ -19199,9 +19253,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             return true;
                         }
                         if (!coversOwnTimestampGroup(coverageProbe, lvRowPosition)) {
+                            final TimestampDriver driver = ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType());
                             LOG.info().$("live view repair boundary no longer covers its timestamp group [view=")
                                     .$(instance.getDefinition().getViewName())
-                                    .$(", boundaryMaxTs=").$ts(coverageProbe.maxTimestamp)
+                                    .$(", boundaryMaxTs=").$ts(driver, coverageProbe.maxTimestamp)
                                     .$(", boundaryCheckpointId=").$(coverageProbe.checkpointId)
                                     .$(", lvRowPosition=").$(lvRowPosition).I$();
                             return false;
@@ -19212,10 +19267,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     reader.detach();
                 }
             } catch (Throwable t) {
+                final TimestampDriver driver = ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType());
                 LOG.info().$("live view could not vet the boundaries a keyed repair re-versions [view=")
                         .$(instance.getDefinition().getViewName())
-                        .$(", lowTsInclusive=").$ts(lowTsInclusive)
-                        .$(", highTsExclusive=").$ts(highTsExclusive)
+                        .$(", lowTsInclusive=").$ts(driver, lowTsInclusive)
+                        .$(", highTsExclusive=").$ts(driver, highTsExclusive)
                         .$(", reason=").$(t).I$();
                 return false;
             }

@@ -1170,6 +1170,88 @@ public class LiveViewNoGcSourceHygieneTest {
         );
     }
 
+    static Path findSourceRoot() {
+        Path current = Path.of(System.getProperty("user.dir")).toAbsolutePath().normalize();
+        while (current != null) {
+            final Path repositorySourceRoot = current.resolve("core/src/main/java");
+            if (Files.isDirectory(repositorySourceRoot.resolve("io/questdb/cairo/lv"))) {
+                return repositorySourceRoot;
+            }
+
+            final Path moduleSourceRoot = current.resolve("src/main/java");
+            if (Files.isDirectory(moduleSourceRoot.resolve("io/questdb/cairo/lv"))) {
+                return moduleSourceRoot;
+            }
+            current = current.getParent();
+        }
+        throw new AssertionError("cannot find core/src/main/java from " + System.getProperty("user.dir"));
+    }
+
+    static String stripCommentsAndLiterals(String source) {
+        final StringBuilder code = new StringBuilder(source.length());
+        int state = 0;
+        for (int i = 0, n = source.length(); i < n; i++) {
+            final char c = source.charAt(i);
+            final char next = i + 1 < n ? source.charAt(i + 1) : 0;
+            if (state == 0) {
+                if (c == '/' && next == '/') {
+                    code.append("  ");
+                    i++;
+                    state = 1;
+                } else if (c == '/' && next == '*') {
+                    code.append("  ");
+                    i++;
+                    state = 2;
+                } else if (c == '"' && next == '"' && i + 2 < n && source.charAt(i + 2) == '"') {
+                    code.append("   ");
+                    i += 2;
+                    state = 5;
+                } else if (c == '"') {
+                    code.append(' ');
+                    state = 3;
+                } else if (c == '\'') {
+                    code.append(' ');
+                    state = 4;
+                } else {
+                    code.append(c);
+                }
+            } else if (state == 1) {
+                if (c == '\n') {
+                    code.append('\n');
+                    state = 0;
+                } else {
+                    code.append(' ');
+                }
+            } else if (state == 2) {
+                if (c == '*' && next == '/') {
+                    code.append("  ");
+                    i++;
+                    state = 0;
+                } else {
+                    code.append(c == '\n' ? '\n' : ' ');
+                }
+            } else if (state == 3 || state == 4) {
+                final char delimiter = state == 3 ? '"' : '\'';
+                if (c == '\\' && next != 0) {
+                    code.append("  ");
+                    i++;
+                } else {
+                    code.append(c == '\n' ? '\n' : ' ');
+                    if (c == delimiter) {
+                        state = 0;
+                    }
+                }
+            } else if (c == '"' && next == '"' && i + 2 < n && source.charAt(i + 2) == '"') {
+                code.append("   ");
+                i += 2;
+                state = 0;
+            } else {
+                code.append(c == '\n' ? '\n' : ' ');
+            }
+        }
+        return code.toString();
+    }
+
     private static void assertEntrySetDetected(String source) {
         final List<String> violations = new ArrayList<>();
         findEntrySetIteration(
@@ -1732,23 +1814,6 @@ public class LiveViewNoGcSourceHygieneTest {
         final List<String> violations = new ArrayList<>();
         findPathToStringCalls(Path.of("source"), Path.of("source/Snippet.java"), code, violations);
         return !violations.isEmpty();
-    }
-
-    private static Path findSourceRoot() {
-        Path current = Path.of(System.getProperty("user.dir")).toAbsolutePath().normalize();
-        while (current != null) {
-            final Path repositorySourceRoot = current.resolve("core/src/main/java");
-            if (Files.isDirectory(repositorySourceRoot.resolve("io/questdb/cairo/lv"))) {
-                return repositorySourceRoot;
-            }
-
-            final Path moduleSourceRoot = current.resolve("src/main/java");
-            if (Files.isDirectory(moduleSourceRoot.resolve("io/questdb/cairo/lv"))) {
-                return moduleSourceRoot;
-            }
-            current = current.getParent();
-        }
-        throw new AssertionError("cannot find core/src/main/java from " + System.getProperty("user.dir"));
     }
 
     private static void findBoxedCollectionTypes(
@@ -2726,71 +2791,6 @@ public class LiveViewNoGcSourceHygieneTest {
 
     private static String singleLine(String value) {
         return value.replaceAll("\\s+", " ").trim();
-    }
-
-    private static String stripCommentsAndLiterals(String source) {
-        final StringBuilder code = new StringBuilder(source.length());
-        int state = 0;
-        for (int i = 0, n = source.length(); i < n; i++) {
-            final char c = source.charAt(i);
-            final char next = i + 1 < n ? source.charAt(i + 1) : 0;
-            if (state == 0) {
-                if (c == '/' && next == '/') {
-                    code.append("  ");
-                    i++;
-                    state = 1;
-                } else if (c == '/' && next == '*') {
-                    code.append("  ");
-                    i++;
-                    state = 2;
-                } else if (c == '"' && next == '"' && i + 2 < n && source.charAt(i + 2) == '"') {
-                    code.append("   ");
-                    i += 2;
-                    state = 5;
-                } else if (c == '"') {
-                    code.append(' ');
-                    state = 3;
-                } else if (c == '\'') {
-                    code.append(' ');
-                    state = 4;
-                } else {
-                    code.append(c);
-                }
-            } else if (state == 1) {
-                if (c == '\n') {
-                    code.append('\n');
-                    state = 0;
-                } else {
-                    code.append(' ');
-                }
-            } else if (state == 2) {
-                if (c == '*' && next == '/') {
-                    code.append("  ");
-                    i++;
-                    state = 0;
-                } else {
-                    code.append(c == '\n' ? '\n' : ' ');
-                }
-            } else if (state == 3 || state == 4) {
-                final char delimiter = state == 3 ? '"' : '\'';
-                if (c == '\\' && next != 0) {
-                    code.append("  ");
-                    i++;
-                } else {
-                    code.append(c == '\n' ? '\n' : ' ');
-                    if (c == delimiter) {
-                        state = 0;
-                    }
-                }
-            } else if (c == '"' && next == '"' && i + 2 < n && source.charAt(i + 2) == '"') {
-                code.append("   ");
-                i += 2;
-                state = 0;
-            } else {
-                code.append(c == '\n' ? '\n' : ' ');
-            }
-        }
-        return code.toString();
     }
 
     private static final class MethodRegion {

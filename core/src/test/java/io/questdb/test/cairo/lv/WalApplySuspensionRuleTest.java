@@ -64,6 +64,12 @@ public class WalApplySuspensionRuleTest extends AbstractLiveViewTest {
     private static final String EARLIER_SUSPENSION_TABLE = "table=earlier~1";
     private static final String LATE_SUSPENSION_LINE = "job failed, table suspended [table=late~1, seqTxn=3, error=a line of the test]";
     private static final String LIVE_VIEW_CRITICAL_LINE = "a CRITICAL line live view code logged during the run";
+    // The kept-marker line of a view over a nanosecond base, with its timestamps printed as
+    // microseconds, and as nanoseconds.
+    private static final String NANOS_AS_MICROS_LIVE_VIEW_LINE = "live view O3 repair kept its repair marker, no root at the frontier "
+            + "[view=lv, frontier=57971-02-27T18:40:00.000000Z, spliceHeadRootMaxTs=57971-02-26T09:20:00.000000Z]";
+    private static final String NANOS_LIVE_VIEW_LINE = "live view O3 repair kept its repair marker, no root at the frontier "
+            + "[view=lv, frontier=2026-01-01T00:04:00.000000000Z, spliceHeadRootMaxTs=2026-01-01T00:02:00.000000000Z]";
     // A logger of io.questdb.cairo.lv: runAnchoredRemovalFuzz's check reads its CRITICAL lines.
     private static final Log LIVE_VIEW_LOG = LogFactory.getLog(LiveViewRefreshJob.class);
     private static final Log LOG = LogFactory.getLog(WalApplySuspensionRuleTest.class);
@@ -149,6 +155,54 @@ public class WalApplySuspensionRuleTest extends AbstractLiveViewTest {
             } finally {
                 release.countDown();
                 consoleWriter().setInterceptor(null);
+            }
+        });
+    }
+
+    @Test
+    public void testNanosecondBaseCheckReportsALiveViewLineReadingNanosAsMicros() throws Exception {
+        // A nanosecond 2026-01-01T00:04 printed as microseconds lands in the year 57971: a run over
+        // a nanosecond base must fail on such a live view line after its marker.
+        assertMemoryLeak(() -> {
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            try {
+                final String runMarker = LiveViewFuzzTest.logNanosBaseRunMarker();
+                LIVE_VIEW_LOG.info().$(NANOS_LIVE_VIEW_LINE).$();
+                LIVE_VIEW_LOG.info().$(NANOS_AS_MICROS_LIVE_VIEW_LINE).$();
+                final AssertionError error = Assert.assertThrows(
+                        AssertionError.class,
+                        () -> LiveViewFuzzTest.assertNoLiveViewLineReadsNanosAsMicrosAfter(capture, runMarker)
+                );
+                assertReportsLine(
+                        error,
+                        "live view[^\\n]*\\d{5}-\\d\\d-\\d\\dT",
+                        " I i.q.c.l.LiveViewRefreshJob " + NANOS_AS_MICROS_LIVE_VIEW_LINE
+                );
+            } finally {
+                capture.stop();
+            }
+        });
+    }
+
+    @Test
+    public void testNanosecondBaseCheckSkipsNanosecondDatesOtherLinesAndLinesAheadOfItsRunMarker() throws Exception {
+        // The capture spans the whole test, so a line of an earlier run sits ahead of the marker. A
+        // nanosecond date, and a five-digit year on a line no live view code logged, are no misread
+        // timestamp of the run's views.
+        assertMemoryLeak(() -> {
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            try {
+                LIVE_VIEW_LOG.info().$(NANOS_AS_MICROS_LIVE_VIEW_LINE).$();
+                final String runMarker = LiveViewFuzzTest.logNanosBaseRunMarker();
+                LIVE_VIEW_LOG.info().$(NANOS_LIVE_VIEW_LINE).$();
+                LOG.info().$("a partition of another table [partition=57971-02-27T18:40:00.000000Z]").$();
+                LiveViewFuzzTest.assertNoLiveViewLineReadsNanosAsMicrosAfter(capture, runMarker);
+                Assert.assertEquals("the line ahead of the marker reached the capture", 1, capture.countOccurrences(NANOS_AS_MICROS_LIVE_VIEW_LINE));
+                Assert.assertEquals(1, capture.countOccurrences(NANOS_LIVE_VIEW_LINE));
+            } finally {
+                capture.stop();
             }
         });
     }
