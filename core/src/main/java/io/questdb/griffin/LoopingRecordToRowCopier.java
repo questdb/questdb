@@ -242,6 +242,7 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
         switch (toTypeTag) {
             case ColumnType.BOOLEAN, ColumnType.BYTE -> row.putByte(toIndex, value);
             case ColumnType.SHORT -> row.putShort(toIndex, value);
+            case ColumnType.CHAR -> row.putChar(toIndex, SqlUtil.implicitCastIntAsChar(value));
             case ColumnType.INT -> row.putInt(toIndex, value);
             case ColumnType.LONG -> row.putLong(toIndex, value);
             case ColumnType.DATE -> row.putDate(toIndex, value);
@@ -283,6 +284,7 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
         switch (toTypeTag) {
             case ColumnType.BYTE -> row.putByte(toIndex, SqlUtil.implicitCastLongAsByte(value));
             case ColumnType.SHORT -> row.putShort(toIndex, SqlUtil.implicitCastLongAsShort(value));
+            case ColumnType.CHAR -> row.putChar(toIndex, SqlUtil.implicitCastLongAsChar(value));
             case ColumnType.INT -> row.putInt(toIndex, SqlUtil.implicitCastLongAsInt(value));
             case ColumnType.LONG -> row.putLong(toIndex, value);
             case ColumnType.DATE -> row.putDate(toIndex, value);
@@ -320,6 +322,7 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
         switch (toTypeTag) {
             case ColumnType.BYTE -> row.putByte(toIndex, SqlUtil.implicitCastDoubleAsByte(value));
             case ColumnType.SHORT -> row.putShort(toIndex, SqlUtil.implicitCastDoubleAsShort(value));
+            case ColumnType.CHAR -> row.putChar(toIndex, SqlUtil.implicitCastDoubleAsChar(value));
             case ColumnType.INT -> row.putInt(toIndex, SqlUtil.implicitCastDoubleAsInt(value));
             case ColumnType.LONG -> row.putLong(toIndex, SqlUtil.implicitCastDoubleAsLong(value));
             case ColumnType.DATE -> row.putDate(toIndex, SqlUtil.implicitCastDoubleAsLong(value));
@@ -335,6 +338,7 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
         switch (toTypeTag) {
             case ColumnType.BYTE -> row.putByte(toIndex, SqlUtil.implicitCastFloatAsByte(value));
             case ColumnType.SHORT -> row.putShort(toIndex, SqlUtil.implicitCastFloatAsShort(value));
+            case ColumnType.CHAR -> row.putChar(toIndex, SqlUtil.implicitCastFloatAsChar(value));
             case ColumnType.INT -> row.putInt(toIndex, SqlUtil.implicitCastFloatAsInt(value));
             case ColumnType.LONG -> row.putLong(toIndex, SqlUtil.implicitCastFloatAsLong(value));
             case ColumnType.DATE -> row.putDate(toIndex, SqlUtil.implicitCastFloatAsLong(value));
@@ -415,6 +419,7 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
         switch (toTypeTag) {
             case ColumnType.BYTE -> row.putByte(toIndex, SqlUtil.implicitCastIntAsByte(value));
             case ColumnType.SHORT -> row.putShort(toIndex, SqlUtil.implicitCastIntAsShort(value));
+            case ColumnType.CHAR -> row.putChar(toIndex, SqlUtil.implicitCastIntAsChar(value));
             case ColumnType.INT -> row.putInt(toIndex, value);
             case ColumnType.LONG -> row.putLong(toIndex, SqlUtil.implicitCastIntAsLong(value));
             case ColumnType.DATE -> row.putDate(toIndex, SqlUtil.implicitCastIntAsLong(value));
@@ -434,6 +439,7 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
         switch (toTypeTag) {
             case ColumnType.BYTE -> row.putByte(toIndex, SqlUtil.implicitCastLongAsByte(value));
             case ColumnType.SHORT -> row.putShort(toIndex, SqlUtil.implicitCastLongAsShort(value));
+            case ColumnType.CHAR -> row.putChar(toIndex, SqlUtil.implicitCastLongAsChar(value));
             case ColumnType.INT -> row.putInt(toIndex, SqlUtil.implicitCastLongAsInt(value));
             case ColumnType.LONG -> row.putLong(toIndex, value);
             case ColumnType.DATE -> row.putDate(toIndex, value);
@@ -457,6 +463,7 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
         switch (toTypeTag) {
             case ColumnType.BYTE -> row.putByte(toIndex, SqlUtil.implicitCastShortAsByte(value));
             case ColumnType.SHORT -> row.putShort(toIndex, value);
+            case ColumnType.CHAR -> row.putChar(toIndex, SqlUtil.implicitCastIntAsChar(value));
             case ColumnType.INT -> row.putInt(toIndex, value);
             case ColumnType.LONG -> row.putLong(toIndex, value);
             case ColumnType.DATE -> row.putDate(toIndex, value);
@@ -516,6 +523,7 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
         switch (toTypeTag) {
             case ColumnType.BYTE -> row.putByte(toIndex, SqlUtil.implicitCastLongAsByte(value));
             case ColumnType.SHORT -> row.putShort(toIndex, SqlUtil.implicitCastLongAsShort(value));
+            case ColumnType.CHAR -> row.putChar(toIndex, SqlUtil.implicitCastLongAsChar(value));
             case ColumnType.INT -> row.putInt(toIndex, SqlUtil.implicitCastLongAsInt(value));
             case ColumnType.LONG -> row.putLong(toIndex, value);
             case ColumnType.FLOAT -> row.putFloat(toIndex, SqlUtil.implicitCastLongAsFloat(value));
