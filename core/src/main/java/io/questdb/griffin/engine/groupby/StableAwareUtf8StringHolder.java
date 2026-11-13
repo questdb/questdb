@@ -123,9 +123,17 @@ public class StableAwareUtf8StringHolder implements Utf8Sequence {
         return this;
     }
 
+    /**
+     * Returns the address of the first byte of the value, as {@link Utf8Sequence#ptr()} promises: the
+     * pointer the holder keeps for a direct sequence, its own copy otherwise, and 0 when the holder has no
+     * buffer. The address does not identify the holder: store {@link #colouredPtr()} instead.
+     */
     @Override
     public long ptr() {
-        return ptr;
+        if (ptr == 0) {
+            return 0;
+        }
+        return direct ? Unsafe.getLong(ptr + HEADER_SIZE) : ptr + HEADER_SIZE;
     }
 
     public void setAllocator(GroupByAllocator allocator) {

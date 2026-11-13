@@ -1870,6 +1870,72 @@ public class QwpEgressTypesExhaustiveTest extends AbstractReusedServerQwpEgressT
         });
     }
 
+    @Test
+    public void testVarcharGroupByFunctions() throws Exception {
+        // GROUP BY functions return VARCHAR values from buffers of their own, which egress copies through
+        // ptr(). Each group repeats one value, so every function returns that value. first(), last(),
+        // first_not_null(), last_not_null() and arg_max() keep a pointer to a column value and copy a cast.
+        final String[] values = {"", "c", "abcdefghi", "abcdefghij", "żółw", "ab😀", "q".repeat(1_000), null};
+        final String[] functions = {
+                "max(v)", "min(v)", "mode(v)",
+                "first(v)", "last(v)", "first_not_null(v)", "last_not_null(v)", "arg_max(v, n)",
+                "first(v::string::varchar)", "last(v::string::varchar)", "first_not_null(v::string::varchar)",
+                "last_not_null(v::string::varchar)", "arg_max(v::string::varchar, n)"
+        };
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = startEgressServer()) {
+                serverMain.execute("CREATE TABLE t(k INT, v VARCHAR, n LONG, part_ts TIMESTAMP) TIMESTAMP(part_ts) PARTITION BY DAY WAL");
+                final StringBuilder insert = new StringBuilder("INSERT INTO t VALUES ");
+                final StringBuilder query = new StringBuilder("SELECT k");
+                final List<String> expected = new ArrayList<>();
+                for (int k = 0; k < values.length; k++) {
+                    final String literal = values[k] == null ? "NULL" : "'" + values[k] + "'";
+                    for (int row = 0; row < 2; row++) {
+                        final int n = 2 * k + row + 1;
+                        insert.append(n == 1 ? "" : ", ").append('(').append(k).append(", ").append(literal)
+                                .append(", ").append(n).append(", ").append(n).append("::TIMESTAMP)");
+                    }
+                    for (String function : functions) {
+                        expected.add(k + " " + function + ": " + values[k]);
+                    }
+                }
+                for (int f = 0; f < functions.length; f++) {
+                    query.append(", ").append(functions[f]).append(" f").append(f);
+                }
+                query.append(" FROM t ORDER BY k");
+                serverMain.execute(insert.toString());
+                serverMain.awaitTable("t");
+
+                final List<String> actual = new ArrayList<>();
+                try (QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+                    client.connect();
+                    client.execute(query.toString(), new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            for (int r = 0; r < batch.getRowCount(); r++) {
+                                final int k = batch.getIntValue(0, r);
+                                for (int f = 0; f < functions.length; f++) {
+                                    Assert.assertEquals(QwpConstants.TYPE_VARCHAR, batch.getColumnWireType(f + 1));
+                                    actual.add(k + " " + functions[f] + ": " + batch.getString(f + 1, r));
+                                }
+                            }
+                        }
+
+                        @Override
+                        public void onEnd(long totalRows) {
+                        }
+
+                        @Override
+                        public void onError(byte status, String message) {
+                            Assert.fail(message);
+                        }
+                    });
+                }
+                Assert.assertEquals(expected, actual);
+            }
+        });
+    }
+
     /**
      * Runs {@code sql} and asserts every column arrives as DECIMAL64 with the given scales,
      * and each row's unscaled values match {@code expected} (a {@code null} row means

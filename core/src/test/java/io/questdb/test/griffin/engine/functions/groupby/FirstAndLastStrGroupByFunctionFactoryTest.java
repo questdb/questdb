@@ -298,10 +298,10 @@ public class FirstAndLastStrGroupByFunctionFactoryTest extends AbstractCairoTest
 
                 DirectUtf8String flyweight = new DirectUtf8String();
                 flyweight.of(firstPtr, firstPtr + first.size(), first.isAscii());
-                TestUtils.equals("first", flyweight.asAsciiCharSequence());
+                TestUtils.assertEquals("first", flyweight.asAsciiCharSequence());
 
                 flyweight.of(lastPtr, lastPtr + last.size(), last.isAscii());
-                TestUtils.equals("last", flyweight.asAsciiCharSequence());
+                TestUtils.assertEquals("last", flyweight.asAsciiCharSequence());
             }
         });
     }

@@ -1134,6 +1134,32 @@ public final class TestUtils {
         }
     }
 
+    /**
+     * Asserts the {@link Utf8Sequence#ptr()} contract: a sequence that reports an off-heap address keeps
+     * its UTF-8 bytes there. Hash maps, the QWP egress and regex functions copy or hash {@code size()}
+     * bytes from {@code ptr()} instead of calling {@code byteAt()}, so a sequence that reports any other
+     * address hands them the wrong bytes.
+     */
+    public static void assertPtrCompliance(@Nullable Utf8Sequence utf8Sequence) {
+        if (utf8Sequence == null) {
+            return;
+        }
+        final long ptr = utf8Sequence.ptr();
+        final int size = utf8Sequence.size();
+        if (ptr == -1 || size == 0) {
+            return;
+        }
+        if (ptr <= 0) {
+            Assert.fail("ptr() is not an address [class=" + utf8Sequence.getClass().getName() + ", ptr=" + ptr + ", size=" + size + ']');
+        }
+        for (int i = 0; i < size; i++) {
+            if (Unsafe.getByte(ptr + i) != utf8Sequence.byteAt(i)) {
+                Assert.fail("ptr() does not address the bytes of the sequence [class=" + utf8Sequence.getClass().getName()
+                        + ", index=" + i + ", size=" + size + ']');
+            }
+        }
+    }
+
     public static void assertReader(CharSequence expected, TableReader reader, MutableUtf16Sink sink) {
         try (TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)) {
             assertCursor(expected, cursor, reader.getMetadata(), true, sink);
@@ -2266,7 +2292,9 @@ public final class TestUtils {
         CursorPrinter.println(record, metadata, sink);
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             if (metadata.getColumnType(i) == ColumnType.VARCHAR) {
-                assertAsciiCompliance(record.getVarcharA(i));
+                final Utf8Sequence value = record.getVarcharA(i);
+                assertAsciiCompliance(value);
+                assertPtrCompliance(value);
             }
         }
     }
@@ -2987,12 +3015,14 @@ public final class TestUtils {
                     if (!Utf8s.equalsUtf16Nc(right, left)) {
                         Assert.fail("Expected " + right + ", but was: " + left);
                     }
+                    assertPtrCompliance(left);
                 } else {
                     CharSequence left = readAsCharSequence(colTypeL, lr, col);
                     Utf8Sequence right = rr.getVarcharA(col);
                     if (!Utf8s.equalsUtf16Nc(left, right)) {
                         Assert.fail("Expected " + right + ", but was: " + left);
                     }
+                    assertPtrCompliance(right);
                 }
             }
             return;
@@ -3005,9 +3035,14 @@ public final class TestUtils {
             case ColumnType.STRING:
                 TestUtils.assertEquals(rr.getStrA(col), lr.getStrA(col));
                 break;
-            case ColumnType.VARCHAR:
-                TestUtils.assertEquals(rr.getVarcharA(col), lr.getVarcharA(col));
+            case ColumnType.VARCHAR: {
+                final Utf8Sequence expected = rr.getVarcharA(col);
+                final Utf8Sequence actual = lr.getVarcharA(col);
+                TestUtils.assertEquals(expected, actual);
+                assertPtrCompliance(expected);
+                assertPtrCompliance(actual);
                 break;
+            }
             default:
                 throw new UnsupportedOperationException("Unexpected column type: " + ColumnType.nameOf(colTypeL));
         }

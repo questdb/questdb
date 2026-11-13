@@ -86,6 +86,8 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
     // Join key -> position with no qualifying row for the key at or below it, valid for the whole cursor.
     private final @Nullable Map keyMissMap;
     private final long lookahead;
+    // Null unless two key positions compare the same slave column, see backwardScanForKeyMatch()
+    private final @Nullable HorizonJoinSharedKeyCheck sharedKeyCheck;
     // Scale factor for slave timestamps to normalize to nanoseconds (1 if no scaling needed)
     private final long slaveTsScale;
     // Backward scan row counter, used by the adaptive switching logic
@@ -151,33 +153,36 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
     }
 
     /**
-     * @param isWindowSwitchEnabled whether the switch to forward scan mode also checks runs of
-     *                              gaps below the min gap, see {@link #shouldSwitchToForwardScanOverWindow}.
-     *                              Without a filter, forward scan mode is sticky until
-     *                              {@link #toTop()}, and a short burst of closely spaced positions
-     *                              can pass the window check. A sparse stretch after the burst, or
-     *                              the distance to the next offset of a batch of horizon
-     *                              timestamps, would then cost a forward scan of every row in
-     *                              between where backward scans read a few. A helper with the
-     *                              window switch therefore also bounds its forward scans: in
-     *                              forward scan mode, the lookup drops the key cache and restarts
-     *                              the forward scan at a position that {@link #isForwardScanTooLong}
-     *                              finds too far ahead. A toTop() before every batch does not bound
-     *                              them, since one batch already spans all offsets. Only
-     *                              {@link HorizonJoinMatcher} enables it. The aggregating HORIZON
-     *                              JOIN factories keep a helper's epoch for a whole page frame or
-     *                              query and leave it disabled: after a switch, they scan every gap
-     *                              forward unless the right-hand table has a filter. With a filter,
-     *                              the lookup of any helper, with or without the window switch,
-     *                              returns to backward-only mode at a position ahead when a lower
-     *                              bound of the rows in between exceeds both the min gap and the
-     *                              rows that backward scans read since the last clear or drop of
-     *                              the key cache, see {@link #findKeyedAsOfMatch}.
-     *                              In backward-only mode, a helper with the window switch drops
-     *                              the key cache at a new position as a restart does, so that a
-     *                              cache that one deep lookup grew does not cost a clear of its
-     *                              whole capacity at every later position, see {@link #dropKeyCache}.
+     * The constructor of the aggregating HORIZON JOIN factories, which leave the window switch off.
+     *
+     * @param sharedKeyCheckTemplate null unless two key positions compare the same slave column,
+     *                               see {@link HorizonJoinSharedKeyCheck}
      */
+    public HorizonJoinTimeFrameHelper(
+            CairoConfiguration configuration,
+            long lookahead,
+            long slaveTsScale,
+            long bwdScanAbsoluteThreshold,
+            long bwdScanMinGap,
+            long bwdScanSwitchFactor,
+            @Nullable Function filter,
+            @Nullable ColumnTypes asOfJoinKeyTypes,
+            @Nullable HorizonJoinSharedKeyCheckTemplate sharedKeyCheckTemplate
+    ) {
+        this(
+                configuration,
+                lookahead,
+                slaveTsScale,
+                bwdScanAbsoluteThreshold,
+                bwdScanMinGap,
+                bwdScanSwitchFactor,
+                filter,
+                asOfJoinKeyTypes,
+                false,
+                sharedKeyCheckTemplate
+        );
+    }
+
     public HorizonJoinTimeFrameHelper(
             CairoConfiguration configuration,
             long lookahead,
@@ -189,6 +194,64 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
             @Nullable ColumnTypes asOfJoinKeyTypes,
             boolean isWindowSwitchEnabled
     ) {
+        this(
+                configuration,
+                lookahead,
+                slaveTsScale,
+                bwdScanAbsoluteThreshold,
+                bwdScanMinGap,
+                bwdScanSwitchFactor,
+                filter,
+                asOfJoinKeyTypes,
+                isWindowSwitchEnabled,
+                null
+        );
+    }
+
+    /**
+     * @param isWindowSwitchEnabled  whether the switch to forward scan mode also checks runs of
+     *                               gaps below the min gap, see {@link #shouldSwitchToForwardScanOverWindow}.
+     *                               Without a filter, forward scan mode is sticky until
+     *                               {@link #toTop()}, and a short burst of closely spaced positions
+     *                               can pass the window check. A sparse stretch after the burst, or
+     *                               the distance to the next offset of a batch of horizon
+     *                               timestamps, would then cost a forward scan of every row in
+     *                               between where backward scans read a few. A helper with the
+     *                               window switch therefore also bounds its forward scans: in
+     *                               forward scan mode, the lookup drops the key cache and restarts
+     *                               the forward scan at a position that {@link #isForwardScanTooLong}
+     *                               finds too far ahead. A toTop() before every batch does not bound
+     *                               them, since one batch already spans all offsets. Only
+     *                               {@link HorizonJoinMatcher} enables it. The aggregating HORIZON
+     *                               JOIN factories keep a helper's epoch for a whole page frame or
+     *                               query and leave it disabled: after a switch, they scan every gap
+     *                               forward unless the right-hand table has a filter. With a filter,
+     *                               the lookup of any helper, with or without the window switch,
+     *                               returns to backward-only mode at a position ahead when a lower
+     *                               bound of the rows in between exceeds both the min gap and the
+     *                               rows that backward scans read since the last clear or drop of
+     *                               the key cache, see {@link #findKeyedAsOfMatch}.
+     *                               In backward-only mode, a helper with the window switch drops
+     *                               the key cache at a new position as a restart does, so that a
+     *                               cache that one deep lookup grew does not cost a clear of its
+     *                               whole capacity at every later position, see {@link #dropKeyCache}.
+     * @param sharedKeyCheckTemplate null unless two key positions compare the same slave column,
+     *                               see {@link HorizonJoinSharedKeyCheck}. The helper creates its own
+     *                               check, {@link #of} reopens it and {@link #close()} closes it.
+     */
+    public HorizonJoinTimeFrameHelper(
+            CairoConfiguration configuration,
+            long lookahead,
+            long slaveTsScale,
+            long bwdScanAbsoluteThreshold,
+            long bwdScanMinGap,
+            long bwdScanSwitchFactor,
+            @Nullable Function filter,
+            @Nullable ColumnTypes asOfJoinKeyTypes,
+            boolean isWindowSwitchEnabled,
+            @Nullable HorizonJoinSharedKeyCheckTemplate sharedKeyCheckTemplate
+    ) {
+        this.sharedKeyCheck = sharedKeyCheckTemplate != null ? sharedKeyCheckTemplate.newInstance() : null;
         this.filter = filter;
         // Projection batches reset scan watermarks, but a key miss remains valid for the slave
         // cursor. Keep its bound so later batches scan only rows above it, as filtered joins do.
@@ -240,6 +303,10 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
      * we scan backward from the current position to find earlier occurrences.
      * <p>
      * Updates the internal backward watermark after scanning.
+     * <p>
+     * A master key that no slave row can hold, because its values differ at two key positions
+     * that compare the same slave column, gets no match without a scan, see
+     * {@link HorizonJoinSharedKeyCheck}.
      *
      * @param startRowId              starting position for backward scan (inclusive), typically the ASOF position
      * @param masterRecord            master record containing the target key
@@ -292,6 +359,13 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
             effectiveStart = backwardWatermark;
         } else {
             effectiveStart = startRowId;
+        }
+
+        // The key cache holds slave keys only, so it never answers a master key that no slave row
+        // can hold, and the scan below would read every row down to the first one for it. The
+        // check runs after the cache lookup, so a lookup that the cache answers pays nothing for it.
+        if (sharedKeyCheck != null && !sharedKeyCheck.isMatchable(masterRecord)) {
+            return Long.MIN_VALUE;
         }
 
         MapValue missValue = null;
@@ -425,6 +499,9 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
     public void close() {
         Misc.free(keyMissMap);
         keyMissWatermark = Long.MIN_VALUE;
+        if (sharedKeyCheck != null) {
+            sharedKeyCheck.close();
+        }
     }
 
     /**
@@ -929,6 +1006,9 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
         if (keyMissMap != null) {
             keyMissMap.close();
             keyMissMap.setMemoryTracker(memoryTracker);
+        }
+        if (sharedKeyCheck != null) {
+            sharedKeyCheck.reopen(memoryTracker);
         }
         keyMissWatermark = Long.MIN_VALUE;
         this.timeFrameCursor = timeFrameCursor;

@@ -91,11 +91,19 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
             // executed when TOLERANCE_INTERVAL is set
             joinKeyMapB = toleranceInterval != Numbers.LONG_NULL ? MapFactory.createUnorderedMap(configuration, mapKeyTypes, mapValueTypes, false, false) : null;
             int slaveWrappedOverMaster = slaveColumnTypes.getColumnCount() - masterTableKeyColumns.getColumnCount();
+            final SymbolWrapOverJoinRecord record = SymbolWrapOverJoinRecord.newInstance(
+                    columnSplit,
+                    NullRecordFactory.getInstance(slaveColumnTypes),
+                    slaveWrappedOverMaster,
+                    masterTableKeyColumns,
+                    mapKeyTypes,
+                    slaveColumnTypes
+            );
             this.cursor = new LtJoinRecordCursor(
                     columnSplit,
                     joinKeyMapA,
                     joinKeyMapB,
-                    NullRecordFactory.getInstance(slaveColumnTypes),
+                    record,
                     masterFactory.getMetadata().getTimestampIndex(),
                     slaveFactory.getMetadata().getTimestampIndex(),
                     masterFactory.getMetadata().getTimestampType(),
@@ -191,7 +199,7 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
                 int columnSplit,
                 Map joinKeyMapA,
                 Map joinKeyMapB,
-                Record nullRecord,
+                SymbolWrapOverJoinRecord record,
                 int masterTimestampIndex,
                 int slaveTimestampIndex,
                 int masterTimestampType,
@@ -202,7 +210,7 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
                 IntList slaveColumnIndex
         ) {
             super(columnSplit, slaveWrappedOverMaster, masterTableKeyColumns, slaveColumnIndex, masterTimestampType, slaveTimestampType);
-            this.record = new SymbolWrapOverJoinRecord(columnSplit, nullRecord, slaveWrappedOverMaster, masterTableKeyColumns);
+            this.record = record;
             this.joinKeyMapA = joinKeyMapA;
             this.joinKeyMapB = joinKeyMapB;
             this.currentJoinKeyMap = joinKeyMapA;

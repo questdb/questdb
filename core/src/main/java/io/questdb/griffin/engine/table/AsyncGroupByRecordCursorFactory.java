@@ -57,6 +57,8 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
+import io.questdb.griffin.engine.groupby.GroupByUtils;
+import io.questdb.griffin.engine.groupby.SharedCursorOwnership;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectLongList;
@@ -80,6 +82,8 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
     private AsyncGroupByRecordCursor cursor;
     private UnorderedPageFrameSequence<AsyncGroupByAtom> frameSequence;
     private ObjList<Function> recordFunctions; // includes groupByFunctions
+    // who holds the owner state that a shared cursor opened, created with the first shared cursor
+    private SharedCursorOwnership sharedCursorOwnership;
     private @Nullable ObjList<ObjList<Function>> sharedRecordFunctions;
     private final int workerCount;
     private ObjList<AsyncGroupBySharedCursor> sharedCursors;
@@ -161,17 +165,13 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        final int order = base.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
-        frameSequence.of(base, executionContext, order);
-        try {
-            cursor.of(frameSequence, executionContext);
+        if (sharedCursorOwnership != null && sharedCursorOwnership.claim()) {
+            // A shared consumer opened before this primary in the current execution and already
+            // opened the owner state, which its symbol tables point into. Hand it over as is.
             return cursor;
-        } catch (Throwable th) {
-            // On a mid-reopen breach, close() drains the partially reopened atom and resets isOpen
-            // so the cached factory stays reusable.
-            cursor.close();
-            throw th;
         }
+        openOwner(executionContext);
+        return cursor;
     }
 
     @Override
@@ -180,17 +180,35 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
     }
 
     @Override
-    public RecordCursor getSharedCursor(SqlExecutionContext executionContext, int sharedId) {
+    public RecordCursor getSharedCursor(SqlExecutionContext executionContext, int sharedId) throws SqlException {
         if (sharedCursors == null) {
             sharedCursors = new ObjList<>();
+            sharedCursorOwnership = new SharedCursorOwnership(cursor);
         }
         int idx = sharedId - 1;
         AsyncGroupBySharedCursor shared = sharedCursors.getQuiet(idx);
         if (shared == null) {
             assert sharedRecordFunctions != null;
             assert idx < sharedRecordFunctions.size();
-            shared = new AsyncGroupBySharedCursor(sharedRecordFunctions.getQuick(idx));
+            shared = new AsyncGroupBySharedCursor(sharedRecordFunctions.getQuick(idx), sharedCursorOwnership.newHolder());
             sharedCursors.extendAndSet(idx, shared);
+        }
+        // The consumer's parent initializes against the consumer's symbol tables while it opens,
+        // and a parent may open the consumer before the primary (a hash join opens its build side
+        // first). The owner state must therefore exist now: open it here when the primary has not.
+        final boolean isOwnerOpenedHere = !cursor.isOpen();
+        if (isOwnerOpenedHere) {
+            openOwner(executionContext);
+            sharedCursorOwnership.markOpenedBySharedCursor();
+        }
+        try {
+            GroupByUtils.initSharedKeyFunctions(sharedRecordFunctions.getQuick(idx), frameSequence.getSymbolTableSource(), executionContext);
+        } catch (Throwable th) {
+            if (isOwnerOpenedHere) {
+                // no primary holds the owner state yet, so release it under the current tracker
+                sharedCursorOwnership.releaseUnclaimed();
+            }
+            throw th;
         }
         shared.of(cursor);
         return shared;
@@ -599,6 +617,9 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         this.sharedCursors = null;
         final ObjList<ObjList<Function>> sharedRecordFunctions = this.sharedRecordFunctions;
         this.sharedRecordFunctions = null;
+        if (sharedCursorOwnership != null) {
+            sharedCursorOwnership.clear();
+        }
 
         Throwable cleanupFailure = Misc.freeBestEffort(null, base);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, cursor);
@@ -611,5 +632,18 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         // Shared cursors hold no native memory; primary state freed above covers it.
         Misc.clear(sharedCursors);
         CairoException.rethrowCleanupFailure(cleanupFailure);
+    }
+
+    private void openOwner(SqlExecutionContext executionContext) throws SqlException {
+        final int order = base.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
+        frameSequence.of(base, executionContext, order);
+        try {
+            cursor.of(frameSequence, executionContext);
+        } catch (Throwable th) {
+            // On a mid-reopen breach, close() drains the partially reopened atom and resets isOpen
+            // so the cached factory stays reusable.
+            cursor.close();
+            throw th;
+        }
     }
 }

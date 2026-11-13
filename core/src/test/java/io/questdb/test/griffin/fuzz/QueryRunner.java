@@ -129,7 +129,10 @@ import java.util.regex.Pattern;
  *       sets query: the UNION ALL of one plain GROUP BY per grouping set. The axis compares only
  *       when both queries run: the rewrite exists to check the rows grouping sets return, not
  *       which queries they accept. Catches wrong subtotals, a lost or duplicated grouping set and
- *       a wrong GROUPING_ID, which every other axis would reproduce on both of its sides.</li>
+ *       a wrong GROUPING_ID, which every other axis would reproduce on both of its sides.
+ *       {@code HorizonJoinClause} writes one for a keyed HORIZON JOIN that repeats its key: the
+ *       same query with the single key. Catches keys that the code generator encodes wrongly
+ *       when one column sits at two key positions.</li>
  * </ul>
  * The two modes share a pivot: {@code primary @ JIT-off}. With both
  * enabled, three runs per query are required (primary @ JIT-on,
@@ -242,8 +245,8 @@ public final class QueryRunner {
     private final TextPlanSink planSink = new TextPlanSink();
     private final boolean primaryHasAnyParquet;
     private final Pattern[] primaryPatterns;
-    // Comparisons the reference axis ran, i.e. queries whose rewrite and pivot both ran.
-    private int referenceAxisRuns;
+    // Comparisons the reference axis ran per query shape, i.e. queries whose rewrite and pivot both ran.
+    private final int[] referenceAxisRuns = new int[QueryShape.values().length];
     // Worker-thread name prefix of the query pool, used to scope a parallel FILE
     // fault to the query execution (test thread + query workers). See runFault.
     private final String queryWorkerNamePrefix;
@@ -372,11 +375,11 @@ public final class QueryRunner {
     }
 
     /**
-     * Comparisons the reference axis ran: queries with a reference rewrite whose pivot and
-     * rewrite both ran to completion.
+     * Comparisons the reference axis ran for the shape: queries with a reference rewrite whose
+     * pivot and rewrite both ran to completion.
      */
-    public int getReferenceAxisRuns() {
-        return referenceAxisRuns;
+    public int getReferenceAxisRuns(QueryShape shape) {
+        return referenceAxisRuns[shape.ordinal()];
     }
 
     /**
@@ -1962,7 +1965,8 @@ public final class QueryRunner {
         if (bJ.failure != null || reference.failure != null) {
             return null;
         }
-        referenceAxisRuns++;
+        referenceAxisRuns[query.shape().ordinal()]++;
+        final boolean isGroupingSets = query.shape() == QueryShape.GROUPING_SETS;
         return reconcilePair(
                 query.sql(),
                 bJ,
@@ -1970,9 +1974,9 @@ public final class QueryRunner {
                 rowsB,
                 rowsG,
                 query.deterministic(),
-                "grouping sets reference divergence",
-                "grouping sets",
-                "union all    "
+                isGroupingSets ? "grouping sets reference divergence" : "repeated key reference divergence",
+                isGroupingSets ? "grouping sets" : "repeated key",
+                isGroupingSets ? "union all    " : "single key  "
         );
     }
 

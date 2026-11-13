@@ -36,6 +36,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.async.AdaptiveDispatchLimit;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.log.Log;
@@ -50,21 +51,24 @@ import org.jetbrains.annotations.Nullable;
 
 class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.RecordFreer, RecordCursor {
     private static final Log LOG = LogFactory.getLog(AsyncFilteredRecordCursor.class);
-    private final int defaultDispatchLimit;
+    // Sizes the in-flight page frame tasks of a read that the reader may stop early.
+    private final AdaptiveDispatchLimit dispatchLimit;
     private final Function filter;
     // Used for random access: we may have to deserialize Parquet page frame.
     private final PageFrameMemoryPool frameMemoryPool;
     private final boolean hasDescendingOrder;
+    // The rows of the first page frame of a limited read whose frames ramp up, 0 when they do not.
+    private final int rampFirstFrameRowCount;
     private final PageFrameMemoryRecord record;
     private boolean allFramesActive;
     private long cursor = -1;
-    private int dispatchLimit;
     private int frameIndex;
     private int frameLimit;
     private long frameRowCount;
     private long frameRowIndex;
     private PageFrameSequence<?> frameSequence;
     private boolean isOpen;
+    private boolean isRampingUpLimitedReads;
     // The OG rows remaining, used to reset the counter when re-running cursor from top().
     private long ogRowsRemaining;
     private PageFrameMemoryRecord recordB;
@@ -90,13 +94,14 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
         this.hasDescendingOrder = scanDirection == RecordCursorFactory.SCAN_DIRECTION_BACKWARD;
         this.record = record;
         this.frameMemoryPool = frameMemoryPool;
-        this.defaultDispatchLimit = configuration.getSqlParallelFilterDispatchLimit();
+        this.dispatchLimit = new AdaptiveDispatchLimit(configuration.getSqlParallelFilterDispatchLimit());
+        this.rampFirstFrameRowCount = configuration.getSqlPageFrameRampStartRows();
     }
 
     @Override
     public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor.Counter counter) {
         if (frameIndex == -1) {
-            fetchNextFrame(dispatchLimit, true);
+            fetchNextFrame(true);
             circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
         }
 
@@ -122,7 +127,7 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
         collectCursor(false);
 
         while (frameIndex < frameLimit) {
-            fetchNextFrame(dispatchLimit, true);
+            fetchNextFrame(true);
             if (frameRowCount > 0 && frameRowIndex < frameRowCount) {
                 long frameRowsLeft = Math.min(frameRowCount - frameRowIndex, rowsRemaining);
                 rowsRemaining -= frameRowsLeft;
@@ -163,6 +168,11 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
 
                     collectCursor(true);
                     if (frameLimit > -1) {
+                        // The reader may stop ahead of the last frame, as it does under a LIMIT.
+                        // Workers skip the published tasks they have not started instead of
+                        // reducing them for nothing. The frame sequence resets the cancellation
+                        // when the factory reopens it.
+                        frameSequence.cancel(SqlExecutionCircuitBreaker.STATE_OK);
                         frameSequence.await();
                     }
                     frameSequence.reset();
@@ -176,8 +186,9 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
 
     @Override
     public void expectLimitedIteration() {
-        // it must be a LIMIT N query, so put a cap the number of in-flight page frame tasks
-        dispatchLimit = defaultDispatchLimit;
+        // The parent may stop early, so the in-flight page frame tasks start at the configured
+        // dispatch limit and grow while the parent keeps reading.
+        dispatchLimit.expectLimitedRead();
     }
 
     @Override
@@ -210,7 +221,7 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
     public boolean hasNext() {
         // Check for the first hasNext call.
         if (frameIndex == -1) {
-            fetchNextFrame(dispatchLimit, false);
+            fetchNextFrame(false);
         }
 
         // Check for already reached row limit.
@@ -232,7 +243,7 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
 
         // Do we have more frames?
         if (frameIndex < frameLimit) {
-            fetchNextFrame(dispatchLimit, false);
+            fetchNextFrame(false);
             if (frameRowCount > 0 && frameRowIndex < frameRowCount) {
                 record.setRowIndex(rows.get(rowIndex()));
                 frameRowIndex++;
@@ -283,11 +294,13 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
 
     @Override
     public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
-        // hint is dropped here: filter discards rows, so the consumer's "max
-        // output rows" cannot translate to a per-frame decode clamp without
-        // knowing the filter selectivity.
+        // The hint cannot clamp the decode of a frame: the filter discards rows, so the
+        // consumer's "max output rows" says nothing about the rows of a frame without
+        // knowing the filter selectivity. It sizes the in-flight tasks of a limited read.
+        final long pendingRowCount = frameRowIndex < frameRowCount ? frameRowCount - frameRowIndex : 0;
+        dispatchLimit.onSkip(pendingRowCount, rowCount.get(), maxRowsAfterSkip);
         if (frameIndex == -1) {
-            fetchNextFrame(dispatchLimit, false);
+            fetchNextFrame(false);
         }
 
         long rowCountLeft = Math.min(rowsRemaining, rowCount.get());
@@ -310,7 +323,7 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
         collectCursor(false);
 
         while (frameIndex < frameLimit) {
-            fetchNextFrame(dispatchLimit, false);
+            fetchNextFrame(false);
             if (frameRowCount > 0 && frameRowIndex < frameRowCount) {
                 long frameRowsLeft = Math.min(frameRowCount - frameRowIndex, rowCountLeft);
                 rowsRemaining -= frameRowsLeft;
@@ -334,7 +347,12 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
     public void toTop() {
         collectCursor(false);
         filter.toTop();
+        if (frameLimit > -1) {
+            // The frame sequence resets the cancellation once the workers finish the tasks they started.
+            frameSequence.cancel(SqlExecutionCircuitBreaker.STATE_OK);
+        }
         frameSequence.toTop();
+        dispatchLimit.toTop();
         rowsRemaining = ogRowsRemaining;
         // Don't reset frameLimit here since its value is used to prepare frame sequence for dispatch only once.
         frameIndex = -1;
@@ -368,15 +386,21 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
         }
     }
 
-    private void fetchNextFrame(int dispatchLimit, boolean countOnly) {
+    private void fetchNextFrame(boolean countOnly) {
         if (frameLimit == -1) {
+            // A parent that stops early, such as the LIMIT above a RIGHT or FULL join, reads the rows of
+            // a frame only once a worker filtered the whole frame. Frames that start small give it the
+            // first rows without filtering a regular frame of up to cairo.sql.page.frame.max.rows rows.
+            if (isRampingUpLimitedReads && rampFirstFrameRowCount > 0 && dispatchLimit.isLimitedRead()) {
+                frameSequence.rampUpFrameSizes(rampFirstFrameRowCount);
+            }
             frameSequence.prepareForDispatch();
             frameLimit = frameSequence.getFrameCount() - 1;
         }
 
         try {
             do {
-                cursor = frameSequence.next(dispatchLimit, countOnly);
+                cursor = frameSequence.next(dispatchLimit.get(), countOnly);
                 if (cursor > -1) {
                     PageFrameReduceTask task = frameSequence.getTask(cursor);
                     LOG.debug()
@@ -403,11 +427,13 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
                     frameIndex = task.getFrameIndex();
                     frameRowIndex = 0;
                     if (frameRowCount > 0 && frameSequence.isActive()) {
+                        dispatchLimit.onFrameCollected(frameRowCount);
                         record.init(task.getFrameMemory());
                         break;
                     } else {
                         // Force reset frame size if frameSequence was canceled or failed.
                         frameRowCount = 0;
+                        dispatchLimit.onFrameCollected(0);
                         collectCursor(false);
                     }
                 } else if (cursor == -2) {
@@ -440,13 +466,17 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
         return hasDescendingOrder ? (frameRowCount - frameRowIndex - 1) : frameRowIndex;
     }
 
+    int getDispatchLimit() {
+        return dispatchLimit.get();
+    }
+
     void of(PageFrameSequence<?> frameSequence, long rowsRemaining) {
         this.isOpen = true;
         this.frameSequence = frameSequence;
         this.rowsRemaining = rowsRemaining;
         this.ogRowsRemaining = rowsRemaining;
-        // put a cap the number of in-flight page frame tasks in case of LIMIT N query
-        this.dispatchLimit = rowsRemaining != Long.MAX_VALUE ? defaultDispatchLimit : Integer.MAX_VALUE;
+        // A LIMIT N query may stop early, so it sizes the in-flight page frame tasks to the rows it reads.
+        dispatchLimit.of(rowsRemaining);
         this.frameIndex = -1;
         this.frameLimit = -1;
         this.frameRowIndex = -1;
@@ -459,5 +489,11 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
         if (recordB != null) {
             recordB.of(frameSequence.getSymbolTableSource());
         }
+    }
+
+    // Makes the page frames of every read that a parent may stop early start at
+    // cairo.sql.page.frame.ramp.start.rows rows and ramp up, see PageFrameCursor#rampUpFrameSizes(int).
+    void rampUpLimitedReads() {
+        isRampingUpLimitedReads = true;
     }
 }

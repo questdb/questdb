@@ -79,6 +79,7 @@ import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.sc
  */
 public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     private HorizonJoinRecordCursor cursor;
+    private final boolean hasSharedKeyCheck;
     private JoinRecordMetadata horizonJoinMetadata;
     private ObjList<Function> keyFunctions;
     private RecordCursorFactory masterFactory;
@@ -108,11 +109,13 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
             int masterColumnCount,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
+            @Nullable HorizonJoinSharedKeyCheckTemplate sharedKeyCheckTemplate,
             @Transient @NotNull ListColumnFilter groupByColumnFilter,
             int @NotNull [] columnSources,
             int @NotNull [] columnIndexes
     ) {
         super(metadata);
+        this.hasSharedKeyCheck = sharedKeyCheckTemplate != null;
         try {
             this.horizonJoinMetadata = horizonJoinMetadata;
             this.keyFunctions = keyFunctions;
@@ -149,6 +152,7 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
                     masterColumnCount,
                     masterSymbolKeyColumnIndices,
                     slaveSymbolKeyColumnIndices,
+                    sharedKeyCheckTemplate,
                     groupByColumnFilter,
                     columnSources,
                     columnIndexes,
@@ -215,6 +219,9 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
         sink.child(masterFactory);
         if (slaveFilter != null) {
             sink.attr("slave filter").val(slaveFilter, slaveFactory);
+        }
+        if (hasSharedKeyCheck) {
+            sink.attr("sharedKeyCheck").val(true);
         }
         sink.child(slaveFactory);
     }
@@ -296,6 +303,7 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
                 int masterColumnCount,
                 int @Nullable [] masterSymbolKeyColumnIndices,
                 int @Nullable [] slaveSymbolKeyColumnIndices,
+                @Nullable HorizonJoinSharedKeyCheckTemplate sharedKeyCheckTemplate,
                 @Transient ListColumnFilter groupByColumnFilter,
                 int[] columnSources,
                 int[] columnIndexes,
@@ -370,7 +378,8 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
                     configuration.getSqlHorizonJoinBwdScanMinGap(),
                     configuration.getSqlHorizonJoinBwdScanSwitchFactor(),
                     slaveFilter,
-                    asOfJoinKeyTypes
+                    asOfJoinKeyTypes,
+                    sharedKeyCheckTemplate
             );
             this.isOpen = false;
         }

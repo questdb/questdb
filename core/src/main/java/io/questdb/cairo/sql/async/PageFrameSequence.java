@@ -497,6 +497,17 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         }
     }
 
+    /**
+     * Makes the page frames that {@link #prepareForDispatch()} lists ramp up to their regular size,
+     * see {@link PageFrameCursor#rampUpFrameSizes(int)}. Once prepareForDispatch() has listed the
+     * frames, the call changes no frame, as prepareForDispatch() lists them only once.
+     *
+     * @param firstFrameRowCount the rows of the first frame, greater than zero
+     */
+    public void rampUpFrameSizes(int firstFrameRowCount) {
+        frameCursor.rampUpFrameSizes(firstFrameRowCount);
+    }
+
     public void reset() {
         // reset() must be called only if there are no tasks in progress for this page frame sequence
         assert frameCount == 0 || reduceFinishedCounter.get() == dispatchStartFrameIndex;

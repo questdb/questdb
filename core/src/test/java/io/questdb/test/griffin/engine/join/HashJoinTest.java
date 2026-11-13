@@ -40,6 +40,82 @@ import org.junit.Test;
 public class HashJoinTest extends AbstractCairoTest {
 
     @Test
+    public void testHashFullJoinFilteredSwappedEmitsMatchedLeftRowOnce() throws Exception {
+        assertMemoryLeak(() -> {
+            createSwappedFullJoinTables("INT");
+            // l has fewer rows than r, so the cursor swaps sides; the filter is true on a NULL r side
+            assertQuery("SELECT * FROM l FULL JOIN r ON r.k = l.k AND (l.v > 1 OR r.v IS NULL) ORDER BY l.k, l.v, r.k, r.v")
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Full Outer Join Light", "filter:")
+                    .returns("""
+                            k\tv\tk1\tv1
+                            null\tnull\tnull\t2
+                            null\tnull\tnull\t3
+                            null\tnull\tnull\t3
+                            null\tnull\t3\t1
+                            1\t1\tnull\tnull
+                            1\t1\tnull\tnull
+                            1\t3\t1\t5
+                            2\t2\t2\t3
+                            2\t2\t2\t3
+                            2\t2\t2\t3
+                            2\t2\t2\t3
+                            """);
+        });
+    }
+
+    @Test
+    public void testHashFullJoinFilteredSwappedKeepsUnmatchedLeftRows() throws Exception {
+        assertMemoryLeak(() -> {
+            createSwappedFullJoinTables("INT");
+            // l has fewer rows than r, so the cursor swaps sides; the filter is false on a NULL r side
+            assertQuery("SELECT * FROM l FULL JOIN r ON r.k = l.k AND r.v > 5 ORDER BY l.k, l.v, r.k, r.v")
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Full Outer Join Light", "filter:")
+                    .returns("""
+                            k\tv\tk1\tv1
+                            null\tnull\tnull\t2
+                            null\tnull\tnull\t3
+                            null\tnull\tnull\t3
+                            null\tnull\t1\t5
+                            null\tnull\t2\t3
+                            null\tnull\t2\t3
+                            null\tnull\t3\t1
+                            1\t1\tnull\tnull
+                            1\t1\tnull\tnull
+                            1\t3\tnull\tnull
+                            2\t2\tnull\tnull
+                            2\t2\tnull\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testHashFullJoinFilteredSwappedKeepsUnmatchedLeftRowsSymbolKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            createSwappedFullJoinTables("SYMBOL");
+            assertQuery("SELECT * FROM l FULL JOIN r ON r.k = l.k AND r.v > 5 ORDER BY l.k, l.v, r.k, r.v")
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Full Outer Join Light", "symbolKeyJoin: true", "filter:")
+                    .returns("""
+                            k\tv\tk1\tv1
+                            \tnull\t\t2
+                            \tnull\t\t3
+                            \tnull\t\t3
+                            \tnull\t1\t5
+                            \tnull\t2\t3
+                            \tnull\t2\t3
+                            \tnull\t3\t1
+                            1\t1\t\tnull
+                            1\t1\t\tnull
+                            1\t3\t\tnull
+                            2\t2\t\tnull
+                            2\t2\t\tnull
+                            """);
+        });
+    }
+
+    @Test
     public void testHashFullJoinSymbolAndStringKeyIndexCollision() throws Exception {
         assertMemoryLeak(() -> {
             createOrdersAndFills("STRING");
@@ -955,5 +1031,30 @@ public class HashJoinTest extends AbstractCairoTest {
                     ('2024-01-01T00:00:00.000000Z', 'AAPL', 'NYSE', 10),
                     ('2024-01-01T00:00:00.000000Z', 'MSFT', 'NASDAQ', 20),
                     ('2024-01-01T00:00:00.000000Z', 'IBM', 'ARCA', 30)""");
+    }
+
+    /**
+     * Creates l (5 rows) and r (7 rows) with duplicate keys. The Hash Full Outer Join Light cursor
+     * swaps sides when the left side has fewer rows, so {@code l FULL JOIN r} takes the swapped path.
+     */
+    private void createSwappedFullJoinTables(String keyType) throws Exception {
+        execute("CREATE TABLE l (k " + keyType + ", v INT)");
+        execute("CREATE TABLE r (k " + keyType + ", v INT)");
+        execute("""
+                INSERT INTO l VALUES
+                    (1::KT, 1),
+                    (2::KT, 2),
+                    (1::KT, 3),
+                    (2::KT, 2),
+                    (1::KT, 1)""".replace("KT", keyType));
+        execute("""
+                INSERT INTO r VALUES
+                    (null, 3),
+                    (null, 2),
+                    (3::KT, 1),
+                    (null, 3),
+                    (2::KT, 3),
+                    (2::KT, 3),
+                    (1::KT, 5)""".replace("KT", keyType));
     }
 }

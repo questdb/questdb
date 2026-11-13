@@ -1431,6 +1431,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlPageFrameRampStartRows() {
+        return 1_000;
+    }
+
+    @Override
     public int getSqlParallelFilterDispatchLimit() {
         return Integer.MAX_VALUE;
     }
