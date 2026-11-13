@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.mv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.MetadataCacheWriter;
@@ -63,6 +64,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -1090,6 +1092,146 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
 
             setCurrentMicros(JAN_10 + 63_000_000_000L); // 2024-01-10T17:30:00Z
             assertQuery("SELECT count() FROM mv").noRandomAccess().expectSize().noLeakCheck().returns("count\n7\n");
+        });
+    }
+
+    @Test
+    public void testExpirePolicyAndViewOverMaxDateVariableIntervalsAfterRestart() throws Exception {
+        // A policy and a view that hold a date-variable tick literal compile it on every read. Both
+        // were stored while the interval cap allowed the date variables of the literal: two days x
+        // 513 minutes two minutes apart, 1,026 intervals. Once the cap drops to its default of 1,024,
+        // every read fails at the literal in the text that it parses, and leaks nothing, while a view
+        // of a repeated date variable within the cap reads on, and dropping the policy and the view
+        // leaves the table readable.
+        setProperty(PropertyKey.CAIRO_SQL_INTERVAL_MAX_INTERVALS_AFTER_MERGE, 2_048);
+        assertMemoryLeak(() -> {
+            setCurrentMicros(Micros.toMicros(2024, 1, 8, 1, 0));
+            // the even minutes from 00:00 to 17:04 of 2024-01-07 and of $today, the Monday 2024-01-08
+            final String tick = "'[$today,$yesterday]T[" + minutesOfDay(513, 2) + "]'";
+            // the minutes from 00:00 to 17:03 of $today
+            final String repeatedTick = "'[$today,$today]T[" + minutesOfDay(1_024, 1) + "]'";
+            execute("CREATE TABLE base (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                    (1, '2024-01-06T00:00:00.000000Z'),
+                    (2, '2024-01-07T00:02:00.000000Z'),
+                    (3, '2024-01-07T00:03:00.000000Z'),
+                    (4, '2024-01-08T09:00:00.000000Z'),
+                    (5, '2024-01-08T17:04:00.000000Z'),
+                    (6, '2024-01-08T17:06:00.000000Z')""");
+            drainWalAndMatViewQueues();
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS WHEN ts IN " + tick);
+            execute("CREATE VIEW v AS (SELECT * FROM base WHERE ts IN " + tick + ')');
+            execute("CREATE VIEW w AS (SELECT * FROM base WHERE ts IN " + repeatedTick + ')');
+            drainWalAndMatViewQueues();
+            drainViewQueue();
+            // The policy hides the rows that the view shows.
+            assertQuery("SELECT v FROM mv").noLeakCheck().returns("v\n1\n3\n6\n");
+            assertQuery("SELECT v FROM v").noLeakCheck().returns("v\n2\n4\n5\n");
+            assertQuery("SELECT v FROM w").noLeakCheck().returns("v\n4\n");
+            final String viewSql = engine.getViewGraph().getViewDefinition(engine.verifyTableName("v")).getViewSql();
+
+            setProperty(PropertyKey.CAIRO_SQL_INTERVAL_MAX_INTERVALS_AFTER_MERGE, 1_024);
+            engine.releaseInactive();
+            engine.releaseAllWriters();
+            try (
+                    CairoEngine restarted = new CairoEngine(configuration);
+                    SqlExecutionContext restartedContext = TestUtils.createSqlExecutionCtx(restarted)
+            ) {
+                restarted.load();
+                restarted.buildViewGraphs();
+                final String overCapError = "Bracket expansion produces too many intervals (max 1024)";
+                final TableToken token = restarted.verifyTableName("mv");
+                final String predicate;
+                try (TableMetadata metadata = restarted.getTableMetadata(token)) {
+                    predicate = metadata.getExpiryPredicate();
+                }
+                // A read of mv parses SELECT * FROM "mv" WHERE NOT (<predicate>), and a read of v the stored
+                // body of the view.
+                final String keepFilterSql = "SELECT * FROM \"mv\" WHERE NOT (" + predicate.trim() + ')';
+                TestUtils.assertException(restarted, restartedContext, "SELECT v FROM mv", overCapError, keepFilterSql.indexOf("'["), sink);
+                TestUtils.assertException(restarted, restartedContext, "SELECT v FROM v", overCapError, viewSql.indexOf("'["), sink);
+                // the cleanup skips a policy that reads the clock, and the cap error does not escape it
+                try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(restarted)) {
+                    Assert.assertFalse(job.cleanupTable(token, predicate));
+                }
+                // The list of w stores its repeated date variable once, so it stays within the cap. The
+                // context reads the clock of the test, the Monday 2024-01-08, as a statement does on entry.
+                restartedContext.initNow();
+                assertQuery("SELECT v FROM w").withEngine(restarted).withContext(restartedContext).noLeakCheck().returns("v\n4\n");
+            }
+            // The engine of the test owns the table registry, which the DDL writes. Without the policy
+            // and the view, the table reads every row again.
+            execute("DROP VIEW v");
+            execute("ALTER MATERIALIZED VIEW mv DROP EXPIRE");
+            drainWalAndMatViewQueues();
+            Assert.assertNull(engine.getTableTokenIfExists("v"));
+            assertQuery("SELECT v FROM mv").noLeakCheck().expectSize().returns("v\n1\n2\n3\n4\n5\n6\n");
+        });
+    }
+
+    @Test
+    public void testExpirePolicyAndViewOverMaxIntervalsAfterRestart() throws Exception {
+        // A policy and a view that hold a date-variable tick literal compile it on every read. Both
+        // were stored while the interval cap allowed the static intervals of the literal, 1,025 hours
+        // from 09:00, one a day from 2024-01-01. Once the cap drops to its default of 1,024, every read
+        // fails at the literal in the text that it parses, and leaks nothing, while dropping the
+        // policy and the view leaves the table readable.
+        setProperty(PropertyKey.CAIRO_SQL_INTERVAL_MAX_INTERVALS_AFTER_MERGE, 2_048);
+        assertMemoryLeak(() -> {
+            setCurrentMicros(Micros.toMicros(2024, 1, 8, 1, 0));
+            final String tick = "'[$today,2024-01-01T09:00;1h;1d;1025]'";
+            execute("CREATE TABLE base (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                    (1, '2024-01-01T09:30:00.000000Z'),
+                    (2, '2024-01-01T12:00:00.000000Z'),
+                    (3, '2024-01-08T12:00:00.000000Z'),
+                    (4, '2026-10-21T09:30:00.000000Z'),
+                    (5, '2026-10-22T09:30:00.000000Z')""");
+            drainWalAndMatViewQueues();
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS WHEN ts IN " + tick);
+            execute("CREATE VIEW v AS (SELECT * FROM base WHERE ts IN " + tick + ')');
+            drainWalAndMatViewQueues();
+            drainViewQueue();
+            // The 1,025th hour falls on 2026-10-21 (row 4), and $today, the Monday 2024-01-08, holds
+            // row 3. The policy hides the rows that the view shows.
+            assertQuery("SELECT v FROM mv").noLeakCheck().returns("v\n2\n5\n");
+            assertQuery("SELECT v FROM v").noLeakCheck().returns("v\n1\n3\n4\n");
+            final String viewSql = engine.getViewGraph().getViewDefinition(engine.verifyTableName("v")).getViewSql();
+
+            setProperty(PropertyKey.CAIRO_SQL_INTERVAL_MAX_INTERVALS_AFTER_MERGE, 1_024);
+            engine.releaseInactive();
+            engine.releaseAllWriters();
+            try (
+                    CairoEngine restarted = new CairoEngine(configuration);
+                    SqlExecutionContext restartedContext = TestUtils.createSqlExecutionCtx(restarted)
+            ) {
+                restarted.load();
+                restarted.buildViewGraphs();
+                final String overCapError = "Bracket expansion produces too many intervals (max 1024)";
+                final TableToken token = restarted.verifyTableName("mv");
+                final String predicate;
+                try (TableMetadata metadata = restarted.getTableMetadata(token)) {
+                    predicate = metadata.getExpiryPredicate();
+                }
+                // A read of mv parses SELECT * FROM "mv" WHERE NOT (<predicate>), and a read of v the stored
+                // body of the view.
+                final String keepFilterSql = "SELECT * FROM \"mv\" WHERE NOT (" + predicate.trim() + ')';
+                TestUtils.assertException(restarted, restartedContext, "SELECT v FROM mv", overCapError, keepFilterSql.indexOf("'["), sink);
+                TestUtils.assertException(restarted, restartedContext, "SELECT v FROM v", overCapError, viewSql.indexOf("'["), sink);
+                // the cleanup skips a policy that reads the clock, and the cap error does not escape it
+                try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(restarted)) {
+                    Assert.assertFalse(job.cleanupTable(token, predicate));
+                }
+            }
+            // The engine of the test owns the table registry, which the DDL writes. Without the policy
+            // and the view, the table reads every row again.
+            execute("DROP VIEW v");
+            execute("ALTER MATERIALIZED VIEW mv DROP EXPIRE");
+            drainWalAndMatViewQueues();
+            Assert.assertNull(engine.getTableTokenIfExists("v"));
+            assertQuery("SELECT v FROM mv").noLeakCheck().expectSize().returns("v\n1\n2\n3\n4\n5\n");
         });
     }
 
@@ -3434,6 +3576,16 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
         Assert.assertEquals("hasClock [predicate=" + predicate + ']', hasClock, result.hasClock());
         Assert.assertEquals("isDeterministic [predicate=" + predicate + ']', isDeterministic, result.isDeterministic());
         Assert.assertEquals("isMonotonic [predicate=" + predicate + ']', isMonotonic, result.isMonotonic());
+    }
+
+    // The time list values HH:MM of count minutes of a day stepMinutes apart from 00:00
+    private static String minutesOfDay(int count, int stepMinutes) {
+        final StringBuilder values = new StringBuilder();
+        for (int k = 0; k < count; k++) {
+            final int minute = k * stepMinutes;
+            values.append(k == 0 ? "" : ",").append(String.format("%02d:%02d", minute / 60, minute % 60));
+        }
+        return values.toString();
     }
 
     private void assertCleanupWithStaleDiscoveryPredicateKeepsRows(String policyChangeSql, String newPredicateOrNullForDrop) throws Exception {

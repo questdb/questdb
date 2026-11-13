@@ -121,6 +121,40 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInStrColumnParsesEachRow() throws Exception {
+        // The tick string of each row gives the intervals that t must fall in. 2024-01-15 is a
+        // Monday, so the day filter of row 5 drops the only day. A malformed string (row 6), a NULL
+        // string (row 7) and a NULL timestamp (row 8) match nothing, so NOT IN holds for them.
+        assertQuery("SELECT k, t IN s AS in_s, t NOT IN s AS not_in_s, t IN v AS in_v, t NOT IN v AS not_in_v FROM x")
+                .ddl(
+                        "CREATE TABLE x (k INT, t TIMESTAMP, s STRING, v VARCHAR)",
+                        """
+                                INSERT INTO x VALUES
+                                    (1, '2024-01-15T10:00:00.000000Z', '2024-01-15', '2024-01-15'),
+                                    (2, '2024-01-15T10:00:00.000000Z', '2024-01-16', '2024-01-16'),
+                                    (3, '2024-01-15T10:00:59.999999Z', '2024-01-[14,15]T10:00', '2024-01-[14,15]T10:00'),
+                                    (4, '2024-01-15T10:01:00.000000Z', '2024-01-[14,15]T10:00', '2024-01-[14,15]T10:00'),
+                                    (5, '2024-01-15T10:00:00.000000Z', '2024-01-15#tue', '2024-01-15#tue'),
+                                    (6, '2024-01-15T10:00:00.000000Z', '2024-01-[15', '2024-01-[15'),
+                                    (7, '2024-01-15T10:00:00.000000Z', NULL, NULL),
+                                    (8, NULL, '2024-01-15', '2024-01-15')
+                                """
+                )
+                .expectSize()
+                .returns("""
+                        k\tin_s\tnot_in_s\tin_v\tnot_in_v
+                        1\ttrue\tfalse\ttrue\tfalse
+                        2\tfalse\ttrue\tfalse\ttrue
+                        3\ttrue\tfalse\ttrue\tfalse
+                        4\tfalse\ttrue\tfalse\ttrue
+                        5\tfalse\ttrue\tfalse\ttrue
+                        6\tfalse\ttrue\tfalse\ttrue
+                        7\tfalse\ttrue\tfalse\ttrue
+                        8\tfalse\ttrue\tfalse\ttrue
+                        """);
+    }
+
+    @Test
     public void testIntervalBindVariable() throws Exception {
         execute("create table test as (select rnd_int() a, timestamp_sequence(0, 1000) ts from long_sequence(10000))");
 

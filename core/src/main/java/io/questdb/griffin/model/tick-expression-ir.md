@@ -8,32 +8,32 @@ arithmetic only.
 ## Overall Layout
 
 ```
-ir[0]                          header (counts + flags)
+ir[0]                          header (flags)
 ir[1]                          numericTzOffset
-ir[2 .. 2+D)                   duration parts          (D longs)
-ir[2+D .. 2+D+3T)              time override triples   (T triples, 3 longs each)
-ir[2+D+3T .. end)              elements                (variable-length)
+ir[2]                          element count
+ir[3]                          time override count     (T)
+ir[4]                          duration part count     (D)
+ir[5 .. 5+D)                   duration parts          (D longs)
+ir[5+D .. 5+D+3T)              time override triples   (T triples, 3 longs each)
+ir[5+D+3T .. end)              elements                (variable-length)
 ```
 
-`D`, `T`, and the element count are all encoded in the header.
+Each count takes a whole slot, so no count overflows its slot.
 
 ## Header — `ir[0]`
 
 ```
 bit 63                                                              bit 0
- ├─ elemCount ─┤─ toCount ──┤─ durCount ─┤          ┤DWE┤          ┤dayMask┤
- [63      56]   [55      48] [47      40] [39 .. 24] [23] [22 .. 7] [6 .. 0]
+          ┤DWE┤          ┤dayMask┤
+ [63 .. 24] [23] [22 .. 7] [6 .. 0]
 ```
 
 | Bits    | Name                     | Description                              |
 |---------|--------------------------|------------------------------------------|
-| 63 – 56 | `elemCount`             | Number of elements (max 255)             |
-| 55 – 48 | `timeOverrideCount`     | Number of time override pairs            |
-| 47 – 40 | `durationPartCount`     | Number of duration (unit, value) parts   |
 | 23      | `hasDurationWithExchange`| Duration applied after exchange schedule |
 | 6 – 0   | `dayFilterMask`         | Bitmask of allowed days (Mon=bit 0, Sun=bit 6) |
 
-Bits 39–24 and 22–7 are reserved (zero).
+Bits 63–24 and 22–7 are reserved (zero).
 
 ## Timezone Offset — `ir[1]`
 
@@ -44,7 +44,7 @@ Named timezones (e.g. `Europe/London`) are stored separately as a
 `TimeZoneRules` object reference on the `CompiledTickExpression` instance, since
 DST rules cannot be encoded as a single long.
 
-## Duration Parts — `ir[2 .. 2+D)`
+## Duration Parts — `ir[5 .. 5+D)`
 
 Each duration part (e.g. the `6h30m` in `;6h30m`) is encoded as one long:
 
@@ -60,7 +60,7 @@ bit 63                                    bit 0
 | 47 – 32 | `unit` | Duration unit char (`h`, `m`, `s`, `d`, `M`, `y`, etc.) |
 | 31 – 0  | `value`| Duration amount (signed int stored as 32-bit pattern) |
 
-## Time Override Triples — `ir[2+D .. 2+D+3T)`
+## Time Override Triples — `ir[5+D .. 5+D+3T)`
 
 Each time override (e.g. `T09:30` or each entry in `T[09:00,14:00]`) is stored
 as three consecutive longs:
@@ -137,9 +137,11 @@ long[1]:  lo  (interval start, fully resolved at compile time)
 long[2]:  hi  (interval end, fully resolved at compile time)
 ```
 
-Static elements have all suffix processing (time override, duration, timezone,
-day filter, exchange schedule) applied at compile time. They are emitted
-directly into the output without further computation.
+The compiler applies the time override, the duration, the day filter and the
+timezone to the intervals of the static elements, so each STATIC entry holds an
+interval of a fixed date after the day filter, in UTC. The compiler writes the
+STATIC entries after the date variable elements. The exchange schedule applies
+at run time, to the whole list.
 
 ### RANGE — 2 longs
 
@@ -157,11 +159,11 @@ iterates day-by-day from `startDay` to `endDay`, emitting per-day intervals
 
 ## Section Offsets
 
-Computed once in the constructor from the header:
+Computed once in the constructor from the counts:
 
 ```
-durationOff      = 2
-toOff            = 2 + durationPartCount
+durationOff      = 5
+toOff            = 5 + durationPartCount
 elemOff          = toOff + timeOverrideCount * 3
 ```
 
@@ -183,7 +185,7 @@ The `expression` string is also kept for `toPlan()` display only.
 ```
 1. Walk elements (elemOff → end of ir):
    - SINGLE_VAR: decode expr → evaluate → emit day/point interval
-   - STATIC:     emit pre-computed [lo, hi]
+   - STATIC:     skip
    - RANGE:      decode both exprs → evaluate → emit day-by-day or single interval
 
 2. Apply day filter (bitmask check on day-of-week of each lo)
@@ -192,7 +194,12 @@ The `expression` string is also kept for `toPlan()` display only.
    - Numeric: subtract fixed offset from all timestamps
    - Named:   DST-aware conversion via driver.toUTC(timestamp, tzRules)
 
+   Then append the STATIC entries as stored: the compiler applied phases 2
+   and 3 to them.
+
 4. Apply exchange schedule (if present):
+   - Union the intervals, so that an interval inside another one cannot end
+     the other one's part of a session
    - Filter intervals to exchange trading hours
    - Optionally apply duration to filtered intervals
 
@@ -202,17 +209,73 @@ The `expression` string is also kept for `toPlan()` display only.
 All phases operate on the output `LongList` in-place. No intermediate
 allocations.
 
+## Interval Count Bound
+
+The JIT filter compiles a fixed number of range checks for an expression and
+fills their bounds on every execution (`CompiledFilterTickBounds`), so it needs
+an upper bound on the interval count that holds for every "now".
+`getMaxIntervalCount(cap)` walks the elements and sums:
+
+| Element    | Bound                                                        |
+|------------|--------------------------------------------------------------|
+| STATIC     | all entries together: runs plus empty intervals (see below)  |
+| SINGLE_VAR | `max(1, T)`                                                  |
+| RANGE      | 1 if contiguous (see below), otherwise no bound              |
+
+The compiler writes one STATIC entry per bracket leaf, day or list value, or
+one per interval of their union once they exceed the interval cap, and phase 5
+merges the intervals that overlap or touch, so the 20 STATIC entries of
+`[$today, 2024-01-[01..20]]` yield one interval. The STATIC entries count as the
+runs of overlapping or adjacent intervals they form, plus one per empty interval
+(lo > hi, as a zero duration yields), which the merge may keep apart from a run.
+The compiler stores them after the day filter and the timezone conversion, and
+`evaluate()` emits them as stored, so the method counts their runs as they are.
+
+A range is contiguous when it has no business-day walk and the expression has
+no time override, duration, day filter or named timezone. `emitRange()` then
+emits one interval or a run of adjacent whole days, which phase 5 merges into
+one.
+
+For the date variable elements, the day filter only drops intervals and the
+timezone conversion maps each interval to one, so phases 2 and 3 never raise
+their count, and phase 5 only joins intervals. The method returns -1 (no bound)
+for an exchange calendar, for an offset or duration unit the timestamp driver
+does not know, for any other range, and when the sum exceeds `cap`.
+
 ## Compile-Time Construction
 
-`IntervalUtils.compileTickExpr()` builds the IR into a single `long[]`:
+`IntervalUtils.compileTickExpr()` builds the IR into a single `LongList`:
 
-1. Allocate one `long[64]`
-2. Write duration parts at `ir[0..D)`
-3. Write time override triples at `ir[D..D+3T)`
-4. **Shift** suffix data right by 2 (`arraycopy`) to insert header + tz offset
-5. Append elements at `ir[2+D+3T..)`
-6. Write header at `ir[0]`, trim array to exact size
+1. Append the header placeholder, the numeric timezone offset and three count
+   placeholders at `ir[0..5)`
+2. Append duration parts at `ir[5..5+D)`
+3. Append time override triples at `ir[5+D..5+D+3T)`
+4. Append elements at `ir[5+D+3T..)`: the distinct date variable elements in
+   list order, then the STATIC entries of the list
+5. Write the header at `ir[0]` and the counts at `ir[2..5)`
 
-This produces exactly **one `long[]` allocation** for the stored IR. Compile-time
-temporaries (two `StringSink`, one `LongList`) are reused across all parsing
-phases via `clear()` between uses.
+The compiler collects the intervals of the static elements of a list in a
+scratch list before it writes them. Each static element, and each day of a
+month or year with a time, gets the day filter and the timezone conversion of
+phases 2 and 3 on its own, as `parseTickExpr()` finishes each element before
+its list union. A union of the list then joins final UTC intervals only; a
+union in local time would join two days across a fall-back into a block that
+spans the repeated hour.
+Every `evaluate()` emits all STATIC entries, so the list keeps at most the
+interval cap (`cairo.sql.interval.max.intervals.after.merge`) of them: the
+compiler unions the collected intervals whenever they exceed the cap and the
+merge threshold together, and once more at the end when they exceed the cap,
+and fails if the union still exceeds the cap.
+
+Every `evaluate()` also emits up to `max(1, T)` intervals for each date variable
+element of a list, per day of a range, so the list keeps the distinct date
+variable elements times `max(1, T)` within the interval cap, and fails at the
+first element over it, with the same error as the static intervals. An element
+that repeats an earlier one, the same SINGLE_VAR word or the same pair of
+RANGE words, emits the same intervals for every "now", so the compiler stores
+and counts it once: `$today` and `$TODAY` are one element, as are `$today - 1d`
+and `$today-01d`, while `$today` and `$today + 0d` are two.
+
+This produces exactly **one `LongList`** for the stored IR. Compile-time
+temporaries (`StringSink`s, two `LongList`s and a `LongLongHashSet`) are
+thread-local and reused across all parsing phases via `clear()` between uses.

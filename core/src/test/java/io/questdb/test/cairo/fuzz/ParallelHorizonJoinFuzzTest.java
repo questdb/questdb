@@ -39,6 +39,7 @@ import io.questdb.griffin.engine.table.AsyncHorizonJoinProjectionRecordCursorFac
 import io.questdb.griffin.engine.table.HorizonJoinProjectionRecordCursorFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
@@ -343,8 +344,10 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
     @Test
     public void testParallelHorizonJoinProjectionConcurrent() throws Exception {
         // Queries share one worker pool, so the reading thread of one query reduces the tasks of
-        // another and takes a worker slot of that query's atom. Each thread runs one shape after
-        // another, and every run must return the rows of the serial factory.
+        // another and takes a worker slot of that query's atom. Each thread runs a few consecutive
+        // shapes from a random start, one after another, so the threads run different shapes at
+        // the same time and together cover every shape. Every run must return the rows of the
+        // serial factory.
         final String[] queries = {
                 // Keyed.
                 "SELECT t.ts, t.sym, h.offset, p.bid FROM trades t HORIZON JOIN prices p ON (sym) LIST (-1s, 0s, 1s) AS h",
@@ -368,7 +371,10 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
                 "SELECT t.ts, h.offset, p.bid FROM trades t HORIZON JOIN prices p ON (sym) RANGE FROM 0s TO 199s STEP 1s AS h WHERE t.price > 29",
         };
         final int threadCount = 6;
-        final int iterationCount = 20;
+        // The fewest shapes per thread that cover every shape. Under JaCoCo each query runs
+        // about 10x slower, and 20 random shapes per thread ran past the 20-minute test
+        // timeout with heavy seeds (#8050).
+        final int iterationCount = queries.length - threadCount + 1;
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
             TestUtils.execute(
@@ -392,16 +398,16 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
                         final CyclicBarrier barrier = new CyclicBarrier(threadCount);
                         final SOCountDownLatch haltLatch = new SOCountDownLatch(threadCount);
                         final int workerCount = sqlExecutionContext.getSharedQueryWorkerCount();
+                        final int firstQuery = rnd.nextInt(queries.length);
                         for (int i = 0; i < threadCount; i++) {
                             final int threadId = i;
-                            final Rnd threadRnd = new Rnd(rnd.nextLong(), rnd.nextLong());
                             new Thread(() -> {
                                 // Each thread compiles and runs against a context of its own.
                                 try (SqlExecutionContextImpl threadContext = TestUtils.createSqlExecutionCtx(engine, workerCount)) {
                                     threadContext.setParallelHorizonJoinEnabled(true);
                                     TestUtils.await(barrier);
                                     for (int j = 0; j < iterationCount; j++) {
-                                        final int q = threadRnd.nextInt(queries.length);
+                                        final int q = (firstQuery + threadId + j) % queries.length;
                                         try (RecordCursorFactory factory = engine.select(queries[q], threadContext)) {
                                             // The shapes differ in random access and in whether they
                                             // report a size, so the assertion takes random access from
@@ -618,6 +624,11 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelHorizonJoinProjectionSortedSubQueryMaster() throws Exception {
+        testParallelHorizonJoinSortedSubQueryMaster(1 + rnd.nextInt(2), true);
+    }
+
+    @Test
     public void testParallelHorizonJoinRange() throws Exception {
         testParallelHorizonJoin(
                 "RANGE FROM -2s TO 2s STEP 1s AS h",
@@ -635,6 +646,11 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
                 true,
                 null
         );
+    }
+
+    @Test
+    public void testParallelHorizonJoinSortedSubQueryMaster() throws Exception {
+        testParallelHorizonJoinSortedSubQueryMaster(1, false);
     }
 
     @Test
@@ -746,6 +762,11 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
     // in BaseAsyncMultiHorizonJoinAtom. Uses workerCount=3 and slaveCount=2
     // with mixed keyed/non-keyed slaves so that the bug (slave-major construction
     // vs worker-major access formula) produces null/non-null map mismatches.
+    @Test
+    public void testParallelMultiHorizonJoinSortedSubQueryMaster() throws Exception {
+        testParallelHorizonJoinSortedSubQueryMaster(2 + rnd.nextInt(2), false);
+    }
+
     @Test
     public void testParallelMultiHorizonJoinWorkerSlaveIndexing() throws Exception {
         final long[] offsetsMicros = {-1_000_000, 0, 1_000_000};
@@ -1115,6 +1136,55 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
         return slaveFilter != null ? "(" + table + " WHERE " + slaveFilter.replace("$", "") + ")" : table;
     }
 
+    // The per-offset ASOF JOIN reference of a HORIZON JOIN over the given materialised left-hand side: the left-hand
+    // rows shifted by each offset, ASOF JOINed with each slave, then aggregated by offset (and symbol), or, for the
+    // projection form, ordered by trade and then by offset.
+    private static String sortedMasterReference(
+            String masterTable,
+            String masterColumn,
+            String masterAggregate,
+            long[] offsetsMicros,
+            int slaveCount,
+            boolean isKeyed,
+            boolean isProjection
+    ) {
+        final StringBuilder ref = new StringBuilder();
+        if (isProjection) {
+            ref.append("SELECT trade_ts, h_offset, sym, mc");
+            for (int s = 0; s < slaveCount; s++) {
+                ref.append(", bid").append(s).append(", ask").append(s);
+            }
+        } else {
+            ref.append("SELECT h_offset, sym");
+            for (int s = 0; s < slaveCount; s++) {
+                ref.append(", count(bid").append(s).append(") AS cnt_bid").append(s).append(", max(ask").append(s).append(") AS max_ask").append(s);
+            }
+            ref.append(", ").append(masterAggregate).append("(mc) AS mc");
+        }
+        ref.append(" FROM (");
+        for (int i = 0; i < offsetsMicros.length; i++) {
+            if (i > 0) {
+                ref.append(" UNION ALL ");
+            }
+            ref.append("SELECT CAST(").append(offsetsMicros[i]).append(" AS LONG) AS h_offset, t.trade_ts, t.sym, t.mc");
+            for (int s = 0; s < slaveCount; s++) {
+                ref.append(", p").append(s).append(".bid AS bid").append(s).append(", p").append(s).append(".ask AS ask").append(s);
+            }
+            ref.append(" FROM (SELECT * FROM (SELECT dateadd('u', ").append(offsetsMicros[i]).append(", ts) AS ts, ts AS trade_ts, sym, ")
+                    .append(masterColumn).append(" AS mc FROM ").append(masterTable).append(") TIMESTAMP(ts)) t");
+            for (int s = 0; s < slaveCount; s++) {
+                ref.append(asOfSlave("prices" + s, "p" + s, isKeyed, null));
+            }
+        }
+        ref.append(')');
+        if (isProjection) {
+            ref.append(" ORDER BY trade_ts, h_offset");
+        } else {
+            ref.append(" GROUP BY h_offset, sym ORDER BY h_offset, sym");
+        }
+        return ref.toString();
+    }
+
     private String generateSlaveFilter() {
         return switch (rnd.nextInt(5)) {
             case 0, 1 -> null;
@@ -1426,6 +1496,121 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
                         // of the aggregation always does.
                         assertQueriesMatch(engine, sqlExecutionContext, rowsQuery, rowsReference, true, filter == null);
                         assertQueriesMatch(engine, sqlExecutionContext, aggregateQuery, aggregateReference, false, true);
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    // HORIZON JOIN over left-hand sides that ORDER BY sorts by their timestamp, against the per-offset ASOF JOIN
+    // reference over the same rows materialised into a table. A WINDOW JOIN offers neither random access nor page
+    // frames, so ORDER BY keeps its sort and the HORIZON JOIN runs single-threaded over it. A covering-index scan
+    // offers page frames without random access: the parallel HORIZON JOIN reads them, the single-threaded one
+    // reads the sort ORDER BY keeps for it. The aggregation groups by the left-hand symbol whether the join is
+    // keyed or not: an aggregation over a WINDOW JOIN sub-query without that key drops the ORDER BY of the
+    // sub-query, and with it the designated timestamp the HORIZON JOIN needs.
+    private void testParallelHorizonJoinSortedSubQueryMaster(int slaveCount, boolean isProjection) throws Exception {
+        final boolean isKeyed = rnd.nextBoolean();
+        final boolean isList = rnd.nextBoolean();
+        final String horizonClause = isList ? "LIST (-1s, 0s, 2s) AS h" : "RANGE FROM -1s TO 1s STEP 1s AS h";
+        final long[] offsetsMicros = isList ? new long[]{-1_000_000, 0, 2_000_000} : rangeOffsets(-1, 1);
+        final String windowJoinMaster = "SELECT t.ts, t.sym, t.price, count() wc FROM trades t WINDOW JOIN prices0 p ON (t.sym = p.sym) " +
+                "RANGE BETWEEN 1 second PRECEDING AND CURRENT ROW EXCLUDE PREVAILING ORDER BY t.ts";
+        final String coveringIndexMaster = "SELECT ts, sym, price FROM trades_ci WHERE sym = 'sym1' ORDER BY ts";
+        // master SQL, materialised master, master column, master aggregate
+        final String[][] masters = {
+                {windowJoinMaster, "wj_ref", "wc", "sum"},
+                {coveringIndexMaster, "ci_ref", "price", "max"}
+        };
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
+            TestUtils.execute(
+                    pool,
+                    (engine, _, sqlExecutionContext) -> {
+                        createTradesTable(engine, sqlExecutionContext);
+                        for (int s = 0; s < slaveCount; s++) {
+                            createPricesTable(engine, sqlExecutionContext, "prices" + s);
+                        }
+                        engine.execute(
+                                "CREATE TABLE trades_ci (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (price), side SYMBOL, " +
+                                        "price DOUBLE, amount DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR",
+                                sqlExecutionContext
+                        );
+                        engine.execute("INSERT INTO trades_ci SELECT * FROM trades", sqlExecutionContext);
+                        if (convertToParquet) {
+                            engine.execute("ALTER TABLE trades CONVERT PARTITION TO PARQUET WHERE ts >= 0", sqlExecutionContext);
+                            for (int s = 0; s < slaveCount; s++) {
+                                engine.execute("ALTER TABLE prices" + s + " CONVERT PARTITION TO PARQUET WHERE ts >= 0", sqlExecutionContext);
+                            }
+                        }
+                        engine.execute("CREATE TABLE wj_ref AS (" + windowJoinMaster + ") TIMESTAMP(ts) PARTITION BY HOUR", sqlExecutionContext);
+                        engine.execute("CREATE TABLE ci_ref AS (SELECT ts, sym, price FROM trades WHERE sym = 'sym1') TIMESTAMP(ts) PARTITION BY HOUR", sqlExecutionContext);
+                        final StringSink plan = new StringSink();
+                        final StringSink horizonSink = new StringSink();
+                        final StringSink referenceSink = new StringSink();
+                        for (int mode = 0; mode < 4; mode++) {
+                            final boolean isParallelHorizonJoin = (mode & 1) != 0;
+                            sqlExecutionContext.setParallelHorizonJoinEnabled(isParallelHorizonJoin);
+                            sqlExecutionContext.setParallelWindowJoinEnabled((mode & 2) != 0);
+                            for (int m = 0; m < masters.length; m++) {
+                                final String[] master = masters[m];
+                                final StringBuilder query = new StringBuilder();
+                                if (isProjection) {
+                                    query.append("SELECT t.ts AS trade_ts, h.offset AS h_offset, t.sym, t.").append(master[2]).append(" AS mc");
+                                    for (int s = 0; s < slaveCount; s++) {
+                                        query.append(", p").append(s).append(".bid AS bid").append(s).append(", p").append(s).append(".ask AS ask").append(s);
+                                    }
+                                } else {
+                                    query.append("SELECT h.offset AS h_offset, t.sym");
+                                    for (int s = 0; s < slaveCount; s++) {
+                                        query.append(", count(p").append(s).append(".bid) AS cnt_bid").append(s)
+                                                .append(", max(p").append(s).append(".ask) AS max_ask").append(s);
+                                    }
+                                    query.append(", ").append(master[3]).append("(t.").append(master[2]).append(") AS mc");
+                                }
+                                query.append(" FROM (").append(master[0]).append(") t");
+                                for (int s = 0; s < slaveCount; s++) {
+                                    query.append(horizonSlave("prices" + s, "p" + s, isKeyed, null, false));
+                                }
+                                query.append(' ').append(horizonClause);
+                                if (!isProjection) {
+                                    query.append(" ORDER BY h_offset, t.sym");
+                                }
+                                final String horizonQuery = query.toString();
+                                final String referenceQuery = sortedMasterReference(master[1], master[2], master[3], offsetsMicros, slaveCount, isKeyed, isProjection);
+
+                                // The WINDOW JOIN offers no page frames, so the HORIZON JOIN reads its sort in either mode.
+                                // The parallel HORIZON JOIN reads the page frames of the covering-index scan.
+                                final boolean isParallelPlan = m == 1 && isParallelHorizonJoin;
+                                plan.clear();
+                                TestUtils.printSql(engine, sqlExecutionContext, "EXPLAIN " + horizonQuery, plan);
+                                TestUtils.assertContains(plan, "Horizon Join");
+                                if (isParallelPlan) {
+                                    TestUtils.assertContains(plan, "Async ");
+                                    TestUtils.assertContains(plan, "CoveringIndex");
+                                    Assert.assertFalse(plan.toString(), Chars.contains(plan, "keys: [ts]"));
+                                } else {
+                                    TestUtils.assertContains(plan, "Encode sort\n");
+                                    TestUtils.assertContains(plan, "keys: [ts]");
+                                    for (String async : new String[]{"Async Horizon Join", "Async JIT Horizon Join", "Async Multi Horizon Join"}) {
+                                        Assert.assertFalse(plan.toString(), Chars.contains(plan, async));
+                                    }
+                                }
+
+                                horizonSink.clear();
+                                TestUtils.printSql(engine, sqlExecutionContext, horizonQuery, horizonSink);
+                                referenceSink.clear();
+                                TestUtils.printSql(engine, sqlExecutionContext, referenceQuery, referenceSink);
+                                try {
+                                    TestUtils.assertEquals(referenceSink, horizonSink);
+                                } catch (AssertionError e) {
+                                    LOG.error().$("HORIZON JOIN query: ").$(horizonQuery).$();
+                                    LOG.error().$("Reference query: ").$(referenceQuery).$();
+                                    throw e;
+                                }
+                            }
+                        }
                     },
                     configuration,
                     LOG
