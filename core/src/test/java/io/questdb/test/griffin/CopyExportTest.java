@@ -40,6 +40,7 @@ import io.questdb.cutlass.parquet.CopyExportRequestJob;
 import io.questdb.cutlass.parquet.ParquetExportMode;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.griffin.engine.table.parquet.ParquetFileDecoder;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
@@ -64,6 +65,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.ParquetTestUtils;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
@@ -338,6 +340,136 @@ public class CopyExportTest extends AbstractCairoTest {
     @Test
     public void testCopyFusedSymbolKeyJoinGroupBySurvivesBuildTableGrowthAfterQueue() throws Exception {
         assertMemoryLeak(() -> assertCopyOfFusedJoinGroupByAfterBuildTableGrowth("SYMBOL", "('k' || (x % 5))::SYMBOL", "", "fused_symbol_growth"));
+    }
+
+    @Test
+    public void testCopyMultiKeyCoveringScanAcrossManyFrames() throws Exception {
+        // The multi-key covering merge fills each frame into buffers of its own, and the export
+        // frees the frames before the current one after each row group it writes. With frames
+        // of 7 rows, row groups of 1, 3, 7, 10 and 1_000 rows end inside, on and past frame
+        // edges. The no_covering query reads the column files instead of the index sidecar.
+        CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(7);
+        try {
+            assertMemoryLeak(() -> {
+                execute("""
+                        CREATE TABLE cov_mk (
+                            ts TIMESTAMP,
+                            sym SYMBOL INDEX TYPE POSTING INCLUDE (b, i, l, d, vc, s, sy, u, arr, bin),
+                            b BOOLEAN, i INT, l LONG, d DOUBLE, vc VARCHAR, s STRING, sy SYMBOL, u UUID, arr DOUBLE[], bin BINARY
+                        ) TIMESTAMP(ts) PARTITION BY DAY
+                        """);
+                execute("""
+                        INSERT INTO cov_mk SELECT
+                            (x * 600_000_000L)::TIMESTAMP,
+                            CASE x % 3 WHEN 0 THEN 'A' WHEN 1 THEN 'B' ELSE 'C' END,
+                            x % 2 = 0,
+                            CASE WHEN x % 10 = 0 THEN NULL ELSE x::INT END,
+                            x * 1_000_003,
+                            CASE WHEN x % 11 = 0 THEN NULL ELSE x / 7.0 END,
+                            CASE WHEN x % 7 = 0 THEN NULL ELSE 'varchar value ' || x END,
+                            CASE WHEN x % 5 = 0 THEN NULL ELSE 'string ' || x END,
+                            rnd_symbol('x', 'y', 'z', NULL),
+                            rnd_uuid4(),
+                            CASE WHEN x % 13 = 0 THEN NULL ELSE ARRAY[x::DOUBLE, -x::DOUBLE] END,
+                            rnd_bin(1, 32, 1)
+                        FROM long_sequence(600)
+                        """);
+                final String[] selects = {
+                        // DIRECT_PAGE_FRAME: the encoder reads the covering frames as they are
+                        "ts, sym, b, i, l, d, vc, s, sy, u, arr, bin FROM cov_mk WHERE sym IN ('A', 'C')",
+                        // PAGE_FRAME_BACKED: a computed column next to columns read from the frames
+                        "l + 1 lp, vc, s, arr, bin, ts FROM cov_mk WHERE sym IN ('A', 'C')",
+                };
+                final ParquetExportMode[] modes = {ParquetExportMode.DIRECT_PAGE_FRAME, ParquetExportMode.PAGE_FRAME_BACKED};
+                int fileIdx = 0;
+                for (int s = 0; s < selects.length; s++) {
+                    final String select = "SELECT " + selects[s];
+                    try (RecordCursorFactory factory = select(select)) {
+                        Assert.assertEquals(modes[s], ParquetExportMode.determineExportMode(factory, false, sqlExecutionContext));
+                    }
+                    assertQuery(select)
+                            .noLeakCheck()
+                            .assertsPlanContaining("CoveringIndex on: sym");
+                    final String expected = TestUtils.printSqlToString(engine, sqlExecutionContext, "SELECT /*+ no_covering */ " + selects[s], new StringSink());
+                    for (int rowGroupSize : new int[]{1, 3, 7, 10, 1_000}) {
+                        final String fileName = "cov_mk_" + fileIdx++;
+                        CopyExportRunnable statement = () -> runAndFetchCopyExportID(
+                                "COPY (" + select + ") TO '" + fileName + "' WITH FORMAT PARQUET ROW_GROUP_SIZE " + rowGroupSize,
+                                sqlExecutionContext
+                        );
+                        CopyExportRunnable test = () -> assertEventually(() -> {
+                            assertQuery("SELECT status FROM \"sys.copy_export_log\" LIMIT -1")
+                                    .noLeakCheck()
+                                    .expectSize()
+                                    .returns("status\nfinished\n");
+                            assertQuery("SELECT * FROM read_parquet('" + exportRoot + File.separator + fileName + ".parquet')")
+                                    .noLeakCheck()
+                                    .expectSize()
+                                    .timestamp("ts")
+                                    .returns(expected);
+                        });
+                        testCopyExport(statement, test);
+                    }
+                }
+            });
+        } finally {
+            CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(-1);
+        }
+    }
+
+    @Test
+    public void testCopyMultiKeyCoveringScanStaysUnderQueryMemoryLimit() throws Exception {
+        // The merge fills each frame into buffers of its own: 4096 rows of price, dbl and the
+        // symbol key. After each row group the export frees the frames before the current one,
+        // so with row groups of one frame it holds two frames at a time, under a query memory
+        // limit of three and a half, through the 40 frames of the result. Keeping every frame
+        // until the export ends would breach the limit at the fourth.
+        final long frameBytes = 4_096L * (Long.BYTES + Double.BYTES + Integer.BYTES);
+        CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(60_000);
+        try {
+            assertMemoryLeak(() -> {
+                execute("CREATE TABLE tm (sym SYMBOL INDEX TYPE POSTING INCLUDE (price, dbl), price LONG, dbl DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+                // 60_000 rows a second apart, all in one day partition; x % 3 picks the key
+                execute("INSERT INTO tm SELECT CASE x % 3 WHEN 0 THEN 'A' WHEN 1 THEN 'B' ELSE 'C' END, x, x / 2.0, (x * 1_000_000L)::TIMESTAMP FROM long_sequence(60_000)");
+                final String select = "SELECT price, dbl FROM tm WHERE sym IN ('A', 'C')";
+                assertQuery(select)
+                        .noLeakCheck()
+                        .assertsPlanContaining("CoveringIndex on: sym with: price, dbl");
+                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 3 * frameBytes + frameBytes / 2);
+
+                // a single frame of all 40_000 matching rows outgrows the limit on its own
+                testCopyExport(
+                        () -> runAndFetchCopyExportID("COPY (" + select + ") TO 'tm_one_frame' WITH FORMAT PARQUET ROW_GROUP_SIZE 1000", sqlExecutionContext),
+                        () -> assertEventually(() -> {
+                            final String log = TestUtils.printSqlToString(engine, sqlExecutionContext, "SELECT status, message FROM \"sys.copy_export_log\" LIMIT -1", new StringSink());
+                            TestUtils.assertContains(log, "failed");
+                            TestUtils.assertContains(log, "query memory limit exceeded");
+                        })
+                );
+
+                CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(1_000);
+                testCopyExport(
+                        () -> runAndFetchCopyExportID("COPY (" + select + ") TO 'tm_frames' WITH FORMAT PARQUET ROW_GROUP_SIZE 1000", sqlExecutionContext),
+                        () -> assertEventually(() -> {
+                            assertQuery("SELECT status FROM \"sys.copy_export_log\" LIMIT -1")
+                                    .noLeakCheck()
+                                    .expectSize()
+                                    .returns("status\nfinished\n");
+                            // the 40_000 rows with x % 3 != 1: x sums to 1_200_040_000
+                            assertQuery("SELECT count(), sum(price), sum(dbl), min(price), max(price) FROM read_parquet('" + exportRoot + File.separator + "tm_frames.parquet')")
+                                    .noLeakCheck()
+                                    .noRandomAccess()
+                                    .expectSize()
+                                    .returns("""
+                                            count\tsum\tsum1\tmin\tmax
+                                            40000\t1200040000\t6.0002E8\t2\t60000
+                                            """);
+                        })
+                );
+            });
+        } finally {
+            CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(-1);
+        }
     }
 
     @Test
@@ -1691,7 +1823,10 @@ public class CopyExportTest extends AbstractCairoTest {
                                 .expectSize()
                                 .returns("export_path\tnum_exported_files\tstatus\n" +
                                         parquetPath + "\t1\tfinished\n");
-                        assertParquetMatchesQuery(query, parquetPath);
+                        // A computed column makes the projection a VirtualRecord, which keeps the designated
+                        // timestamp only under its exact name. Over the join the projection names the column
+                        // <table>.ts, so neither the query nor its export has a designated timestamp.
+                        assertParquetMatchesQuery(query, parquetPath, null);
                         ParquetTestUtils.assertColumnsUseDictionaryEncoding(
                                 parquetPath,
                                 configuration.getFilesFacade(),
@@ -1748,7 +1883,7 @@ public class CopyExportTest extends AbstractCairoTest {
                                 .expectSize()
                                 .returns("export_path\tnum_exported_files\tstatus\n" +
                                         parquetPath + "\t1\tfinished\n");
-                        assertParquetMatchesQuery(query, parquetPath);
+                        assertParquetMatchesQuery(query, parquetPath, "ts");
                         ParquetTestUtils.assertColumnsUseDictionaryEncoding(
                                 parquetPath,
                                 configuration.getFilesFacade(),
@@ -1828,7 +1963,7 @@ public class CopyExportTest extends AbstractCairoTest {
                                 .expectSize()
                                 .returns("export_path\tnum_exported_files\tstatus\n" +
                                         parquetPath + "\t1\tfinished\n");
-                        assertParquetMatchesQuery(query, parquetPath);
+                        assertParquetMatchesQuery(query, parquetPath, "ts");
                         // Output column order: id, metric, ts, id1, total, ts1.
                         // metric is column 1 and total is column 4.
                         ParquetTestUtils.assertColumnsUseDictionaryEncoding(
@@ -1995,7 +2130,10 @@ public class CopyExportTest extends AbstractCairoTest {
                                 .expectSize()
                                 .returns("export_path\tnum_exported_files\tstatus\n" +
                                         parquetPath + "\t1\tfinished\n");
-                        assertParquetMatchesQuery(query, parquetPath);
+                        // A computed column makes the projection a VirtualRecord, which keeps the designated
+                        // timestamp only under its exact name. Over the join the projection names the column
+                        // <table>.ts, so neither the query nor its export has a designated timestamp.
+                        assertParquetMatchesQuery(query, parquetPath, null);
 
                         // Col 0 (label, SYMBOL->STRING) is type-changed; col 2 (computed_label)
                         // is a computed expression. Neither should inherit the RLE_DICTIONARY
@@ -4394,11 +4532,13 @@ public class CopyExportTest extends AbstractCairoTest {
                                 .returns("status\nfinished\n");
                         assertParquetMatchesQuery(
                                 "SELECT * FROM ct WHERE ts IN '2024-01-01'",
-                                exportRoot + File.separator + "composite_export" + File.separator + "2024-01-01.parquet"
+                                exportRoot + File.separator + "composite_export" + File.separator + "2024-01-01.parquet",
+                                "ts"
                         );
                         assertParquetMatchesQuery(
                                 "SELECT * FROM ct WHERE ts IN '2024-01-03'",
-                                exportRoot + File.separator + "composite_export" + File.separator + "2024-01-03.parquet"
+                                exportRoot + File.separator + "composite_export" + File.separator + "2024-01-03.parquet",
+                                "ts"
                         );
                     });
 
@@ -4457,11 +4597,13 @@ public class CopyExportTest extends AbstractCairoTest {
                     .returns("status\nfinished\n");
             assertParquetMatchesQuery(
                     "SELECT * FROM ct WHERE ts IN '2024-01-01'",
-                    exportRoot + File.separator + "transition_export" + File.separator + "2024-01-01.parquet"
+                    exportRoot + File.separator + "transition_export" + File.separator + "2024-01-01.parquet",
+                    "ts"
             );
             assertParquetMatchesQuery(
                     "SELECT * FROM ct WHERE ts IN '2024-01-03'",
-                    exportRoot + File.separator + "transition_export" + File.separator + "2024-01-03.parquet"
+                    exportRoot + File.separator + "transition_export" + File.separator + "2024-01-03.parquet",
+                    "ts"
             );
         });
     }
@@ -4492,11 +4634,13 @@ public class CopyExportTest extends AbstractCairoTest {
                     .returns("status\nfinished\n");
             assertParquetMatchesQuery(
                     "SELECT * FROM \"src ct\" WHERE ts IN '2024-01-01'",
-                    exportRoot + File.separator + "quoted_enqueue_export" + File.separator + "2024-01-01.parquet"
+                    exportRoot + File.separator + "quoted_enqueue_export" + File.separator + "2024-01-01.parquet",
+                    "ts"
             );
             assertParquetMatchesQuery(
                     "SELECT * FROM \"src ct\" WHERE ts IN '2024-01-03'",
-                    exportRoot + File.separator + "quoted_enqueue_export" + File.separator + "2024-01-03.parquet"
+                    exportRoot + File.separator + "quoted_enqueue_export" + File.separator + "2024-01-03.parquet",
+                    "ts"
             );
         });
     }
@@ -4531,11 +4675,13 @@ public class CopyExportTest extends AbstractCairoTest {
                     .returns("status\nfinished\n");
             assertParquetMatchesQuery(
                     "SELECT * FROM \"src ct\" WHERE ts IN '2024-01-01'",
-                    exportRoot + File.separator + "quoted_transition_export" + File.separator + "2024-01-01.parquet"
+                    exportRoot + File.separator + "quoted_transition_export" + File.separator + "2024-01-01.parquet",
+                    "ts"
             );
             assertParquetMatchesQuery(
                     "SELECT * FROM \"src ct\" WHERE ts IN '2024-01-03'",
-                    exportRoot + File.separator + "quoted_transition_export" + File.separator + "2024-01-03.parquet"
+                    exportRoot + File.separator + "quoted_transition_export" + File.separator + "2024-01-03.parquet",
+                    "ts"
             );
         });
     }
@@ -4862,12 +5008,19 @@ public class CopyExportTest extends AbstractCairoTest {
         engine.releaseAllReaders();
     }
 
-    private void assertParquetMatchesQuery(String query, String parquetPath) throws Exception {
-        StringSink expectedSink = new StringSink();
-        StringSink actualSink = new StringSink();
-        TestUtils.printSql(engine, sqlExecutionContext, query, expectedSink);
-        TestUtils.printSql(engine, sqlExecutionContext, "SELECT * FROM read_parquet('" + parquetPath + "')", actualSink);
-        TestUtils.assertEquals(expectedSink, actualSink);
+    /**
+     * Asserts that {@code read_parquet()} of the file at {@code parquetPath} returns the rows of
+     * {@code query}. {@code timestamp} names the designated timestamp {@code read_parquet()}
+     * reports, or is null when it reports none.
+     */
+    private void assertParquetMatchesQuery(String query, String parquetPath, @Nullable String timestamp) throws Exception {
+        final StringSink expected = new StringSink();
+        TestUtils.printSql(engine, sqlExecutionContext, query, expected);
+        assertQuery("SELECT * FROM read_parquet('" + parquetPath + "')")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp(timestamp)
+                .returns(expected);
     }
 
     private boolean exportFileExists(String fileName) {

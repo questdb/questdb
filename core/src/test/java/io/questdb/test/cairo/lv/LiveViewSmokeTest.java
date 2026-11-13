@@ -5392,8 +5392,8 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 );
                 engine.releaseAllReaders();
                 final IntList openedBasePartitions = new IntList();
-                engine.setReaderListener((tableToken, partitionIndex) -> {
-                    if (baseToken.equals(tableToken)) {
+                engine.setReaderListener((reader, partitionIndex) -> {
+                    if (baseToken.equals(reader.getTableToken())) {
                         openedBasePartitions.add(partitionIndex);
                     }
                 });
@@ -22191,8 +22191,8 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
                 engine.releaseAllReaders();
                 final IntList openedBasePartitions = new IntList();
-                engine.setReaderListener((tableToken, partitionIndex) -> {
-                    if (baseToken.equals(tableToken)) {
+                engine.setReaderListener((reader, partitionIndex) -> {
+                    if (baseToken.equals(reader.getTableToken())) {
                         openedBasePartitions.add(partitionIndex);
                     }
                 });

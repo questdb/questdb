@@ -1025,6 +1025,61 @@ public class FilesTest {
     }
 
     @Test
+    public void testIsPageCacheResident() throws Exception {
+        // mincore(2) reports which pages of a mapping are in memory: those a read brought in,
+        // not those that nothing read. Only Linux asks; elsewhere no range is in memory.
+        assertMemoryLeak(() -> {
+            // a sparse file: nothing of it is in memory until something reads it
+            final long fileSize = 64 * 1024 * 1024;
+            final long readSize = 4 * 1024 * 1024;
+            final File temp = temporaryFolder.newFile();
+            try (Path path = new Path().of(temp.getAbsolutePath())) {
+                final long fdrw = Files.openRW(path.$());
+                try {
+                    Assert.assertTrue(Files.truncate(fdrw, fileSize));
+                } finally {
+                    Files.close(fdrw);
+                }
+                final long fd = Files.openRO(path.$());
+                try {
+                    final long address = Files.mmap(fd, fileSize, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
+                    try {
+                        final boolean isLinux = Os.isLinux();
+                        final long pageSize = Files.PAGE_SIZE;
+                        Assert.assertFalse(Files.isPageCacheResident(address, pageSize));
+                        long sink = 0;
+                        for (long p = 0; p < readSize; p += pageSize) {
+                            sink += Unsafe.getByte(address + p);
+                        }
+                        Assert.assertEquals(0, sink);
+                        // 1,024 pages of 4 KiB: more than one mincore(2) call reports on
+                        Assert.assertEquals(isLinux, Files.isPageCacheResident(address, readSize));
+                        Assert.assertEquals(isLinux, FilesFacadeImpl.INSTANCE.isPageCacheResident(address, readSize));
+                        // a range inside a page
+                        Assert.assertEquals(isLinux, Files.isPageCacheResident(address + 100, 10));
+                        // The far end of the file, which nothing read: the fault read-around that
+                        // brought the first 4 MiB in reaches no further than a few hundred KiB past them.
+                        Assert.assertFalse(Files.isPageCacheResident(address + fileSize - readSize, readSize));
+                        Assert.assertFalse(Files.isPageCacheResident(address + fileSize - 1, 1));
+                        // a range in memory at its start only: a later mincore(2) call finds the gap
+                        Assert.assertFalse(Files.isPageCacheResident(address, fileSize));
+                        Assert.assertFalse(FilesFacadeImpl.INSTANCE.isPageCacheResident(address, fileSize));
+                        // nothing to report on
+                        Assert.assertFalse(Files.isPageCacheResident(address, 0));
+                        Assert.assertFalse(Files.isPageCacheResident(address, -1));
+                        // mincore(2) fails on a range that nothing maps
+                        Assert.assertFalse(Files.isPageCacheResident(0, pageSize));
+                    } finally {
+                        Files.munmap(address, fileSize, MemoryTag.MMAP_DEFAULT);
+                    }
+                } finally {
+                    Files.close(fd);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testLastModified() throws Exception {
         LogFactory.getLog(FilesTest.class); // so that it is not accounted in assertMemoryLeak
         assertMemoryLeak(() -> {
@@ -1085,6 +1140,54 @@ public class FilesTest {
     public void testLongFd2() {
         long unuqFd = Numbers.encodeLowHighInts(Integer.MAX_VALUE, 1000);
         Assert.assertTrue(unuqFd > 0);
+    }
+
+    @Test
+    public void testMadviseWillNeedSplitsTheRangeIntoRequests() throws Exception {
+        // Linux reads at most its readahead size of one MADV_WILLNEED request and drops the
+        // rest, so madviseWillNeed() sends a range as page-aligned requests of at most
+        // 128 KiB. Other platforms send nothing.
+        assertMemoryLeak(() -> {
+            final long fileSize = 1024 * 1024;
+            final File temp = temporaryFolder.newFile();
+            try (Path path = new Path().of(temp.getAbsolutePath())) {
+                final long fdrw = Files.openRW(path.$());
+                try {
+                    Assert.assertTrue(Files.allocate(fdrw, fileSize));
+                } finally {
+                    Files.close(fdrw);
+                }
+                final long fd = Files.openRO(path.$());
+                try {
+                    final long address = Files.mmap(fd, fileSize, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
+                    try {
+                        final boolean isLinux = Os.isLinux();
+                        Assert.assertEquals(isLinux, Files.isMadviseWillNeedSupported());
+                        Assert.assertEquals(isLinux, FilesFacadeImpl.INSTANCE.isMadviseWillNeedSupported());
+                        final long requestSize = 128 * 1024;
+                        Assert.assertEquals(requestSize, Files.MADV_WILLNEED_REQUEST_SIZE);
+                        // the whole file
+                        Assert.assertEquals(isLinux ? 8 : 0, Files.madviseWillNeed(address, fileSize));
+                        Assert.assertEquals(isLinux ? 8 : 0, FilesFacadeImpl.INSTANCE.madviseWillNeed(address, fileSize));
+                        // a range that starts inside a page starts the requests at that page:
+                        // 100 + 300 KiB from the start of the mapping
+                        Assert.assertEquals(isLinux ? 3 : 0, Files.madviseWillNeed(address + 100, 300 * 1024));
+                        // a range that ends on a request boundary
+                        Assert.assertEquals(isLinux ? 2 : 0, Files.madviseWillNeed(address, 2 * requestSize));
+                        Assert.assertEquals(isLinux ? 1 : 0, Files.madviseWillNeed(address + fileSize - 1, 1));
+                        // nothing to ask for
+                        Assert.assertEquals(0, Files.madviseWillNeed(address, 0));
+                        Assert.assertEquals(0, Files.madviseWillNeed(address, -1));
+                        // the advice changes nothing the mapping reads
+                        Assert.assertEquals(0, Unsafe.getByte(address + fileSize - 1));
+                    } finally {
+                        Files.munmap(address, fileSize, MemoryTag.MMAP_DEFAULT);
+                    }
+                } finally {
+                    Files.close(fd);
+                }
+            }
+        });
     }
 
     @Test

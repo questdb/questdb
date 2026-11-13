@@ -32,10 +32,13 @@ import io.questdb.std.Rnd;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
+import org.junit.ComparisonFailure;
 import org.junit.Test;
 
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -52,6 +55,91 @@ public final class TestUtilsTest extends AbstractCairoTest {
                 AssertionError.class,
                 () -> TestUtils.assertAsciiCompliance(new Utf8String(new byte[]{(byte) 0xc3, (byte) 0xa9}, true))
         );
+    }
+
+    @Test
+    public void testAssertEventuallyRethrowsLastFailureWhenTimeIsUp() {
+        // the first retry comes 10ms after the first attempt, well inside the 1s budget
+        final int[] attempts = {0};
+        final AssertionError error = Assert.assertThrows(
+                AssertionError.class,
+                () -> TestUtils.assertEventually(() -> {
+                    throw new AssertionError("attempt " + ++attempts[0]);
+                }, 1, Set.of(AssertionError.class))
+        );
+        Assert.assertTrue("attempts: " + attempts[0], attempts[0] > 1);
+        Assert.assertEquals("attempt " + attempts[0], error.getMessage());
+    }
+
+    @Test
+    public void testAssertEventuallyRethrowsUnlistedFailureAtOnce() {
+        // an AssertionError retries only when the caller lists it
+        final int[] attempts = {0};
+        final AssertionError error = Assert.assertThrows(
+                AssertionError.class,
+                () -> TestUtils.assertEventually(() -> {
+                    attempts[0]++;
+                    throw new AssertionError("unlisted error");
+                }, 5, Set.of(SqlException.class))
+        );
+        Assert.assertEquals("unlisted error", error.getMessage());
+        Assert.assertEquals(1, attempts[0]);
+
+        attempts[0] = 0;
+        final IllegalStateException exception = Assert.assertThrows(
+                IllegalStateException.class,
+                () -> TestUtils.assertEventually(() -> {
+                    attempts[0]++;
+                    throw new IllegalStateException("unlisted exception");
+                }, 5, Set.of(AssertionError.class, SqlException.class))
+        );
+        Assert.assertEquals("unlisted exception", exception.getMessage());
+        Assert.assertEquals(1, attempts[0]);
+    }
+
+    @Test
+    public void testAssertEventuallyRetriesListedTypes() throws Exception {
+        // AssertionError is an Error, not an Exception, and a listed one retries all the same.
+        // So does a subclass of a listed type: Assert.assertEquals() fails two strings with a
+        // ComparisonFailure.
+        final int[] attempts = {0};
+        TestUtils.assertEventually(() -> {
+            switch (++attempts[0]) {
+                case 1 -> throw new AssertionError("not yet");
+                case 2 -> throw new ComparisonFailure("not yet", "finished", "running");
+                case 3 -> throw SqlException.$(0, "not yet");
+                default -> {
+                }
+            }
+        }, 5, Set.of(AssertionError.class, SqlException.class));
+        Assert.assertEquals(4, attempts[0]);
+    }
+
+    @Test
+    public void testAssertEventuallyWithTypesRetriesAssertionError() throws Exception {
+        // the overload without a timeout retries AssertionError on top of the types the caller
+        // lists, and leaves the caller's set as it was
+        final Set<Class<?>> types = new HashSet<>(Set.of(SqlException.class));
+        final int[] attempts = {0};
+        TestUtils.assertEventually(() -> {
+            switch (++attempts[0]) {
+                case 1 -> throw new AssertionError("not yet");
+                case 2 -> throw SqlException.$(0, "not yet");
+                default -> {
+                }
+            }
+        }, types);
+        Assert.assertEquals(3, attempts[0]);
+        Assert.assertEquals(Set.of(SqlException.class), types);
+
+        // so a set the caller cannot modify works as well
+        attempts[0] = 0;
+        TestUtils.assertEventually(() -> {
+            if (++attempts[0] == 1) {
+                throw new AssertionError("not yet");
+            }
+        }, Set.of(SqlException.class));
+        Assert.assertEquals(2, attempts[0]);
     }
 
     @Test

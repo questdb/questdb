@@ -294,6 +294,10 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
             throw CopyExportException.instance(CopyExportRequestTask.Phase.STREAM_SENDING_DATA, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
         }
         if (exporter.onResume()) {
+            if (isPageFrameBacked) {
+                // see processStreamExport()
+                streamingPfc.releaseOpenPartitions();
+            }
             LOG.debug().$("hybrid stream export progress (resume) [id=").$hexPadded(task.getCopyID())
                     .$(", exported totalRows=").$(exporter.getTotalRows())
                     .$(']').$();
@@ -324,6 +328,12 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
             throw CopyExportException.instance(CopyExportRequestTask.Phase.STREAM_SENDING_DATA, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
         }
         if (exporter.onResume()) {
+            // onResume() has written every full row group, so the rows the encoder still holds
+            // all belong to the frame it was writing, which stays the cursor's current frame
+            // until the next() below. The frames before it can go, as after any row group the
+            // loop writes; without this, a client too slow to take each row group as it comes
+            // would hold every frame of the export.
+            pageFrameCursor.releaseOpenPartitions();
             LOG.debug().$("stream export progress (resume) [id=").$hexPadded(task.getCopyID())
                     .$(", rowsInFrame=").$(exporter.getCurrentFrameRowCount())
                     .$(", exported totalRows=").$(exporter.getTotalRows())

@@ -3153,8 +3153,8 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
                 execute("INSERT INTO base (ts, x) VALUES ('2026-05-11T23:59:59.000000Z', 5)");
                 drainWalQueue();
                 engine.releaseAllReaders();
-                engine.setReaderListener((tableToken, partitionIndex) -> {
-                    if (instance.getLiveViewToken().equals(tableToken)) {
+                engine.setReaderListener((reader, partitionIndex) -> {
+                    if (instance.getLiveViewToken().equals(reader.getTableToken())) {
                         openedLvPartitions.add(partitionIndex);
                     }
                 });
