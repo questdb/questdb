@@ -33,6 +33,24 @@ import org.junit.Test;
 public class NotMatchStrFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
+    public void testNullCharRegex() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQuery("SELECT 'abc' !~ null::CHAR a, 'abc' ~ null::CHAR b")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("a\tb\nfalse\tfalse\n");
+            execute("CREATE TABLE x (s STRING, sym SYMBOL)");
+            execute("INSERT INTO x VALUES ('abc', 'abc'), ('', ''), (null, null)");
+            assertQuery("x WHERE s !~ null::CHAR")
+                    .noLeakCheck()
+                    .returns("s\tsym\n");
+            assertQuery("x WHERE sym !~ null::CHAR")
+                    .noLeakCheck()
+                    .returns("s\tsym\n");
+        });
+    }
+
+    @Test
     public void testNullRegex() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select rnd_str() name from long_sequence(2000))");
