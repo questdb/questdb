@@ -143,6 +143,24 @@ public class EqLong256StrFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNullCharConstant() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQuery("SELECT null::LONG256 = null::CHAR a, '0x00'::LONG256 = null::CHAR b")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("a\tb\ntrue\tfalse\n");
+            execute("CREATE TABLE x (id INT, l LONG256)");
+            execute("INSERT INTO x VALUES (1, null), (2, '0x00'), (3, '0x01'), (4, '0x010000000000000000')");
+            assertQuery("SELECT id FROM x WHERE l = null::CHAR")
+                    .noLeakCheck()
+                    .returns("id\n1\n");
+            assertQuery("SELECT id FROM x WHERE l != null::CHAR")
+                    .noLeakCheck()
+                    .returns("id\n2\n3\n4\n");
+        });
+    }
+
+    @Test
     public void testStrColumnInEqFilter() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (l long256, a string)");
