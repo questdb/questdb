@@ -83,6 +83,45 @@ public class PGRightJoinWhereScanFilterTest extends BasePGTest {
     }
 
     @Test
+    public void testGreaterThanBindVariableBeforeTwoRightJoins() throws Exception {
+        // t0.c > ? is false on a NULL c, so a copy filters the scan of t0 and, as the last RIGHT join matches on
+        // t0.c, the rows of the RIGHT join of t1 too; the two NULL keys of t3 would match the rows that the
+        // RIGHT join of t1 NULL-extends. For 0: (r1, 0) with t3 row 1 and (r2, 1) with t3 row 2. For 1: (r2, 1)
+        // with t3 row 2. For NULL: no row.
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            createTables(connection);
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("CREATE TABLE t3 (k INT)");
+                statement.execute("INSERT INTO t3 VALUES (1), (2), (NULL), (NULL)");
+                try (ResultSet plan = statement.executeQuery("EXPLAIN SELECT count(*) FROM t0 RIGHT JOIN t1 ON t1.k = t0.k"
+                        + " RIGHT JOIN t3 ON t3.k = t0.c WHERE t0.c > 0")) {
+                    sink.clear();
+                    while (plan.next()) {
+                        sink.put(plan.getString(1)).put('\n');
+                    }
+                    TestUtils.assertContains(sink, """
+                                        Filter filter: 0<t0.c
+                                            Hash Right Outer Join Light
+                                              condition: t1.k=t0.k
+                            """);
+                }
+            }
+            try (PreparedStatement statement = connection.prepareStatement(
+                    "SELECT count(*) FROM t0 RIGHT JOIN t1 ON t1.k = t0.k RIGHT JOIN t3 ON t3.k = t0.c WHERE t0.c > ?"
+            )) {
+                for (int i = 0; i < 2; i++) {
+                    statement.setInt(1, 0);
+                    assertCount(statement, 2);
+                    statement.setInt(1, 1);
+                    assertCount(statement, 1);
+                    statement.setNull(1, Types.INTEGER);
+                    assertCount(statement, 0);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testHalfOpenRangeBindVariables() throws Exception {
         // ts < ? is false on a NULL ts, and takes ts >= ? along: r1, r2 and r3 twice each for the day,
         // r2 and r3 twice each from 01:30, and nothing when ts >= NULL fails every real row

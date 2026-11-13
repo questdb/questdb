@@ -4,6 +4,7 @@
 # rows must not change.
 # The expected rows come from DuckDB. QuestDB differs from it in these places:
 # - NULL != 1 is true in QuestDB: DuckDB runs t0.c != 1 as t0.c IS DISTINCT FROM 1.
+# - = in an ON clause matches NULL keys in QuestDB: DuckDB runs it as IS NOT DISTINCT FROM.
 # - t0.ts IN '2024-01-05' is a QuestDB interval: DuckDB runs it as
 #   t0.ts >= '2024-01-05' AND t0.ts < '2024-01-06'.
 # - LATEST ON has no DuckDB counterpart, so this file does not cover it.
@@ -19,6 +20,9 @@ DROP TABLE IF EXISTS t1
 
 statement ok
 DROP TABLE IF EXISTS t2
+
+statement ok
+DROP TABLE IF EXISTS t3
 
 statement ok
 CREATE TABLE t0 (rn INT, c INT, k INT, s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
@@ -153,6 +157,93 @@ SELECT t0.rn, t1.k k1, t2.k k2 FROM t0 JOIN t1 ON t1.k > t0.k RIGHT JOIN t2 ON t
 ----
 1	1	1
 
+# Two RIGHT or FULL joins after t0, where a later join matches on t0.c. QuestDB matches NULL keys, so
+# each row that the first join NULL-extends meets both NULL keys of t3; the copies drop those rows
+# right after the first join.
+
+statement ok
+CREATE TABLE t3 (k INT)
+
+statement ok
+INSERT INTO t3 VALUES (1), (2), (NULL), (NULL)
+
+query III rowsort
+SELECT t0.rn, t1.k k1, t3.k k3 FROM t0 RIGHT JOIN t1 ON t1.k = t0.k RIGHT JOIN t3 ON t3.k = t0.c WHERE t0.c > 0
+----
+1	0	1
+2	1	2
+
+# the copy drops r1, so t1 row 0 becomes a NULL row as well
+query III rowsort
+SELECT t0.rn, t1.k k1, t3.k k3 FROM t0 RIGHT JOIN t1 ON t1.k = t0.k RIGHT JOIN t3 ON t3.k = t0.c WHERE t0.c > 1
+----
+2	1	2
+
+# the FULL join keeps r4, which matches no t1 row
+query III rowsort
+SELECT t0.rn, t1.k k1, t3.k k3 FROM t0 FULL JOIN t1 ON t1.k = t0.k RIGHT JOIN t3 ON t3.k = t0.c WHERE t0.c > 0
+----
+1	0	1
+2	1	2
+4	NULL	1
+
+query III rowsort
+SELECT t0.rn, t1.k k1, t3.k k3 FROM t0 RIGHT JOIN t1 ON t1.k = t0.k FULL JOIN t3 ON t3.k = t0.c WHERE t0.c > 0
+----
+1	0	1
+2	1	2
+
+query IIII rowsort
+SELECT t0.rn, t1.k k1, t2.k k2, t3.k k3 FROM t0 RIGHT JOIN t1 ON t1.k = t0.k RIGHT JOIN t2 ON t2.k = t1.k RIGHT JOIN t3 ON t3.k = t0.c WHERE t0.c > 0
+----
+1	0	0	1
+2	1	1	2
+
+# a LEFT join that matches on t0.c between the RIGHT joins
+query IIII rowsort
+SELECT t0.rn, t1.k k1, t3.k k3, t2.k k2 FROM t0 RIGHT JOIN t1 ON t1.k = t0.k LEFT JOIN t3 ON t3.k = t0.c RIGHT JOIN t2 ON t2.k = t1.k WHERE t0.c > 0
+----
+1	0	1	0
+2	1	2	1
+
+# a non-equi RIGHT join first, and a non-equi RIGHT join last
+query III rowsort
+SELECT t0.rn, t1.k k1, t3.k k3 FROM t0 RIGHT JOIN t1 ON t1.k > t0.k RIGHT JOIN t3 ON t3.k = t0.c WHERE t0.c > 1
+----
+2	5	2
+
+query III rowsort
+SELECT t0.rn, t1.k k1, t3.k k3 FROM t0 RIGHT JOIN t1 ON t1.k = t0.k RIGHT JOIN t3 ON t3.k > t0.c WHERE t0.c > 0
+----
+1	0	2
+
+# the interval drops r4
+query III rowsort
+SELECT t0.rn, t1.k k1, t3.k k3 FROM t0 RIGHT JOIN t1 ON t1.k = t0.k RIGHT JOIN t3 ON t3.k = t0.c WHERE t0.ts IN '2024-01-05'
+----
+1	0	1
+2	1	2
+
+# copies of t0.c > 0 and t2.k > 0 filter the scans of t0 and t2 before the RIGHT joins
+query IIII rowsort
+SELECT t0.rn, t2.k k2, t1.k k1, t3.k k3 FROM t0 CROSS JOIN t2 RIGHT JOIN t1 ON t1.k = t0.k RIGHT JOIN t3 ON t3.k = t0.c WHERE t0.c > 0 AND t2.k > 0
+----
+1	1	0	1
+1	2	0	1
+1	9	0	1
+2	1	1	2
+2	2	1	2
+2	9	1	2
+
+# != is true on NULL, so no copy filters the scan: the NULL row of t1 row 5 meets both NULL keys of t3
+# (DuckDB: IS DISTINCT FROM)
+query III rowsort
+SELECT t0.rn, t1.k k1, t3.k k3 FROM t0 RIGHT JOIN t1 ON t1.k = t0.k RIGHT JOIN t3 ON t3.k = t0.c WHERE t0.c != 1
+----
+2	1	2
+NULL	5	NULL
+NULL	5	NULL
+
 statement ok
 DROP TABLE t0
 
@@ -161,6 +252,9 @@ DROP TABLE t1
 
 statement ok
 DROP TABLE t2
+
+statement ok
+DROP TABLE t3
 
 # A LIMIT over a RIGHT or FULL join must not stop the scan of the table before the join at the LIMIT.
 # The first rows of l0 that pass the WHERE, rn 1, 2 and 3, match no l1 row.

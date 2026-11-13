@@ -41,13 +41,16 @@ import org.junit.Test;
  * row, SqlOptimiser also filters the scan of the table with a copy of every stable conjunct of the
  * table, see SqlOptimiser.addScanFilterBeforeNullingJoin(). The copies remove only rows that the
  * post-join filter drops anyway, so the rows stay the same while interval scans and JIT filters come
- * back.
+ * back. When a later join matches on a table that a RIGHT or FULL join before the last one NULL-extends,
+ * a copy of the first conjunct that is false on the NULL row also filters after that RIGHT or FULL join,
+ * see SqlOptimiser.addNullExtensionFilters().
  * <p>
  * Data D: t0 holds r1 (c 1, k 0, ts 2024-01-05T01:00), r2 (2, 1, 2024-01-05T02:00), r3 (NULL, 2,
  * 2024-01-05T03:00) and r4 (1, 3, 2024-01-06T01:00); t1 holds k 0, 1 and 5; t2 holds k 0, 1, 2 and 9.
  * Shape X, "t0 CROSS JOIN t1 RIGHT JOIN t2 ON t2.k = t1.k", matches every t0 row with t2 rows 0 and 1,
  * and NULL-extends t2 rows 2 and 9. Shape Y, "t0 CROSS JOIN t1 RIGHT JOIN t2 ON t2.k = t0.k", matches
- * r1, r2 and r3 three times each (once per t1 row), r4 never, and NULL-extends t2 row 9.
+ * r1, r2 and r3 three times each (once per t1 row), r4 never, and NULL-extends t2 row 9. t3 holds k 1,
+ * 2, NULL and NULL, and joins on t0.c after a RIGHT or FULL join of t1.
  * The expected counts follow by hand from the data, and agree with DuckDB with = written as
  * IS NOT DISTINCT FROM and QuestDB's != as IS DISTINCT FROM.
  */
@@ -784,16 +787,36 @@ public class RightJoinWhereScanFilterTest extends AbstractCairoTest {
 
     @Test
     public void testMatchesLimitFencedReference() throws Exception {
-        // LIMIT keeps the WHERE of the reference above the join, so the reference takes no copy
+        // LIMIT keeps the WHERE of the reference above the join, so the reference takes no copy. The joins
+        // after the first four put a second RIGHT or FULL join after t0, and a copy may also filter after
+        // the first one, see testNullingJoinsBeforeLastDropNullExtendedRows(); t3 holds NULL keys.
         assertMemoryLeak(() -> {
             createTables();
+            createNullKeyTable();
             final String[] predicates = {
                     "t0.c = 1", "t0.c != 1", "t0.c IS NULL", "t0.c IS NOT NULL", "t0.c IN (1, 2)", "t0.c BETWEEN 1 AND 2",
                     "t0.ts IN '2024-01-05'", "t0.ts > '2024-01-05T01:30'", "t0.s = 'a'", "t0.s != 'a'", "t0.s IN ('a', 'b')",
                     "t0.s NOT IN ('a')", "t0.s LIKE 'a%'", "t0.s ~ 'b'", "t0.c != 1 AND t0.ts < '2024-01-06'",
-                    "coalesce(t0.c, 1) = 1 AND t0.ts IN '2024-01-05'", "t0.c > t0.k", "t0.c = 1 OR t0.s = 'b'"
+                    "coalesce(t0.c, 1) = 1 AND t0.ts IN '2024-01-05'", "t0.c > t0.k", "t0.c = 1 OR t0.s = 'b'", "t0.c > 0"
             };
-            for (String joins : new String[]{X_JOINS, X_FULL_JOINS, Y_JOINS, "FROM t0 JOIN t1 ON t1.k > t0.k RIGHT JOIN t2 ON t2.k = t1.k"}) {
+            for (String joins : new String[]{
+                    X_JOINS,
+                    X_FULL_JOINS,
+                    Y_JOINS,
+                    "FROM t0 JOIN t1 ON t1.k > t0.k RIGHT JOIN t2 ON t2.k = t1.k",
+                    "FROM t0 RIGHT JOIN t1 ON t1.k = t0.k RIGHT JOIN t3 ON t3.k = t0.c",
+                    "FROM t0 FULL JOIN t1 ON t1.k = t0.k RIGHT JOIN t3 ON t3.k = t0.c",
+                    "FROM t0 RIGHT JOIN t1 ON t1.k = t0.k FULL JOIN t3 ON t3.k = t0.c",
+                    "FROM t0 FULL JOIN t1 ON t1.k = t0.k FULL JOIN t3 ON t3.k = t0.c",
+                    "FROM t0 RIGHT JOIN t1 ON t1.k = t0.k RIGHT JOIN t2 ON t2.k = t1.k FULL JOIN t3 ON t3.k = t0.c",
+                    "FROM t0 RIGHT JOIN t1 ON t1.k = t0.k LEFT JOIN t3 ON t3.k = t0.c RIGHT JOIN t2 ON t2.k = t1.k",
+                    "FROM t0 CROSS JOIN t2 RIGHT JOIN t1 ON t1.k = t0.k RIGHT JOIN t3 ON t3.k = t0.c",
+                    "FROM t0 RIGHT JOIN t1 ON t1.k = t0.k JOIN t2 ON t2.k = t1.k RIGHT JOIN t3 ON t3.k = t0.c",
+                    "FROM t0 RIGHT JOIN t1 ON t1.k > t0.k RIGHT JOIN t3 ON t3.k = t0.c",
+                    "FROM t0 RIGHT JOIN t1 ON t1.k = t0.k RIGHT JOIN t3 ON t3.k > t0.c",
+                    "FROM t0 RIGHT JOIN t1 ON t1.k = t0.k RIGHT JOIN t2 ON t2.k = t1.k",
+                    "FROM t0 RIGHT JOIN t1 ON t1.k = t0.k RIGHT JOIN t2 ON t2.k = t1.k AND t2.k < t0.c + 5"
+            }) {
                 for (String predicate : predicates) {
                     assertSqlCursors(
                             "SELECT count(*) FROM (SELECT t0.c, t0.k, t0.s, t0.ts " + joins + " LIMIT 1_000_000_000) WHERE "
@@ -802,6 +825,456 @@ public class RightJoinWhereScanFilterTest extends AbstractCairoTest {
                     );
                 }
             }
+        });
+    }
+
+    @Test
+    public void testNullingJoinBeforeLastFilteredForBindVariable() throws Exception {
+        // t0.c > $1 is false on the NULL row of t0 for every value of $1, so it filters after the RIGHT join
+        // of t1 as well. For 0: (r1, 0) with t3 row 1 and (r2, 1) with t3 row 2. For 1: (r2, 1) only. For
+        // NULL: no row.
+        assertMemoryLeak(() -> {
+            createTables();
+            createNullKeyTable();
+            bindVariableService.clear();
+            bindVariableService.setInt(0, 0);
+            final String sql = "SELECT count(*) FROM t0 RIGHT JOIN t1 ON t1.k = t0.k RIGHT JOIN t3 ON t3.k = t0.c WHERE t0.c > $1";
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .assertsPlanContaining("""
+                                        Filter filter: $0::int<t0.c
+                                            Hash Right Outer Join Light
+                                              condition: t1.k=t0.k
+                            """);
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .assertBinds(cases(
+                            BindVarTuple.ok("0", "count\n2\n", s -> s.setInt(0, 0)),
+                            BindVarTuple.ok("1", "count\n1\n", s -> s.setInt(0, 1)),
+                            BindVarTuple.ok("NULL", "count\n0\n", s -> s.setInt(0, Numbers.INT_NULL))
+                    ));
+        });
+    }
+
+    @Test
+    public void testNullingJoinBeforeLastFilteredInSubQueryCteAndView() throws Exception {
+        // the outer WHERE moves into the join level after its join pass, through moveWhereInsideSubQueries;
+        // the rows of testNullingJoinsBeforeLastDropNullExtendedRows(): 2
+        assertMemoryLeak(() -> {
+            createTables();
+            createNullKeyTable();
+            final String joins = "FROM t0 RIGHT JOIN t1 ON t1.k = t0.k RIGHT JOIN t3 ON t3.k = t0.c";
+            final String afterFirstJoin = """
+                                    Filter filter: 0<t0.c
+                                        Hash Right Outer Join Light
+                                          condition: t1.k=t0.k
+                    """;
+            assertQuery("SELECT count(*) FROM (SELECT t0.c, t3.k k3 " + joins + ") WHERE c > 0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining(afterFirstJoin)
+                    .returns("count\n2\n");
+            assertQuery("WITH j AS (SELECT t0.c, t3.k k3 " + joins + ") SELECT count(*) FROM j WHERE c > 0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining(afterFirstJoin)
+                    .returns("count\n2\n");
+            execute("CREATE VIEW v AS (SELECT t0.c, t3.k k3 " + joins + ")");
+            assertQuery("SELECT count(*) FROM v WHERE c > 0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining(afterFirstJoin)
+                    .returns("count\n2\n");
+        });
+    }
+
+    @Test
+    public void testNullingJoinBeforeLastFilteredOnce() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            createNullKeyTable();
+            // the copies of t0.c > 0 and t2.k > 0 filter the scans of t0 and t2, and one copy filters after
+            // the RIGHT join of t1, which NULL-extends both tables: r1 and r2, each with t2 rows 1, 2 and 9
+            assertQuery("SELECT count(*) FROM t0 CROSS JOIN t2 RIGHT JOIN t1 ON t1.k = t0.k RIGHT JOIN t3 ON t3.k = t0.c"
+                    + " WHERE t0.c > 0 AND t2.k > 0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining(
+                            """
+                                                Filter filter: 0<t0.c
+                                                    Hash Right Outer Join Light
+                                                      condition: t1.k=t0.k
+                                    """,
+                            "filter: 0<c\n",
+                            "filter: 0<k\n"
+                    )
+                    .returns("count\n6\n");
+            // only the first conjunct that is false on the NULL row of t0 filters after the RIGHT join of
+            // t1: c != 2 holds for NULL, and ts IN comes before c > 0; r1 with t1 row 0 and t3 row 1
+            assertQuery("SELECT count(*) FROM t0 RIGHT JOIN t1 ON t1.k = t0.k RIGHT JOIN t3 ON t3.k = t0.c"
+                    + " WHERE t0.c != 2 AND t0.ts IN '2024-01-05' AND t0.c > 0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining(
+                            """
+                                                Filter filter: t0.ts in [1704412800000000,1704499199999999]
+                                                    Hash Right Outer Join Light
+                                                      condition: t1.k=t0.k
+                                    """,
+                            "filter: (c!=2 and 0<c)\n",
+                            "Interval forward scan on: t0"
+                    )
+                    .returns("count\n1\n");
+        });
+    }
+
+    @Test
+    public void testNullingJoinBeforeLastFilteredWithLatestOn() throws Exception {
+        // LATEST ON picks a -> (c 2) and b -> (c 1), and c = 1 keeps b, matched with t1 rows 0 and 1, which
+        // t2 rows 0 and 1 match; t3 row 1 matches both rows, and the copy of c = 1 drops the NULL row of t2
+        // row 2 after the RIGHT join of t2
+        assertMemoryLeak(() -> {
+            createLatestOnTables();
+            createNullKeyTable();
+            assertQuery("SELECT count(*) FROM t0 CROSS JOIN t1 RIGHT JOIN t2 ON t2.k = t1.k RIGHT JOIN t3 ON t3.k = t0.c"
+                    + " WHERE t0.c = 1 LATEST ON ts PARTITION BY k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining(
+                            """
+                                                Filter filter: t0.c=1
+                                                    Hash Right Outer Join Light
+                                                      condition: t2.k=t1.k
+                                                        Cross Join
+                                                            Filter filter: c=1
+                                                                LatestByDeferredListValuesFiltered
+                                    """
+                    )
+                    .returns("count\n2\n");
+        });
+    }
+
+    @Test
+    public void testNullingJoinBeforeLastNotFiltered() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            createNullKeyTable();
+            // the RIGHT join of t2 matches on t1 and t2 alone, so it matches the NULL row of t1 row 5 as it
+            // would match the t0 rows that the copy on the t0 scan drops, and the copy filters no more:
+            // t2 rows 0 and 1 match (r1, 0) and (r2, 1)
+            assertQuery("SELECT count(*) FROM t0 RIGHT JOIN t1 ON t1.k = t0.k RIGHT JOIN t2 ON t2.k = t1.k WHERE t0.c > 0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            Count
+                                Filter filter: 0<t0.c
+                                    Hash Right Outer Join Light
+                                      condition: t2.k=t1.k
+                                        Hash Right Outer Join Light
+                                          condition: t1.k=t0.k
+                                            Async JIT Filter workers: 1
+                                              filter: 0<c
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: t0
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: t1
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t2
+                            """)
+                    .returns("count\n2\n");
+            // the condition of the RIGHT join of t2 beside its key reads t2 alone: the same rows
+            assertQuery("SELECT count(*) FROM t0 RIGHT JOIN t1 ON t1.k = t0.k RIGHT JOIN t2 ON t2.k = t1.k AND t2.k < 5 WHERE t0.c > 0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("""
+                                Filter filter: 0<t0.c
+                                    Hash Right Outer Join Light
+                                      condition: t2.k=t1.k
+                                      filter: t2.k<5
+                                        Hash Right Outer Join Light
+                                          condition: t1.k=t0.k
+                            """)
+                    .returns("count\n2\n");
+            // neither a CROSS join between the RIGHT joins nor the last join, keyed on the CROSS join, matches
+            // on t0: (r1, 0), (r2, 1) and the NULL row of t1 row 5 with each t2 row, of which t3 rows 1 and 2
+            // match t2 rows 1 and 2
+            assertQuery("SELECT count(*) FROM t0 RIGHT JOIN t1 ON t1.k = t0.k CROSS JOIN t2 RIGHT JOIN t3 ON t3.k = t2.k WHERE t0.c > 0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            Count
+                                Filter filter: 0<t0.c
+                                    Hash Right Outer Join Light
+                                      condition: t3.k=t2.k
+                                        Cross Join
+                                            Hash Right Outer Join Light
+                                              condition: t1.k=t0.k
+                                                Async JIT Filter workers: 1
+                                                  filter: 0<c
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: t0
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: t1
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t2
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t3
+                            """)
+                    .returns("count\n4\n");
+            // t2 joins after the RIGHT join of t1, so only the last RIGHT join NULL-extends it, and its copy
+            // filters only its scan: (r2, 1) with t2 row 1 and t3 row 2
+            assertQuery("SELECT count(*) FROM t0 RIGHT JOIN t1 ON t1.k = t0.k JOIN t2 ON t2.k = t1.k RIGHT JOIN t3 ON t3.k = t0.c"
+                    + " WHERE t2.k > 0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            Count
+                                Filter filter: 0<t2.k
+                                    Hash Right Outer Join Light
+                                      condition: t3.k=t0.c
+                                        Hash Join Light
+                                          condition: t2.k=t1.k
+                                            Hash Right Outer Join Light
+                                              condition: t1.k=t0.k
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: t0
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: t1
+                                            Hash
+                                                Async JIT Filter workers: 1
+                                                  filter: 0<k
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: t2
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t3
+                            """)
+                    .returns("count\n1\n");
+            // c != 1 holds for NULL, so it gets no copy: (r2, 1) with t3 row 2, and the NULL row of t1 row 5
+            // with both NULL keys of t3
+            assertQuery("SELECT count(*) FROM t0 RIGHT JOIN t1 ON t1.k = t0.k RIGHT JOIN t3 ON t3.k = t0.c WHERE t0.c != 1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            Count
+                                Filter filter: t0.c!=1
+                                    Hash Right Outer Join Light
+                                      condition: t3.k=t0.c
+                                        Hash Right Outer Join Light
+                                          condition: t1.k=t0.k
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t0
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: t1
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t3
+                            """)
+                    .returns("count\n3\n");
+        });
+    }
+
+    @Test
+    public void testNullingJoinsBeforeLastDropNullExtendedRows() throws Exception {
+        // A second RIGHT or FULL join follows t0, keyed on t0.c. The copy of c > 0 on the t0 scan drops
+        // r3, so the RIGHT join of t1 NULL-extends t0 in every t1 row that matched only rejected rows, and
+        // the next join would match each such row with both NULL keys of t3. A copy of c > 0 drops these
+        // rows right after each RIGHT or FULL join but the last, which filters by c > 0 itself, when a
+        // later join matches on t0. t0 RIGHT JOIN t1 holds (r1, 0) and (r2, 1), which t3 rows 1 and 2 match:
+        // 2 rows.
+        assertMemoryLeak(() -> {
+            createTables();
+            createNullKeyTable();
+            assertQuery("SELECT count(*) FROM t0 RIGHT JOIN t1 ON t1.k = t0.k RIGHT JOIN t3 ON t3.k = t0.c WHERE t0.c > 0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            Count
+                                Filter filter: 0<t0.c
+                                    Hash Right Outer Join Light
+                                      condition: t3.k=t0.c
+                                        Filter filter: 0<t0.c
+                                            Hash Right Outer Join Light
+                                              condition: t1.k=t0.k
+                                                Async JIT Filter workers: 1
+                                                  filter: 0<c
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: t0
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: t1
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t3
+                            """)
+                    .returns("count\n2\n");
+            // the FULL join of t1 also keeps r4, which matches no t1 row, and t3 row 1 matches it: 3 rows
+            assertQuery("SELECT count(*) FROM t0 FULL JOIN t1 ON t1.k = t0.k RIGHT JOIN t3 ON t3.k = t0.c WHERE t0.c > 0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("""
+                                        Filter filter: 0<t0.c
+                                            Hash Full Outer Join Light
+                                              condition: t1.k=t0.k
+                            """)
+                    .returns("count\n3\n");
+            // the last join is a FULL join, which keeps no t0 row that the RIGHT join of t1 dropped: 2 rows
+            assertQuery("SELECT count(*) FROM t0 RIGHT JOIN t1 ON t1.k = t0.k FULL JOIN t3 ON t3.k = t0.c WHERE t0.c > 0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("""
+                                Filter filter: 0<t0.c
+                                    Hash Full Outer Join Light
+                                      condition: t3.k=t0.c
+                                        Filter filter: 0<t0.c
+                                            Hash Right Outer Join Light
+                                              condition: t1.k=t0.k
+                            """)
+                    .returns("count\n2\n");
+            // a copy after each of the RIGHT joins of t1 and t2; t2 rows 0 and 1 match (r1, 0) and (r2, 1)
+            assertQuery("SELECT count(*) FROM t0 RIGHT JOIN t1 ON t1.k = t0.k RIGHT JOIN t2 ON t2.k = t1.k"
+                    + " RIGHT JOIN t3 ON t3.k = t0.c WHERE t0.c > 0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            Count
+                                Filter filter: 0<t0.c
+                                    Hash Right Outer Join Light
+                                      condition: t3.k=t0.c
+                                        Filter filter: 0<t0.c
+                                            Hash Right Outer Join Light
+                                              condition: t2.k=t1.k
+                                                Filter filter: 0<t0.c
+                                                    Hash Right Outer Join Light
+                                                      condition: t1.k=t0.k
+                                                        Async JIT Filter workers: 1
+                                                          filter: 0<c
+                                                            PageFrame
+                                                                Row forward scan
+                                                                Frame forward scan on: t0
+                                                        Hash
+                                                            PageFrame
+                                                                Row forward scan
+                                                                Frame forward scan on: t1
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: t2
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t3
+                            """)
+                    .returns("count\n2\n");
+            // a LEFT join keyed on t0.c NULL-extends no t0 row, so no copy filters after it; t2 rows 0 and 1
+            // match (r1, 0, 1) and (r2, 1, 2)
+            assertQuery("SELECT count(*) FROM t0 RIGHT JOIN t1 ON t1.k = t0.k LEFT JOIN t3 ON t3.k = t0.c"
+                    + " RIGHT JOIN t2 ON t2.k = t1.k WHERE t0.c > 0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("""
+                                        Hash Left Outer Join Light
+                                          condition: t3.k=t0.c
+                                            Filter filter: 0<t0.c
+                                                Hash Right Outer Join Light
+                                                  condition: t1.k=t0.k
+                            """)
+                    .returns("count\n2\n");
+            // a non-equi RIGHT join of t1 runs as a nested loop: after the copy, t1 row 1 matches r1 and t1 row
+            // 5 matches r1, r2 and r4, and t3 rows 1 and 2 match all four rows
+            assertQuery("SELECT count(*) FROM t0 RIGHT JOIN t1 ON t1.k > t0.k RIGHT JOIN t3 ON t3.k = t0.c WHERE t0.c > 0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("""
+                                        Filter filter: 0<t0.c
+                                            Nested Loop Right Join
+                                              filter: t0.k<t1.k
+                            """)
+                    .returns("count\n4\n");
+            // the condition of the last join beside its key reads t0, which the RIGHT join of t1 NULL-extends:
+            // t2 rows 0 and 1 match (r1, 0) and (r2, 1)
+            assertQuery("SELECT count(*) FROM t0 RIGHT JOIN t1 ON t1.k = t0.k RIGHT JOIN t2 ON t2.k = t1.k AND t2.k < t0.c + 5"
+                    + " WHERE t0.c > 0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("""
+                                    Hash Right Outer Join Light
+                                      condition: t2.k=t1.k
+                                      filter: t2.k<t0.c+5
+                                        Filter filter: 0<t0.c
+                                            Hash Right Outer Join Light
+                                              condition: t1.k=t0.k
+                            """)
+                    .returns("count\n2\n");
+            // a non-equi last join runs as a nested loop after the RIGHT join of t1: t3 row 2 matches (r1, 0)
+            assertQuery("SELECT count(*) FROM t0 RIGHT JOIN t1 ON t1.k = t0.k RIGHT JOIN t3 ON t3.k > t0.c WHERE t0.c > 0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("""
+                                    Nested Loop Right Join
+                                      filter: t0.c<t3.k
+                                        Filter filter: 0<t0.c
+                                            Hash Right Outer Join Light
+                                              condition: t1.k=t0.k
+                            """)
+                    .returns("count\n1\n");
+            // a CROSS join between the RIGHT joins has no condition, and the last join matches on t0: (r1, 0)
+            // and (r2, 1) with each t2 row, matched by t3 rows 1 and 2
+            assertQuery("SELECT count(*) FROM t0 RIGHT JOIN t1 ON t1.k = t0.k CROSS JOIN t2 RIGHT JOIN t3 ON t3.k = t0.c WHERE t0.c > 0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("""
+                                        Cross Join
+                                            Filter filter: 0<t0.c
+                                                Hash Right Outer Join Light
+                                                  condition: t1.k=t0.k
+                            """)
+                    .returns("count\n8\n");
         });
     }
 
@@ -1230,6 +1703,12 @@ public class RightJoinWhereScanFilterTest extends AbstractCairoTest {
         execute("INSERT INTO t1 VALUES (0), (1)");
         execute("CREATE TABLE t2 (k INT)");
         execute("INSERT INTO t2 VALUES (0), (1), (2)");
+    }
+
+    // t3 rows 1 and 2 match r1 and r2 on t0.c, and both NULL keys match every row whose t0.c is NULL
+    private static void createNullKeyTable() throws SqlException {
+        execute("CREATE TABLE t3 (k INT)");
+        execute("INSERT INTO t3 VALUES (1), (2), (NULL), (NULL)");
     }
 
     // a, the first table of the join in s, holds v as INT, which has NULL, u as SHORT, which has not, and no

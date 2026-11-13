@@ -1458,19 +1458,20 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                     Hash Right Outer Join Light
                                       condition: ep.WorkflowEventId=el.Id and ep.CreateDate=el.CreateDate
                                       filter: ep.ActionTypeId=8
-                                        Hash Right Outer Join Light
-                                          condition: ep0.WorkflowEventId=el.Id and ep0.CreateDate=el.CreateDate
-                                          filter: (ep0.ActionTypeId=13 and ep0.Message='2')
-                                            Async JIT Filter workers: 1
-                                              filter: (UserId=19 and TenantId=24024 and EventTypeId=1)
-                                                PageFrame
-                                                    Row forward scan
-                                                    Interval forward scan on: WorkflowEvent
-                                                      intervals: [("2016-01-01T00:00:00.000000Z","2016-01-01T10:00:00.000000Z")]
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: WorkflowEventAction
+                                        Filter filter: el.UserId=19
+                                            Hash Right Outer Join Light
+                                              condition: ep0.WorkflowEventId=el.Id and ep0.CreateDate=el.CreateDate
+                                              filter: (ep0.ActionTypeId=13 and ep0.Message='2')
+                                                Async JIT Filter workers: 1
+                                                  filter: (UserId=19 and TenantId=24024 and EventTypeId=1)
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Interval forward scan on: WorkflowEvent
+                                                          intervals: [("2016-01-01T00:00:00.000000Z","2016-01-01T10:00:00.000000Z")]
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: WorkflowEventAction
                                         Hash
                                             PageFrame
                                                 Row forward scan
@@ -1505,19 +1506,20 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                     Hash Full Outer Join Light
                                       condition: ep.WorkflowEventId=el.Id and ep.CreateDate=el.CreateDate
                                       filter: ep.ActionTypeId=8
-                                        Hash Full Outer Join Light
-                                          condition: ep0.WorkflowEventId=el.Id and ep0.CreateDate=el.CreateDate
-                                          filter: (ep0.ActionTypeId=13 and ep0.Message='2')
-                                            Async JIT Filter workers: 1
-                                              filter: (UserId=19 and TenantId=24024 and EventTypeId=1)
-                                                PageFrame
-                                                    Row forward scan
-                                                    Interval forward scan on: WorkflowEvent
-                                                      intervals: [("2016-01-01T00:00:00.000000Z","2016-01-01T10:00:00.000000Z")]
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: WorkflowEventAction
+                                        Filter filter: el.UserId=19
+                                            Hash Full Outer Join Light
+                                              condition: ep0.WorkflowEventId=el.Id and ep0.CreateDate=el.CreateDate
+                                              filter: (ep0.ActionTypeId=13 and ep0.Message='2')
+                                                Async JIT Filter workers: 1
+                                                  filter: (UserId=19 and TenantId=24024 and EventTypeId=1)
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Interval forward scan on: WorkflowEvent
+                                                          intervals: [("2016-01-01T00:00:00.000000Z","2016-01-01T10:00:00.000000Z")]
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: WorkflowEventAction
                                         Hash
                                             PageFrame
                                                 Row forward scan

@@ -329,6 +329,8 @@ public class SqlOptimiser implements Mutable {
     private final IntList loneEmittedClauseEdges = new IntList();
     private final int maxRecursion;
     private final AtomicInteger nonAggSelectCount = new AtomicInteger(0);
+    // Model indexes of the master-nulling joins of a level that addNullExtensionFilters() considered.
+    private final IntHashSet nullExtensionCheckedJoins = new IntHashSet();
     // Model indexes of the ASOF and LT joins whose unmatched master rows a WHERE conjunct drops, see
     // collectNullRejectedJoins().
     private final IntHashSet nullRejectedJoinIndexes = new IntHashSet();
@@ -386,9 +388,11 @@ public class SqlOptimiser implements Mutable {
     private final ObjList<JoinContext> savedJoinContexts = new ObjList<>();
     private final IntList savedJoinTypes = new IntList();
     // The WHERE conjuncts of a level, by index, that read one table, filter after a master-nulling join
-    // that NULL-extends the table and are stable within an execution; and the tables of the level that
+    // that NULL-extends the table and are stable within an execution; for each table of scanFilteredTables,
+    // the first of those conjuncts that drops the NULL row of the table; and the tables of the level that
     // one of those conjuncts drops the NULL row of. See addScanFilterCopyCandidate.
     private final IntHashSet scanFilterCopyCandidates = new IntHashSet();
+    private final IntHashSet scanFilterNullRejectors = new IntHashSet();
     private final IntHashSet scanFilteredTables = new IntHashSet();
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
     // Second stack, separate from sqlNodeStack because some operations
@@ -2565,6 +2569,36 @@ public class SqlOptimiser implements Mutable {
         addMultiModelOnPredicateBehindNullingJoin(parent, node, tempIntHashSet, joinIndex);
     }
 
+    // Gives a copy of the WHERE conjunct, which reads only the table at tableIndex and is false on the NULL
+    // row of the table, to the post-join filter of each master-nulling join that executes after the table
+    // and before the join at anchorIndex, the last one, which filters by the conjunct itself, when a later
+    // join matches rows on a table that the master-nulling join NULL-extends, see isNullExtensionMatched().
+    // Once copies of the conjuncts filter the scan of the table, the master-nulling join finds no match for
+    // more of its right rows, and NULL-extends the table in each of them. The later join matches all those
+    // rows on NULL, as NULL = NULL holds: "ta a RIGHT JOIN tb b ON a.id = b.k RIGHT JOIN td d ON a.x = d.k
+    // WHERE a.x > 999000" joined each NULL key of td with every tb row. The copy drops these rows where the
+    // join makes them, and changes no result: the table reads NULL or a rejected value in a row that the
+    // copy drops, in every row that the row leads to, and in every row that a later master-nulling join
+    // NULL-extends instead, and the conjunct drops them all after the anchor. The other master-nulling joins
+    // get no copy: the later joins return no more rows for a row that such a join NULL-extends than for the
+    // rows of the table that the copies on the scan dropped. One copy per join suffices, as the join
+    // NULL-extends all the tables before it at once.
+    private void addNullExtensionFilters(IQueryModel parent, int tableIndex, int anchorIndex, ExpressionNode node) throws SqlException {
+        // the callers run after reorderTables(), which orders every model of the level
+        assert isNullingExecOrderValid;
+        final ObjList<IQueryModel> joinModels = parent.getJoinModels();
+        final IntList ordered = parent.getOrderedJoinModels();
+        for (int p = nullingExecPosByModel.getQuick(tableIndex) + 1, n = nullingExecPosByModel.getQuick(anchorIndex); p < n; p++) {
+            final int joinIndex = ordered.getQuick(p);
+            final IQueryModel joinModel = joinModels.getQuick(joinIndex);
+            if (isMasterNullingJoinType(joinModel.getJoinType())
+                    && nullExtensionCheckedJoins.add(joinIndex)
+                    && isNullExtensionMatched(parent, p, n)) {
+                addPostJoinWhereClause(joinModel, ExpressionNode.deepClone(expressionNodePool, node));
+            }
+        }
+    }
+
     private void addOrderingConstraint(IQueryModel parent, int parentIndex, int childIndex) {
         assert parentIndex != childIndex;
         final IQueryModel childModel = parent.getJoinModels().getQuick(childIndex);
@@ -2729,6 +2763,7 @@ public class SqlOptimiser implements Mutable {
     // after the master-nulling join that NULL-extends the table, may also filter the table before that
     // join: it records the conjunct in scanFilterCopyCandidates when it is stable within an execution,
     // and the table in scanFilteredTables when the conjunct is also false on the NULL row of the table.
+    // The first such conjunct of the table also goes to scanFilterNullRejectors, see addNullExtensionFilters.
     // A SPLICE join on the level allows no copy, see hasSpliceJoin.
     private void addScanFilterCopyCandidate(
             IQueryModel parent,
@@ -2741,8 +2776,10 @@ public class SqlOptimiser implements Mutable {
             return;
         }
         scanFilterCopyCandidates.add(index);
-        if (isNullRejectingColumnPredicate(parent.getJoinModels().getQuick(tableIndex), node, sqlExecutionContext)) {
+        if (scanFilteredTables.excludes(tableIndex)
+                && isNullRejectingColumnPredicate(parent.getJoinModels().getQuick(tableIndex), node, sqlExecutionContext)) {
             scanFilteredTables.add(tableIndex);
+            scanFilterNullRejectors.add(index);
         }
     }
 
@@ -3362,7 +3399,9 @@ public class SqlOptimiser implements Mutable {
         postFilterRemoved.clear();
         postFilterTableRefs.clear();
         scanFilterCopyCandidates.clear();
+        scanFilterNullRejectors.clear();
         scanFilteredTables.clear();
+        nullExtensionCheckedJoins.clear();
         final IntList modelOnJoinIndexes = tempCrossIndexes;
         modelOnJoinIndexes.clear();
         // refresh the per-level anchors now that reorderTables has populated the execution order
@@ -3445,6 +3484,9 @@ public class SqlOptimiser implements Mutable {
                                 addPostJoinWhereClause(tableModel, copy);
                             } else {
                                 addWhereNode(tableModel, copy);
+                            }
+                            if (scanFilterNullRejectors.contains(k)) {
+                                addNullExtensionFilters(parent, tableIndex, nullingJoinIndex, node);
                             }
                         }
                     }
@@ -4534,7 +4576,9 @@ public class SqlOptimiser implements Mutable {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         scanFilterCopyCandidates.clear();
+        scanFilterNullRejectors.clear();
         scanFilteredTables.clear();
+        nullExtensionCheckedJoins.clear();
         for (int i = 0, n = nodes.size(); i < n; i++) {
             final ExpressionNode node = nodes.getQuick(i);
             if (node.innerPredicate) {
@@ -8839,6 +8883,42 @@ public class SqlOptimiser implements Mutable {
         return true;
     }
 
+    // Returns true when a join that executes after the master-nulling join at execution position nullingExecPos,
+    // up to the one at anchorExecPos, matches rows on a column of a table that executes before the
+    // master-nulling join, through a join key or the outer join expression of the join. The master-nulling
+    // join NULL-extends such a table, and the join matches each row that it NULL-extends with every row whose
+    // key is NULL. A join that matches on later tables alone finds for such a row the rows that it finds for
+    // each row of the table that a filter of its scan dropped. The filters after the joins only drop rows.
+    private boolean isNullExtensionMatched(IQueryModel parent, int nullingExecPos, int anchorExecPos) throws SqlException {
+        final ObjList<IQueryModel> joinModels = parent.getJoinModels();
+        final IntList ordered = parent.getOrderedJoinModels();
+        for (int p = nullingExecPos + 1; p <= anchorExecPos; p++) {
+            final IQueryModel joinModel = joinModels.getQuick(ordered.getQuick(p));
+            final JoinContext context = joinModel.getJoinContext();
+            if (context != null) {
+                for (int i = 0, n = context.aIndexes.size(); i < n; i++) {
+                    if (nullingExecPosByModel.getQuick(context.aIndexes.getQuick(i)) < nullingExecPos
+                            || nullingExecPosByModel.getQuick(context.bIndexes.getQuick(i)) < nullingExecPos) {
+                        return true;
+                    }
+                }
+            }
+            final ExpressionNode outerJoinExpression = joinModel.getOuterJoinExpressionClause();
+            if (outerJoinExpression != null) {
+                tempIntHashSet.clear();
+                final boolean isResolved = collectReferencedJoinModels(parent, outerJoinExpression, tempIntHashSet);
+                // processJoinConditions() resolved every name of the expression to one model of the level
+                assert isResolved;
+                for (int i = 0, n = tempIntHashSet.size(); i < n; i++) {
+                    if (nullingExecPosByModel.getQuick(tempIntHashSet.get(i)) < nullingExecPos) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
     // Returns true when a conjunct from collectNullRejectionConjuncts() filters after the join at position
     // and rejects the NULL row of a model from loIndex to hiIndex, see isNullRejectingColumnPredicate(). The
     // conjuncts already known to reject go first, so the NULL check, a function parse, runs only when none of
@@ -9932,6 +10012,9 @@ public class SqlOptimiser implements Mutable {
                         addPostJoinWhereClause(model.getJoinModels().getQuick(nullingJoinIndex), node);
                         if (!scanFilterCopyCandidates.contains(i) || !scanFilteredTables.contains(tableIndex)) {
                             continue;
+                        }
+                        if (scanFilterNullRejectors.contains(i)) {
+                            addNullExtensionFilters(model, tableIndex, nullingJoinIndex, node);
                         }
                         // A copy filters the table before the join, and moves into its sub-query as any
                         // other conjunct of the table does. The table carries no LATEST ON of its own:

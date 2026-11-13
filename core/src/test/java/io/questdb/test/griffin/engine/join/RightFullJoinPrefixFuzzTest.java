@@ -66,9 +66,10 @@ import java.util.regex.Pattern;
  * The WHERE-heavy queries always filter, with one or two conjuncts on a table, constants and INT bind
  * variables, and sometimes LATEST ON on the first table, which the references put in a sub-query of that
  * table. A conjunct on a table before the last join filters after it, and SqlOptimiser may also filter the
- * scan of the table with copies of the conjuncts, see SqlOptimiser.addScanFilterCopyCandidate(). The
- * LIMIT-fenced reference runs the flat joins without WHERE in a sub-query that LIMIT keeps whole, and
- * filters its rows, so it takes no such copy. The LIMIT queries end the WHERE-heavy flat form with a LIMIT,
+ * scan of the table with copies of the conjuncts, see SqlOptimiser.addScanFilterCopyCandidate(), and, when a
+ * later join matches on the table, the rows of an earlier RIGHT or FULL join, see
+ * SqlOptimiser.addNullExtensionFilters(). The LIMIT-fenced reference runs the flat joins without WHERE in a
+ * sub-query that LIMIT keeps whole, and filters its rows, so it takes no such copy. The LIMIT queries end the WHERE-heavy flat form with a LIMIT,
  * which may return any rows of the query but no fewer than it asks for, so a filter of a table before the
  * RIGHT or FULL join must not stop at the LIMIT.
  */
@@ -113,6 +114,8 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
     private static final Pattern WHERE_CONJUNCT_PAIR = Pattern.compile(" WHERE .* AND ");
     // a WHERE whose first predicate reads the first table, see appendWherePredicate()
     private static final Pattern WHERE_ON_FIRST_TABLE = Pattern.compile("^SELECT \\* FROM t(\\d) .* WHERE (coalesce\\()?[cs]\\1[ ,]");
+    // the table that the first predicate of a WHERE reads, see appendWherePredicate()
+    private static final Pattern WHERE_TABLE = Pattern.compile(" WHERE (coalesce\\()?[cs](\\d)[ ,]");
     private static final int WHERE_QUERY_COUNT = 300;
     // a WHERE predicate on a SYMBOL column
     private static final Pattern WHERE_SYMBOL_PREDICATE = Pattern.compile(" s\\d (LIKE|~|IN|NOT IN) ");
@@ -272,15 +275,21 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
     @Test
     public void testWhereQueriesCoverScanFilterShapes() {
         // The shapes where a copy of a WHERE conjunct could change the rows: LATEST ON on the table, symbol
-        // predicates that the NULL probe parses, bind variables whose value may be NULL, and several conjuncts
-        // on one table, which a NULL-rejecting conjunct takes along.
+        // predicates that the NULL probe parses, bind variables whose value may be NULL, several conjuncts
+        // on one table, which a NULL-rejecting conjunct takes along, and a join that matches on the table
+        // after a RIGHT or FULL join, after which a copy also filters. A twentieth of the queries suffices
+        // for the last: it needs a RIGHT or FULL join, a later ON clause and a WHERE that line up.
         final Rnd rnd = new Rnd(42, 4242);
         int latestOnCount = 0;
         int symbolCount = 0;
         int bindCount = 0;
         int conjunctPairCount = 0;
+        int nullExtensionMatchCount = 0;
         for (int i = 0; i < WHERE_CORPUS_SIZE; i++) {
             final String flat = generateQueries(rnd, false, false, true, false)[0];
+            if (hasJoinOnWhereTableAfterOuterJoin(flat)) {
+                nullExtensionMatchCount++;
+            }
             if (flat.contains(" LATEST ON ts PARTITION BY k")) {
                 latestOnCount++;
             }
@@ -295,11 +304,13 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
             }
         }
         final String counts = "latestOn=" + latestOnCount + ", symbol=" + symbolCount + ", bind=" + bindCount
-                + ", conjunctPair=" + conjunctPairCount + " of " + WHERE_CORPUS_SIZE;
+                + ", conjunctPair=" + conjunctPairCount + ", nullExtensionMatch=" + nullExtensionMatchCount
+                + " of " + WHERE_CORPUS_SIZE;
         Assert.assertTrue(counts, latestOnCount * 10 >= WHERE_CORPUS_SIZE);
         Assert.assertTrue(counts, symbolCount * 10 >= WHERE_CORPUS_SIZE);
         Assert.assertTrue(counts, bindCount * 10 >= WHERE_CORPUS_SIZE);
         Assert.assertTrue(counts, conjunctPairCount * 10 >= WHERE_CORPUS_SIZE);
+        Assert.assertTrue(counts, nullExtensionMatchCount * 20 >= WHERE_CORPUS_SIZE);
     }
 
     private static void appendCondition(Rnd rnd, StringBuilder sql, int[] tables, int joined, int left, boolean isOuterJoinHeavy) {
@@ -513,6 +524,60 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
         }
         flat.append(latestOn);
         return new String[]{flat.toString(), nested, prefixSubQuery, limitFenced};
+    }
+
+    // True when the WHERE of the flat query filters the first table, or a table of an INNER or CROSS join, with a
+    // predicate that is false on the NULL row of the table, a RIGHT or FULL join NULL-extends the table, and the
+    // ON clause of a later join reads the table. Copies of the predicate filter the scan of the table, and the
+    // later join matches the rows that the RIGHT or FULL join NULL-extends on NULL, so a copy also filters
+    // after that join, see SqlOptimiser.addNullExtensionFilters().
+    private static boolean hasJoinOnWhereTableAfterOuterJoin(String flat) {
+        final Matcher whereMatcher = WHERE_TABLE.matcher(flat);
+        if (!whereMatcher.find()) {
+            return false;
+        }
+        final String table = whereMatcher.group(2);
+        // the predicates of appendWherePredicate() that are false on NULL for every value of $1 and $2
+        final Pattern nullRejectingPredicate = Pattern.compile("[cs]" + table + " (> 0|IS NOT NULL|IN \\(|BETWEEN|LIKE|~|> \\$1|< \\$2)");
+        if (!nullRejectingPredicate.matcher(flat).region(whereMatcher.start(), flat.length()).find()) {
+            return false;
+        }
+        final Pattern tableColumn = Pattern.compile("[cv]" + table + "(?!\\d)");
+        final List<String> joinTypes = new ArrayList<>();
+        final List<String> joinedTables = new ArrayList<>();
+        final List<String> onClauses = new ArrayList<>();
+        final Matcher joinMatcher = FLAT_JOIN.matcher(flat).region(0, whereMatcher.start());
+        int onStart = -1;
+        while (joinMatcher.find()) {
+            if (onStart != -1) {
+                onClauses.add(flat.substring(onStart, joinMatcher.start()));
+            }
+            joinTypes.add(joinMatcher.group(1));
+            joinedTables.add(joinMatcher.group(2));
+            onStart = joinMatcher.end();
+        }
+        if (onStart != -1) {
+            onClauses.add(flat.substring(onStart, whereMatcher.start()));
+        }
+        boolean isTableJoined = flat.startsWith("SELECT * FROM t" + table + ' ');
+        // a RIGHT or FULL join after the table runs before the join that the loop reads
+        boolean isNullExtended = false;
+        for (int i = 0, n = joinTypes.size(); i < n; i++) {
+            if (isNullExtended && tableColumn.matcher(onClauses.get(i)).find()) {
+                return true;
+            }
+            final String joinType = joinTypes.get(i);
+            if (joinedTables.get(i).equals(table)) {
+                if (!joinType.equals("JOIN") && !joinType.equals("CROSS JOIN")) {
+                    // the WHERE filters the right side of an outer or time-series join after it
+                    return false;
+                }
+                isTableJoined = true;
+            } else {
+                isNullExtended |= isTableJoined && (joinType.equals("RIGHT JOIN") || joinType.equals("FULL JOIN"));
+            }
+        }
+        return false;
     }
 
     // True when an INNER join of the flat query has a conjunct that matches the pattern, and a RIGHT or FULL
