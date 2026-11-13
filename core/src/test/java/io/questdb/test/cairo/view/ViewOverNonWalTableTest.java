@@ -394,25 +394,16 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
             createView("v2", "SELECT * FROM t2");
             execute("ALTER TABLE t2 ADD COLUMN b INT");
 
-            final ViewCompileParker run = ViewCompileParker.ofQueueDrain(engine, "t2", PoolListener.SRC_READER);
-            final AtomicInteger lockAttempts = new AtomicInteger();
-            final long ddlThread = Thread.currentThread().threadId();
-            engine.setPoolListener((factoryType, thread, tableToken, event, segment, position) -> {
-                run.onEvent(factoryType, thread, tableToken, event, segment, position);
-                if (isTableMetadataLockOfT(ddlThread, factoryType, thread, tableToken, event)) {
-                    lockAttempts.incrementAndGet();
-                }
-            });
+            final AtomicInteger lockAttempts = countTableMetadataLocks();
             try (
                     RecordCursorFactory factory = select("SELECT * FROM t");
                     RecordCursor ignore = factory.getCursor(sqlExecutionContext)
             ) {
-                run.start();
-                run.releaseAfterLogged(capture, WAIT_LINE, null);
-                assertDdlFails("DROP TABLE t", "could not lock 't~' [reason='busyReader']");
-                Assert.assertEquals(2, lockAttempts.get());
+                ViewCompileParker.ofQueueDrain(engine, "t2", PoolListener.SRC_READER).executeWhileHolding(capture, "t", () -> {
+                    assertDdlFails("DROP TABLE t", "could not lock 't~' [reason='busyReader']");
+                    Assert.assertEquals(2, lockAttempts.get());
+                }, null);
             } finally {
-                run.join();
                 engine.setPoolListener(null);
             }
             execute("DROP TABLE t");
@@ -1259,30 +1250,26 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
             execute("ALTER TABLE t2 ADD COLUMN b INT");
 
             final ReaderHoldingThread query = ReaderHoldingThread.start(engine, "t");
-            final ViewCompileParker run = ViewCompileParker.ofQueueDrain(engine, "t2", PoolListener.SRC_READER);
-            engine.setPoolListener(run);
             try {
-                run.start();
-                run.releaseAfterLogged(capture, WAIT_LINE, null);
-                // TRUNCATE reads the clock when it waits for view compile runs. One that kept trying
-                // the lock after the run ended would read it on every try, and never reach the
-                // timeout: end the query after many reads with no run running, so that such a
-                // TRUNCATE succeeds and fails the test.
-                final long ddlThread = Thread.currentThread().threadId();
-                final AtomicInteger clockReadsWithNoRun = new AtomicInteger();
-                testMicrosClock = () -> {
-                    if (Thread.currentThread().threadId() == ddlThread
-                            && !ViewStateStore.isCompileRunRunning(engine.getViewStateStore().getCompileRunActivity())
-                            && clockReadsWithNoRun.incrementAndGet() == 1_000) {
-                        closeQuery(query);
-                    }
-                    return defaultMicrosecondClock.getTicks();
-                };
-                assertDdlFails("TRUNCATE TABLE t", "there is an active query against 't'. Try again.");
+                ViewCompileParker.ofQueueDrain(engine, "t2", PoolListener.SRC_READER).executeWhileHolding(capture, "t", () -> {
+                    // TRUNCATE reads the clock when it waits for view compile runs. One that kept trying
+                    // the lock after the run ended would read it on every try, and never reach the
+                    // timeout: end the query after many reads with no run running, so that such a
+                    // TRUNCATE succeeds and fails the test.
+                    final long ddlThread = Thread.currentThread().threadId();
+                    final AtomicInteger clockReadsWithNoRun = new AtomicInteger();
+                    testMicrosClock = () -> {
+                        if (Thread.currentThread().threadId() == ddlThread
+                                && !ViewStateStore.isCompileRunRunning(engine.getViewStateStore().getCompileRunActivity())
+                                && clockReadsWithNoRun.incrementAndGet() == 1_000) {
+                            closeQuery(query);
+                        }
+                        return defaultMicrosecondClock.getTicks();
+                    };
+                    assertDdlFails("TRUNCATE TABLE t", "there is an active query against 't'. Try again.");
+                }, null);
             } finally {
                 testMicrosClock = defaultMicrosecondClock;
-                run.join();
-                engine.setPoolListener(null);
                 query.close();
             }
             capture.drain();
@@ -1392,8 +1379,8 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
             final ViewCompileParker runOverT2 = ViewCompileParker.ofQueueDrain(engine, "t2", PoolListener.SRC_READER);
             final AtomicInteger readerCloses = new AtomicInteger();
             final long ddlThread = Thread.currentThread().threadId();
+            // runOverT.executeWhileHolding() passes each pool event to the run over t before this listener
             engine.setPoolListener((factoryType, thread, tableToken, event, segment, position) -> {
-                runOverT.onEvent(factoryType, thread, tableToken, event, segment, position);
                 runOverT2.onEvent(factoryType, thread, tableToken, event, segment, position);
                 // Runs on the DDL thread, inside the second lock attempt, which reads the clock once
                 // it fails. The attempt holds the lock of t's readers, so a run over t could not
@@ -1422,28 +1409,27 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
                 }
             });
             watchdog.start();
-            ReaderHoldingThread query = null;
             try {
-                runOverT.start();
-                // The run holds t's reader in the pool's first slot, so the query takes the second
-                // slot. The first lock attempt of TRUNCATE fails on the run's slot, and the second
-                // one closes the reader that the run returned there before it fails on the query.
-                query = ReaderHoldingThread.start(engine, "t");
-                runOverT.releaseAfterLogged(capture, WAIT_LINE, null);
-                assertDdlFails("TRUNCATE TABLE t", "there is an active query against 't'. Try again.");
-                Assert.assertTrue(
-                        "TRUNCATE waited for the run over t2",
-                        ViewStateStore.isCompileRunRunning(engine.getViewStateStore().getCompileRunActivity())
-                );
+                runOverT.executeWhileHolding(capture, "t", () -> {
+                    // The run holds t's reader in the pool's first slot, so the query takes the second
+                    // slot. The first lock attempt of TRUNCATE fails on the run's slot, and the second
+                    // one closes the reader that the run returned there before it fails on the query.
+                    final ReaderHoldingThread query = ReaderHoldingThread.start(engine, "t");
+                    try {
+                        assertDdlFails("TRUNCATE TABLE t", "there is an active query against 't'. Try again.");
+                        Assert.assertTrue(
+                                "TRUNCATE waited for the run over t2",
+                                ViewStateStore.isCompileRunRunning(engine.getViewStateStore().getCompileRunActivity())
+                        );
+                    } finally {
+                        query.close();
+                    }
+                }, null);
             } finally {
                 isTruncateDone.countDown();
                 watchdog.join();
-                runOverT.join();
                 runOverT2.join();
                 engine.setPoolListener(null);
-                if (query != null) {
-                    query.close();
-                }
             }
             Assert.assertEquals(1, readerCloses.get());
             capture.drain();
@@ -1480,23 +1466,18 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
             createView("v2", "SELECT * FROM t2");
             final ViewCompileParker runOverT = ViewCompileParker.ofQueueDrain(engine, "t", PoolListener.SRC_READER);
             final ViewCompileParker runOverT2 = ViewCompileParker.ofQueueDrain(engine, "t2", PoolListener.SRC_READER);
-            engine.setPoolListener((factoryType, thread, tableToken, event, segment, position) -> {
-                runOverT.onEvent(factoryType, thread, tableToken, event, segment, position);
-                runOverT2.onEvent(factoryType, thread, tableToken, event, segment, position);
-            });
+            engine.setPoolListener(runOverT2);
             try {
                 execute("ALTER TABLE t ADD COLUMN b INT");
-                runOverT.start();
-                execute("ALTER TABLE t2 ADD COLUMN b INT");
-                runOverT2.start();
+                runOverT.executeWhileHolding(capture, "t", () -> {
+                    execute("ALTER TABLE t2 ADD COLUMN b INT");
+                    runOverT2.start();
 
-                // the server default
-                node1.setProperty(PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 500);
-                runOverT.releaseAfterLogged(capture, WAIT_LINE, null);
-                assertDdlFailsAfter(500, "TRUNCATE TABLE t", "there is an active query against 't'. Try again.");
-                runOverT.join();
+                    // the server default
+                    node1.setProperty(PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 500);
+                    assertDdlFailsAfter(500, "TRUNCATE TABLE t", "there is an active query against 't'. Try again.");
+                }, null);
             } finally {
-                runOverT.join();
                 runOverT2.join();
                 engine.setPoolListener(null);
             }
@@ -1642,18 +1623,7 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
             String ddl,
             @Nullable TestUtils.CheckedRunnable onWait
     ) throws Exception {
-        // a wait line of an earlier DDL would release the run before this DDL waits
-        restartLogCapture();
-        final ViewCompileParker run = ViewCompileParker.ofQueueDrain(engine, tableName, poolSource);
-        engine.setPoolListener(run);
-        try {
-            run.start();
-            run.releaseAfterLogged(capture, WAIT_LINE, onWait);
-            execute(ddl);
-        } finally {
-            run.join();
-            engine.setPoolListener(null);
-        }
+        ViewCompileParker.ofQueueDrain(engine, tableName, poolSource).executeWhileHolding(capture, "t", () -> execute(ddl), onWait);
     }
 
     // Runs the DDL, and the action on the DDL thread at its first event of the given kind on the
@@ -1726,11 +1696,6 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
         }
     }
 
-    private static void restartLogCapture() {
-        capture.stop();
-        capture.start();
-    }
-
     private static void startRun(ViewCompileParker run) {
         try {
             run.start();
@@ -1744,11 +1709,10 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
             @Nullable String expectedError,
             boolean isNameReserved
     ) throws Exception {
-        createTableWithRows("t");
         final TableToken[] reservedName = new TableToken[1];
         try {
             executeWhileQueryAndViewCompileHold(ddl, () -> {
-                executeInOwnContext("DROP TABLE t");
+                ViewCompileParker.dropTableAsAnotherSession(engine, "t", false);
                 if (isNameReserved) {
                     reservedName[0] = engine.lockTableName("t");
                     Assert.assertNotNull(reservedName[0]);
@@ -1772,18 +1736,13 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
     // The retry callback runs on the DDL thread after it waited for a view compile run and found
     // t under its name. The callback has another session drop t, and create a new t when asked.
     private void assertDdlDoesNotActOnTableChangedBeforeRetryLock(String ddl, String expectedError, boolean isRecreated) throws Exception {
-        createTableWithRows("t");
         final AtomicInteger retries = new AtomicInteger();
         engine.setViewCompileRetryCallback(() -> {
             if (retries.incrementAndGet() == 1) {
                 final AtomicReference<Throwable> sessionError = new AtomicReference<>();
                 final Thread session = new Thread(() -> {
                     try {
-                        if (isRecreated) {
-                            executeInOwnContext("DROP TABLE t", "CREATE TABLE t (a INT)", "INSERT INTO t VALUES (42)");
-                        } else {
-                            executeInOwnContext("DROP TABLE t");
-                        }
+                        ViewCompileParker.dropTableAsAnotherSession(engine, "t", isRecreated);
                     } catch (Throwable th) {
                         sessionError.set(th);
                     } finally {
@@ -1842,16 +1801,8 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
     }
 
     private void assertDdlDoesNotActOnTableReplacedDuringViewCompileWait(String ddl, String expectedError) throws Exception {
-        createTableWithRows("t");
         try {
-            executeWhileQueryAndViewCompileHold(
-                    ddl,
-                    () -> executeInOwnContext(
-                            "DROP TABLE t",
-                            "CREATE TABLE t (a INT)",
-                            "INSERT INTO t VALUES (42)"
-                    )
-            );
+            executeWhileQueryAndViewCompileHold(ddl, () -> ViewCompileParker.dropTableAsAnotherSession(engine, "t", true));
             Assert.fail("expected to fail: " + ddl);
         } catch (SqlException | CairoException e) {
             TestUtils.assertEquals(expectedError, e.getFlyweightMessage());
@@ -1974,21 +1925,10 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
         execute("ALTER TABLE t ADD COLUMN b INT");
     }
 
-    // A query holds t's reader and a view compile run holds t2's reader, so a DDL of t that fails
-    // on the query waits for the run. Once the DDL logs that it waits, the query ends, the action
-    // runs and the run ends.
+    // Creates t with the rows 1 and 2 and runs the DDL of t while a query holds t's reader and a
+    // view compile run holds t2's reader, so that the DDL fails on the query and waits for the run.
+    // Once the DDL logs that it waits, the query ends, the action runs and the run ends.
     private void executeWhileQueryAndViewCompileHold(String ddl, @Nullable TestUtils.CheckedRunnable onWait) throws Exception {
-        execute("ALTER TABLE t2 ADD COLUMN c" + addedColumnCount++ + " INT");
-        final ReaderHoldingThread query = ReaderHoldingThread.start(engine, "t");
-        try {
-            executeWhileViewCompileHolds("t2", PoolListener.SRC_READER, ddl, () -> {
-                query.close();
-                if (onWait != null) {
-                    onWait.run();
-                }
-            });
-        } finally {
-            query.close();
-        }
+        ViewCompileParker.executeWhileQueryAndViewCompileHold(engine, sqlExecutionContext, capture, addedColumnCount++, () -> execute(ddl), onWait);
     }
 }

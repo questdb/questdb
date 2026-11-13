@@ -26,7 +26,6 @@ package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.griffin.engine.table.parquet.ParquetEncoding;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.Path;
@@ -43,6 +42,9 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.util.concurrent.atomic.AtomicInteger;
+
+import static io.questdb.test.tools.ParquetTestUtils.STREAMING_EXPORT_LOG;
+import static io.questdb.test.tools.ParquetTestUtils.TEMP_TABLE_EXPORT_LOG;
 
 /**
  * A server-side prepared statement keeps its compiled COPY and runs it on each execution. Of the connection modes that
@@ -63,32 +65,6 @@ public class PGCopyExportTest extends BasePGTest {
             1\t7\t2024-01-03T00:00:00.000000Z
             2\t8\t2024-01-03T08:00:00.000000Z
             0\t9\t2024-01-03T16:00:00.000000Z
-            """;
-    // the copy_export_log rows of an export that streams its rows
-    private static final String STREAMING_EXPORT_LOG = """
-            phase\tstatus
-            wait_to_run\tstarted
-            wait_to_run\tfinished
-            stream_sending_data\tstarted
-            stream_sending_data\tfinished
-            move_files\tstarted
-            move_files\tfinished
-            success\tfinished
-            """;
-    // the copy_export_log rows of an export that materializes its rows through a temp table
-    private static final String TEMP_TABLE_EXPORT_LOG = """
-            phase\tstatus
-            wait_to_run\tstarted
-            wait_to_run\tfinished
-            populating_data_to_temp_table\tstarted
-            populating_data_to_temp_table\tfinished
-            converting_partitions\tstarted
-            converting_partitions\tfinished
-            move_files\tstarted
-            move_files\tfinished
-            dropping_temp_table\tstarted
-            dropping_temp_table\tfinished
-            success\tfinished
             """;
 
     @BeforeClass
@@ -125,11 +101,11 @@ public class PGCopyExportTest extends BasePGTest {
             final String parquetPath = exportRoot + File.separator + "pgd.parquet";
             try (PreparedStatement statement = connection.prepareStatement("COPY (SELECT * FROM pe ORDER BY ts DESC) TO 'pgd' WITH FORMAT PARQUET")) {
                 final String firstId = executeCopy(statement);
-                assertExportPhases(firstId, STREAMING_EXPORT_LOG);
+                ParquetTestUtils.assertExportLog(engine, sqlExecutionContext, firstId, STREAMING_EXPORT_LOG);
                 assertDescendingRowsExported(parquetPath);
                 final String secondId = executeCopy(statement);
                 Assert.assertNotEquals(firstId, secondId);
-                assertExportPhases(secondId, STREAMING_EXPORT_LOG);
+                ParquetTestUtils.assertExportLog(engine, sqlExecutionContext, secondId, STREAMING_EXPORT_LOG);
                 assertDescendingRowsExported(parquetPath);
             }
         });
@@ -322,13 +298,6 @@ public class PGCopyExportTest extends BasePGTest {
                         """);
     }
 
-    // Asserts the phases and statuses that the export logged, in their order.
-    private void assertExportPhases(String exportId, String expectedPhases) throws Exception {
-        assertQuery("SELECT phase, status FROM \"" + configuration.getSystemTableNamePrefix() + "copy_export_log\" WHERE id = '" + exportId + "'")
-                .noLeakCheck()
-                .returns(expectedPhases);
-    }
-
     // the GROUP BY of ps exports its 100_000 symbols, one row each
     private void assertGroupByRowsExported(String parquetPath) throws Exception {
         assertQuery("SELECT count() n, count_distinct(sym) symbols, sum(c) total, min(sym) mn FROM read_parquet('" + parquetPath + "')")
@@ -352,14 +321,14 @@ public class PGCopyExportTest extends BasePGTest {
         final FilesFacade ff = configuration.getFilesFacade();
         try (PreparedStatement statement = connection.prepareStatement(copySql)) {
             final String firstId = executeCopy(statement);
-            assertExportPhases(firstId, expectedPhases);
+            ParquetTestUtils.assertExportLog(engine, sqlExecutionContext, firstId, expectedPhases);
             assertParquetRows(parquetPath, PE_ROWS);
             ParquetTestUtils.assertColumnsUseDictionaryEncoding(parquetPath, ff, 0);
 
             alterMetricParquetSetting("DELTA_BINARY_PACKED");
             final String secondId = executeCopy(statement);
             Assert.assertNotEquals(firstId, secondId);
-            assertExportPhases(secondId, expectedPhases);
+            ParquetTestUtils.assertExportLog(engine, sqlExecutionContext, secondId, expectedPhases);
             assertParquetRows(parquetPath, PE_ROWS);
             ParquetTestUtils.assertColumnsUseEncoding(parquetPath, ff, ParquetEncoding.ENCODING_DELTA_BINARY_PACKED, 0);
             ParquetTestUtils.assertColumnsDoNotUseDictionaryEncoding(parquetPath, ff, 0);
@@ -367,7 +336,7 @@ public class PGCopyExportTest extends BasePGTest {
             alterMetricParquetSetting("default");
             final String thirdId = executeCopy(statement);
             Assert.assertNotEquals(secondId, thirdId);
-            assertExportPhases(thirdId, expectedPhases);
+            ParquetTestUtils.assertExportLog(engine, sqlExecutionContext, thirdId, expectedPhases);
             assertParquetRows(parquetPath, PE_ROWS);
             // metric has no setting now, so it takes the INT default, PLAIN
             ParquetTestUtils.assertColumnsUseEncoding(parquetPath, ff, ParquetEncoding.ENCODING_PLAIN, 0);
@@ -386,13 +355,8 @@ public class PGCopyExportTest extends BasePGTest {
         }
         // The export job releases the export after it logs the result and drops the temp table, so the next COPY
         // starts after this export ended.
-        TestUtils.assertEventually(() -> Assert.assertEquals(
-                CopyExportContext.INACTIVE_COPY_ID,
-                engine.getCopyExportContext().getActiveExportId()
-        ));
-        assertQuery("SELECT status FROM \"" + configuration.getSystemTableNamePrefix() + "copy_export_log\" WHERE id = '" + exportId + "' AND phase = 'success'")
-                .noLeakCheck()
-                .returns("status\nfinished\n");
+        ParquetTestUtils.awaitExportsDrained(engine);
+        ParquetTestUtils.assertExportSucceeded(engine, sqlExecutionContext, exportId);
         return exportId;
     }
 }

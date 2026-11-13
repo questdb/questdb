@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.view.ViewCompilerJob;
 import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.griffin.SqlException;
@@ -48,12 +49,53 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
+import io.questdb.test.QueryAssertion;
 import org.junit.Assert;
 
 import java.util.function.Consumer;
 
 public final class ParquetTestUtils {
+    // the copy_export_log phases and statuses of an export that streams its rows and succeeds
+    public static final String STREAMING_EXPORT_LOG = """
+            phase\tstatus
+            wait_to_run\tstarted
+            wait_to_run\tfinished
+            stream_sending_data\tstarted
+            stream_sending_data\tfinished
+            move_files\tstarted
+            move_files\tfinished
+            success\tfinished
+            """;
+    // the copy_export_log phases and statuses of an export that runs through a temp table and succeeds
+    public static final String TEMP_TABLE_EXPORT_LOG = """
+            phase\tstatus
+            wait_to_run\tstarted
+            wait_to_run\tfinished
+            populating_data_to_temp_table\tstarted
+            populating_data_to_temp_table\tfinished
+            converting_partitions\tstarted
+            converting_partitions\tfinished
+            move_files\tstarted
+            move_files\tfinished
+            dropping_temp_table\tstarted
+            dropping_temp_table\tfinished
+            success\tfinished
+            """;
     private static final Log LOG = LogFactory.getLog(ParquetTestUtils.class);
+    // the rows of the tables that createTableToRetype() creates: two symbols alternate inside each of three days, and
+    // other_ts holds NULL in two rows
+    private static final String RETYPED_TABLE_ROWS = """
+            ('a', 'p', 1, '2023-06-05T00:00:00.000000Z', '2024-01-01T00:00:00.000000Z'),
+            ('b', 'q', 2, NULL, '2024-01-01T01:00:00.000000Z'),
+            ('a', 'q', 3, '2023-06-03T00:00:00.000000Z', '2024-01-01T02:00:00.000000Z'),
+            ('b', 'p', 4, '2023-06-02T00:00:00.000000Z', '2024-01-01T03:00:00.000000Z'),
+            ('a', 'p', 5, '2023-06-09T00:00:00.000000Z', '2024-01-02T00:00:00.000000Z'),
+            ('b', 'q', 6, NULL, '2024-01-02T01:00:00.000000Z'),
+            ('a', 'q', 7, '2023-06-07T00:00:00.000000Z', '2024-01-02T02:00:00.000000Z'),
+            ('b', 'p', 8, '2023-06-06T00:00:00.000000Z', '2024-01-02T03:00:00.000000Z'),
+            ('a', 'p', 9, '2023-06-10T00:00:00.000000Z', '2024-01-03T00:00:00.000000Z'),
+            ('b', 'q', 10, '2023-06-11T00:00:00.000000Z', '2024-01-03T01:00:00.000000Z')
+            """;
 
     private ParquetTestUtils() {
     }
@@ -195,6 +237,22 @@ public final class ParquetTestUtils {
         assertColumnsDoNotUseEncoding(parquetFilePath, ff, ParquetEncoding.ENCODING_DELTA_BINARY_PACKED, 29 - shift);
     }
 
+    // Asserts the phases and statuses that the export logged, in their order.
+    public static void assertExportLog(CairoEngine engine, SqlExecutionContext executionContext, String exportId, String expectedPhases) throws Exception {
+        new QueryAssertion(engine, executionContext, () -> {
+        }, "SELECT phase, status FROM \"" + engine.getConfiguration().getSystemTableNamePrefix() + "copy_export_log\" WHERE id = '" + exportId + "'")
+                .noLeakCheck()
+                .returns(expectedPhases);
+    }
+
+    // Asserts that the export logged its success.
+    public static void assertExportSucceeded(CairoEngine engine, SqlExecutionContext executionContext, String exportId) throws Exception {
+        new QueryAssertion(engine, executionContext, () -> {
+        }, "SELECT status FROM \"" + engine.getConfiguration().getSystemTableNamePrefix() + "copy_export_log\" WHERE id = '" + exportId + "' AND phase = 'success'")
+                .noLeakCheck()
+                .returns("status\nfinished\n");
+    }
+
     /**
      * Waits until the active export has streamed rows to its file or client and returns its id, so that a test that
      * cancels the export or drops its connection afterwards stops it while it streams. Fails when the export streams
@@ -214,6 +272,18 @@ public final class ParquetTestUtils {
             );
         });
         return exportId[0];
+    }
+
+    /**
+     * Waits until no export is active: the export the test started has ended, whether it succeeded, failed or was
+     * cancelled.
+     */
+    public static void awaitExportsDrained(CairoEngine engine) throws Exception {
+        TestUtils.assertEventually(() -> Assert.assertEquals(
+                "the export must end",
+                CopyExportContext.INACTIVE_COPY_ID,
+                engine.getCopyExportContext().getActiveExportId()
+        ));
     }
 
     /**
@@ -257,6 +327,64 @@ public final class ParquetTestUtils {
                 expectedRowGroupCount,
                 decoder.metadata().getRowGroupCount()
         ));
+    }
+
+    /**
+     * Creates the table (x INT, b BINARY, ts), partitioned by day, with four rows over three days, whose b holds random
+     * bytes, and NULL in the second row. The WAL mode is as in createTableToRetype().
+     */
+    public static void createBinaryTableToRetype(
+            CairoEngine engine,
+            SqlExecutionContext executionContext,
+            String tableName,
+            String walMode
+    ) throws SqlException {
+        engine.execute("CREATE TABLE " + tableName + " (x INT, b BINARY, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY " + walMode, executionContext);
+        engine.execute("INSERT INTO " + tableName + " VALUES " + """
+                (1, rnd_bin(2, 4, 0), '2024-01-01T00:00:00.000000Z'),
+                (2, NULL, '2024-01-01T12:00:00.000000Z'),
+                (3, rnd_bin(2, 4, 0), '2024-01-02T00:00:00.000000Z'),
+                (4, rnd_bin(2, 4, 0), '2024-01-03T00:00:00.000000Z')
+                """, executionContext);
+        TestUtils.drainWalQueue(engine);
+    }
+
+    /**
+     * Creates the tables and views that the tests of exports of a retyped column read: r, whose first day goes to
+     * Parquet before x turns from INT to LONG, so that the Parquet partition holds x in its old type and a read
+     * converts it lazily; nr, which holds the same rows and turns x to LONG while every partition is native, so that
+     * the table converts x eagerly and reads it as any LONG column; the views vr, vrf, vrl and vrv over r; and k, which
+     * holds the symbols of s. The WAL mode is as in createTableToRetype(). dropRetypedTables() drops them all.
+     */
+    public static void createRetypedTables(CairoEngine engine, SqlExecutionContext executionContext, String walMode) throws SqlException {
+        createTableToRetype(engine, executionContext, "r", walMode);
+        createTableToRetype(engine, executionContext, "nr", walMode);
+        retypeColumnX(engine, executionContext, "r", true);
+        retypeColumnX(engine, executionContext, "nr", false);
+        engine.execute("CREATE TABLE k (s SYMBOL)", executionContext);
+        engine.execute("INSERT INTO k VALUES ('a'), ('b')", executionContext);
+        engine.execute("CREATE VIEW vr AS (SELECT * FROM r)", executionContext);
+        engine.execute("CREATE VIEW vrf AS (SELECT * FROM r WHERE x > 1)", executionContext);
+        engine.execute("CREATE VIEW vrl AS (SELECT * FROM r LATEST ON ts PARTITION BY s)", executionContext);
+        drainWalAndViewQueues(engine);
+        engine.execute("CREATE VIEW vrv AS (SELECT * FROM vr)", executionContext);
+        drainWalAndViewQueues(engine);
+    }
+
+    /**
+     * Creates the table, partitioned by day, with the columns s SYMBOL INDEX, s2 SYMBOL, x INT, other_ts TIMESTAMP and
+     * the designated timestamp ts, and inserts RETYPED_TABLE_ROWS. The WAL mode follows PARTITION BY DAY: WAL, BYPASS
+     * WAL, or empty for the engine's default.
+     */
+    public static void createTableToRetype(
+            CairoEngine engine,
+            SqlExecutionContext executionContext,
+            String tableName,
+            String walMode
+    ) throws SqlException {
+        engine.execute("CREATE TABLE " + tableName + " (s SYMBOL INDEX, s2 SYMBOL, x INT, other_ts TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY " + walMode, executionContext);
+        engine.execute("INSERT INTO " + tableName + " VALUES " + RETYPED_TABLE_ROWS, executionContext);
+        TestUtils.drainWalQueue(engine);
     }
 
     /**
@@ -335,6 +463,37 @@ public final class ParquetTestUtils {
                 )""", executionContext);
     }
 
+    // Drops the tables and views that createRetypedTables() creates.
+    public static void dropRetypedTables(CairoEngine engine, SqlExecutionContext executionContext) throws SqlException {
+        engine.execute("DROP VIEW vrv", executionContext);
+        engine.execute("DROP VIEW vr", executionContext);
+        engine.execute("DROP VIEW vrf", executionContext);
+        engine.execute("DROP VIEW vrl", executionContext);
+        engine.execute("DROP TABLE k", executionContext);
+        engine.execute("DROP TABLE r", executionContext);
+        engine.execute("DROP TABLE nr", executionContext);
+        drainWalAndViewQueues(engine);
+    }
+
+    /**
+     * Turns the INT column x of the table into LONG. With isFirstDayParquet the day 2024-01-01 goes to Parquet first,
+     * so that the Parquet partition holds x in its old type and a read converts it lazily; without, every partition is
+     * native and the table converts x eagerly.
+     */
+    public static void retypeColumnX(
+            CairoEngine engine,
+            SqlExecutionContext executionContext,
+            String tableName,
+            boolean isFirstDayParquet
+    ) throws SqlException {
+        if (isFirstDayParquet) {
+            engine.execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET LIST '2024-01-01'", executionContext);
+            TestUtils.drainWalQueue(engine);
+        }
+        engine.execute("ALTER TABLE " + tableName + " ALTER COLUMN x TYPE LONG", executionContext);
+        TestUtils.drainWalQueue(engine);
+    }
+
     private static void assertEncoding(String parquetFilePath, FilesFacade ff, int encodingId, boolean expectPresent, int... columnIndexes) {
         withDecoder(parquetFilePath, ff, decoder -> {
             final int rowGroupCount = decoder.metadata().getRowGroupCount();
@@ -357,6 +516,14 @@ public final class ParquetTestUtils {
                 }
             }
         });
+    }
+
+    // applies the WAL of the tables and runs the view compiles that their DDL queued, as the server's jobs do
+    private static void drainWalAndViewQueues(CairoEngine engine) {
+        TestUtils.drainWalQueue(engine);
+        try (ViewCompilerJob viewCompilerJob = new ViewCompilerJob(0, engine)) {
+            viewCompilerJob.drain(0);
+        }
     }
 
     private static void withDecoder(String parquetFilePath, FilesFacade ff, Consumer<ParquetFileDecoder> body) {

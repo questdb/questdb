@@ -60,8 +60,6 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.Assert.assertEquals;
 
 public class ViewCompilerJobTest extends AbstractViewTest {
-    // DROP, RENAME or TRUNCATE of t logs this line when it waits for a view compile run
-    private static final String DDL_WAIT_LINE = ViewCompileParker.ddlWaitLine("t");
     private static final String PIVOT_RACE_SQL = """
             SELECT * FROM data
             PIVOT (
@@ -435,16 +433,9 @@ public class ViewCompilerJobTest extends AbstractViewTest {
             createView("v", "SELECT * FROM t");
 
             final LogCapture capture = new LogCapture();
-            capture.start();
-            final ViewCompileParker pass = ViewCompileParker.ofStartupPass(engine, "t", PoolListener.SRC_READER);
-            engine.setPoolListener(pass);
             try {
-                pass.start();
-                pass.releaseAfterLogged(capture, DDL_WAIT_LINE, null);
-                execute("DROP TABLE t");
+                ViewCompileParker.ofStartupPass(engine, "t", PoolListener.SRC_READER).executeWhileHolding(capture, "t", () -> execute("DROP TABLE t"), null);
             } finally {
-                pass.join();
-                engine.setPoolListener(null);
                 capture.stop();
             }
             assertTableAbsent("t");
@@ -585,17 +576,6 @@ public class ViewCompilerJobTest extends AbstractViewTest {
         execute("INSERT INTO t VALUES (1), (2)");
         Assert.assertFalse(engine.verifyTableName("t").isWal());
         execute("CREATE VIEW v AS (SELECT * FROM t)");
-        // a wait line of an earlier DDL would release the run before this DDL waits
-        capture.start();
-        final ViewCompileParker run = ViewCompileParker.ofQueueDrain(engine, "t", PoolListener.SRC_READER);
-        engine.setPoolListener(run);
-        try {
-            run.start();
-            run.releaseAfterLogged(capture, DDL_WAIT_LINE, null);
-            execute(ddl);
-        } finally {
-            run.join();
-            engine.setPoolListener(null);
-        }
+        ViewCompileParker.ofQueueDrain(engine, "t", PoolListener.SRC_READER).executeWhileHolding(capture, "t", () -> execute(ddl), null);
     }
 }

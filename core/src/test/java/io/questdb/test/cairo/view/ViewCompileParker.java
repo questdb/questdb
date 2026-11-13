@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.view.ViewCompilerJob;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
@@ -54,6 +55,7 @@ public class ViewCompileParker implements PoolListener {
     public static final String DDL_WAIT_LINE_PREFIX = "waiting for view compilation to release table [table=";
     private static final long HOLDING_TIMEOUT_SECONDS = 30;
     private final Thread compileThread;
+    private final CairoEngine engine;
     private final AtomicReference<Throwable> error = new AtomicReference<>();
     private final CountDownLatch holding = new CountDownLatch(1);
     private final AtomicBoolean isJoining = new AtomicBoolean();
@@ -62,7 +64,8 @@ public class ViewCompileParker implements PoolListener {
     private final String tableName;
     private Thread helperThread;
 
-    private ViewCompileParker(String tableName, byte poolSource, Runnable compileRun) {
+    private ViewCompileParker(CairoEngine engine, String tableName, byte poolSource, Runnable compileRun) {
+        this.engine = engine;
         this.tableName = tableName;
         this.poolSource = poolSource;
         this.compileThread = new Thread(() -> {
@@ -82,10 +85,57 @@ public class ViewCompileParker implements PoolListener {
     }
 
     /**
+     * Another session drops the table and, when asked, creates a new table (a INT) under its name that holds the
+     * row 42.
+     */
+    public static void dropTableAsAnotherSession(CairoEngine engine, String tableName, boolean isRecreated) throws SqlException {
+        try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+            engine.execute("DROP TABLE " + tableName, executionContext);
+            if (isRecreated) {
+                engine.execute("CREATE TABLE " + tableName + " (a INT)", executionContext);
+                engine.execute("INSERT INTO " + tableName + " VALUES (42)", executionContext);
+            }
+        }
+    }
+
+    /**
+     * Creates the table t (a INT) with the rows 1 and 2 and runs the DDL of t while a query holds t's reader and a
+     * view compile run holds t2's reader, so that the DDL fails on the query and waits for the run. The run compiles
+     * the views over t2, which the method queues by adding the column c{addedColumnIndex} to t2: the caller has
+     * created t2 and a view over it, and passes an index that names no column of t2. Once the DDL logs its wait, the
+     * query ends, the action runs and the run ends.
+     */
+    public static void executeWhileQueryAndViewCompileHold(
+            CairoEngine engine,
+            SqlExecutionContext executionContext,
+            LogCapture capture,
+            int addedColumnIndex,
+            TestUtils.LeakProneCode ddl,
+            @Nullable TestUtils.CheckedRunnable onWait
+    ) throws Exception {
+        engine.execute("CREATE TABLE t (a INT)", executionContext);
+        engine.execute("INSERT INTO t VALUES (1), (2)", executionContext);
+        // only a DDL of a non-WAL table waits for view compile runs
+        Assert.assertFalse(engine.verifyTableName("t").isWal());
+        engine.execute("ALTER TABLE t2 ADD COLUMN c" + addedColumnIndex + " INT", executionContext);
+        final ReaderHoldingThread query = ReaderHoldingThread.start(engine, "t");
+        try {
+            ofQueueDrain(engine, "t2", PoolListener.SRC_READER).executeWhileHolding(capture, "t", ddl, () -> {
+                query.close();
+                if (onWait != null) {
+                    onWait.run();
+                }
+            });
+        } finally {
+            query.close();
+        }
+    }
+
+    /**
      * A run that drains the view compile queue, as a view-compiler worker does.
      */
     public static ViewCompileParker ofQueueDrain(CairoEngine engine, String tableName, byte poolSource) {
-        return new ViewCompileParker(tableName, poolSource, () -> {
+        return new ViewCompileParker(engine, tableName, poolSource, () -> {
             try (ViewCompilerJob job = new ViewCompilerJob(0, engine)) {
                 job.run();
             }
@@ -96,7 +146,7 @@ public class ViewCompileParker implements PoolListener {
      * The run that compiles every view at server startup.
      */
     public static ViewCompileParker ofStartupPass(CairoEngine engine, String tableName, byte poolSource) {
-        return new ViewCompileParker(tableName, poolSource, () -> {
+        return new ViewCompileParker(engine, tableName, poolSource, () -> {
             try (SqlExecutionContext executionContext = engine.createViewCompilerContext(0)) {
                 ViewCompilerJob.compileAllViews(engine, executionContext, new ObjList<>());
             }
@@ -130,6 +180,35 @@ public class ViewCompileParker implements PoolListener {
         final Throwable th = drainError.get();
         if (th != null) {
             throw new AssertionError("view compile drain failed", th);
+        }
+    }
+
+    /**
+     * Starts the run, runs the DDL while the run holds its table, and joins the run. Once the capture holds the line
+     * that the DDL logs when it waits for the run, the action runs and the run ends. The method starts the capture
+     * anew first, so that the wait line of an earlier DDL cannot end the run before this DDL waits. While it runs, the
+     * engine passes its pool events to the run and then to the listener set before the call, which the method sets
+     * back when it returns.
+     */
+    public void executeWhileHolding(
+            LogCapture capture,
+            String ddlTableName,
+            TestUtils.LeakProneCode ddl,
+            @Nullable TestUtils.CheckedRunnable onWait
+    ) throws Exception {
+        capture.start();
+        final PoolListener listener = engine.getPoolListener();
+        engine.setPoolListener(listener == null ? this : (factoryType, thread, tableToken, event, segment, position) -> {
+            onEvent(factoryType, thread, tableToken, event, segment, position);
+            listener.onEvent(factoryType, thread, tableToken, event, segment, position);
+        });
+        try {
+            start();
+            releaseAfterLogged(capture, ddlWaitLine(ddlTableName), onWait);
+            ddl.run();
+        } finally {
+            join();
+            engine.setPoolListener(listener);
         }
     }
 
@@ -173,26 +252,6 @@ public class ViewCompileParker implements PoolListener {
     }
 
     /**
-     * Starts a helper thread that waits until the capture holds the line, runs the action and
-     * then releases the run.
-     */
-    public void releaseAfterLogged(LogCapture capture, String line, @Nullable TestUtils.CheckedRunnable action) {
-        helperThread = new Thread(() -> {
-            try {
-                if (awaitLogged(capture, line) && action != null) {
-                    action.run();
-                }
-            } catch (Throwable th) {
-                error.compareAndSet(null, th);
-            } finally {
-                release.countDown();
-                Path.clearThreadLocals();
-            }
-        }, "view-compile-releaser");
-        helperThread.start();
-    }
-
-    /**
      * Starts the run and waits until it holds the table.
      */
     public void start() throws InterruptedException {
@@ -214,5 +273,25 @@ public class ViewCompileParker implements PoolListener {
                 }
             }
         }
+    }
+
+    /**
+     * Starts a helper thread that waits until the capture holds the line, runs the action and
+     * then releases the run.
+     */
+    private void releaseAfterLogged(LogCapture capture, String line, @Nullable TestUtils.CheckedRunnable action) {
+        helperThread = new Thread(() -> {
+            try {
+                if (awaitLogged(capture, line) && action != null) {
+                    action.run();
+                }
+            } catch (Throwable th) {
+                error.compareAndSet(null, th);
+            } finally {
+                release.countDown();
+                Path.clearThreadLocals();
+            }
+        }, "view-compile-releaser");
+        helperThread.start();
     }
 }

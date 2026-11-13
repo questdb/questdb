@@ -34,6 +34,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.StaleViewCheckFactory;
 import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.ParquetTestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -51,19 +52,6 @@ public class HasTableScanTimestampTest extends AbstractCairoTest {
     private static final int BACKWARD = RecordCursorFactory.SCAN_DIRECTION_BACKWARD;
     private static final int FORWARD = RecordCursorFactory.SCAN_DIRECTION_FORWARD;
     private static final int OTHER = RecordCursorFactory.SCAN_DIRECTION_OTHER;
-    // The rows of t and r: two symbols alternate inside each of three days, and other_ts holds NULL in two rows.
-    private static final String ROWS = """
-            ('a', 'p', 1, '2023-06-05T00:00:00.000000Z', '2024-01-01T00:00:00.000000Z'),
-            ('b', 'q', 2, NULL, '2024-01-01T01:00:00.000000Z'),
-            ('a', 'q', 3, '2023-06-03T00:00:00.000000Z', '2024-01-01T02:00:00.000000Z'),
-            ('b', 'p', 4, '2023-06-02T00:00:00.000000Z', '2024-01-01T03:00:00.000000Z'),
-            ('a', 'p', 5, '2023-06-09T00:00:00.000000Z', '2024-01-02T00:00:00.000000Z'),
-            ('b', 'q', 6, NULL, '2024-01-02T01:00:00.000000Z'),
-            ('a', 'q', 7, '2023-06-07T00:00:00.000000Z', '2024-01-02T02:00:00.000000Z'),
-            ('b', 'p', 8, '2023-06-06T00:00:00.000000Z', '2024-01-02T03:00:00.000000Z'),
-            ('a', 'p', 9, '2023-06-10T00:00:00.000000Z', '2024-01-03T00:00:00.000000Z'),
-            ('b', 'q', 10, '2023-06-11T00:00:00.000000Z', '2024-01-03T01:00:00.000000Z')
-            """;
     private final StringBuilder failures = new StringBuilder();
 
     @Override
@@ -326,16 +314,9 @@ public class HasTableScanTimestampTest extends AbstractCairoTest {
     }
 
     private static void createTables() throws Exception {
-        execute("CREATE TABLE t (s SYMBOL INDEX, s2 SYMBOL, x INT, other_ts TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-        execute("INSERT INTO t VALUES " + ROWS);
-        // r holds the rows of t; its first day goes to Parquet before x turns from INT to LONG
-        execute("CREATE TABLE r (s SYMBOL INDEX, s2 SYMBOL, x INT, other_ts TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-        execute("INSERT INTO r VALUES " + ROWS);
-        drainWalQueue();
-        execute("ALTER TABLE r CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
-        drainWalQueue();
-        execute("ALTER TABLE r ALTER COLUMN x TYPE LONG");
-        drainWalQueue();
+        // t holds the rows of r, and its x stays INT
+        ParquetTestUtils.createTableToRetype(engine, sqlExecutionContext, "t", "BYPASS WAL");
+        ParquetTestUtils.createRetypedTables(engine, sqlExecutionContext, "WAL");
         // rc covers x and other_ts in its posting index on s, and retypes y over its Parquet partition
         execute("CREATE TABLE rc (s SYMBOL INDEX TYPE POSTING INCLUDE (x, other_ts), x INT, other_ts TIMESTAMP, y INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
         execute("INSERT INTO rc SELECT s, x, other_ts, x, ts FROM t");
@@ -344,19 +325,11 @@ public class HasTableScanTimestampTest extends AbstractCairoTest {
         drainWalQueue();
         execute("ALTER TABLE rc ALTER COLUMN y TYPE LONG");
         drainWalQueue();
-        execute("CREATE TABLE k (s SYMBOL)");
-        execute("INSERT INTO k VALUES ('a'), ('b')");
         execute("CREATE TABLE flags (b BOOLEAN)");
         execute("INSERT INTO flags VALUES (true)");
         execute("CREATE TABLE d (s SYMBOL, y INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
         execute("INSERT INTO d VALUES ('a', 100, '2024-01-01T00:30:00.000000Z'), ('b', 200, '2024-01-01T01:30:00.000000Z')");
-        execute("CREATE VIEW vr AS (SELECT * FROM r)");
-        execute("CREATE VIEW vrf AS (SELECT * FROM r WHERE x > 1)");
-        execute("CREATE VIEW vrl AS (SELECT * FROM r LATEST ON ts PARTITION BY s)");
         execute("CREATE MATERIALIZED VIEW mv AS (SELECT ts, s, sum(x) sx FROM r SAMPLE BY 1d)");
-        drainWalAndViewQueues();
-        execute("CREATE VIEW vrv AS (SELECT * FROM vr)");
-        drainWalAndViewQueues();
         drainWalAndMatViewQueues();
         encodeTable("t", "ht.parquet");
     }

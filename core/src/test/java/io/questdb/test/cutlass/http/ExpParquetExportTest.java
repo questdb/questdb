@@ -1380,15 +1380,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                         ParquetTestUtils.awaitExportStreamedRows(engine);
                     }
                     client.disconnect();
-                    for (int i = 0; i < 100; i++) {
-                        if (engine.getCopyExportContext().getActiveExportId() == -1) {
-                            break;
-                        }
-                        if (i == 99) {
-                            Assert.fail("Failed to cancel export");
-                        }
-                        Os.sleep(100);
-                    }
+                    ParquetTestUtils.awaitExportsDrained(engine);
 
                     final String query = "SELECT h.sym, h.k, h.v FROM hsym h CROSS JOIN long_sequence(1)";
                     try (
@@ -1833,15 +1825,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                         ParquetTestUtils.awaitExportStreamedRows(engine);
                     }
                     client.disconnect();
-                    for (int i = 0; i < 100; i++) {
-                        if (engine.getCopyExportContext().getActiveExportId() == -1) {
-                            break;
-                        }
-                        if (i == 99) {
-                            Assert.fail("Failed to cancel export");
-                        }
-                        Os.sleep(100);
-                    }
+                    ParquetTestUtils.awaitExportsDrained(engine);
 
                     try (
                             TestHttpClient httpClient = new TestHttpClient();
@@ -3197,44 +3181,14 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     }
 
     /**
-     * Creates r, whose first day goes to Parquet before x turns from INT to LONG, so that the Parquet partition holds x
-     * in its old type; nr, which holds the same rows and turns x to LONG while every partition is native; the view vr
-     * over r; tb, whose b is BINARY; and rb, whose x turns from INT to LONG over a Parquet partition, next to a BINARY
-     * column.
+     * Creates the tables and views of ParquetTestUtils.createRetypedTables(); tb, whose b is BINARY; and rb, whose x
+     * turns from INT to LONG over a Parquet partition, next to a BINARY column.
      */
     private static void createRetypedTables(CairoEngine engine, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        for (String tableName : new String[]{"r", "nr"}) {
-            engine.execute("CREATE TABLE " + tableName + " (s SYMBOL INDEX, s2 SYMBOL, x INT, other_ts TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", sqlExecutionContext);
-            engine.execute("""
-                    INSERT INTO %s VALUES
-                        ('a', 'p', 1, '2023-06-05T00:00:00.000000Z', '2024-01-01T00:00:00.000000Z'),
-                        ('b', 'q', 2, NULL, '2024-01-01T01:00:00.000000Z'),
-                        ('a', 'q', 3, '2023-06-03T00:00:00.000000Z', '2024-01-01T02:00:00.000000Z'),
-                        ('b', 'p', 4, '2023-06-02T00:00:00.000000Z', '2024-01-01T03:00:00.000000Z'),
-                        ('a', 'p', 5, '2023-06-09T00:00:00.000000Z', '2024-01-02T00:00:00.000000Z'),
-                        ('b', 'q', 6, NULL, '2024-01-02T01:00:00.000000Z'),
-                        ('a', 'q', 7, '2023-06-07T00:00:00.000000Z', '2024-01-02T02:00:00.000000Z'),
-                        ('b', 'p', 8, '2023-06-06T00:00:00.000000Z', '2024-01-02T03:00:00.000000Z'),
-                        ('a', 'p', 9, '2023-06-10T00:00:00.000000Z', '2024-01-03T00:00:00.000000Z'),
-                        ('b', 'q', 10, '2023-06-11T00:00:00.000000Z', '2024-01-03T01:00:00.000000Z')
-                    """.formatted(tableName), sqlExecutionContext);
-        }
-        engine.execute("ALTER TABLE r CONVERT PARTITION TO PARQUET LIST '2024-01-01'", sqlExecutionContext);
-        engine.execute("ALTER TABLE r ALTER COLUMN x TYPE LONG", sqlExecutionContext);
-        engine.execute("ALTER TABLE nr ALTER COLUMN x TYPE LONG", sqlExecutionContext);
-        engine.execute("CREATE VIEW vr AS (SELECT * FROM r)", sqlExecutionContext);
-        for (String tableName : new String[]{"tb", "rb"}) {
-            engine.execute("CREATE TABLE " + tableName + " (x INT, b BINARY, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", sqlExecutionContext);
-            engine.execute("""
-                    INSERT INTO %s VALUES
-                        (1, rnd_bin(2, 4, 0), '2024-01-01T00:00:00.000000Z'),
-                        (2, NULL, '2024-01-01T12:00:00.000000Z'),
-                        (3, rnd_bin(2, 4, 0), '2024-01-02T00:00:00.000000Z'),
-                        (4, rnd_bin(2, 4, 0), '2024-01-03T00:00:00.000000Z')
-                    """.formatted(tableName), sqlExecutionContext);
-        }
-        engine.execute("ALTER TABLE rb CONVERT PARTITION TO PARQUET LIST '2024-01-01'", sqlExecutionContext);
-        engine.execute("ALTER TABLE rb ALTER COLUMN x TYPE LONG", sqlExecutionContext);
+        ParquetTestUtils.createRetypedTables(engine, sqlExecutionContext, "");
+        ParquetTestUtils.createBinaryTableToRetype(engine, sqlExecutionContext, "tb", "");
+        ParquetTestUtils.createBinaryTableToRetype(engine, sqlExecutionContext, "rb", "");
+        ParquetTestUtils.retypeColumnX(engine, sqlExecutionContext, "rb", true);
     }
 
     // hsym's sym holds 36 symbols and NULL in every 5th row; hdim's symbol map holds two of them and one other.

@@ -724,19 +724,17 @@ public class ImportIODispatcherTest extends AbstractTest {
                     engine.execute("ALTER TABLE trips ADD COLUMN b INT", sqlExecutionContext);
 
                     final LogCapture capture = new LogCapture();
-                    capture.start();
-                    final ViewCompileParker run = ViewCompileParker.ofQueueDrain(engine, "trips", PoolListener.SRC_READER);
-                    engine.setPoolListener(run);
                     try {
-                        run.start();
-                        run.releaseAfterLogged(capture, ViewCompileParker.ddlWaitLine("trips"), null);
-                        new SendAndReceiveRequestBuilder().execute(
-                                ValidImportRequest1.replace("POST /upload?name=trips HTTP", "POST /upload?name=trips&overwrite=true HTTP"),
-                                ValidImportResponse1
+                        ViewCompileParker.ofQueueDrain(engine, "trips", PoolListener.SRC_READER).executeWhileHolding(
+                                capture,
+                                "trips",
+                                () -> new SendAndReceiveRequestBuilder().execute(
+                                        ValidImportRequest1.replace("POST /upload?name=trips HTTP", "POST /upload?name=trips&overwrite=true HTTP"),
+                                        ValidImportResponse1
+                                ),
+                                null
                         );
                     } finally {
-                        run.join();
-                        engine.setPoolListener(null);
                         capture.stop();
                     }
                     assertQuery("select count() from trips")

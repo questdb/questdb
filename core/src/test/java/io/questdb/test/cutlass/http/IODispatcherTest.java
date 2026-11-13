@@ -136,7 +136,6 @@ import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestRecord;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
-import io.questdb.test.cairo.view.ReaderHoldingThread;
 import io.questdb.test.cairo.view.ViewCompileParker;
 import io.questdb.test.cutlass.NetUtils;
 import io.questdb.test.mp.TestWorkerPool;
@@ -7906,9 +7905,10 @@ public class IODispatcherTest extends AbstractTest {
         }
     }
 
-    // A query holds t's reader and a view compile run holds t2's reader, so the DDL of t waits for
-    // the run. Once the DDL logs that it waits, the query ends, another session drops t and, when
-    // asked, creates a new t with row 42, and the run ends.
+    // Creates t with the rows 1 and 2 and runs the DDL of t while a query holds t's reader and a
+    // view compile run holds t2's reader, so that the DDL waits for the run. Once the DDL logs that
+    // it waits, the query ends, another session drops t and, when asked, creates a new t with row
+    // 42, and the run ends.
     private static void assertExecDdlAfterTableChangedDuringViewCompileWait(
             CairoEngine engine,
             SqlExecutionContext sqlExecutionContext,
@@ -7919,33 +7919,14 @@ public class IODispatcherTest extends AbstractTest {
             String expectedStatus,
             String expectedResponseRegex
     ) throws Exception {
-        engine.execute("CREATE TABLE t (a INT)", sqlExecutionContext);
-        engine.execute("INSERT INTO t VALUES (1), (2)", sqlExecutionContext);
-        // queues the compile of v2
-        engine.execute("ALTER TABLE t2 ADD COLUMN c" + scenario + " INT", sqlExecutionContext);
-        final ReaderHoldingThread query = ReaderHoldingThread.start(engine, "t");
-        // a wait line of an earlier statement would release the run before this one waits
-        capture.start();
-        final ViewCompileParker run = ViewCompileParker.ofQueueDrain(engine, "t2", PoolListener.SRC_READER);
-        engine.setPoolListener(run);
-        try {
-            run.start();
-            run.releaseAfterLogged(capture, ViewCompileParker.ddlWaitLine("t"), () -> {
-                query.close();
-                try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
-                    engine.execute("DROP TABLE t", executionContext);
-                    if (isRecreated) {
-                        engine.execute("CREATE TABLE t (a INT)", executionContext);
-                        engine.execute("INSERT INTO t VALUES (42)", executionContext);
-                    }
-                }
-            });
-            testHttpClient.assertGetRegexp("/exec", expectedResponseRegex, ddl, null, null, null, null, expectedStatus);
-        } finally {
-            run.join();
-            engine.setPoolListener(null);
-            query.close();
-        }
+        ViewCompileParker.executeWhileQueryAndViewCompileHold(
+                engine,
+                sqlExecutionContext,
+                capture,
+                scenario,
+                () -> testHttpClient.assertGetRegexp("/exec", expectedResponseRegex, ddl, null, null, null, null, expectedStatus),
+                () -> ViewCompileParker.dropTableAsAnotherSession(engine, "t", isRecreated)
+        );
     }
 
     private static HttpServer createHttpServer(ServerConfiguration serverConfiguration, CairoEngine cairoEngine, WorkerPool workerPool) {
@@ -7985,18 +7966,12 @@ public class IODispatcherTest extends AbstractTest {
     // Runs the DDL over /exec while the view compile run that an ALTER of t queued holds t's
     // reader. The run ends once the DDL logs that it waits for it.
     private static void executeWhileViewCompileHolds(CairoEngine engine, LogCapture capture, String ddl) throws Exception {
-        // a wait line of an earlier statement would release the run before this one waits
-        capture.start();
-        final ViewCompileParker run = ViewCompileParker.ofQueueDrain(engine, "t", PoolListener.SRC_READER);
-        engine.setPoolListener(run);
-        try {
-            run.start();
-            run.releaseAfterLogged(capture, ViewCompileParker.ddlWaitLine("t"), null);
-            testHttpClient.assertGet("/exec", "{\"ddl\":\"OK\"}", ddl);
-        } finally {
-            run.join();
-            engine.setPoolListener(null);
-        }
+        ViewCompileParker.ofQueueDrain(engine, "t", PoolListener.SRC_READER).executeWhileHolding(
+                capture,
+                "t",
+                () -> testHttpClient.assertGet("/exec", "{\"ddl\":\"OK\"}", ddl),
+                null
+        );
     }
 
     private static String rangeRequest(String range, String ifRange) {

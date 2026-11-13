@@ -80,7 +80,6 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.cairo.view.ReaderHoldingThread;
 import io.questdb.test.cairo.view.ViewCompileParker;
 import io.questdb.test.cutlass.NetUtils;
 import io.questdb.test.mp.TestWorkerPool;
@@ -3889,13 +3888,14 @@ if __name__ == "__main__":
                 // the server takes the lock of t's readers after the client is gone, and a compile
                 // of the view over t, queued at that moment, meets the lock
                 final ViewCompileInsideLockOfT compileInsideLock = new ViewCompileInsideLockOfT(true);
+                engine.setPoolListener(compileInsideLock);
                 try {
                     try (
                             Connection disconnecting = getConnection(mode, port, binary);
                             PreparedStatement truncate = disconnecting.prepareStatement("TRUNCATE TABLE t")
                     ) {
                         try {
-                            executeWhileViewCompileHolds(capture, truncate, () -> disconnecting.abort(Runnable::run), compileInsideLock);
+                            executeWhileViewCompileHolds(capture, truncate, () -> disconnecting.abort(Runnable::run));
                             Assert.fail("expected the disconnect to fail the statement");
                         } catch (SQLException e) {
                             TestUtils.assertContains(e.getMessage(), "An I/O error occurred while sending to the backend");
@@ -13285,39 +13285,15 @@ create table tab as (
     }
 
     // Runs the statement while the view compile run that an ALTER of t queued holds t's reader.
-    // Once the statement logs that it waits for the run, the action runs and the run ends.
+    // Once the statement logs that it waits for the run, the action runs and the run ends. The
+    // listener set before the call gets the pool events too, and stays set when the method returns,
+    // since the server may take the lock of t after the client is gone: the caller removes it.
     private static void executeWhileViewCompileHolds(
             LogCapture capture,
             PreparedStatement ddl,
             @Nullable TestUtils.CheckedRunnable onWait
     ) throws Exception {
-        executeWhileViewCompileHolds(capture, ddl, onWait, null);
-    }
-
-    // As above, and the engine passes its pool events to the lock listener too. The lock listener
-    // stays set when the method returns, since the server may take the lock of t after the client
-    // is gone: the caller removes it.
-    private static void executeWhileViewCompileHolds(
-            LogCapture capture,
-            PreparedStatement ddl,
-            @Nullable TestUtils.CheckedRunnable onWait,
-            @Nullable PoolListener lockListener
-    ) throws Exception {
-        // a wait line of an earlier statement would release the run before this one waits
-        capture.start();
-        final ViewCompileParker run = ViewCompileParker.ofQueueDrain(engine, "t", PoolListener.SRC_READER);
-        engine.setPoolListener(lockListener == null ? run : (factoryType, thread, tableToken, event, segment, position) -> {
-            run.onEvent(factoryType, thread, tableToken, event, segment, position);
-            lockListener.onEvent(factoryType, thread, tableToken, event, segment, position);
-        });
-        try {
-            run.start();
-            run.releaseAfterLogged(capture, ViewCompileParker.ddlWaitLine("t"), onWait);
-            ddl.execute();
-        } finally {
-            run.join();
-            engine.setPoolListener(lockListener);
-        }
+        ViewCompileParker.ofQueueDrain(engine, "t", PoolListener.SRC_READER).executeWhileHolding(capture, "t", ddl::execute, onWait);
     }
 
     // Executes the statement while a view compile meets the lock of t's readers that the
@@ -13358,9 +13334,10 @@ create table tab as (
         return count;
     }
 
-    // A query holds t's reader and a view compile run holds t2's reader, so the DDL of t waits for
-    // the run. Once the DDL logs that it waits, the query ends, another session drops t and, when
-    // asked, creates a new t, and the run ends.
+    // Creates t with the rows 1 and 2 and runs the DDL of t while a query holds t's reader and a
+    // view compile run holds t2's reader, so that the DDL waits for the run. Once the DDL logs that
+    // it waits, the query ends, another session drops t and, when asked, creates a new t, and the
+    // run ends.
     private void assertDdlAfterTableChangedDuringViewCompileWait(
             Connection connection,
             LogCapture capture,
@@ -13368,41 +13345,17 @@ create table tab as (
             boolean isRecreated,
             @Nullable String expectedError
     ) throws Exception {
-        try (Statement statement = connection.createStatement()) {
-            statement.execute("CREATE TABLE t (a INT)");
-            statement.execute("INSERT INTO t VALUES (1), (2)");
-            // queues the compile of v2
-            statement.execute("ALTER TABLE t2 ADD COLUMN c" + addedColumnCount++ + " INT");
-        }
-        final ReaderHoldingThread query = ReaderHoldingThread.start(engine, "t");
-        // a wait line of an earlier statement would release the run before this one waits
-        capture.start();
-        final ViewCompileParker run = ViewCompileParker.ofQueueDrain(engine, "t2", PoolListener.SRC_READER);
-        engine.setPoolListener(run);
-        try (PreparedStatement statement = connection.prepareStatement(ddl)) {
-            run.start();
-            run.releaseAfterLogged(capture, ViewCompileParker.ddlWaitLine("t"), () -> {
-                query.close();
-                try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
-                    engine.execute("DROP TABLE t", executionContext);
-                    if (isRecreated) {
-                        engine.execute("CREATE TABLE t (a INT)", executionContext);
-                        engine.execute("INSERT INTO t VALUES (42)", executionContext);
-                    }
+        ViewCompileParker.executeWhileQueryAndViewCompileHold(engine, sqlExecutionContext, capture, addedColumnCount++, () -> {
+            try (PreparedStatement statement = connection.prepareStatement(ddl)) {
+                try {
+                    statement.execute();
+                    Assert.assertNull("expected to fail: " + ddl, expectedError);
+                } catch (SQLException e) {
+                    Assert.assertNotNull("unexpected failure of " + ddl + ": " + e.getMessage(), expectedError);
+                    TestUtils.assertContains(e.getMessage(), expectedError);
                 }
-            });
-            try {
-                statement.execute();
-                Assert.assertNull("expected to fail: " + ddl, expectedError);
-            } catch (SQLException e) {
-                Assert.assertNotNull("unexpected failure of " + ddl + ": " + e.getMessage(), expectedError);
-                TestUtils.assertContains(e.getMessage(), expectedError);
             }
-        } finally {
-            run.join();
-            engine.setPoolListener(null);
-            query.close();
-        }
+        }, () -> ViewCompileParker.dropTableAsAnotherSession(engine, "t", isRecreated));
         assertSql(connection, "SELECT table_name FROM tables() WHERE table_name = 'u'", "table_name[VARCHAR]\n");
         if (isRecreated) {
             assertSql(connection, "SELECT * FROM t", "a[INTEGER]\n42\n");
