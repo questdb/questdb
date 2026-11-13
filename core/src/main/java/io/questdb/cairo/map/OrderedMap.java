@@ -338,6 +338,15 @@ public class OrderedMap implements Map, Reopenable {
         }
     }
 
+    /**
+     * Exposes {@code OrderedMapFixedSizeRecord.keyHolderOpcode}, of a class private to this package, to
+     * TypeRelationGoldenTest, which checks it for every type.
+     */
+    @TestOnly
+    public static int keyHolderOpcodeForTesting(int columnType) {
+        return OrderedMapFixedSizeRecord.keyHolderOpcode(columnType);
+    }
+
     @Override
     public void clear() {
         kPos = heapAddr;

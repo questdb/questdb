@@ -33,6 +33,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -293,6 +294,40 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCastToLongByteBound() throws Exception {
+        assertMemoryLeak(() -> {
+            createEpoch();
+            // a BYTE bound reads at its own tier and has no NULL, so it prunes like a LONG bound
+            assertQuery("SELECT * FROM epoch WHERE timestamp::long > 100::byte")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Interval forward scan on: epoch")
+                    .withPlanNotContaining("filter:")
+                    .returns("""
+                            price\ttimestamp
+                            3.0\t1970-01-01T00:00:00.000150Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testCastToLongByteMinimumBound() throws Exception {
+        assertMemoryLeak(() -> {
+            createEpoch();
+            // BYTE has no NULL sentinel: its minimum is a value, not an empty bound
+            assertQuery("SELECT * FROM epoch WHERE timestamp::long > cast(-128 AS byte)")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Interval forward scan on: epoch")
+                    .withPlanNotContaining("filter:")
+                    .returns("""
+                            price\ttimestamp
+                            1.0\t1970-01-01T00:00:00.000050Z
+                            2.0\t1970-01-01T00:00:00.000100Z
+                            3.0\t1970-01-01T00:00:00.000150Z
+                            """);
+        });
+    }
+
+    @Test
     public void testCastToLongComparison() throws Exception {
         assertMemoryLeak(() -> {
             createTrades();
@@ -450,6 +485,42 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
                             30.0\t2022-03-01T00:00:00.000000Z
                             40.0\t2022-03-15T00:00:00.000000Z
                             """);
+        });
+    }
+
+    @Test
+    public void testDateAddRuntimeTextBound() throws Exception {
+        // a text bind variable bounds the chain as its getLong() reads it: NULL selects nothing,
+        // an integer string is the bound in microseconds. The bound falls between the two rows and
+        // the row filter alone, which reads the text in another unit, keeps both, so the result
+        // shows the interval the bound gives; the rows are master's
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-02T00:00:00.000000Z')");
+            final String query = "SELECT v, ts FROM t WHERE dateadd('h', 1, ts) > $1";
+            for (boolean isVarchar : new boolean[]{true, false}) {
+                bindVariableService.clear();
+                if (isVarchar) {
+                    bindVariableService.setVarchar(0, null);
+                } else {
+                    bindVariableService.setStr(0, null);
+                }
+                assertQuery(query)
+                        .timestamp("ts")
+                        .returns("v\tts\n");
+                bindVariableService.clear();
+                if (isVarchar) {
+                    bindVariableService.setVarchar(0, new Utf8String("1704110400000000")); // 2024-01-01T12:00:00Z
+                } else {
+                    bindVariableService.setStr(0, "1704110400000000");
+                }
+                assertQuery(query)
+                        .timestamp("ts")
+                        .returns("""
+                                v\tts
+                                2\t2024-01-02T00:00:00.000000Z
+                                """);
+            }
         });
     }
 
@@ -1788,6 +1859,18 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testYearConstantNullIntBoundIsEmpty() throws Exception {
+        assertMemoryLeak(() -> {
+            createYears();
+            // the INT NULL constant empties the scan at compile time: no interval, predicate dropped
+            assertQuery("SELECT * FROM y WHERE year(timestamp) > cast(null AS int)")
+                    .timestamp("timestamp")
+                    .withPlan("Empty table\n")
+                    .returns("price\ttimestamp\n");
+        });
+    }
+
+    @Test
     public void testYearDoubleBoundFallsBack() throws Exception {
         assertMemoryLeak(() -> {
             createYears();
@@ -1837,6 +1920,57 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
             } finally {
                 setCurrentMicros(-1);
             }
+        });
+    }
+
+    @Test
+    public void testYearRuntimeNullIntBoundIsEmpty() throws Exception {
+        assertMemoryLeak(() -> {
+            createYears();
+            bindVariableService.clear();
+            bindVariableService.setInt(0, Numbers.INT_NULL);
+            // the inverter resolves the NULL bound at scan open and imposes the empty interval;
+            // the residual filter alone would also reject every row, so the plan pins the interval
+            assertQuery("SELECT * FROM y WHERE year(timestamp) > $1")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Interval forward scan on: y", "intervals: []")
+                    .returns("price\ttimestamp\n");
+        });
+    }
+
+    @Test
+    public void testYearShortBound() throws Exception {
+        assertMemoryLeak(() -> {
+            createYears();
+            // a SHORT bound reads at its own tier and has no NULL, so it prunes like an INT bound
+            assertQuery("SELECT * FROM y WHERE year(timestamp) > 2022::short")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Interval forward scan on: y")
+                    .withPlanNotContaining("filter:")
+                    .returns("""
+                            price\ttimestamp
+                            3.0\t2023-06-01T00:00:00.000000Z
+                            4.0\t2024-06-01T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testYearShortMinimumBound() throws Exception {
+        assertMemoryLeak(() -> {
+            createYears();
+            // SHORT has no NULL sentinel: its minimum is a value, not an empty bound
+            assertQuery("SELECT * FROM y WHERE year(timestamp) > cast(-32768 AS short)")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Interval forward scan on: y")
+                    .withPlanNotContaining("filter:")
+                    .returns("""
+                            price\ttimestamp
+                            1.0\t2021-06-01T00:00:00.000000Z
+                            2.0\t2022-06-01T00:00:00.000000Z
+                            3.0\t2023-06-01T00:00:00.000000Z
+                            4.0\t2024-06-01T00:00:00.000000Z
+                            """);
         });
     }
 
@@ -1918,6 +2052,14 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
         }
         execute(insert.toString());
         return data;
+    }
+
+    private static void createEpoch() throws Exception {
+        execute("CREATE TABLE epoch (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
+        execute("INSERT INTO epoch VALUES " +
+                "(1, '1970-01-01T00:00:00.000050Z')," +
+                "(2, '1970-01-01T00:00:00.000100Z')," +
+                "(3, '1970-01-01T00:00:00.000150Z');");
     }
 
     private static void createTrades() throws Exception {

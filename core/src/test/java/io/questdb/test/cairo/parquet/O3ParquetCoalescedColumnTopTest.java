@@ -26,6 +26,7 @@ package io.questdb.test.cairo.parquet;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.NullPolicy;
 import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableReader;
@@ -686,8 +687,8 @@ public class O3ParquetCoalescedColumnTopTest extends AbstractCairoTest {
             final ParquetMetaFileReader meta = reader.getAndInitParquetPartitionDecoder(0).metadata();
             final int bIndex = meta.getColumnIndex("b");
             if (bIndex < 0
-                    || !ColumnType.isNoNullSentinelFixedType(meta.getColumnType(bIndex))
-                    || ColumnType.isNoNullSentinelFixedType(reader.getMetadata().getColumnType("b"))) {
+                    || ColumnType.getTypeDriver(meta.getColumnType(bIndex)).getNullPolicy() != NullPolicy.NONE
+                    || ColumnType.getTypeDriver(reader.getMetadata().getColumnType("b")).getNullPolicy() == NullPolicy.NONE) {
                 return false;
             }
             final int tsIndex = meta.getColumnIndex("ts");

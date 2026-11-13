@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.CursorPrinter;
+import io.questdb.cairo.NullPolicy;
 import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SqlJitMode;
@@ -2324,14 +2325,14 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                 for (String[] conversion : LAZY_TYPE_CONVERSIONS) {
                     // BOOLEAN, BYTE, SHORT and CHAR keep the column top; a type with a NULL sentinel starts
                     // at the first row of the first row group with data
-                    final long expectedTop = ColumnType.isNoNullSentinelFixedType(ColumnType.typeOf(conversion[2])) ? top : 4L * (top / 4);
+                    final long expectedTop = hasNoNullSentinel("pt", conversion[0]) ? top : 4L * (top / 4);
                     Assert.assertEquals(context + ", column " + conversion[0], expectedTop, getColumnTop("pt", 0, conversion[0]));
                 }
                 engine.releaseAllReaders();
                 assertSqlCursors("tw", "pt");
                 // a type with a NULL sentinel reads the column top of a BOOLEAN, BYTE, SHORT or CHAR column as NULL
                 for (String[] conversion : LAZY_TYPE_CONVERSIONS) {
-                    if (ColumnType.isNoNullSentinelFixedType(ColumnType.typeOf(conversion[2]))) {
+                    if (hasNoNullSentinel("pt", conversion[0])) {
                         for (String table : new String[]{"pt", "tw"}) {
                             execute("ALTER TABLE " + table + " ALTER COLUMN " + conversion[0] + " TYPE SYMBOL");
                         }
@@ -2608,6 +2609,13 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
         try (TableReader reader = getReader(tableName)) {
             final int columnIndex = reader.getMetadata().getWriterIndex(reader.getMetadata().getColumnIndex(columnName));
             return reader.getColumnVersionReader().getColumnTop(reader.getPartitionTimestampByIndex(partitionIndex), columnIndex);
+        }
+    }
+
+    private static boolean hasNoNullSentinel(String tableName, String columnName) {
+        try (TableReader reader = getReader(tableName)) {
+            final int columnType = reader.getMetadata().getColumnType(columnName);
+            return ColumnType.getTypeDriver(columnType).getNullPolicy() == NullPolicy.NONE;
         }
     }
 

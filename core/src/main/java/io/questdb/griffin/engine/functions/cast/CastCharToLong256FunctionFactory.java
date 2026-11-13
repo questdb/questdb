@@ -57,7 +57,7 @@ public class CastCharToLong256FunctionFactory implements FunctionFactory {
 
         @Override
         public void getLong256(Record rec, CharSink<?> sink) {
-            Numbers.appendLong256(arg.getChar(rec), 0, 0, 0, sink);
+            Numbers.appendLong256(arg.getLong(rec), 0, 0, 0, sink);
         }
 
         @Override

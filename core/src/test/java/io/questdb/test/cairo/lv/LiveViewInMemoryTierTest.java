@@ -1590,7 +1590,7 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
     public void testStringBinaryAuxRegionMatchesNativeLayout() throws Exception {
         // The buffer's STRING / BINARY aux vector is the drivers' own N+1 model: a leading
         // 0, then one 8-byte END offset per row. So it matches getAuxVectorSize entry for
-        // entry - and BinaryTypeDriver's with it, since it extends StringTypeDriver - which
+        // entry - and BinaryTypeDriver's with it, since both take that layout from one base - which
         // is what makes every column here driver-readable and lets a Phase 3 frame cursor
         // size a data page through getDataVectorSizeAt like it would anywhere else.
         //

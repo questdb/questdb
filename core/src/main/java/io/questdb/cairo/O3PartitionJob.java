@@ -4690,6 +4690,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             dedupColSinkAddr,
                             dedupColumnIndex,
                             columnType,
+                            metadata.getColumnNullPolicy(i),
                             columnSize,
                             columnTop
                     );
@@ -4940,12 +4941,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     private static boolean hasLegacyRequiredNoSentinelColumn(ParquetMetaFileReader meta, int parquetColumnCount) {
         for (int i = 0; i < parquetColumnCount; i++) {
             if (meta.getColumnMaxDefLevel(i) == 0) {
-                final int srcTag = ColumnType.tagOf(meta.getColumnType(i));
-                if (srcTag == ColumnType.BOOLEAN
-                        || srcTag == ColumnType.BYTE
-                        || srcTag == ColumnType.SHORT
-                        || srcTag == ColumnType.CHAR
-                        || srcTag == ColumnType.SYMBOL) {
+                final boolean isOptionalByConvention = switch (meta.getColumnNullPolicy(i)) {
+                    case SENTINEL -> ColumnType.isSymbol(meta.getColumnType(i));
+                    case NONE -> true;
+                };
+                if (isOptionalByConvention) {
                     return true;
                 }
             }
@@ -5508,11 +5508,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 assert columnType >= 0;
                 if (tableWriterMetadata.isDedupKey(columnIndex) && columnIndex != timestampIndex) {
                     final int columnSize = !ColumnType.isVarSize(columnType) ? ColumnType.sizeOf(columnType) : -1;
-                    final long columnTop = parquetDedupColumnTop(rowGroupBuffers, columnType, decodeIdx, rowGroupSize);
+                    final NullPolicy nullPolicy = tableWriterMetadata.getColumnNullPolicy(columnIndex);
+                    final long columnTop = parquetDedupColumnTop(rowGroupBuffers, nullPolicy, decodeIdx, rowGroupSize);
                     long addr = DedupColumnCommitAddresses.setColValues(
                             dedupColSinkAddr,
                             dedupColumnIndex++,
                             columnType,
+                            nullPolicy,
                             columnSize,
                             columnTop
                     );
@@ -6118,21 +6120,18 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
      */
     private static long parquetDedupColumnTop(
             RowGroupBuffers rowGroupBuffers,
-            int columnType,
+            NullPolicy nullPolicy,
             int decodeIdx,
             int rowGroupSize
     ) {
         if (decodeIdx < 0) {
             return rowGroupSize;
         }
-        if (!ColumnType.isNoNullSentinelFixedType(columnType)) {
-            return 0;
-        }
-        if (rowGroupBuffers.getChunkDataPtr(decodeIdx) == 0) {
-            // all-NULL chunk
-            return rowGroupSize;
-        }
-        return 0;
+        return switch (nullPolicy) {
+            case SENTINEL -> 0;
+            // an all-NULL chunk has no data buffer
+            case NONE -> rowGroupBuffers.getChunkDataPtr(decodeIdx) == 0 ? rowGroupSize : 0;
+        };
     }
 
     /**

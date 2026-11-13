@@ -109,8 +109,7 @@ public class UniformFunctionFactory extends AbstractWindowFunctionFactory {
         // anything not convertible to LONG (e.g. a bind variable already bound to a non-numeric type).
         coerceRuntimeConstantType(targetArg, ColumnType.LONG, sqlExecutionContext, "target point count must be an integer", targetPosition);
         final short targetTypeTag = ColumnType.tagOf(targetArg.getType());
-        if (targetTypeTag != ColumnType.INT && targetTypeTag != ColumnType.LONG
-                && targetTypeTag != ColumnType.SHORT && targetTypeTag != ColumnType.BYTE) {
+        if (!ColumnType.isIntegral(targetTypeTag)) {
             throw SqlException.$(targetPosition, "integer expected for target point count");
         }
 

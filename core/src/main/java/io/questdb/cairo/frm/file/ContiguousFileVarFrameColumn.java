@@ -242,6 +242,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
                     sourceColumnTop
             );
             markAuxWritten(commitMode, dstAuxOffset + srcAuxSize);
+            // validity batch site: a column with a validity bitmap would mark these rows NULL here
         }
     }
 
@@ -428,6 +429,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
                     dstDataBase,
                     targetDataOffset
             );
+            // validity batch site: a column with a validity bitmap would mark the rows below the column top NULL here
         } else {
             columnTypeDriver.o3ColumnMerge(
                     mergeIndexAddr,

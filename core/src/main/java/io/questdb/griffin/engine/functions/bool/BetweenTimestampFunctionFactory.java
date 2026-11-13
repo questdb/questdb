@@ -26,7 +26,9 @@ package io.questdb.griffin.engine.functions.bool;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.TypeDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -61,6 +63,13 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
         int fromType = ColumnType.getTimestampType(fromFn.getType());
         int toType = ColumnType.getTimestampType(toFn.getType());
         if (!ColumnType.isTimestamp(argType)) {
+            // an operand that is not a timestamp compares through its getTimestamp, with LONG_MIN as
+            // NULL, as every existing type and every pseudo type does; a type unlike its family's
+            // namesake may hold its NULL otherwise, so it is refused
+            final TypeDriver driver = ColumnType.findTypeDriver(arg.getType());
+            if (driver != null && !PhysicalDescriptor.isLikeFamilyNamesake(driver)) {
+                throw PhysicalDescriptor.noFamilyArm(driver.getTypeName(), "between");
+            }
             if (fromFn.isConstant() && toFn.isConstant()) {
                 long fromFnTimestamp = fromFn.getTimestamp(null);
                 long toFnTimestamp = toFn.getTimestamp(null);

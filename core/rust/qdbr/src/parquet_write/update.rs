@@ -50,7 +50,7 @@ use parquet_format_safe::{
     Encoding as ThriftEncoding, OffsetIndex, PageEncodingStats, PageHeader, PageType, RowGroup,
     Statistics, Type,
 };
-use qdb_core::col_type::{ColumnType, ColumnTypeTag};
+use qdb_core::col_type::{ColumnNullPolicy, ColumnType, ColumnTypeTag};
 use qdb_parquet_meta::convert::resolve_column_id;
 use rapidhash::RapidHashMap;
 use std::collections::HashSet;
@@ -703,10 +703,13 @@ impl ParquetUpdater {
         }
         let mut columns: Option<Vec<Column>> = None;
         for (i, col) in partition.columns.iter().enumerate() {
-            let value_size = match col.data_type.tag() {
-                ColumnTypeTag::Boolean | ColumnTypeTag::Byte => 1,
-                ColumnTypeTag::Short | ColumnTypeTag::Char => 2,
-                _ => continue,
+            let tag = col.data_type.tag();
+            // only a type without a NULL sentinel keeps a top here
+            let value_size = match tag.null_policy() {
+                ColumnNullPolicy::None => tag.fixed_size().ok_or_else(|| {
+                    fmt_err!(InvalidType, "no fixed width for column type {}", tag.name())
+                })?,
+                ColumnNullPolicy::Sentinel => continue,
             };
             let top = self
                 .kept_column_top(col.id)
@@ -2014,13 +2017,15 @@ impl ParquetUpdater {
             if field.get_field_info().repetition != Repetition::Required {
                 return false;
             }
-            match col.data_type.tag() {
-                ColumnTypeTag::Symbol => !col.not_null_hint,
-                ColumnTypeTag::Boolean
-                | ColumnTypeTag::Byte
-                | ColumnTypeTag::Short
-                | ColumnTypeTag::Char => true,
-                _ => false,
+            // Files written by older versions mark the types without NULL (BOOLEAN, BYTE, SHORT,
+            // CHAR) Required, and a SYMBOL Required when it held no nulls; the current writer marks
+            // them Optional. A Required SYMBOL needs migration only when the column being written
+            // lacks the not-null hint, since only then may its pages hold nulls.
+            match col.data_type.tag().null_policy() {
+                ColumnNullPolicy::None => true,
+                ColumnNullPolicy::Sentinel => {
+                    col.data_type.tag() == ColumnTypeTag::Symbol && !col.not_null_hint
+                }
             }
         };
         let needs_update = partition
@@ -2517,10 +2522,10 @@ fn generate_null_column_chunk_bytes(
 /// Whether the type has no NULL sentinel: BOOLEAN, BYTE, SHORT and CHAR read a NULL
 /// only through the definition levels of their chunks.
 fn is_no_null_sentinel_type(column_type: ColumnType) -> bool {
-    matches!(
-        column_type.tag(),
-        ColumnTypeTag::Boolean | ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Char
-    )
+    match column_type.tag().null_policy() {
+        ColumnNullPolicy::None => true,
+        ColumnNullPolicy::Sentinel => false,
+    }
 }
 
 /// Generates the raw bytes and thrift `ColumnChunk` of an Optional BOOLEAN, BYTE,
@@ -2806,7 +2811,34 @@ fn generate_required_zero_page(
             // Stored as Int32 in Parquet.
             4
         }
-        _ => {
+        // no type in this arm reaches here: the target schema marks only the designated timestamp
+        // Required, and a null chunk fills only a column the file lacks, never that timestamp
+        ColumnTypeTag::Int
+        | ColumnTypeTag::Long
+        | ColumnTypeTag::Date
+        | ColumnTypeTag::Timestamp
+        | ColumnTypeTag::Float
+        | ColumnTypeTag::Double
+        | ColumnTypeTag::String
+        | ColumnTypeTag::Symbol
+        | ColumnTypeTag::Long256
+        | ColumnTypeTag::GeoByte
+        | ColumnTypeTag::GeoShort
+        | ColumnTypeTag::GeoInt
+        | ColumnTypeTag::GeoLong
+        | ColumnTypeTag::Binary
+        | ColumnTypeTag::Uuid
+        | ColumnTypeTag::Long128
+        | ColumnTypeTag::IPv4
+        | ColumnTypeTag::Varchar
+        | ColumnTypeTag::Array
+        | ColumnTypeTag::Decimal8
+        | ColumnTypeTag::Decimal16
+        | ColumnTypeTag::Decimal32
+        | ColumnTypeTag::Decimal64
+        | ColumnTypeTag::Decimal128
+        | ColumnTypeTag::Decimal256
+        | ColumnTypeTag::VarcharSlice => {
             return Err(fmt_err!(
                 InvalidLayout,
                 "cannot generate null chunk for Required column type {:?}",
@@ -2859,6 +2891,10 @@ fn build_column_infos_from_qdb_meta<'a>(
                 // field_id, matching the convert path's `_pm` generation.
                 id: resolve_column_id(cm.and_then(|c| c.id), field_info.id),
                 flags,
+                #[allow(
+                    clippy::wildcard_enum_match_arm,
+                    reason = "not a tag match: parquet2 PhysicalType"
+                )]
                 fixed_byte_len: match phys_type {
                     parquet2::schema::types::PhysicalType::FixedLenByteArray(len) => len as i32,
                     _ => 0,
@@ -3311,6 +3347,10 @@ mod tests {
                     metadata.row_group(0).column(column_position).data_page_offset(),
                     "mixed offset index must point at the copied/encoded data page for column {column_position}"
                 );
+                #[allow(
+                    clippy::wildcard_enum_match_arm,
+                    reason = "not a tag match: parquet2 page Index"
+                )]
                 match &column_index[0][column_position] {
                     Index::INT64(native) => {
                         let (expected_min, expected_max) =
@@ -4616,6 +4656,10 @@ mod tests {
                 );
             }
             let (min, max) = ts_bounds[rg_i];
+            #[allow(
+                clippy::wildcard_enum_match_arm,
+                reason = "not a tag match: parquet2 page Index"
+            )]
             match &column_index[rg_i][0] {
                 Index::INT64(native) => {
                     assert_eq!(
@@ -4815,6 +4859,10 @@ mod tests {
         )?;
         let md = builder.metadata();
         let column_index = md.column_index().expect("parsed column index");
+        #[allow(
+            clippy::wildcard_enum_match_arm,
+            reason = "not a tag match: parquet2 page Index"
+        )]
         match &column_index[0][0] {
             Index::INT64(native) => assert_eq!(
                 native.boundary_order,
@@ -5897,6 +5945,10 @@ mod tests {
             // Mirrors the field definitions schema.rs builds for these tags
             // (Byte=Int8, Short=Int16, Char=Uint16); only the repetition is
             // a parameter so the test can pin both legacy and modern shapes.
+            #[allow(
+                clippy::wildcard_enum_match_arm,
+                reason = "test helper: builds only the tags its cases name"
+            )]
             let (converted, logical) = match tag {
                 ColumnTypeTag::Byte => (
                     PrimitiveConvertedType::Int8,
@@ -7051,6 +7103,10 @@ mod tests {
 
     /// A column of `row_count` rows whose first `top` rows are its column top; row `r`
     /// past the top holds `value_of(r)` in the width of the type.
+    #[allow(
+        clippy::wildcard_enum_match_arm,
+        reason = "test helper: builds only the tags its cases name"
+    )]
     fn topped_column(
         id: i32,
         name: &'static str,
@@ -8515,6 +8571,10 @@ mod tests {
     /// Builds the file of [`build_added_column_layout`] for `source` with the values that
     /// [`no_sentinel_targets`] decode: 0, a positive value and the extremes of the type.
     #[allow(clippy::type_complexity)]
+    #[allow(
+        clippy::wildcard_enum_match_arm,
+        reason = "test helper: builds only the tags its cases name"
+    )]
     fn build_no_sentinel_layout(
         source: ColumnTypeTag,
         tops: &[usize],

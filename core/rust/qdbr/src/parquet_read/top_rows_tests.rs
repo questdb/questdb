@@ -31,6 +31,11 @@
 //! a NULL must read NULL there and the stored value, 0 included, everywhere else. The footer
 //! decoder, which serves CONVERT TO NATIVE, takes the leading column top of the file metadata.
 
+#![allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "test helpers: build and read only the tags their cases name"
+)]
+
 use crate::allocator::TestAllocatorState;
 use crate::parquet::error::ParquetResult;
 use crate::parquet::qdb_metadata::{QdbMeta, QDB_META_KEY};

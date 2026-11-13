@@ -59,6 +59,18 @@ public abstract class Long256FromCharSequenceDecoder implements Long256Acceptor 
         }
     }
 
+    /**
+     * Returns where the hex digits of LONG256 text start: 2 after a {@code 0x} or {@code 0X} that
+     * has something after it, else 0, so {@link #decode} reads a lone prefix as digits and refuses
+     * it. The caller handles NULL and empty text.
+     *
+     * @param text the text, not empty
+     * @param len  the length of the text
+     */
+    public static int hexDigitsLo(CharSequence text, int len) {
+        return len > 2 && text.charAt(0) == '0' && (text.charAt(1) | 32) == 'x' ? 2 : 0;
+    }
+
     public abstract void setAll(long l0, long l1, long l2, long l3);
 
     private static long parse64BitGroup(int startPos, int minPos, CharSequence hexString, int p, int lim) throws NumericException {

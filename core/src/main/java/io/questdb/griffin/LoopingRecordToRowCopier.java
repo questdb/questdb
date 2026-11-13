@@ -31,13 +31,13 @@ import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DoubleArrayParser;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
+import io.questdb.std.IntList;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Utf8Sequence;
 
@@ -52,7 +52,9 @@ import io.questdb.std.str.Utf8Sequence;
 public class LoopingRecordToRowCopier implements RecordToRowCopier {
     private final DoubleArrayParser arrayParser; // null if not needed
     private final ColumnTypes fromTypes;
-    private final int timestampIndex;
+    // RecordToRowCopierUtils.copyOpcode() per filtered column; COPY_NONE for the timestamp column
+    // and for a NULL-typed source column
+    private final IntList opcodes = new IntList();
     private final ColumnFilter toColumnFilter;
     private final RecordMetadata toMetadata;
 
@@ -65,12 +67,34 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
         this.fromTypes = copyColumnTypes(fromTypes);
         this.toMetadata = GenericRecordMetadata.copyOfNew(toMetadata);
         this.toColumnFilter = copyColumnFilter(toColumnFilter);
-        this.timestampIndex = toMetadata.getTimestampIndex();
 
-        // Only create array parser if needed (for STRING/VARCHAR → ARRAY conversions)
-        this.arrayParser = isArrayParserRequired(this.fromTypes, this.toMetadata, this.toColumnFilter)
-                ? new DoubleArrayParser()
-                : null;
+        final int timestampIndex = toMetadata.getTimestampIndex();
+        boolean isArrayParserRequired = false;
+        for (int i = 0, n = this.toColumnFilter.getColumnCount(); i < n; i++) {
+            final int toColumnIndex = this.toColumnFilter.getColumnIndexFactored(i);
+            final int fromColumnType = this.fromTypes.getColumnType(i);
+            // The timestamp column is copied externally. A NULL-typed column holds no value, and
+            // records that materialize rows, such as map records and sort chains, keep no bytes
+            // for it: a typed getter would read the next column. Leave the column out of the row,
+            // and TableWriter and WalWriter fill it with NULL.
+            if (toColumnIndex == timestampIndex || ColumnType.isNull(fromColumnType)) {
+                opcodes.add(RecordToRowCopierUtils.COPY_NONE);
+                continue;
+            }
+            final int toColumnType = this.toMetadata.getColumnType(toColumnIndex);
+            final int opcode = RecordToRowCopierUtils.copyOpcode(fromColumnType, toColumnType);
+            if (opcode == RecordToRowCopierUtils.COPY_NONE) {
+                throw RecordToRowCopierUtils.noCopierArmForColumn(fromColumnType, toColumnType, this.toMetadata.getColumnName(toColumnIndex));
+            }
+            if (opcode == RecordToRowCopierUtils.COPY_UNLIKE) {
+                throw RecordToRowCopierUtils.noFamilyArmForColumn(fromColumnType, toColumnType);
+            }
+            opcodes.add(opcode);
+            // STRING/VARCHAR -> ARRAY parses the text
+            isArrayParserRequired |= RecordToRowCopierUtils.copyToTag(opcode) == ColumnType.ARRAY
+                    && (RecordToRowCopierUtils.copyFromTag(opcode) == ColumnType.STRING || RecordToRowCopierUtils.copyFromTag(opcode) == ColumnType.VARCHAR);
+        }
+        this.arrayParser = isArrayParserRequired ? new DoubleArrayParser() : null;
     }
 
     @Override
@@ -80,48 +104,24 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
         final Decimal256 decimal256 = context.getDecimal256();
 
         for (int i = 0; i < n; i++) {
+            final int opcode = opcodes.getQuick(i);
+            if (opcode == RecordToRowCopierUtils.COPY_NONE) {
+                // the timestamp column, copied apart from the copier, or a NULL-typed source
+                // column, which the writer fills with NULL
+                continue;
+            }
             final int toColumnIndex = toColumnFilter.getColumnIndexFactored(i);
-
-            // Skip timestamp column (handled externally)
-            if (toColumnIndex == timestampIndex) {
-                continue;
-            }
-
-            final int fromColumnType = fromTypes.getColumnType(i);
-            if (ColumnType.isNull(fromColumnType)) {
-                // A NULL-typed column holds no value, and records that materialize rows, such as
-                // map records and sort chains, keep no bytes for it: a typed getter would read the
-                // next column. Leave the column out of the row, and TableWriter and WalWriter fill
-                // it with NULL.
-                continue;
-            }
-            final int toColumnType = toMetadata.getColumnType(toColumnIndex);
-            int fromColumnTypeTag = ColumnType.tagOf(fromColumnType);
-            final int toColumnTypeTag = ColumnType.tagOf(toColumnType);
-            final int toColumnWriterIndex = toMetadata.getWriterIndex(toColumnIndex);
-
-            // VARCHAR_SLICE is a transient in-memory type (from read_parquet)
-            // accessed through the same getVarcharA() interface as VARCHAR.
-            if (fromColumnTypeTag == ColumnType.VARCHAR_SLICE) {
-                fromColumnTypeTag = ColumnType.VARCHAR;
-            }
-
-            // Get TimestampDriver when needed for conversions
-            TimestampDriver timestampDriver = null;
-            if (toColumnTypeTag == ColumnType.DATE && fromColumnTypeTag == ColumnType.TIMESTAMP) {
-                timestampDriver = ColumnType.getTimestampDriver(fromColumnType);
-            } else if (toColumnTypeTag == ColumnType.TIMESTAMP &&
-                    (fromColumnTypeTag == ColumnType.DATE ||
-                            fromColumnTypeTag == ColumnType.VARCHAR ||
-                            fromColumnTypeTag == ColumnType.STRING ||
-                            fromColumnTypeTag == ColumnType.SYMBOL ||
-                            (fromColumnTypeTag == ColumnType.TIMESTAMP && fromColumnType != toColumnType))) {
-                timestampDriver = ColumnType.getTimestampDriver(toColumnType);
-            }
-
-            // Copy the column value based on source and target types
-            copyColumn(record, row, i, toColumnWriterIndex, fromColumnTypeTag, toColumnTypeTag,
-                    fromColumnType, toColumnType, timestampDriver, decimal128, decimal256);
+            copyColumn(
+                    record,
+                    row,
+                    i,
+                    toMetadata.getWriterIndex(toColumnIndex),
+                    opcode,
+                    fromTypes.getColumnType(i),
+                    toMetadata.getColumnType(toColumnIndex),
+                    decimal128,
+                    decimal256
+            );
         }
     }
 
@@ -141,37 +141,19 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
         return copy;
     }
 
-    private static boolean isArrayParserRequired(ColumnTypes from, RecordMetadata to, ColumnFilter toColumnFilter) {
-        int n = toColumnFilter.getColumnCount();
-        for (int i = 0; i < n; i++) {
-            int toColumnIndex = toColumnFilter.getColumnIndexFactored(i);
-            int toColumnType = to.getColumnType(toColumnIndex);
-            int fromColumnType = from.getColumnType(i);
-            int fromTag = ColumnType.tagOf(fromColumnType);
-            if (fromTag == ColumnType.VARCHAR_SLICE) {
-                fromTag = ColumnType.VARCHAR;
-            }
-            if (ColumnType.tagOf(toColumnType) == ColumnType.ARRAY &&
-                    (fromTag == ColumnType.STRING || fromTag == ColumnType.VARCHAR)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     private void copyColumn(
             Record record,
             TableWriter.Row row,
             int fromColumnIndex,
             int toColumnWriterIndex,
-            int fromColumnTypeTag,
-            int toColumnTypeTag,
+            int opcode,
             int fromColumnType,
             int toColumnType,
-            TimestampDriver timestampDriver,
             Decimal128 decimal128,
             Decimal256 decimal256
     ) {
+        final int fromColumnTypeTag = RecordToRowCopierUtils.copyFromTag(opcode);
+        final int toColumnTypeTag = RecordToRowCopierUtils.copyToTag(opcode);
         switch (fromColumnTypeTag) {
             case ColumnType.INT ->
                     copyFromInt(record, row, fromColumnIndex, toColumnWriterIndex, toColumnTypeTag, toColumnType, decimal256);
@@ -179,9 +161,9 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
             case ColumnType.LONG ->
                     copyFromLong(record, row, fromColumnIndex, toColumnWriterIndex, toColumnTypeTag, toColumnType, decimal256);
             case ColumnType.DATE ->
-                    copyFromDate(record, row, fromColumnIndex, toColumnWriterIndex, toColumnTypeTag, timestampDriver);
+                    copyFromDate(record, row, fromColumnIndex, toColumnWriterIndex, toColumnTypeTag, toColumnType);
             case ColumnType.TIMESTAMP ->
-                    copyFromTimestamp(record, row, fromColumnIndex, toColumnWriterIndex, toColumnTypeTag, fromColumnType, toColumnType, timestampDriver);
+                    copyFromTimestamp(record, row, fromColumnIndex, toColumnWriterIndex, toColumnTypeTag, fromColumnType, toColumnType);
             case ColumnType.BYTE ->
                     copyFromByte(record, row, fromColumnIndex, toColumnWriterIndex, toColumnTypeTag, toColumnType, decimal256);
             case ColumnType.SHORT ->
@@ -193,11 +175,11 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
             case ColumnType.CHAR ->
                     copyFromChar(record, row, fromColumnIndex, toColumnWriterIndex, toColumnTypeTag, toColumnType);
             case ColumnType.SYMBOL ->
-                    copyFromSymbol(record, row, fromColumnIndex, toColumnWriterIndex, toColumnTypeTag, timestampDriver);
+                    copyFromSymbol(record, row, fromColumnIndex, toColumnWriterIndex, toColumnTypeTag, toColumnType);
             case ColumnType.VARCHAR ->
-                    copyFromVarchar(record, row, fromColumnIndex, toColumnWriterIndex, toColumnTypeTag, toColumnType, timestampDriver);
+                    copyFromVarchar(record, row, fromColumnIndex, toColumnWriterIndex, toColumnTypeTag, toColumnType);
             case ColumnType.STRING ->
-                    copyFromString(record, row, fromColumnIndex, toColumnWriterIndex, toColumnTypeTag, toColumnType, timestampDriver);
+                    copyFromString(record, row, fromColumnIndex, toColumnWriterIndex, toColumnTypeTag, toColumnType);
             case ColumnType.BINARY -> copyFromBinary(record, row, fromColumnIndex, toColumnWriterIndex);
             case ColumnType.LONG256 -> copyFromLong256(record, row, fromColumnIndex, toColumnWriterIndex);
             case ColumnType.GEOBYTE ->
@@ -210,23 +192,17 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
                     copyFromGeoLong(record, row, fromColumnIndex, toColumnWriterIndex, fromColumnType, toColumnType, toColumnTypeTag);
             case ColumnType.LONG128, ColumnType.UUID ->
                     copyFromUuid(record, row, fromColumnIndex, toColumnWriterIndex, toColumnTypeTag);
-            case ColumnType.ARRAY ->
-                    copyFromArray(record, row, fromColumnIndex, toColumnWriterIndex, fromColumnType, toColumnTypeTag);
+            case ColumnType.ARRAY -> copyFromArray(record, row, fromColumnIndex, toColumnWriterIndex, fromColumnType);
             case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64,
                  ColumnType.DECIMAL128, ColumnType.DECIMAL256 ->
                     copyFromDecimal(record, row, fromColumnIndex, toColumnWriterIndex, fromColumnTypeTag, fromColumnType, toColumnType, decimal128, decimal256);
-            // copy() skips NULL-typed columns, and INSERT compilation rejects every type the
-            // copier does not convert
-            default ->
-                    throw new IllegalStateException("Unexpected source column type: " + ColumnType.nameOf(fromColumnType));
+            default -> throw new IllegalStateException("Unexpected value: " + fromColumnTypeTag);
         }
     }
 
-    private void copyFromArray(Record record, TableWriter.Row row, int fromIndex, int toIndex, int fromType, int toTypeTag) {
-        if (toTypeTag == ColumnType.ARRAY) {
-            ArrayView array = record.getArray(fromIndex, fromType);
-            row.putArray(toIndex, array);
-        }
+    private void copyFromArray(Record record, TableWriter.Row row, int fromIndex, int toIndex, int fromType) {
+        ArrayView array = record.getArray(fromIndex, fromType);
+        row.putArray(toIndex, array);
     }
 
     private void copyFromBinary(Record record, TableWriter.Row row, int fromIndex, int toIndex) {
@@ -248,11 +224,10 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
             case ColumnType.TIMESTAMP -> row.putTimestamp(toIndex, value);
             case ColumnType.FLOAT -> row.putFloat(toIndex, value);
             case ColumnType.DOUBLE -> row.putDouble(toIndex, value);
-            default -> {
-                if (ColumnType.isDecimalType(toTypeTag)) {
+            case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64,
+                 ColumnType.DECIMAL128, ColumnType.DECIMAL256 ->
                     RecordToRowCopierUtils.transferByteToDecimal(row, toIndex, value, decimal256, toType);
-                }
-            }
+            default -> throw new IllegalStateException("Unexpected value: " + toTypeTag);
         }
     }
 
@@ -278,7 +253,7 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
         }
     }
 
-    private void copyFromDate(Record record, TableWriter.Row row, int fromIndex, int toIndex, int toTypeTag, TimestampDriver timestampDriver) {
+    private void copyFromDate(Record record, TableWriter.Row row, int fromIndex, int toIndex, int toTypeTag, int toType) {
         long value = record.getDate(fromIndex);
         switch (toTypeTag) {
             case ColumnType.BYTE -> row.putByte(toIndex, SqlUtil.implicitCastLongAsByte(value));
@@ -286,7 +261,8 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
             case ColumnType.INT -> row.putInt(toIndex, SqlUtil.implicitCastLongAsInt(value));
             case ColumnType.LONG -> row.putLong(toIndex, value);
             case ColumnType.DATE -> row.putDate(toIndex, value);
-            case ColumnType.TIMESTAMP -> row.putTimestamp(toIndex, timestampDriver.fromDate(value));
+            case ColumnType.TIMESTAMP ->
+                    row.putTimestamp(toIndex, ColumnType.getTimestampDriver(toType).fromDate(value));
             case ColumnType.FLOAT -> row.putFloat(toIndex, SqlUtil.implicitCastLongAsFloat(value));
             case ColumnType.DOUBLE -> row.putDouble(toIndex, SqlUtil.implicitCastLongAsDouble(value));
             default -> throw new IllegalStateException("Unexpected value: " + toTypeTag);
@@ -421,11 +397,10 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
             case ColumnType.TIMESTAMP -> row.putTimestamp(toIndex, SqlUtil.implicitCastIntAsLong(value));
             case ColumnType.FLOAT -> row.putFloat(toIndex, SqlUtil.implicitCastIntAsFloat(value));
             case ColumnType.DOUBLE -> row.putDouble(toIndex, SqlUtil.implicitCastIntAsDouble(value));
-            default -> {
-                if (ColumnType.isDecimalType(toTypeTag)) {
+            case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64,
+                 ColumnType.DECIMAL128, ColumnType.DECIMAL256 ->
                     RecordToRowCopierUtils.transferIntToDecimal(row, toIndex, value, decimal256, toType);
-                }
-            }
+            default -> throw new IllegalStateException("Unexpected value: " + toTypeTag);
         }
     }
 
@@ -440,11 +415,10 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
             case ColumnType.TIMESTAMP -> row.putTimestamp(toIndex, value);
             case ColumnType.FLOAT -> row.putFloat(toIndex, SqlUtil.implicitCastLongAsFloat(value));
             case ColumnType.DOUBLE -> row.putDouble(toIndex, SqlUtil.implicitCastLongAsDouble(value));
-            default -> {
-                if (ColumnType.isDecimalType(toTypeTag)) {
+            case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64,
+                 ColumnType.DECIMAL128, ColumnType.DECIMAL256 ->
                     RecordToRowCopierUtils.transferLongToDecimal(row, toIndex, value, decimal256, toType);
-                }
-            }
+            default -> throw new IllegalStateException("Unexpected value: " + toTypeTag);
         }
     }
 
@@ -463,15 +437,14 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
             case ColumnType.TIMESTAMP -> row.putTimestamp(toIndex, value);
             case ColumnType.FLOAT -> row.putFloat(toIndex, value);
             case ColumnType.DOUBLE -> row.putDouble(toIndex, value);
-            default -> {
-                if (ColumnType.isDecimalType(toTypeTag)) {
+            case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64,
+                 ColumnType.DECIMAL128, ColumnType.DECIMAL256 ->
                     RecordToRowCopierUtils.transferShortToDecimal(row, toIndex, value, decimal256, toType);
-                }
-            }
+            default -> throw new IllegalStateException("Unexpected value: " + toTypeTag);
         }
     }
 
-    private void copyFromString(Record record, TableWriter.Row row, int fromIndex, int toIndex, int toTypeTag, int toType, TimestampDriver timestampDriver) {
+    private void copyFromString(Record record, TableWriter.Row row, int fromIndex, int toIndex, int toTypeTag, int toType) {
         CharSequence value = record.getStrA(fromIndex);
         switch (toTypeTag) {
             case ColumnType.ARRAY ->
@@ -486,7 +459,8 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
             case ColumnType.DOUBLE -> row.putDouble(toIndex, SqlUtil.implicitCastStrAsDouble(value));
             case ColumnType.SYMBOL -> row.putSym(toIndex, value);
             case ColumnType.DATE -> row.putDate(toIndex, SqlUtil.implicitCastStrAsDate(value));
-            case ColumnType.TIMESTAMP -> row.putTimestamp(toIndex, timestampDriver.implicitCast(value));
+            case ColumnType.TIMESTAMP ->
+                    row.putTimestamp(toIndex, ColumnType.getTimestampDriver(toType).implicitCast(value));
             case ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG ->
                     row.putGeoStr(toIndex, value);
             case ColumnType.STRING -> row.putStr(toIndex, value);
@@ -499,19 +473,19 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
         }
     }
 
-    private void copyFromSymbol(Record record, TableWriter.Row row, int fromIndex, int toIndex, int toTypeTag, TimestampDriver timestampDriver) {
+    private void copyFromSymbol(Record record, TableWriter.Row row, int fromIndex, int toIndex, int toTypeTag, int toType) {
         CharSequence value = record.getSymA(fromIndex);
         switch (toTypeTag) {
             case ColumnType.SYMBOL -> row.putSym(toIndex, value);
             case ColumnType.STRING -> row.putStr(toIndex, value);
             case ColumnType.VARCHAR -> RecordToRowCopierUtils.transferStrToVarcharCol(row, toIndex, value);
             case ColumnType.TIMESTAMP ->
-                    row.putTimestamp(toIndex, timestampDriver.implicitCast(value, ColumnType.SYMBOL));
+                    row.putTimestamp(toIndex, ColumnType.getTimestampDriver(toType).implicitCast(value, ColumnType.SYMBOL));
             default -> throw new IllegalStateException("Unexpected value: " + toTypeTag);
         }
     }
 
-    private void copyFromTimestamp(Record record, TableWriter.Row row, int fromIndex, int toIndex, int toTypeTag, int fromType, int toType, TimestampDriver timestampDriver) {
+    private void copyFromTimestamp(Record record, TableWriter.Row row, int fromIndex, int toIndex, int toTypeTag, int fromType, int toType) {
         long value = record.getTimestamp(fromIndex);
         switch (toTypeTag) {
             case ColumnType.BYTE -> row.putByte(toIndex, SqlUtil.implicitCastLongAsByte(value));
@@ -520,10 +494,10 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
             case ColumnType.LONG -> row.putLong(toIndex, value);
             case ColumnType.FLOAT -> row.putFloat(toIndex, SqlUtil.implicitCastLongAsFloat(value));
             case ColumnType.DOUBLE -> row.putDouble(toIndex, SqlUtil.implicitCastLongAsDouble(value));
-            case ColumnType.DATE -> row.putDate(toIndex, timestampDriver.toDate(value));
+            case ColumnType.DATE -> row.putDate(toIndex, ColumnType.getTimestampDriver(fromType).toDate(value));
             case ColumnType.TIMESTAMP -> {
                 if (fromType != toType && fromType != ColumnType.NULL) {
-                    value = timestampDriver.from(value, fromType);
+                    value = ColumnType.getTimestampDriver(toType).from(value, fromType);
                 }
                 row.putTimestamp(toIndex, value);
             }
@@ -542,7 +516,7 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
         }
     }
 
-    private void copyFromVarchar(Record record, TableWriter.Row row, int fromIndex, int toIndex, int toTypeTag, int toType, TimestampDriver timestampDriver) {
+    private void copyFromVarchar(Record record, TableWriter.Row row, int fromIndex, int toIndex, int toTypeTag, int toType) {
         Utf8Sequence value = record.getVarcharA(fromIndex);
         switch (toTypeTag) {
             case ColumnType.VARCHAR -> row.putVarchar(toIndex, value);
@@ -558,7 +532,8 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
             case ColumnType.FLOAT -> row.putFloat(toIndex, SqlUtil.implicitCastVarcharAsFloat(value));
             case ColumnType.DOUBLE -> row.putDouble(toIndex, SqlUtil.implicitCastVarcharAsDouble(value));
             case ColumnType.UUID -> row.putUuidUtf8(toIndex, value);
-            case ColumnType.TIMESTAMP -> row.putTimestamp(toIndex, timestampDriver.implicitCastVarchar(value));
+            case ColumnType.TIMESTAMP ->
+                    row.putTimestamp(toIndex, ColumnType.getTimestampDriver(toType).implicitCastVarchar(value));
             case ColumnType.SYMBOL -> RecordToRowCopierUtils.transferVarcharToSymbolCol(row, toIndex, value);
             case ColumnType.DATE -> RecordToRowCopierUtils.transferVarcharToDateCol(row, toIndex, value);
             case ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG ->

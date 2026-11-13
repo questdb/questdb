@@ -71,6 +71,23 @@ public class Long256FromCharSequenceDecoderTest {
     }
 
     @Test
+    public void testHexDigitsLo() {
+        // the digits start after 0x or 0X when something follows the prefix
+        Assert.assertEquals(2, Long256FromCharSequenceDecoder.hexDigitsLo("0x1", 3));
+        Assert.assertEquals(2, Long256FromCharSequenceDecoder.hexDigitsLo("0X1", 3));
+        Assert.assertEquals(2, Long256FromCharSequenceDecoder.hexDigitsLo("0xzz", 4));
+        // otherwise at the first character, so the decoder reads and refuses a lone prefix
+        Assert.assertEquals(0, Long256FromCharSequenceDecoder.hexDigitsLo("0x", 2));
+        Assert.assertEquals(0, Long256FromCharSequenceDecoder.hexDigitsLo("0X", 2));
+        Assert.assertEquals(0, Long256FromCharSequenceDecoder.hexDigitsLo("12", 2));
+        Assert.assertEquals(0, Long256FromCharSequenceDecoder.hexDigitsLo("abc", 3));
+        Assert.assertEquals(0, Long256FromCharSequenceDecoder.hexDigitsLo("f", 1));
+        Assert.assertEquals(0, Long256FromCharSequenceDecoder.hexDigitsLo("1x12", 4));
+        Assert.assertEquals(0, Long256FromCharSequenceDecoder.hexDigitsLo("0y12", 4));
+        Assert.assertEquals(0, Long256FromCharSequenceDecoder.hexDigitsLo(" 0x12", 5));
+    }
+
+    @Test
     public void testMixed() {
         assertDecoded("5a9796963abad00001e5f6bbdb38", 0, 0, -3458762426621895880L, 99607112989370L, 0, 0);
         assertDecoded("05a9796963abad00001e5f6bbdb38", 0, 0, -3458762426621895880L, 99607112989370L, 0, 0);

@@ -2097,6 +2097,10 @@ mod tests {
     /// entry, in order, and each folder is a (column top, values) pair. A folder's values can
     /// so come ahead of the next folder's top rows, which the writer stores as def-level-0
     /// NULLs: the chunk null count then covers rows that hold values.
+    #[allow(
+        clippy::wildcard_enum_match_arm,
+        reason = "test helper: builds only the tags its cases name"
+    )]
     fn build_folder_rows_no_sentinel_parquet_meta(
         tag: ColumnTypeTag,
         row_groups: &[&[(usize, &[i16])]],

@@ -1025,6 +1025,14 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
                         " from long_sequence(5)" +
                         ")")
                 .expectSize()
+                // a is not wrapped in ::timestamp_ns: coalesce converts only the value it returns
+                .withPlan("""
+                        VirtualRecord
+                          functions: [coalesce([b,a,x]),coalesce(b,a),a,b,x]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: alex
+                        """)
                 .returns("""
                         c1\tc2\ta\tb\tx
                         1970-01-01T00:00:50.000000000Z\t1970-01-01T00:00:50.000000000Z\t\t1970-01-01T00:00:50.000000000Z\t

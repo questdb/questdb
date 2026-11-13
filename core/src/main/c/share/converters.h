@@ -51,15 +51,77 @@ enum class ConversionError {
     UNSUPPORTED_CAST = 1,
 };
 
-template <ColumnType C> struct EnumTypeMap
-{
-    using type = int8_t;
-    static constexpr type null_value = 0;
-    static constexpr bool has_null = false;
-};
+#pragma GCC diagnostic push
+#pragma GCC diagnostic error "-Wswitch"
+
+/**
+ * Whether the fixed-to-fixed conversion table converts values of type t: exactly the types with an
+ * EnumTypeMap specialisation below. The switch names every tag and -Wswitch is an error here, so a
+ * new tag must be classified before the build passes.
+ */
+constexpr bool is_fixed_convertible(ColumnType t) {
+    switch (t) {
+        case ColumnType::BOOLEAN:
+        case ColumnType::BYTE:
+        case ColumnType::SHORT:
+        case ColumnType::INT:
+        case ColumnType::LONG:
+        case ColumnType::FLOAT:
+        case ColumnType::DOUBLE:
+        case ColumnType::TIMESTAMP_MICRO:
+        case ColumnType::TIMESTAMP_NANO:
+        case ColumnType::DATE:
+            return true;
+        case ColumnType::UNDEFINED:
+        case ColumnType::CHAR:
+        case ColumnType::STRING:
+        case ColumnType::SYMBOL:
+        case ColumnType::LONG256:
+        case ColumnType::GEOBYTE:
+        case ColumnType::GEOSHORT:
+        case ColumnType::GEOINT:
+        case ColumnType::GEOLONG:
+        case ColumnType::BINARY:
+        case ColumnType::UUID:
+        case ColumnType::CURSOR:
+        case ColumnType::VAR_ARG:
+        case ColumnType::RECORD:
+        case ColumnType::GEOHASH:
+        case ColumnType::LONG128:
+        case ColumnType::IPV4:
+        case ColumnType::VARCHAR:
+        case ColumnType::ARRAY:
+        case ColumnType::DECIMAL8:
+        case ColumnType::DECIMAL16:
+        case ColumnType::DECIMAL32:
+        case ColumnType::DECIMAL64:
+        case ColumnType::DECIMAL128:
+        case ColumnType::DECIMAL256:
+        case ColumnType::DECIMAL:
+        case ColumnType::REGCLASS:
+        case ColumnType::REGPROCEDURE:
+        case ColumnType::ARRAY_STRING:
+        case ColumnType::PARAMETER:
+        case ColumnType::INTERVAL:
+        case ColumnType::VARCHAR_SLICE:
+        case ColumnType::NULL_:
+            return false;
+    }
+    return false;
+}
+
+#pragma GCC diagnostic pop
+
+/**
+ * The storage type and NULL of a type the conversion table converts. The primary template has
+ * no definition: a table row for a type without a specialisation stops the build, instead of
+ * reading the values as bytes.
+ */
+template <ColumnType C> struct EnumTypeMap;
 
 template<>
 struct EnumTypeMap<ColumnType::BOOLEAN> {
+    static_assert(is_fixed_convertible(ColumnType::BOOLEAN), "EnumTypeMap specialisation for a type is_fixed_convertible does not list");
     using type = bool;
     static constexpr type null_value = false;
     static constexpr bool has_null = false;
@@ -67,6 +129,7 @@ struct EnumTypeMap<ColumnType::BOOLEAN> {
 
 template<>
 struct EnumTypeMap<ColumnType::BYTE> {
+    static_assert(is_fixed_convertible(ColumnType::BYTE), "EnumTypeMap specialisation for a type is_fixed_convertible does not list");
     using type = int8_t;
     static constexpr type null_value = 0;
     static constexpr bool has_null = false;
@@ -74,6 +137,7 @@ struct EnumTypeMap<ColumnType::BYTE> {
 
 template<>
 struct EnumTypeMap<ColumnType::SHORT> {
+    static_assert(is_fixed_convertible(ColumnType::SHORT), "EnumTypeMap specialisation for a type is_fixed_convertible does not list");
     using type = int16_t;
     static constexpr type null_value = 0;
     static constexpr bool has_null = false;
@@ -81,6 +145,7 @@ struct EnumTypeMap<ColumnType::SHORT> {
 
 template<>
 struct EnumTypeMap<ColumnType::INT> {
+    static_assert(is_fixed_convertible(ColumnType::INT), "EnumTypeMap specialisation for a type is_fixed_convertible does not list");
     using type = int32_t;
     static constexpr type null_value =  static_cast<int32_t>(0x80000000);
     static constexpr bool has_null = true;
@@ -88,6 +153,7 @@ struct EnumTypeMap<ColumnType::INT> {
 
 template<>
 struct EnumTypeMap<ColumnType::LONG> {
+    static_assert(is_fixed_convertible(ColumnType::LONG), "EnumTypeMap specialisation for a type is_fixed_convertible does not list");
     using type = int64_t;
     static constexpr type null_value = static_cast<int64_t>(0x8000000000000000LL);
     static constexpr bool has_null = true;
@@ -95,6 +161,7 @@ struct EnumTypeMap<ColumnType::LONG> {
 
 template<>
 struct EnumTypeMap<ColumnType::FLOAT> {
+    static_assert(is_fixed_convertible(ColumnType::FLOAT), "EnumTypeMap specialisation for a type is_fixed_convertible does not list");
     using type = float;
     static constexpr type null_value = std::numeric_limits<float>::quiet_NaN();
     static constexpr bool has_null = true;
@@ -102,6 +169,7 @@ struct EnumTypeMap<ColumnType::FLOAT> {
 
 template<>
 struct EnumTypeMap<ColumnType::DOUBLE> {
+    static_assert(is_fixed_convertible(ColumnType::DOUBLE), "EnumTypeMap specialisation for a type is_fixed_convertible does not list");
     using type = double;
     static constexpr type null_value = std::numeric_limits<double>::quiet_NaN();
     static constexpr bool has_null = true;
@@ -109,6 +177,7 @@ struct EnumTypeMap<ColumnType::DOUBLE> {
 
 template <>
 struct EnumTypeMap<ColumnType::TIMESTAMP_MICRO> {
+    static_assert(is_fixed_convertible(ColumnType::TIMESTAMP_MICRO), "EnumTypeMap specialisation for a type is_fixed_convertible does not list");
   using type = int64_t;
   static constexpr type null_value = static_cast<int64_t>(0x8000000000000000LL);
   static constexpr bool has_null = true;
@@ -116,6 +185,7 @@ struct EnumTypeMap<ColumnType::TIMESTAMP_MICRO> {
 
 template <>
 struct EnumTypeMap<ColumnType::TIMESTAMP_NANO> {
+    static_assert(is_fixed_convertible(ColumnType::TIMESTAMP_NANO), "EnumTypeMap specialisation for a type is_fixed_convertible does not list");
   using type = int64_t;
   static constexpr type null_value = static_cast<int64_t>(0x8000000000000000LL);
   static constexpr bool has_null = true;
@@ -123,6 +193,7 @@ struct EnumTypeMap<ColumnType::TIMESTAMP_NANO> {
 
 template<>
 struct EnumTypeMap<ColumnType::DATE> {
+    static_assert(is_fixed_convertible(ColumnType::DATE), "EnumTypeMap specialisation for a type is_fixed_convertible does not list");
     using type = int64_t;
     static constexpr type null_value =  static_cast<int64_t>(0x8000000000000000LL);
     static constexpr bool has_null = true;

@@ -702,9 +702,10 @@ public class CopyImportTest extends AbstractCairoTest {
 
     @Test
     public void testParallelCopyWithSkipRowAtomicityImportsOnlyRowsWithNoParseErrors() throws Exception {
-        // invalid geohash 'GEOHASH' in the CSV file errors out rather than storing NULL silently
-        // therefore such row is skipped
-        testCopyWithAtomicity(true, "SKIP_ROW", 5);
+        // invalid geohash 'GEOHASH' and the CHAR value 'CHAR', which is not one character, in the
+        // CSV file error out rather than storing NULL or the first character silently, therefore
+        // such rows are skipped
+        testCopyWithAtomicity(true, "SKIP_ROW", 4);
     }
 
     @Test
@@ -1050,9 +1051,10 @@ public class CopyImportTest extends AbstractCairoTest {
 
     @Test
     public void testSerialCopyWithSkipRowAtomicityImportsOnlyRowsWithNoParseErrors() throws Exception {
-        // invalid geohash 'GEOHASH' in the CSV file errors out rather than storing NULL silently
-        // therefore such row is skipped
-        testCopyWithAtomicity(false, "SKIP_ROW", 5);
+        // invalid geohash 'GEOHASH' and the CHAR value 'CHAR', which is not one character, in the
+        // CSV file error out rather than storing NULL or the first character silently, therefore
+        // such rows are skipped
+        testCopyWithAtomicity(false, "SKIP_ROW", 4);
     }
 
     @Test

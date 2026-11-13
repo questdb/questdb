@@ -356,6 +356,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         }
                         columnTypeDriver.setFullAuxVectorNull(srcAuxAddr, srcDataTop);
                     }
+                    // validity batch site: a column with a validity bitmap would mark these rows NULL here
                     // the scratch holds the whole column; -dstAuxFd is not closed again and marks the scratch for copyTail()
                     O3Utils.close(ff, srcDataFixFd);
                     srcDataFixFd = -dstAuxFd;
@@ -2506,7 +2507,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     srcDataFixSize = srcDataMax << shl;
                     srcDataFixAddr = mapRW(ff, dstFixFd, srcDataFixSize, Files.ceilPageSize(dstRowCount << shl), MemoryTag.MMAP_O3);
                     ff.madvise(srcDataFixAddr, srcDataFixSize, Files.POSIX_MADV_SEQUENTIAL);
-                    TableUtils.setNull(columnType, srcDataFixAddr, srcDataTop);
+                    final TypeDriver typeDriver = ColumnType.getTypeDriver(columnType);
+                    typeDriver.setNull(srcDataFixAddr, srcDataTop);
+                    // validity batch site: a column with a validity bitmap would mark these rows NULL here
                     if (srcDataActualBytesNew > 0) {
                         final long srcAddr = mapRO(ff, srcFixFd, srcDataActualBytesNew, MemoryTag.MMAP_O3);
                         try {

@@ -24,16 +24,11 @@
 
 package org.questdb;
 
-import io.questdb.MessageBusImpl;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.DefaultCairoConfiguration;
-import io.questdb.cairo.DefaultDdlListener;
-import io.questdb.cairo.DefaultLifecycleManager;
-import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
-import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -41,6 +36,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.Rnd;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
+import org.openjdk.jmh.annotations.Fork;
 import org.openjdk.jmh.annotations.Level;
 import org.openjdk.jmh.annotations.Mode;
 import org.openjdk.jmh.annotations.OutputTimeUnit;
@@ -59,22 +55,21 @@ import java.util.concurrent.TimeUnit;
 @State(Scope.Benchmark)
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
+@Fork(value = 1, jvmArgsAppend = "--add-exports=java.base/jdk.internal.vm=ALL-UNNAMED")
 public class TableWriterBenchmark {
     // Should be set close enough to the cairo.max.uncommitted.rows default value.
     private static final int ROWS_PER_ITERATION = 1;
-    private static final CairoConfiguration configuration = new DefaultCairoConfiguration(System.getProperty("java.io.tmpdir"));
-    private static CairoEngine cairoEngine;
-    private static TableWriter writer;
-    private static TableWriter writer2;
-    private static TableWriter writer3;
     private final Rnd rnd = new Rnd();
     @Param({"NOSYNC", "SYNC", "ASYNC"})
     public WriterCommitMode writerCommitMode;
+    private CairoEngine engine;
+    private SqlExecutionContext sqlExecutionContext;
     private long ts;
+    private TableWriter writer;
+    private TableWriter writer2;
+    private TableWriter writer3;
 
     public static void main(String[] args) throws RunnerException {
-        cairoEngine = new CairoEngine(configuration);
-
         Options opt = new OptionsBuilder()
                 .include(TableWriterBenchmark.class.getSimpleName())
                 .warmupIterations(1)
@@ -86,57 +81,35 @@ public class TableWriterBenchmark {
     }
 
     @Setup(Level.Iteration)
-    public void setup() {
+    public void setup() throws SqlException {
         final CairoConfiguration configuration = getConfiguration();
+        engine = new CairoEngine(configuration);
+        sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
+                .with(
+                        configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                        null,
+                        null,
+                        -1,
+                        null
+                );
 
-        executeDdl("create table if not exists test1(f long)", configuration);
-        executeDdl("create table if not exists test2(f timestamp) timestamp (f)", configuration);
-        executeDdl("create table if not exists test3(f timestamp) timestamp (f) PARTITION BY DAY", configuration);
+        engine.execute("DROP TABLE IF EXISTS test1", sqlExecutionContext);
+        engine.execute("DROP TABLE IF EXISTS test2", sqlExecutionContext);
+        engine.execute("DROP TABLE IF EXISTS test3", sqlExecutionContext);
+        engine.execute("CREATE TABLE test1 (f LONG)", sqlExecutionContext);
+        engine.execute("CREATE TABLE test2 (f TIMESTAMP) TIMESTAMP(f)", sqlExecutionContext);
+        engine.execute("CREATE TABLE test3 (f TIMESTAMP) TIMESTAMP(f) PARTITION BY DAY BYPASS WAL", sqlExecutionContext);
 
         LogFactory.haltInstance();
 
-        TableToken tableToken1 = new TableToken("test1", "test1", null, 0, false, false, false);
-        TableToken tableToken2 = new TableToken("test2", "test2", null, 0, false, false, false);
-        TableToken tableToken3 = new TableToken("test3", "test3", null, 0, false, false, false);
-
-        writer = new TableWriter(
-                configuration,
-                tableToken1,
-                null,
-                new MessageBusImpl(configuration),
-                true,
-                DefaultLifecycleManager.INSTANCE,
-                configuration.getDbRoot(),
-                DefaultDdlListener.INSTANCE,
-                cairoEngine
-        );
-        writer2 = new TableWriter(
-                configuration,
-                tableToken2,
-                null,
-                new MessageBusImpl(configuration),
-                true,
-                DefaultLifecycleManager.INSTANCE,
-                configuration.getDbRoot(),
-                DefaultDdlListener.INSTANCE,
-                cairoEngine
-        );
-        writer3 = new TableWriter(
-                configuration,
-                tableToken3,
-                null,
-                new MessageBusImpl(configuration),
-                true,
-                DefaultLifecycleManager.INSTANCE,
-                configuration.getDbRoot(),
-                DefaultDdlListener.INSTANCE,
-                cairoEngine
-        );
+        writer = engine.getWriter(engine.verifyTableName("test1"), "benchmark");
+        writer2 = engine.getWriter(engine.verifyTableName("test2"), "benchmark");
+        writer3 = engine.getWriter(engine.verifyTableName("test3"), "benchmark");
         rnd.reset();
     }
 
     @TearDown(Level.Iteration)
-    public void tearDown() {
+    public void tearDown() throws SqlException {
         writer.commit();
         writer.truncate();
         writer.close();
@@ -149,10 +122,10 @@ public class TableWriterBenchmark {
 
         ts = 0;
 
-        final CairoConfiguration configuration = getConfiguration();
-        executeDdl("drop table test1", configuration);
-        executeDdl("drop table test2", configuration);
-        executeDdl("drop table test3", configuration);
+        engine.execute("DROP TABLE test1", sqlExecutionContext);
+        engine.execute("DROP TABLE test2", sqlExecutionContext);
+        engine.execute("DROP TABLE test3", sqlExecutionContext);
+        engine.close();
     }
 
     @Benchmark
@@ -208,24 +181,6 @@ public class TableWriterBenchmark {
         }
     }
 
-    private void executeDdl(String ddl, CairoConfiguration configuration) {
-        try (CairoEngine engine = new CairoEngine(configuration)) {
-            SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
-                    .with(
-                            configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
-                            null,
-                            null,
-                            -1,
-                            null
-                    );
-            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
-                compiler.compile(ddl, sqlExecutionContext);
-            } catch (SqlException e) {
-                e.printStackTrace(System.out);
-            }
-        }
-    }
-
     private CairoConfiguration getConfiguration() {
         final int commitMode = switch (writerCommitMode) {
             case NOSYNC -> CommitMode.NOSYNC;
@@ -233,7 +188,7 @@ public class TableWriterBenchmark {
             case ASYNC -> CommitMode.ASYNC;
         };
 
-        return new DefaultCairoConfiguration(".") {
+        return new DefaultCairoConfiguration(System.getProperty("java.io.tmpdir")) {
             @Override
             public int getCommitMode() {
                 return commitMode;

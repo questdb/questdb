@@ -30,6 +30,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxnScoreboard;
 import io.questdb.cairo.TxnScoreboardV2;
 import io.questdb.cairo.pool.PoolListener;
@@ -54,6 +55,7 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.Timeout;
 
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -649,6 +651,47 @@ public class ImportIODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testImportIntoDoubleArrayColumnReleasesWriter() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run((engine, sqlExecutionContext) -> {
+                    // a leaked writer keeps the non-WAL table busy, so the writer below cannot be
+                    // taken; a leaked WAL writer fails the pool check when the engine closes
+                    for (String table : new String[]{"arr_bypass", "arr_wal"}) {
+                        engine.execute(
+                                "CREATE TABLE " + table + " (k VARCHAR, v DOUBLE[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY "
+                                        + (table.endsWith("_wal") ? "WAL" : "BYPASS WAL"),
+                                sqlExecutionContext
+                        );
+                        new SendAndReceiveRequestBuilder().execute(
+                                importRequest("/imp?name=" + table + "&forceHeader=true&delimiter=%2C", """
+                                        k,v,ts\r
+                                        a,[1.0],1970-01-01T00:00:00.000000Z\r
+                                        """),
+                                """
+                                        HTTP/1.1 200 OK\r
+                                        Server: questDB/1.0\r
+                                        Date: Thu, 1 Jan 1970 00:00:00 GMT\r
+                                        Transfer-Encoding: chunked\r
+                                        Content-Type: text/plain; charset=utf-8\r
+                                        \r
+                                        2c\r
+                                        no adapter for type [id=2587, name=DOUBLE[]]\r
+                                        00\r
+                                        \r
+                                        """
+                        );
+                        try (TableWriter writer = engine.getWriter(engine.verifyTableName(table), "test")) {
+                            Assert.assertEquals(0, writer.size());
+                        }
+                    }
+                });
+    }
+
+    @Test
     public void testImportLocksTable() throws Exception {
         final String tableName = "trips";
         new HttpQueryTestBuilder()
@@ -681,6 +724,92 @@ public class ImportIODispatcherTest extends AbstractTest {
     @Test
     public void testImportMisDetectsTimestampColumnSlowPeer() throws Exception {
         testImportMisDetectsTimestampColumn(new HttpServerConfigurationBuilder().withNetwork(getSendDelayNetworkFacade(50)), 10);
+    }
+
+    @Test
+    public void testImportNonAsciiCharColumn() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("CREATE TABLE chars (k VARCHAR, c CHAR)", sqlExecutionContext);
+                    final String url = "/imp?name=chars&fmt=json&forceHeader=true&delimiter=%2C";
+
+                    // one character each: one, two and three UTF-8 bytes, and an empty value,
+                    // which leaves the column at its default
+                    new SendAndReceiveRequestBuilder().execute(
+                            importRequest(url, """
+                                    k,c\r
+                                    ascii,x\r
+                                    acute,\u00e9\r
+                                    max,\uffff\r
+                                    empty,\r
+                                    """),
+                            """
+                                    HTTP/1.1 200 OK\r
+                                    Server: questDB/1.0\r
+                                    Date: Thu, 1 Jan 1970 00:00:00 GMT\r
+                                    Transfer-Encoding: chunked\r
+                                    Content-Type: application/json; charset=utf-8\r
+                                    \r
+                                    d4\r
+                                    {"status":"OK","location":"chars","rowsRejected":0,"rowsImported":4,"header":true,"partitionBy":"NONE","columns":[{"name":"k","type":"VARCHAR","size":0,"errors":0},{"name":"c","type":"CHAR","size":2,"errors":0}]}\r
+                                    00\r
+                                    \r
+                                    """
+                    );
+                    assertQuery("SELECT k, c FROM chars")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
+                                    k\tc
+                                    ascii\tx
+                                    acute\t\u00e9
+                                    max\t\uffff
+                                    empty\t
+                                    """);
+
+                    // not one character: two characters, and one code point above U+FFFF (four
+                    // UTF-8 bytes), which no CHAR holds; each counts as a bad value and the row
+                    // keeps the column at its default
+                    new SendAndReceiveRequestBuilder().execute(
+                            importRequest(url, """
+                                    k,c\r
+                                    two,ab\r
+                                    astral,\ud83d\ude00\r
+                                    """),
+                            """
+                                    HTTP/1.1 200 OK\r
+                                    Server: questDB/1.0\r
+                                    Date: Thu, 1 Jan 1970 00:00:00 GMT\r
+                                    Transfer-Encoding: chunked\r
+                                    Content-Type: application/json; charset=utf-8\r
+                                    \r
+                                    d4\r
+                                    {"status":"OK","location":"chars","rowsRejected":0,"rowsImported":2,"header":true,"partitionBy":"NONE","columns":[{"name":"k","type":"VARCHAR","size":0,"errors":0},{"name":"c","type":"CHAR","size":2,"errors":2}]}\r
+                                    00\r
+                                    \r
+                                    """
+                    );
+                    assertQuery("SELECT k, c FROM chars")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
+                                    k\tc
+                                    ascii\tx
+                                    acute\t\u00e9
+                                    max\t\uffff
+                                    empty\t
+                                    two\t
+                                    astral\t
+                                    """);
+                });
     }
 
     @Test
@@ -1240,6 +1369,27 @@ public class ImportIODispatcherTest extends AbstractTest {
                         Assert.assertTrue(txnScoreboard.isTxnAvailable(2));
                     }
                 });
+    }
+
+    private static String importRequest(String url, String csv) {
+        final String request = "POST " + url + " HTTP/1.1\r\n" +
+                """
+                        Host: localhost:9001\r
+                        User-Agent: curl/7.64.0\r
+                        Accept: */*\r
+                        Content-Length: 437760673\r
+                        Content-Type: multipart/form-data; boundary=------------------------27d997ca93d2689d\r
+                        Expect: 100-continue\r
+                        \r
+                        --------------------------27d997ca93d2689d\r
+                        Content-Disposition: form-data; name="data"; filename="data.csv"\r
+                        Content-Type: application/octet-stream\r
+                        \r
+                        """ +
+                csv +
+                REQUEST_FOOTER;
+        // SendAndReceiveRequestBuilder sends each char as one byte: pass the UTF-8 form one byte per char
+        return new String(request.getBytes(StandardCharsets.UTF_8), StandardCharsets.ISO_8859_1);
     }
 
     private static int stringLen(int number) {
