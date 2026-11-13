@@ -634,38 +634,43 @@ public class QwpSchemaStaleAlterE2ETest extends AbstractQwpWebSocketTest {
         };
         runInContext(port -> {
             int tableIndex = 0;
+            // A transactional sender sends the pending rows without committing them;
+            // the application's flush() commits them with the rows in the new type.
             for (String mode : new String[]{"auto", "strict"}) {
-                for (Change change : changes) {
-                    String table = "recover_" + tableIndex++;
-                    execute("CREATE TABLE " + table + " (v " + change.from + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-                    try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";schema_mode=" + mode
-                            + ";auto_flush_rows=2147483647;auto_flush_bytes=0;auto_flush_interval=2147483646;"
-                            + "close_flush_timeout_millis=0;")) {
-                        QwpWebSocketSender ws = (QwpWebSocketSender) sender;
-                        // The frozen clock keeps the cached schema within the age limit,
-                        // so only the run of rejected rows can make the sender look again.
-                        ws.setNanoClockForTesting(() -> 0L);
-                        sender.table(table).longColumn("v", 7).at(1, ChronoUnit.MICROS);
-                        execute("ALTER TABLE " + table + " ALTER COLUMN v TYPE " + change.to);
-                        for (int i = 0; i < QwpSchemaFreshness.REJECTIONS_BEFORE_RECHECK; i++) {
-                            try {
-                                change.write.accept(sender.table(table));
-                                Assert.fail(mode + " " + change.to + ": expected rejection against the cached schema");
-                            } catch (LineSenderSchemaException e) {
-                                Assert.assertEquals(LineSenderSchemaException.Reason.INVALID_VALUE, e.getReason());
+                for (String transaction : new String[]{"off", "on"}) {
+                    for (Change change : changes) {
+                        String table = "recover_" + tableIndex++;
+                        execute("CREATE TABLE " + table + " (v " + change.from + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                        try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";schema_mode=" + mode
+                                + ";transaction=" + transaction
+                                + ";auto_flush_rows=2147483647;auto_flush_bytes=0;auto_flush_interval=2147483646;"
+                                + "close_flush_timeout_millis=0;")) {
+                            QwpWebSocketSender ws = (QwpWebSocketSender) sender;
+                            // The frozen clock keeps the cached schema within the age limit,
+                            // so only the run of rejected rows can make the sender look again.
+                            ws.setNanoClockForTesting(() -> 0L);
+                            sender.table(table).longColumn("v", 7).at(1, ChronoUnit.MICROS);
+                            execute("ALTER TABLE " + table + " ALTER COLUMN v TYPE " + change.to);
+                            for (int i = 0; i < QwpSchemaFreshness.REJECTIONS_BEFORE_RECHECK; i++) {
+                                try {
+                                    change.write.accept(sender.table(table));
+                                    Assert.fail(mode + " " + transaction + " " + change.to + ": expected rejection against the cached schema");
+                                } catch (LineSenderSchemaException e) {
+                                    Assert.assertEquals(LineSenderSchemaException.Reason.INVALID_VALUE, e.getReason());
+                                }
                             }
+                            change.write.accept(sender.table(table));
+                            sender.at(2, ChronoUnit.MICROS);
+                            sender.flush();
+                            Assert.assertTrue(sender.drain(10_000));
+                            Assert.assertEquals(0, ws.getTotalReconnectAttempts());
                         }
-                        change.write.accept(sender.table(table));
-                        sender.at(2, ChronoUnit.MICROS);
-                        sender.flush();
-                        Assert.assertTrue(sender.drain(10_000));
-                        Assert.assertEquals(0, ws.getTotalReconnectAttempts());
+                        drainWalQueue();
+                        assertQuery("SELECT v FROM " + table + " ORDER BY ts")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("v\n" + change.pending + "\n" + change.written + "\n");
                     }
-                    drainWalQueue();
-                    assertQuery("SELECT v FROM " + table + " ORDER BY ts")
-                            .noLeakCheck()
-                            .expectSize()
-                            .returns("v\n" + change.pending + "\n" + change.written + "\n");
                 }
             }
         });
