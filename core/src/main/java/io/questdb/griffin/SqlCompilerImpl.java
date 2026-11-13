@@ -249,6 +249,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final VacuumColumnVersions vacuumColumnVersions;
     protected CharSequence sqlText;
     private boolean closed = false;
+    // Created on first use, see isColumnNamedInExpiryPolicy().
+    private GenericLexer expiryPolicyLexer;
     // Helper var used to pass back count in cases it can't be done via method result.
     private long insertCount;
     //determines how compiler parses query text
@@ -1453,6 +1455,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return sink;
     }
 
+    // True when the token is the column's name, ignoring case, with or without double quotes, see
+    // isColumnNamedInExpiryPolicy(). A quoted name in a policy that passed validation has its quotes at both ends.
+    private static boolean isColumnToken(CharSequence tok, CharSequence columnName) {
+        final int len = tok.length();
+        return Chars.equalsIgnoreCase(columnName, tok)
+                || (len > 2 && tok.charAt(0) == '"' && Chars.equalsIgnoreCase(columnName, tok, 1, len - 1));
+    }
+
     private static boolean isIPv4UpdateCast(int from, int to) {
         return (from == ColumnType.STRING && to == ColumnType.IPv4)
                 || (from == ColumnType.IPv4 && to == ColumnType.STRING)
@@ -2496,6 +2506,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             if (isMatView && columnIndex == metadata.getTimestampIndex()) {
                 throw SqlException.$(lexer.lastTokenPosition(), "cannot drop the designated timestamp column of a materialized view");
             }
+            if (isMatView) {
+                checkMatViewDropColumnExpiryPolicy(tableToken, metadata.getColumnName(columnIndex), lexer.lastTokenPosition());
+            }
 
             CharSequence columnName = tok;
             dropColumnStatement.ofDropColumn(columnName);
@@ -3130,6 +3143,39 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
+    // Refuses ALTER MATERIALIZED VIEW v DROP COLUMN c when the view's EXPIRE ROWS policy reads c. Every read of the
+    // view goes through the policy's rewrite, a keep-filter, a LATEST ON or a window query, which names the policy's
+    // columns, so without c no query could read the view until DROP EXPIRE. The check reads the policy that reads of
+    // the view apply, so a SET EXPIRE still in the view's WAL does not count yet. It looks for c in the policy's text:
+    // a name, quoted or not, that is not a function call. The SQL lexer splits a name with a table prefix at the dot,
+    // and it reads a string, quotes included, as one token, which never equals a column name. The check errs on the
+    // side of refusal: it also refuses a column whose name the policy uses otherwise, such as a type name in a cast
+    // or a table prefix. Changing the policy with SET EXPIRE, or removing it with DROP EXPIRE, lets the column go.
+    private void checkMatViewDropColumnExpiryPolicy(
+            TableToken matViewToken,
+            CharSequence columnName,
+            int position
+    ) throws SqlException {
+        final String predicate = engine.getMetadataCache().lookupExpiryPolicy(matViewToken).getPredicate();
+        if (predicate == null) {
+            return;
+        }
+        final CharSequence policyText;
+        if (RowExpiryUtil.isKeepLatest(predicate)) {
+            // the designated timestamp, which LATEST ON reads too, cannot be dropped
+            policyText = RowExpiryUtil.keepLatestKeys(predicate);
+        } else if (RowExpiryUtil.isKeepBy(predicate) || RowExpiryUtil.isWindow(predicate)) {
+            policyText = RowExpiryUtil.windowPredicate(predicate, null);
+        } else {
+            policyText = predicate;
+        }
+        if (isColumnNamedInExpiryPolicy(policyText, columnName)) {
+            throw SqlException.$(position, "the EXPIRE ROWS policy of the materialized view reads the column [column=")
+                    .put(columnName)
+                    .put("], change the policy with SET EXPIRE or remove it with DROP EXPIRE first, and retry once that has applied");
+        }
+    }
+
     // Reads the statement that follows the name of a materialized view and fails RENAME COLUMN with the hint how to
     // rename a view column. Leaves the lexer past what it read.
     private void checkMatViewRenameColumn() throws SqlException {
@@ -3290,9 +3336,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         tok = SqlUtil.fetchNext(lexer);
         // ADD and DROP read the view's sequencer metadata, as ALTER TABLE does: it holds the schema changes still in the
         // view's WAL, so DROP COLUMN c works while the ADD COLUMN c before it waits to apply. The WAL apply context
-        // gives the metadata of the view's table instead. The other forms read the view's table metadata.
-        // ALTER ... AS checks the new SQL against the same metadata, so that it sees a column added or dropped just
-        // before it.
+        // gives the metadata of the view's table instead. The other forms read the view's table metadata, apart from
+        // SET EXPIRE, which opens the sequencer metadata itself. ALTER ... AS checks the new SQL against the same
+        // metadata, so that it sees a column added or dropped just before it.
         final boolean isSchemaChange = tok != null && (isAddKeyword(tok) || isDropKeyword(tok) || isAsKeyword(tok) || isWithKeyword(tok));
         try (TableRecordMetadata tableMetadata = isSchemaChange ? executionContext.getMetadataForWrite(matViewToken) : engine.getTableMetadata(matViewToken)) {
             if (tok != null && (isAsKeyword(tok) || isWithKeyword(tok))) {
@@ -3476,7 +3522,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     // the clause, validates the predicate against the view, and builds SET_EXPIRE ->
                     // setMetaExpiry), so we route the mat-view token straight through it.
                     executionContext.getSecurityContext().authorizeAlterTableSetParam(matViewToken);
-                    alterTableSetExpire(executionContext, matViewToken, matViewNamePosition, tableMetadata);
+                    // It checks the columns of a scalar WHEN or KEEP policy against the view's sequencer metadata, as
+                    // ADD and DROP COLUMN do, so that a policy reading a column that a view DROP COLUMN still in the
+                    // view's WAL removes fails here, not at apply, where it would suspend the view's WAL, and a policy
+                    // reading a column that a pending ADD COLUMN adds passes. The read probe of a KEEP or window WHEN
+                    // policy still compiles against the view's applied columns.
+                    try (TableRecordMetadata writeMetadata = executionContext.getMetadataForWrite(matViewToken)) {
+                        alterTableSetExpire(executionContext, matViewToken, matViewNamePosition, writeMetadata);
+                    }
                 } else if (isRefreshKeyword(tok)) {
                     tok = expectToken(lexer, "'immediate' or 'manual' or 'period' or 'every' or 'limit'");
                     if (isLimitKeyword(tok)) {
@@ -7323,6 +7376,25 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return viewDefinition != null && viewDefinition.isAudited();
     }
 
+    // True when a token of an EXPIRE ROWS policy's text names the column, see isColumnToken(), and is not the name of
+    // a function call, which the next token, '(', marks.
+    private boolean isColumnNamedInExpiryPolicy(CharSequence policyText, CharSequence columnName) throws SqlException {
+        GenericLexer policyLexer = expiryPolicyLexer;
+        if (policyLexer == null) {
+            policyLexer = expiryPolicyLexer = new GenericLexer(configuration.getSqlLexerPoolCapacity());
+            configureLexer(policyLexer);
+        }
+        policyLexer.of(policyText);
+        boolean isNamed = false;
+        for (CharSequence tok = SqlUtil.fetchNext(policyLexer); tok != null; tok = SqlUtil.fetchNext(policyLexer)) {
+            if (isNamed && !Chars.equals(tok, '(')) {
+                return true;
+            }
+            isNamed = isColumnToken(tok, columnName);
+        }
+        return isNamed;
+    }
+
     private boolean isCompatibleColumnTypeChange(int from, int to) {
         return columnConversionSupport[ColumnType.tagOf(from)][ColumnType.tagOf(to)];
     }
@@ -8041,9 +8113,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         // The mat-view target check (and the aggregating-view advisory) is handled for ALL modes by the
         // caller (alterTableSetExpire); this only resolves the relative policy against the view.
         // The probe opens a reader on the view, so a schema change to the view that applies between the
-        // probe's code generation and its getCursor() (an index, SYMBOL CAPACITY, TTL, another SET EXPIRE)
-        // fails it with TableReferenceOutOfDateException. No such change alters the view's column names or
-        // types, so the probe runs again against the new metadata version. A view dropped and re-created
+        // probe's code generation and its getCursor() (an index, SYMBOL CAPACITY, TTL, another SET EXPIRE, a
+        // view ADD or DROP COLUMN) fails it with TableReferenceOutOfDateException, and the probe runs again
+        // against the view's columns at the new metadata version. A view dropped and re-created
         // under the same name has a new table id, and the WAL writer rejects the ALTER when it executes.
         // The probe reads the view without its current policy, the way a read sees the view once the new
         // policy replaces it, so it asks for SELECT on the new policy's columns and not on the columns of
@@ -8231,10 +8303,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         }
         // The probe runs when the user submits the statement, and not when WAL apply replays the stored
-        // SET EXPIRE. By then the probe has already accepted the policy for this view, and a view's column
-        // names and types cannot change in between, so running it again checks nothing new. A second run
-        // can fail only for reasons unrelated to the policy: the probe borrows a compiler and a view reader
-        // and opens the view's files, and any of these can fail when the server is under load.
+        // SET EXPIRE. By then the probe has already accepted the policy for this view. A second run can fail for
+        // reasons unrelated to the policy: the probe borrows a compiler and a view reader and opens the view's
+        // files, and any of these can fail when the server is under load. A view's columns can change in
+        // between, through a view ADD or DROP COLUMN still in the view's WAL when the user submitted the SET
+        // EXPIRE. At ALTER, the column checks above read the view's sequencer metadata, so they see such a
+        // change; a window WHEN policy has no column check here, so one that reads a column a pending DROP
+        // COLUMN removes applies, and reads of the view fail until the policy changes.
         if (!executionContext.isWalApplication()) {
             probeExpiryPolicyRead(executionContext, source, tsName(metadata), predicate, isNarrowProjection, position);
         }

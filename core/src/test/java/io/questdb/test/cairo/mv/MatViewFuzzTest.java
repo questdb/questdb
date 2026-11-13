@@ -42,7 +42,6 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
-import io.questdb.griffin.RecordToRowCopierUtils;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -1355,11 +1354,9 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         // The record copier the view's refresh writes rows with: picked by the schema's size (0), or forced to the
         // single-method, chunked or looping flavour. Production uses the looping copier for wide views when chunked
         // copiers are disabled or fail.
-        int copierType = rnd.nextInt(4);
+        final int copierType = rnd.nextInt(4);
         LOG.info().$("fuzz: copier type ").$(copierType).$();
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, copierType);
-        // view columns this round dropped, by name
-        final ObjList<String> droppedViewColumns = new ObjList<>();
         final MatViewFuzzOpGenerator generator = new MatViewFuzzOpGenerator(OPS_DAY_COUNT);
         final MatViewFuzzOpGenerator.Op op = new MatViewFuzzOpGenerator.Op();
         createOperationsFuzzBase(timestampType);
@@ -1394,21 +1391,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             if (isViewColumnAdded && isDroppingNewestViewPartition(op)) {
                 LOG.info().$("fuzz: skipping view DROP PARTITION of the newest view partition, see questdb/questdb#8330").$();
             } else {
-                // Leaves the looping copier before the view adds back a column it dropped: the looping copier copies
-                // the view's metadata, whose dropped slot keeps the name, and fails every refresh after that with
-                // "duplicate column". MatViewRefreshCopierTypesTest#testRefreshAfterViewColumnReAddedWithSameType
-                // pins it. Remove the switch with the fix.
-                if (copierType == RecordToRowCopierUtils.COPIER_TYPE_LOOPING
-                        && op.kind == MatViewFuzzOpGenerator.Kind.VIEW_ADD_COLUMN
-                        && droppedViewColumns.indexOf(op.column) > -1) {
-                    copierType = rnd.nextInt(3);
-                    LOG.info().$("fuzz: leaving the looping copier before a view column is added back [copierType=").$(copierType).I$();
-                    setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, copierType);
-                }
                 runOperationsFuzzOp(generator, op, sqlColumnsBefore, oracle, timestampType);
-                if (op.kind == MatViewFuzzOpGenerator.Kind.VIEW_DROP_COLUMN) {
-                    droppedViewColumns.add(op.column);
-                }
             }
             isViewColumnAdded |= op.kind == MatViewFuzzOpGenerator.Kind.VIEW_ADD_COLUMN;
             if (rnd.nextBoolean()) {

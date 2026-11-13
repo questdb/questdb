@@ -35,15 +35,22 @@ import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.wal.WriterRowUtils;
 import io.questdb.griffin.LoopingRecordToRowCopier;
 import io.questdb.griffin.RecordToRowCopier;
 import io.questdb.griffin.RecordToRowCopierUtils;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.table.SelectedRecord;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimal256;
 import io.questdb.std.IntList;
+import io.questdb.std.Long256Acceptor;
+import io.questdb.std.Long256FromCharSequenceDecoder;
+import io.questdb.std.Uuid;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
@@ -76,14 +83,22 @@ public final class MatViewColumnMapping {
      * that discards the values, to find the column whose value does not convert. The generated copiers do not
      * know which column they convert; the looping copier does. Returns the column's position in the copier, for
      * {@link #getQueryColumnIndex(RecordToRowCopier, int)} and {@link #getViewColumnIndex(RecordToRowCopier, int)},
-     * or -1 when the replay converts every column.
+     * or -1 when the replay names no column.
+     * <p>
+     * The copy stops at the first column whose value does not convert, and so does the replay. The replay names
+     * that column when the copier's own conversion failed there, with the error's message. A conversion that the
+     * writer row performs itself, such as text to UUID, keeps its error as it is: the row the replay copies into
+     * runs those conversions, with the writer row's code, only to stop where the writer row stopped, and the
+     * replay then names no column. Without that, the replay would pass over such a column and could name a later
+     * one whose value fails with the same message.
      */
     public static int findFailingColumn(
             SqlExecutionContext context,
             RecordToRowCopier copier,
             RecordMetadata queryMetadata,
             RecordMetadata viewMetadata,
-            Record record
+            Record record,
+            CharSequence errorMessage
     ) {
         final ColumnTypes fromTypes;
         final ColumnFilter toColumnFilter;
@@ -100,8 +115,10 @@ public final class MatViewColumnMapping {
             toColumnFilter = entityColumnFilter;
             fromRecord = record;
         }
-        return new LoopingRecordToRowCopier(fromTypes, viewMetadata, toColumnFilter)
-                .findFailingColumn(context, fromRecord, TableWriter.NOOP_ROW);
+        final ConversionCheckingRow row = new ConversionCheckingRow(viewMetadata);
+        final int position = new LoopingRecordToRowCopier(fromTypes, viewMetadata, toColumnFilter)
+                .findFailingColumn(context, fromRecord, row, errorMessage);
+        return row.hasConversionFailed ? -1 : position;
     }
 
     /**
@@ -305,6 +322,84 @@ public final class MatViewColumnMapping {
 
         public String getUnmappedViewColumns() {
             return unmappedViewColumns;
+        }
+    }
+
+    // A row that discards the values, but first runs the value conversions that the writer row performs itself for
+    // the looping copier, from text to DECIMAL, GEOHASH, UUID and LONG256, with the writer row's code, see
+    // TableWriter.RowImpl and WalWriter.RowImpl. A value that does not convert fails there as it fails in the writer
+    // row, and the row records that the failure is its own. Column indexes are writer indexes, as in the writer row.
+    private static final class ConversionCheckingRow extends TableWriter.NoOpRow {
+        private static final Long256Acceptor NOOP_LONG256_ACCEPTOR = (l0, l1, l2, l3) -> {
+        };
+        private final Decimal256 decimal256 = new Decimal256();
+        private final RecordMetadata metadata;
+        private final Uuid uuid = new Uuid();
+        private boolean hasConversionFailed;
+
+        private ConversionCheckingRow(RecordMetadata metadata) {
+            this.metadata = metadata;
+        }
+
+        @Override
+        public void putDecimalChar(int columnIndex, char decimalValue) {
+            hasConversionFailed = true;
+            WriterRowUtils.putDecimalChar(columnIndex, decimal256, decimalValue, metadata.getColumnType(columnIndex), this);
+            hasConversionFailed = false;
+        }
+
+        @Override
+        public void putDecimalStr(int columnIndex, CharSequence decimalValue) {
+            hasConversionFailed = true;
+            WriterRowUtils.putDecimalStr(columnIndex, decimal256, decimalValue, metadata.getColumnType(columnIndex), this);
+            hasConversionFailed = false;
+        }
+
+        @Override
+        public void putDecimalVarchar(int columnIndex, Utf8Sequence decimalValue) {
+            hasConversionFailed = true;
+            WriterRowUtils.putDecimalVarchar(columnIndex, decimal256, decimalValue, metadata.getColumnType(columnIndex), this);
+            hasConversionFailed = false;
+        }
+
+        @Override
+        public void putGeoStr(int columnIndex, CharSequence value) {
+            hasConversionFailed = true;
+            WriterRowUtils.putGeoStr(columnIndex, value, metadata.getColumnType(columnIndex), this);
+            hasConversionFailed = false;
+        }
+
+        @Override
+        public void putGeoVarchar(int columnIndex, Utf8Sequence value) {
+            hasConversionFailed = true;
+            WriterRowUtils.putGeoVarchar(columnIndex, value, metadata.getColumnType(columnIndex), this);
+            hasConversionFailed = false;
+        }
+
+        // The writer row's column memory stores an empty or NULL text as NULL, and decodes any other text from its
+        // third character on, past the "0x" prefix, with Long256FromCharSequenceDecoder.
+        @Override
+        public void putLong256Utf8(int columnIndex, Utf8Sequence hexString) {
+            final int size;
+            if (hexString != null && (size = hexString.size()) > 0) {
+                hasConversionFailed = true;
+                Long256FromCharSequenceDecoder.decode(hexString.asAsciiCharSequence(), 2, size, NOOP_LONG256_ACCEPTOR);
+                hasConversionFailed = false;
+            }
+        }
+
+        @Override
+        public void putUuid(int columnIndex, CharSequence uuidStr) {
+            hasConversionFailed = true;
+            SqlUtil.implicitCastStrAsUuid(uuidStr, uuid);
+            hasConversionFailed = false;
+        }
+
+        @Override
+        public void putUuidUtf8(int columnIndex, Utf8Sequence uuidStr) {
+            hasConversionFailed = true;
+            SqlUtil.implicitCastStrAsUuid(uuidStr, uuid);
+            hasConversionFailed = false;
         }
     }
 

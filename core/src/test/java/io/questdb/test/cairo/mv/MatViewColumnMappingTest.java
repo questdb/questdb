@@ -1202,22 +1202,26 @@ public class MatViewColumnMappingTest extends AbstractCairoTest {
                     final Record record = cursor.getRecord();
                     // the first row converts
                     Assert.assertTrue(cursor.hasNext());
-                    Assert.assertEquals(-1, MatViewColumnMapping.findFailingColumn(sqlExecutionContext, copier, queryMetadata, viewMetadata, record));
+                    Assert.assertEquals(-1, MatViewColumnMapping.findFailingColumn(sqlExecutionContext, copier, queryMetadata, viewMetadata, record, "inconvertible value: `abc` [VARCHAR -> INT]"));
                     TableWriter.Row row = writer.newRow(record.getTimestamp(timestampIndex));
                     copier.copy(sqlExecutionContext, record, row);
                     row.append();
 
                     Assert.assertTrue(cursor.hasNext());
                     row = writer.newRow(record.getTimestamp(timestampIndex));
+                    String error = null;
                     try {
                         copier.copy(sqlExecutionContext, record, row);
                         Assert.fail("copy must fail on the malformed value");
                     } catch (ImplicitCastException e) {
                         TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `abc` [VARCHAR -> INT]");
+                        error = e.getMessage();
                     } finally {
                         row.cancel();
                     }
-                    final int position = MatViewColumnMapping.findFailingColumn(sqlExecutionContext, copier, queryMetadata, viewMetadata, record);
+                    // a replay that fails with another error than the copy's names no column
+                    Assert.assertEquals(-1, MatViewColumnMapping.findFailingColumn(sqlExecutionContext, copier, queryMetadata, viewMetadata, record, error + " "));
+                    final int position = MatViewColumnMapping.findFailingColumn(sqlExecutionContext, copier, queryMetadata, viewMetadata, record, error);
                     Assert.assertTrue(position > -1);
                     TestUtils.assertEquals(expectedQueryColumn, queryMetadata.getColumnName(MatViewColumnMapping.getQueryColumnIndex(copier, position)));
                     TestUtils.assertEquals(expectedViewColumn, viewMetadata.getColumnName(MatViewColumnMapping.getViewColumnIndex(copier, position)));

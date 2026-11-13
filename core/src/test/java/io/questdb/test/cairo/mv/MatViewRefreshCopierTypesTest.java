@@ -180,6 +180,23 @@ public class MatViewRefreshCopierTypesTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFailingColumnNamedPastNullAndEmptyRowConversionText() throws Exception {
+        // A NULL text, and an empty one for LONG256, converts to NULL in the writer row. x holds one, and the copy
+        // goes on to y, whose value fails: the error names y.
+        assertMemoryLeak(() -> {
+            for (int i = 0; i < ROW_CONVERSIONS.length; i++) {
+                final String[] rowConversion = ROW_CONVERSIONS[i];
+                final String[] copierConversion = COPIER_CONVERSIONS[i % COPIER_CONVERSIONS.length];
+                final String copierError = copierConversion[4] + " [from=y, to=y]";
+                assertValueError(rowConversion, copierConversion, true, "NULL", copierConversion[1], copierError);
+                if (rowConversion[3].equals("LONG256")) {
+                    assertValueError(rowConversion, copierConversion, true, "''", copierConversion[1], copierError);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testRefreshAfterViewColumnReAddedWithOtherType() throws Exception {
         assertRefreshAfterViewColumnReAdded("LONG");
     }
@@ -241,6 +258,50 @@ public class MatViewRefreshCopierTypesTest extends AbstractCairoTest {
     @Test
     public void testValueErrorAfterViewColumnReAddedWithSameType() throws Exception {
         assertValueErrorAfterViewColumnReAdded("INT");
+    }
+
+    @Test
+    public void testValueErrorKeptWhenReplayFails() throws Exception {
+        // The replay that names the failing column fails itself. The refresh fails with the value's error, as it is,
+        // and the view keeps its rows. Two views read the base, and the replay fails for the first one only: the
+        // second one's error names the column.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, i INT, d DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base VALUES ('2024-01-01T00:00:00.000000Z', 1, 1.5)");
+            drainWalQueue();
+            execute("CREATE MATERIALIZED VIEW mv1 AS (SELECT * FROM base) PARTITION BY DAY");
+            execute("CREATE MATERIALIZED VIEW mv2 AS (SELECT * FROM base) PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+            execute("ALTER TABLE base ALTER COLUMN d TYPE VARCHAR");
+            drainWalAndMatViewQueues();
+            execute("INSERT INTO base VALUES ('2024-01-02T00:00:00.000000Z', 2, 'abc')");
+            drainWalQueue();
+
+            final AtomicInteger replays = new AtomicInteger();
+            try (MatViewRefreshJob job = createMatViewRefreshJob()) {
+                job.setOnCastErrorReplayForTesting(() -> {
+                    if (replays.incrementAndGet() == 1) {
+                        throw new IllegalStateException("replay failure");
+                    }
+                });
+                drainMatViewQueue(job);
+            }
+            drainWalQueue();
+            Assert.assertEquals(2, replays.get());
+            assertQuery("SELECT view_status, invalidation_reason FROM materialized_views() ORDER BY invalidation_reason")
+                    .noLeakCheck()
+                    .returns("""
+                            view_status\tinvalidation_reason
+                            invalid\tinconvertible value: `abc` [VARCHAR -> DOUBLE]
+                            invalid\tinconvertible value: `abc` [VARCHAR -> DOUBLE] [from=d, to=d]
+                            """);
+            for (String viewName : new String[]{"mv1", "mv2"}) {
+                assertQuery(viewName + " ORDER BY ts").timestamp("ts").noLeakCheck().expectSize().returns("""
+                        ts\ti\td
+                        2024-01-01T00:00:00.000000Z\t1\t1.5
+                        """);
+            }
+        });
     }
 
     // Base (ts, i, d, s); a passthrough view drops i, the designated timestamp's neighbour, adds it back with the

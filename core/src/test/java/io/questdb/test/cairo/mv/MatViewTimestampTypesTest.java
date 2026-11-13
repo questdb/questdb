@@ -215,7 +215,8 @@ public class MatViewTimestampTypesTest extends AbstractCairoTest {
         // the time the view's WAL applies it. A plain WAL table running the same statement is the oracle.
         // TIMESTAMP_NS is left out: on a plain TIMESTAMP_NS WAL table, the WAL apply job hands now() the commit
         // timestamp in microseconds as if it were nanoseconds, so DROP PARTITION WHERE ts < now() drops nothing.
-        // That predates this feature and needs its own fix (ApplyWal2TableJob, setNowAndFixClock()).
+        // That predates this feature and needs its own fix (ApplyWal2TableJob, setNowAndFixClock()), see
+        // questdb/questdb#8047. Remove the Assume with the fix.
         Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
             setCurrentMicros(parseFloorPartialTimestamp("2024-01-05T00:00:00.000000Z"));

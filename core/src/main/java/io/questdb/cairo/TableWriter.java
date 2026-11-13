@@ -21573,7 +21573,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private static class NoOpRow implements Row {
+    // A row that discards the values. Public so that a row which checks some of the values before it discards them,
+    // as the cast error replay of materialized view refresh does, overrides only the methods that take those.
+    public static class NoOpRow implements Row {
         @Override
         public void append() {
             // no-op

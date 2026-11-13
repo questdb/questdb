@@ -346,10 +346,9 @@ public class MatViewConcurrentOperationsFuzzTest extends AbstractCairoTest {
         timestampType = rnd.nextBoolean() ? "TIMESTAMP" : "TIMESTAMP_NS";
         LOG.info().$("fuzz: timestamp type ").$(timestampType).$();
         // The record copier the refreshes write rows with: picked by the schema's size (0), or forced to the
-        // single-method or the chunked flavour. The looping copier joins the draw with the fix of the "duplicate
-        // column" failure it hits once the view adds back a column it dropped, which this round's statements do;
-        // MatViewRefreshCopierTypesTest#testRefreshAfterViewColumnReAddedWithSameType pins it.
-        final int copierType = rnd.nextInt(3);
+        // single-method, chunked or looping flavour. Production uses the looping copier for wide views when chunked
+        // copiers are disabled or fail.
+        final int copierType = rnd.nextInt(4);
         LOG.info().$("fuzz: copier type ").$(copierType).$();
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, copierType);
         try (SqlExecutionContextImpl context = TestUtils.createSqlExecutionCtx(engine, 1)) {

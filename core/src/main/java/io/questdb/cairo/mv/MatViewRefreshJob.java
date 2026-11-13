@@ -138,6 +138,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     @TestOnly
     private volatile Runnable onBeforeRefreshLockForTesting;
     @TestOnly
+    private volatile Runnable onCastErrorReplayForTesting;
+    @TestOnly
     private volatile Runnable onFullRefreshTerminalFailureForTesting;
     @TestOnly
     private volatile Runnable onHoldingLockForTesting;
@@ -363,6 +365,16 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     @TestOnly
     public void setOnBeforeRefreshLockForTesting(Runnable onBeforeRefreshLockForTesting) {
         this.onBeforeRefreshLockForTesting = onBeforeRefreshLockForTesting;
+    }
+
+    /**
+     * Test seam: runs when insertAsSelect() is about to replay a row that failed with a value conversion error, to
+     * name the column. A test can throw here, as a replay that fails would. Persistent: fires on every replay until
+     * reset.
+     */
+    @TestOnly
+    public void setOnCastErrorReplayForTesting(Runnable onCastErrorReplayForTesting) {
+        this.onCastErrorReplayForTesting = onCastErrorReplayForTesting;
     }
 
     /**
@@ -2552,7 +2564,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                 try {
                                     copier.copy(refreshSqlExecutionContext, record, row);
                                 } catch (ImplicitCastException e) {
-                                    appendCastErrorColumns(copier, factory.getMetadata(), walWriter.getMetadata(), record, e);
+                                    appendCastErrorColumns(viewTableToken, copier, factory.getMetadata(), walWriter.getMetadata(), record, e);
                                     throw e;
                                 }
                                 row.append();
@@ -3169,16 +3181,35 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     // [from=<query column>, to=<view column>], the way the inconvertible types error names them. The error becomes
     // the refresh error and the invalidation reason. The generated copiers do not know which column they convert,
     // so MatViewColumnMapping.findFailingColumn() replays the failing row through the looping copier into a row
-    // that discards the values. A conversion the writer row performs itself, such as text to UUID, does not run
-    // there, so the replay finds no column and the error stays as it is.
+    // that discards the values, and names the first column that fails there, when the copier's own conversion
+    // failed with the error's message. A conversion the writer row performs itself, such as text to UUID, keeps the
+    // error as it is. The replay only names the column: when it fails in any other way, the error stays as it is.
     private void appendCastErrorColumns(
+            TableToken viewToken,
             RecordToRowCopier copier,
             RecordMetadata queryMetadata,
             RecordMetadata viewMetadata,
             Record record,
             ImplicitCastException e
     ) {
-        final int position = MatViewColumnMapping.findFailingColumn(refreshSqlExecutionContext, copier, queryMetadata, viewMetadata, record);
+        final int position;
+        try {
+            runCastErrorReplaySeamForTesting();
+            position = MatViewColumnMapping.findFailingColumn(
+                    refreshSqlExecutionContext,
+                    copier,
+                    queryMetadata,
+                    viewMetadata,
+                    record,
+                    e.getFlyweightMessage()
+            );
+        } catch (Throwable th) {
+            LOG.error().$("could not find the column of a materialized view refresh cast error [view=").$(viewToken)
+                    .$(", error=").$safe(e.getFlyweightMessage())
+                    .$(", replayError=").$(th)
+                    .I$();
+            return;
+        }
         if (position > -1) {
             e.put(" [from=").put(queryMetadata.getColumnName(MatViewColumnMapping.getQueryColumnIndex(copier, position)))
                     .put(", to=").put(viewMetadata.getColumnName(MatViewColumnMapping.getViewColumnIndex(copier, position)))
@@ -4134,6 +4165,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
     private void runBeforeRefreshLockSeamForTesting() {
         final Runnable seam = onBeforeRefreshLockForTesting;
+        if (seam != null) {
+            seam.run();
+        }
+    }
+
+    private void runCastErrorReplaySeamForTesting() {
+        final Runnable seam = onCastErrorReplayForTesting;
         if (seam != null) {
             seam.run();
         }
