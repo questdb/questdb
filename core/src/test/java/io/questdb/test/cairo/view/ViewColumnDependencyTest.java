@@ -818,6 +818,48 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
     }
 
     @Test
+    public void testOverridableVariableReadsNoColumnOnlyOtherReadsScanThroughOuterViewSettingItLater() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // v_alias lends ts and b only to the reads that set none of its variables, and has no variable yet
+            execute("CREATE VIEW v_alias AS (SELECT l.k, l.a, 0 AS z FROM (SELECT u.ts, u.k, u.a, u.b FROM x u) l)");
+            drainWalAndViewQueues();
+            // The outer view declares a variable v_alias does not read, so its SELECT sets no variable of v_alias, and
+            // it lends the columns v_alias marks to the reads that set none of its own.
+            execute("CREATE VIEW v AS (DECLARE @c := l.b SELECT k, a, z FROM v_alias)");
+            drainWalAndViewQueues();
+            Assert.assertEquals("{v_alias=[], x=[?b, ?ts, a, k]}", dependenciesOf("v"));
+            try (SqlExecutionContext context = denyBaseTableSelectContext()) {
+                assertQuery("SELECT a FROM v")
+                        .withContext(context)
+                        .noLeakCheck()
+                        .inferTimestamp()
+                        .inferRandomAccess()
+                        .sizeMayVary()
+                        .returns("a\n1\n3\n");
+            }
+
+            // v_alias gains @c, which the SELECT of the outer view sets, so a read of the outer view reads b through
+            // v_alias. The outer view keeps the dependencies it recorded, which lend b to the reads that set no
+            // variable, but the read sets one of v_alias, and reads b with the permission of the reader.
+            execute("ALTER VIEW v_alias AS (DECLARE OVERRIDABLE @c := l.a SELECT l.k, @c AS a, 0 AS z FROM (SELECT u.ts, u.k, u.a, u.b FROM x u) l)");
+            drainWalAndViewQueues();
+            Assert.assertEquals("{v_alias=[], x=[?b, ?ts, a, k]}", dependenciesOf("v"));
+            assertQuery("SELECT a FROM v")
+                    .noLeakCheck()
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("a\n2\n4\n");
+            try (SqlExecutionContext context = denyBaseTableSelectContext()) {
+                assertQuery("SELECT a FROM v").withContext(context).noLeakCheck().failsWith("permission denied [table=x, columns=b]");
+                // as a read of v_alias that sets @c does
+                assertQuery("DECLARE @c := l.b SELECT a FROM v_alias").withContext(context).noLeakCheck().failsWith("permission denied [table=x, columns=b]");
+            }
+        });
+    }
+
+    @Test
     public void testOverridableVariableReadsNoColumnTheViewDoesNot() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
@@ -974,6 +1016,35 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
             final String viewSql = "SELECT 'src' src, l.k, \"@c\" FROM (SELECT u.ts, u.k, u.a, u.b, u.\"@c\" FROM xc u) l";
             assertReads(viewSql, "{xc=[?a, ?b, ?ts, @c, k]}", "SELECT src FROM v");
             assertOverrideDenied(viewSql, "DECLARE @c := b SELECT * FROM v", "permission denied [table=xc, columns=b]");
+        });
+    }
+
+    @Test
+    public void testStatementValueReadUnderNameTheViewDoesNotDeclareThroughOuterViewSettingItLater() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE xc (ts TIMESTAMP, k SYMBOL, a LONG, b LONG, \"@c\" LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO xc VALUES (0, 'k1', 1, 2, 7)");
+            drainWalQueue();
+            execute("CREATE VIEW v_inner AS (SELECT l.k, l.a, 0 AS z FROM (SELECT u.ts, u.k, u.a, u.b, u.\"@c\" FROM xc u) l)");
+            drainWalAndViewQueues();
+            // The outer view declares a variable that v_inner does not read under its name.
+            execute("CREATE VIEW v AS (DECLARE @c := l.b SELECT k, a, z FROM v_inner)");
+            drainWalAndViewQueues();
+            Assert.assertEquals("{v_inner=[], xc=[?@c, ?b, ?ts, a, k]}", dependenciesOf("v"));
+
+            // v_inner selects the column @c by a name a variable can have, which the outer view gives a value, so a
+            // read of the outer view reads b through v_inner, with the permission of the reader.
+            execute("ALTER VIEW v_inner AS (SELECT l.k, \"@c\" AS a, 0 AS z FROM (SELECT u.ts, u.k, u.a, u.b, u.\"@c\" FROM xc u) l)");
+            drainWalAndViewQueues();
+            assertQuery("SELECT a FROM v")
+                    .noLeakCheck()
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("a\n2\n");
+            try (SqlExecutionContext context = denyBaseTableSelectContext()) {
+                assertQuery("SELECT a FROM v").withContext(context).noLeakCheck().failsWith("permission denied [table=xc, columns=b]");
+            }
         });
     }
 

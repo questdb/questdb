@@ -714,10 +714,10 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
      * The view definition, as of the compile, that a table-name function, a SHOW statement or a scan reads through.
      *
      * @param definition       the definition the parser expanded the view from
-     * @param isReadOverridden whether the declarations in effect where the view is read, those of the statement or of
-     *                         a view whose expression reads it, set an OVERRIDABLE variable of it, or of a view it
-     *                         reads, which the view lends only the columns its own plan reads, see
-     *                         {@link ViewDefinition#OTHER_READ_COLUMN_PREFIX}
+     * @param isReadOverridden whether a value reaches an OVERRIDABLE variable of the view, or of a view it reads, from
+     *                         the declarations in effect where the view is read, those of the statement or of a view
+     *                         whose expression reads it, or from the body of a view it reads, which the view lends
+     *                         only the columns its own plan reads, see {@link ViewDefinition#OTHER_READ_COLUMN_PREFIX}
      */
     record TableFunctionView(ViewDefinition definition, boolean isReadOverridden) {
 
