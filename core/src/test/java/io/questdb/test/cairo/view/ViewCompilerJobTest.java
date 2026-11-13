@@ -35,15 +35,20 @@ import io.questdb.cairo.pool.ResourcePoolSupervisor;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.view.NoOpViewStateStore;
 import io.questdb.cairo.view.ViewCompilerJob;
+import io.questdb.cairo.view.ViewCompilerTask;
 import io.questdb.cairo.view.ViewState;
 import io.questdb.cairo.view.ViewStateStore;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
@@ -53,6 +58,7 @@ import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -73,6 +79,10 @@ public class ViewCompilerJobTest extends AbstractViewTest {
     private static final StringSink raceInvalidViews = new StringSink();
     private static final AtomicReference<String> raceRecreateTableSql = new AtomicReference<>();
     private static final ObjList<String> raceWatchedViews = new ObjList<>();
+    // the borrows of t's reader without a metadata version, which the optimiser makes once per
+    // compile of a view over t, on the thread that countReaderBorrowsOfT() arms
+    private static final AtomicInteger readerBorrowsOfT = new AtomicInteger();
+    private static volatile Thread readerBorrowCountingThread;
     private final String[] breakingSqls = new String[]{
             "RENAME TABLE " + TABLE1 + " TO " + TABLE3,
             "ALTER TABLE " + TABLE1 + " DROP COLUMN v",
@@ -139,6 +149,9 @@ public class ViewCompilerJobTest extends AbstractViewTest {
                     }
                     recordInvalidWatchedViews(this);
                 }
+                if (Thread.currentThread() == readerBorrowCountingThread && Chars.equals(tableToken.getTableName(), "t")) {
+                    readerBorrowsOfT.incrementAndGet();
+                }
                 return super.getReader(tableToken, readerPoolSupervisor);
             }
 
@@ -175,7 +188,108 @@ public class ViewCompilerJobTest extends AbstractViewTest {
         raceInvalidViews.clear();
         raceRecreateTableSql.set(null);
         raceWatchedViews.clear();
+        readerBorrowCountingThread = null;
+        readerBorrowsOfT.set(0);
         super.tearDown();
+    }
+
+    @Test
+    public void testBusyRetryCompilesViewAlone() throws Exception {
+        // A busy retry repeats the compile of one view: each view over it that the original request
+        // covered got its own compile, and its own retry when that compile met a lock. A request for
+        // the view compiles the views over it too.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(CREATE_MICROS);
+            createPivotTable();
+            createView("v", "SELECT * FROM t");
+            createView("vp", "SELECT * FROM v PIVOT (sum(x) FOR k IN (SELECT DISTINCT k FROM v ORDER BY k))");
+            // a compile of vp over the emptied table fails
+            execute("TRUNCATE TABLE t");
+            setCurrentMicros(ALTER_MICROS);
+            final long dueMicros = ALTER_MICROS + busyRetryTimeoutMicros();
+            Assert.assertEquals(dueMicros, engine.getViewStateStore().scheduleCompileBusyRetry(engine.verifyTableName("v"), ALTER_MICROS));
+            setCurrentMicros(dueMicros);
+            drainViewQueue();
+            assertViewStatus("v", "valid", "", "2025-06-19T11:00:00.000000Z");
+            assertViewStatus("vp", "valid", "", "2025-06-19T10:00:00.000000Z");
+            assertPendingCompileBusyRetries("");
+
+            // 11:30
+            setCurrentMicros(ALTER_MICROS + 30 * Micros.MINUTE_MICROS);
+            engine.enqueueCompileView(engine.verifyTableName("v"));
+            drainViewQueue();
+            assertViewStatus("v", "valid", "", "2025-06-19T11:30:00.000000Z");
+            assertViewStatus("vp", "invalid", "PIVOT IN subquery returned empty result set", "2025-06-19T11:30:00.000000Z");
+        });
+    }
+
+    @Test
+    public void testBusyRetryOfOlderRequestDoesNotOverwriteNewerState() throws Exception {
+        // The compile of a request meets the lock of t's readers, and a newer request compiles the
+        // view before the busy retry is due. The retry then compiles the view over the emptied table
+        // and fails, but its update timestamp is older than the view state's, so the view keeps the
+        // state of the newer request.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(CREATE_MICROS);
+            createPivotTable();
+            createView("vp", PIVOT_SQL);
+            final long dueMicros = ALTER_MICROS + busyRetryTimeoutMicros();
+            setCurrentMicros(ALTER_MICROS);
+            try (ReadersLockOfT ignore = new ReadersLockOfT()) {
+                engine.enqueueCompileView(engine.verifyTableName("t"));
+                drainViewQueue();
+            }
+            assertPendingCompileBusyRetries(pendingCompileBusyRetry("vp", ALTER_MICROS, dueMicros));
+
+            // 11:00:00.5, before the retry is due
+            setCurrentMicros(ALTER_MICROS + busyRetryTimeoutMicros() / 2);
+            execute("COMPILE VIEW vp");
+            drainViewQueue();
+            assertViewStatus("vp", "valid", "", "2025-06-19T11:00:00.500000Z");
+            assertPendingCompileBusyRetries(pendingCompileBusyRetry("vp", ALTER_MICROS, dueMicros));
+
+            execute("TRUNCATE TABLE t");
+            setCurrentMicros(dueMicros);
+            drainViewQueue();
+            assertViewStatus("vp", "valid", "", "2025-06-19T11:00:00.500000Z");
+            assertPendingCompileBusyRetries("");
+        });
+    }
+
+    @Test
+    public void testBusyRetryTimeoutSettingSetsRetryDelay() throws Exception {
+        // The busy retry is due the configured timeout, in milliseconds or with a unit, after the
+        // compile met the lock, and not a microsecond earlier.
+        assertMemoryLeak(() -> {
+            final String[] timeouts = {"1", "250ms"};
+            final long[] delaysMicros = {1_000, 250_000};
+            for (int i = 0; i < timeouts.length; i++) {
+                node1.setProperty(PropertyKey.CAIRO_VIEW_COMPILE_BUSY_RETRY_TIMEOUT, timeouts[i]);
+                createTableWithRowsAndView();
+                setCurrentMicros(ALTER_MICROS);
+                execute("ALTER TABLE t ADD COLUMN b INT");
+                try (ReadersLockOfT ignore = new ReadersLockOfT()) {
+                    drainViewQueue();
+                }
+                final long dueMicros = ALTER_MICROS + delaysMicros[i];
+                assertPendingCompileBusyRetries(pendingCompileBusyRetry("v", ALTER_MICROS, dueMicros));
+
+                setCurrentMicros(dueMicros - 1);
+                drainViewQueue();
+                assertViewStatus("v", "valid", "", "2025-06-19T10:00:00.000000Z");
+                assertViewColumns("v", "a:INT");
+
+                setCurrentMicros(dueMicros);
+                drainViewQueue();
+                assertViewStatus("v", "valid", "", "2025-06-19T11:00:00.000000Z");
+                assertViewColumns("v", "a:INT, b:INT");
+                assertPendingCompileBusyRetries("");
+
+                execute("DROP VIEW v");
+                execute("DROP TABLE t");
+                drainViewQueue();
+            }
+        });
     }
 
     @Test
@@ -207,6 +321,48 @@ public class ViewCompilerJobTest extends AbstractViewTest {
             assertViewState("pv");
             assertViewColumns("pv", "grp:SYMBOL, X:LONG, Y:LONG");
             assertNothingBusy();
+        });
+    }
+
+    @Test
+    public void testCompileMeetingLockAfterViewDropLeavesNoPendingBusyRetry() throws Exception {
+        // DROP VIEW runs while a compile of the view is in flight, and the compile then meets the
+        // lock of t's readers. The view has no state any more, so it gets no busy retry.
+        assertMemoryLeak(() -> {
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            try {
+                setCurrentMicros(CREATE_MICROS);
+                createTableWithRows("t");
+                createTableWithRows("t2");
+                createView("vj", "SELECT x.*, y.a a2 FROM t x JOIN t2 y ON x.a = y.a");
+                setCurrentMicros(ALTER_MICROS);
+                execute("ALTER TABLE t ADD COLUMN b INT");
+                // The optimiser borrows and returns t's reader, then the run parks at its first
+                // borrow of t2. Code generation borrows t again once the run goes on.
+                final ViewCompileParker run = ViewCompileParker.ofQueueDrain(engine, "t2", PoolListener.SRC_READER);
+                engine.setPoolListener(run);
+                try {
+                    run.start();
+                    try (ReadersLockOfT ignore = new ReadersLockOfT()) {
+                        execute("DROP VIEW vj");
+                        run.join();
+                    }
+                } finally {
+                    run.join();
+                    engine.setPoolListener(null);
+                }
+                capture.drain();
+                capture.assertLogged("view compile met a table lock [view=vj");
+                assertPendingCompileBusyRetries("");
+
+                drainViewQueue();
+                assertPendingCompileBusyRetries("");
+                capture.drain();
+                capture.assertNotLogged("cannot compile view");
+            } finally {
+                capture.stop();
+            }
         });
     }
 
@@ -296,6 +452,55 @@ public class ViewCompilerJobTest extends AbstractViewTest {
             assertViewState("race_v");
             assertViewColumns("race_v", "a:INT, b:INT, c:INT");
             assertNothingBusy();
+        });
+    }
+
+    @Test
+    public void testConcurrentDrainsMeetingLockLeaveOnePendingBusyRetryPerView() throws Exception {
+        // Two drains compile 100 requests for v at once, and every compile meets the lock of t's
+        // readers. Whichever drain schedules first, each view ends with one busy retry with the
+        // newest update timestamp of the requests, and keeps its state.
+        assertMemoryLeak(() -> {
+            createTableWithRowsAndViews();
+            final int requestCount = 100;
+            final TableToken viewToken = engine.verifyTableName("v");
+            for (int i = 0; i < requestCount; i++) {
+                setCurrentMicros(ALTER_MICROS + i);
+                engine.enqueueCompileView(viewToken);
+            }
+            try (ReadersLockOfT ignore = new ReadersLockOfT()) {
+                final CyclicBarrier start = new CyclicBarrier(2);
+                final AtomicReference<Throwable> drainError = new AtomicReference<>();
+                final ObjList<Thread> drains = new ObjList<>();
+                for (int i = 0; i < 2; i++) {
+                    final Thread drain = new Thread(() -> {
+                        try (ViewCompilerJob job = new ViewCompilerJob(0, engine)) {
+                            start.await();
+                            job.run();
+                        } catch (Throwable th) {
+                            drainError.compareAndSet(null, th);
+                        } finally {
+                            Path.clearThreadLocals();
+                        }
+                    }, "view-compile-drain-" + i);
+                    drains.add(drain);
+                    drain.start();
+                }
+                for (int i = 0, n = drains.size(); i < n; i++) {
+                    drains.getQuick(i).join();
+                }
+                if (drainError.get() != null) {
+                    throw new AssertionError("view compile drain failed", drainError.get());
+                }
+            }
+            assertViewStatus("v", "valid", "", "2025-06-19T10:00:00.000000Z");
+            assertViewStatus("v_dep", "valid", "", "2025-06-19T10:00:00.000000Z");
+            final long newestRequestMicros = ALTER_MICROS + requestCount - 1;
+            final long dueMicros = newestRequestMicros + busyRetryTimeoutMicros();
+            assertPendingCompileBusyRetries(
+                    pendingCompileBusyRetry("v", newestRequestMicros, dueMicros)
+                            + pendingCompileBusyRetry("v_dep", newestRequestMicros, dueMicros)
+            );
         });
     }
 
@@ -422,6 +627,55 @@ public class ViewCompilerJobTest extends AbstractViewTest {
     }
 
     @Test
+    public void testDropViewRemovesItsPendingBusyRetry() throws Exception {
+        // DROP VIEW removes the pending busy retry of the view. A retry that a drain already queued
+        // when the view is dropped finds no view, and compiles nothing.
+        assertMemoryLeak(() -> {
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            try {
+                final long dueMicros = ALTER_MICROS + busyRetryTimeoutMicros();
+                // the retry is pending
+                createTableWithRowsAndView();
+                setCurrentMicros(ALTER_MICROS);
+                execute("ALTER TABLE t ADD COLUMN b INT");
+                try (ReadersLockOfT ignore = new ReadersLockOfT()) {
+                    drainViewQueue();
+                    assertPendingCompileBusyRetries(pendingCompileBusyRetry("v", ALTER_MICROS, dueMicros));
+                    execute("DROP VIEW v");
+                    assertPendingCompileBusyRetries("");
+                }
+                setCurrentMicros(dueMicros);
+                drainViewQueue();
+                assertPendingCompileBusyRetries("");
+                assertViewAbsent("v");
+                execute("DROP TABLE t");
+                drainViewQueue();
+
+                // the retry is queued
+                createTableWithRowsAndView();
+                setCurrentMicros(ALTER_MICROS);
+                execute("ALTER TABLE t ADD COLUMN b INT");
+                try (ReadersLockOfT ignore = new ReadersLockOfT()) {
+                    drainViewQueue();
+                    assertPendingCompileBusyRetries(pendingCompileBusyRetry("v", ALTER_MICROS, dueMicros));
+                    setCurrentMicros(dueMicros);
+                    engine.getViewStateStore().enqueueDueCompileBusyRetries();
+                    assertPendingCompileBusyRetries("");
+                    execute("DROP VIEW v");
+                }
+                drainViewQueue();
+                assertPendingCompileBusyRetries("");
+                assertViewAbsent("v");
+                capture.drain();
+                capture.assertNotLogged("cannot compile view");
+            } finally {
+                capture.stop();
+            }
+        });
+    }
+
+    @Test
     public void testDropWaitsForStartupViewCompile() throws Exception {
         // The server compiles every view in one pass at startup, while it already takes
         // statements. DROP of a non-WAL table that a view reads waits for the pass instead of
@@ -441,6 +695,328 @@ public class ViewCompilerJobTest extends AbstractViewTest {
             assertTableAbsent("t");
             drainViewQueue();
             assertViewState("v", "table does not exist [table=t]");
+        });
+    }
+
+    @Test
+    public void testLockedViewIsCompiledOncePerRequestAndOncePerDelay() throws Exception {
+        // While the lock of t's readers lasts, each request compiles the views once, as without the
+        // lock, and the busy retry compiles each view once per busy retry timeout, however many
+        // requests met the lock meanwhile. Every drain runs on the thread that holds the lock, and
+        // ends. The suite runs at the server default of the timeout.
+        assertMemoryLeak(() -> {
+            Assert.assertEquals(1_000, configuration.getViewCompileBusyRetryTimeout());
+            final long delayMicros = busyRetryTimeoutMicros();
+            createTableWithRowsAndViews();
+            setCurrentMicros(ALTER_MICROS);
+            execute("ALTER TABLE t ADD COLUMN b INT");
+            countReaderBorrowsOfT();
+            final long newestRequestMicros = ALTER_MICROS + delayMicros + 5;
+            try (ReadersLockOfT ignore = new ReadersLockOfT()) {
+                // the request of the ALTER compiles v and v_dep once each
+                Assert.assertEquals(2, drainAndCountCompilesOverT());
+                assertPendingCompileBusyRetries(
+                        pendingCompileBusyRetry("v", ALTER_MICROS, ALTER_MICROS + delayMicros)
+                                + pendingCompileBusyRetry("v_dep", ALTER_MICROS, ALTER_MICROS + delayMicros)
+                );
+                setCurrentMicros(ALTER_MICROS + delayMicros - 1);
+                Assert.assertEquals(0, drainAndCountCompilesOverT());
+
+                // the retries meet the lock again, and are due one timeout later
+                setCurrentMicros(ALTER_MICROS + delayMicros);
+                Assert.assertEquals(2, drainAndCountCompilesOverT());
+                assertPendingCompileBusyRetries(
+                        pendingCompileBusyRetry("v", ALTER_MICROS, ALTER_MICROS + 2 * delayMicros)
+                                + pendingCompileBusyRetry("v_dep", ALTER_MICROS, ALTER_MICROS + 2 * delayMicros)
+                );
+
+                // each failed read of v queues a compile of v, which compiles v_dep and v
+                for (int i = 1; i <= 5; i++) {
+                    setCurrentMicros(ALTER_MICROS + delayMicros + i);
+                    assertExceptionNoLeakCheck("SELECT * FROM v", 14, "table is locked: t");
+                }
+                setCurrentMicros(ALTER_MICROS + delayMicros + 6);
+                Assert.assertEquals(10, drainAndCountCompilesOverT());
+                assertPendingCompileBusyRetries(
+                        pendingCompileBusyRetry("v", newestRequestMicros, ALTER_MICROS + 2 * delayMicros)
+                                + pendingCompileBusyRetry("v_dep", newestRequestMicros, ALTER_MICROS + 2 * delayMicros)
+                );
+
+                setCurrentMicros(ALTER_MICROS + 2 * delayMicros);
+                Assert.assertEquals(2, drainAndCountCompilesOverT());
+                assertPendingCompileBusyRetries(
+                        pendingCompileBusyRetry("v", newestRequestMicros, ALTER_MICROS + 3 * delayMicros)
+                                + pendingCompileBusyRetry("v_dep", newestRequestMicros, ALTER_MICROS + 3 * delayMicros)
+                );
+                assertViewStatus("v", "valid", "", "2025-06-19T10:00:00.000000Z");
+                assertViewStatus("v_dep", "valid", "", "2025-06-19T10:00:00.000000Z");
+                assertViewColumns("v", "a:INT");
+                assertViewColumns("v_dep", "a:INT");
+            }
+
+            setCurrentMicros(ALTER_MICROS + 3 * delayMicros);
+            Assert.assertEquals(2, drainAndCountCompilesOverT());
+            assertViewStatus("v", "valid", "", "2025-06-19T11:00:01.000005Z");
+            assertViewStatus("v_dep", "valid", "", "2025-06-19T11:00:01.000005Z");
+            assertViewColumns("v", "a:INT, b:INT");
+            assertViewColumns("v_dep", "a:INT, b:INT");
+            assertPendingCompileBusyRetries("");
+
+            setCurrentMicros(ALTER_MICROS + 4 * delayMicros);
+            Assert.assertEquals(0, drainAndCountCompilesOverT());
+            assertViewStatus("v", "valid", "", "2025-06-19T11:00:01.000005Z");
+            assertPendingCompileBusyRetries("");
+        });
+    }
+
+    @Test
+    public void testLongMaxBusyRetryTimeoutKeepsRetryPendingWithoutOverflow() throws Exception {
+        // A busy retry timeout whose due time does not fit a long makes the retry due never, whether
+        // the timeout overflows in microseconds or only once added to the clock: no drain runs the
+        // retry, a later request still compiles the view, and DROP VIEW removes the retry.
+        assertMemoryLeak(() -> {
+            // the largest value, one below it, and the largest value whose microseconds fit a long
+            for (long timeoutMillis : new long[]{Long.MAX_VALUE, Long.MAX_VALUE - 1, Long.MAX_VALUE / 1_000}) {
+                node1.setProperty(PropertyKey.CAIRO_VIEW_COMPILE_BUSY_RETRY_TIMEOUT, timeoutMillis);
+                createTableWithRowsAndView();
+                setCurrentMicros(ALTER_MICROS);
+                execute("ALTER TABLE t ADD COLUMN b INT");
+                try (ReadersLockOfT ignore = new ReadersLockOfT()) {
+                    drainViewQueue();
+                }
+                assertPendingCompileBusyRetries(pendingCompileBusyRetry("v", ALTER_MICROS, Long.MAX_VALUE));
+
+                // 9999-12-31T23:59:59.999999Z
+                setCurrentMicros(253_402_300_799_999_999L);
+                drainViewQueue();
+                assertViewStatus("v", "valid", "", "2025-06-19T10:00:00.000000Z");
+                assertViewColumns("v", "a:INT");
+                assertPendingCompileBusyRetries(pendingCompileBusyRetry("v", ALTER_MICROS, Long.MAX_VALUE));
+
+                execute("COMPILE VIEW v");
+                drainViewQueue();
+                assertViewStatus("v", "valid", "", "9999-12-31T23:59:59.999999Z");
+                assertViewColumns("v", "a:INT, b:INT");
+                assertPendingCompileBusyRetries(pendingCompileBusyRetry("v", ALTER_MICROS, Long.MAX_VALUE));
+
+                execute("DROP VIEW v");
+                assertPendingCompileBusyRetries("");
+                execute("DROP TABLE t");
+                drainViewQueue();
+            }
+        });
+    }
+
+    @Test
+    public void testManyViewsMeetingLockLeaveOnePendingBusyRetryEach() throws Exception {
+        // The compile that an ALTER queued meets the lock of t's readers for each of 40 views over t.
+        // Each view keeps one busy retry, and one drain compiles each view once when they are due.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(CREATE_MICROS);
+            createTableWithRows("t");
+            final int viewCount = 40;
+            for (int i = 0; i < viewCount; i++) {
+                createView(manyViewName(i), "SELECT * FROM t");
+            }
+            setCurrentMicros(ALTER_MICROS);
+            execute("ALTER TABLE t ADD COLUMN b INT");
+            countReaderBorrowsOfT();
+            final long dueMicros = ALTER_MICROS + busyRetryTimeoutMicros();
+            final StringSink expectedPending = new StringSink();
+            for (int i = 0; i < viewCount; i++) {
+                expectedPending.put(pendingCompileBusyRetry(manyViewName(i), ALTER_MICROS, dueMicros));
+            }
+            try (ReadersLockOfT ignore = new ReadersLockOfT()) {
+                Assert.assertEquals(viewCount, drainAndCountCompilesOverT());
+                assertPendingCompileBusyRetries(expectedPending.toString());
+                setCurrentMicros(dueMicros - 1);
+                Assert.assertEquals(0, drainAndCountCompilesOverT());
+                assertPendingCompileBusyRetries(expectedPending.toString());
+            }
+            setCurrentMicros(dueMicros);
+            Assert.assertEquals(viewCount, drainAndCountCompilesOverT());
+            for (int i = 0; i < viewCount; i++) {
+                assertViewStatus(manyViewName(i), "valid", "", "2025-06-19T11:00:00.000000Z");
+                assertViewColumns(manyViewName(i), "a:INT, b:INT");
+            }
+            assertPendingCompileBusyRetries("");
+        });
+    }
+
+    @Test
+    public void testMergedBusyRetryKeepsNewestRequestTime() throws Exception {
+        // A request meets the lock while the view has a pending busy retry: the retry keeps its due
+        // time and takes the newer update timestamp. The retry then serves the newer request, which
+        // is newer than the state that a request in between set.
+        assertMemoryLeak(() -> {
+            createTableWithRowsAndView();
+            final long delayMicros = busyRetryTimeoutMicros();
+            final long dueMicros = ALTER_MICROS + delayMicros;
+            setCurrentMicros(ALTER_MICROS);
+            try (ReadersLockOfT ignore = new ReadersLockOfT()) {
+                engine.enqueueCompileView(engine.verifyTableName("t"));
+                drainViewQueue();
+            }
+            assertPendingCompileBusyRetries(pendingCompileBusyRetry("v", ALTER_MICROS, dueMicros));
+
+            // 11:00:00.25
+            setCurrentMicros(ALTER_MICROS + delayMicros / 4);
+            execute("COMPILE VIEW v");
+            drainViewQueue();
+            assertViewStatus("v", "valid", "", "2025-06-19T11:00:00.250000Z");
+            assertViewColumns("v", "a:INT");
+
+            // 11:00:00.5, the ALTER queues a request that meets the lock at 11:00:00.75
+            setCurrentMicros(ALTER_MICROS + delayMicros / 2);
+            execute("ALTER TABLE t ADD COLUMN b INT");
+            setCurrentMicros(ALTER_MICROS + 3 * delayMicros / 4);
+            try (ReadersLockOfT ignore = new ReadersLockOfT()) {
+                drainViewQueue();
+            }
+            assertPendingCompileBusyRetries(pendingCompileBusyRetry("v", ALTER_MICROS + delayMicros / 2, dueMicros));
+            assertViewStatus("v", "valid", "", "2025-06-19T11:00:00.250000Z");
+
+            setCurrentMicros(dueMicros);
+            drainViewQueue();
+            assertViewStatus("v", "valid", "", "2025-06-19T11:00:00.500000Z");
+            assertViewColumns("v", "a:INT, b:INT");
+            assertPendingCompileBusyRetries("");
+        });
+    }
+
+    @Test
+    public void testNoOpViewStateStoreSchedulesNoBusyRetry() throws Exception {
+        // The no-op store keeps no view state, so it gives no view a busy retry, and no compiler
+        // consumes its queue.
+        assertMemoryLeak(() -> {
+            createTableWithRowsAndView();
+            final ViewStateStore noOpStore = NoOpViewStateStore.INSTANCE;
+            Assert.assertEquals(Numbers.LONG_NULL, noOpStore.scheduleCompileBusyRetry(engine.verifyTableName("v"), ALTER_MICROS));
+            setCurrentMicros(Long.MAX_VALUE - 1);
+            noOpStore.enqueueDueCompileBusyRetries();
+            Assert.assertFalse(noOpStore.tryDequeueCompilerTask(new ViewCompilerTask()));
+        });
+    }
+
+    @Test
+    public void testPromotionMovesOnlyDueBusyRetries() throws Exception {
+        // Each view keeps one busy retry, due the busy retry timeout after the view's first lock
+        // failure. A failure with an older update timestamp leaves the retry be. A drain start
+        // queues the retries that are due, and leaves the others pending until they are due.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(CREATE_MICROS);
+            createTableWithRows("t");
+            createView("v1", "SELECT * FROM t");
+            createView("v2", "SELECT * FROM t");
+            final ViewStateStore stateStore = engine.getViewStateStore();
+            final TableToken v1 = engine.verifyTableName("v1");
+            final TableToken v2 = engine.verifyTableName("v2");
+            final long delayMicros = busyRetryTimeoutMicros();
+            final long v2RequestMicros = ALTER_MICROS + delayMicros / 2;
+            final long v1DueMicros = ALTER_MICROS + delayMicros;
+            final long v2DueMicros = ALTER_MICROS + 3 * delayMicros / 2;
+
+            setCurrentMicros(ALTER_MICROS);
+            Assert.assertEquals(v1DueMicros, stateStore.scheduleCompileBusyRetry(v1, ALTER_MICROS));
+            setCurrentMicros(v2RequestMicros);
+            Assert.assertEquals(v2DueMicros, stateStore.scheduleCompileBusyRetry(v2, v2RequestMicros));
+            // 10:30, older than the update timestamp of the pending retry
+            Assert.assertEquals(v1DueMicros, stateStore.scheduleCompileBusyRetry(v1, CREATE_MICROS + 30 * Micros.MINUTE_MICROS));
+            assertPendingCompileBusyRetries(
+                    pendingCompileBusyRetry("v1", ALTER_MICROS, v1DueMicros)
+                            + pendingCompileBusyRetry("v2", v2RequestMicros, v2DueMicros)
+            );
+
+            setCurrentMicros(v1DueMicros);
+            stateStore.enqueueDueCompileBusyRetries();
+            assertCompilerTasks(compilerTask("v1", ALTER_MICROS, true));
+            assertPendingCompileBusyRetries(pendingCompileBusyRetry("v2", v2RequestMicros, v2DueMicros));
+
+            setCurrentMicros(v2DueMicros - 1);
+            stateStore.enqueueDueCompileBusyRetries();
+            assertCompilerTasks("");
+            assertPendingCompileBusyRetries(pendingCompileBusyRetry("v2", v2RequestMicros, v2DueMicros));
+
+            setCurrentMicros(v2DueMicros);
+            stateStore.enqueueDueCompileBusyRetries();
+            assertCompilerTasks(compilerTask("v2", v2RequestMicros, true));
+            assertPendingCompileBusyRetries("");
+        });
+    }
+
+    @Test
+    public void testRequestsMeetingTableLockLeaveOnePendingBusyRetryPerView() throws Exception {
+        // The ALTER and two failed reads of v each queue a compile of the views, and each compile
+        // meets the lock of t's readers. Each view keeps its state and one busy retry, with the
+        // newest update timestamp of the requests, due the busy retry timeout after the first lock
+        // failure. The retry compiles the view with that timestamp.
+        assertMemoryLeak(() -> {
+            createTableWithRowsAndViews();
+            setCurrentMicros(ALTER_MICROS);
+            execute("ALTER TABLE t ADD COLUMN b INT");
+            // 11:30
+            final long drainMicros = ALTER_MICROS + 30 * Micros.MINUTE_MICROS;
+            final long dueMicros = drainMicros + busyRetryTimeoutMicros();
+            // 11:20
+            final long newestRequestMicros = ALTER_MICROS + 20 * Micros.MINUTE_MICROS;
+            try (ReadersLockOfT ignore = new ReadersLockOfT()) {
+                setCurrentMicros(ALTER_MICROS + 10 * Micros.MINUTE_MICROS);
+                assertExceptionNoLeakCheck("SELECT * FROM v", 14, "table is locked: t");
+                setCurrentMicros(newestRequestMicros);
+                assertExceptionNoLeakCheck("SELECT * FROM v", 14, "table is locked: t");
+                // a drain on the thread that holds the lock ends
+                setCurrentMicros(drainMicros);
+                drainViewQueue();
+                assertViewStatus("v", "valid", "", "2025-06-19T10:00:00.000000Z");
+                assertViewStatus("v_dep", "valid", "", "2025-06-19T10:00:00.000000Z");
+                assertViewColumns("v", "a:INT");
+                assertViewColumns("v_dep", "a:INT");
+                assertPendingCompileBusyRetries(
+                        pendingCompileBusyRetry("v", newestRequestMicros, dueMicros)
+                                + pendingCompileBusyRetry("v_dep", newestRequestMicros, dueMicros)
+                );
+                setCurrentMicros(dueMicros - 1);
+                engine.getViewStateStore().enqueueDueCompileBusyRetries();
+                assertCompilerTasks("");
+            }
+            setCurrentMicros(dueMicros);
+            drainViewQueue();
+            assertViewStatus("v", "valid", "", "2025-06-19T11:20:00.000000Z");
+            assertViewStatus("v_dep", "valid", "", "2025-06-19T11:20:00.000000Z");
+            assertViewColumns("v", "a:INT, b:INT");
+            assertViewColumns("v_dep", "a:INT, b:INT");
+            assertPendingCompileBusyRetries("");
+        });
+    }
+
+    @Test
+    public void testStartupViewCompileMeetingLockLeavesPendingBusyRetry() throws Exception {
+        // The startup pass compiles every view with the clock as update timestamp. A view whose
+        // compile meets the lock of a table it reads keeps its state and gets a busy retry, which a
+        // drain runs once it is due.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(CREATE_MICROS);
+            createTableWithRows("t");
+            createTableWithRows("t2");
+            createView("v", "SELECT * FROM t");
+            createView("v2", "SELECT * FROM t2");
+            // 11:30
+            final long passMicros = ALTER_MICROS + 30 * Micros.MINUTE_MICROS;
+            final long dueMicros = passMicros + busyRetryTimeoutMicros();
+            setCurrentMicros(passMicros);
+            try (ReadersLockOfT ignore = new ReadersLockOfT()) {
+                try (SqlExecutionContext executionContext = engine.createViewCompilerContext(0)) {
+                    ViewCompilerJob.compileAllViews(engine, executionContext, new ObjList<>());
+                }
+                assertViewStatus("v", "valid", "", "2025-06-19T10:00:00.000000Z");
+                assertViewStatus("v2", "valid", "", "2025-06-19T11:30:00.000000Z");
+                assertPendingCompileBusyRetries(pendingCompileBusyRetry("v", passMicros, dueMicros));
+            }
+            setCurrentMicros(dueMicros);
+            drainViewQueue();
+            assertViewStatus("v", "valid", "", "2025-06-19T11:30:00.000000Z");
+            assertViewColumns("v", "a:INT");
+            assertPendingCompileBusyRetries("");
         });
     }
 
@@ -510,6 +1086,43 @@ public class ViewCompilerJobTest extends AbstractViewTest {
         });
     }
 
+    @Test
+    public void testZeroBusyRetryTimeoutRetriesAtNextCompileRun() throws Exception {
+        // With a busy retry timeout of 0 the retry is due at once. The next drain runs it, but not
+        // the drain that scheduled it, so a drain on the thread that holds the lock ends.
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_VIEW_COMPILE_BUSY_RETRY_TIMEOUT, 0);
+            createTableWithRowsAndView();
+            setCurrentMicros(ALTER_MICROS);
+            execute("ALTER TABLE t ADD COLUMN b INT");
+            countReaderBorrowsOfT();
+            try (ReadersLockOfT ignore = new ReadersLockOfT()) {
+                Assert.assertEquals(1, drainAndCountCompilesOverT());
+                assertViewStatus("v", "valid", "", "2025-06-19T10:00:00.000000Z");
+                assertViewColumns("v", "a:INT");
+                assertPendingCompileBusyRetries(pendingCompileBusyRetry("v", ALTER_MICROS, ALTER_MICROS));
+                // the clock stands still: the retry runs once, meets the lock, and is due again
+                Assert.assertEquals(1, drainAndCountCompilesOverT());
+                assertPendingCompileBusyRetries(pendingCompileBusyRetry("v", ALTER_MICROS, ALTER_MICROS));
+            }
+            Assert.assertEquals(1, drainAndCountCompilesOverT());
+            assertViewStatus("v", "valid", "", "2025-06-19T11:00:00.000000Z");
+            assertViewColumns("v", "a:INT, b:INT");
+            assertPendingCompileBusyRetries("");
+        });
+    }
+
+    // takes every task from the view compile queue, one line per task in queue order, each as
+    // compilerTask() prints it
+    private static void assertCompilerTasks(String expected) {
+        final ViewCompilerTask task = new ViewCompilerTask();
+        final StringSink sink = new StringSink();
+        while (engine.getViewStateStore().tryDequeueCompilerTask(task)) {
+            sink.put(compilerTask(task.tableToken.getTableName(), task.updateTimestamp, task.isBusyRetry));
+        }
+        Assert.assertEquals(expected, sink.toString());
+    }
+
     private static void assertNothingBusy() {
         Assert.assertEquals(0, engine.getSqlCompilerPool().getBusyCount());
         Assert.assertEquals(0, engine.getBusyReaderCount());
@@ -534,6 +1147,18 @@ public class ViewCompilerJobTest extends AbstractViewTest {
         TestUtils.assertContains(reason, expectedReasonFragment);
     }
 
+    // a line of assertCompilerTasks(): the name of the table or view, the update timestamp, and
+    // whether the task is a busy retry
+    private static String compilerTask(String tableName, long updateTimestamp, boolean isBusyRetry) {
+        return tableName + '\t' + updateTimestamp + '\t' + isBusyRetry + '\n';
+    }
+
+    // counts, from now on, the borrows of t's reader that the optimiser makes on this thread
+    private static void countReaderBorrowsOfT() {
+        readerBorrowsOfT.set(0);
+        readerBorrowCountingThread = Thread.currentThread();
+    }
+
     private static void createPivotRaceTables() throws SqlException {
         execute("CREATE TABLE data (grp SYMBOL, cat SYMBOL, val INT)");
         execute("CREATE TABLE cats (c SYMBOL)");
@@ -545,6 +1170,20 @@ public class ViewCompilerJobTest extends AbstractViewTest {
                     ('B', 'X', 30),
                     ('B', 'Y', 40)
                 """);
+    }
+
+    // drains the view compile queue on this thread, and returns the number of compiles of views
+    // over t that the drain ran, see countReaderBorrowsOfT()
+    private static int drainAndCountCompilesOverT() {
+        final int borrows = readerBorrowsOfT.get();
+        drainViewQueue();
+        return readerBorrowsOfT.get() - borrows;
+    }
+
+    // a name of the views of testManyViewsMeetingLockLeaveOnePendingBusyRetryEach(), which sort as
+    // their indexes do
+    private static String manyViewName(int index) {
+        return String.format("v%02d", index);
     }
 
     // runs on the thread that drains the view queue, which in these tests is the test thread
@@ -568,6 +1207,14 @@ public class ViewCompilerJobTest extends AbstractViewTest {
         }
     }
 
+    private void assertViewAbsent(String viewName) throws Exception {
+        assertQuery("SELECT view_name FROM views() WHERE view_name = '" + viewName + "'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize(false)
+                .returns("view_name\n");
+    }
+
     // Creates the non-WAL table t with rows 1 and 2 and the view v over it, then runs the DDL
     // while the compile run that CREATE VIEW queued holds t's reader. The run ends once the DDL
     // logs that it waits for it.
@@ -577,5 +1224,32 @@ public class ViewCompilerJobTest extends AbstractViewTest {
         Assert.assertFalse(engine.verifyTableName("t").isWal());
         execute("CREATE VIEW v AS (SELECT * FROM t)");
         ViewCompileParker.ofQueueDrain(engine, "t", PoolListener.SRC_READER).executeWhileHolding(capture, "t", () -> execute(ddl), null);
+    }
+
+    // creates the non-WAL table t (a INT) with the rows 1 and 2, and the view v over t, at CREATE_MICROS
+    private void createTableWithRowsAndView() throws SqlException {
+        setCurrentMicros(CREATE_MICROS);
+        createTableWithRows("t");
+        createView("v", "SELECT * FROM t");
+    }
+
+    // as createTableWithRowsAndView(), and the view v_dep over v
+    private void createTableWithRowsAndViews() throws SqlException {
+        createTableWithRowsAndView();
+        createView("v_dep", "SELECT * FROM v");
+    }
+
+    // holds the lock of t's readers, which the thread that creates it takes, until closed
+    private static class ReadersLockOfT implements QuietCloseable {
+        private final TableToken tableToken = engine.verifyTableName("t");
+
+        private ReadersLockOfT() {
+            Assert.assertTrue("could not lock the readers of t", engine.lockReadersByTableToken(tableToken));
+        }
+
+        @Override
+        public void close() {
+            engine.unlockReaders(tableToken);
+        }
     }
 }

@@ -26,6 +26,7 @@ package io.questdb.cairo.view;
 
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -47,6 +48,10 @@ public class NoOpViewStateStore implements ViewStateStore {
     }
 
     @Override
+    public void enqueueDueCompileBusyRetries() {
+    }
+
+    @Override
     public void finishCompileRun() {
     }
 
@@ -63,6 +68,12 @@ public class NoOpViewStateStore implements ViewStateStore {
 
     @Override
     public void removeViewState(TableToken viewToken) {
+    }
+
+    // the store keeps no view state, so no view gets a retry
+    @Override
+    public long scheduleCompileBusyRetry(@NotNull TableToken viewToken, long updateTimestamp) {
+        return Numbers.LONG_NULL;
     }
 
     @Override

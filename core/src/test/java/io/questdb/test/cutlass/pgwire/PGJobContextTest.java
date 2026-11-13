@@ -140,6 +140,7 @@ import java.util.stream.Collectors;
 import java.util.stream.LongStream;
 import java.util.stream.Stream;
 
+import static io.questdb.PropertyKey.CAIRO_VIEW_COMPILE_BUSY_RETRY_TIMEOUT;
 import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT;
 import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT;
 import static io.questdb.cairo.sql.SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK;
@@ -3869,9 +3870,11 @@ if __name__ == "__main__":
         // The wait for a view compile run does not check the circuit breaker, as the busy wait of
         // ALTER does not. A DROP whose query is cancelled, and a TRUNCATE whose client
         // disconnects, while they wait still complete once the run ends, and leave nothing busy.
-        // The TRUNCATE also queues the recompile of the view whose compile met its lock.
+        // The compile of the view that met the lock of the TRUNCATE retries at the next run (busy
+        // retry timeout 0).
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             node1.setProperty(CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, Long.MAX_VALUE);
+            node1.setProperty(CAIRO_VIEW_COMPILE_BUSY_RETRY_TIMEOUT, 0);
             final LogCapture capture = new LogCapture();
             capture.start();
             try {
@@ -3928,7 +3931,7 @@ if __name__ == "__main__":
                     }
                 });
                 compileInsideLock.assertDrainedOnce();
-                // TRUNCATE queued another compile of the view, which leaves it valid with the new column
+                // the busy retry of the compile that met the lock leaves the view valid with the new column
                 drainViewQueue();
                 assertViewValidWithColumns(connection, """
                         a,INT
@@ -12003,12 +12006,13 @@ create table tab as (
     }
 
     @Test
-    public void testTruncateRecompilesViewsWhoseCompileMetTheLock() throws Exception {
+    public void testTruncateRetriesViewsWhoseCompileMetTheLock() throws Exception {
         // ALTER of a non-WAL table queues the recompile of the view over it, which runs while
-        // TRUNCATE holds the lock of the table's readers, and marks the view invalid. TRUNCATE
-        // queues another recompile once it releases the readers, which leaves the view valid with
-        // the new column, each time the prepared statement runs.
+        // TRUNCATE holds the lock of the table's readers, and leaves the view as it was. The
+        // compile that met the lock retries at the next run (busy retry timeout 0), which leaves the
+        // view valid with the new column, each time the prepared statement runs.
         assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
+            node1.setProperty(CAIRO_VIEW_COMPILE_BUSY_RETRY_TIMEOUT, 0);
             createTableAndViewThenAddColumn(connection);
             try (PreparedStatement truncate = connection.prepareStatement("TRUNCATE TABLE t")) {
                 executeWithViewCompileInsideLockOfT(truncate);

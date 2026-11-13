@@ -1748,6 +1748,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getViewCompileBusyRetryTimeout() {
+        return getDelegate().getViewCompileBusyRetryTimeout();
+    }
+
+    @Override
     public int getViewLexerPoolCapacity() {
         return getDelegate().getViewLexerPoolCapacity();
     }

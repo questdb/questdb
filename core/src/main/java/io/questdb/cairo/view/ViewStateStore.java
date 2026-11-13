@@ -59,6 +59,13 @@ public interface ViewStateStore extends Mutable {
     void enqueueCompile(@NotNull TableToken viewToken);
 
     /**
+     * Queues a compile of each view whose busy retry, see {@link #scheduleCompileBusyRetry}, is due,
+     * with the update timestamp of the retry, and forgets the retry. The view compiler calls it
+     * before it takes the first task of a drain, so a drain never runs a retry that it scheduled.
+     */
+    void enqueueDueCompileBusyRetries();
+
+    /**
      * Ends the view compile run that {@link #startCompileRun()} started.
      */
     void finishCompileRun();
@@ -73,6 +80,19 @@ public interface ViewStateStore extends Mutable {
     ViewState getViewState(TableToken viewToken);
 
     void removeViewState(TableToken viewToken);
+
+    /**
+     * Keeps one pending compile of the view, after its compile met the lock of a table it reads and
+     * left its state as it was. The retry is due once the busy retry timeout passes after it was
+     * scheduled, see {@link io.questdb.cairo.CairoConfiguration#getViewCompileBusyRetryTimeout()}.
+     * When the view already has a pending retry, the retry keeps its due time and takes the newer of
+     * the two update timestamps: it compiles after both requests were made. A view with no state,
+     * such as a dropped one, gets no retry.
+     *
+     * @return the due time of the view's pending retry, or {@link io.questdb.std.Numbers#LONG_NULL}
+     * when the view has no state
+     */
+    long scheduleCompileBusyRetry(@NotNull TableToken viewToken, long updateTimestamp);
 
     /**
      * Starts a view compile run: a drain of the compile queue, or the startup compile of all

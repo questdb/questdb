@@ -39,6 +39,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.cairo.fuzz.AbstractFuzzTest;
@@ -52,6 +53,9 @@ import java.util.TreeMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ViewFuzzTest extends AbstractFuzzTest {
+    // a PIVOT over tp (k SYMBOL, x INT), whose compile fails while tp is empty
+    private static final String TP_PIVOT_SQL = "SELECT * FROM tp PIVOT (sum(x) FOR k IN (SELECT DISTINCT k FROM tp ORDER BY k))";
+    private static final String VP_STATUS_SQL = "SELECT view_status, invalidation_reason, view_status_update_time FROM views() WHERE view_name = 'vp'";
     private static final String[] timestampTypes = new String[]{"timestamp", "timestamp_ns"};
 
     @Test
@@ -92,13 +96,18 @@ public class ViewFuzzTest extends AbstractFuzzTest {
         // An ALTER of a non-WAL table queues the recompile of the views over it, and a TRUNCATE,
         // RENAME or DROP of the table follows at once while view compile workers run. Every DDL
         // succeeds: it waits for a compile run that holds the table instead of failing as busy.
-        // A compile that meets the lock of a DDL marks views invalid, and the DDL queues another
-        // compile of them, so every view ends valid. One session runs all DDLs;
-        // ViewOverNonWalTableTest pins what a DDL does when another session changes its table
-        // while it waits.
+        // A compile that meets the lock of a DDL leaves the views alone and retries once the busy
+        // retry timeout passed, so every view ends valid. TRUNCATE queues no compile of its own, so
+        // the PIVOT view over tp, which nothing ALTERs, keeps the status of its CREATE through the
+        // TRUNCATEs of tp. One session runs all DDLs; ViewOverNonWalTableTest pins what a DDL does
+        // when another session changes its table while it waits.
         assertMemoryLeak(() -> {
             final Rnd rnd = fuzzer.generateRandom(LOG);
             node1.setProperty(PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, Long.MAX_VALUE);
+            // a busy retry at the next compile run, or at the server default
+            final long busyRetryTimeoutMillis = rnd.nextBoolean() ? 0 : 1_000;
+            LOG.info().$("view compile busy retry timeout [millis=").$(busyRetryTimeoutMillis).I$();
+            node1.setProperty(PropertyKey.CAIRO_VIEW_COMPILE_BUSY_RETRY_TIMEOUT, busyRetryTimeoutMillis);
             final int tableCount = 1 + rnd.nextInt(3);
             final boolean[] isPartitioned = new boolean[tableCount];
             final ObjList<String> viewNames = new ObjList<>();
@@ -125,7 +134,12 @@ public class ViewFuzzTest extends AbstractFuzzTest {
             if (tableCount > 1) {
                 createViewAndCompile("join_v", "SELECT x.a, y.a a2 FROM t0 x JOIN t1 y ON x.a = y.a", viewNames, viewSqls);
             }
+            execute("CREATE TABLE tp (k SYMBOL, x INT)");
+            insertPivotRows();
+            createViewAndCompile("vp", TP_PIVOT_SQL, viewNames, viewSqls);
             drainViewQueue();
+            final StringSink vpCreateStatus = new StringSink();
+            printSql(VP_STATUS_SQL, vpCreateStatus);
 
             final AtomicBoolean stop = new AtomicBoolean();
             final ObjList<Thread> viewCompilerJobs = new ObjList<>();
@@ -134,6 +148,8 @@ public class ViewFuzzTest extends AbstractFuzzTest {
             final int ddlShapeCount = tableCount > 1 ? 5 : 4;
             final int[] ddlCounts = new int[ddlShapeCount];
             final int ddlOffset = rnd.nextInt(ddlShapeCount);
+            // TRUNCATE of tp alone, and as the second table of a TRUNCATE of two tables
+            final int[] tpTruncateCounts = new int[2];
             int addedColumnCount = 0;
             try {
                 for (int i = 0, n = 1 + rnd.nextInt(4); i < n; i++) {
@@ -164,6 +180,18 @@ public class ViewFuzzTest extends AbstractFuzzTest {
                         }
                     }
                     insertRows(tableName, isPartitioned[tableIndex]);
+                    // the first iterations truncate tp in each way, then tp is truncated at random
+                    final int tpTruncate = i < 2 ? i : rnd.nextInt(3);
+                    if (tpTruncate < 2) {
+                        if (tpTruncate == 0) {
+                            execute("TRUNCATE TABLE tp");
+                        } else {
+                            execute("TRUNCATE TABLE " + tableName + ", tp");
+                            insertRows(tableName, isPartitioned[tableIndex]);
+                        }
+                        tpTruncateCounts[tpTruncate]++;
+                        insertPivotRows();
+                    }
                 }
             } finally {
                 stopAndJoinJobs(stop, viewCompilerJobs);
@@ -171,17 +199,34 @@ public class ViewFuzzTest extends AbstractFuzzTest {
             for (int ddl = 0; ddl < ddlShapeCount; ddl++) {
                 Assert.assertTrue("DDL " + ddl + " did not run", ddlCounts[ddl] > 0);
             }
-
-            // the compiles that the DDLs queued leave every view valid
-            drainViewQueue();
-            assertViewsValidAndMatchSql(viewNames, viewSqls);
-
-            // one more compile of each view, with no DDL running, keeps them so
-            for (int i = 0, n = viewNames.size(); i < n; i++) {
-                engine.enqueueCompileView(engine.verifyTableName(viewNames.getQuick(i)));
+            for (int tpTruncate = 0; tpTruncate < 2; tpTruncate++) {
+                Assert.assertTrue("TRUNCATE " + tpTruncate + " of tp did not run", tpTruncateCounts[tpTruncate] > 0);
             }
-            drainViewQueue();
-            assertViewsValidAndMatchSql(viewNames, viewSqls);
+
+            try {
+                // the busy retries of the compiles that met a lock are due, and the compiles that
+                // they and the DDLs queued leave every view valid
+                setCurrentMicros(MicrosecondClockImpl.INSTANCE.getTicks() + busyRetryTimeoutMillis * 1_000 + 1);
+                drainViewQueue();
+                AbstractViewTest.assertPendingCompileBusyRetries("");
+                // nothing compiled vp since its CREATE
+                assertQuery(VP_STATUS_SQL)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize(false)
+                        .returns(vpCreateStatus);
+                assertViewsValidAndMatchSql(viewNames, viewSqls);
+
+                // one more compile of each view, with no DDL running, keeps them so
+                for (int i = 0, n = viewNames.size(); i < n; i++) {
+                    engine.enqueueCompileView(engine.verifyTableName(viewNames.getQuick(i)));
+                }
+                drainViewQueue();
+                assertViewsValidAndMatchSql(viewNames, viewSqls);
+            } finally {
+                // the other tests of the class run on the real clock
+                setCurrentMicros(-1);
+            }
         });
     }
 
@@ -270,6 +315,10 @@ public class ViewFuzzTest extends AbstractFuzzTest {
         drainViewQueue();
         viewNames.add(viewName);
         viewSqls.add(viewSql);
+    }
+
+    private static void insertPivotRows() throws SqlException {
+        execute("INSERT INTO tp VALUES ('a', 1), ('b', 2)");
     }
 
     private static void insertRows(String tableName, boolean isPartitioned) throws SqlException {

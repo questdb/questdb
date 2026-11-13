@@ -77,7 +77,6 @@ import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.view.ViewCompilerExecutionContext;
 import io.questdb.cairo.view.ViewDefinition;
-import io.questdb.cairo.view.ViewStateStore;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
@@ -5349,34 +5348,23 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 lock.unlock();
                             }
                         } else {
+                            // TRUNCATE queues no compile of the views over the table: a compile over the
+                            // emptied table fails a view whose compile reads the rows, such as a PIVOT IN
+                            // sub-query. A view compile that meets the lock of the table's readers keeps
+                            // the view's state and compiles the view again later, see ViewCompilerJob.
                             final TableToken tableToken = writer.getTableToken();
-                            // A view compile that borrows a reader of the table while TRUNCATE holds the
-                            // lock of its readers, or tries to take it, fails with "table is locked" and
-                            // marks the views over the table invalid. Every view compile runs inside a
-                            // compile run, so when a run overlapped the lock, queue a recompile once
-                            // TRUNCATE let go of the readers. A recompile after every TRUNCATE would
-                            // compile the views over the emptied table, which fails a view whose compile
-                            // reads the rows, such as a PIVOT IN sub-query.
-                            final ViewStateStore viewStateStore = engine.getViewStateStore();
-                            final long compileRunActivity = viewStateStore.getCompileRunActivity();
-                            try {
-                                if (engine.lockReaders(tableToken)) {
-                                    try {
-                                        if (keepSymbolTables) {
-                                            writer.truncateSoft();
-                                        } else {
-                                            writer.truncate();
-                                        }
-                                    } finally {
-                                        engine.unlockReaders(tableToken);
+                            if (engine.lockReaders(tableToken)) {
+                                try {
+                                    if (keepSymbolTables) {
+                                        writer.truncateSoft();
+                                    } else {
+                                        writer.truncate();
                                     }
-                                } else {
-                                    throw SqlException.$(0, "there is an active query against '").put(tableToken.getTableName()).put("'. Try again.");
+                                } finally {
+                                    engine.unlockReaders(tableToken);
                                 }
-                            } finally {
-                                if (ViewStateStore.hasCompileRunOverlapped(compileRunActivity, viewStateStore.getCompileRunActivity())) {
-                                    engine.enqueueCompileView(tableToken);
-                                }
+                            } else {
+                                throw SqlException.$(0, "there is an active query against '").put(tableToken.getTableName()).put("'. Try again.");
                             }
                         }
                     } catch (CairoException | CairoError e) {

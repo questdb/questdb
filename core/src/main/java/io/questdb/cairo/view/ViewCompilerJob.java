@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.MetadataCacheWriter;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
@@ -162,7 +163,18 @@ public class ViewCompilerJob implements Job, QuietCloseable {
             // we should also update view metadata, if there was a change
             reset(engine, viewToken, viewMetadata, updateTimestamp);
         } catch (SqlException | CairoException e) {
-            invalidate(engine, viewToken, e.getFlyweightMessage(), updateTimestamp, invalidateViewsSink);
+            if (isTableLocked(e)) {
+                // The lock of a table the view reads tells nothing about the view: keep the state
+                // of the view and of the views over it, and compile the view again later.
+                final long retryTimestamp = engine.getViewStateStore().scheduleCompileBusyRetry(viewToken, updateTimestamp);
+                LOG.info().$("view compile met a table lock [view=").$safe(viewToken.getTableName())
+                        .$(", reason=").$safe(e.getFlyweightMessage())
+                        .$(", updateTimestamp=").$(updateTimestamp)
+                        .$(", retryTimestamp=").$(retryTimestamp)
+                        .I$();
+            } else {
+                invalidate(engine, viewToken, e.getFlyweightMessage(), updateTimestamp, invalidateViewsSink);
+            }
         } catch (Throwable e) {
             invalidate(engine, viewToken, e.getMessage(), updateTimestamp, invalidateViewsSink);
         }
@@ -265,6 +277,12 @@ public class ViewCompilerJob implements Job, QuietCloseable {
         }
     }
 
+    // Another thread holds, or is taking, the lock of a table the view reads: the reader pool
+    // reports it, or the optimiser wraps the pool's report.
+    private static boolean isTableLocked(Throwable e) {
+        return e instanceof EntryLockedException || (e instanceof SqlException sqlException && sqlException.isTableLocked());
+    }
+
     private static void reset(CairoEngine engine, TableToken tableToken, @Nullable ViewMetadata viewMetadata, long updateTimestamp) {
         if (tableToken == null || !tableToken.isView()) {
             LOG.error().$("cannot reset view state, not a view token [token=").$(tableToken).I$();
@@ -322,7 +340,12 @@ public class ViewCompilerJob implements Job, QuietCloseable {
         }
     }
 
-    private void compile(TableToken tableToken, long updateTimestamp) {
+    private void compile(TableToken tableToken, long updateTimestamp, boolean isBusyRetry) {
+        if (isBusyRetry) {
+            // the views over the view got compiles of their own from the request that met the lock
+            compileView(engine, compilerExecutionContext, tableToken, updateTimestamp, invalidateViewsSink);
+            return;
+        }
         compileDependentViews(tableToken, updateTimestamp);
         if (tableToken.isView()) {
             compileView(engine, compilerExecutionContext, tableToken, updateTimestamp, invalidateViewsSink);
@@ -339,6 +362,9 @@ public class ViewCompilerJob implements Job, QuietCloseable {
     }
 
     private boolean processNotifications() {
+        // Only before the first task: a drain never runs a busy retry that it scheduled, so it ends
+        // while the lock it met lasts, also on the thread that holds the lock.
+        stateStore.enqueueDueCompileBusyRetries();
         if (!stateStore.tryDequeueCompilerTask(compilerTask)) {
             return false;
         }
@@ -348,7 +374,7 @@ public class ViewCompilerJob implements Job, QuietCloseable {
         stateStore.startCompileRun();
         try {
             do {
-                compile(compilerTask.tableToken, compilerTask.updateTimestamp);
+                compile(compilerTask.tableToken, compilerTask.updateTimestamp, compilerTask.isBusyRetry);
             } while (stateStore.tryDequeueCompilerTask(compilerTask));
         } finally {
             stateStore.finishCompileRun();
