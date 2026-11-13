@@ -371,6 +371,22 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
         runBatch(STEER_SPARSE_FALLBACK, rnd);
         Assert.assertEquals(5, coverage.get(LiveViewRefreshStats.SPARSE_PUBLICATION_COUNT));
         Assert.assertEquals(12, coverage.get(LiveViewRefreshStats.SPARSE_PUBLICATION_FALLBACK_COUNT));
+        // Each of the ten steered steps prices one keyed read and repairs once on the keyed
+        // closed-segment route, and sparsePublicationEpisode counts them. assertCoverage takes them off
+        // the batch's totals, which leaves the drawn runs the 7 repairs and 31 prices the batch made
+        // before any run was steered.
+        Assert.assertEquals("keyed closed-segment repairs of the steered steps", 10, sparseEpisodeKeyedRepairs);
+        Assert.assertEquals("keyed prices of the steered steps", 10, sparseEpisodeKeyedPrices);
+        Assert.assertEquals(
+                "keyed closed-segment repairs of the drawn runs",
+                7,
+                coverage.getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_KEYED_CLOSED_SEGMENT) - sparseEpisodeKeyedRepairs
+        );
+        Assert.assertEquals(
+                "keyed prices of the drawn runs",
+                31,
+                coverage.get(LiveViewRefreshStats.KEYED_SCAN_PRICED_COUNT) - sparseEpisodeKeyedPrices
+        );
         Assert.assertEquals(4_959_227_367_749_357_659L, rnd.getSeed0());
         Assert.assertEquals(4_504_132_681_311_710_744L, rnd.getSeed1());
     }
