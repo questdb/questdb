@@ -41,7 +41,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.test.cairo.parquet.ParquetCommitTestUtils.assertTwinsEqual;
 import static io.questdb.test.cairo.parquet.ParquetCommitTestUtils.indexFiles;
+import static io.questdb.test.cairo.parquet.ParquetCommitTestUtils.isDeadBytesRewriteExpected;
 import static io.questdb.test.cairo.parquet.ParquetCommitTestUtils.parquetFileSize;
+import static io.questdb.test.cairo.parquet.ParquetCommitTestUtils.parquetRowGroupCompressedSize;
 import static io.questdb.test.cairo.parquet.ParquetCommitTestUtils.parquetRowGroupCount;
 import static io.questdb.test.cairo.parquet.ParquetCommitTestUtils.parquetUnusedBytes;
 import static io.questdb.test.cairo.parquet.ParquetCommitTestUtils.partitionDirCount;
@@ -155,9 +157,45 @@ public class ParquetDedupIdenticalCommitTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExistingDeadBytesCountTowardsRewrite() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwins();
+            // with the gate off, a new d for id 6 merges row group 1 in place and leaves its first version dead
+            assertCommitWrites(rowGroup1WithNewD(6, "-1.0"), false, 4, 3);
+
+            // Row group 1 identical and a new d for id 10, in row group 2: the identity check leaves row group 1 as
+            // stored, so the gate counts the dead bytes and row group 2, not row group 1. A ratio between the share of
+            // the dead bytes and row group 2 and the share of the dead bytes and row groups 1 and 2 updates the
+            // partition in place
+            long unusedBytes = parquetUnusedBytes(engine, "pq", 0);
+            long parquetFileSize = parquetFileSize(engine, "pq", 0);
+            final long rowGroup1Size = parquetRowGroupCompressedSize(engine, "pq", 0, 1);
+            long rowGroup2Size = parquetRowGroupCompressedSize(engine, "pq", 0, 2);
+            double ratio = (unusedBytes + rowGroup2Size + rowGroup1Size / 2.0) / parquetFileSize;
+            Assert.assertFalse(isDeadBytesRewriteExpected(unusedBytes, parquetFileSize, rowGroup2Size, ratio, Long.MAX_VALUE));
+            Assert.assertTrue(isDeadBytesRewriteExpected(unusedBytes, parquetFileSize, rowGroup1Size + rowGroup2Size, ratio, Long.MAX_VALUE));
+            setRewriteRatio(ratio);
+            assertCommitWrites(rowGroup1WithNewDOf10("-2.0"), false, 4, 3);
+
+            // the same kind of commit under a ratio between the share of the dead bytes and the share of the dead bytes
+            // and row group 2: row group 2 alone stays under it, the dead bytes the file holds take it over
+            unusedBytes = parquetUnusedBytes(engine, "pq", 0);
+            parquetFileSize = parquetFileSize(engine, "pq", 0);
+            rowGroup2Size = parquetRowGroupCompressedSize(engine, "pq", 0, 2);
+            ratio = (unusedBytes + rowGroup2Size / 2.0) / parquetFileSize;
+            Assert.assertFalse(isDeadBytesRewriteExpected(0, parquetFileSize, rowGroup2Size, ratio, Long.MAX_VALUE));
+            Assert.assertTrue(isDeadBytesRewriteExpected(unusedBytes, parquetFileSize, rowGroup2Size, ratio, Long.MAX_VALUE));
+            setRewriteRatio(ratio);
+            // the rewrite copies row groups 0 and 1, and merges row group 2
+            assertCommitWrites(rowGroup1WithNewDOf10("-3.0"), true, 12, 3);
+        });
+    }
+
+    @Test
     public void testGapInsertAfterDeferredRowGroupsInRewriteFlushesThem() throws Exception {
         assertMemoryLeak(() -> {
-            node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, 0);
+            // -1: the commit leaves no byte dead, so only a negative limit rewrites the partition
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, -1);
             createTwins();
             // row group 0 is a copy and row group 1 an identical MERGE, both stay as stored,
             // then one new row at 15:00 lands in the gap before row group 2 as a COPY_O3:
@@ -336,9 +374,9 @@ public class ParquetDedupIdenticalCommitTest extends AbstractCairoTest {
     @Test
     public void testIdenticalInRewriteModeLeavesPartitionUnchanged() throws Exception {
         assertMemoryLeak(() -> {
-            // any merge now crosses the dead-bytes gate, so a change rewrites the partition;
-            // the identical commit opens no rewrite: no new directory, no txn change
-            node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, 0);
+            // the identical commit opens no rewrite even when every commit that writes rewrites:
+            // no new directory, no txn change
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, -1);
             createTwins();
             // row group 2 only: row groups 0 and 1 are copies the rewrite would start with
             assertIdenticalCommitIsNoop("SELECT * FROM nat WHERE ts BETWEEN '2024-01-01T16:00' AND '2024-01-01T22:00'", true);
@@ -352,6 +390,50 @@ public class ParquetDedupIdenticalCommitTest extends AbstractCairoTest {
             node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1000);
             createTwins();
             assertIdenticalCommitIsNoop("SELECT * FROM nat WHERE ts BETWEEN '2024-01-01T02:00' AND '2024-01-01T06:00'", true);
+        });
+    }
+
+    @Test
+    public void testMaxBytesAtProjectionStaysInPlace() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwins();
+            // a new d for id 6: the merge of row group 1 leaves it dead, which does not exceed a limit of its size
+            node1.setProperty(
+                    PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES,
+                    parquetRowGroupCompressedSize(engine, "pq", 0, 1)
+            );
+            assertCommitWrites(rowGroup1WithNewD(6, "-1.0"), false, 4, 3);
+            // a limit one byte below the dead bytes and the new version of row group 1 rewrites: the rewrite copies
+            // row groups 0 and 2, and merges row group 1
+            node1.setProperty(
+                    PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES,
+                    parquetUnusedBytes(engine, "pq", 0) + parquetRowGroupCompressedSize(engine, "pq", 0, 1) - 1
+            );
+            assertCommitWrites(rowGroup1WithNewD(6, "-2.0"), true, 12, 3);
+        });
+    }
+
+    @Test
+    public void testMaxBytesMinusOneResendWithRowPastMaxRewrites() throws Exception {
+        assertMemoryLeak(() -> {
+            // the commit of testMaxBytesZeroResendWithRowPastMaxUpdatesInPlace leaves no byte dead, which exceeds a
+            // limit of -1 bytes: the rewrite copies row groups 0, 1 and 2 before the new one
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, -1);
+            createTwins();
+            assertCommitWrites(rowGroup1WithNewRow(100, "23:00"), true, 13, 4);
+        });
+    }
+
+    @Test
+    public void testMaxBytesZeroResendWithRowPastMaxUpdatesInPlace() throws Exception {
+        assertMemoryLeak(() -> {
+            // The identity check leaves row group 1 as stored, and the new row past the partition max (22:00) forms a
+            // row group of its own: the commit leaves no byte dead, in a file that holds none, which does not exceed
+            // a limit of 0 bytes
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, 0);
+            createTwins();
+            Assert.assertFalse(isDeadBytesRewriteExpected(parquetUnusedBytes(engine, "pq", 0), parquetFileSize(engine, "pq", 0), 0, 1.0, 0));
+            assertCommitWrites(rowGroup1WithNewRow(100, "23:00"), false, 1, 4);
         });
     }
 
@@ -421,6 +503,48 @@ public class ParquetDedupIdenticalCommitTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRatioZeroResendWithRowPastMaxUpdatesInPlaceThenRewrites() throws Exception {
+        assertMemoryLeak(() -> {
+            // the commit of testMaxBytesZeroResendWithRowPastMaxUpdatesInPlace leaves no byte dead in a file that
+            // holds none, and a share of 0 does not exceed a ratio of 0
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "0.0");
+            createTwins();
+            Assert.assertFalse(isDeadBytesRewriteExpected(parquetUnusedBytes(engine, "pq", 0), parquetFileSize(engine, "pq", 0), 0, 0.0, Long.MAX_VALUE));
+            assertCommitWrites(rowGroup1WithNewRow(100, "23:00"), false, 1, 4);
+            // the in-place update left the footer it replaced dead, so the next such commit rewrites: the rewrite
+            // copies row groups 0..3 before the new one (row group 3 holds one row, not fewer than a quarter of the
+            // row group size)
+            Assert.assertTrue(isDeadBytesRewriteExpected(parquetUnusedBytes(engine, "pq", 0), parquetFileSize(engine, "pq", 0), 0, 0.0, Long.MAX_VALUE));
+            assertCommitWrites(rowGroup1WithNewRow(101, "23:30"), true, 14, 5);
+        });
+    }
+
+    @Test
+    public void testResendWithRowPastMaxAfterAddColumnRewrites() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwins();
+            execute("ALTER TABLE nat ADD COLUMN extra INT");
+            execute("ALTER TABLE pq ADD COLUMN extra INT");
+            drainWalQueue();
+            // The commit of testMaxBytesZeroResendWithRowPastMaxUpdatesInPlace after a column is added, with the gate
+            // off: the identity check leaves row group 1 as stored, extra NULL included, so the output opens at the new
+            // row and the commit leaves no byte dead. The parquet file lacks extra, which still rewrites the partition:
+            // the rewrite copies row groups 0, 1 and 2 with a NULL chunk for extra before the new one
+            assertCommitWrites(
+                    """
+                            SELECT * FROM nat WHERE ts BETWEEN '2024-01-01T08:00' AND '2024-01-01T14:00'
+                            UNION ALL
+                            SELECT 100, '2024-01-01T23:00'::TIMESTAMP, v, sym, d, s, bin, extra FROM nat WHERE id = 12
+                            """,
+                    true,
+                    13,
+                    4
+            );
+            assertQuery("SELECT count() FROM pq WHERE extra IS NULL").noLeakCheck().expectSize().noRandomAccess().returns("count\n37\n");
+        });
+    }
+
+    @Test
     public void testTailInsertSingleRowGroupInRewriteFlushesDeferredCopy() throws Exception {
         assertMemoryLeak(() -> {
             // 12 rows per day -> one row group, which always takes the rewrite path;
@@ -469,6 +593,26 @@ public class ParquetDedupIdenticalCommitTest extends AbstractCairoTest {
         drainWalQueue();
     }
 
+    // rows 5..8 of day 1 (row group 1, 08:00..14:00), with a new d for the id
+    private static String rowGroup1WithNewD(int id, String d) {
+        return "SELECT id, ts, v, sym, CASE WHEN id = " + id + " THEN " + d + " ELSE d END, s, bin FROM nat WHERE ts BETWEEN '2024-01-01T08:00' AND '2024-01-01T14:00'";
+    }
+
+    // rows 5..8 of day 1 (row group 1) as stored, and id 10 (row group 2) with a new d
+    private static String rowGroup1WithNewDOf10(String d) {
+        return "SELECT * FROM nat WHERE ts BETWEEN '2024-01-01T08:00' AND '2024-01-01T14:00' UNION ALL SELECT id, ts, v, sym, " + d + ", s, bin FROM nat WHERE id = 10";
+    }
+
+    // rows 5..8 of day 1 (row group 1) as stored, and a new id at the time of day 1, with the values of id 12
+    private static String rowGroup1WithNewRow(int id, String time) {
+        return "SELECT * FROM nat WHERE ts BETWEEN '2024-01-01T08:00' AND '2024-01-01T14:00' UNION ALL SELECT " + id
+                + ", '2024-01-01T" + time + "'::TIMESTAMP, v, sym, d, s, bin FROM nat WHERE id = 12";
+    }
+
+    private static void setRewriteRatio(double ratio) {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, Double.toString(ratio));
+    }
+
     private void assertChangedCommitMerges(String select, boolean isRewriteExpected, String probe, String expected) throws Exception {
         final long txnBefore = partitionNameTxn(engine, "pq", 0);
         final long sizeBefore = parquetFileSize(engine, "pq", 0);
@@ -482,6 +626,30 @@ public class ParquetDedupIdenticalCommitTest extends AbstractCairoTest {
             Assert.assertTrue(parquetUnusedBytes(engine, "pq", 0) > 0);
         }
         assertQuery(probe).noLeakCheck().returns(expected);
+    }
+
+    // Commits the rows of the query to pq and applies the commit, then to nat, so that the rows pq writes count apart
+    // from those of nat. Asserts that the twins match, and that the commit rewrote day 1 of pq or updated it in place,
+    // wrote the given rows and left it the given row groups.
+    private void assertCommitWrites(String select, boolean isRewriteExpected, long expectedWrittenRows, int expectedRowGroups) throws Exception {
+        final long txnBefore = partitionNameTxn(engine, "pq", 0);
+        final O3ParquetPathCounts paths = new O3ParquetPathCounts();
+        final long writtenRowsBefore = engine.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows();
+        execute("INSERT INTO pq " + select);
+        drainWalQueue();
+        final long writtenRows = engine.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows() - writtenRowsBefore;
+        execute("INSERT INTO nat " + select);
+        drainWalQueue();
+        assertTwinsEqual(engine, sqlExecutionContext);
+        Assert.assertEquals("rewrites", isRewriteExpected ? 1 : 0, paths.getRewrite());
+        Assert.assertEquals("in-place updates", isRewriteExpected ? 0 : 1, paths.getInPlace());
+        if (isRewriteExpected) {
+            Assert.assertNotEquals("name txn", txnBefore, partitionNameTxn(engine, "pq", 0));
+        } else {
+            Assert.assertEquals("name txn", txnBefore, partitionNameTxn(engine, "pq", 0));
+        }
+        Assert.assertEquals("written rows", expectedWrittenRows, writtenRows);
+        Assert.assertEquals("row groups", expectedRowGroups, parquetRowGroupCount(engine, "pq", 0));
     }
 
     private void assertIdenticalCommitIsNoop(String select, boolean isRewriteMode) throws Exception {

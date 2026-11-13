@@ -57,7 +57,8 @@ import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
 /**
  * Helpers for the tests of commits into parquet partitions: a replace-range commit whose
  * rows come from a query, probes of a partition's {@code _txn}, {@code _pm}, directory and
- * index files, and the check that pq matches its native twin nat.
+ * index files, the formula of the dead-bytes rewrite gate, and the check that pq matches its
+ * native twin nat.
  */
 public final class ParquetCommitTestUtils {
     private static final Log LOG = LogFactory.getLog(ParquetCommitTestUtils.class);
@@ -107,11 +108,32 @@ public final class ParquetCommitTestUtils {
     }
 
     /**
+     * Whether the dead-bytes gate of an O3 commit into a parquet partition asks for a rewrite, by the formula
+     * cairo/CLAUDE.md documents: the bytes the file holds unused plus the bytes the commit leaves dead, over the
+     * file size, exceed the ratio, or exceed the byte limit.
+     */
+    public static boolean isDeadBytesRewriteExpected(long unusedBytes, long parquetFileSize, long deadBytes, double ratio, long maxBytes) {
+        final long projectedUnusedBytes = unusedBytes + deadBytes;
+        return (double) projectedUnusedBytes / parquetFileSize > ratio || projectedUnusedBytes > maxBytes;
+    }
+
+    /**
      * A partition's parquet file size as committed in {@code _txn}.
      */
     public static long parquetFileSize(CairoEngine engine, String table, int partitionIndex) {
         try (TableReader reader = engine.getReader(table)) {
             return reader.getTxFile().getPartitionParquetFileSize(partitionIndex);
+        }
+    }
+
+    /**
+     * The compressed size of the column chunks of a row group of a partition's parquet file, as its {@code _pm}
+     * records it.
+     */
+    public static long parquetRowGroupCompressedSize(CairoEngine engine, String table, int partitionIndex, int rowGroup) {
+        try (TableReader reader = engine.getReader(table)) {
+            reader.openPartition(partitionIndex);
+            return reader.getAndInitParquetPartitionDecoder(partitionIndex).metadata().getRowGroupCompressedSize(rowGroup);
         }
     }
 
@@ -122,6 +144,16 @@ public final class ParquetCommitTestUtils {
         try (TableReader reader = engine.getReader(table)) {
             reader.openPartition(partitionIndex);
             return reader.getAndInitParquetPartitionDecoder(partitionIndex).metadata().getRowGroupCount();
+        }
+    }
+
+    /**
+     * The row count of a row group of a partition's parquet file, as its {@code _pm} records it.
+     */
+    public static long parquetRowGroupRowCount(CairoEngine engine, String table, int partitionIndex, int rowGroup) {
+        try (TableReader reader = engine.getReader(table)) {
+            reader.openPartition(partitionIndex);
+            return reader.getAndInitParquetPartitionDecoder(partitionIndex).metadata().getRowGroupSize(rowGroup);
         }
     }
 

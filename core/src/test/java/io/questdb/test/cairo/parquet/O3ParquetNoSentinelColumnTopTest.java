@@ -37,6 +37,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.fuzz.O3ParquetPathCounts;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -60,6 +61,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.IntFunction;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+import static io.questdb.test.cairo.parquet.ParquetCommitTestUtils.isDeadBytesRewriteExpected;
+import static io.questdb.test.cairo.parquet.ParquetCommitTestUtils.parquetFileSize;
+import static io.questdb.test.cairo.parquet.ParquetCommitTestUtils.parquetRowGroupCompressedSize;
+import static io.questdb.test.cairo.parquet.ParquetCommitTestUtils.parquetUnusedBytes;
+import static io.questdb.test.cairo.parquet.ParquetCommitTestUtils.partitionNameTxn;
 
 /**
  * An O3 commit into a parquet partition keeps the column top of a BOOLEAN, BYTE, SHORT or CHAR
@@ -1646,6 +1653,33 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDedupUpsertIdenticalKeptTopNotCountedByRewriteGate() throws Exception {
+        // the commit of testDedupUpsertIdenticalKeptTopFirstMergeLeavesRowGroupUnchanged under a dead-bytes gate that
+        // row group 2, which the commit merges, stays under, and row groups 0 and 2 together pass. Row group 0 is the
+        // first MERGE, whose NULLs the partition updater tells apart only once the output opens, see
+        // isKeptTopMergeUnchanged(): the gate decides as the output opens and counts row group 2 alone, so the commit
+        // updates the partition in place, as with the gate off
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createFileTopShapeTables(" DEDUP UPSERT KEYS(ts)", 2, 12);
+            setRewriteRatioUnderFirstRowGroup();
+            final long nameTxn = partitionNameTxn(engine, "pt", 0);
+            final O3ParquetPathCounts paths = new O3ParquetPathCounts();
+            assertDecodedColumnsAndWrittenRows(
+                    27,
+                    4,
+                    storedRow(4, 2),
+                    storedRow(6, 2),
+                    newRow(tsOf(11))
+            );
+            assertUpdatedInPlace(nameTxn, paths);
+            assertChunkNullCounts("c2", "2,0,0");
+            assertReaders(topRows(12, 2, 11, null, true));
+        });
+    }
+
+    @Test
     public void testDedupUpsertIdenticalKeptTopRewriteCopiesRowGroup() throws Exception {
         // the commit of testDedupUpsertIdenticalKeptTopFirstMergeTwiceLeavesRowGroupUnchanged in a full rewrite: the
         // rewrite copies row group 0 with its NULLs, and row group 1, and merges row group 2 from what the check
@@ -2309,6 +2343,37 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDedupUpsertMergedKeptTopNotCountedByRewriteGate() throws Exception {
+        // the commit of testDedupUpsertIdenticalKeptTopFirstMergeRewritesRowGroup under the dead-bytes gate of
+        // testDedupUpsertIdenticalKeptTopNotCountedByRewriteGate. The file records no top, so the partition updater
+        // answers, once the output opens, that the merge of row group 0 writes its NULLs as 0/false, and the merge
+        // loop merges row group 0 too. The gate decided before, on row group 2 alone: its count of the bytes that the
+        // update leaves dead is a lower bound, and the commit updates the partition in place
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createShapeTables(" DEDUP UPSERT KEYS(ts)", 2, 12, -1);
+            eraseFileColumnTops();
+            setRewriteRatioUnderFirstRowGroup();
+            final long nameTxn = partitionNameTxn(engine, "pt", 0);
+            final O3ParquetPathCounts paths = new O3ParquetPathCounts();
+            // CHAR: a merge writes the NULLs of row group 0 as NULLs, so the merge loop leaves it in place, and takes
+            // over what the check decoded of row group 2
+            final boolean isNullMerged = hasNoSentinelType();
+            assertDecodedColumnsAndWrittenRows(
+                    isNullMerged ? 45 : 27,
+                    isNullMerged ? 8 : 4,
+                    storedRow(4, 2),
+                    storedRow(6, 2),
+                    newRow(tsOf(11))
+            );
+            assertUpdatedInPlace(nameTxn, paths);
+            assertChunkNullCounts("c2", "2,0,0");
+            assertReaders(topRows(12, 2, 11, null, true));
+        });
+    }
+
+    @Test
     public void testDedupUpsertNanResentOverNullKeepsTop() throws Exception {
         // DOUBLE d and FLOAT f are NULL in row 7, the replay sends NaN, which is the same NULL: native appends
         Assume.assumeTrue(isWal);
@@ -2783,6 +2848,14 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         });
     }
 
+    // asserts that the one commit into the parquet partitions of pt since the counts and the name txn of 2024-01-01 were
+    // taken updated 2024-01-01 in place
+    private static void assertUpdatedInPlace(long nameTxn, O3ParquetPathCounts paths) {
+        Assert.assertEquals("in-place updates", 1, paths.getInPlace());
+        Assert.assertEquals("rewrites", 0, paths.getRewrite());
+        Assert.assertEquals("name txn", nameTxn, partitionNameTxn(engine, "pt", 0));
+    }
+
     // the rows of the query, with NULL and 0 or false as one value in NO_SENTINEL_COLUMNS
     private static String normalizedRows(String sql) throws Exception {
         sink.clear();
@@ -2892,6 +2965,21 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
                 return super.openRW(name, opts);
             }
         };
+    }
+
+    // Sets the ratio of the dead-bytes rewrite gate halfway between the share of the parquet file of 2024-01-01 of pt
+    // that the bytes it holds unused and row group 2 make, and that share with row group 0 as well: by the formula of
+    // the gate, a commit that re-encodes row group 2 updates the partition in place, one that also counts row group 0
+    // rewrites it
+    private static void setRewriteRatioUnderFirstRowGroup() {
+        final long unusedBytes = parquetUnusedBytes(engine, "pt", 0);
+        final long parquetFileSize = parquetFileSize(engine, "pt", 0);
+        final long rowGroup0Size = parquetRowGroupCompressedSize(engine, "pt", 0, 0);
+        final long rowGroup2Size = parquetRowGroupCompressedSize(engine, "pt", 0, 2);
+        final double ratio = (unusedBytes + rowGroup2Size + rowGroup0Size / 2.0) / parquetFileSize;
+        Assert.assertFalse(isDeadBytesRewriteExpected(unusedBytes, parquetFileSize, rowGroup2Size, ratio, Long.MAX_VALUE));
+        Assert.assertTrue(isDeadBytesRewriteExpected(unusedBytes, parquetFileSize, rowGroup0Size + rowGroup2Size, ratio, Long.MAX_VALUE));
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, Double.toString(ratio));
     }
 
     private static String tsOf(int v) {

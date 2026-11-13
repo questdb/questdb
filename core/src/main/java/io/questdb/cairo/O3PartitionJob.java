@@ -2254,6 +2254,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         long resultMinTimestamp = Long.MAX_VALUE;
         long newParquetSize;
         long newParquetMetaFileSize;
+        // whether the output is a new partition directory, decided as the output opens, see isOutputOpen
         boolean isRewrite = false;
         // Whether the merge opened its output, a new partition directory for a rewrite or the parquet
         // file and _pm of the partition for an in-place update. A SKIP commit that writes no row leaves
@@ -2501,21 +2502,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
                 }
 
-                // Bytes MERGE and DROP actions would leave dead if updated in place, from
-                // _pm chunk sizes. The dead-bytes gate below looks one commit ahead, so a
-                // commit that re-encodes most of the file rewrites it instead.
-                long projectedDeadBytes = 0;
-                for (int i = 0; i < actionCount; i++) {
-                    final O3ParquetMergeStrategy.MergeAction action = actionsBuf.getQuick(i);
-                    if (action.type == O3ParquetMergeStrategy.ActionType.MERGE || action.type == O3ParquetMergeStrategy.ActionType.DROP) {
-                        for (int rg = action.rowGroupIndex; rg <= action.rowGroupIndexHi; rg++) {
-                            projectedDeadBytes += parquetMeta.getRowGroupCompressedSize(rg);
-                        }
-                    }
-                }
-                final long projectedUnusedBytes = unusedBytes + projectedDeadBytes;
-
-                // Decide whether to rewrite the file or update in-place.
+                // Whether the commit rewrites the file instead of updating it in place, whatever
+                // bytes it leaves dead. The dead-bytes gate decides the rest where the output
+                // opens, see isDeadBytesOverLimit().
                 // A single-row-group file always triggers a rewrite: any O3 merge
                 // replaces its only row group, leaving 100% of the original payload
                 // as dead bytes.
@@ -2523,19 +2512,18 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // mode, untouched row groups would retain the old column layout while
                 // the footer schema uses the new target schema, producing a malformed
                 // Parquet file.
-                // Projected unused bytes lie inside the current file, so the ratio stays
-                // below 1.0, and a 1.0 ratio / Long.MAX_VALUE bytes still disables the gate.
                 // An index whose committed name is at or above txn forces a rewrite too: the
                 // in-place rebuild would name its new version txn, see isForeignParquetIndex().
-                isRewrite = hasSchemaChange
+                final boolean isRewriteForced = hasSchemaChange
                         || forceFullReencode
                         || hasStaleColumnTops
                         || rowGroupCount == 1
                         || hasCoalescableTie
-                        || (parquetSize > 0 && (double) projectedUnusedBytes / parquetSize > cairoConfiguration.getPartitionEncoderParquetO3RewriteUnusedRatio())
-                        || projectedUnusedBytes > cairoConfiguration.getPartitionEncoderParquetO3RewriteUnusedMaxBytes()
                         || hasForeignParquetIndex(tableWriter, tableWriterMetadata, partitionTimestamp, txn)
                         || hasLiveIndexUnderColumnTop(tableWriter, tableWriterMetadata, ff, path, partitionTimestamp, oldPartitionSize);
+                // the bytes of the file that are dead after the commit: the output adds the bytes
+                // that the commit leaves dead when it opens, see getProjectedDeadBytes()
+                long projectedUnusedBytes = unusedBytes;
 
                 // the last O3 row at or below the partition max, srcOooLo - 1 when there is none
                 final long o3HiUpToPartitionMax = srcOooLo <= srcOooHi
@@ -2618,6 +2606,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     // A rewrite that copies row groups through ParquetRowGroupMaterializer
                     // decodes them into the buffers of the columns past the keys, so the check
                     // keeps those columns only when it does not.
+                    // The dead-bytes gate decides where the output opens, once the commit knows
+                    // which MERGEs leave their row groups as stored, see getProjectedDeadBytes().
                     final boolean isSkipMode = tableWriter.isCommitDedupSkipMode()
                             || (isCommitDedup
                             && columnTopRowLimit != Long.MAX_VALUE
@@ -2642,6 +2632,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             ctx
                     ));
                     if (!isSkipMode) {
+                        // Every DROP and every MERGE but the ones the identity check leaves as stored. The partition
+                        // updater settles the kept-top MERGE only once the output opens, so the projection does not
+                        // count it even when the merge loop merges it below: a lower bound
+                        projectedUnusedBytes = unusedBytes + getProjectedDeadBytes(actionsBuf, 0, actionCount, parquetMeta, ctx);
+                        isRewrite = isRewriteForced || isDeadBytesOverLimit(projectedUnusedBytes, parquetSize, cairoConfiguration);
                         // set before the call, so that the cleanup covers an output that opened partially
                         isOutputOpen = true;
                         openParquetOutput(
@@ -2767,6 +2762,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 // the partition max, the commit only appends past the partition end: native
                                 // turns such a commit into an append, which keeps every column top
                                 final long o3RowsUpToPartitionMax = o3HiUpToPartitionMax - srcOooLo + 1;
+                                // The actions before this one wrote nothing, and the dedup of a later MERGE runs
+                                // after the output opens: the projection counts this action alone, a lower bound
+                                projectedUnusedBytes = unusedBytes + getProjectedDeadBytes(actionsBuf, i, i + 1, parquetMeta, ctx);
+                                isRewrite = isRewriteForced || isDeadBytesOverLimit(projectedUnusedBytes, parquetSize, cairoConfiguration);
                                 // set before the call, so that the cleanup covers an output that opened partially
                                 isOutputOpen = true;
                                 openParquetOutput(
@@ -5055,6 +5054,30 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         return mergeRowCount > maxChunkTarget ? (int) ((mergeRowCount + maxChunkTarget - 1) / maxChunkTarget) : 1;
     }
 
+    // The bytes that the actions [actionLo, actionHi) leave dead when they update the parquet file in place, from the
+    // _pm compressed sizes of the row groups: those of a DROP and of a MERGE that re-encodes them. A MERGE that the
+    // UPSERT identity check leaves as stored keeps its row groups in place, see
+    // O3ParquetMergeContext.setUnchangedMergeActions().
+    private static long getProjectedDeadBytes(
+            ObjList<O3ParquetMergeStrategy.MergeAction> actions,
+            int actionLo,
+            int actionHi,
+            ParquetMetaFileReader parquetMeta,
+            O3ParquetMergeContext ctx
+    ) {
+        long deadBytes = 0;
+        for (int i = actionLo; i < actionHi; i++) {
+            final O3ParquetMergeStrategy.MergeAction action = actions.getQuick(i);
+            if (action.type == O3ParquetMergeStrategy.ActionType.DROP
+                    || (action.type == O3ParquetMergeStrategy.ActionType.MERGE && !ctx.isUnchangedMergeAction(i))) {
+                for (int rg = action.rowGroupIndex; rg <= action.rowGroupIndexHi; rg++) {
+                    deadBytes += parquetMeta.getRowGroupCompressedSize(rg);
+                }
+            }
+        }
+        return deadBytes;
+    }
+
     /**
      * Returns true if any two adjacent row groups share a boundary timestamp
      * (rg[i].max == rg[i+1].min) that the sorted O3 batch [srcOooLo, srcOooHi] also
@@ -5289,6 +5312,17 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             }
         }
         return false;
+    }
+
+    // The dead-bytes gate: whether the bytes of the parquet file that are dead after the commit, the projected unused
+    // bytes, are too many for an in-place update, so that the commit rewrites the file instead of roughly doubling it.
+    // The projection lies inside the current file, so its share stays below 1.0, and a ratio of 1.0 with
+    // Long.MAX_VALUE bytes disables the gate.
+    private static boolean isDeadBytesOverLimit(long projectedUnusedBytes, long parquetSize, CairoConfiguration configuration) {
+        // the file holds at least one row group
+        assert parquetSize > 0;
+        return (double) projectedUnusedBytes / parquetSize > configuration.getPartitionEncoderParquetO3RewriteUnusedRatio()
+                || projectedUnusedBytes > configuration.getPartitionEncoderParquetO3RewriteUnusedMaxBytes();
     }
 
     // Whether the merge of the first MERGE, which the UPSERT identity check found identical, writes its row groups as

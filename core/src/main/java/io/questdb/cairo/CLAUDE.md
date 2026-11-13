@@ -42,17 +42,19 @@ executes them:
 (rather than appended in place) when `isRewrite` is true:
 
 ```
-isRewrite = hasSchemaChange            // missing / extra / type-converted columns
+isRewrite = isRewriteForced
+         || projectedUnusedBytes/parquetSize > ratio  // too many dead bytes, after this commit,
+         || projectedUnusedBytes > maxBytes;          // decided when the output opens
+isRewriteForced = hasSchemaChange      // missing / extra / type-converted columns
          || forceFullReencode          // legacy Required no-sentinel column present
+         || hasStaleColumnTops         // _cv tops a 9.3.4 - 10.0.1 in-place merge left stale
          || rowGroupCount == 1         // any merge replaces the only row group
          || hasCoalescableTie          // a boundary-straddling timestamp run
-         || projectedUnusedBytes/parquetSize > ratio  // too many dead bytes, after this commit
-         || projectedUnusedBytes > maxBytes
          || hasForeignParquetIndex      // a rebuilt index named at or above txn, from ATTACH of a copied directory
          || hasLiveIndexUnderColumnTop; // a 10.0.1-or-older index under a column top
 hasSchemaChange = hasMissingColumns || hasExtraColumns || hasTypeConvertedColumns;
 projectedUnusedBytes = unusedBytes     // already dead (_pm footer)
-         + sum(_pm compressed size of every row group a MERGE or DROP action consumes);
+         + sum(_pm compressed size of every row group a DROP drops or a MERGE re-encodes);
 ```
 
 `ratio` / `maxBytes` are `cairo.partition.encoder.parquet.o3.rewrite.unused.ratio` (0.5) /
@@ -60,12 +62,24 @@ projectedUnusedBytes = unusedBytes     // already dead (_pm footer)
 the re-encoded row group and leaves the old one as dead bytes, so a commit that re-encodes
 most of the file (a whole-partition replace, O3 or a dedup merge into most row groups) is
 rewritten to one clean file instead of roughly doubling it in place. This applies to every
-parquet O3 commit, not only replace. The estimate sums `ParquetMetaFileReader.getRowGroupCompressedSize()`
-(TOTAL_COMPRESSED over the group's column chunks), O(actions x columns), after replace filter merges with no row in the window have
-been downgraded to COPY. It is a lower bound of what update mode actually adds to
-`unusedBytes`: it omits the old parquet footer and the replaced groups' column/offset
-indexes. Both kinds of bytes lie inside the current file, so the ratio stays below 1.0;
-tests that force in-place updates with ratio 1.0 and maxBytes `Long.MAX_VALUE` are unaffected.
+parquet O3 commit, not only replace. `isRewriteForced` is decided before the merge actions run;
+the dead-bytes gate (`isDeadBytesOverLimit()`) when the output opens, once the commit knows which
+MERGEs re-encode their row groups (`getProjectedDeadBytes()`). An output that opens upfront counts
+every DROP and every MERGE but the identical ones the UPSERT identity check leaves as stored
+(`O3ParquetMergeContext.isUnchangedMergeAction()`). A SKIP-mode commit (see Deduplication) decides
+at its first writing action and counts that action alone: the actions before it wrote nothing, and
+the dedup of the later MERGEs runs after the output opens. The first MERGE whose NULLs of a BOOLEAN,
+BYTE or SHORT column may be a kept column top counts as stored too: the partition updater settles
+it only after the open (`isKeptTopMergeUnchanged()`). The estimate sums
+`ParquetMetaFileReader.getRowGroupCompressedSize()` (TOTAL_COMPRESSED over the group's column
+chunks), O(actions x columns), after replace filter merges with no row in the window have been
+downgraded to COPY. It is a lower bound of what update mode actually adds to `unusedBytes`: it
+omits the old parquet footer, the replaced groups' column/offset indexes, and the MERGEs above that
+turn out to re-encode their row groups. So a SKIP commit that writes into most row groups updates
+the file in place, and the gate of a later commit, which counts the bytes it left dead, or the idle
+compaction (`PartitionCompactionScanJob`) rewrites it. All these bytes lie inside the current file,
+so the ratio stays below 1.0; tests that force in-place updates with ratio 1.0 and maxBytes
+`Long.MAX_VALUE` are unaffected.
 
 **DROP in update mode.** `removeRowGroup(rg)` takes the original index, like `updateRowGroup`.
 parquet2's `ParquetFile::end()` applies it in original index space after the replacements
@@ -272,8 +286,9 @@ a merge whose O3 rows are all duplicates reproduces the existing rows as they ar
   in-place update, or the rewrite copies it like a `COPY_ROW_GROUP_SLICE`, with no stage 2.
   `processParquetPartition()` opens its output (the new `txn` directory of a rewrite, or the
   `data.parquet` and `_pm` of an update) at the first action that writes rows: a `MERGE` that
-  keeps an O3 row, or a `COPY_O3`. On that first write a rewrite copies the row groups of the
-  actions before it, in order. When no action writes, the partition stays as it is, and the
+  keeps an O3 row, or a `COPY_O3`, and decides there whether to rewrite (see Rewrite vs
+  in-place update). On that first write a rewrite copies the row groups of the actions before
+  it, in order. When no action writes, the partition stays as it is, and the
   partition sink reports it as unchanged as the native path does (`updatePartitionSink(...,
   newPartitionSize = -1, partitionMutates = 0)`). Other commits open the output upfront.
 
