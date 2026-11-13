@@ -167,7 +167,14 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private long pendingDurableSeqTxn = -1L;
     // Wall-clock micros of the oldest pending commit. The flush fires once now - pendingSinceMicros >= W.
     private long pendingSinceMicros = -1L;
+    // The uncommitted row count the prepared record covers, see prepareCommit().
+    private long preparedRowCount;
+    // prepareCommit() appended a DATA record for the uncommitted rows and flushed this writer's private files,
+    // and nothing has sequenced the record yet. commit() sequences it; rollback() and close abandon it.
+    private boolean isCommitPrepared;
     private boolean isCommittingData;
+    // A group flush fell due while a prepared commit sequenced; flushDueGroupCommit() runs it.
+    private boolean isGroupFlushDue;
     private byte lastDedupMode = WAL_DEDUP_MODE_DEFAULT;
     private long lastMatViewPeriodHi = WAL_DEFAULT_LAST_PERIOD_HI;
     private long lastMatViewRefreshBaseTxn = WAL_DEFAULT_BASE_TABLE_TXN;
@@ -275,6 +282,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             boolean isDedupKey,
             SecurityContext securityContext
     ) {
+        throwIfCommitPrepared("add a column");
         alterOp.clear();
         alterOp.ofAddColumn(
                 getMetadata().getTableId(),
@@ -294,6 +302,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     public long appendCustomEvent(byte txnType, WalEventPayloadWriter payload) {
+        throwIfCommitPrepared("append a custom event");
         if (!WalTxnType.isDownstreamType(txnType)) {
             throw new IllegalArgumentException(
                     "custom event types must be in reserved range 64..127, got: " + txnType
@@ -331,6 +340,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
     @Override
     public long apply(AlterOperation alterOp, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
+        throwIfCommitPrepared("apply ALTER");
         alterOp.authorize();
         // Flush the pending batch first. A structural change's endMetadataChangeEntry() syncs the sequencer log
         // with MS_SYNC, which would put this record on the device ahead of earlier data commits whose files are
@@ -346,6 +356,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     // Returns table transaction number
     @Override
     public long apply(UpdateOperation operation) {
+        throwIfCommitPrepared("apply UPDATE");
         operation.authorize();
         if (inTransaction()) {
             throw CairoException.critical(0).put("cannot update table with uncommitted inserts [table=")
@@ -386,6 +397,10 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
     @Override
     public void commit() {
+        if (isCommitPrepared) {
+            commitPrepared();
+            return;
+        }
         // plain old commit
         commit0(
                 WalTxnType.DATA,
@@ -409,6 +424,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
      * @param lastReplaceRangeHiTs  the high timestamp of the range to be replaced, exclusive
      */
     public void commitMatView(long lastRefreshBaseTxn, long lastRefreshTimestamp, long lastPeriodHi, long lastReplaceRangeLowTs, long lastReplaceRangeHiTs) {
+        throwIfCommitPrepared("commit a materialized view");
         assert lastReplaceRangeLowTs < lastReplaceRangeHiTs;
         assert txnMinTimestamp >= lastReplaceRangeLowTs;
         assert txnMaxTimestamp <= lastReplaceRangeHiTs;
@@ -431,6 +447,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
      * base-WAL retention.
      */
     public void commitLiveView(long maxBaseSeqTxnInBlock) {
+        throwIfCommitPrepared("commit a live view");
         commit0(
                 WalTxnType.LIVE_VIEW_DATA,
                 maxBaseSeqTxnInBlock,
@@ -462,6 +479,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
      *                             the current transaction.
      */
     public void commitLiveViewWithReplaceRange(long maxBaseSeqTxnInBlock, long lowTs, long hiTs) {
+        throwIfCommitPrepared("commit a live view");
         assert lowTs < hiTs;
         assert txnMinTimestamp >= lowTs;
         assert txnMaxTimestamp <= hiTs;
@@ -477,6 +495,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     public void commitWithParams(long replaceRangeLowTs, long replaceRangeHiTs, byte dedupMode) {
+        throwIfCommitPrepared("commit with parameters");
         commit0(
                 WalTxnType.DATA,
                 WAL_DEFAULT_BASE_TABLE_TXN,
@@ -497,6 +516,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
      * @return true when the sequencer accepted the transaction, false when the fence rejected it
      */
     public boolean commitWithParamsIfSeqTxn(long expectedSeqTxn, long replaceRangeLowTs, long replaceRangeHiTs, byte dedupMode) {
+        throwIfCommitPrepared("commit with parameters");
         return commit0(
                 WalTxnType.DATA,
                 WAL_DEFAULT_BASE_TABLE_TXN,
@@ -507,6 +527,28 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 dedupMode,
                 expectedSeqTxn
         );
+    }
+
+    /**
+     * Runs the group flush that fell due while {@link #commit()} sequenced a prepared commit, see
+     * {@link #prepareCommit()}. Does nothing when no flush is due, and skips a writer distressed since: its
+     * close flushes the sequenced batch. A failed flush distresses the writer and is rethrown.
+     */
+    public void flushDueGroupCommit() {
+        // Only inside the check: flushPendingDurable() has no window check of its own, so an unconditional call
+        // would fdatasync the sequencer log on every commit and defeat the group commit.
+        if (isGroupFlushDue) {
+            isGroupFlushDue = false;
+            if (distressed) {
+                return;
+            }
+            try {
+                flushPendingDurable();
+            } catch (Throwable th) {
+                distressed = true;
+                throw th;
+            }
+        }
     }
 
     /**
@@ -574,6 +616,10 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     public void goActive(long maxStructureVersion) {
+        // An unguarded goActive() could roll the prepared record to a new segment and report the old
+        // segment's closure with the record still counted. A prepared commit's own NO_TXN replay does not
+        // come through here: getSequencerTxn() calls applyMetadataChangeLog() directly.
+        throwIfCommitPrepared("apply structure changes");
         try {
             applyMetadataChangeLog(maxStructureVersion);
         } catch (CairoException e) {
@@ -602,6 +648,14 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     /**
+     * True between a successful {@link #prepareCommit()} and the {@link #commit()}, {@link #rollback()} or close
+     * that ends it.
+     */
+    public boolean isCommitPrepared() {
+        return isCommitPrepared;
+    }
+
+    /**
      * True between {@code beginColumnarWrite} and its {@code endColumnarWrite} or
      * {@code cancelColumnarWrite}; also true after a cancel that failed to rewind.
      */
@@ -620,6 +674,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
      */
     public void markSavepoint() {
         assert !isInColumnarWrite() : "markSavepoint called during columnar write";
+        throwIfCommitPrepared("mark a savepoint");
         savepointRows = segmentRowCount - currentTxnStartRowNum;
         savepointMinTimestamp = txnMinTimestamp;
         savepointMaxTimestamp = txnMaxTimestamp;
@@ -653,6 +708,61 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
     }
 
+    /**
+     * The part of {@link #commit()} that precedes sequencing, for a plain commit of the uncommitted rows:
+     * appends the transaction's DATA event record and flushes this writer's private files, the column, event
+     * and segment metadata files, at the commit mode's grade, including what sequencing would flush first. The
+     * {@link #commit()} that follows only sequences the record. A QWP commit batch prepares its tables before
+     * it takes the role-switch read lock, and sequences them under it.
+     * <p>
+     * After a successful prepare the only exits are {@link #commit()}, then {@link #flushDueGroupCommit()}, or
+     * discarding the writer through {@link #rollback()} or a close. The caller appends no row in between; a
+     * commit that finds the row count changed fails and distresses the writer. Discarding never withdraws the
+     * record: it distresses the writer and stops counting the record, so the segment's closure reports only
+     * what was sequenced. The record stays in the closed segment, as after a commit that fails before it
+     * sequences, and apply never reads it. Every other operation that writes an event or changes the segment
+     * refuses a prepared writer, which stays prepared.
+     * <p>
+     * Refuses a writer that is distressed, mid columnar write, already prepared or holds no uncommitted row. A
+     * failure once the record is being appended distresses the writer, which a close then discards.
+     */
+    public void prepareCommit() {
+        throwIfCommitPrepared("prepare a commit");
+        checkDistressed();
+        throwIfInColumnarWrite("prepare a commit");
+        if (!inTransaction()) {
+            throw CairoException.critical(0).put("cannot prepare a WAL commit without rows [table=").put(tableToken.getTableName())
+                    .put(", wal=").put(walId)
+                    .put(']');
+        }
+        // A record that the failure below leaves in the event file is never sequenced: stop counting it.
+        final int lastSegmentTxnBeforeAppend = lastSegmentTxn;
+        try {
+            final int commitMode = walCommitMode();
+            final long txnRowCount = appendAndFlushCommit(
+                    WalTxnType.DATA,
+                    WAL_DEFAULT_BASE_TABLE_TXN,
+                    WAL_DEFAULT_LAST_REFRESH_TIMESTAMP,
+                    WAL_DEFAULT_LAST_PERIOD_HI,
+                    0,
+                    0,
+                    WAL_DEDUP_MODE_DEFAULT,
+                    commitMode
+            );
+            syncBeforeSequencingPreparedCommit(commitMode);
+            preparedRowCount = txnRowCount;
+            // isCommittingData stays set: the NO_TXN replay of a concurrent structure change while the prepared
+            // record sequences rolls or rewrites the record on it.
+            isCommitPrepared = true;
+        } catch (Throwable th) {
+            // The record may be half-written: never rewind it with rollback0().
+            distressed = true;
+            isCommittingData = false;
+            lastSegmentTxn = lastSegmentTxnBeforeAppend;
+            throw th;
+        }
+    }
+
     public long renameTable(@NotNull CharSequence oldName, String newTableName, SecurityContext securityContext) {
         if (!Chars.equalsIgnoreCaseNc(oldName, tableToken.getTableName())) {
             throw CairoException.tableDoesNotExist(oldName);
@@ -676,6 +786,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             @Nullable LongList refreshIntervals,
             long refreshIntervalsBaseTxn
     ) {
+        throwIfCommitPrepared("reset the materialized view state");
         try {
             lastSegmentTxn = events.appendMatViewInvalidate(
                     lastRefreshBaseTxn,
@@ -705,6 +816,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     public void rollSegment() {
+        throwIfCommitPrepared("roll the segment");
         try {
             openNewSegment();
         } catch (Throwable e) {
@@ -717,8 +829,16 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
     }
 
+    /**
+     * Rolls back the uncommitted rows. On a writer with a prepared commit, abandons the commit instead, see
+     * {@link #prepareCommit()}: the writer ends distressed, and its close discards it.
+     */
     @Override
     public void rollback() {
+        if (isCommitPrepared) {
+            abandonPreparedCommit();
+            return;
+        }
         throwIfInColumnarWrite("rollback");
         rollback0();
     }
@@ -732,6 +852,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
      * columnar write and a distressed one; a failure distresses the writer.
      */
     public void rollbackToSavepoint() {
+        throwIfCommitPrepared("roll back to a savepoint");
         throwIfInColumnarWrite("rollback to savepoint");
         checkDistressed();
         try {
@@ -752,6 +873,12 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     protected final void cleanupBeforeClose() {
+        // On every path: a healthy writer must not reach the pool with a due group flush left over by a batch that
+        // threw before it ran it. The healthy branch's flushPendingDurable() runs that flush.
+        isGroupFlushDue = false;
+        if (isCommitPrepared) {
+            abandonPreparedCommit();
+        }
         // If distressed, no need to rollback, WalWriter will not be used any more.
         if (isDistressed()) {
             // A distressed writer is discarded, but the batch it already sequenced still needs its flush, or
@@ -784,6 +911,19 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             dropPendingDurable();
             throw th;
         }
+    }
+
+    // Abandons the prepared commit: the record can never be sequenced now, so the segment's closure must not
+    // count it. Decrements lastSegmentTxn exactly once, on the transition of isCommitPrepared: rollback() and
+    // then a close, and a pool tenant's close, which runs cleanupBeforeClose() twice, all come through here, and
+    // only the first finds the flag set. Does no file work; the distressed writer's close discards it.
+    private void abandonPreparedCommit() {
+        assert isCommitPrepared;
+        isCommitPrepared = false;
+        isGroupFlushDue = false;
+        isCommittingData = false;
+        lastSegmentTxn--;
+        distressed = true;
     }
 
     private void rollback0() {
@@ -898,6 +1038,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
      * rebased table parks instead of spinning.
      */
     public void commitRebaseSeed() {
+        throwIfCommitPrepared("commit the rebase seed");
         try {
             // Each appendData + getSequencerTxn pair is one sequencer transaction (segment_txn 0 and 1 ->
             // seqTxn 1 and 2). Both seeds are identical 0-row commits, so no per-txn state needs resetting
@@ -946,6 +1087,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
     @Override
     public void truncateSoft() {
+        throwIfCommitPrepared("truncate");
         try {
             lastSegmentTxn = events.truncate();
             final int syncedMode = syncAdaptiveEventsBeforeSequencing();
@@ -1269,12 +1411,23 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     /**
-     * Test hook, called inside {@link #commit0} under a group window after the txn is sequenced but before the
-     * writer records it as pending, so a test can interpose a peer writer's flush to drive that race.
+     * Test hook, called inside {@link #commit0} and the sequencing of a prepared commit after the txn is
+     * sequenced, so a test can interpose between the assignment and what the commit does next.
      */
     @TestOnly
     public interface DeferredCommitInterceptor {
+        /**
+         * Under a group window, before the writer records the txn as pending, so a test can interpose a peer
+         * writer's flush to drive that race.
+         */
         void onSequencedBeforePin(int walId, long seqTxn);
+
+        /**
+         * Under ADAPTIVE with no group window, before the writer re-checks the process fence and publishes the
+         * txn as locally durable, so a test can poison the engine there.
+         */
+        default void onSequencedBeforeDurablePublish(int walId, long seqTxn) {
+        }
     }
 
     @TestOnly
@@ -1311,43 +1464,11 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             byte dedupMode,
             long expectedSeqTxn
     ) {
+        assert !isCommitPrepared : "a prepared commit reached commit0";
         checkDistressed();
         throwIfInColumnarWrite("commit");
         try {
             if (inTransaction() || dedupMode == WAL_DEDUP_MODE_REPLACE_RANGE) {
-                final long txnRowCount = getUncommittedRowCount();
-
-                this.isCommittingData = true;
-                this.lastTxnType = txnType;
-                this.lastReplaceRangeLowTs = replaceRangeLowTs;
-                this.lastReplaceRangeHiTs = replaceRangeHiTs;
-                this.lastDedupMode = dedupMode;
-                this.lastMatViewRefreshBaseTxn = lastRefreshBaseTxn;
-                this.lastMatViewRefreshTimestamp = lastRefreshTimestamp;
-                this.lastMatViewPeriodHi = lastPeriodHi;
-                if (txnRowCount == 0) {
-                    // Sometimes symbols are added but rows are cancelled.
-                    // This can only theoretically happen for replace range commits
-                    // but at the moment it can only happen in fuzz tests because
-                    // in regular usage nothing uses row.cancel() when writing to WAL.
-                    // In this exotic case we do not need to write symbol maps for empty txns.
-                    resetSymbolMaps();
-                }
-
-                lastSegmentTxn = events.appendData(
-                        txnType,
-                        currentTxnStartRowNum,
-                        segmentRowCount,
-                        txnMinTimestamp,
-                        txnMaxTimestamp,
-                        txnOutOfOrder,
-                        lastRefreshBaseTxn,
-                        lastRefreshTimestamp,
-                        lastPeriodHi,
-                        replaceRangeLowTs,
-                        replaceRangeHiTs,
-                        dedupMode
-                );
                 // Flush before asking the sequencer. A conditional cleanup commit does not hold the sequencer lock
                 // across append and fsync, so a fence rejection rolls back this unsequenced event. Under ADAPTIVE,
                 // syncIfRequired puts the column and event files on the medium ahead of the sequencer record, and
@@ -1357,77 +1478,17 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 final int commitMode = walCommitMode();
                 // Read the test hook once per commit: it is a static volatile on the hot path.
                 final DeferredCommitInterceptor commitInterceptor = deferredCommitInterceptor;
-                syncIfRequired(commitMode);
-                final long seqTxn = getSequencerTxn(expectedSeqTxn);
-                // A rejected txn leaves before the ADAPTIVE block, so it is never recorded as pending or durable.
-                if (seqTxn == FENCE_REJECTED) {
-                    events.rollback();
-                    lastSegmentTxn--;
-                    rollback0();
-                    openNewSegment();
-                    return false;
-                }
-                if (commitMode == CommitMode.ADAPTIVE) {
-                    if (isDeviceFlushDeferred()) {
-                        // Test hook: the txn is sequenced and the sequencer pinned it with the assignment, so a peer's
-                        // markWriterDurable here cannot advance the frontier over it.
-                        if (commitInterceptor != null) {
-                            commitInterceptor.onSequencedBeforePin(walId, seqTxn);
-                        }
-                        // The commit is sequenced and in the page cache, but not on the device. Record it as pending and leave
-                        // localDurableSeqTxn alone until the batch flush lands. recordPendingDurable flushes the backlog at once
-                        // if its oldest commit is W old; the background flusher covers commits that stop before then.
-                        recordPendingDurable(seqTxn);
-                    } else {
-                        // W=0: data, events and sequencer are already on the device. Re-check the process fence before
-                        // publishing.
-                        checkDistressed();
-                        seqTxnTracker.setLocalDurableSeqTxn(seqTxn);
-                    }
-                }
-                if (walTelemetryEnabled) {
-                    final long minTs = txnRowCount > 0 ? txnMinTimestamp : Numbers.LONG_NULL;
-                    final long maxTs = txnRowCount > 0 ? txnMaxTimestamp : Numbers.LONG_NULL;
-                    TelemetryWalTask.store(
-                            telemetryWal,
-                            TelemetryEvent.WAL_TXN_COMMITTED,
-                            tableToken.getTableId(),
-                            walId,
-                            seqTxn,
-                            txnRowCount,
-                            txnRowCount,
-                            0L,
-                            minTs,
-                            maxTs
-                    );
-                }
-                final boolean hasReplaceRange = replaceRangeHiTs > replaceRangeLowTs;
-                // Reduce logging when telemetry is enabled; all the information is saved in sys.telemetry_wal
-                LogRecord logLine = hasReplaceRange || !walTelemetryEnabled ? LOG.info() : LOG.debug();
-                try {
-                    logLine.$("commit [wal=").$substr(pathRootSize, path).$(Files.SEPARATOR).$(segmentId)
-                            .$(", segTxn=").$(lastSegmentTxn)
-                            .$(", seqTxn=").$(seqTxn)
-                            .$(", rowLo=").$(currentTxnStartRowNum).$(", rowHi=").$(segmentRowCount)
-                            .$(", minTs=").$ts(timestampDriver, txnMinTimestamp).$(", maxTs=").$ts(timestampDriver, txnMaxTimestamp);
-                    if (hasReplaceRange) {
-                        logLine.$(", replaceRangeLo=").$ts(timestampDriver, replaceRangeLowTs).$(", replaceRangeHi=").$ts(timestampDriver, replaceRangeHiTs);
-                    }
-                } finally {
-                    logLine.I$();
-                }
-                resetDataTxnProperties();
-                mayRollSegmentOnNextRow();
-                metrics.walMetrics().addRowsWritten(txnRowCount);
-                // Track WAL commit for tables() function
-                if (recentWriteTracker != null) {
-                    recentWriteTracker.recordWalWrite(
-                            tableToken,
-                            seqTxn,
-                            lastTxnMaxTimestamp == -1 ? Numbers.LONG_NULL : lastTxnMaxTimestamp,
-                            txnRowCount
-                    );
-                }
+                final long txnRowCount = appendAndFlushCommit(
+                        txnType,
+                        lastRefreshBaseTxn,
+                        lastRefreshTimestamp,
+                        lastPeriodHi,
+                        replaceRangeLowTs,
+                        replaceRangeHiTs,
+                        dedupMode,
+                        commitMode
+                );
+                return sequenceCommit(txnRowCount, expectedSeqTxn, commitMode, commitInterceptor, false);
             }
             return true;
         } catch (CairoException | TableReferenceOutOfDateException ex) {
@@ -1445,6 +1506,200 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             throw th;
         } finally {
             isCommittingData = false;
+        }
+    }
+
+    // The part of a commit that precedes sequencing: appends the transaction's event record and flushes the
+    // writer's column and event files at the commit mode's grade. Returns the transaction's row count.
+    private long appendAndFlushCommit(
+            byte txnType,
+            long lastRefreshBaseTxn,
+            long lastRefreshTimestamp,
+            long lastPeriodHi,
+            long replaceRangeLowTs,
+            long replaceRangeHiTs,
+            byte dedupMode,
+            int commitMode
+    ) {
+        final long txnRowCount = getUncommittedRowCount();
+
+        this.isCommittingData = true;
+        this.lastTxnType = txnType;
+        this.lastReplaceRangeLowTs = replaceRangeLowTs;
+        this.lastReplaceRangeHiTs = replaceRangeHiTs;
+        this.lastDedupMode = dedupMode;
+        this.lastMatViewRefreshBaseTxn = lastRefreshBaseTxn;
+        this.lastMatViewRefreshTimestamp = lastRefreshTimestamp;
+        this.lastMatViewPeriodHi = lastPeriodHi;
+        if (txnRowCount == 0) {
+            // Sometimes symbols are added but rows are cancelled.
+            // This can only theoretically happen for replace range commits
+            // but at the moment it can only happen in fuzz tests because
+            // in regular usage nothing uses row.cancel() when writing to WAL.
+            // In this exotic case we do not need to write symbol maps for empty txns.
+            resetSymbolMaps();
+        }
+
+        lastSegmentTxn = events.appendData(
+                txnType,
+                currentTxnStartRowNum,
+                segmentRowCount,
+                txnMinTimestamp,
+                txnMaxTimestamp,
+                txnOutOfOrder,
+                lastRefreshBaseTxn,
+                lastRefreshTimestamp,
+                lastPeriodHi,
+                replaceRangeLowTs,
+                replaceRangeHiTs,
+                dedupMode
+        );
+        syncIfRequired(commitMode);
+        return txnRowCount;
+    }
+
+    /**
+     * Sequences the prepared record, see {@link #prepareCommit()}. The sequencer does no file IO of this
+     * writer's own: the prepare flushed everything {@code nextSeqTxn} would. A concurrent structure change
+     * still replays through {@link #applyMetadataChangeLog} on a NO_TXN answer, which can roll or rewrite the
+     * prepared record. Any failure once the sequencer is asked distresses the writer: the caller cannot tell
+     * whether the sequencer assigned the txn.
+     */
+    private void commitPrepared() {
+        checkDistressed();
+        final long txnRowCount = getUncommittedRowCount();
+        if (txnRowCount != preparedRowCount) {
+            // The prepared record covers preparedRowCount rows: sequencing it would drop the rows appended since,
+            // or name rows that are gone. isCommitPrepared stays set, so the rollback or close that discards this
+            // writer stops counting the record.
+            distressed = true;
+            throw CairoException.critical(0).put("rows changed under a prepared WAL commit [table=").put(tableToken.getTableName())
+                    .put(", wal=").put(walId)
+                    .put(", preparedRows=").put(preparedRowCount)
+                    .put(", rows=").put(txnRowCount)
+                    .put(']');
+        }
+        assert isCommittingData : "a prepared commit is not committing data";
+        final int commitMode = walCommitMode();
+        // Read the test hook once per commit: it is a static volatile on the hot path.
+        final DeferredCommitInterceptor commitInterceptor = deferredCommitInterceptor;
+        // From here on nothing abandons the record: the sequencer may assign it a txn.
+        isCommitPrepared = false;
+        try {
+            sequenceCommit(txnRowCount, Long.MAX_VALUE, commitMode, commitInterceptor, true);
+        } catch (Throwable th) {
+            distressed = true;
+            if (sequencer.isDataSyncFailureFatal(th)) {
+                dropPendingDurable();
+                sequencer.handleDataSyncFailure(th);
+            }
+            throw th;
+        } finally {
+            isCommittingData = false;
+        }
+    }
+
+    // Sequences the transaction whose event record appendAndFlushCommit() appended, and finishes the commit.
+    // Returns false when the sequencer fence rejected it. isGroupFlushDeferred leaves a due group flush to
+    // flushDueGroupCommit() instead of running it here.
+    private boolean sequenceCommit(
+            long txnRowCount,
+            long expectedSeqTxn,
+            int commitMode,
+            DeferredCommitInterceptor commitInterceptor,
+            boolean isGroupFlushDeferred
+    ) {
+        final long seqTxn = getSequencerTxn(expectedSeqTxn);
+        // A rejected txn leaves before the ADAPTIVE block, so it is never recorded as pending or durable.
+        if (seqTxn == FENCE_REJECTED) {
+            assert expectedSeqTxn != Long.MAX_VALUE : "an unconditional commit was fence-rejected";
+            events.rollback();
+            lastSegmentTxn--;
+            rollback0();
+            openNewSegment();
+            return false;
+        }
+        if (commitMode == CommitMode.ADAPTIVE) {
+            if (isDeviceFlushDeferred()) {
+                // Test hook: the txn is sequenced and the sequencer pinned it with the assignment, so a peer's
+                // markWriterDurable here cannot advance the frontier over it.
+                if (commitInterceptor != null) {
+                    commitInterceptor.onSequencedBeforePin(walId, seqTxn);
+                }
+                // The commit is sequenced and in the page cache, but not on the device. Record it as pending and leave
+                // localDurableSeqTxn alone until the batch flush lands. recordPendingDurable flushes the backlog at once
+                // if its oldest commit is W old; the background flusher covers commits that stop before then.
+                recordPendingDurable(seqTxn, isGroupFlushDeferred);
+            } else {
+                if (commitInterceptor != null) {
+                    commitInterceptor.onSequencedBeforeDurablePublish(walId, seqTxn);
+                }
+                // W=0: data, events and sequencer are already on the device. Re-check the process fence before
+                // publishing.
+                checkDistressed();
+                seqTxnTracker.setLocalDurableSeqTxn(seqTxn);
+            }
+        }
+        if (walTelemetryEnabled) {
+            final long minTs = txnRowCount > 0 ? txnMinTimestamp : Numbers.LONG_NULL;
+            final long maxTs = txnRowCount > 0 ? txnMaxTimestamp : Numbers.LONG_NULL;
+            TelemetryWalTask.store(
+                    telemetryWal,
+                    TelemetryEvent.WAL_TXN_COMMITTED,
+                    tableToken.getTableId(),
+                    walId,
+                    seqTxn,
+                    txnRowCount,
+                    txnRowCount,
+                    0L,
+                    minTs,
+                    maxTs
+            );
+        }
+        final boolean hasReplaceRange = lastReplaceRangeHiTs > lastReplaceRangeLowTs;
+        // Reduce logging when telemetry is enabled; all the information is saved in sys.telemetry_wal
+        LogRecord logLine = hasReplaceRange || !walTelemetryEnabled ? LOG.info() : LOG.debug();
+        try {
+            logLine.$("commit [wal=").$substr(pathRootSize, path).$(Files.SEPARATOR).$(segmentId)
+                    .$(", segTxn=").$(lastSegmentTxn)
+                    .$(", seqTxn=").$(seqTxn)
+                    .$(", rowLo=").$(currentTxnStartRowNum).$(", rowHi=").$(segmentRowCount)
+                    .$(", minTs=").$ts(timestampDriver, txnMinTimestamp).$(", maxTs=").$ts(timestampDriver, txnMaxTimestamp);
+            if (hasReplaceRange) {
+                logLine.$(", replaceRangeLo=").$ts(timestampDriver, lastReplaceRangeLowTs).$(", replaceRangeHi=").$ts(timestampDriver, lastReplaceRangeHiTs);
+            }
+        } finally {
+            logLine.I$();
+        }
+        resetDataTxnProperties();
+        mayRollSegmentOnNextRow();
+        metrics.walMetrics().addRowsWritten(txnRowCount);
+        // Track WAL commit for tables() function
+        if (recentWriteTracker != null) {
+            recentWriteTracker.recordWalWrite(
+                    tableToken,
+                    seqTxn,
+                    lastTxnMaxTimestamp == -1 ? Numbers.LONG_NULL : lastTxnMaxTimestamp,
+                    txnRowCount
+            );
+        }
+        return true;
+    }
+
+    // What nextSeqTxn() flushes before it asks the sequencer, run by prepareCommit() so that sequencing the
+    // prepared record does no file IO of this writer's own. Both calls do nothing for a file that has not
+    // changed since its last flush, so nextSeqTxn() finds nothing left to flush.
+    private void syncBeforeSequencingPreparedCommit(int commitMode) {
+        try {
+            events.syncBeforeSequencing(commitMode);
+            syncSegmentFilesBeforeSequencing(commitMode);
+        } catch (Throwable failure) {
+            if (sequencer.isDataSyncFailureFatal(failure)) {
+                distressed = true;
+                dropPendingDurable();
+                sequencer.handleDataSyncFailure(failure);
+            }
+            CairoException.rethrowCleanupFailure(failure);
         }
     }
 
@@ -2212,6 +2467,15 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         resetSymbolMaps();
     }
 
+    void throwIfCommitPrepared(CharSequence operation) {
+        if (isCommitPrepared) {
+            throw CairoException.critical(0).put("cannot ").put(operation).put(" while a WAL commit is prepared [table=")
+                    .put(tableToken.getTableName())
+                    .put(", wal=").put(walId)
+                    .put(']');
+        }
+    }
+
     private void throwIfInColumnarWrite(CharSequence operation) {
         if (isInColumnarWrite()) {
             throw CairoException.nonCritical().put("cannot ").put(operation).put(" during columnar write");
@@ -2713,7 +2977,15 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
      * Synchronized on the writer monitor, so the pending fields and the flush decision agree with
      * {@link #forceDurableIfPending(long)} and {@link #flushPendingDurable()}.
      */
-    private synchronized void recordPendingDurable(long seqTxn) {
+    private void recordPendingDurable(long seqTxn) {
+        recordPendingDurable(seqTxn, false);
+    }
+
+    /**
+     * {@link #recordPendingDurable(long)}, except that with {@code isFlushDeferred} a flush that falls due is left
+     * to {@link #flushDueGroupCommit()}, which the caller runs once it holds no lock.
+     */
+    private synchronized void recordPendingDurable(long seqTxn, boolean isFlushDeferred) {
         if (pendingDurableSeqTxn < 0) {
             // First commit of a new batch: start the batch's age clock.
             pendingSinceMicros = configuration.getMicrosecondClock().getTicks();
@@ -2733,7 +3005,11 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         // MicrosecondClock is wall time. If NTP/admin adjustment moves it backwards, flush immediately:
         // waiting for wall time to catch up would violate the configured RPO bound.
         if (elapsedMicros < 0 || elapsedMicros >= windowUs) {
-            flushPendingDurable();
+            if (isFlushDeferred) {
+                isGroupFlushDue = true;
+            } else {
+                flushPendingDurable();
+            }
         }
     }
 
