@@ -60,11 +60,12 @@ static inline jlong _io_questdb_std_Files_mremap0
 
     void *orgAddr = (void *) address;
     void *newAddr = mmap(orgAddr, (size_t) newLen, prot, MAP_SHARED, (int) fd, offset);
+    if (newAddr == MAP_FAILED) {
+        // As mremap(2) does on Linux, a failed remap leaves the old mapping in place: the caller still owns it.
+        return -1;
+    }
     if (orgAddr != newAddr) {
         munmap(orgAddr, (size_t) previousLen);
-    }
-    if (newAddr == MAP_FAILED) {
-	    return -1;
     }
     return (jlong) newAddr;
 }

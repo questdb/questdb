@@ -258,6 +258,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private static final Runnable NOOP = () -> {
     };
     private static final Row NOOP_ROW = new NoOpRow();
+    // Zero symbol counts, for a _txn record published before the symbol map writers open, see repairTruncate().
+    // Never modified.
+    private static final ObjList<SymbolCountProvider> NO_SYMBOL_COUNTS = new ObjList<>();
     private static final int O3_ERRNO_FATAL = Integer.MAX_VALUE - 1;
     private static final int POSTING_SEAL_PURGE_CLOSE_QUEUE_RETRY_COUNT = 32;
     private static final String POSTING_SEAL_PURGE_PENDING_FILE_NAME = "_posting_seal_purge_pending.d";
@@ -816,11 +819,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
 
-            // we have to do truncate repair at this stage of constructor
-            // because this operation requires metadata
+            // The truncate repair needs the metadata and _cv. It runs before the symbol map writers open, which then
+            // open with the symbol counts it publishes.
             switch (todo) {
                 case TODO_TRUNCATE:
-                    repairTruncate();
+                    repairTruncate(false);
+                    break;
+                case TODO_TRUNCATE_KEEP_SYMBOL_MAPS:
+                    repairTruncate(true);
                     break;
                 case TODO_RESTORE_META:
                 case -1:
@@ -5582,10 +5588,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Truncates table including symbol tables. When the operation is unsuccessful, it throws CairoException.
-     * With that truncate can be retried or alternatively, the table can be closed. The outcome of any other operation
-     * with the table is undefined and likely to cause a segmentation fault. When the table re-opens, any partial
-     * truncate will be retried.
+     * Truncates table including symbol tables. When the operation is unsuccessful, it throws and leaves this writer
+     * distressed: the writer must be closed, and the pool closes it instead of handing it out again. When the table
+     * re-opens, any partial truncate will be retried.
      */
     @Override
     public final void truncate() {
@@ -5593,10 +5598,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Truncates table, but keeps symbol tables. When the operation is unsuccessful, it throws CairoException.
-     * With that truncate can be retried or alternatively, the table can be closed. The outcome of any other operation
-     * with the table is undefined and likely to cause a segmentation fault. When the table re-opens, any partial
-     * truncate will be retried.
+     * Truncates table, but keeps symbol tables. When the operation is unsuccessful, it throws and leaves this writer
+     * distressed: the writer must be closed, and the pool closes it instead of handing it out again. When the table
+     * re-opens, any partial truncate will be retried.
      */
     @Override
     public final void truncateSoft() {
@@ -9811,6 +9815,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // drop-table purge path) cannot free the command queue underneath a publisher
         // mid-serialize and crash the JVM with a SIGSEGV. The default hook is a no-op.
         lifecycleManager.onBeforeClose();
+        // A writer that gives the table up after a failed commit must not leave that commit's _cv published, see
+        // rollbackColumnVersionOfFailedCommit(). The drop path and a half-built writer close with truncate false.
+        if (truncate && distressed) {
+            rollbackColumnVersionOfFailedCommit();
+        }
         // destroy() may have already closed everything
         boolean tx = inTransaction();
         // A graceful close of a healthy adaptive WAL writer folds the committed tail into a final epoch, so a
@@ -19079,10 +19088,32 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         clearTodoLog();
     }
 
-    private void repairTruncate() {
-        LOG.info().$("repairing abnormally terminated truncate on ").$substr(pathRootSize, path).$();
+    /**
+     * Completes a TRUNCATE that stopped after it armed its {@code _todo_} entry and before it published the empty
+     * {@code _txn}, as {@link #truncate0(boolean)} would have: no partitions, no rows, no column tops. The
+     * constructor calls it before it opens the columns and the symbol map writers.
+     */
+    private void repairTruncate(boolean isKeepSymbolMaps) {
+        LOG.info().$("repairing abnormally terminated truncate on ").$substr(pathRootSize, path)
+                .$(" [keepSymbolMaps=").$(isKeepSymbolMaps).I$();
         scheduleRemoveAllPartitions();
-        txWriter.truncate(columnVersionWriter.getVersion(), denseSymbolMapWriters);
+        columnVersionWriter.truncate();
+        if (isKeepSymbolMaps) {
+            // TRUNCATE ... KEEP SYMBOL MAPS leaves the symbol maps as _txn counts them, and a reader of the old rows
+            // may still resolve their keys: the record keeps those counts, so new symbols do not overwrite them.
+            final ObjList<SymbolCountProvider> symbolCounts = new ObjList<>();
+            for (int i = 0, n = txWriter.getSymbolColumnCount(); i < n; i++) {
+                final int symbolCount = txWriter.getSymbolValueCount(i);
+                symbolCounts.add(() -> symbolCount);
+            }
+            txWriter.truncate(columnVersionWriter.getVersion(), symbolCounts);
+        } else {
+            // A TRUNCATE without KEEP SYMBOL MAPS empties the symbol maps before it arms _todo_, so their files may
+            // hold fewer symbols than _txn counts. Zero counts are valid for the files in either state.
+            txWriter.truncate(columnVersionWriter.getVersion(), NO_SYMBOL_COUNTS);
+        }
+        // The symbol map writers open with the counts txWriter loaded, so it loads the record it just published
+        txWriter.unsafeLoadAll();
         resetCompositePartitionTracking();
         clearTodoLog();
         processPartitionRemoveCandidates();
@@ -19523,6 +19554,39 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // truncate _meta file exactly, the file size never changes.
             // Metadata updates are written to a new file and then swapped by renaming.
             ddlMem.close(true, Vm.TRUNCATE_TO_POINTER);
+        }
+    }
+
+    /**
+     * Rolls back the _cv version that a failed commit published ahead of the _txn record naming it, as
+     * rollbackColumnVersionToTxn() does on open and on rollback(), when this writer gives the table up distressed.
+     * Readers wait for _txn to name the _cv version, see ColumnVersionReader.readSafe(MillisecondClock, long, long),
+     * and the WAL table that the failure suspends opens no other writer until RESUME WAL. This runs while the writer
+     * still owns the table, before the pool lets another writer open it, and never throws: the next writer's
+     * constructor rolls back what this cannot. It takes the column version from the live _txn record, not from
+     * txWriter's fields, which the failed commit already moved on: the record the reader view holds changes only
+     * when a commit publishes its own.
+     */
+    private void rollbackColumnVersionOfFailedCommit() {
+        try {
+            // A failed mremap unmaps _cv, and reading it then faults. _txn keeps its mapping through a failed commit,
+            // see TxWriter.mapWriteArea(); the writer still checks it before reading.
+            if (txWriter.isOpen() && columnVersionWriter.isOpen()) {
+                final long txnColumnVersion = txWriter.unsafeReadColumnVersion();
+                // A failed commit leaves _cv exactly one version ahead of _txn. The next writer's constructor
+                // refuses any wider gap.
+                if (columnVersionWriter.getVersion() - 1 == txnColumnVersion) {
+                    LOG.info().$("rolling back column version of failed commit [table=").$(tableToken)
+                            .$(", txnVersion=").$(txnColumnVersion)
+                            .$(", actualFileVersion=").$(columnVersionWriter.getVersion())
+                            .I$();
+                    columnVersionWriter.rollback();
+                }
+            }
+        } catch (Throwable th) {
+            LOG.critical().$("could not roll back column version of failed commit [table=").$(tableToken)
+                    .$(", error=").$(th)
+                    .I$();
         }
     }
 
@@ -21938,17 +22002,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try {
             truncate0(keepSymbolTables);
         } catch (Throwable th) {
+            // A failed truncate0() may have emptied symbol tables and columns, scheduled the removal of every
+            // partition and committed _cv, none of which inTransaction() sees. The pool would hand this writer out
+            // again without a rollback, and its next commit would publish the half-done truncate. The pool closes a
+            // distressed writer instead: the close drops the scheduled removals and rolls back a _cv version that
+            // _txn does not name.
+            distressed = true;
             // A non-WAL TRUNCATE reports to the statement: a failed data sync stops the engine here
-            if (engine.isDataSyncFailureFatal(th)) {
-                distressed = true;
-                engine.handleDataSyncFailure(th);
-            }
+            engine.handleDataSyncFailure(th);
             throw th;
         }
     }
 
     private void truncate0(boolean keepSymbolTables) {
         rollback();
+        // Growing _txn for the truncated record can fail: disk full, a failed remap. Map the record before the steps
+        // below remove anything, so that such a failure leaves the table as it was; txWriter.truncate() then writes
+        // inside the mapping.
+        txWriter.mapTruncatedRecordArea();
 
         boolean hasNonEmptySymbolTables = false;
         if (!keepSymbolTables) {
@@ -21970,15 +22041,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return;
         }
 
-        // this is a crude block to test things for now
-        todoMem.putLong(0, ++todoTxn); // write txn, reader will first read txn at offset 24 and then at offset 0
+        // The writer open acts on a _todo_ entry only when its txn is the live _txn txn (see openTodoMem()). Stamped
+        // with the txn this truncate starts from, the entry makes the next open complete a truncate that stopped
+        // before it published the empty _txn, and the open ignores it once that _txn, or a later one, is published.
+        todoMem.putLong(0, txWriter.txn); // write txn, reader will first read txn at offset 24 and then at offset 0
         Unsafe.storeFence(); // make sure we do not write hash before writing txn (view from another thread)
         todoMem.putLong(8, configuration.getDatabaseIdLo()); // write out our instance hashes
         todoMem.putLong(16, configuration.getDatabaseIdHi());
         Unsafe.storeFence();
-        todoMem.putLong(24, todoTxn);
+        todoMem.putLong(24, txWriter.txn);
         todoMem.putLong(32, 1);
-        todoMem.putLong(40, TODO_TRUNCATE);
+        // The repair keeps the symbol maps only when this truncate keeps them: otherwise it has emptied them above
+        todoMem.putLong(40, keepSymbolTables ? TODO_TRUNCATE_KEEP_SYMBOL_MAPS : TODO_TRUNCATE);
         // ensure file is closed with correct length
         todoMem.jumpTo(48);
 

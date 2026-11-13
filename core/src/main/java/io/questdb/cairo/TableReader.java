@@ -2247,21 +2247,20 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private boolean reloadColumnVersion(long columnVersion, long deadline) {
-        if (columnVersionReader.getVersion() == columnVersion) {
-            return true;
-        }
-        // Unlike the absolute deadline readTxnSlow()/reloadMetadata() take: a consistent _cv behind the
-        // version _txn names is terminal, and the reader throws it by name without waiting on any clock.
-        columnVersionReader.readSafe(clock, configuration.getSpinLockTimeout(), columnVersion);
-        if (columnVersionReader.getVersion() == columnVersion) {
+        if (columnVersionReader.getVersion() == columnVersion
+                // Unlike the absolute deadline readTxnSlow()/reloadMetadata() take: a consistent _cv behind the
+                // version _txn names is terminal, and the reader throws it by name without waiting on any clock.
+                || columnVersionReader.readSafe(clock, configuration.getSpinLockTimeout(), columnVersion)) {
             return true;
         }
         // _cv is ahead of the _txn record we loaded: a commit in flight has published _cv but not yet _txn.
-        // That one is worth waiting for, on this reload's deadline, then _txn is re-read.
+        // That one is worth waiting for, on this reload's deadline, then _txn is re-read. The reader loads no
+        // column versions until _txn names them: the commit can still roll back, and the next one reuse its
+        // version number.
         if (clock.getTicks() > deadline) {
             throw CairoException.critical(0).put("Column Version read timeout [src=reader, table=").put(tableToken)
                     .put(", txnColumnVersion=").put(columnVersion)
-                    .put(", cvVersion=").put(columnVersionReader.getVersion())
+                    .put(", cvVersion=").put(columnVersionReader.unsafeGetVersion())
                     .put(", timeout=").put(configuration.getSpinLockTimeout()).put("ms]");
         }
         Os.pause();

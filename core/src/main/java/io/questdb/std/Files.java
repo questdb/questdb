@@ -984,6 +984,11 @@ public final class Files {
 
     static native long mmap0(int fd, long len, long offset, int flags, long baseAddress);
 
+    /**
+     * Grows or shrinks the mapping at {@code address} to {@code newSize} bytes and returns its address, which may
+     * have moved. On failure, returns -1 and leaves the mapping at {@code address} in place on every platform, as
+     * mremap(2) does on Linux: the caller still owns it and must unmap it.
+     */
     static native long mremap0(int fd, long address, long previousSize, long newSize, long offset, int flags);
 
     static native int munmap0(long address, long len);

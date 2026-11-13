@@ -310,8 +310,11 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         final long committedLagMaxTimestamp = getLong(TX_OFFSET_LAG_MAX_TIMESTAMP_64);
         final int committedLagTxnCount = Math.abs(txMemBase.getInt(readBaseOffset + TX_OFFSET_LAG_TXN_COUNT_32));
 
-        writeAreaSize = calculateTxRecordSize(symbolBytes, partitionTableBytes);
-        writeBaseOffset = calculateWriteOffset(writeAreaSize);
+        final int areaSize = calculateTxRecordSize(symbolBytes, partitionTableBytes);
+        final int areaOffset = calculateWriteOffset(areaSize);
+        mapWriteArea(areaOffset, areaSize);
+        writeAreaSize = areaSize;
+        writeBaseOffset = areaOffset;
         // The slot's cached partition-table hash stops describing its area as soon as the body write starts.
         partitionTableHashOfNextSlot().invalidate();
         final long partitionsOffset = getPartitionTableIndexOffset(partitionTableOffset, 0);
@@ -514,6 +517,17 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
                     .put("_txn did not load the live transaction again [txn=").put(liveVersion).put(']');
         }
         return false;
+    }
+
+    /**
+     * Maps the area that {@link #truncate(long, ObjList)} writes its record to: growing _txn is the step of the
+     * truncate that can fail. A caller that removes data before it truncates _txn calls this first, so that a _txn
+     * that cannot grow fails the caller before it removed anything. Nothing may commit _txn in between: the area
+     * depends on the live record.
+     */
+    public void mapTruncatedRecordArea() {
+        final int areaSize = calculateTruncatedRecordSize();
+        mapWriteArea(calculateWriteOffset(areaSize), areaSize);
     }
 
     @Override
@@ -929,14 +943,18 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     public void truncate(long columnVersion, ObjList<? extends SymbolCountProvider> symbolCountProviders) {
+        final int areaSize = calculateTruncatedRecordSize();
+        final int areaOffset = calculateWriteOffset(areaSize);
+        mapWriteArea(areaOffset, areaSize);
+
         removeAllPartitions();
         if (!PartitionBy.isPartitioned(partitionBy)) {
             attachedPartitions.setPos(LONGS_PER_TX_ATTACHED_PARTITION);
             initPartitionAt(0, DEFAULT_PARTITION_TIMESTAMP, 0L, -1L);
         }
-
-        writeAreaSize = calculateWriteSize();
-        writeBaseOffset = calculateWriteOffset(writeAreaSize);
+        assert areaSize == calculateWriteSize(symbolColumnCount);
+        writeAreaSize = areaSize;
+        writeBaseOffset = areaOffset;
         // The slot's cached partition-table hash stops describing its area as soon as the body write starts.
         partitionTableHashOfNextSlot().invalidate();
         resetTxn(
@@ -1060,6 +1078,14 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         return combineTxnBodyChecksum(hashTxnBodyHeader(areaAddr), partitionTableHash.power, partitionTableHash.hash);
     }
 
+    // The truncated record keeps no partitions but the default one of a non-partitioned table.
+    private int calculateTruncatedRecordSize() {
+        return calculateTxRecordSize(
+                symbolColumnCount * Long.BYTES,
+                PartitionBy.isPartitioned(partitionBy) ? 0 : LONGS_PER_TX_ATTACHED_PARTITION * Long.BYTES
+        );
+    }
+
     private int calculateWriteOffset(int areaSize) {
         boolean currentIsA = (baseVersion & 1L) == 0L;
         int currentOffset = currentIsA ? txMemBase.getInt(TX_BASE_OFFSET_A_32) : txMemBase.getInt(TX_BASE_OFFSET_B_32);
@@ -1072,19 +1098,24 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         return currentOffset + currentSize;
     }
 
-    private int calculateWriteSize() {
-        // If by any action data is reset and table is partitioned, clear attachedPartitions
-        if (maxTimestamp == Long.MIN_VALUE && PartitionBy.isPartitioned(partitionBy)) {
-            attachedPartitions.clear();
-        }
-        return calculateTxRecordSize(symbolColumnCount * Long.BYTES, attachedPartitions.size() * Long.BYTES);
+    private int calculateWriteSize(int symbolCount) {
+        final int partitionLongs = isPartitionTableDropped() ? 0 : attachedPartitions.size();
+        return calculateTxRecordSize(symbolCount * Long.BYTES, partitionLongs * Long.BYTES);
     }
 
     private void commitFullRecord(int commitMode, ObjList<? extends SymbolCountProvider> symbolCountProviders) {
-        symbolColumnCount = symbolCountProviders.size();
+        final int symbolCount = symbolCountProviders.size();
+        final int areaSize = calculateWriteSize(symbolCount);
+        final int areaOffset = calculateWriteOffset(areaSize);
+        mapWriteArea(areaOffset, areaSize);
 
-        writeAreaSize = calculateWriteSize();
-        writeBaseOffset = calculateWriteOffset(writeAreaSize);
+        if (isPartitionTableDropped()) {
+            // If by any action data is reset and table is partitioned, clear attachedPartitions
+            attachedPartitions.clear();
+        }
+        symbolColumnCount = symbolCount;
+        writeAreaSize = areaSize;
+        writeBaseOffset = areaOffset;
         final long partitionTableOffset = getPartitionTableSizeOffset(symbolColumnCount);
         final PartitionTableHash partitionTableHash = partitionTableHashOfNextSlot();
         if (!partitionTableHash.isFor(writeBaseOffset, writeAreaSize, partitionTableOffset)) {
@@ -1215,6 +1246,10 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
     }
 
+    private boolean isPartitionTableDropped() {
+        return maxTimestamp == Long.MIN_VALUE && PartitionBy.isPartitioned(partitionBy);
+    }
+
     // An entry exists only for an area this writer mapped, and the mapping never shrinks while it is open.
     private boolean isPartitionTableHashExact(PartitionTableHash partitionTableHash) {
         if (!partitionTableHash.isValid()) {
@@ -1222,6 +1257,15 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
         final long areaAddr = txMemBase.addressOf(partitionTableHash.areaOffset);
         return partitionTableHash.hash == hashTxnBodyPartitionTable(areaAddr, partitionTableHash.recordSize, partitionTableHash.partitionTableStart);
+    }
+
+    // Maps the area a record write is about to fill before its caller changes any state, as ColumnVersionWriter
+    // reserves its area before it writes one. Growing _txn is the step of a commit that can fail - disk full, a
+    // failed remap - and failing here leaves the file, the mapping and this writer at the last committed record,
+    // with the open transaction intact for the owner to roll back. Every write of the record then lands inside the
+    // mapping.
+    private void mapWriteArea(int areaOffset, int areaSize) {
+        txMemBase.extend((long) areaOffset + areaSize);
     }
 
     // Resets the commit bookkeeping to the record just loaded. False when the file has never committed.
@@ -1246,6 +1290,8 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         if (ff.exists(path)) {
             if (txMemBase == null) {
                 txMemBase = Vm.getSmallCMARWInstance(ff, path, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
+                // A commit that fails to grow _txn leaves the committed record mapped, for the rollback to reload.
+                txMemBase.setMappingKeptOnFailedRemap(true);
             } else {
                 txMemBase.of(ff, path, ff.getPageSize(), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
             }
