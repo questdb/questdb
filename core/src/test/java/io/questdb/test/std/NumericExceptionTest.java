@@ -46,6 +46,7 @@ public class NumericExceptionTest {
                 .put("Overflow");
         Assert.assertEquals("Overflow", e1.getMessage());
         NumericException e2 = NumericException.instance();
+        Assert.assertSame(e1, e2);
         Assert.assertEquals("", e2.getMessage());
     }
 
