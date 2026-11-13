@@ -55,10 +55,11 @@ import static io.questdb.test.cairo.parquet.ParquetCommitTestUtils.replace;
  * The dead-bytes rewrite gate of a DEDUP commit into a parquet partition counts the row groups that the commit
  * re-encodes, not the ones that the UPSERT identity check or the SKIP dedup leaves as stored: a commit that resends
  * stored rows together with a new or changed row updates the partition in place, writing about one row group, instead
- * of rewriting the whole file. The gate keeps the server defaults, a ratio of 0.5 and 1 GiB. The parquet table pq goes
- * through the commits, its native twin nat takes the same rows, and the two must match after every commit, through the
- * index of sym too. Whether a commit rewrites comes from the gate formula that cairo/CLAUDE.md documents, fed with the
- * sizes the {@code _pm} of the partition records before the commit and with the row groups the commit re-encodes.
+ * of rewriting the whole file. The gate keeps the server defaults, a ratio of 0.5 and 1 GiB, unless a test sets a ratio
+ * of its own. The parquet table pq goes through the commits, its native twin nat takes the same rows, and the two must
+ * match after every commit, through the index of sym too. Whether a commit rewrites comes from the gate formula that
+ * cairo/CLAUDE.md documents, fed with the sizes the {@code _pm} of the partition records before the commit and with the
+ * row groups the commit re-encodes.
  * <p>
  * Day 2024-01-01 holds ids 1..10_000, one every 8.64 s, in row groups of 1000 rows: row group k holds ids
  * 1000k+1..1000k+1000. Day 2024-01-02 holds one row, so 2024-01-01 is not the last partition, unless the table is a
@@ -141,6 +142,27 @@ public class O3ParquetDedupRewriteGateTest extends AbstractCairoTest {
 
             assertGateFormula(true, 0);
             commitBoth(newRow("'2024-01-01'::TIMESTAMP", 100_011), true);
+            Assert.assertEquals(10, parquetRowGroupCount(engine, "pq", 0));
+        });
+    }
+
+    @Test
+    public void testSkipOpeningMergeCountsTowardsRewrite() throws Exception {
+        // The commit of testSkipResendWithNewRowInFirstResentRowGroupUpdatesInPlace under a ratio between the share of
+        // the bytes the file holds unused and the share of those and row group 4: the MERGE of row group 4 opens the
+        // output, and the gate counts its row group, which takes the projection over the ratio. The rewrite copies row
+        // groups 0..3, merges row group 4 with the new row, and copies row groups 5..9, whose O3 rows the dedup drops
+        assertMemoryLeak(() -> {
+            createTwins("SKIP", false, "TIMESTAMP", false);
+            final long rowGroup4Size = parquetRowGroupCompressedSize(engine, "pq", 0, 4);
+            final double ratio = (parquetUnusedBytes(engine, "pq", 0) + rowGroup4Size / 2.0) / parquetFileSize(engine, "pq", 0);
+            assertGateFormula(ratio, false);
+            assertGateFormula(ratio, true, 4);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, Double.toString(ratio));
+            Assert.assertEquals(
+                    10_001,
+                    commitBoth(resend(4, 9) + " UNION ALL " + newRow("'2024-01-01'::TIMESTAMP + 4000 * 8_640_000L", 100_001), true)
+            );
             Assert.assertEquals(10, parquetRowGroupCount(engine, "pq", 0));
         });
     }
@@ -250,6 +272,11 @@ public class O3ParquetDedupRewriteGateTest extends AbstractCairoTest {
     // asserts that the gate formula, fed with the bytes 2024-01-01 of pq holds unused, the size of its parquet file and
     // the compressed sizes of the row groups that the next commit re-encodes, asks for a rewrite or not
     private static void assertGateFormula(boolean isRewriteExpected, int... reencodedRowGroups) {
+        assertGateFormula(DEFAULT_RATIO, isRewriteExpected, reencodedRowGroups);
+    }
+
+    // assertGateFormula(boolean, int...) under the ratio
+    private static void assertGateFormula(double ratio, boolean isRewriteExpected, int... reencodedRowGroups) {
         final long unusedBytes = parquetUnusedBytes(engine, "pq", 0);
         final long parquetFileSize = parquetFileSize(engine, "pq", 0);
         long deadBytes = 0;
@@ -257,9 +284,9 @@ public class O3ParquetDedupRewriteGateTest extends AbstractCairoTest {
             deadBytes += parquetRowGroupCompressedSize(engine, "pq", 0, rowGroup);
         }
         Assert.assertEquals(
-                "gate formula [unusedBytes=" + unusedBytes + ", parquetFileSize=" + parquetFileSize + ", deadBytes=" + deadBytes + ']',
+                "gate formula [unusedBytes=" + unusedBytes + ", parquetFileSize=" + parquetFileSize + ", deadBytes=" + deadBytes + ", ratio=" + ratio + ']',
                 isRewriteExpected,
-                isDeadBytesRewriteExpected(unusedBytes, parquetFileSize, deadBytes, DEFAULT_RATIO, DEFAULT_MAX_BYTES)
+                isDeadBytesRewriteExpected(unusedBytes, parquetFileSize, deadBytes, ratio, DEFAULT_MAX_BYTES)
         );
     }
 
