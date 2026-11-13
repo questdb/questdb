@@ -721,6 +721,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI, WalColum
         throwIfInColumnarWrite("roll segment");
         try {
             openNewSegment();
+            // the new segment satisfies a roll that a structure change left pending for the next row
+            rollSegmentOnNextRow = false;
         } catch (Throwable e) {
             distressed = true;
             if (sequencer.isDataSyncFailureFatal(e)) {
