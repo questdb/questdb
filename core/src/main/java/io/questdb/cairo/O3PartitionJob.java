@@ -2252,7 +2252,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         boolean isReplaceRemoval = false;
         // the timestamp of the first row of the partition after a replace commit
         long resultMinTimestamp = Long.MAX_VALUE;
-        long newParquetSize;
+        long newParquetSize = parquetFileSize;
         long newParquetMetaFileSize;
         // whether the output is a new partition directory, decided as the output opens, see isOutputOpen
         boolean isRewrite = false;
@@ -3167,13 +3167,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 ff.munmap(parquetMetaAddr, parquetMetaSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
             }
             if (isOutputOpen) {
-                path.of(pathToTable);
-                if (isRewrite) {
-                    setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, txn);
-                } else {
-                    setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, srcNameTxn);
-                }
-                final long fileSize = Files.length(path.$());
                 Unsafe.putLong(partitionUpdateSinkAddr, partitionTimestamp);
                 Unsafe.putLong(partitionUpdateSinkAddr + Long.BYTES, isReplace ? resultMinTimestamp : o3TimestampMin);
                 Unsafe.putLong(partitionUpdateSinkAddr + 2 * Long.BYTES, newPartitionSize - removedRowCount);
@@ -3182,7 +3175,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // highInt = the covering index state: the seal sweep rebuilds the covered sidecars
                 Unsafe.putLong(partitionUpdateSinkAddr + 4 * Long.BYTES, Numbers.encodeLowHighInts(isRewrite ? 0 : 1, COVERING_INDEX_REBUILD));
                 Unsafe.putLong(partitionUpdateSinkAddr + 5 * Long.BYTES, 0); // o3SplitPartitionSize
-                Unsafe.putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, fileSize); // update parquet partition file size
+                Unsafe.putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, newParquetSize); // update parquet partition file size
             } else if (isReplaceNoop) {
                 updatePartitionSink(partitionUpdateSinkAddr, partitionTimestamp, resultMinTimestamp, oldPartitionSize, oldPartitionSize, 0);
             } else if (isReplaceRemoval) {
