@@ -113,6 +113,30 @@ public class ParallelLimitedReadTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoinDroppingRowsLimitReadsPastTheFirstMatches() throws Exception {
+        // The first and the last rows of t with v = 0 alternate between a row that the joins keep and one
+        // that they drop, so a scan that stopped at the LIMIT returned too few rows.
+        withWorkers((engine, ctx) -> {
+            // s holds every second row of t with v = 0
+            engine.execute("CREATE TABLE s AS (SELECT x * 2_000 x, x y FROM long_sequence(50))", ctx);
+            // q holds a row at every second of t, so the ASOF join pairs row x of t with y = x
+            engine.execute("CREATE TABLE q AS (SELECT x y, timestamp_sequence(0, 1_000_000) ts FROM long_sequence(100_000)) TIMESTAMP(ts) PARTITION BY HOUR", ctx);
+            for (String sql : new String[]{
+                    "SELECT a.x, b.y FROM t a JOIN s b ON a.x = b.x WHERE a.v = 0",
+                    "SELECT a.x, b.y FROM t a LEFT JOIN s b ON a.x = b.x WHERE a.v = 0 AND b.y > 0",
+                    "SELECT a.x, b.y / 2_000 y FROM t a ASOF JOIN q b WHERE a.v = 0 AND b.y % 2_000 = 0"
+            }) {
+                assertRowsNoRandomAccess(engine, ctx, sql + " LIMIT 3", rightJoinRows(0, 3));
+                assertRowsNoRandomAccess(engine, ctx, sql + " LIMIT 30", rightJoinRows(0, 30));
+                assertRowsNoRandomAccess(engine, ctx, sql + " LIMIT -3", rightJoinRows(47, 50));
+                assertRowsNoRandomAccess(engine, ctx, sql + " LIMIT 20, 30", rightJoinRows(20, 30));
+            }
+            // no row of t passes the join: the read collects every frame
+            assertRowsNoRandomAccess(engine, ctx, "SELECT a.x, b.y FROM t a JOIN s b ON a.x = b.x WHERE a.v = 1 LIMIT 10", "x\ty\n");
+        });
+    }
+
+    @Test
     public void testJoinMasterLimitReadsPastTheFirstFrames() throws Exception {
         withWorkers((engine, ctx) -> {
             // s holds every second match of t
@@ -242,7 +266,8 @@ public class ParallelLimitedReadTest extends AbstractCairoTest {
     }
 
     // Rows lo (inclusive) to hi (exclusive) of the RIGHT join of t and s: the rows of s, x = 2000 * k and y = k,
-    // in the order of t, as every row of s matches a row of t with v = 0.
+    // in the order of t, as every row of s matches a row of t with v = 0. The INNER join of t and s returns
+    // the same rows.
     private static String rightJoinRows(int lo, int hi) {
         final StringBuilder sb = new StringBuilder("x\ty\n");
         for (long k = lo + 1; k <= Math.min(hi, 50); k++) {

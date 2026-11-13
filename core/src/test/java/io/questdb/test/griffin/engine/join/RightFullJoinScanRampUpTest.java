@@ -195,6 +195,14 @@ public class RightFullJoinScanRampUpTest extends AbstractCairoTest {
             try (RecordCursorFactory factory = select("SELECT t.id, w.k FROM t JOIN w ON t.k = w.k WHERE t.x > 0 LIMIT 1, 4")) {
                 assertReads(factory, "2\t2\n6\t1\n7\t2\n", REGULAR_FRAMES, 1);
             }
+            // an INNER join, or a filter after a LEFT join, drops rows, so the filter takes no LIMIT advice,
+            // see JoinScanLimitTest, and the join reads it until the LIMIT stops
+            try (RecordCursorFactory factory = select("SELECT t.id, w.k FROM t JOIN w ON t.k = w.k WHERE t.x > 0 LIMIT 3")) {
+                assertReads(factory, "1\t1\n2\t2\n6\t1\n", REGULAR_FRAMES, 1);
+            }
+            try (RecordCursorFactory factory = select("SELECT t.id, w.k FROM t LEFT JOIN w ON t.k = w.k WHERE t.x > 0 AND w.k > 0 LIMIT 3")) {
+                assertReads(factory, "1\t1\n2\t2\n6\t1\n", REGULAR_FRAMES, 1);
+            }
         });
     }
 

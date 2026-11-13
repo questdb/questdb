@@ -42,6 +42,7 @@ import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.griffin.engine.functions.constants.LongConstant;
 import io.questdb.griffin.engine.join.AsOfJoinNoKeyFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.CrossJoinRecordCursorFactory;
+import io.questdb.griffin.engine.join.UnnestRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -144,6 +145,34 @@ public class ExpectLimitedIterationTest extends AbstractCairoTest {
                 lo.value = 3;
                 limit.getCursor(sqlExecutionContext).close();
                 Assert.assertEquals(2, base.cursor.callCount);
+            }
+        });
+    }
+
+    @Test
+    public void testUnnestPassesCallToBase() throws Exception {
+        // UNNEST reads its base as it returns rows, as a join reads its master
+        assertMemoryLeak(() -> {
+            final CountingFactory base = new CountingFactory(new GenericRecordMetadata());
+            final RecordCursorFactory unnest = new UnnestRecordCursorFactory(
+                    new GenericRecordMetadata(),
+                    base,
+                    new ObjList<>(),
+                    new ObjList<>(),
+                    0,
+                    false,
+                    new ObjList<>()
+            );
+            // the LIMIT owns the UNNEST factory
+            try (RecordCursorFactory limit = new LimitRecordCursorFactory(unnest, LongConstant.newInstance(3), null, 0)) {
+                try (RecordCursor cursor = unnest.getCursor(sqlExecutionContext)) {
+                    cursor.expectLimitedIteration();
+                    Assert.assertEquals(1, base.cursor.callCount);
+                }
+                // a LIMIT that reads the first rows announces them through UNNEST
+                try (RecordCursor ignore = limit.getCursor(sqlExecutionContext)) {
+                    Assert.assertEquals(2, base.cursor.callCount);
+                }
             }
         });
     }

@@ -69,7 +69,10 @@ import java.util.stream.Stream;
  * WHERE qty > 1000 keeps half the rows of every symbol, so the RIGHT join finds matches in the first rows,
  * while WHERE qty > 1990 keeps rows of one symbol that watch does not hold, so it reads every row. The
  * parallel filter caps its in-flight page frame tasks for a LIMIT at the server default,
- * min(workers, 32).
+ * min(workers, 32). The INNER join shapes, and the LEFT and ASOF joins with a WHERE on their joined table,
+ * drop rows that the filter of trades returns, so that filter takes no LIMIT; the LEFT join without such a
+ * WHERE keeps every row, and its filter takes the LIMIT. rampStartRows sets
+ * cairo.sql.page.frame.ramp.start.rows, 0 turns the ramp-up off.
  * <p>
  * Run against the baseline and the candidate build:
  * <pre>
@@ -88,9 +91,13 @@ public class RightFullJoinLimitBenchmark {
             "right_join_limit", "right_join_no_match_limit", "right_join_negative_limit", "filter_limit_range",
             "inner_join_limit_range", "filter_first_rows_limit", "filter_no_match_limit", "filter_no_match_limit_range",
             "filter_sparse_deep_limit_range", "filter_offset_only", "inner_join_no_match_limit_range",
-            "horizon_first_rows_limit_range", "horizon_no_match_limit"
+            "horizon_first_rows_limit_range", "horizon_no_match_limit", "inner_join_limit", "inner_join_negative_limit",
+            "inner_join_no_match_limit", "inner_join_desc_limit", "left_join_where_right_limit", "left_join_negative_limit",
+            "asof_join_where_right_negative_limit"
     })
     public String shape;
+    @Param({"1000"})
+    public int rampStartRows;
     @Param({"4"})
     public int workers;
     private SqlExecutionContextImpl context;
@@ -120,7 +127,13 @@ public class RightFullJoinLimitBenchmark {
     public void setUp() throws IOException, SqlException {
         root = Files.createTempDirectory("right-full-join-limit-");
         final int dispatchLimit = Math.min(workers, 32);
+        final int pageFrameRampStartRows = rampStartRows;
         final CairoConfiguration configuration = new DefaultCairoConfiguration(root.toString()) {
+            @Override
+            public int getSqlPageFrameRampStartRows() {
+                return pageFrameRampStartRows;
+            }
+
             @Override
             public int getSqlParallelFilterDispatchLimit() {
                 return dispatchLimit;
@@ -180,6 +193,21 @@ public class RightFullJoinLimitBenchmark {
                     "SELECT t.sym, t.qty, q.px FROM trades t HORIZON JOIN quotes q LIST (0s) AS h WHERE t.qty > 2000 LIMIT 10";
             case "inner_join_limit_range" ->
                     "SELECT t.sym, t.qty, i.lot FROM trades t JOIN inst i ON t.sym = i.sym WHERE t.qty > 1000 LIMIT 3_000_000, 3_000_010";
+            // inst holds every symbol, so every row that passes the filter has a match
+            case "inner_join_limit" -> "SELECT t.sym, t.qty, i.lot FROM trades t JOIN inst i ON t.sym = i.sym WHERE t.qty > 1000 LIMIT 10";
+            case "inner_join_negative_limit" ->
+                    "SELECT t.sym, t.qty, i.lot FROM trades t JOIN inst i ON t.sym = i.sym WHERE t.qty > 1000 LIMIT -10";
+            case "inner_join_no_match_limit" ->
+                    "SELECT t.sym, t.qty, i.lot FROM trades t JOIN inst i ON t.sym = i.sym WHERE t.qty > 2000 LIMIT 10";
+            // the last rows of inner_join_negative_limit, newest first
+            case "inner_join_desc_limit" ->
+                    "SELECT t.sym, t.qty, i.lot FROM trades t JOIN inst i ON t.sym = i.sym WHERE t.qty > 1000 ORDER BY t.ts DESC LIMIT 10";
+            case "left_join_where_right_limit" ->
+                    "SELECT t.sym, t.qty, i.lot FROM trades t LEFT JOIN inst i ON t.sym = i.sym WHERE t.qty > 1000 AND i.lot > 0 LIMIT 10";
+            case "left_join_negative_limit" ->
+                    "SELECT t.sym, t.qty, i.lot FROM trades t LEFT JOIN inst i ON t.sym = i.sym WHERE t.qty > 1000 LIMIT -10";
+            case "asof_join_where_right_negative_limit" ->
+                    "SELECT t.sym, t.qty, q.px FROM trades t ASOF JOIN quotes q WHERE t.qty > 1000 AND q.px > 0 LIMIT -10";
             default -> throw new IllegalArgumentException(shape);
         };
         factory = engine.select(sql, context);

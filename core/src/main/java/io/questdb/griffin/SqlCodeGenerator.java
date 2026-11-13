@@ -2037,6 +2037,44 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return filter;
     }
 
+    // Returns true when a LIMIT over the joins of the level must not stop the scan of the level's first table.
+    // The first N rows that the scan returns yield the first N rows of the level, and its last N rows the last
+    // N rows of the level, only when every join of the level returns at least one row for each row that it
+    // reads, in the order that it reads them:
+    // - a LEFT join returns the matches of a row, or the row NULL-extended;
+    // - an ASOF, LT or WINDOW join returns one row for each row;
+    // - a CROSS join returns each row with every row of its table, or no row at all when its table is empty.
+    // An INNER join drops the rows that match nothing, as UNNEST drops the rows of an empty or NULL array.
+    // RIGHT and FULL joins return their unmatched rows after reading every row of the scan, and a SPLICE join
+    // returns rows of its own table, with NULL in the columns of the scan. A filter after a join drops rows.
+    private static boolean hasLimitBlockingJoin(IQueryModel model) {
+        final ObjList<IQueryModel> joinModels = model.getJoinModels();
+        if (joinModels.size() < 2) {
+            return false;
+        }
+        // walks the models as generateJoins() runs them, so the first table counts as a join when the optimiser
+        // runs another model ahead of it
+        final IntList ordered = model.getOrderedJoinModels();
+        for (int i = 0, n = ordered.size(); i < n; i++) {
+            final IQueryModel joinModel = joinModels.getQuick(ordered.getQuick(i));
+            // generateJoins() filters the rows of the join, or of the first model, with it
+            if (joinModel.getPostJoinWhereClause() != null) {
+                return true;
+            }
+            if (i > 0) {
+                switch (joinModel.getJoinType()) {
+                    case IQueryModel.JOIN_LEFT_OUTER, IQueryModel.JOIN_CROSS_LEFT, IQueryModel.JOIN_ASOF,
+                         IQueryModel.JOIN_LT, IQueryModel.JOIN_WINDOW, IQueryModel.JOIN_CROSS -> {
+                    }
+                    default -> {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
     // A record copier writes a column in one encoding at every key position, so a column shared by a key
     // that compares symbol ids and a key that compares strings would need two encodings. The callers keep
     // every key a string then. symbolIdKeys holds the key positions whose columns could compare symbol ids.
@@ -15611,13 +15649,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return null;
         }
         // The LIMIT advice of a join level counts the rows that the level returns, but this filter
-        // reads only the table of join model 0, which runs ahead of every RIGHT or FULL join of the
-        // level. A RIGHT join drops the rows of that table that match nothing, and RIGHT and FULL
-        // joins return their unmatched rows after reading every row of that table, so a filter that
-        // stops at the LIMIT loses rows, or NULL-extends rows that have a match. LimitRecordCursorFactory
-        // applies the LIMIT above the level instead, and its RecordCursor.expectLimitedIteration() call
-        // still caps the page frame tasks that the filter dispatches ahead of the join.
-        if (hasRightOrFullJoin(model)) {
+        // reads only the table of join model 0. A filter that stops at the LIMIT returns the rows of
+        // the LIMIT only when the joins of the level keep every row that it returns, in its order, see
+        // hasLimitBlockingJoin(). Otherwise it loses rows: an INNER join or a filter after a join drops
+        // the rows that it read, and RIGHT and FULL joins return their unmatched rows after reading
+        // every row of the table, or NULL-extend rows that have a match. LimitRecordCursorFactory
+        // applies the LIMIT above the level instead, and its RecordCursor.expectLimitedIteration()
+        // call still caps the page frame tasks that the filter dispatches ahead of the join.
+        if (hasLimitBlockingJoin(model)) {
             return null;
         }
         if (model.getLimitAdviceLo() != null && model.getLimitAdviceHi() == null) {
