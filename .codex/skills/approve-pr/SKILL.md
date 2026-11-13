@@ -34,6 +34,13 @@ finding is still open, do NOT approve — tell the user the PR does not meet the
 bar and suggest `$reject-pr`. A **needs discussion** verdict doesn't clear the
 bar either: tell the user which decision the review leaves open.
 
+The review must also have blocked at `high` risk or stricter: its opening line
+names the `--block-at` tier, and `high` (the default), `medium` and `low` clear
+the bar. A review run with `--block-at=critical` shipped High-risk bugs as
+Deferred, so do NOT approve on it: tell the user to run the review again without
+that option. If the line names no tier, ask the user which one the review ran
+with, and approve only on `high`, `medium` or `low`.
+
 - If no review report exists in this conversation, STOP and tell the user to run
   `$review-pr` first — do not approve unreviewed code.
 

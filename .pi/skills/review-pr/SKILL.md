@@ -73,7 +73,7 @@ The level controls how much of the review below actually runs. Lower levels keep
 | **2** | Full Step 2.5, with 2.5b restricted to `public`/`protected` symbols. Run Agent 1 plus at most **four** change-relevant roles from Agents 2-8 and 10-12. Run an independent falsification task for each surviving atomic candidate. |
 | **3** | Full Step 2.5 and the complete admission protocol. Select at most **six** applicable discovery roles: Agent 1 always; Agents 2-7 only when their domain is touched; the others by the selection rule in their entries. Depth comes from producer/reachability evidence and independent falsification, not agent count. |
 
-State the reviewed revision, the chosen level, the model running the review and the version of this skill, given under its title, in one line at the start of the review so the user knows what they're getting (e.g., "Reviewing PR #1234 at 1a2b3c4d5e6f, level 2, with <provider>/<model>, thinking <level>, review-pr <version>"). Name the revision by the first 12 characters of its commit hash: the PR's `headRefOid` from Step 1, or the range head; for a range that ends at the working tree, the hash of `HEAD` followed by `+ uncommitted changes`. `approve-pr` approves only the revision this line names.
+State the reviewed revision, the chosen level, the `--block-at` tier, the model running the review and the version of this skill, given under its title, in one line at the start of the review so the user knows what they're getting (e.g., "Reviewing PR #1234 at 1a2b3c4d5e6f, level 2, block at high, with <provider>/<model>, thinking <level>, review-pr <version>"). Name the revision by the first 12 characters of its commit hash: the PR's `headRefOid` from Step 1, or the range head; for a range that ends at the working tree, the hash of `HEAD` followed by `+ uncommitted changes`. `approve-pr` approves only the revision this line names, and only when its tier is `high` or stricter.
 Take the model from pi, never from memory: models misstate their own name and version.
 
 ```bash
@@ -890,7 +890,7 @@ Net impact: Ingestion stalls after ~1k failed commits.
 Evidence: WalLeakTest red at 1a2b3c4d5e6f, green at base 9f8e7d6c5b4a.
 ```
 
-Open the report with the line from "Review level" that names the target, the level, the model and the skill version, followed by the revisions reviewed: the head, `$BASE`, and the new commit of each submodule pointer the PR moves, such as a tandem PR's head. PR bodies leave commit hashes out (CLAUDE.md), so the review carries them.
+Open the report with the line from "Review level" that names the target, the level, the `--block-at` tier, the model and the skill version, followed by the revisions reviewed: the head, `$BASE`, and the new commit of each submodule pointer the PR moves, such as a tandem PR's head. PR bodies leave commit hashes out (CLAUDE.md), so the review carries them.
 
 Structure as:
 
