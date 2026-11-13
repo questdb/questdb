@@ -337,7 +337,8 @@ public class ColumnPurgeOperator implements Closeable {
                 txnScoreboard = engine.getTxnScoreboard(task.getTableToken());
                 // fall through
             case STARTUP_ONLY:
-                TableToken updatedTableToken = engine.getTableTokenIfExists(task.getTableToken().getTableName());
+                // WAL renames keep the directory, even if another table takes the old table name.
+                TableToken updatedTableToken = engine.getTableTokenByDirName(task.getTableToken().getDirName());
                 boolean tableChanged = updatedTableToken == null || updatedTableToken.getTableId() != task.getTableId();
                 if (!tableChanged) {
                     int tableId = readTableId(path);
