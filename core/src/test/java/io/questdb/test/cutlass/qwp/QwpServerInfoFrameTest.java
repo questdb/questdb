@@ -248,7 +248,8 @@ public class QwpServerInfoFrameTest {
     public void testUpgradeFrameAdvertisesQueryDetailsForEveryProvider() throws Exception {
         // CAP_QUERY_DETAILS describes the egress processor, not the node: the
         // upgrade writer sets it whatever the provider reports, and leaves the
-        // provider's own bits as they are. It adds no field to the frame.
+        // provider's own bits as they are. It adds no field to the frame, and
+        // never claims the per-query timeouts of CAP_QUERY_TIMEOUT.
         final int[] providerCapabilities = {
                 0,
                 io.questdb.cutlass.qwp.codec.QwpEgressMsgKind.CAP_QUERY_FLAGS,
@@ -268,6 +269,7 @@ public class QwpServerInfoFrameTest {
                         | (advertiseCompression ? io.questdb.cutlass.qwp.codec.QwpEgressMsgKind.CAP_COMPRESSION : 0);
                 Assert.assertEquals("provider capabilities 0x" + Integer.toHexString(providerCapability),
                         expected, info.getCapabilities());
+                Assert.assertEquals(0, info.getCapabilities() & io.questdb.cutlass.qwp.codec.QwpEgressMsgKind.CAP_QUERY_TIMEOUT);
                 Assert.assertEquals("questdb", info.getClusterId());
                 Assert.assertEquals("node-a", info.getNodeId());
                 Assert.assertNull(info.getZoneId());

@@ -167,8 +167,10 @@ public class QwpEgressProcessorStateQueryDetailsTest extends AbstractCairoTest {
                 Assert.assertEquals(set == QwpEgressMsgKind.QUERY_FLAG_COUNT_ROWS, state.isRowCountRequested());
                 Assert.assertEquals(set == QwpEgressMsgKind.QUERY_FLAG_COUNT_ROWS, state.isRowCountPending());
             }
-            // the row-window bits and unknown bits request none of the details
-            state.setQueryDetails(QwpEgressMsgKind.QUERY_FLAG_SKIP_ROWS | QwpEgressMsgKind.QUERY_FLAG_MAX_ROWS | 0x40, 5);
+            // the row-window bits, the reserved timeout bit and unknown bits
+            // request none of the details
+            state.setQueryDetails(QwpEgressMsgKind.QUERY_FLAG_SKIP_ROWS | QwpEgressMsgKind.QUERY_FLAG_MAX_ROWS
+                    | QwpEgressMsgKind.QUERY_FLAG_TIMEOUT | 0x80, 5);
             Assert.assertFalse(state.isErrorPositionRequested());
             Assert.assertFalse(state.isStatsRequested());
             Assert.assertFalse(state.isRowCountRequested());

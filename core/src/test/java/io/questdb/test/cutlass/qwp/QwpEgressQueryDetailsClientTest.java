@@ -59,6 +59,10 @@ public class QwpEgressQueryDetailsClientTest extends AbstractQwpQueryDetailsTest
     public void testClientConstantsMatchServer() {
         Assert.assertEquals(QwpEgressMsgKind.CAP_QUERY_DETAILS,
                 io.questdb.client.cutlass.qwp.client.QwpEgressMsgKind.CAP_QUERY_DETAILS);
+        Assert.assertEquals(QwpEgressMsgKind.CAP_QUERY_TIMEOUT,
+                io.questdb.client.cutlass.qwp.client.QwpEgressMsgKind.CAP_QUERY_TIMEOUT);
+        Assert.assertEquals(QwpEgressMsgKind.QUERY_FLAG_TIMEOUT,
+                io.questdb.client.cutlass.qwp.client.QwpEgressMsgKind.QUERY_FLAG_TIMEOUT);
         Assert.assertEquals(QwpEgressMsgKind.QUERY_FLAG_ERROR_POSITION,
                 io.questdb.client.cutlass.qwp.client.QwpEgressMsgKind.QUERY_FLAG_ERROR_POSITION);
         Assert.assertEquals(QwpEgressMsgKind.QUERY_FLAG_STATS,

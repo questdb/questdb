@@ -57,13 +57,22 @@ public final class QwpEgressMsgKind {
      * set those bits only when this bit is set: a server without it ignores
      * them and answers with the baseline frames.
      */
-    public static final int CAP_QUERY_DETAILS = 0x00000008;
+    public static final int CAP_QUERY_DETAILS = 0x00000010;
     /**
      * {@code SERVER_INFO.capabilities} bit: the server parses the optional
      * {@code query_flags:varint} trailer on {@code QUERY_REQUEST}. Clients append
      * the trailer only when this bit is set.
      */
     public static final int CAP_QUERY_FLAGS = 0x00000002;
+    /**
+     * {@code SERVER_INFO.capabilities} bit reserved for per-query timeouts, which
+     * this server does not support and never advertises. Released clients
+     * (c-questdb-client 7.2.0 and later, and the Python client built on it) read
+     * the bit as "the server honours {@link #QUERY_FLAG_TIMEOUT}" and send that
+     * flag with a timeout to a server that sets it, so no other capability may
+     * take this bit.
+     */
+    public static final int CAP_QUERY_TIMEOUT = 0x00000008;
     /**
      * {@code SERVER_INFO.capabilities} bit advertising that the frame ends with
      * an additional {@code zone_id:u16_len+utf8} field after {@code node_id}.
@@ -104,7 +113,7 @@ public final class QwpEgressMsgKind {
      * the remaining rows without sending them. Ignored by statements that do not
      * produce rows.
      */
-    public static final int QUERY_FLAG_COUNT_ROWS = 0x08;
+    public static final int QUERY_FLAG_COUNT_ROWS = 0x10;
     /**
      * {@code QUERY_REQUEST.query_flags} bit: report the error position. A
      * {@code QUERY_ERROR} for this request then carries the bare message,
@@ -114,15 +123,15 @@ public final class QwpEgressMsgKind {
      * frame when it has not read the request's flags: a request it cannot
      * decode, or one it rejects because another query is in flight.
      */
-    public static final int QUERY_FLAG_ERROR_POSITION = 0x02;
+    public static final int QUERY_FLAG_ERROR_POSITION = 0x04;
     /**
      * {@code QUERY_REQUEST.query_flags} bit: stream at most {@code max_rows}
-     * rows. The request carries {@code max_rows:varint} after {@code query_flags}
-     * (and after {@code skip_rows} when {@link #QUERY_FLAG_SKIP_ROWS} is set too).
-     * Zero streams no rows, only the schema. Ignored by statements that do not
-     * produce rows.
+     * rows. The request carries {@code max_rows:varint} after {@code query_flags},
+     * behind the fields of the lower flag bits: after {@code skip_rows} when
+     * {@link #QUERY_FLAG_SKIP_ROWS} is set too. Zero streams no rows, only the
+     * schema. Ignored by statements that do not produce rows.
      */
-    public static final int QUERY_FLAG_MAX_ROWS = 0x20;
+    public static final int QUERY_FLAG_MAX_ROWS = 0x40;
     /**
      * {@code QUERY_REQUEST.query_flags} bit: reset the SYMBOL dict before this
      * query, scoping it to the query rather than the connection. Reuses the
@@ -137,10 +146,11 @@ public final class QwpEgressMsgKind {
     /**
      * {@code QUERY_REQUEST.query_flags} bit: leave out the first
      * {@code skip_rows} rows of the result set. The request carries
-     * {@code skip_rows:varint} right after {@code query_flags}. Ignored by
+     * {@code skip_rows:varint} after {@code query_flags}, behind the fields of
+     * the lower flag bits, of which this server knows none. Ignored by
      * statements that do not produce rows.
      */
-    public static final int QUERY_FLAG_SKIP_ROWS = 0x10;
+    public static final int QUERY_FLAG_SKIP_ROWS = 0x20;
     /**
      * {@code QUERY_REQUEST.query_flags} bit: report execution statistics.
      * {@code RESULT_END} and {@code EXEC_DONE} then end with the statistics block
@@ -151,7 +161,19 @@ public final class QwpEgressMsgKind {
      * durations. {@code client_wait_ns} is the time the query waited for the
      * client to read a result or grant credit. See {@link #STATS_FLAG_JIT_COMPILED}.
      */
-    public static final int QUERY_FLAG_STATS = 0x04;
+    public static final int QUERY_FLAG_STATS = 0x08;
+    /**
+     * {@code QUERY_REQUEST.query_flags} bit reserved for per-query timeouts, which
+     * this server does not support. Released clients (c-questdb-client 7.2.0 and
+     * later, and the Python client built on it) send it, followed by a
+     * {@code timeout_ms:varint}, to a server that advertises
+     * {@link #CAP_QUERY_TIMEOUT}, so no other flag may take this bit. A flag that
+     * carries a field appends it after {@code query_flags} in ascending order of
+     * the flag bits, so {@code timeout_ms} goes ahead of {@code skip_rows} and
+     * {@code max_rows} on a server that supports both. This server ignores the
+     * bit, as it ignores every flag it does not know.
+     */
+    public static final int QUERY_FLAG_TIMEOUT = 0x02;
     public static final byte QUERY_REQUEST = 0x10;
     /**
      * Reset mask bit: clear the connection-scoped SYMBOL dict.

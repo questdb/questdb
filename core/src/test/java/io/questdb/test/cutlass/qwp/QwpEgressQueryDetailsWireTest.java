@@ -36,6 +36,7 @@ import io.questdb.cutlass.qwp.codec.QwpEgressFrameWriter;
 import io.questdb.cutlass.qwp.codec.QwpEgressMsgKind;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpParseException;
+import io.questdb.cutlass.qwp.protocol.QwpVarint;
 import io.questdb.cutlass.qwp.server.egress.QwpEgressUpgradeProcessor;
 import io.questdb.cutlass.qwp.server.egress.QwpRowExceedsBufferException;
 import io.questdb.cutlass.qwp.websocket.WebSocketOpcode;
@@ -113,6 +114,8 @@ public class QwpEgressQueryDetailsWireTest extends AbstractQwpQueryDetailsTest {
                 int capabilities = rd.i32();
                 Assert.assertEquals(QwpEgressMsgKind.CAP_QUERY_DETAILS, capabilities & QwpEgressMsgKind.CAP_QUERY_DETAILS);
                 Assert.assertEquals(QwpEgressMsgKind.CAP_QUERY_FLAGS, capabilities & QwpEgressMsgKind.CAP_QUERY_FLAGS);
+                // released clients would send this server their per-query timeouts
+                Assert.assertEquals(0, capabilities & QwpEgressMsgKind.CAP_QUERY_TIMEOUT);
             }
         });
     }
@@ -551,6 +554,37 @@ public class QwpEgressQueryDetailsWireTest extends AbstractQwpQueryDetailsTest {
         });
     }
 
+    /**
+     * A released c-questdb-client or Python client with a per-query timeout sets
+     * {@code QUERY_FLAG_TIMEOUT} and appends {@code timeout_ms}, but only for a
+     * server that advertises {@code CAP_QUERY_TIMEOUT}. This server does not, so
+     * those clients refuse such a query instead. Sent anyway, the reserved bit
+     * selects none of the query details: the error and the end of a result come
+     * back as the baseline frames those clients decode, with no trailer.
+     */
+    @Test
+    public void testReservedTimeoutFlagGetsBaselineFrames() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = startFragmented();
+                 WireConnection conn = new WireConnection("")) {
+                createWindowTable(serverMain, 3);
+                final long flags = QwpEgressMsgKind.QUERY_FLAG_RESET_DICT | QwpEgressMsgKind.QUERY_FLAG_TIMEOUT;
+                conn.send(withTimeoutMs(QwpWireTestFixtures.buildQueryRequest(1, "SELECT x FROM qd_missing", 0, flags, 0, 0), 5_000));
+                QueryError error = conn.readResponse(1).queryError();
+                Assert.assertEquals(QwpConstants.STATUS_PARSE_ERROR, error.status);
+                Assert.assertEquals("[14] table does not exist [table=qd_missing]", error.message);
+                error.assertEnd();
+
+                conn.send(withTimeoutMs(QwpWireTestFixtures.buildQueryRequest(2, "SELECT x FROM qd_window", 0, flags, 0, 0), 5_000));
+                Response r = conn.readResponse(2);
+                assertSequence(r.longs, 0, 3);
+                ResultEnd end = r.resultEnd();
+                Assert.assertEquals(3, end.totalRows);
+                end.assertEnd();
+            }
+        });
+    }
+
     @Test
     public void testStatsFrozenClock() throws Exception {
         // A frozen HTTP clock makes every duration exactly 0, so the frame bytes
@@ -859,6 +893,34 @@ public class QwpEgressQueryDetailsWireTest extends AbstractQwpQueryDetailsTest {
         });
     }
 
+    /**
+     * Each capability and each query flag is a bit of its own, and the query
+     * details leave alone the per-query timeout bits that released clients
+     * already use: capability 0x08 and flag 0x02, followed by {@code timeout_ms}
+     * (c-questdb-client 7.2.0 and py-questdb-client 6.0.0).
+     */
+    @Test
+    public void testWireBitsAreDistinctAndLeaveTimeoutBitsFree() {
+        Assert.assertEquals(0x08, QwpEgressMsgKind.CAP_QUERY_TIMEOUT);
+        Assert.assertEquals(0x02, QwpEgressMsgKind.QUERY_FLAG_TIMEOUT);
+        assertDistinctBits(
+                QwpEgressMsgKind.CAP_ZONE,
+                QwpEgressMsgKind.CAP_QUERY_FLAGS,
+                QwpEgressMsgKind.CAP_COMPRESSION,
+                QwpEgressMsgKind.CAP_QUERY_TIMEOUT,
+                QwpEgressMsgKind.CAP_QUERY_DETAILS
+        );
+        assertDistinctBits(
+                QwpEgressMsgKind.QUERY_FLAG_RESET_DICT,
+                QwpEgressMsgKind.QUERY_FLAG_TIMEOUT,
+                QwpEgressMsgKind.QUERY_FLAG_ERROR_POSITION,
+                QwpEgressMsgKind.QUERY_FLAG_STATS,
+                QwpEgressMsgKind.QUERY_FLAG_COUNT_ROWS,
+                QwpEgressMsgKind.QUERY_FLAG_SKIP_ROWS,
+                QwpEgressMsgKind.QUERY_FLAG_MAX_ROWS
+        );
+    }
+
     private void assertJitCompiled(boolean isJitEnabled) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (TestServerMain serverMain = startFragmented(
@@ -963,6 +1025,15 @@ public class QwpEgressQueryDetailsWireTest extends AbstractQwpQueryDetailsTest {
         });
     }
 
+    private static void assertDistinctBits(int... bits) {
+        int union = 0;
+        for (int bit : bits) {
+            Assert.assertEquals("0x" + Integer.toHexString(bit) + " must be a single bit", 1, Integer.bitCount(bit));
+            Assert.assertEquals("0x" + Integer.toHexString(bit) + " is taken twice", 0, union & bit);
+            union |= bit;
+        }
+    }
+
     private static void assertLongs(String message, LongList expected, LongList actual) {
         Assert.assertEquals(message, expected.size(), actual.size());
         for (int i = 0, n = expected.size(); i < n; i++) {
@@ -1008,6 +1079,15 @@ public class QwpEgressQueryDetailsWireTest extends AbstractQwpQueryDetailsTest {
 
     private static String maxBatchRows(int rows) {
         return "X-QWP-Max-Batch-Rows: " + rows + "\r\n";
+    }
+
+    /**
+     * Appends {@code timeout_ms:varint} to a request that ends with its
+     * {@code query_flags}, as a client that sets {@code QUERY_FLAG_TIMEOUT} does.
+     */
+    private static byte[] withTimeoutMs(byte[] request, long timeoutMs) {
+        final byte[] p = Arrays.copyOf(request, request.length + 10);
+        return Arrays.copyOf(p, QwpVarint.encode(p, request.length, timeoutMs));
     }
 
 

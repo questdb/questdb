@@ -223,11 +223,15 @@ public class QwpEgressRequestDecoder {
             QwpVarint.decode(p, limit, varintScratch);
             queryFlags = varintScratch.value;
             p += varintScratch.bytesRead;
-            // The row-window flags carry their values after the flags, in
-            // ascending order of their bits. Bytes after the known fields are
-            // ignored, as they are after the flags of a baseline request. A
-            // decoded value is negative only when the unsigned varint is 2^63
-            // or more, so the message names the bound, not the value.
+            // Flags that carry a field append it after the flags, in ascending
+            // order of their bits; the row-window flags are the only ones this
+            // server knows. QUERY_FLAG_TIMEOUT, whose timeout_ms would come
+            // first, is reserved: this server does not advertise
+            // CAP_QUERY_TIMEOUT, so a client never sends it here. Bytes after
+            // the known fields are ignored, as they are after the flags of a
+            // baseline request. A decoded value is negative only when the
+            // unsigned varint is 2^63 or more, so the message names the bound,
+            // not the value.
             if ((queryFlags & QwpEgressMsgKind.QUERY_FLAG_SKIP_ROWS) != 0) {
                 QwpVarint.decode(p, limit, varintScratch);
                 skipRows = varintScratch.value;

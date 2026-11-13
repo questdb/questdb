@@ -701,6 +701,28 @@ public class QwpEgressRequestDecoderTest {
     }
 
     /**
+     * A released client with a per-query timeout sends the reserved
+     * {@code QUERY_FLAG_TIMEOUT} bit and {@code timeout_ms} only to a server
+     * that advertises {@code CAP_QUERY_TIMEOUT}, which this one does not. Should
+     * one arrive anyway, the decoder ignores the bit like any flag it does not
+     * know: the {@code timeout_ms} bytes are left unread, not taken for a row
+     * window.
+     */
+    @Test
+    public void testDecodeQueryFlagsReservedTimeoutBitIgnored() throws Exception {
+        runWithBuf(64, (buf, bindVars, decoder) -> {
+            int len = writeBindScaffold(buf, 0);
+            long p = buf + len;
+            p = QwpVarint.encode(p, QwpEgressMsgKind.QUERY_FLAG_RESET_DICT | QwpEgressMsgKind.QUERY_FLAG_TIMEOUT);
+            p = QwpVarint.encode(p, 5_000L); // timeout_ms
+            decoder.decodeQueryRequest(buf, (int) (p - buf), bindVars);
+            Assert.assertEquals(0x03L, decoder.queryFlags);
+            Assert.assertEquals(0L, decoder.skipRows);
+            Assert.assertEquals(Long.MAX_VALUE, decoder.maxRows);
+        });
+    }
+
+    /**
      * A trailer that sets only other (reserved) bits must leave the RESET_DICT
      * bit clear -- the server tests that exact bit, so an adjacent bit must not
      * accidentally trigger a reset.
@@ -710,9 +732,9 @@ public class QwpEgressRequestDecoderTest {
         runWithBuf(64, (buf, bindVars, decoder) -> {
             int len = writeBindScaffold(buf, 0);
             long p = buf + len;
-            p = QwpVarint.encode(p, 0x40L); // a reserved bit, NOT RESET_DICT
+            p = QwpVarint.encode(p, QwpEgressMsgKind.QUERY_FLAG_TIMEOUT); // a reserved bit, NOT RESET_DICT
             decoder.decodeQueryRequest(buf, (int) (p - buf), bindVars);
-            Assert.assertEquals(0x40L, decoder.queryFlags);
+            Assert.assertEquals(0x02L, decoder.queryFlags);
             Assert.assertEquals("RESET_DICT must read clear when only other bits are set",
                     0, decoder.queryFlags & QwpEgressMsgKind.QUERY_FLAG_RESET_DICT);
         });
@@ -728,10 +750,10 @@ public class QwpEgressRequestDecoderTest {
         runWithBuf(64, (buf, bindVars, decoder) -> {
             int len = writeBindScaffold(buf, 0);
             long p = buf + len;
-            // bit0 (RESET_DICT) + bit6 (reserved/unknown) = 0x41
-            p = QwpVarint.encode(p, 0x41L);
+            // bit0 (RESET_DICT) + bit7 (unknown) = 0x81
+            p = QwpVarint.encode(p, 0x81L);
             decoder.decodeQueryRequest(buf, (int) (p - buf), bindVars);
-            Assert.assertEquals(0x41L, decoder.queryFlags);
+            Assert.assertEquals(0x81L, decoder.queryFlags);
             Assert.assertTrue("RESET_DICT bit must be detectable alongside unknown bits",
                     (decoder.queryFlags & QwpEgressMsgKind.QUERY_FLAG_RESET_DICT) != 0);
         });
