@@ -56,6 +56,7 @@ public final class FuzzConfig {
     public static final String PARALLEL_JOIN_RING_PROP = "questdb.fuzz.parallel.join.ring";
     public static final String PARQUET_ROW_GROUP_PROP = "questdb.fuzz.parquet.row.group";
     public static final String QUERIES_PROP = "questdb.fuzz.queries";
+    public static final String STORAGE_PROP = "questdb.fuzz.storage";
     public static final String VERIFY_CURSOR_PROP = "questdb.fuzz.verify.cursor";
     public static final String WINDOW_JOIN_PROP = "questdb.fuzz.windowjoin";
     public static final String WINDOW_PROP = "questdb.fuzz.window";
@@ -94,6 +95,7 @@ public final class FuzzConfig {
     private final boolean isHorizonJoinEnabled;
     private final boolean isLatestOnEnabled;
     private final boolean isParallelFaultEnabled;
+    private final boolean isStorageAxesEnabled;
     private final boolean isVerifyCursorEnabled;
     private final boolean isWindowEnabled;
     private final boolean isWindowJoinEnabled;
@@ -229,9 +231,9 @@ public final class FuzzConfig {
         // Every axis compares runs under the same knobs, so the in-order oracle holds. A Parquet row
         // group of a few rows, -Dquestdb.fuzz.parquet.row.group=N, makes the Parquet partitions of the
         // run's tables hold many row groups. It applies to every shape, and the seed does not pick it:
-        // over a WAL table whose partitions all converted to row groups of four rows, the vectorized
-        // GROUP BY's avg() of a NULL key differs from sum() / count() on the base this axis came
-        // with, so a seed-picked row group would fail runs over a defect outside the equi-join shapes.
+        // row groups of two rows still meet a defect outside the equi-join shapes, tracked on its own,
+        // so a run that wants the axis sets it, to 4 or more. QueryFuzzTest#testParallelJoinStorageAxes
+        // pins it at 4.
         final long seedBits = rnd.getSeed0() ^ rnd.getSeed1();
         this.parallelJoinFrameMaxRows = Integer.getInteger(
                 PARALLEL_JOIN_FRAMES_PROP,
@@ -241,6 +243,12 @@ public final class FuzzConfig {
         this.parallelJoinRingMaxSize = Long.getLong(PARALLEL_JOIN_RING_PROP, ringPick == 1 ? 1 : ringPick == 2 ? 192 : 0);
         this.parallelJoinDispatchLimit = Integer.getInteger(PARALLEL_JOIN_DISPATCH_PROP, (int) ((seedBits >>> 8) & 3) - 1);
         this.parquetRowGroupSize = Integer.getInteger(PARQUET_ROW_GROUP_PROP, 0);
+        // The run's primary tables take storage shapes that their shadows do not: non-WAL and
+        // non-partitioned tables, column tops and a dropped column (see FuzzTableFactory). On by
+        // default; pass -Dquestdb.fuzz.storage=false to keep every table a partitioned WAL table
+        // that holds every column from its first row. The shapes come from a generator of their
+        // own, so the property changes no query a seed generates.
+        this.isStorageAxesEnabled = Boolean.parseBoolean(System.getProperty(STORAGE_PROP, "true"));
         // LATEST ON shapes (latest row per PARTITION BY key) carve a band out of
         // the SIMPLE range (see QueryGenerator). On by default, like window. Pass
         // -Dquestdb.fuzz.lateston=false to drop them and give the band back to
@@ -387,6 +395,10 @@ public final class FuzzConfig {
 
     public boolean isParallelFaultEnabled() {
         return isParallelFaultEnabled;
+    }
+
+    public boolean isStorageAxesEnabled() {
+        return isStorageAxesEnabled;
     }
 
     public boolean isVerifyCursorEnabled() {

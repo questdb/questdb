@@ -33,6 +33,8 @@ import io.questdb.test.griffin.fuzz.types.FuzzColumnType;
 import io.questdb.test.griffin.fuzz.types.FuzzColumnTypes;
 import io.questdb.test.griffin.fuzz.types.IntKeyType;
 import io.questdb.test.griffin.fuzz.types.LongKeyType;
+import io.questdb.test.griffin.fuzz.types.LongType;
+import io.questdb.test.griffin.fuzz.types.ShortType;
 import io.questdb.test.griffin.fuzz.types.SymbolType;
 import io.questdb.test.griffin.fuzz.types.TimestampType;
 import io.questdb.test.griffin.fuzz.types.VarcharKeyType;
@@ -52,8 +54,15 @@ import java.time.format.DateTimeFormatter;
  * {@link LongKeyType}) and the VARCHAR column {@code vk} (see
  * {@link VarcharKeyType}), which reach the map-backed build through the key
  * sinks. {@code vk} holds {@code sym}'s texts, so the two also join each
- * other. The designated timestamp column is always the last column and is
- * named {@code ts}.
+ * other. The designated timestamp column is named {@code ts}; it is the last
+ * column but for the late columns of a table with column tops, which follow
+ * it.
+ * <p>
+ * The primary also takes a storage shape of its own (see {@link FuzzStorage}
+ * and {@code pickStorage()}): a non-WAL or a non-partitioned table, column
+ * tops of some columns, and a column dropped after its first rows. The
+ * shadow stays a partitioned WAL table that holds every column from its
+ * first row, in the primary's column order.
  * <p>
  * Each of the two siblings independently picks one of three parquet
  * modes uniformly at random: {@link ParquetMode#NONE} keeps every
@@ -97,6 +106,14 @@ public final class FuzzTableFactory {
     // Per-posting-index chance of attaching a covering INCLUDE list.
     private static final double POSTING_COVERING_CHANCE = 0.5;
     private static final int POSTING_MAX_COVERING_COLUMNS = 3;
+    // Per-table chances of the primary's storage shapes, see pickStorage().
+    private static final double COLUMN_TOP_CHANCE = 0.4;
+    private static final double DROPPED_COLUMN_CHANCE = 0.25;
+    private static final double LATE_COLUMN_CHANCE = 0.3;
+    private static final double LATE_JOIN_KEY_CHANCE = 0.5;
+    private static final double NON_PARTITIONED_CHANCE = 0.2;
+    private static final double NON_WAL_CHANCE = 0.2;
+    private static final long STORAGE_SEED_SALT = 0x5707_a6e5_c01d_70f5L;
     private static final String TS_COLUMN = "ts";
     private static final String VARCHAR_JOIN_KEY_COLUMN = "vk";
 
@@ -119,25 +136,51 @@ public final class FuzzTableFactory {
      * index among the tables this factory created, and its shadow.
      */
     public FuzzTable create(Rnd rnd, String primaryName, SqlExecutor executor, Runnable drainWal) throws SqlException {
-        final int rows = config.getTableRows(tablesCreated++);
+        final int tableIndex = tablesCreated++;
+        final int rows = config.getTableRows(tableIndex);
         String shadowName = primaryName + "_shadow";
-        ObjList<FuzzColumn> primaryColumns = buildColumnList(rnd);
-        ObjList<FuzzColumn> shadowColumns = mirrorColumns(rnd, primaryColumns);
+        ObjList<FuzzColumn> columns = buildColumnList(rnd);
+        ObjList<FuzzColumn> mirroredColumns = mirrorColumns(rnd, columns);
+        // The primary's storage shape, drawn from a generator of its own (see pickStorage()), and
+        // both tables' columns in the order the primary ends up with: the late columns, which
+        // ALTER TABLE ADD COLUMN appends, after the others.
+        final FuzzStorage storage = pickStorage(rnd, tableIndex, columns, mirroredColumns, rows);
+        ObjList<FuzzColumn> primaryColumns = inStorageOrder(columns, storage);
+        ObjList<FuzzColumn> shadowColumns = inStorageOrder(mirroredColumns, storage);
 
-        executor.execute(buildCreateDdl(primaryName, primaryColumns));
-        executor.execute(buildCreateDdl(shadowName, shadowColumns));
+        // The shadow holds every column, in the primary's order, before its first row.
+        executor.execute(buildCreateDdl(shadowName, earlyColumns(shadowColumns, storage, false), true, true));
+        addLateColumns(shadowName, shadowColumns, storage, executor);
 
         // Generate the random data on the primary, drain so it's committed,
         // then copy onto the shadow via SELECT * FROM primary so both tables
         // hold byte-identical content. Doing it the other way (running the
         // rnd_* insert on each independently) would draw two different
         // random sequences and break the row-set comparison.
-        executor.execute(buildInsertDml(primaryName, primaryColumns, rows));
+        if (storage.hasColumnTops() || storage.hasDroppedColumn()) {
+            // The first rows, before the late columns exist and while the dropped column does; the
+            // rest continue the timestamps, in the partition the first rows left off in, which then
+            // holds column tops in its middle, and in the later ones.
+            final ObjList<FuzzColumn> createColumns = earlyColumns(primaryColumns, storage, true);
+            executor.execute(buildCreateDdl(primaryName, createColumns, storage.isWal(), storage.isPartitioned()));
+            executor.execute(buildInsertDml(primaryName, createColumns, storage.firstChunkRows(), 0));
+            drainWal.run();
+            if (storage.hasDroppedColumn()) {
+                executor.execute("ALTER TABLE " + primaryName + " DROP COLUMN " + FuzzStorage.DROPPED_COLUMN);
+            }
+            addLateColumns(primaryName, primaryColumns, storage, executor);
+            executor.execute(buildInsertDml(primaryName, primaryColumns, rows - storage.firstChunkRows(), storage.firstChunkRows()));
+        } else {
+            executor.execute(buildCreateDdl(primaryName, primaryColumns, storage.isWal(), storage.isPartitioned()));
+            executor.execute(buildInsertDml(primaryName, primaryColumns, rows, 0));
+        }
         drainWal.run();
 
         // Composite-partition backdate, primary only and before the shadow copy
         // (see the class javadoc) -- both siblings still end up with identical rows.
-        String compositeDay = applyCompositePartition(rnd, primaryName, primaryColumns, rows, executor);
+        // A table of one partition, which takes no rows out of order, draws as the others do and
+        // backdates nothing.
+        String compositeDay = applyCompositePartition(rnd, primaryName, primaryColumns, rows, storage.isPartitioned() ? executor : null);
         if (compositeDay != null) {
             drainWal.run();
         }
@@ -145,15 +188,140 @@ public final class FuzzTableFactory {
         executor.execute("INSERT INTO " + shadowName + " SELECT * FROM " + primaryName);
 
         // Convert statements are queued behind the shadow insert in the WAL
-        // queue and processed by the second drain.
-        ParquetConversion primaryParquet = applyParquetConversion(rnd, primaryName, rows, executor);
+        // queue and processed by the second drain. A table of one partition
+        // draws its conversion as the others do, so that the draws stay the
+        // same, and converts nothing.
+        ParquetConversion primaryParquet = applyParquetConversion(rnd, primaryName, rows, storage.isPartitioned() ? executor : null);
         ParquetConversion shadowParquet = applyParquetConversion(rnd, shadowName, rows, executor);
         drainWal.run();
 
         FuzzTable shadow = new FuzzTable(shadowName, shadowColumns, TS_COLUMN,
                 shadowParquet.mode, shadowParquet.partitions, null, null);
         return new FuzzTable(primaryName, primaryColumns, TS_COLUMN,
-                primaryParquet.mode, primaryParquet.partitions, compositeDay, shadow);
+                primaryParquet.mode, primaryParquet.partitions, compositeDay, shadow, storage);
+    }
+
+    // Appends the late columns to a table, which then holds them as column tops of its rows so far.
+    private static void addLateColumns(String tableName, ObjList<FuzzColumn> columns, FuzzStorage storage, SqlExecutor executor) throws SqlException {
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final FuzzColumn c = columns.getQuick(i);
+            if (storage.isLate(c.getName())) {
+                executor.execute("ALTER TABLE " + tableName + " ADD COLUMN " + c.getName() + ' ' + c.getType().getDdl());
+            }
+        }
+    }
+
+    // The columns that CREATE TABLE makes: all but the late ones, and, for a primary that drops a
+    // column, that column at its position.
+    private static ObjList<FuzzColumn> earlyColumns(ObjList<FuzzColumn> columns, FuzzStorage storage, boolean isPrimary) {
+        final ObjList<FuzzColumn> early = new ObjList<>();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final FuzzColumn c = columns.getQuick(i);
+            if (!storage.isLate(c.getName())) {
+                early.add(c);
+            }
+        }
+        if (isPrimary && storage.hasDroppedColumn()) {
+            final ObjList<FuzzColumn> withDropped = new ObjList<>();
+            for (int i = 0, n = early.size(); i < n; i++) {
+                if (i == storage.droppedColumnPos()) {
+                    withDropped.add(new FuzzColumn(FuzzStorage.DROPPED_COLUMN, LongType.INSTANCE));
+                }
+                withDropped.add(early.getQuick(i));
+            }
+            return withDropped;
+        }
+        return early;
+    }
+
+    // The columns in the order that the primary ends up with: the late ones after the others.
+    private static ObjList<FuzzColumn> inStorageOrder(ObjList<FuzzColumn> columns, FuzzStorage storage) {
+        final ObjList<FuzzColumn> ordered = new ObjList<>();
+        for (int pass = 0; pass < 2; pass++) {
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                final FuzzColumn c = columns.getQuick(i);
+                if (storage.isLate(c.getName()) == (pass == 1)) {
+                    ordered.add(c);
+                }
+            }
+        }
+        return ordered;
+    }
+
+    // Whether any index of the columns, of the primary or of its shadow, is on the column or covers it.
+    private static boolean isIndexedOrCovered(String name, ObjList<FuzzColumn> columns) {
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final FuzzColumn c = columns.getQuick(i);
+            if (c.isIndexed()) {
+                if (c.getName().equals(name)) {
+                    return true;
+                }
+                final ObjList<String> covering = c.getIndex().coveringColumns();
+                for (int j = 0, m = covering != null ? covering.size() : 0; j < m; j++) {
+                    if (covering.getQuick(j).equals(name)) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Draws the primary's storage shape (see {@link FuzzStorage}) from a generator seeded off the
+     * run's one, which this draws nothing from, so that a seed replays the same queries whatever
+     * shape its tables take. A table becomes, each with its own chance:
+     * <ul>
+     *   <li>a non-WAL or a non-partitioned table, see {@link #NON_WAL_CHANCE} and
+     *   {@link #NON_PARTITIONED_CHANCE};</li>
+     *   <li>a table with column tops, {@link #COLUMN_TOP_CHANCE}: some of its columns, the join keys
+     *   more often, come after its first rows;</li>
+     *   <li>a table that drops a column after its first rows, {@link #DROPPED_COLUMN_CHANCE}.</li>
+     * </ul>
+     * A late column is neither indexed, nor covered by an index, on either table, so both tables
+     * create their indexes up front. Nor is it a SHORT or a temporal column: the vectorized GROUP BY
+     * reads a SHORT column top as no value where it reads an explicit value of 0, and its hour() keys
+     * put an explicit NULL timestamp in another group than a column top. -Dquestdb.fuzz.storage=false
+     * keeps every table a plain one.
+     */
+    private FuzzStorage pickStorage(Rnd rnd, int tableIndex, ObjList<FuzzColumn> columns, ObjList<FuzzColumn> mirroredColumns, int rows) {
+        if (!config.isStorageAxesEnabled()) {
+            return FuzzStorage.PLAIN;
+        }
+        final Rnd storageRnd = new Rnd(rnd.getSeed0() ^ STORAGE_SEED_SALT, rnd.getSeed1() + tableIndex);
+        // Rnd's first draws are biased, see TestUtils.generateRandom().
+        storageRnd.nextBoolean();
+        storageRnd.nextBoolean();
+        final double layout = storageRnd.nextDouble();
+        final boolean isPartitioned = layout >= NON_PARTITIONED_CHANCE;
+        final boolean isWal = isPartitioned && layout >= NON_PARTITIONED_CHANCE + NON_WAL_CHANCE;
+        final ObjList<String> lateColumns = new ObjList<>();
+        if (storageRnd.nextDouble() < COLUMN_TOP_CHANCE) {
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                final FuzzColumn c = columns.getQuick(i);
+                final String name = c.getName();
+                if (name.equals(TS_COLUMN)
+                        || c.getType() == ShortType.INSTANCE
+                        || c.getType().getKind() == ColumnKind.TEMPORAL
+                        || isIndexedOrCovered(name, columns)
+                        || isIndexedOrCovered(name, mirroredColumns)) {
+                    continue;
+                }
+                final boolean isJoinKey = name.equals(JOIN_KEY_COLUMN) || name.equals(INT_JOIN_KEY_COLUMN)
+                        || name.equals(LONG_JOIN_KEY_COLUMN) || name.equals(VARCHAR_JOIN_KEY_COLUMN);
+                if (storageRnd.nextDouble() < (isJoinKey ? LATE_JOIN_KEY_CHANCE : LATE_COLUMN_CHANCE)) {
+                    lateColumns.add(name);
+                }
+            }
+        }
+        final boolean hasDroppedColumn = storageRnd.nextDouble() < DROPPED_COLUMN_CHANCE;
+        if (lateColumns.size() == 0 && !hasDroppedColumn) {
+            return new FuzzStorage(isWal, isPartitioned, lateColumns, 0, -1);
+        }
+        // A quarter to three quarters of the rows come first.
+        final int firstChunkRows = rows / 4 + storageRnd.nextInt(rows / 2);
+        final int droppedColumnPos = hasDroppedColumn ? storageRnd.nextInt(columns.size() - lateColumns.size()) : -1;
+        return new FuzzStorage(isWal, isPartitioned, lateColumns, firstChunkRows, droppedColumnPos);
     }
 
     /**
@@ -164,7 +332,8 @@ public final class FuzzTableFactory {
      * this relocates the overlapping stride to the tail as its own piece and
      * leaves the superseded copy dead, making the day a genuine composite
      * partition. Returns the backdated day (ISO date), or {@code null} if the
-     * coin missed or the table has no non-active day to target.
+     * coin missed, the table has no non-active day to target, or executor is
+     * null, which draws as the others do and backdates nothing.
      */
     private String applyCompositePartition(Rnd rnd, String tableName, ObjList<FuzzColumn> columns, int rows, SqlExecutor executor) throws SqlException {
         if (rnd.nextDouble() >= COMPOSITE_PARTITION_CHANCE) {
@@ -180,13 +349,23 @@ public final class FuzzTableFactory {
         String day = start.plusDays(rnd.nextInt(numPartitions - 1)).toString();
         int rowsPerDay = (int) (DAY_MICROS / config.getStepMicros());
         int overlapRows = 1 + rnd.nextInt(Math.min(3, rowsPerDay));
+        if (executor == null) {
+            return null;
+        }
         executor.execute(buildOverlapInsertDml(tableName, columns, day, overlapRows));
         return day;
     }
 
+    // Converts nothing when executor is null, a table of one partition, but draws as for the others.
     private ParquetConversion applyParquetConversion(Rnd rnd, String tableName, int rows, SqlExecutor executor) throws SqlException {
         ParquetMode mode = pickParquetMode(rnd);
         String partitions = null;
+        if (executor == null) {
+            if (mode == ParquetMode.PARTIAL) {
+                pickPartialPartitionList(rnd, rows);
+            }
+            return new ParquetConversion(ParquetMode.NONE, null);
+        }
         switch (mode) {
             case NONE -> {
             }
@@ -266,7 +445,7 @@ public final class FuzzTableFactory {
         return FuzzColumnTypes.pickRandom(rnd);
     }
 
-    private String buildCreateDdl(String tableName, ObjList<FuzzColumn> columns) {
+    private String buildCreateDdl(String tableName, ObjList<FuzzColumn> columns, boolean isWal, boolean isPartitioned) {
         StringSink ddl = new StringSink();
         ddl.put("CREATE TABLE ").put(tableName).put(" (");
         for (int i = 0, n = columns.size(); i < n; i++) {
@@ -279,11 +458,12 @@ public final class FuzzTableFactory {
                 c.getIndex().appendDdl(ddl);
             }
         }
-        ddl.put(") TIMESTAMP(").put(TS_COLUMN).put(") PARTITION BY DAY WAL");
+        ddl.put(") TIMESTAMP(").put(TS_COLUMN).put(isPartitioned ? ") PARTITION BY DAY" : ") PARTITION BY NONE").put(isWal ? " WAL" : " BYPASS WAL");
         return ddl.toString();
     }
 
-    private String buildInsertDml(String tableName, ObjList<FuzzColumn> columns, int rows) {
+    // The rows' timestamps continue from rowOffset steps after the run's start.
+    private String buildInsertDml(String tableName, ObjList<FuzzColumn> columns, int rows, int rowOffset) {
         StringSink dml = new StringSink();
         dml.put("INSERT INTO ").put(tableName).put(" SELECT ");
         for (int i = 0, n = columns.size(); i < n; i++) {
@@ -295,7 +475,7 @@ public final class FuzzTableFactory {
             // rows are monotonically ordered and spread across partitions.
             if (c.getName().equals(TS_COLUMN)) {
                 dml.put("timestamp_sequence(to_timestamp('").put(config.getTsStart())
-                        .put("', 'yyyy-MM-dd'), ").put(config.getStepMicros()).put("L)");
+                        .put("', 'yyyy-MM-dd') + ").put(rowOffset * config.getStepMicros()).put("L, ").put(config.getStepMicros()).put("L)");
             } else {
                 dml.put(c.getType().getRndCall());
             }

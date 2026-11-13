@@ -24,16 +24,20 @@
 
 package io.questdb.test.griffin.engine.groupby.vect;
 
+import io.questdb.Metrics;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.groupby.vect.VectorAggregateEntry;
 import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.mp.WorkerPoolMode;
 import io.questdb.mp.WorkerPoolUtils;
+import io.questdb.std.Numbers;
 import io.questdb.std.Rosti;
 import io.questdb.std.RostiAllocFacadeImpl;
 import io.questdb.std.str.StringSink;
@@ -48,6 +52,7 @@ import org.junit.runners.Parameterized;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * The vectorized (Rosti) keyed GROUP BY over page frames whose key column holds no data: a column
@@ -144,35 +149,218 @@ public class GroupByVectorizedNullKeyTest extends AbstractCairoTest {
 
     @Test
     public void testNullKeyMatchesNonVectorizedGroupByOnWorkers() throws Exception {
+        // Both worker pool modes, each of which publishes and merges the per-worker maps its own way.
         assertMemoryLeak(() -> {
             final int workerCount = 4;
-            final WorkerPool pool = TestWorkerPool.createWithRandomMode(TestUtils.generateRandom(LOG), new WorkerPoolConfiguration() {
-                @Override
-                public String getPoolName() {
-                    return "nullKey";
+            for (WorkerPoolMode mode : WorkerPoolMode.values()) {
+                final WorkerPool pool = new TestWorkerPool("nullKey", workerCount, Metrics.DISABLED, mode);
+                WorkerPoolUtils.setupQueryJobs(pool, engine);
+                pool.start(null);
+                try (SqlExecutionContext parallelContext = new SqlExecutionContextImpl(engine, workerCount)
+                        .with(securityContext, bindVariableService, null, -1, circuitBreaker)) {
+                    parallelContext.initNow();
+                    // Several partitions of column tops, so that the workers aggregate the NULL key in
+                    // more than one map and the maps merge.
+                    final String table = "t_" + mode.name().toLowerCase();
+                    createColumnTopTable(table, false, 6);
+                    for (String key : KEYS) {
+                        assertMatchesNonVectorized(parallelContext, allAggregates(key, table));
+                        assertMatchesNonVectorized(parallelContext, "SELECT " + key + ", avg(l) v FROM " + table + " ORDER BY 1");
+                        assertMatchesNonVectorized(parallelContext, "SELECT " + key + ", count() c, sum(l) v FROM " + table + " ORDER BY 1");
+                    }
+                } finally {
+                    pool.halt();
                 }
-
-                @Override
-                public int getWorkerCount() {
-                    return workerCount;
-                }
-            });
-            WorkerPoolUtils.setupQueryJobs(pool, engine);
-            pool.start(null);
-            try (SqlExecutionContext parallelContext = new SqlExecutionContextImpl(engine, workerCount)
-                    .with(securityContext, bindVariableService, null, -1, circuitBreaker)) {
-                parallelContext.initNow();
-                // Several partitions of column tops, so that the workers aggregate the NULL key in
-                // more than one map and the maps merge.
-                createColumnTopTable("t", false, 6);
-                for (String key : KEYS) {
-                    assertMatchesNonVectorized(parallelContext, allAggregates(key, "t"));
-                    assertMatchesNonVectorized(parallelContext, "SELECT " + key + ", avg(l) v FROM t ORDER BY 1");
-                    assertMatchesNonVectorized(parallelContext, "SELECT " + key + ", count() c, sum(l) v FROM t ORDER BY 1");
-                }
-            } finally {
-                pool.halt();
             }
+        });
+    }
+
+    @Test
+    public void testNullKeyMemoryLimitInParquetDecode() throws Exception {
+        // The per-query memory limit bounds the page frame pools that decode Parquet row groups, here
+        // the row groups whose key column is a column top, which aggregate under the NULL key. The
+        // Rosti maps themselves stay on the global RSS limit, see GroupByRecordCursorFactory. Each
+        // breach fails the query with the limit's error and releases everything, and the query
+        // returns its rows once the limit allows the decode.
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1_000);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v LONG, d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY" + walSuffix());
+            execute("INSERT INTO t SELECT x, x / 2.0, timestamp_sequence('2024-01-01', 10_000_000) FROM long_sequence(5_000)");
+            drainWalIfNeeded();
+            execute("ALTER TABLE t ADD COLUMN k INT");
+            execute("INSERT INTO t (v, d, ts, k) VALUES (7, 3.5, '2024-01-03T00:00:00Z', 1)");
+            drainWalIfNeeded();
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalIfNeeded();
+            final String sql = "SELECT k, count() c, sum(v) s, max(d) mx FROM t ORDER BY k";
+            // The NULL key: the 5_000 column top rows, v 1 to 5_000 and d up to 2_500.0.
+            final String expected = """
+                    k\tc\ts\tmx
+                    null\t5000\t12502500\t2500.0
+                    1\t1\t7\t3.5
+                    """;
+            int failures = 0;
+            try (RecordCursorFactory factory = select(sql)) {
+                for (long limit = 1_024; ; limit *= 2) {
+                    setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, limit);
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        sink.clear();
+                        CursorPrinter.println(cursor, factory.getMetadata(), sink);
+                        TestUtils.assertEquals(expected, sink);
+                        break;
+                    } catch (CairoException e) {
+                        Assert.assertTrue(e.getMessage(), e.isOutOfMemory());
+                        TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                        failures++;
+                    }
+                    Assert.assertTrue("the limit never let the decode fit: " + limit, limit < Numbers.SIZE_1GB);
+                }
+                Assert.assertTrue(failures > 0);
+                // The factory runs again without a limit.
+                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    sink.clear();
+                    CursorPrinter.println(cursor, factory.getMetadata(), sink);
+                    TestUtils.assertEquals(expected, sink);
+                }
+            }
+            assertVectorized(sqlExecutionContext, sql, expected);
+            assertMatchesNonVectorized(sqlExecutionContext, sql);
+        });
+    }
+
+    @Test
+    public void testNullKeyOverColumnTopFramesAroundChunkSize() throws Exception {
+        // Frames of column tops of NULL_KEY_CHUNK_SIZE rows, one row less and one more, and of two
+        // chunks and one row more: the GROUP BY aggregates each in chunks of at most
+        // NULL_KEY_CHUNK_SIZE NULL keys, the last one partial.
+        Assert.assertEquals(1_024, VectorAggregateEntry.NULL_KEY_CHUNK_SIZE);
+        assertMemoryLeak(() -> {
+            for (int rows : new int[]{1, 1_023, 1_024, 1_025, 2_048, 2_049}) {
+                execute("CREATE TABLE t (v LONG, d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY" + walSuffix());
+                // v 1 to rows, d -1.0 to -rows.
+                execute("INSERT INTO t SELECT x, -x::DOUBLE, timestamp_sequence('2024-01-01', 1_000_000) FROM long_sequence(" + rows + ")");
+                drainWalIfNeeded();
+                execute("ALTER TABLE t ADD COLUMN k INT");
+                execute("INSERT INTO t (v, d, ts, k) VALUES (1_000_000, 0.5, '2024-01-02T00:00:00Z', 1)");
+                drainWalIfNeeded();
+                final long sum = (long) rows * (rows + 1) / 2;
+                final String expected = "k\tc\tcv\ts\tmn\tmx\ta\tsd\n"
+                        + "null\t" + rows + '\t' + rows + '\t' + sum + "\t1\t" + rows + '\t' + ((rows + 1) / 2.0) + '\t' + (-(double) sum) + '\n'
+                        + "1\t1\t1\t1000000\t1000000\t1000000\t1000000.0\t0.5\n";
+                final String sql = "SELECT k, count() c, count(v) cv, sum(v) s, min(v) mn, max(v) mx, avg(v) a, sum(d) sd FROM t ORDER BY k";
+                assertVectorized(sqlExecutionContext, sql, expected);
+                assertMatchesNonVectorized(sqlExecutionContext, sql);
+                // Each aggregate alone, so that no other one puts the NULL key in the map first.
+                assertVectorized(sqlExecutionContext, "SELECT k, sum(v) s FROM t ORDER BY k", "k\ts\nnull\t" + sum + "\n1\t1000000\n");
+                assertVectorized(sqlExecutionContext, "SELECT k, count() c FROM t ORDER BY k", "k\tc\nnull\t" + rows + "\n1\t1\n");
+                execute("DROP TABLE t");
+            }
+        });
+    }
+
+    @Test
+    public void testNullKeyOverMidPartitionKeyColumnTop() throws Exception {
+        // The key columns appear in the middle of the first partition: its first five rows are column
+        // tops, the rows after them hold keys, NULL among them. Native frames split at the column
+        // top; Parquet row groups of four rows hold column tops only, then both kinds of rows.
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v LONG, d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY" + walSuffix());
+            execute("INSERT INTO t SELECT x, x / 2.0, timestamp_sequence('2024-01-01', 3_600_000_000) FROM long_sequence(5)");
+            drainWalIfNeeded();
+            execute("ALTER TABLE t ADD COLUMN k INT");
+            execute("ALTER TABLE t ADD COLUMN sym SYMBOL");
+            execute("""
+                    INSERT INTO t (v, d, ts, k, sym) VALUES
+                        (10, 5.0, '2024-01-01T05:00:00Z', 1, 'a'),
+                        (20, 10.0, '2024-01-01T06:00:00Z', 2, 'b'),
+                        (30, 15.0, '2024-01-01T07:00:00Z', NULL, NULL),
+                        (40, 20.0, '2024-01-01T08:00:00Z', 1, 'a'),
+                        (100, 50.0, '2024-01-02T00:00:00Z', 2, 'b')
+                    """);
+            drainWalIfNeeded();
+            // The NULL key: v 1 to 5, the column tops, and 30; key 1 (a): 10 and 40; key 2 (b): 20 and 100.
+            final String expected = """
+                    %s\tc\ts\ta\tmn\tmx
+                    %s\t6\t45\t7.5\t0.5\t15.0
+                    %s\t2\t50\t25.0\t5.0\t20.0
+                    %s\t2\t120\t60.0\t10.0\t50.0
+                    """;
+            final String columns = ", count() c, sum(v) s, avg(v) a, min(d) mn, max(d) mx FROM t ORDER BY 1";
+            for (boolean isParquet : new boolean[]{false, true}) {
+                if (isParquet) {
+                    execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                    drainWalIfNeeded();
+                    assertQuery("SELECT name, isParquet FROM table_partitions('t')")
+                            .noRandomAccess()
+                            .expectSize()
+                            .noLeakCheck()
+                            .returns("""
+                                    name\tisParquet
+                                    2024-01-01\ttrue
+                                    2024-01-02\tfalse
+                                    """);
+                }
+                // Whole partitions in a frame, then frames of three rows, which cut the column tops and
+                // the rows with keys apart and together.
+                for (int frameRows : new int[]{1_000_000, 3}) {
+                    sqlExecutionContext.changePageFrameSizes(frameRows, frameRows);
+                    try {
+                        assertVectorized(sqlExecutionContext, "SELECT k" + columns, expected.formatted("k", "null", "1", "2"));
+                        assertVectorized(sqlExecutionContext, "SELECT sym" + columns, expected.formatted("sym", "", "a", "b"));
+                        assertVectorized(sqlExecutionContext, "SELECT k, sum(v) s FROM t ORDER BY k", """
+                                k\ts
+                                null\t45
+                                1\t50
+                                2\t120
+                                """);
+                        assertMatchesNonVectorized(sqlExecutionContext, "SELECT k" + columns);
+                        assertMatchesNonVectorized(sqlExecutionContext, "SELECT sym" + columns);
+                    } finally {
+                        sqlExecutionContext.restoreToDefaultPageFrameSizes();
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testNullKeyBufferFreedWhenMapAllocationFails() throws Exception {
+        // The factory allocates its NULL keys before the per-worker maps: when the first map's or a
+        // later map's allocation fails, the failed factory frees them, which assertMemoryLeak checks,
+        // and the query compiles once the maps allocate again.
+        final AtomicInteger allocations = new AtomicInteger();
+        final AtomicInteger failingAllocation = new AtomicInteger(-1);
+        configOverrideRostiAllocFacade(new RostiAllocFacadeImpl() {
+            @Override
+            public long alloc(ColumnTypes types, long capacity) {
+                if (allocations.getAndIncrement() == failingAllocation.get()) {
+                    return 0;
+                }
+                return super.alloc(types, capacity);
+            }
+        });
+        assertMemoryLeak(() -> {
+            createColumnTopTable("t", false, 0);
+            final String sql = "SELECT k, count() c, sum(l) s FROM t ORDER BY k";
+            try (SqlExecutionContext context = new SqlExecutionContextImpl(engine, 4)
+                    .with(securityContext, bindVariableService, null, -1, circuitBreaker)) {
+                for (int failAt : new int[]{0, 2}) {
+                    allocations.set(0);
+                    failingAllocation.set(failAt);
+                    try {
+                        engine.select(sql, context).close();
+                        Assert.fail("expected the map allocation to fail");
+                    } catch (CairoException e) {
+                        Assert.assertTrue(e.getMessage(), e.isOutOfMemory());
+                        TestUtils.assertContains(e.getFlyweightMessage(), "could not allocate rosti hash table");
+                    }
+                    Assert.assertEquals(failAt + 1, allocations.get());
+                }
+                failingAllocation.set(-1);
+            }
+            assertMatchesNonVectorized(sqlExecutionContext, sql);
         });
     }
 

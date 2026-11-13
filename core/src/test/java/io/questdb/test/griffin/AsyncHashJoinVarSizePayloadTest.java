@@ -81,6 +81,66 @@ public class AsyncHashJoinVarSizePayloadTest extends AbstractCairoTest {
         sqlExecutionContext.restoreToDefaultPageFrameSizes();
     }
 
+    // A build's STRING and VARCHAR columns that the table gained after its first rows read as NULL below
+    // their column tops, never as empty values, wherever the operator reads them from native frames: on
+    // the consumer, for an ON residual and for a post-join filter, at the build rows and from the copy.
+    // The fused GROUP BY never reads such a payload: it keeps the ordinary plan instead. The printed rows
+    // that the comparison with the ordinary plan uses show a NULL and an empty value alike, so the counts
+    // below, by hand, check the NULLs. ct_d has 20 rows, 5 per key: s and vc hold NULL in 14 (the 12
+    // first rows, below the column tops, and rows 3 and 6 of the later insert), an empty value in 3 (rows
+    // 1, 4 and 7) and a value in 3. ct_t has 12 rows per key, so the INNER join has 240 rows, 168 with a
+    // NULL s and vc and 36 with an empty one.
+    @Test
+    public void testColumnTopVarSizePayloadsReadAsNull() throws Exception {
+        assertMemoryLeak(() -> {
+            for (String wal : new String[]{"BYPASS WAL", "WAL"}) {
+                createColumnTopTables(wal);
+            }
+            sqlExecutionContext.changePageFrameSizes(5, 5);
+            for (HashJoinPayloadLayout layout : HashJoinPayloadLayout.values()) {
+                layout.apply(node1.getConfigurationOverrides());
+                for (String wal : new String[]{"BYPASS WAL", "WAL"}) {
+                    final String suffix = wal.equals("WAL") ? "wal" : "bypass";
+                    final String t = "ct_t_" + suffix;
+                    final String d = "ct_d_" + suffix;
+                    // The consumer reads s and vc for the joined rows.
+                    assertTrueCounts(
+                            "SELECT t.v, d.w, d.s, d.vc, d.s IS NULL sn, d.vc IS NULL vn, d.s = '' se, d.vc = '' ve FROM " + t + " t JOIN " + d + " d ON t.k = d.k",
+                            240, 168, 168, 36, 36
+                    );
+                    // The probe tasks read them for an ON residual ...
+                    assertTrueCounts("SELECT t.v, d.w FROM " + t + " t JOIN " + d + " d ON t.k = d.k AND (d.vc IS NULL OR t.v < 0)", 168);
+                    assertTrueCounts("SELECT t.v, d.w FROM " + t + " t JOIN " + d + " d ON t.k = d.k AND (d.s = '' OR t.v < 0)", 36);
+                    // ... of a LEFT join that keeps the 6 rows of ct_d whose vc is not NULL, 2, 2, 1 and 1
+                    // of keys 0 to 3: each probe row matches at least one, so 12 x 6 = 72 rows, none
+                    // NULL-extended.
+                    assertTrueCounts(
+                            "SELECT t.v, d.w, d.vc IS NULL vn FROM " + t + " t LEFT JOIN " + d + " d ON t.k = d.k AND (d.vc IS NOT NULL OR t.v < 0)",
+                            72, 0
+                    );
+                    // ... and for a post-join filter.
+                    assertTrueCounts("SELECT t.v, d.w FROM " + t + " t JOIN " + d + " d ON t.k = d.k WHERE d.s IS NULL OR t.v < 0", 168);
+                    assertTrueCounts("SELECT t.v, d.w FROM " + t + " t JOIN " + d + " d ON t.k = d.k WHERE d.vc = '' OR t.v < 0", 36);
+                    // A GROUP BY over the joined rows' flags runs over the operator, whose consumer reads
+                    // s and vc.
+                    final String groupBy = "SELECT d.vc IS NULL vn, d.s = '' se, count() c FROM " + t + " t JOIN " + d + " d ON t.k = d.k";
+                    try (RecordCursorFactory factory = select(groupBy)) {
+                        TestUtils.assertContains(ParallelHashJoinTestUtils.plan(factory, sqlExecutionContext), "Hash Join workers:");
+                    }
+                    assertQuery(groupBy + " ORDER BY vn, se")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
+                                    vn\tse\tc
+                                    false\tfalse\t36
+                                    false\ttrue\t36
+                                    true\tfalse\t168
+                                    """);
+                }
+            }
+        });
+    }
+
     @Test
     public void testVarSizePayloads() throws Exception {
         assertMemoryLeak(() -> {
@@ -150,6 +210,33 @@ public class AsyncHashJoinVarSizePayloadTest extends AbstractCairoTest {
         }
     }
 
+    // The query runs the operator, returns the ordinary plan's rows, in order, and, run once more with
+    // the operator, the expected count of rows, then, for each of its last trueCounts.length columns,
+    // which are BOOLEAN, the expected count of rows where it is true.
+    private static void assertTrueCounts(String sql, long rows, long... trueCounts) throws SqlException {
+        assertParallelHashJoin(sql, sqlExecutionContext);
+        try (RecordCursorFactory factory = select(sql)) {
+            Assert.assertNotNull(sql, find(factory));
+            final int firstFlag = factory.getMetadata().getColumnCount() - trueCounts.length;
+            final long[] actual = new long[trueCounts.length + 1];
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                final Record record = cursor.getRecord();
+                while (cursor.hasNext()) {
+                    actual[0]++;
+                    for (int i = 0; i < trueCounts.length; i++) {
+                        if (record.getBool(firstFlag + i)) {
+                            actual[i + 1]++;
+                        }
+                    }
+                }
+            }
+            final long[] expected = new long[trueCounts.length + 1];
+            expected[0] = rows;
+            System.arraycopy(trueCounts, 0, expected, 1, trueCounts.length);
+            Assert.assertArrayEquals(sql, expected, actual);
+        }
+    }
+
     private static void assertCount(String sql, long expected) throws SqlException {
         try (
                 RecordCursorFactory factory = select(sql);
@@ -195,5 +282,35 @@ public class AsyncHashJoinVarSizePayloadTest extends AbstractCairoTest {
                     "WHEN x % 6 = 2 THEN 'v\u00e9\uD83D\uDE00' || (x % 4) ELSE 'a longer varchar ' || (x % 4) END::VARCHAR vc, " +
                     "x::INT ew FROM long_sequence(8))");
         }
+    }
+
+    // ct_t has 48 rows over two days, 12 per key 0 to 3. ct_d has 12 rows on the first day, 3 per key,
+    // then gains s and vc and takes 8 more rows, 2 per key, the first on the first day, so that its
+    // column tops end inside that day's partition.
+    private void createColumnTopTables(String wal) throws Exception {
+        final String suffix = wal.equals("WAL") ? "wal" : "bypass";
+        final String t = "ct_t_" + suffix;
+        final String d = "ct_d_" + suffix;
+        execute("CREATE TABLE " + t + " AS (SELECT (x % 4)::INT k, x v, timestamp_sequence('2024-01-01', 3_600_000_000) ts " +
+                "FROM long_sequence(48)) TIMESTAMP(ts) PARTITION BY DAY " + wal);
+        execute("CREATE TABLE " + d + " AS (SELECT (x % 4)::INT k, x w, timestamp_sequence('2024-01-01', 7_200_000_000) dts " +
+                "FROM long_sequence(12)) TIMESTAMP(dts) PARTITION BY DAY " + wal);
+        execute("ALTER TABLE " + d + " ADD COLUMN s STRING");
+        execute("ALTER TABLE " + d + " ADD COLUMN vc VARCHAR");
+        execute("INSERT INTO " + d + " (k, w, dts, s, vc) SELECT (x % 4)::INT, 100 + x, timestamp_sequence('2024-01-01T23', 3_600_000_000), " +
+                "CASE WHEN x % 3 = 0 THEN NULL WHEN x % 3 = 1 THEN '' ELSE 's' || x END, " +
+                "CASE WHEN x % 3 = 0 THEN NULL WHEN x % 3 = 1 THEN '' ELSE 'v' || x END::VARCHAR FROM long_sequence(8)");
+        drainWalQueue();
+        // A scan of ct_d, without the operator, sees the same NULLs and empty values.
+        assertQuery("SELECT count() n, count_distinct(k) keys, sum(CASE WHEN s IS NULL THEN 1 ELSE 0 END) sn, " +
+                "sum(CASE WHEN vc IS NULL THEN 1 ELSE 0 END) vn, sum(CASE WHEN s = '' THEN 1 ELSE 0 END) se, " +
+                "sum(CASE WHEN vc = '' THEN 1 ELSE 0 END) ve FROM " + d)
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        n\tkeys\tsn\tvn\tse\tve
+                        20\t4\t14\t14\t3\t3
+                        """);
     }
 }

@@ -27,22 +27,27 @@ package io.questdb.test.griffin;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.griffin.engine.table.AsyncHashJoinAtom;
 import io.questdb.griffin.engine.table.AsyncHashJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.HashJoinBuildStage;
+import io.questdb.mp.WorkerPoolMode;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Rows;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
@@ -52,6 +57,7 @@ import org.junit.Test;
 
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -308,6 +314,136 @@ public class AsyncHashJoinFailureTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCloseDropsFramesThatNoWorkerStarted() throws Exception {
+        // A window of 32 frames of 16 rows; two workers each hold a frame past the first one inside
+        // the probe filter, so the frames behind them wait in the queue, until the consumer, which
+        // read the first row, closes its cursor and waits for the frames in flight. The frames that
+        // no worker started by then never run the probe filter.
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 32);
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 64);
+        for (WorkerPoolMode mode : WorkerPoolMode.values()) {
+            assertMemoryLeak(() -> TestUtils.execute(new TestWorkerPool(2, mode), (db, compiler, ignore) -> {
+                try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(db, 2)
+                        .with(AllowAllSecurityContext.INSTANCE, null, null, -1, null)) {
+                    context.setParallelHashJoinEnabled(true);
+                    context.changePageFrameSizes(16, 16);
+                    // 64 frames of t, all in one partition, so that a row id's partition index is
+                    // its frame's index.
+                    final String t = "t_" + mode.name().toLowerCase();
+                    final String d = "d_" + mode.name().toLowerCase();
+                    db.execute("CREATE TABLE " + t + " AS (SELECT (x % 50)::INT k, x v, timestamp_sequence('2024-01-01', 1_000_000) ts"
+                            + " FROM long_sequence(1_024)) TIMESTAMP(ts) PARTITION BY DAY", context);
+                    db.execute("CREATE TABLE " + d + " AS (SELECT (x % 40)::INT k, x w FROM long_sequence(300))", context);
+                    final String sql = "SELECT t.v, d.w FROM " + t + " t JOIN " + d + " d ON t.k = d.k WHERE (test_latched_counter() OR t.v < 0)";
+                    final Thread owner = Thread.currentThread();
+                    final Set<Integer> startedFrames = ConcurrentHashMap.newKeySet();
+                    final AtomicBoolean isClosing = new AtomicBoolean();
+                    final AtomicInteger startsAfterClose = new AtomicInteger();
+                    final AtomicInteger heldWorkers = new AtomicInteger();
+                    TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
+                        @Override
+                        public boolean onGet(Record rec, int count) {
+                            final int frame = Rows.toPartitionIndex(rec.getRowId());
+                            if (startedFrames.add(frame) && isClosing.get()) {
+                                startsAfterClose.incrementAndGet();
+                            }
+                            if (frame > 0 && Thread.currentThread() != owner && !isClosing.get()) {
+                                // The worker holds its frame until the consumer's close() cancelled the
+                                // frames and waits for those in flight.
+                                heldWorkers.incrementAndGet();
+                                while (!isClosing.get()) {
+                                    if (isAwaitingFrames(owner)) {
+                                        isClosing.set(true);
+                                    } else {
+                                        Thread.onSpinWait();
+                                    }
+                                }
+                            }
+                            return true;
+                        }
+                    });
+                    try (RecordCursorFactory factory = db.select(sql, context)) {
+                        final AsyncHashJoinRecordCursorFactory join = find(factory);
+                        Assert.assertNotNull(join);
+                        TestUtils.assertContains(plan(factory, context), "filter: (test_latched_counter() or v<0)");
+                        try (RecordCursor cursor = factory.getCursor(context)) {
+                            Assert.assertTrue(cursor.hasNext());
+                            Assert.assertEquals(64, join.getProbeFrameCount());
+                            // Both workers hold a frame, with the rest of the window queued behind them.
+                            final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(60);
+                            while (heldWorkers.get() < 2) {
+                                Assert.assertTrue("the workers took no frame", System.nanoTime() < deadline);
+                                Thread.onSpinWait();
+                            }
+                        }
+                        // The workers held their frames, and only the frame that a worker took before
+                        // the cancellation, after the first one, started once the consumer closed.
+                        Assert.assertEquals(2, heldWorkers.get());
+                        Assert.assertTrue("frames started after close: " + startsAfterClose.get(), startsAfterClose.get() <= 1);
+                        Assert.assertTrue("frames started: " + startedFrames.size(), startedFrames.size() < 32);
+                        assertReleased(join, db);
+                        TestLatchedCounterFunctionFactory.reset(null);
+                        Assert.assertEquals(ordinary(sql, context), result(factory, context));
+                    } finally {
+                        TestLatchedCounterFunctionFactory.reset(null);
+                    }
+                }
+            }, configuration, LOG));
+        }
+    }
+
+    @Test
+    public void testLengthFailuresOnParquetProbeBuildAndLaterStageFiles() throws Exception {
+        // The length of a Parquet partition's data file, which the reader checks before it maps the
+        // file, fails for the probe, for the build, and for a later stage's build input.
+        final TableFilesFacade ff = new TableFilesFacade();
+        assertMemoryLeak(ff, () -> {
+            createFileTables();
+            execute("CREATE TABLE later_tab AS (SELECT (x % 5)::LONG l, x w2, timestamp_sequence('2024-01-01', 1_800_000_000) ts FROM long_sequence(100)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("ALTER TABLE probe_tab CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            execute("ALTER TABLE build_tab CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            execute("ALTER TABLE later_tab CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            sqlExecutionContext.changePageFrameSizes(16, 16);
+            for (String table : new String[]{"probe_tab", "build_tab", "later_tab"}) {
+                for (String sql : PROBE_AND_LATER_STAGE_QUERIES) {
+                    if (table.equals("later_tab") && !sql.contains("later_tab")) {
+                        continue;
+                    }
+                    ff.targetLength(table, ".parquet");
+                    final String expected = ordinary(sql, sqlExecutionContext);
+                    try (RecordCursorFactory factory = select(sql)) {
+                        final AsyncHashJoinRecordCursorFactory join = find(factory);
+                        Assert.assertNotNull(sql, join);
+                        for (int run = 0; run < 2; run++) {
+                            // The readers open the partitions anew, through the failing facade.
+                            engine.releaseAllReaders();
+                            ff.arm();
+                            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                //noinspection StatementWithEmptyBody
+                                while (cursor.hasNext()) {
+                                }
+                                Assert.fail("expected the length of " + table + "'s Parquet file to fail: " + sql);
+                            } catch (CairoException e) {
+                                TestUtils.assertContains(e.getFlyweightMessage(), "parquet partition data file missing");
+                                TestUtils.assertContains(e.getFlyweightMessage(), table);
+                            } finally {
+                                ff.disarm();
+                            }
+                            Assert.assertTrue(sql, ff.getFailures() > 0);
+                            assertReleased(join);
+                            Assert.assertEquals(sql, expected, result(factory, sqlExecutionContext));
+                        }
+                    }
+                }
+            }
+            // The tables still work on their own.
+            assertQuery("SELECT count() FROM probe_tab").noLeakCheck().noRandomAccess().expectSize().returns("count\n400\n");
+            assertQuery("SELECT count() FROM build_tab").noLeakCheck().noRandomAccess().expectSize().returns("count\n200\n");
+            assertQuery("SELECT count() FROM later_tab").noLeakCheck().noRandomAccess().expectSize().returns("count\n100\n");
+        });
+    }
+
+    @Test
     public void testLaterStageTableRecreatedUnderCachedStack() throws Exception {
         assertMemoryLeak(() -> {
             createFileTables();
@@ -445,6 +581,25 @@ public class AsyncHashJoinFailureTest extends AbstractCairoTest {
 
     // Nothing of the failed execution stays behind: no build of any stage, no slot, no ring byte and
     // no busy reader.
+    private static void assertReleased(AsyncHashJoinRecordCursorFactory join, CairoEngine db) {
+        for (int k = 0, n = join.getSpec().getStageCount(); k < n; k++) {
+            Assert.assertNull("stage " + k, join.getAtom().getStage(k).getFrozenBuild());
+        }
+        Assert.assertEquals(0, join.getAtom().getRing().getAllocatedBytes());
+        Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+        Assert.assertEquals(0, db.getBusyReaderCount());
+    }
+
+    // Whether the thread waits, inside a cursor's close(), for the frames that workers still reduce.
+    private static boolean isAwaitingFrames(Thread thread) {
+        for (StackTraceElement frame : thread.getStackTrace()) {
+            if (frame.getClassName().equals(PageFrameSequence.class.getName()) && frame.getMethodName().equals("await")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static void assertReleased(AsyncHashJoinRecordCursorFactory join) {
         for (int k = 0, n = join.getSpec().getStageCount(); k < n; k++) {
             Assert.assertNull("stage " + k, join.getAtom().getStage(k).getFrozenBuild());
@@ -690,9 +845,28 @@ public class AsyncHashJoinFailureTest extends AbstractCairoTest {
         private final AtomicInteger failures = new AtomicInteger();
         private final Set<Long> targetFds = ConcurrentHashMap.newKeySet();
         private volatile boolean isArmed;
+        private volatile boolean isLength;
         private volatile boolean isMmap;
         private volatile String suffix;
         private volatile String table;
+
+        @Override
+        public long length(long fd) {
+            if (isArmed && isLength && targetFds.contains(fd)) {
+                failures.incrementAndGet();
+                return -1;
+            }
+            return super.length(fd);
+        }
+
+        @Override
+        public long length(LPSZ name) {
+            if (isArmed && isLength && Utf8s.containsAscii(name, table) && Utf8s.endsWithAscii(name, suffix)) {
+                failures.incrementAndGet();
+                return -1;
+            }
+            return super.length(name);
+        }
 
         @Override
         public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
@@ -706,7 +880,7 @@ public class AsyncHashJoinFailureTest extends AbstractCairoTest {
         @Override
         public long openRO(LPSZ name) {
             final boolean isTarget = isArmed && Utf8s.containsAscii(name, table) && Utf8s.endsWithAscii(name, suffix);
-            if (isTarget && !isMmap) {
+            if (isTarget && !isMmap && !isLength) {
                 failures.incrementAndGet();
                 return -1;
             }
@@ -736,6 +910,16 @@ public class AsyncHashJoinFailureTest extends AbstractCairoTest {
             this.table = table;
             this.suffix = suffix;
             this.isMmap = isMmap;
+            this.isLength = false;
+        }
+
+        // Fails the length of the table's files whose names end with the suffix, by name or by the
+        // descriptor that opened them.
+        void targetLength(String table, String suffix) {
+            this.table = table;
+            this.suffix = suffix;
+            this.isMmap = false;
+            this.isLength = true;
         }
     }
 

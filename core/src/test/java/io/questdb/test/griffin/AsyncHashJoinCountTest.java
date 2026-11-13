@@ -41,6 +41,7 @@ import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactor
 import io.questdb.griffin.engine.table.AsyncHashJoinAtom;
 import io.questdb.griffin.engine.table.AsyncHashJoinRecordCursorFactory;
 import io.questdb.jit.JitUtil;
+import io.questdb.std.Misc;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -65,6 +66,9 @@ import static io.questdb.test.griffin.ParallelHashJoinTestUtils.*;
  */
 public class AsyncHashJoinCountTest extends AbstractCairoTest {
     private static final String ATOM = AsyncHashJoinAtom.class.getName();
+    private static final String CURSOR = "io.questdb.griffin.engine.table.AsyncHashJoinRecordCursor";
+    // The error of a count whose rows do not fit in a LONG.
+    private static final String OVERFLOW = "hash join row count overflow";
     // Single stages and stacks, each with its rows' shape: unique matches and LEFT misses, which the
     // tuples carry as locators; duplicate keys, NULL keys among them, whose chains the tuples leave
     // to the consumer; residuals and post-join filters, which the workers run per pair, and whose
@@ -192,6 +196,46 @@ public class AsyncHashJoinCountTest extends AbstractCairoTest {
                 }
             } finally {
                 AsyncHashJoinRecordCursorFactory.setStepperCopiesEnabledForTesting(true);
+            }
+        });
+    }
+
+    @Test
+    public void testCancellationInsideConsumerChainCount() throws Exception {
+        // After the first row, the count walks the chains that the tuples left to the consumer to
+        // count them, and checks the breaker before each walk: a query that a hot key fans out to
+        // billions of rows stops at the next chain.
+        assertMemoryLeak(() -> {
+            createTables();
+            sqlExecutionContext.changePageFrameSizes(4, 4);
+            for (String sql : new String[]{
+                    // The tuples after the first one carry chains of m's duplicate keys.
+                    "SELECT t.v, m.w FROM t LEFT JOIN m ON t.k = m.k",
+                    // The first row's tuple carries two chains, whose later combinations the count
+                    // counts first.
+                    "SELECT t.v, m.w, d2.w2 FROM t JOIN m ON t.k = m.k JOIN d2 ON t.lk = d2.lk",
+            }) {
+                final String expected = ordinary(sql, sqlExecutionContext);
+                final ConsumerChainCountBreaker breaker = new ConsumerChainCountBreaker();
+                try (RecordCursorFactory factory = select(sql)) {
+                    final AsyncHashJoinRecordCursorFactory join = find(factory);
+                    Assert.assertNotNull(join);
+                    final SqlExecutionCircuitBreaker previous = sqlExecutionContext.getCircuitBreaker();
+                    ((SqlExecutionContextImpl) sqlExecutionContext).with(breaker);
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        Assert.assertTrue(cursor.hasNext());
+                        cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), new RecordCursor.Counter());
+                        Assert.fail("expected cancellation: " + sql);
+                    } catch (CairoException e) {
+                        Assert.assertTrue(e.getMessage(), e.isCancellation());
+                    } finally {
+                        ((SqlExecutionContextImpl) sqlExecutionContext).with(previous);
+                    }
+                    // The first chain walk met the cancellation, and the count walked no other chain.
+                    Assert.assertEquals(sql, 1, breaker.chainWalkCheckCount);
+                    assertReleased(join);
+                    Assert.assertEquals(sql, expected, result(factory, sqlExecutionContext));
+                }
             }
         });
     }
@@ -330,6 +374,105 @@ public class AsyncHashJoinCountTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCountOverflowFailsTheCount() throws Exception {
+        // A probe row of key 1 meets one row of u and 65_536 rows of key 1 in each of h1 to h4:
+        // 2^64 joined rows, more than a LONG count holds, which the ordinary plan would never finish
+        // reading. The count fails rather than return a wrapped number, on the count-only tasks of a
+        // count from the top, and on the consumer after the first row, whether the tuple it reads
+        // carries the chains or a later tuple of the frame does.
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.setParallelHashJoinGroupByEnabled(false);
+            // fo holds key 2, which only a LEFT join keeps, then key 1.
+            execute("CREATE TABLE fo AS (SELECT (3 - x)::INT k, x v FROM long_sequence(2))");
+            execute("CREATE TABLE u AS (SELECT 1 k, 7L w FROM long_sequence(1))");
+            for (int i = 1; i <= 4; i++) {
+                execute("CREATE TABLE h" + i + " AS (SELECT 1 k, x w FROM long_sequence(65_536))");
+            }
+            final String inner = "SELECT fo.v, u.w, h1.w w1, h2.w w2, h3.w w3, h4.w w4 FROM fo JOIN u ON fo.k = u.k"
+                    + " JOIN h1 ON fo.k = h1.k JOIN h2 ON fo.k = h2.k JOIN h3 ON fo.k = h3.k JOIN h4 ON fo.k = h4.k";
+            final String left = inner.replace(" JOIN ", " LEFT JOIN ");
+            // u is smaller than fo, so the operator hashes u and probes fo; the later stages read their
+            // key off u's matches.
+            final String swapped = "SELECT u.w, fo.v, h1.w w1, h2.w w2, h3.w w3, h4.w w4 FROM u JOIN fo ON u.k = fo.k"
+                    + " JOIN h1 ON u.k = h1.k JOIN h2 ON u.k = h2.k JOIN h3 ON u.k = h3.k JOIN h4 ON u.k = h4.k";
+            final String[] queries = {inner, left, swapped};
+            final RecordCursorFactory[] factories = new RecordCursorFactory[queries.length];
+            try {
+                for (int i = 0; i < queries.length; i++) {
+                    factories[i] = select(queries[i]);
+                    assertCountOverflow(queries[i], factories[i], queries[i] == swapped);
+                }
+                // With one row of key 1 in h4, the counts fit: 2^48 rows of key 1, and for the LEFT
+                // join one more row, key 2's, without a match. The factories that failed count them.
+                execute("TRUNCATE TABLE h4");
+                execute("INSERT INTO h4 VALUES (1, 1)");
+                final long[] expectedCounts = {281_474_976_710_656L, 281_474_976_710_657L, 281_474_976_710_656L};
+                for (int i = 0; i < queries.length; i++) {
+                    try (RecordCursor cursor = factories[i].getCursor(sqlExecutionContext)) {
+                        final RecordCursor.Counter counter = new RecordCursor.Counter();
+                        cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
+                        Assert.assertEquals(queries[i], expectedCounts[i], counter.get());
+                    }
+                    assertQuery("SELECT count(*) FROM (" + queries[i] + ")")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .withPlanContaining("Hash Join workers:")
+                            .returns("count\n" + expectedCounts[i] + "\n");
+                }
+            } finally {
+                Misc.free(factories);
+            }
+        });
+    }
+
+    @Test
+    public void testCountOverflowOfTheSumFailsTheCount() throws Exception {
+        // Each probe row of key 1 stands for 2^16 * 2^16 * 2^15 * 2^15 = 2^62 joined rows, which a
+        // LONG holds, and two of them for 2^63, which it does not. The count fails whether the two
+        // rows' counts add up in one frame's task or across frames.
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.setParallelHashJoinGroupByEnabled(false);
+            execute("CREATE TABLE fs AS (SELECT 1 k, x v FROM long_sequence(2))");
+            execute("CREATE TABLE u AS (SELECT 1 k, 7L w FROM long_sequence(1))");
+            execute("CREATE TABLE h1 AS (SELECT 1 k, x w FROM long_sequence(65_536))");
+            execute("CREATE TABLE h2 AS (SELECT 1 k, x w FROM long_sequence(65_536))");
+            execute("CREATE TABLE q3 AS (SELECT 1 k, x w FROM long_sequence(32_768))");
+            execute("CREATE TABLE q4 AS (SELECT 1 k, x w FROM long_sequence(32_768))");
+            final String inner = "SELECT fs.v, u.w, h1.w w1, h2.w w2, q3.w w3, q4.w w4 FROM fs JOIN u ON fs.k = u.k"
+                    + " JOIN h1 ON fs.k = h1.k JOIN h2 ON fs.k = h2.k JOIN q3 ON fs.k = q3.k JOIN q4 ON fs.k = q4.k";
+            for (String sql : new String[]{inner, inner.replace(" JOIN ", " LEFT JOIN ")}) {
+                for (int frameRows : new int[]{2, 1}) {
+                    sqlExecutionContext.changePageFrameSizes(frameRows, frameRows);
+                    try (RecordCursorFactory factory = select(sql)) {
+                        final AsyncHashJoinRecordCursorFactory join = find(factory);
+                        Assert.assertNotNull(sql, join);
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            final RecordCursor.Counter counter = new RecordCursor.Counter();
+                            try {
+                                cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
+                                Assert.fail(sql + ": expected the count to overflow, counted " + counter.get());
+                            } catch (CairoException e) {
+                                TestUtils.assertContains(e.getFlyweightMessage(), OVERFLOW);
+                            }
+                            // The two probe rows were in one frame or in two.
+                            Assert.assertEquals(sql, frameRows == 2 ? 1 : 2, join.getProbeFrameCount());
+                        }
+                        assertReleased(join);
+                    }
+                    // One probe row's 2^62 rows fit.
+                    assertQuery("SELECT count(*) FROM (" + sql + " WHERE fs.v = 1)")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .withPlanContaining("Hash Join workers:")
+                            .returns("count\n4611686018427387904\n");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testThrowingFilterInsideCount() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
@@ -365,6 +508,38 @@ public class AsyncHashJoinCountTest extends AbstractCairoTest {
             }
             assertCountStar("SELECT tp.k, tp.p, d1.w FROM tp LEFT JOIN d1 ON tp.k = d1.k AND (tp.p * 100)::DECIMAL(4,0) > d1.w::DECIMAL(4,0)");
         });
+    }
+
+    // count(*), a negative LIMIT, and the factory's count from the top and after the first row, each
+    // fail with the overflow, and release what the execution held.
+    private static void assertCountOverflow(String sql, RecordCursorFactory factory, boolean isSwapped) throws Exception {
+        final AsyncHashJoinRecordCursorFactory join = find(factory);
+        Assert.assertNotNull(sql, join);
+        for (String query : new String[]{"SELECT count(*) FROM (" + sql + ")", sql + " LIMIT -1"}) {
+            try (RecordCursorFactory queryFactory = select(query)) {
+                Assert.assertNotNull(query, find(queryFactory));
+                try (RecordCursor cursor = queryFactory.getCursor(sqlExecutionContext)) {
+                    final String rows = printRows(cursor, queryFactory.getMetadata(), Integer.MAX_VALUE);
+                    Assert.fail(query + ": expected the count to overflow, read: " + rows);
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), OVERFLOW);
+                }
+            }
+        }
+        for (int prefix = 0; prefix < 2; prefix++) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                if (prefix > 0) {
+                    Assert.assertTrue(sql, cursor.hasNext());
+                }
+                final RecordCursor.Counter counter = new RecordCursor.Counter();
+                cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
+                Assert.fail(sql + ": expected the count to overflow after " + prefix + " rows, counted " + counter.get());
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), OVERFLOW);
+            }
+            Assert.assertEquals(sql, isSwapped, join.getAtom().isSwapped());
+            assertReleased(join);
+        }
     }
 
     // Cancels a count after the first row: inside a count-only task, inside the owner's count of the
@@ -585,6 +760,28 @@ public class AsyncHashJoinCountTest extends AbstractCairoTest {
             CursorPrinter.println(cursor.getRecord(), metadata, sink, true);
         }
         return sink.toString();
+    }
+
+    /**
+     * Cancels the query at the first check of its state that the consumer makes before it walks a
+     * chain to count it, and counts those checks. A breaker of a class of its own is thread safe, so
+     * the cursor consults it directly rather than through a copy.
+     */
+    private static class ConsumerChainCountBreaker extends AtomicBooleanCircuitBreaker {
+        private int chainWalkCheckCount;
+
+        private ConsumerChainCountBreaker() {
+            super(engine);
+        }
+
+        @Override
+        public void statefulThrowExceptionIfTrippedTimeThrottled() {
+            if (StackWalker.getInstance().walk(frames -> frames.anyMatch(frame -> frame.getClassName().equals(CURSOR) && frame.getMethodName().equals("countChain")))) {
+                chainWalkCheckCount++;
+                cancel();
+            }
+            super.statefulThrowExceptionIfTrippedTimeThrottled();
+        }
     }
 
     /**

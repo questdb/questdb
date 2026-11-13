@@ -843,6 +843,36 @@ public class QueryFuzzTest extends AbstractCairoTest {
         );
     }
 
+    // Pins the storage shapes of the primary tables (see FuzzStorage) under the parallel hash join: a
+    // pinned seed's tables include a non-WAL and a non-partitioned table, column tops, in join keys
+    // and in Parquet partitions of row groups of four rows, and a dropped column, and the parallel
+    // join axis runs the operator over each of them, and the diff-shadow axis compares each with its
+    // plain shadow.
+    @Test
+    public void testParallelJoinStorageAxes() throws Exception {
+        withSystemProperties(
+                new String[][]{
+                        {FuzzConfig.QUERIES_PROP, "600"},
+                        {"questdb.fuzz.s0", "99"},
+                        {"questdb.fuzz.s1", "100"},
+                        {FuzzConfig.STORAGE_PROP, "true"},
+                        {FuzzConfig.PARQUET_ROW_GROUP_PROP, "4"},
+                },
+                () -> runQueryFuzz(runner -> {
+                    final String counts = "column top keys " + runner.getParallelJoinOverColumnTopKeys()
+                            + ", Parquet column tops " + runner.getParallelJoinOverParquetColumnTops()
+                            + ", non-partitioned " + runner.getParallelJoinOverNonPartitioned()
+                            + ", non-WAL " + runner.getParallelJoinOverNonWal()
+                            + ", dropped columns " + runner.getParallelJoinOverDroppedColumns();
+                    Assert.assertTrue(counts, runner.getParallelJoinOverColumnTopKeys() > 0);
+                    Assert.assertTrue(counts, runner.getParallelJoinOverParquetColumnTops() > 0);
+                    Assert.assertTrue(counts, runner.getParallelJoinOverNonPartitioned() > 0);
+                    Assert.assertTrue(counts, runner.getParallelJoinOverNonWal() > 0);
+                    Assert.assertTrue(counts, runner.getParallelJoinOverDroppedColumns() > 0);
+                })
+        );
+    }
+
     @Test
     public void testQueryFuzz() throws Exception {
         runQueryFuzz(runner -> {
@@ -884,7 +914,11 @@ public class QueryFuzzTest extends AbstractCairoTest {
             // SqlExecutionContext advertises the real pool width to the planner (the
             // default test context reports getSharedQueryWorkerCount()=1).
             final int workerCount = Integer.getInteger("questdb.fuzz.workers", 4);
-            final Rnd modeRnd = TestUtils.generateRandom(LOG);
+            // The pools' modes come from seeds of their own, which -Dfuzz.s0 and -Dfuzz.s1 replay, as
+            // TestUtils.generateRandom(LOG) reads them; the log line below names both.
+            final long modeS0 = Long.getLong("fuzz.s0", System.nanoTime());
+            final long modeS1 = Long.getLong("fuzz.s1", System.currentTimeMillis());
+            final Rnd modeRnd = TestUtils.generateRandom(LOG, modeS0, modeS1);
             final WorkerPool queryPool = TestWorkerPool.createWithRandomMode(modeRnd, new WorkerPoolConfiguration() {
                 @Override
                 public String getPoolName() {
@@ -909,6 +943,10 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 }
             });
             WorkerPoolUtils.setupWriterJobs(writerPool, engine);
+            LOG.info().$("fuzz worker pools [queryMode=").$(queryPool.getWorkerPoolMode().name())
+                    .$(", writerMode=").$(writerPool.getWorkerPoolMode().name())
+                    .$(", replay=-Dfuzz.s0=").$(modeS0).$(" -Dfuzz.s1=").$(modeS1)
+                    .I$();
             queryPool.start(LOG);
             writerPool.start(LOG);
             try (
@@ -1091,6 +1129,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
         if (t.getCompositeDay() != null) {
             sb.append(" composite=").append(t.getCompositeDay());
         }
+        sb.append(" storage=").append(t.getStorage().describe());
         sb.append("):");
         for (int j = 0, n = t.getColumnCount(); j < n; j++) {
             FuzzColumn c = t.getColumn(j);
@@ -1181,6 +1220,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 .$(", parallelJoinRing=").$(config.getParallelJoinRingMaxSize())
                 .$(", parallelJoinDispatch=").$(config.getParallelJoinDispatchLimit())
                 .$(", parquetRowGroup=").$(config.getParquetRowGroupSize())
+                .$(", storage=").$(config.isStorageAxesEnabled())
                 .$();
         if (config.getHashJoinPayloadLayout() != null) {
             config.getHashJoinPayloadLayout().apply(node1.getConfigurationOverrides());
@@ -1443,6 +1483,12 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 .$(runner.getParallelJoinPartialReadStacked()).$(" stacked, ")
                 .$(runner.getParallelJoinPartialReadSwapped()).$(" swapped, ")
                 .$(runner.getParallelJoinPartialReadContinued()).$(" continued)")
+                .$();
+        LOG.info().$("fuzz parallel join storage: ").$(runner.getParallelJoinOverColumnTopKeys()).$(" executions over a column top join key, ")
+                .$(runner.getParallelJoinOverParquetColumnTops()).$(" over column tops in Parquet tables, ")
+                .$(runner.getParallelJoinOverNonPartitioned()).$(" over non-partitioned tables, ")
+                .$(runner.getParallelJoinOverNonWal()).$(" over non-WAL tables, ")
+                .$(runner.getParallelJoinOverDroppedColumns()).$(" over tables with a dropped column")
                 .$();
         LOG.info().$("fuzz map page axis: ").$(runner.getMapPageAxisRuns()).$(" comparisons").$();
         LOG.info().$("fuzz reference axis: ").$(runner.getReferenceAxisRuns()).$(" comparisons across ")

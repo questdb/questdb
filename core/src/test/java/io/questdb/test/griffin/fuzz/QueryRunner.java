@@ -280,6 +280,19 @@ public final class QueryRunner {
     private int parallelJoinPartialReadSwapped;
     private int parallelJoinAxisSwapCandidates;
     private int parallelJoinAxisSwapped;
+    // Executions of the parallel hash join, by the axis's pivot, over a query that reads a primary
+    // table of each storage shape (see FuzzStorage): a column top of a join key that the query names,
+    // column tops in Parquet partitions, a non-partitioned table, a non-WAL table and a dropped
+    // column. storagePatterns find each table in a query's text, lateJoinKeyPatterns its late join
+    // keys, null for a table without one.
+    private int parallelJoinOverColumnTopKeys;
+    private int parallelJoinOverDroppedColumns;
+    private int parallelJoinOverNonPartitioned;
+    private int parallelJoinOverNonWal;
+    private int parallelJoinOverParquetColumnTops;
+    private final Pattern[] lateJoinKeyPatterns;
+    private final Pattern[] storagePatterns;
+    private final ObjList<FuzzTable> storageTables;
     private final TextPlanSink planSink = new TextPlanSink();
     private final boolean primaryHasAnyParquet;
     private final Pattern[] primaryPatterns;
@@ -342,6 +355,20 @@ public final class QueryRunner {
         this.verifyCursor = verifyCursor;
         this.queryWorkerNamePrefix = queryWorkerNamePrefix;
         this.failureFf = engine.getConfiguration().getFilesFacade() instanceof FailureFileFacade ff ? ff : null;
+        this.storageTables = tables;
+        this.storagePatterns = new Pattern[tables.size()];
+        this.lateJoinKeyPatterns = new Pattern[tables.size()];
+        for (int i = 0, n = tables.size(); i < n; i++) {
+            final FuzzTable t = tables.getQuick(i);
+            storagePatterns[i] = Pattern.compile("(?i)\\b" + Pattern.quote(t.getName()) + "\\b");
+            final StringBuilder keys = new StringBuilder();
+            for (String key : new String[]{"sym", "k", "lk", "vk"}) {
+                if (t.getStorage().isLate(key)) {
+                    keys.append(keys.length() > 0 ? "|" : "").append(key);
+                }
+            }
+            lateJoinKeyPatterns[i] = keys.length() > 0 ? Pattern.compile("(?i)\\b(" + keys + ")\\b") : null;
+        }
         final ObjList<FaultType> offered = new ObjList<>();
         if (failureFf != null) {
             offered.add(FaultType.FILE);
@@ -499,6 +526,26 @@ public final class QueryRunner {
      */
     public int getParallelJoinAxisSwapped() {
         return parallelJoinAxisSwapped;
+    }
+
+    public int getParallelJoinOverColumnTopKeys() {
+        return parallelJoinOverColumnTopKeys;
+    }
+
+    public int getParallelJoinOverDroppedColumns() {
+        return parallelJoinOverDroppedColumns;
+    }
+
+    public int getParallelJoinOverNonPartitioned() {
+        return parallelJoinOverNonPartitioned;
+    }
+
+    public int getParallelJoinOverNonWal() {
+        return parallelJoinOverNonWal;
+    }
+
+    public int getParallelJoinOverParquetColumnTops() {
+        return parallelJoinOverParquetColumnTops;
     }
 
     /**
@@ -1931,6 +1978,33 @@ public final class QueryRunner {
         }
     }
 
+    // Counts the storage shapes of the primary tables that a query, which the parallel hash join ran,
+    // reads, each once per query.
+    private void countStorageShapes(String sql) {
+        boolean hasColumnTopKey = false;
+        boolean hasDroppedColumn = false;
+        boolean hasNonPartitioned = false;
+        boolean hasNonWal = false;
+        boolean hasParquetColumnTops = false;
+        for (int i = 0, n = storageTables.size(); i < n; i++) {
+            if (!storagePatterns[i].matcher(sql).find()) {
+                continue;
+            }
+            final FuzzTable t = storageTables.getQuick(i);
+            final FuzzStorage storage = t.getStorage();
+            hasColumnTopKey |= lateJoinKeyPatterns[i] != null && lateJoinKeyPatterns[i].matcher(sql).find();
+            hasDroppedColumn |= storage.hasDroppedColumn();
+            hasNonPartitioned |= !storage.isPartitioned();
+            hasNonWal |= !storage.isWal();
+            hasParquetColumnTops |= storage.hasColumnTops() && t.getParquetMode() != ParquetMode.NONE;
+        }
+        parallelJoinOverColumnTopKeys += hasColumnTopKey ? 1 : 0;
+        parallelJoinOverDroppedColumns += hasDroppedColumn ? 1 : 0;
+        parallelJoinOverNonPartitioned += hasNonPartitioned ? 1 : 0;
+        parallelJoinOverNonWal += hasNonWal ? 1 : 0;
+        parallelJoinOverParquetColumnTops += hasParquetColumnTops ? 1 : 0;
+    }
+
     /**
      * The parallel join axis applies to the row-producing equi-join shape only, and only when the
      * parallel hash join is available to the pivot. The serial control arm disables it, so both
@@ -1985,6 +2059,7 @@ public final class QueryRunner {
                 if (bJ.isParallelHashJoinSwapped) {
                     parallelJoinAxisSwapped++;
                 }
+                countStorageShapes(query.sql());
             }
         }
         if (bJ.failure == null && bP.failure == null) {

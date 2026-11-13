@@ -212,6 +212,93 @@ public class AsyncHashJoinPerformancePropertiesTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNoHeapAllocationPerRowGroupInFusedGroupByOverParquetBuildPayload() throws Exception {
+        // The fused GROUP BY's probe tasks read the build's payload from its Parquet row groups, which
+        // no copy holds, through the same readers as the join's. An execution after the first ones
+        // allocates no more for a build of ten times as many row groups: the readers decode into the
+        // buffers of the executions before.
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MAX_SIZE, 0);
+        assertMemoryLeak(() -> {
+            createTables();
+            sqlExecutionContext.changePageFrameSizes(1_000, 1_000);
+            final long[] allocated = new long[2];
+            final int[] rowGroupSizes = {1_000, 100};
+            for (int i = 0; i < rowGroupSizes.length; i++) {
+                setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, rowGroupSizes[i]);
+                final String build = "dp" + rowGroupSizes[i];
+                execute("CREATE TABLE " + build + " AS (SELECT (x % 1_800)::INT k, x w, timestamp_sequence('2024-01-01', 20_000_000) dts"
+                        + " FROM long_sequence(5_000)) TIMESTAMP(dts) PARTITION BY DAY");
+                execute("ALTER TABLE " + build + " CONVERT PARTITION TO PARQUET WHERE dts >= 0");
+                final String sql = "SELECT t.s, sum(" + build + ".w) sw, count() c FROM t JOIN " + build + " ON t.k = " + build + ".k";
+                try (
+                        RecordCursorFactory factory = select(sql);
+                        TestUtils.ThreadMetricsScope<com.sun.management.ThreadMXBean> scope = TestUtils.threadAllocationScope()
+                ) {
+                    final AsyncHashJoinGroupByRecordCursorFactory fused = findFused(factory);
+                    Assert.assertNotNull(sql, fused);
+                    final RecordMetadata metadata = factory.getMetadata();
+                    long minAllocated = Long.MAX_VALUE;
+                    long rows = 0;
+                    for (int attempt = 0; attempt < 12; attempt++) {
+                        final long before = scope.getBean().getCurrentThreadAllocatedBytes();
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            final Record record = cursor.getRecord();
+                            long count = 0;
+                            while (cursor.hasNext()) {
+                                count++;
+                                readRow(record, metadata);
+                            }
+                            rows = count;
+                            // The probe tasks read the payload from the Parquet frames.
+                            Assert.assertFalse(sql, fused.getAtom().getBuildingStage().isPayloadCopied());
+                        }
+                        minAllocated = Math.min(minAllocated, scope.getBean().getCurrentThreadAllocatedBytes() - before);
+                    }
+                    Assert.assertEquals(sql, 300, rows);
+                    allocated[i] = minAllocated;
+                }
+            }
+            Assert.assertEquals("allocated per execution at 1_000 and 100 rows per row group", allocated[0], allocated[1]);
+        });
+    }
+
+    @Test
+    public void testParquetDecodeChargesEachExecutionsMemoryLimit() throws Exception {
+        // The consumer's output reader decodes the build's Parquet row groups into buffers that it
+        // keeps from one execution to the next. Each execution charges the decode to its own
+        // per-query memory limit: the smallest limit that the query fits under is the same for a
+        // factory whose readers decode into new buffers and for one whose readers reuse the buffers
+        // of an execution before.
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MAX_SIZE, 0);
+        assertMemoryLeak(() -> {
+            createTables();
+            createVarSizeBuild("dvp");
+            createVarSizeBuild("dvn");
+            execute("ALTER TABLE dvp CONVERT PARTITION TO PARQUET WHERE dts >= 0");
+            sqlExecutionContext.changePageFrameSizes(1_000, 1_000);
+            final String sql = "SELECT t.v, dvp.w, dvp.vc FROM t LEFT JOIN dvp ON t.k = dvp.k";
+            final String expected = ordinary(sql, sqlExecutionContext);
+            try {
+                final long freshLimit = smallestFittingLimit(sql, expected, null);
+                // The same join over a native copy of the build decodes nothing, and fits under a
+                // smaller limit.
+                final String nativeSql = sql.replace("dvp", "dvn");
+                final long nativeLimit = smallestFittingLimit(nativeSql, ordinary(nativeSql, sqlExecutionContext), null);
+                Assert.assertTrue("Parquet " + freshLimit + ", native " + nativeLimit, freshLimit > nativeLimit);
+                try (RecordCursorFactory factory = select(sql)) {
+                    Assert.assertNotNull(find(factory));
+                    // An execution without a limit leaves the readers' buffers to the next one.
+                    Assert.assertEquals(expected, result(factory, sqlExecutionContext));
+                    Assert.assertEquals(freshLimit, smallestFittingLimit(sql, expected, factory));
+                }
+            } finally {
+                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
+            }
+        });
+    }
+
+    @Test
     public void testNoHeapAllocationPerRowOverStacks() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
@@ -283,6 +370,52 @@ public class AsyncHashJoinPerformancePropertiesTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    // The smallest per-query memory limit, to the byte, that the query returns its rows under, on the
+    // given factory, or on a new factory for each limit when it is null; every larger limit fits too.
+    private static long smallestFittingLimit(String sql, String expected, RecordCursorFactory factory) throws Exception {
+        long lo = 0;
+        long hi = 256 * 1024 * 1024;
+        Assert.assertTrue(isFitting(sql, expected, factory, hi));
+        while (hi - lo > 1) {
+            final long mid = (lo + hi) >>> 1;
+            if (isFitting(sql, expected, factory, mid)) {
+                hi = mid;
+            } else {
+                lo = mid;
+            }
+        }
+        return hi;
+    }
+
+    private static boolean isFitting(String sql, String expected, RecordCursorFactory factory, long limit) throws Exception {
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, limit);
+        try {
+            if (factory != null) {
+                Assert.assertEquals(expected, result(factory, sqlExecutionContext));
+            } else {
+                try (RecordCursorFactory fresh = select(sql)) {
+                    Assert.assertEquals(expected, result(fresh, sqlExecutionContext));
+                }
+            }
+            return true;
+        } catch (io.questdb.cairo.CairoException e) {
+            Assert.assertTrue(e.getMessage(), e.isOutOfMemory());
+            TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+            return false;
+        } finally {
+            setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
+        }
+    }
+
+    private static AsyncHashJoinGroupByRecordCursorFactory findFused(RecordCursorFactory factory) {
+        for (RecordCursorFactory f = factory; f != null; f = f.getBaseFactory()) {
+            if (f instanceof AsyncHashJoinGroupByRecordCursorFactory fused) {
+                return fused;
+            }
+        }
+        return null;
     }
 
     // The rows of d, with var-size payload columns.

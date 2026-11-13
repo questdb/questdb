@@ -2531,6 +2531,38 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testParallelHashJoinAloneKeepsSharedQueryPool() throws Exception {
+        // Every other parallel SQL kind is off. The parallel hash join runs on the shared query pool,
+        // and a context with no query workers turns it off, so the pool must start for it.
+        final Properties properties = parallelSqlKindsOff();
+        properties.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_ENABLED.getPropertyPath(), "true");
+        final PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelHashJoinEnabled());
+        Assert.assertEquals(4, configuration.getSharedWorkerPoolQueryConfiguration().getWorkerCount());
+    }
+
+    @Test
+    public void testSharedQueryPoolFollowsParallelSqlKinds() throws Exception {
+        // With every parallel SQL kind off, the server starts no query worker.
+        Properties properties = parallelSqlKindsOff();
+        Assert.assertEquals(0, newPropServerConfiguration(properties).getSharedWorkerPoolQueryConfiguration().getWorkerCount());
+        // Any one kind on its own keeps the 4 configured workers. The parallel hash join has a test
+        // of its own, testParallelHashJoinAloneKeepsSharedQueryPool.
+        for (PropertyKey kind : new PropertyKey[]{
+                PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED,
+                PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED,
+                PropertyKey.CAIRO_SQL_PARALLEL_HORIZON_JOIN_ENABLED,
+                PropertyKey.CAIRO_SQL_PARALLEL_READ_PARQUET_ENABLED,
+                PropertyKey.CAIRO_SQL_PARALLEL_TOP_K_ENABLED,
+                PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_JOIN_ENABLED,
+        }) {
+            properties = parallelSqlKindsOff();
+            properties.setProperty(kind.getPropertyPath(), "true");
+            Assert.assertEquals(kind.getPropertyPath(), 4, newPropServerConfiguration(properties).getSharedWorkerPoolQueryConfiguration().getWorkerCount());
+        }
+    }
+
+    @Test
     public void testParallelHashJoinTaskOutputMaxRows() throws Exception {
         Properties properties = new Properties();
         // The default follows cairo.sql.page.frame.max.rows.
@@ -3628,6 +3660,24 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(configuration.getPoolName(), expectedMaxLiveCount, configuration.getFiberMaxLiveCount());
         Assert.assertEquals(configuration.getPoolName(), expectedRetainedCount, configuration.getFiberRetainedCount());
         Assert.assertEquals(configuration.getPoolName(), 64, configuration.getFiberMountBudget());
+    }
+
+    // 4 shared query workers and every parallel SQL kind off.
+    private static Properties parallelSqlKindsOff() {
+        final Properties properties = new Properties();
+        properties.setProperty(PropertyKey.SHARED_QUERY_WORKER_COUNT.getPropertyPath(), "4");
+        for (PropertyKey kind : new PropertyKey[]{
+                PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED,
+                PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED,
+                PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_ENABLED,
+                PropertyKey.CAIRO_SQL_PARALLEL_HORIZON_JOIN_ENABLED,
+                PropertyKey.CAIRO_SQL_PARALLEL_READ_PARQUET_ENABLED,
+                PropertyKey.CAIRO_SQL_PARALLEL_TOP_K_ENABLED,
+                PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_JOIN_ENABLED,
+        }) {
+            properties.setProperty(kind.getPropertyPath(), "false");
+        }
+        return properties;
     }
 
     private static WorkerPoolConfiguration workerPoolConfiguration(int workerCount) {

@@ -54,6 +54,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.Arrays;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
@@ -251,6 +252,104 @@ public class PGAsyncHashJoinFailureTest extends BasePGTest {
         });
     }
 
+    // Four connections run one cached stack whose first join swaps while its left input is the
+    // smaller one, while another connection inserts rows into that input, past the size of the right
+    // one, so that the cached factory's orientation flips between executions. The inserted rows match
+    // no key, so every execution returns the same rows, in the order of the orientation that its
+    // snapshot gives: the ordinary plan's order before the insert, or after it.
+    @Test
+    public void testSwapFlipsWhileConnectionsShareTheCachedStack() throws Exception {
+        assertMemoryLeak(() -> {
+            final String sql = "SELECT l.v, r.w, e.ew FROM l JOIN r ON l.k = r.k LEFT JOIN e ON l.k = e.k";
+            final String createL = "CREATE TABLE l AS (SELECT (x % 30)::INT k, x v FROM long_sequence(100))";
+            final String insertL = "INSERT INTO l SELECT (-1 - x)::INT, -x FROM long_sequence(100)";
+            execute(createL);
+            execute("CREATE TABLE r AS (SELECT (x % 40)::INT k, x w FROM long_sequence(150))");
+            execute("CREATE TABLE e AS (SELECT (x % 20)::INT k, x ew FROM long_sequence(25))");
+            // The ordinary plan's rows: l, the smaller input, hashed, then, after the insert, r.
+            final String[] expected = new String[2];
+            withServer(false, false, WorkerPoolMode.LEGACY, port -> {
+                try (
+                        Connection connection = getConnection(Mode.EXTENDED, port, true, 1);
+                        PreparedStatement statement = connection.prepareStatement(sql)
+                ) {
+                    expected[0] = read(statement);
+                    execute(insertL);
+                    expected[1] = read(statement);
+                }
+            });
+            Assert.assertNotEquals(expected[0], expected[1]);
+            Assert.assertEquals(sortedLines(expected[0]), sortedLines(expected[1]));
+            Assert.assertTrue(expected[0].length() > 1_000);
+            execute("DROP TABLE l");
+            execute(createL);
+            withServer(true, false, WorkerPoolMode.LEGACY, port -> {
+                final int connectionCount = 4;
+                final int iterationsBefore = 3;
+                final int iterationsAfter = 3;
+                final CyclicBarrier barrier = new CyclicBarrier(connectionCount + 1);
+                final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
+                final int[] afterCounts = new int[connectionCount];
+                final Thread[] threads = new Thread[connectionCount];
+                for (int t = 0; t < connectionCount; t++) {
+                    final int threadIndex = t;
+                    threads[t] = new Thread(() -> {
+                        try (
+                                Connection connection = getConnection(Mode.EXTENDED, port, threadIndex % 2 == 0, 1);
+                                PreparedStatement statement = connection.prepareStatement(sql)
+                        ) {
+                            // Before the insert, every execution hashes l.
+                            for (int i = 0; i < iterationsBefore; i++) {
+                                TestUtils.assertEquals(expected[0], read(statement));
+                            }
+                            barrier.await(60, TimeUnit.SECONDS);
+                            // While the insert runs, an execution's snapshot holds l before or after it,
+                            // and once a connection read the rows after it, it never reads the rows
+                            // before it again.
+                            boolean isAfter = false;
+                            for (int i = 0; i < iterationsAfter || !isAfter; i++) {
+                                Assert.assertTrue("the rows after the insert never came", i < 10_000);
+                                final String rows = read(statement);
+                                if (rows.equals(expected[1])) {
+                                    isAfter = true;
+                                    afterCounts[threadIndex]++;
+                                } else {
+                                    Assert.assertFalse("read the rows before the insert after the rows after it", isAfter);
+                                    TestUtils.assertEquals(expected[0], rows);
+                                }
+                            }
+                        } catch (Throwable th) {
+                            errors.add(th);
+                            barrier.reset();
+                        }
+                    }, "pg-client-" + t);
+                    threads[t].start();
+                }
+                try (Connection connection = getConnection(Mode.EXTENDED, port, true, 1)) {
+                    barrier.await(60, TimeUnit.SECONDS);
+                    try (Statement statement = connection.createStatement()) {
+                        statement.execute(insertL);
+                    }
+                } finally {
+                    for (Thread thread : threads) {
+                        thread.join(TimeUnit.SECONDS.toMillis(120));
+                    }
+                }
+                for (Throwable error : errors) {
+                    throw new AssertionError(error);
+                }
+                for (int t = 0; t < connectionCount; t++) {
+                    Assert.assertTrue(afterCounts[t] > 0);
+                }
+                try (Connection connection = getConnection(Mode.EXTENDED, port, true, 1)) {
+                    final String plan = explain(connection, sql, null);
+                    Assert.assertTrue(plan, plan.contains("Hash Join workers:"));
+                    Assert.assertTrue(plan, plan.contains("inputSwap:"));
+                }
+            });
+        });
+    }
+
     @Test
     public void testDisconnectMidStreamOnFiberOwner() throws Exception {
         assertDisconnectMidStream(true, WorkerPoolMode.FIBER_HOST);
@@ -319,6 +418,12 @@ public class PGAsyncHashJoinFailureTest extends BasePGTest {
 
     private static boolean isOnStack(String className, String methodName) {
         return STACK_WALKER.walk(frames -> frames.anyMatch(frame -> frame.getClassName().equals(className) && frame.getMethodName().equals(methodName)));
+    }
+
+    private static String sortedLines(String text) {
+        final String[] lines = text.split("\n");
+        Arrays.sort(lines);
+        return String.join("\n", lines);
     }
 
     private static String read(PreparedStatement statement) throws SQLException {

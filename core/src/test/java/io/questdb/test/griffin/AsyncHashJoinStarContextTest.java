@@ -152,6 +152,54 @@ public class AsyncHashJoinStarContextTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testViewsAndDistinct() throws Exception {
+        // A view's stored SQL, parsed again for every query over it, plans the star as the query
+        // would: under a filter, count, GROUP BY, ORDER BY with LIMIT and a negative LIMIT, DISTINCT,
+        // and in a CTE that the view joins again. ALTER VIEW stores another star, which every query
+        // then reads.
+        assertMemoryLeak(() -> {
+            createTables();
+            sqlExecutionContext.changePageFrameSizes(3, 3);
+            execute("CREATE VIEW vs AS (" + STAR + ")");
+            final String[] overView = {
+                    "SELECT * FROM vs",
+                    "SELECT * FROM vs WHERE v % 3 = 0",
+                    "SELECT * FROM vs WHERE gw IS NULL",
+                    "SELECT count(*) FROM vs",
+                    "SELECT k, count(*), sum(w) FROM vs ORDER BY k",
+                    "WITH c AS (SELECT * FROM vs WHERE k > 1) SELECT c.v, c.w, d.w FROM c JOIN d ON c.k = d.k",
+                    "SELECT * FROM vs ORDER BY ts DESC LIMIT 7",
+                    "SELECT * FROM vs LIMIT -5",
+                    "SELECT DISTINCT k, w FROM vs ORDER BY k, w",
+            };
+            for (String sql : overView) {
+                assertParallelHashJoin(sql, sqlExecutionContext);
+            }
+            // DISTINCT over a star and over a LEFT join of its own.
+            assertParallelHashJoin("SELECT DISTINCT d.w, e.ev FROM (" + STAR + ") j JOIN d ON j.k = d.k LEFT JOIN e ON j.k = e.k ORDER BY 1, 2", sqlExecutionContext);
+            assertParallelHashJoin("SELECT DISTINCT t.sym, g.gw FROM t LEFT JOIN g ON t.sym = g.sym ORDER BY 1, 2", sqlExecutionContext);
+            // The view, altered to a swapped star, which the queries over it read.
+            execute("ALTER VIEW vs AS (" + SWAPPED + ")");
+            for (String sql : new String[]{
+                    "SELECT * FROM vs",
+                    "SELECT * FROM vs WHERE ev IS NULL",
+                    "SELECT count(*) FROM vs",
+                    "SELECT w, count(*) FROM vs ORDER BY w",
+                    "SELECT DISTINCT w, ev FROM vs ORDER BY w, ev",
+            }) {
+                final String plan = assertParallelHashJoin(sql, sqlExecutionContext);
+                // The swapped star reads e, and the first star's g no more.
+                Assert.assertFalse(plan, plan.contains("scan on: g"));
+                TestUtils.assertContains(plan, "scan on: e");
+            }
+            try (RecordCursorFactory factory = select("SELECT * FROM vs")) {
+                Assert.assertNotNull(find(factory));
+                TestUtils.assertEquals("w\tts\tv\tev\n", columnNames(factory));
+            }
+        });
+    }
+
+    @Test
     public void testTimeSeriesJoinsOverAndUnderTheJoin() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
@@ -171,6 +219,14 @@ public class AsyncHashJoinStarContextTest extends AbstractCairoTest {
                 Assert.assertTrue(plan, plan.contains("AsOf Join") || plan.contains("Lt Join"));
             }
         });
+    }
+
+    private static String columnNames(RecordCursorFactory factory) {
+        final StringBuilder names = new StringBuilder();
+        for (int i = 0, n = factory.getMetadata().getColumnCount(); i < n; i++) {
+            names.append(factory.getMetadata().getColumnName(i)).append(i < n - 1 ? '\t' : '\n');
+        }
+        return names.toString();
     }
 
     private static void assertSameRows(String expectedTable, String actualTable) throws Exception {

@@ -24,6 +24,7 @@
 
 package io.questdb.test;
 
+import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
@@ -73,6 +74,50 @@ public class ServerMainAsyncHashJoinTest extends AbstractBootstrapTest {
         super.setUp();
         unchecked(() -> createDummyConfiguration());
         dbPath.parent().$();
+    }
+
+    @Test
+    public void testHashJoinAloneStartsQueryWorkers() throws Exception {
+        // server.conf turns every parallel SQL kind off but the parallel hash join, which then still
+        // runs on the shared query workers, as the configuration documents.
+        createDummyConfiguration(
+                PropertyKey.SHARED_QUERY_WORKER_COUNT.getPropertyPath() + "=4",
+                PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED.getPropertyPath() + "=false",
+                PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED.getPropertyPath() + "=false",
+                PropertyKey.CAIRO_SQL_PARALLEL_HORIZON_JOIN_ENABLED.getPropertyPath() + "=false",
+                PropertyKey.CAIRO_SQL_PARALLEL_READ_PARQUET_ENABLED.getPropertyPath() + "=false",
+                PropertyKey.CAIRO_SQL_PARALLEL_TOP_K_ENABLED.getPropertyPath() + "=false",
+                PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_JOIN_ENABLED.getPropertyPath() + "=false",
+                PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_ENABLED.getPropertyPath() + "=true"
+        );
+        assertMemoryLeak(() -> {
+            try (ServerMain serverMain = new ServerMain(getServerMainArgs())) {
+                serverMain.start();
+                Assert.assertTrue(serverMain.getEngine().getConfiguration().isSqlParallelHashJoinEnabled());
+                Assert.assertEquals(4, serverMain.getConfiguration().getSharedWorkerPoolQueryConfiguration().getWorkerCount());
+                try (
+                        Connection connection = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
+                        Statement statement = connection.createStatement()
+                ) {
+                    statement.execute("CREATE TABLE f AS (SELECT (x % 10)::INT k, x v, timestamp_sequence('2024-01-01', 1_000_000) ts"
+                            + " FROM long_sequence(100)) TIMESTAMP(ts) PARTITION BY DAY");
+                    statement.execute("CREATE TABLE d AS (SELECT x::INT k, x w FROM long_sequence(5))");
+                    final StringSink plan = new StringSink();
+                    try (ResultSet resultSet = statement.executeQuery("EXPLAIN SELECT f.v, d.w FROM f JOIN d ON f.k = d.k")) {
+                        while (resultSet.next()) {
+                            plan.put(resultSet.getString(1)).put('\n');
+                        }
+                    }
+                    TestUtils.assertContains(plan, "Async Hash Join workers: 4");
+                    // Keys 1 to 5 match d, 10 fact rows each.
+                    try (ResultSet resultSet = statement.executeQuery("SELECT count(*), sum(d.w) FROM f JOIN d ON f.k = d.k")) {
+                        Assert.assertTrue(resultSet.next());
+                        Assert.assertEquals(50, resultSet.getLong(1));
+                        Assert.assertEquals(150, resultSet.getLong(2));
+                    }
+                }
+            }
+        });
     }
 
     @Test
