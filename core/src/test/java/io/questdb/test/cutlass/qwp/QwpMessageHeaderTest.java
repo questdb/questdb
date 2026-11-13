@@ -302,6 +302,56 @@ public class QwpMessageHeaderTest {
     }
 
     @Test
+    public void testRecognizesExactRollbackFrame() {
+        byte[] header = createValidHeader(VERSION, ROLLBACK_FRAME_FLAGS, 0, 0);
+        long addr = Unsafe.malloc(HEADER_SIZE, MemoryTag.NATIVE_DEFAULT);
+        try {
+            for (int i = 0; i < header.length; i++) {
+                Unsafe.putByte(addr + i, header[i]);
+            }
+            Assert.assertTrue(QwpMessageHeader.isRollback(addr, HEADER_SIZE));
+            Assert.assertFalse(QwpMessageHeader.isRollback(addr, HEADER_SIZE - 1));
+            // A longer frame carries a payload the rollback arm would never process.
+            Assert.assertFalse(QwpMessageHeader.isRollback(addr, HEADER_SIZE + 1));
+
+            Unsafe.putByte(addr + HEADER_OFFSET_TABLE_COUNT, (byte) 1);
+            Assert.assertFalse(QwpMessageHeader.isRollback(addr, HEADER_SIZE));
+            Unsafe.putByte(addr + HEADER_OFFSET_TABLE_COUNT, (byte) 0);
+
+            Unsafe.putInt(addr + HEADER_OFFSET_MAGIC, MAGIC_MESSAGE + 1);
+            Assert.assertFalse(QwpMessageHeader.isRollback(addr, HEADER_SIZE));
+            Unsafe.putInt(addr + HEADER_OFFSET_MAGIC, MAGIC_MESSAGE);
+
+            Unsafe.putByte(addr + HEADER_OFFSET_VERSION, (byte) (VERSION + 1));
+            Assert.assertFalse(QwpMessageHeader.isRollback(addr, HEADER_SIZE));
+            Unsafe.putByte(addr + HEADER_OFFSET_VERSION, VERSION);
+
+            Unsafe.putInt(addr + HEADER_OFFSET_PAYLOAD_LENGTH, 1);
+            Assert.assertFalse(QwpMessageHeader.isRollback(addr, HEADER_SIZE));
+            Unsafe.putInt(addr + HEADER_OFFSET_PAYLOAD_LENGTH, 0);
+
+            Assert.assertTrue(QwpMessageHeader.isRollback(addr, HEADER_SIZE));
+
+            // FLAG_ROLLBACK alone, without the defer bit, is not the rollback frame:
+            // an older server would read it as a commit.
+            Unsafe.putByte(addr + HEADER_OFFSET_FLAGS, FLAG_ROLLBACK);
+            Assert.assertFalse(QwpMessageHeader.isRollback(addr, HEADER_SIZE));
+            // A superset of the flags is refused too: a bitmask test would let a
+            // frame that also asks for delta symbols discard the transaction.
+            Unsafe.putByte(addr + HEADER_OFFSET_FLAGS, (byte) (ROLLBACK_FRAME_FLAGS | FLAG_DELTA_SYMBOL_DICT));
+            Assert.assertFalse(QwpMessageHeader.isRollback(addr, HEADER_SIZE));
+            Unsafe.putByte(addr + HEADER_OFFSET_FLAGS, FLAG_DEFER_COMMIT);
+            Assert.assertFalse(QwpMessageHeader.isRollback(addr, HEADER_SIZE));
+            // The rollback frame is still a deferred frame to code that predates it.
+            Unsafe.putByte(addr + HEADER_OFFSET_FLAGS, ROLLBACK_FRAME_FLAGS);
+            Assert.assertTrue(QwpMessageHeader.isDeferCommit(addr, HEADER_SIZE));
+            Assert.assertFalse(QwpMessageHeader.isDurableAckPoll(addr, HEADER_SIZE));
+        } finally {
+            Unsafe.free(addr, HEADER_SIZE, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
     public void testReset() throws QwpParseException {
         byte[] header1 = createValidHeader(1, FLAG_GORILLA, 10, 5000);
         byte[] header2 = createValidHeader(1, FLAG_DELTA_SYMBOL_DICT, 3, 100);

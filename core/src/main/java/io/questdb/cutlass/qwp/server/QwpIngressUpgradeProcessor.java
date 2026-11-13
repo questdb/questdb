@@ -223,6 +223,12 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
     private final int maxResponseContentLength;
     private final boolean qwpBrowserTlsTerminationEnabled;
     private final int recvBufferSize;
+    // Pre-rendered transaction headers of the 101 response: always the
+    // X-QWP-Max-Uncommitted-Rows cap, and X-QWP-Rollback: enabled for a client
+    // that asked for rollback. Config-fixed, so cached like
+    // effectiveMaxBatchSizeBytes.
+    private final byte[] transactionHeaderBytes;
+    private final byte[] transactionRollbackHeaderBytes;
 
     public QwpIngressUpgradeProcessor(CairoEngine engine, HttpFullFatServerConfiguration httpConfiguration) {
         this.engine = engine;
@@ -247,6 +253,13 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 ? Integer.toString(effectiveMaxBatchSize).getBytes(StandardCharsets.US_ASCII)
                 : null;
         this.maxResponseContentLength = httpConfiguration.getSendBufferSize();
+        // Advertise the per-table cap on uncommitted rows, past which the server
+        // commits a deferred-commit group on its own, so a client can keep a
+        // transaction under it instead of having it committed in parts.
+        final String maxUncommittedRowsHeader = "\r\nX-QWP-Max-Uncommitted-Rows: " + lineConfiguration.getQwpMaxUncommittedRows();
+        this.transactionHeaderBytes = maxUncommittedRowsHeader.getBytes(StandardCharsets.US_ASCII);
+        this.transactionRollbackHeaderBytes = (maxUncommittedRowsHeader + "\r\nX-QWP-Rollback: enabled")
+                .getBytes(StandardCharsets.US_ASCII);
     }
 
     /**
@@ -557,10 +570,17 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             LOG.info().$("QWP durable ACK requested over the browser subprotocol but the registry is disabled [fd=")
                     .$(context.getFd()).I$();
         }
+        // The rollback control frame is accepted on every connection; the
+        // confirmation goes only to a client that asked, so an older client's
+        // handshake carries no header it did not expect.
+        final Utf8Sequence rollbackHeader = requestHeader.getHeader(QwpIngressHttpProcessor.HEADER_X_QWP_REQUEST_ROLLBACK);
+        final byte[] transactionHeaders = rollbackHeader != null && Utf8s.equalsIgnoreCaseAscii("true", rollbackHeader)
+                ? transactionRollbackHeaderBytes
+                : transactionHeaderBytes;
         int requiredHandshakeSize = QwpIngressHttpProcessor.responseSize(
                 acceptKey, negotiatedVersion, null, durableAckConfirmToken, roleBytes,
                 effectiveMaxBatchSizeBytes, sessionCookieValueBytes,
-                durableAckWebSocketProtocolRequested, isQwpV1WebSocketProtocolSelected);
+                durableAckWebSocketProtocolRequested, isQwpV1WebSocketProtocolSelected, transactionHeaders);
         if (browserServerInfoRequested) {
             requiredHandshakeSize += BROWSER_SERVER_INFO_WS_FRAME_BYTES;
         }
@@ -591,7 +611,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         int bytesWritten = QwpIngressHttpProcessor.writeResponse(
                 bufferAddr, acceptKey, negotiatedVersion, null, durableAckConfirmToken, roleBytes,
                 effectiveMaxBatchSizeBytes, sessionCookieValueBytes,
-                durableAckWebSocketProtocolRequested, isQwpV1WebSocketProtocolSelected);
+                durableAckWebSocketProtocolRequested, isQwpV1WebSocketProtocolSelected, transactionHeaders);
         if (bytesWritten <= 0) {
             throw responseDoesNotFitSendBuffer(context.getFd(), "101 handshake response", bufferSize, requiredHandshakeSize);
         }
@@ -1661,6 +1681,25 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             }
             // The receive-loop tail performs the normal ACK/durable-ACK flush
             // once for this event, just as it does for a regular binary frame.
+            return;
+        }
+
+        if (QwpMessageHeader.isRollback(payload, length)) {
+            // The client discards its open transaction: roll back every row this
+            // connection holds uncommitted. A pending commit batch was committed
+            // at the top of this method, as for any frame that cannot join it, so
+            // only the deferred group goes. Once nothing is uncommitted, the OK ack
+            // for this sequence covers the group's withheld frames too, which lets
+            // a store-and-forward client trim them; flush it now, since those
+            // frames were never acked individually.
+            state.rollbackUncommitted();
+            state.setHighestProcessedSequence(seq);
+            LOG.debug().$("WebSocket rollback [fd=").$(context.getFd())
+                    .$(", seq=").$(seq).I$();
+            // Nothing clamps the watermark any more: the rollback cleared the
+            // deferred clamps, and an unresolved sequence returned above.
+            assert state.hasPendingAck();
+            trySendAck(context, state);
             return;
         }
 

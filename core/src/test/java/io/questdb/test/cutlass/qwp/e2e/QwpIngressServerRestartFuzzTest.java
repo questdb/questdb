@@ -26,6 +26,7 @@ package io.questdb.test.cutlass.qwp.e2e;
 
 import io.questdb.PropertyKey;
 import io.questdb.client.Sender;
+import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Os;
@@ -320,6 +321,31 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
                 assertTagsIntact();
             }
         });
+    }
+
+    @Test
+    public void testTransactionsCommitAndRollBackWhileServerBounces() throws Exception {
+        // One transactional sender commits, rolls back and resets transactions while
+        // another thread bounces the server. Transactions span several frames, so a bounce
+        // can land between a transaction's deferred frames, between them and its rollback
+        // frame, or inside a replay. Discarding a transaction must never block or fail
+        // the producer, and once the server is stable the table holds every committed
+        // transaction's rows exactly once (dedup collapses replays) and none of a
+        // discarded one's.
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        String mode = rnd.nextBoolean() ? "transaction=on;" : "transaction=strict;";
+        assertTransactionsAcrossBounces(rnd, mode, "", 400);
+    }
+
+    @Test
+    public void testTransactionsCommitInPartsWhileServerBounces() throws Exception {
+        // As above, with transaction=on and a client buffer of two 16 KiB segments, which
+        // holds about a thousand rows of a transaction: most transactions outgrow it, and
+        // the sender commits them in parts. A bounce can also land between the commit
+        // frame of a part and the frames behind it. A discarded transaction keeps exactly
+        // the parts it committed.
+        assertTransactionsAcrossBounces(TestUtils.generateRandom(LOG), "transaction=on;",
+                "sf_max_segment_bytes=16k;sf_max_total_bytes=32k;", 3_000);
     }
 
     @Test
@@ -655,6 +681,172 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
                 .noRandomAccess()
                 .expectSize()
                 .returns("count\n0\n");
+    }
+
+    // A transactional sender commits, rolls back and resets transactions of up to
+    // maxTransactionRows rows while another thread bounces the server. Once the server
+    // is stable, the table must hold exactly the rows of every committed transaction,
+    // and of every part a discarded transaction committed before it was discarded.
+    private void assertTransactionsAcrossBounces(
+            Rnd rnd,
+            String mode,
+            String clientBuffer,
+            int maxTransactionRows
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            createTargetTable();
+            int port = RestartableQwpServer.pickFreePort();
+            int bounces = 3 + rnd.nextInt(3);
+            // Store-and-forward on disk or in memory: replay works from either. The
+            // tests of this class share the temporary folder, so each needs its own name.
+            String sfTag = clientBuffer.isEmpty() ? "txn-bounces" : "txn-parts-bounces";
+            String sf = rnd.nextBoolean() ? "sf_dir=" + freshSfDir(sfTag) + ";" : "";
+            // A small row trigger makes most transactions span several deferred frames.
+            String connect = "ws::addr=localhost:" + port + ";" + sf + mode + clientBuffer
+                    + "auto_flush_rows=100;reconnect_max_duration_millis=120000;close_flush_timeout_millis=120000;";
+            long producerSeed0 = rnd.nextLong();
+            long producerSeed1 = rnd.nextLong();
+            long tsBase = 1_700_000_000_000_000_000L;
+            LOG.info().$("transactions across bounces [bounces=").$(bounces).$(", connect=").$(connect).I$();
+
+            try (RestartableQwpServer server = new RestartableQwpServer(engine, configuration, port, recvChunk, sendChunk)) {
+                server.start();
+
+                AtomicBoolean stopProducer = new AtomicBoolean();
+                AtomicReference<Throwable> producerError = new AtomicReference<>();
+                AtomicReference<Throwable> bouncerError = new AtomicReference<>();
+                AtomicLong committedRows = new AtomicLong();
+                AtomicLong committedIdSum = new AtomicLong();
+                AtomicLong discardedRows = new AtomicLong();
+                // Transactions committed in parts, and those of them discarded afterwards.
+                AtomicLong partedTransactions = new AtomicLong();
+                AtomicLong partedDiscards = new AtomicLong();
+                CountDownLatch producerDone = new CountDownLatch(1);
+                CountDownLatch bouncerDone = new CountDownLatch(1);
+                CountDownLatch firstCommitAcked = new CountDownLatch(1);
+
+                Thread producer = new Thread(() -> {
+                    Rnd producerRnd = new Rnd(producerSeed0, producerSeed1);
+                    try (QwpWebSocketSender sender = (QwpWebSocketSender) Sender.fromConfig(connect)) {
+                        long id = 0;
+                        int transactions = 0;
+                        while (!stopProducer.get()) {
+                            int rows = 1 + producerRnd.nextInt(maxTransactionRows);
+                            // The first transaction always commits, so the table exists and
+                            // the oracle below never sees an empty sum.
+                            int action = firstCommitAcked.getCount() > 0 ? 0 : producerRnd.nextInt(3);
+                            if (!clientBuffer.isEmpty() && (transactions == 1 || transactions == 2)) {
+                                // The two after it are as large as it gets: the first is
+                                // rolled back and the second committed, so the small client
+                                // buffer commits both in parts.
+                                rows = maxTransactionRows;
+                                action = transactions == 1 ? 1 : 0;
+                            }
+                            transactions++;
+                            long firstId = id;
+                            writeRows(sender, firstId, rows, tsBase + firstId * 1000L);
+                            id += rows;
+                            // A transaction=on transaction the client buffer cannot hold
+                            // commits in parts as it goes: they hold its first rows.
+                            long committedPart = sender.getTxnRowsCommittedInPartsForTesting();
+                            if (committedPart > 0) {
+                                partedTransactions.incrementAndGet();
+                            }
+                            if (action == 0) {
+                                sender.flush();
+                                committedRows.addAndGet(rows);
+                                // ids firstId .. id - 1
+                                committedIdSum.addAndGet((firstId + id - 1) * rows / 2);
+                                if (firstCommitAcked.getCount() > 0) {
+                                    Assert.assertTrue("the first transaction must drain before the first bounce",
+                                            sender.drain(30_000));
+                                    firstCommitAcked.countDown();
+                                }
+                            } else {
+                                if (action == 1) {
+                                    sender.rollback();
+                                } else {
+                                    sender.reset();
+                                }
+                                // The parts committed stay: ids firstId .. firstId + committedPart - 1
+                                committedRows.addAndGet(committedPart);
+                                committedIdSum.addAndGet((2 * firstId + committedPart - 1) * committedPart / 2);
+                                discardedRows.addAndGet(rows - committedPart);
+                                if (committedPart > 0) {
+                                    partedDiscards.incrementAndGet();
+                                }
+                            }
+                            Os.sleep(producerRnd.nextInt(10));
+                        }
+                        Assert.assertTrue("everything committed must drain once the server is stable",
+                                sender.drain(120_000));
+                    } catch (Throwable t) {
+                        producerError.set(t);
+                    } finally {
+                        producerDone.countDown();
+                        Path.clearThreadLocals();
+                    }
+                }, "qwp-txn-producer");
+
+                Thread bouncer = new Thread(() -> {
+                    try {
+                        Assert.assertTrue("producer's first transaction never drained",
+                                firstCommitAcked.await(60, TimeUnit.SECONDS));
+                        for (int i = 0; i < bounces; i++) {
+                            server.stop();
+                            Os.sleep(30 + rnd.nextInt(50));   // 30..79 ms downtime
+                            server.start();
+                            Os.sleep(120 + rnd.nextInt(200)); // 120..319 ms uptime
+                        }
+                    } catch (Throwable t) {
+                        bouncerError.set(t);
+                    } finally {
+                        bouncerDone.countDown();
+                    }
+                }, "qwp-txn-bouncer");
+
+                producer.start();
+                bouncer.start();
+                if (!bouncerDone.await(120, TimeUnit.SECONDS)) {
+                    stopProducer.set(true);
+                    throw new AssertionError("bouncer did not finish within 120s");
+                }
+                if (bouncerError.get() != null) {
+                    stopProducer.set(true);
+                    throw new AssertionError("bouncer failed", bouncerError.get());
+                }
+                Os.sleep(200);
+                stopProducer.set(true);
+                if (!producerDone.await(180, TimeUnit.SECONDS)) {
+                    throw new AssertionError("producer did not finish within 180s");
+                }
+                if (producerError.get() != null) {
+                    throw new AssertionError("the producer must not fail across server bounces", producerError.get());
+                }
+                LOG.info().$("transactions across bounces done [committedRows=").$(committedRows.get())
+                        .$(", discardedRows=").$(discardedRows.get())
+                        .$(", partedTransactions=").$(partedTransactions.get())
+                        .$(", partedDiscards=").$(partedDiscards.get()).I$();
+                if (clientBuffer.isEmpty()) {
+                    Assert.assertEquals("the default client buffer holds every transaction", 0, partedTransactions.get());
+                } else {
+                    Assert.assertTrue("transactions must commit in parts", partedTransactions.get() >= 2);
+                    Assert.assertTrue("a transaction committed in parts must be discarded", partedDiscards.get() >= 1);
+                }
+
+                drainWalQueue();
+                engine.awaitTable(TABLE_NAME, 60, TimeUnit.SECONDS);
+                // Ids are distinct across transactions: a leaked discarded row raises the
+                // count, a lost committed row lowers it, and the sum catches a swap.
+                assertQuery("SELECT count() c, count_distinct(id) d, sum(id) s FROM " + TABLE_NAME)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("c\td\ts\n" + committedRows.get() + "\t" + committedRows.get() + "\t"
+                                + committedIdSum.get() + "\n");
+                assertTagsIntact();
+            }
+        });
     }
 
     private void createTargetTable() {

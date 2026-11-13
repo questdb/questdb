@@ -78,10 +78,11 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     // without a name of its own is a plain one-row frame, the common case.
     private static final int FUZZ_DATA_KINDS = 8;
     private static final int FUZZ_DEFERRED = 8;
-    private static final int FUZZ_KINDS = 11;
+    private static final int FUZZ_KINDS = 12;
     private static final int FUZZ_MALFORMED = 5;
     private static final int FUZZ_PING = 10;
     private static final int FUZZ_PLAIN = 0;
+    private static final int FUZZ_ROLLBACK = 11;
     private static final int FUZZ_ROWLESS_DEFERRED = 9;
     private static final int FUZZ_SCHEMA_MISMATCH = 6;
     private static final int FUZZ_TWO_BLOCKS = 4;
@@ -1550,6 +1551,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         final LongList frameErrorStatus = new LongList();
         final int frameCount = 2 + rnd.nextInt(10);
         int seq = 0;
+        // First sequence of the deferred group the next rollback discards: every
+        // frame since the last frame that committed.
+        int openGroupStart = 0;
         for (int f = 0; f < frameCount; f++) {
             int kind = rnd.nextInt(isDataErrorsOnly ? FUZZ_DATA_KINDS : FUZZ_KINDS);
             if ((cap < 1_000_000 && kind == FUZZ_TWO_BLOCKS) || (kind == FUZZ_DEFERRED && (cap < 1_000_000 || isCommitFaulty))) {
@@ -1586,6 +1590,14 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                     values.add(v);
                 }
                 case FUZZ_ROWLESS_DEFERRED -> message = rowlessDeferredMessage();
+                case FUZZ_ROLLBACK -> {
+                    // Discards the open deferred group, so its frames' rows never
+                    // commit even though the rollback's ack covers them.
+                    message = rollbackMessage();
+                    for (int s = openGroupStart; s < seq; s++) {
+                        frameValues.getQuick(s).clear();
+                    }
+                }
                 case FUZZ_PING -> {
                     // a control frame, no sequence
                     wireFrames.add(createMaskedFrame(WebSocketOpcode.PING, new byte[0]));
@@ -1600,6 +1612,10 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
             frameValues.add(values);
             frameErrorStatus.add(errorStatus);
             seq++;
+            if (kind != FUZZ_DEFERRED && kind != FUZZ_ROWLESS_DEFERRED) {
+                // A commit, a rollback, or a frame the server refuses ends the group.
+                openGroupStart = seq;
+            }
         }
         final int lastSeq = seq - 1;
         final byte[][] frames = toArray(wireFrames);

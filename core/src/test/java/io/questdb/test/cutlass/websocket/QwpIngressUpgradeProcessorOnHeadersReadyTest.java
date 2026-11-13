@@ -37,6 +37,7 @@ import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpRawSocket;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.LocalValue;
+import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.qwp.codec.QwpEgressMsgKind;
 import io.questdb.cutlass.qwp.codec.QwpServerInfoProvider;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
@@ -363,6 +364,21 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
             } finally {
                 Unsafe.free(bufferAddr, HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             }
+        });
+    }
+
+    @Test
+    public void testOnHeadersReadyAdvertisesTransactionLimits() throws Exception {
+        // Every 101 carries qwp.max.uncommitted.rows, so a client can keep a
+        // transaction under the cap at which the server commits it on its own. The
+        // rollback confirmation goes only to a client that asked for it: an older
+        // client gets no header it does not know.
+        assertMemoryLeak(() -> {
+            assertTransactionHeaders(null, false);
+            assertTransactionHeaders("true", true);
+            assertTransactionHeaders("TRUE", true);
+            assertTransactionHeaders("false", false);
+            assertTransactionHeaders("", false);
         });
     }
 
@@ -1051,6 +1067,47 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
             processor.onHeadersReady(context);
             processor.onRequestComplete(context);
             return context.getMockRawSocket().sentSize;
+        } finally {
+            Unsafe.free(bufferAddr, HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    private void assertTransactionHeaders(@Nullable String rollbackRequest, boolean isRollbackConfirmed) throws Exception {
+        final LineHttpProcessorConfiguration lineConfig = new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration) {
+            @Override
+            public long getQwpMaxUncommittedRows() {
+                return 12_345;
+            }
+        };
+        HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration) {
+            @Override
+            public LineHttpProcessorConfiguration getLineHttpProcessorConfiguration() {
+                return lineConfig;
+            }
+        };
+        QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+        long bufferAddr = Unsafe.malloc(HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+        try (
+                MockHttpRequestHeader header = new MockHttpRequestHeader();
+                TestableContext context = new TestableContext(httpConfig, header, new MockRawSocket(bufferAddr, HANDSHAKE_BUFFER_SIZE))
+        ) {
+            header.setHeader("Upgrade", "websocket");
+            header.setHeader("Connection", "Upgrade");
+            header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
+            header.setHeader("Sec-WebSocket-Version", "13");
+            if (rollbackRequest != null) {
+                header.setHeader("X-QWP-Request-Rollback", rollbackRequest);
+            }
+            processor.onHeadersReady(context);
+            processor.onRequestComplete(context);
+
+            String response = readResponse(bufferAddr, context.getMockRawSocket().sentSize);
+            Assert.assertTrue("response must advertise the uncommitted-rows cap, got: " + response,
+                    response.contains("\r\nX-QWP-Max-Uncommitted-Rows: 12345\r\n"));
+            Assert.assertEquals("rollback confirmation for request [" + rollbackRequest + "], got: " + response,
+                    isRollbackConfirmed, response.contains("\r\nX-QWP-Rollback: enabled\r\n"));
+            Assert.assertTrue("the response must still end the header block, got: " + response,
+                    response.endsWith("\r\n\r\n"));
         } finally {
             Unsafe.free(bufferAddr, HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
         }
