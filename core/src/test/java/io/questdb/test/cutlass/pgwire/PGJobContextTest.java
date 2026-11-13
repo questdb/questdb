@@ -8405,6 +8405,60 @@ nodejs code:
     }
 
     @Test
+    public void testPasswordMessageWrongType() throws Exception {
+        // the server requests a cleartext password; the protocol allows only a PasswordMessage ('p') in reply
+        final String[] wrongMessages = {
+                "5800000004", // Terminate
+                "5300000004", // Sync
+                "510000000d53454c454354203100", // Query "SELECT 1"
+                "000000000a717565737400", // the correct password under type 0x00
+        };
+        for (boolean isFiberEnabled : new boolean[]{true, false}) {
+            assertMemoryLeak(() -> {
+                final PGConfiguration configuration = new Port0PGConfiguration() {
+                    @Override
+                    public boolean isFiberEnabled() {
+                        return isFiberEnabled;
+                    }
+                };
+                try (
+                        PGServer server = createPGServer(configuration, true);
+                        WorkerPool workerPool = server.getWorkerPool()
+                ) {
+                    workerPool.start(LOG);
+                    for (String message : wrongMessages) {
+                        final long unhandledErrors = engine.getMetrics().healthMetrics().unhandledErrorsCount();
+                        NetUtils.playScript(
+                                NetworkFacadeImpl.INSTANCE,
+                                """
+                                        >0000000804d2162f
+                                        <4e
+                                        >0000007500030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000
+                                        <520000000800000003
+                                        >%s
+                                        <!!""".formatted(message),
+                                "127.0.0.1",
+                                server.getPort()
+                        );
+                        Assert.assertEquals(
+                                "fiber=" + isFiberEnabled + ", message=" + message,
+                                unhandledErrors,
+                                engine.getMetrics().healthMetrics().unhandledErrorsCount()
+                        );
+                    }
+                    try (
+                            Connection connection = getConnection(server.getPort(), true, false);
+                            ResultSet rs = connection.createStatement().executeQuery("SELECT 42 x")
+                    ) {
+                        Assert.assertTrue(rs.next());
+                        Assert.assertEquals(42, rs.getInt(1));
+                    }
+                }
+            });
+        }
+    }
+
+    @Test
     public void testPlanWithIndexAndBindingVariables() throws Exception {
         assertWithPgServer(CONN_AWARE_EXTENDED, (connection, _, _, _) -> {
             // columns:
