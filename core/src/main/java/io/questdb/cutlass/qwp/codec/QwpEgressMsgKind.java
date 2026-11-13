@@ -87,8 +87,11 @@ public final class QwpEgressMsgKind {
     public static final byte EXEC_DONE = 0x16;
     /**
      * {@code position} value of a {@code QUERY_ERROR} position trailer when the
-     * error does not point into the SQL text: a protocol error, a cancellation,
-     * a result that does not fit the send buffer.
+     * error does not point into the SQL text: a protocol error, a {@code CANCEL}
+     * the client sent, a result row that does not fit the send buffer. An error
+     * the SQL engine raises carries the position it attached, 0 when it attached
+     * none, as the {@code position} of /exec does. A query timeout and a
+     * cancellation on the server, such as {@code CANCEL QUERY}, are among them.
      */
     public static final int NO_ERROR_POSITION = -1;
     public static final byte QUERY_ERROR = 0x13;
