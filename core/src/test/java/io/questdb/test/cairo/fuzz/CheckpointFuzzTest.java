@@ -191,6 +191,16 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
+    public void testCheckpointCopyKeepsPostingIndexOfSplitPartitionOfNonWalTable() throws Exception {
+        assertCheckpointCopyKeepsPostingIndexOfSplitPartition("BYPASS WAL");
+    }
+
+    @Test
+    public void testCheckpointCopyKeepsPostingIndexOfSplitPartitionOfWalTable() throws Exception {
+        assertCheckpointCopyKeepsPostingIndexOfSplitPartition("WAL");
+    }
+
+    @Test
     public void testCheckpointCopyKeepsRebuiltPostingIndexOfColumnVersionOfNonWalTable() throws Exception {
         assertCheckpointCopyKeepsPostingIndexOfColumnVersion("BYPASS WAL", false);
     }
@@ -1117,6 +1127,72 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
         });
     }
 
+    // An out-of-order commit into the middle of a partition splits its tail off into a directory of its own, as
+    // out-of-order data does on a server, where merge-append is off. The split's partition timestamp is not the
+    // partition's floor, and an UPDATE gives the split a column version of its own: the restore keeps the chain of the
+    // version _cv names for the split's own timestamp.
+    private void assertCheckpointCopyKeepsPostingIndexOfSplitPartition(String walClause) throws Exception {
+        Assume.assumeFalse(Os.isWindows());
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s SYMBOL INDEX TYPE POSTING INCLUDE (v), v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY " + walClause);
+            // 00:00 to 07:00, every hour, 'a' on every even row
+            execute("""
+                    INSERT INTO x
+                    SELECT CASE WHEN x % 2 = 0 THEN 'a' ELSE 'b' END, x, timestamp_sequence('2024-01-01', 3_600_000_000L)
+                    FROM long_sequence(8)
+                    """);
+            drainWalQueue();
+            execute("INSERT INTO x VALUES ('a', 9, '2024-01-01T06:30')");
+            drainWalQueue();
+            execute("UPDATE x SET s = 'c' WHERE v = 9");
+            drainWalQueue();
+            try (TableReader reader = getReader("x")) {
+                final TxReader txFile = reader.getTxFile();
+                Assert.assertEquals(2, txFile.getPartitionCount());
+                final long splitTimestamp = txFile.getPartitionTimestampByIndex(1);
+                Assert.assertEquals(txFile.getPartitionTimestampByIndex(0), txFile.getLogicalPartitionTimestamp(splitTimestamp));
+                Assert.assertNotEquals(txFile.getPartitionTimestampByIndex(0), splitTimestamp);
+            }
+            // The column name txn _cv gives s, then 2024-01-01, then the split.
+            final long[] columnNameTxns = columnNameTxns("s");
+            Assert.assertTrue(Arrays.toString(columnNameTxns), columnNameTxns[2] > -1 && columnNameTxns[2] != columnNameTxns[1]);
+            final TableToken tableToken = engine.verifyTableName("x");
+            final String splitPartitionName = partitionDirName(1);
+            final long sealTxn = readPostingSealTxn(tableToken, splitPartitionName, "s", columnNameTxns[2]);
+            checkpointCreate(false, true);
+            checkpointRecover();
+            drainWalQueue();
+            assertNotSuspended(tableToken);
+
+            Assert.assertEquals(sealTxn, readPostingSealTxn(tableToken, splitPartitionName, "s", columnNameTxns[2]));
+            assertQuery("SELECT v, ts FROM x WHERE s = 'a'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanContaining("CoveringIndex on: s")
+                    .returns("""
+                            v\tts
+                            2\t2024-01-01T01:00:00.000000Z
+                            4\t2024-01-01T03:00:00.000000Z
+                            6\t2024-01-01T05:00:00.000000Z
+                            8\t2024-01-01T07:00:00.000000Z
+                            """);
+            assertQuery("SELECT v, ts FROM x WHERE s = 'c'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanContaining("CoveringIndex on: s")
+                    .returns("""
+                            v\tts
+                            9\t2024-01-01T06:30:00.000000Z
+                            """);
+        });
+    }
+
     // isPartitionVersioned: an out-of-order commit rewrites 2024-01-01 into a directory whose name carries a partition
     // name txn before the checkpoint, as out-of-order data does by default. The test setup turns merge-append, which
     // writes a composite piece instead, on, so the variant turns it off.
@@ -1561,11 +1637,15 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
     }
 
     private long readPostingSealTxn(TableToken tableToken, String partitionName, String columnName) {
+        return readPostingSealTxn(tableToken, partitionName, columnName, -1);
+    }
+
+    private long readPostingSealTxn(TableToken tableToken, String partitionName, String columnName, long columnNameTxn) {
         try (Path path = new Path()) {
             path.of(configuration.getDbRoot()).concat(tableToken).concat(partitionName);
             final long sealTxn = PostingIndexUtils.readSealTxnFromKeyFile(configuration.getFilesFacade(),
-                    PostingIndexUtils.keyFileName(path, columnName, -1));
-            Assert.assertTrue(sealTxn >= 0);
+                    PostingIndexUtils.keyFileName(path, columnName, columnNameTxn));
+            Assert.assertTrue(path.toString(), sealTxn >= 0);
             return sealTxn;
         }
     }
