@@ -97,10 +97,11 @@ public class ViewFuzzTest extends AbstractFuzzTest {
         // RENAME or DROP of the table follows at once while view compile workers run. Every DDL
         // succeeds: it waits for a compile run that holds the table instead of failing as busy.
         // A compile that meets the lock of a DDL leaves the views alone and retries once the busy
-        // retry timeout passed, so every view ends valid. TRUNCATE queues no compile of its own, so
-        // the PIVOT view over tp, which nothing ALTERs, keeps the status of its CREATE through the
-        // TRUNCATEs of tp. One session runs all DDLs; ViewOverNonWalTableTest pins what a DDL does
-        // when another session changes its table while it waits.
+        // retry timeout passed, so every view ends valid, with the columns of its SQL. TRUNCATE
+        // queues no compile of its own, so the PIVOT view over tp, which nothing ALTERs, keeps the
+        // status of its CREATE through the TRUNCATEs of tp. One session runs all DDLs;
+        // ViewOverNonWalTableTest pins what a DDL does when another session changes its table
+        // while it waits.
         assertMemoryLeak(() -> {
             final Rnd rnd = fuzzer.generateRandom(LOG);
             node1.setProperty(PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, Long.MAX_VALUE);
@@ -205,7 +206,7 @@ public class ViewFuzzTest extends AbstractFuzzTest {
 
             try {
                 // the busy retries of the compiles that met a lock are due, and the compiles that
-                // they and the DDLs queued leave every view valid
+                // they and the DDLs queued leave every view valid, with the columns of its SQL
                 setCurrentMicros(MicrosecondClockImpl.INSTANCE.getTicks() + busyRetryTimeoutMillis * 1_000 + 1);
                 drainViewQueue();
                 AbstractViewTest.assertPendingCompileBusyRetries("");
@@ -341,6 +342,10 @@ public class ViewFuzzTest extends AbstractFuzzTest {
                                 valid
                                 """);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, viewSqls.getQuick(i), viewName, LOG);
+                // A query of the view expands its SQL, so the rows match even when the last
+                // compile of the view went missing, such as a lost busy retry; the catalogue
+                // keeps the columns of the compile before it.
+                AbstractViewTest.assertViewColumnsOfQuery(viewName, viewSqls.getQuick(i));
             }
         }
     }

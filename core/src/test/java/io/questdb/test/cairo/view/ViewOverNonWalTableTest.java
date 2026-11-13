@@ -1984,13 +1984,6 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
                 && Chars.equals(tableToken.getTableName(), "t");
     }
 
-    // the view's columns in the catalogue are those of the query compiled now
-    private static void assertViewColumnsOfQuery(String viewName, String sql) throws SqlException {
-        try (RecordCursorFactory factory = select(sql)) {
-            assertViewColumns(viewName, columnsOf(factory.getMetadata()));
-        }
-    }
-
     private static void joinRun(ViewCompileParker run) {
         try {
             run.join();

@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.file.BlockFileReader;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.view.ViewDefinition;
@@ -120,6 +121,13 @@ class AbstractViewTest extends AbstractCairoTest {
     static void assertViewColumns(String viewName, String expectedColumns) {
         try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName(viewName))) {
             Assert.assertEquals(expectedColumns, columnsOf(metadata));
+        }
+    }
+
+    // the view's columns in the catalogue are those of the query compiled now
+    static void assertViewColumnsOfQuery(String viewName, String sql) throws SqlException {
+        try (RecordCursorFactory factory = select(sql)) {
+            assertViewColumns(viewName, columnsOf(factory.getMetadata()));
         }
     }
 
