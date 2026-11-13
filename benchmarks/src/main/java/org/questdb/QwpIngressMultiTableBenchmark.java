@@ -89,14 +89,22 @@ import java.util.concurrent.TimeUnit;
  *     <li>{@code 2T_2R}: two tables, every frame carries one row of each;</li>
  *     <li>{@code 1T_1000R}, {@code 2T_1000R}: 1,000-row frames of one or two tables.</li>
  * </ul>
- * The benchmark expects a QuestDB server on localhost: HTTP (QWP) on port 9000,
- * PostgreSQL wire on port 8812. Start it on tmpfs to keep the disk out of the
- * measurement, and pin it and the benchmark to separate cores, for example:
+ * The benchmark expects a QuestDB server on localhost: HTTP (QWP) on port 9000 and
+ * PostgreSQL wire on port 8812, or the ports that {@code -Dqdb.bench.http.port} and
+ * {@code -Dqdb.bench.pg.port} name (pass them to the fork with {@code -jvmArgsAppend}).
+ * Pin the server and the benchmark to separate cores, for example:
  * <pre>
  * taskset -c 0-11 java --add-exports java.base/jdk.internal.vm=io.questdb -p questdb.jar \
  *     -m io.questdb/io.questdb.ServerMain -d /dev/shm/qdb-bench
  * taskset -c 16-23 java -jar benchmarks.jar QwpIngressMultiTableBenchmark
  * </pre>
+ * The server's commit mode decides what the score means, and the benchmark cannot set
+ * it: run one server per mode, with {@code cairo.commit.mode} and, for ADAPTIVE,
+ * {@code cairo.adaptive.commit.group.window} (microseconds) in its {@code server.conf}
+ * or in the {@code QDB_CAIRO_COMMIT_MODE} and {@code QDB_CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW}
+ * environment variables. A root on tmpfs keeps the disk out of a NOSYNC measurement,
+ * but voids SYNC and ADAPTIVE ones, whose cost is the device flush: give those a root
+ * on a real disk.
  */
 @State(Scope.Benchmark)
 @BenchmarkMode(Mode.Throughput)
@@ -107,7 +115,8 @@ import java.util.concurrent.TimeUnit;
 public class QwpIngressMultiTableBenchmark {
     private static final long DRAIN_TIMEOUT_MILLIS = 120_000;
     private static final String HOST = "localhost";
-    private static final int HTTP_PORT = 9000;
+    private static final int HTTP_PORT = Integer.getInteger("qdb.bench.http.port", 9000);
+    private static final int PG_PORT = Integer.getInteger("qdb.bench.pg.port", 8812);
     private static final int ROWS_PER_INVOCATION = 1_000_000;
     private static final String TABLE_PREFIX = "qwp_mt_bench_";
     @Param({"raw", "java"})
@@ -201,7 +210,7 @@ public class QwpIngressMultiTableBenchmark {
         properties.setProperty("user", "admin");
         properties.setProperty("password", "quest");
         properties.setProperty("sslmode", "disable");
-        return DriverManager.getConnection("jdbc:postgresql://127.0.0.1:8812/qdb", properties);
+        return DriverManager.getConnection("jdbc:postgresql://127.0.0.1:" + PG_PORT + "/qdb", properties);
     }
 
     /**
