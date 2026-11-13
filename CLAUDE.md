@@ -14,14 +14,14 @@ time-series SQL extensions.
 
 Java class members are grouped by kind (static vs. instance) and visibility.
 
-Use the modern Java 17 features:
+Use modern Java features:
 
 - enhanced switch
 - multiline string literal
 - pattern variables in instanceof checks
 
-However, the java-questdb-client module targets Java 11. When writing code in
-the client module, use only legacy Java features.
+However, the java-questdb-client module targets Java 8, as its own CLAUDE.md
+says. When writing code in the client module, use only Java 8 features.
 
 Whenever dealing with column data, results of expressions, SQL statements, etc.,
 always consider what the behavior should be when something is NULL. Be careful
@@ -96,9 +96,7 @@ paste its output into the expectation.
      long values.
 2. **Types.** Test every column type the feature accepts, not only the common
    ones: SYMBOL, VARCHAR and STRING, CHAR, UUID, IPv4, LONG256, GEOHASH, each
-   DECIMAL width, arrays. JIT filter bugs 7546-7549 (UUID, IPv4, CHAR, SYMBOL
-   compared with a number) went unnoticed because nothing exercised those
-   types.
+   DECIMAL width, arrays.
 3. **Lines, branches and conditions.** Run the tests written for the change
    with coverage (`ci/diff_coverage.py`, below), read the lines, branches and
    conditions that never ran, and add tests that reach them; repeat until
@@ -106,7 +104,7 @@ paste its output into the expectation.
    count. A line that cannot run is proven unreachable and guarded with an
    assertion.
 4. **Every test can fail.** Write each test before the code it covers and see
-   it fail. Assert the exact result the code produces - the rows, the value,
+   it fail. Assert the exact expected result - the rows, the value,
    the error message and position, the resulting state - never only that
    something ran or did not throw. A test added to reach an uncovered line
    asserts what that line does, so that breaking the line fails the test.
@@ -122,13 +120,12 @@ paste its output into the expectation.
    After each failure, assert the error, that nothing leaked, and that the
    table or connection still works.
 
-   Hostile input must not crash or hang the server or leak its resources. Fix
-   such a failure in the change that introduces it. Report the rest -
-   pre-existing ones and those a review lets through - only as issues in
+   Hostile input must not crash or hang the server or exhaust its memory or
+   other resources. Fix such a failure in the change that introduces it.
+   Report the rest - pre-existing ones, and those `review-pr` sends to its
+   Adjacent findings instead of blocking the PR - only as issues in
    `questdb/questdb-enterprise` with the label `crash`, never in a public
-   repository, issue or comment: they show how to take a server down. When
-   `gh repo view questdb/questdb-enterprise` fails, as it does for OSS
-   contributors, show such issues in the console instead.
+   repository, issue or comment: they show how to take a server down.
 6. **Parsing and error messages.** Test every input the parser rejects with
    `assertException(sql, position, message)`: the position points at the
    offending character and the message tells the user what was expected.
@@ -184,7 +181,8 @@ paste its output into the expectation.
     deterministic test of its performance property: the plan shape
     (`assertsPlan`), no allocation per row, or a count of operations, IO calls
     or map resizes. Elapsed time is not a test; measure speed with a JMH
-    benchmark in `benchmarks/` and report the numbers in the PR.
+    benchmark in `benchmarks/`, whose results go in the PR body ("Git & PR
+    Conventions").
 
 ### Test integrity
 
@@ -200,9 +198,8 @@ paste its output into the expectation.
 
 `ci/diff_coverage.py` runs the named tests with coverage and lists the changed
 lines, branches and conditions they leave unexecuted: Java through JaCoCo, Rust
-through LLVM coverage, including Rust code that Java calls through JNI. Work
-the way CI's coverage report and IntelliJ's coverage runner allow: run the
-relevant tests once, read what never ran, write tests for it, then measure
+through LLVM coverage, including Rust code that Java calls through JNI. Run
+the relevant tests once, read what never ran, write tests for it, then measure
 only the new tests with `--append`. It adds their coverage to the previous
 run's and compiles only the changed files, so a large change never re-runs its
 whole test set to check a few new tests.
@@ -221,12 +218,12 @@ python3 ci/diff_coverage.py --base HEAD --tests FooTest
 python3 ci/diff_coverage.py --lang rust --tests none --rust-tests my_module
 ```
 
-Name the tests written for the change: coverage that only an unrelated test
-provides does not count. After changing production code, run without
-`--append` again; the script warns when earlier coverage may be stale. CI's
-coverage report (50% of changed lines, lines only) is a floor, not the target. The first run needs java-questdb-client
-installed (see "Building") and, for Rust, the `llvm-tools` component of the
-qdbr toolchain; the script prints the command when it is missing.
+Name the tests written for the change (item 3). After changing production code,
+run without `--append` again; the script warns when earlier coverage may be
+stale. CI's coverage threshold (lines only) is a floor, not the target. The
+first run needs java-questdb-client installed (see "Building") and, for Rust,
+the `llvm-tools` component of the qdbr toolchain; the script prints the command
+when it is missing.
 
 ### Writing tests
 
@@ -239,10 +236,8 @@ qdbr toolchain; the script prints the command when it is missing.
   a supported surface, add a small, documented test hook (an overridable
   method or a configuration property) or prove the path unreachable.
 - write all tests using assertMemoryLeak(). This isn't needed for narrow unit
-  tests that doesn't allocate native memory.
-- resource leaks are a pain point in QuestDB. Always think carefully about all
-  possible code paths, especially error paths, and write tests that ensure
-  correct resource cleanup on each path.
+  tests that don't allocate native memory, or for a test whose only statement
+  is an `assertQuery(...)` chain, which runs its own leak check.
 - assert query results with the fluent `assertQuery(query)` builder
   (`AbstractCairoTest.assertQuery(...)`): `assertQuery(sql).returns(expected)`.
   Chain factory-property assertions as the query warrants — `.timestamp(...)`,
@@ -250,63 +245,51 @@ qdbr toolchain; the script prints the command when it is missing.
   `.mutateWith(...)`, `.withEngine(...)`, `.withContext(...)`. For execution
   plans use `.assertsPlan(...)` / `.assertsPlanContaining(...)` or fold the plan
   into a data assertion with `.withPlan(...)` / `.withPlanContaining(...)`.
-- the old `assertSql(...)` / `TestUtils.assertSql(...)` query-result helpers have
-  been REMOVED — `.returns(...)` runs a strictly stronger battery (a second
-  cursor pass, a `calculateSize()` cross-check, a variable-column check, and the
-  factory-property assertions) that catches bugs the old single-pass print/compare
-  silently missed. (`TestServerMain.assertSql(sql, expected)` is a separate
-  live-`ServerMain` convenience wrapper and is unrelated.)
 - **never use `.returnsOnce(...)` unless the query's projection is genuinely
   non-deterministic across a re-read** — an unseeded `rnd_*` function, or
   time-varying output such as `now()`/`sysdate()`/`systimestamp()`. `returnsOnce`
-  deliberately skips the second cursor pass and every check listed above, so for
-  any deterministic query it leaves real bugs untested. Default to `.returns(...)`;
-  reach for `.returnsOnce(...)` only with a stated reason that the output cannot be
-  stable across two reads.
-- **Never assert peer behaviour with a hand-built frame or a fake socket.** Server
-  tests must drive the real `java-questdb-client` for anything that asserts how a
-  client reacts to server output — close codes, NACK classification, ack watermark
-  advance, reconnect eligibility. The client is already on the test classpath (53 of
-  91 QWP tests import it). A hand-forged frame encodes the contract you *assume* the
-  client implements, so it passes even when the pinned client disagrees; that is how
-  the ROLE_CHANGE (4001) close shipped against a client that classified it as a
-  poison strike. If a test names a client class in a comment to justify an assertion,
-  it must import that class instead.
-- Fake sockets (`MockRawSocket`, `TestableContext`) remain valid for *transport fault
-  injection only* — partial sends, `PeerIsSlowToWriteException` resume paths, and
-  malformed frames a correct client would never emit. They must never encode what a
-  correct client would send in response to the server.
-- **Any change to a wire constant or wire format requires a test that exercises the
-  pinned submodule client.** A green OSS build does not otherwise prove the pinned
-  client agrees.
+  skips the second cursor pass and the consistency checks `.returns(...)` adds,
+  so for any deterministic query it leaves real bugs untested. Default to
+  `.returns(...)`; reach for `.returnsOnce(...)` only with a stated reason that
+  the output cannot be stable across two reads.
+- **Never assert peer behaviour with a hand-built frame or a fake socket.**
+  Server tests must drive the real `java-questdb-client` for anything that
+  asserts how a client reacts to server output — close codes, how it treats a
+  rejected batch, how far it moves its acknowledged position, and whether it
+  reconnects. The client is already on the test classpath and most QWP tests
+  import it. A hand-forged frame encodes the contract you *assume* the client
+  implements, so it passes even when the pinned client disagrees. If a test
+  names a client class in a comment to justify an assertion, it must import that
+  class instead. Any change to a wire constant or wire format needs such a test:
+  a green OSS build does not otherwise prove the pinned client agrees.
+- Fake sockets remain valid for *transport fault injection only* — partial
+  sends, `PeerIsSlowToWriteException` resume paths, and malformed frames a
+  correct client would never emit. They must never encode what a correct client
+  would send in response to the server.
 - use execute() to run non-queries (DDL)
 - prefer UPPERCASE for SQL keywords (CREATE TABLE, INSERT, SELECT ... AS ... FROM,
   etc.), but mixing cases is acceptable since SQL is case-insensitive
 - use a single INSERT statement to insert multiple rows
 - use multiline strings for longer statements (multiple INSERT rows, complex
   queries), as well as to assert multiline query results
-- use underscore to separate thousands in numbers with 5 digits or more
 
 ## Git & PR Conventions
 
 - **PRs are squash-merged. Commit history on a PR branch is throwaway** — only
-  the squashed commit message that lands on `master` is preserved. Do not
-  spend effort tidying the branch's history: no soft resets to "commit all at
-  once", no rewording prior commits, no force pushes to clean up. Adding a
-  fix-up commit on top is always fine. The squash flow folds the lot at merge
-  time anyway.
-- **Bundle related fixes into one PR; do NOT propose splitting by logic.** This
-  is a high-throughput shop (~20 PRs/day) and CI is the bottleneck, not review:
-  a full run takes ~40 min and can go red on an unrelated flake. Splitting one
-  branch into N "logically clean" PRs multiplies that cost — N× CI time, N×
-  flake exposure, PRs failing on each other's flakes, and N× the babysitting to
-  shepherd them all to merge. The squash-merge collapses everything into one
-  tidy `master` commit anyway, so multiple fixes on a branch cost nothing at
-  merge time. Default to adding the change to the PR/branch already in flight,
-  especially when the fixes share a CI lineage (one change is what makes the
-  other's CI go green). When a branch carries more than one fix, give each its
-  own bullet in the PR body instead of opening another PR. Only split if the
-  user explicitly asks, or if the changes must merge/revert independently.
+  the squashed commit message that lands on `master` is preserved. Do not spend
+  effort tidying the branch's history: no soft resets to "commit all at once",
+  no rewording prior commits, no force pushes to clean up. Adding a fix-up
+  commit on top is always fine.
+- **Bundle related fixes into one PR; do NOT propose splitting by logic.** With
+  many PRs a day, CI is the bottleneck, not review: a full run is long and can
+  go red on an unrelated flake. Splitting one branch into N "logically clean"
+  PRs multiplies that cost — N× CI time, N× flake exposure, PRs failing on each
+  other's flakes, and N× the babysitting to shepherd them all to merge. Default
+  to adding the change to the PR/branch already in flight, especially when one
+  fix is what makes the other's CI go green. When a branch carries more than one
+  fix, give each its own bullet in the PR body instead of opening another PR.
+  Only split if the user explicitly asks, or if the changes must merge/revert
+  independently.
 - **When asked to "send a change to PR #N" / update PR metadata:** push the
   commit(s) to that PR's branch (rebase onto the remote head first if it moved),
   then bring the PR title and body up to date with the branch's net effects.
@@ -355,22 +338,34 @@ qdbr toolchain; the script prints the command when it is missing.
     configs, "Not changed" lists). The code and its tests carry those.
 - **A PR may ship with known bugs whose risk is low.** `review-pr` rates each
   bug a change introduces by what a user who hits it loses and how likely
-  users are to hit it (`.pi/agents/risk-assessor.md`); only Critical and High
-  risk hold up the PR. File each Medium or Low risk bug in
-  `questdb/questdb-enterprise` with the labels `bug` and `deferred`, and keep
-  it out of the PR body, comments and every other public place. A tradeoff
-  the PR makes on purpose, such as a measured slowdown, still gets its bullet.
+  users are to hit it (its `risk-assessor` agent). A bug holds up the PR when
+  its risk reaches `--block-at`, High by default, or when a rule blocks it
+  (`review-pr` Step 3c). Each other bug belongs in
+  `questdb/questdb-enterprise` with the labels `bug` and `deferred`; keep it
+  out of the PR body, comments and every other public place. A tradeoff the
+  PR makes on purpose, such as a measured slowdown, still gets its bullet.
+- **Agents never file issues on their own.** A skill or agent drafts each
+  issue, tells the user which drafts need attention, and files only the ones
+  the user approves. A user-invoked skill may still act on the current PR -
+  post a review, approve, request changes, comment, label - as its steps say.
+  Deferred bugs, crashes from hostile input and security-sensitive bugs go to
+  `questdb/questdb-enterprise`, labelled `bug` and `deferred`, `crash`, or
+  `security`; when `gh repo view questdb/questdb-enterprise` fails, as it does
+  for OSS contributors, their drafts stay in the console.
 - Commit titles do NOT use Conventional Commits prefixes. Keep them short (up to
   50 chars) and descriptive in plain English.
 - When committing, always include a full long-form description in the commit
   message body (not just the title). Lines in the description can be longer than
   in the commit title: up to 72 characters.
+- **`java-questdb-client/` is a separate git repo** (a git submodule). Always
+  `cd` into it and commit there independently. Never commit it from the parent
+  repo as a submodule pointer update without also committing inside it first.
 - Always add GitHub labels consistent with the PR title (e.g., a `perf(sql):` PR
   should get "SQL" and "Performance" labels).
 - Common PR labels: `Bug`, `CI`, `Compatibility`, `Core`, `Documentation`,
   `Enhancement`, `Flaky Test`, `ILP`, `Materialized View`, `New feature`,
-  `Performance`, `Postgres Wire`, `REST API`, `SQL`, `Security`, `UI`, `WAL`,
-  `Windows`, `regression`, `rust`, `storage`.
+  `Performance`, `Postgres Wire`, `QWP`, `REST API`, `SQL`, `Security`, `UI`,
+  `WAL`, `Windows`, `regression`, `rust`, `storage`.
 - Use active voice in commit messages, PR descriptions, and code comments. Name
   the acting subject — a class, method, caller, or component — instead of
   writing "is/are + past participle" constructions.
@@ -392,15 +387,22 @@ qdbr toolchain; the script prints the command when it is missing.
   on master, a real timing constraint, an upstream report — forces a
   different conclusion. Only after that proof can the issue be set aside,
   and the proof itself should be reported back so it can be verified.
-- **`java-questdb-client/` is a separate git repo** (a git submodule). Always
-  `cd` into it and commit there independently. Never commit it from the parent
-  repo as a submodule pointer update without also committing inside it first.
+
+## Agent skills
+
+`ci/skills/render.py` generates the PR skills (`review-pr`, `fix-pr`,
+`approve-pr`, `reject-pr`) and their review agents for Claude Code
+(`.claude/`), Codex (`.codex/`) and pi (`.pi/`). Each skill and agent has one
+shared body in `ci/skills/`, `ci/skills/all/` holds the values every harness
+shares, such as descriptions, and each harness has a fragment file with only the
+text that harness needs. Edit the sources, never the generated files, then run
+`python3 ci/skills/render.py`; CI fails when a generated file is out of date.
 
 ## Build Commands
 
 ### Prerequisites
 
-- Java 11+ (64-bit) with `JAVA_HOME` set
+- JDK 25+ (64-bit) with `JAVA_HOME` set
 - Maven 3
 - Rust toolchain (version pinned in `core/rust/qdbr/rust-toolchain.toml`)
 
@@ -417,9 +419,9 @@ mvn clean package -DskipTests -P build-web-console
 mvn clean package -DskipTests -P build-web-console,build-binaries
 ```
 
-When you build just the core module with `mvn -pl core`, it will fall use a
-pre-built java-questdb-client module, installed in the local Maven cache. It may
-be stale and result in build errors. Fix this issue with:
+A build without `-P local-client`, such as `mvn -pl core`, uses the
+java-questdb-client installed in the local Maven cache. It may be stale and
+result in build errors. Fix this issue with:
 
 ```bash
 cd java-questdb-client && mvn install -DskipTests && cd -
@@ -427,8 +429,8 @@ cd java-questdb-client && mvn install -DskipTests && cd -
 
 This should install a fresh version into the Maven cache.
 
-**Do NOT add `clean` to that command.** The client no longer commits its native
-libraries — `libquestdb` is built from source into
+**Do NOT add `clean` to that command.** The client commits no native
+libraries: `libquestdb` is built from source into
 `core/target/classes/io/questdb/client/bin-local/`, which `clean` deletes and a
 plain `mvn install` does not regenerate. The resulting jar is missing its native,
 and `mvn -pl core test` then fails with hundreds of
@@ -473,17 +475,11 @@ For repeated runs of core tests, compile through `ci/incremental_compile.py`:
 python3 ci/incremental_compile.py -- test -Dtest=ClassNameTest
 ```
 
-Maven's compiler plugin recompiles all of core's ~6,000 sources (about 40
-seconds) whenever any one of them changed. The script compiles the changed
-sources, then reads the class files to see whether anything other classes
-compile against changed: signatures, supertypes, non-private members, constant
-values. If not, it is done: an edit to a method body or a private member
-compiles in about two seconds. If so, it recompiles only the sources that use
-what changed, found in the class files and, for constants and imports, in the
-sources: a new public method on a leaf class compiles in about six seconds, on
-a widely used class such as `TableUtils` in about 25. When the dependents
-exceed about half of the code, it falls back to Maven's full rebuild. Add
-`--verbose` to see what compiles and why.
+Maven's compiler plugin recompiles all of core's sources whenever any one of
+them changed. The script compiles only the changed sources and the sources that
+depend on what changed, so an edit to a method body or a private member compiles
+in seconds; when the dependents are a large share of the code, it falls back to
+Maven's full rebuild. Add `--verbose` to see what compiles and why.
 
 Every source file must compile to a class of its own name; `SourceFileNameTest`
 checks it. A file whose only top-level type has another name, or an empty file,
@@ -494,7 +490,10 @@ looks changed on every build and makes Maven recompile the whole module.
 ```bash
 # After building with web console:
 mkdir <root_directory>
-java --add-exports=java.base/jdk.internal.vm=io.questdb -p core/target/questdb-<version>-SNAPSHOT.jar -m io.questdb/io.questdb.ServerMain -d <root_directory>
+# Read the JVM module options from the server's start script, so they stay current:
+java $(grep -E '^[[:space:]]+--(sun-misc-unsafe-memory-access|enable-native-access|add-opens|add-exports)' core/src/main/bin/questdb.sh) \
+  -p core/target/questdb-<version>-SNAPSHOT.jar \
+  -m io.questdb/io.questdb.ServerMain -d <root_directory>
 # Web console at http://localhost:9000
 ```
 
@@ -520,11 +519,10 @@ compiles it from the current Rust source into
 With `-DskipNative`, Maven skips that build, and the tests load whatever an
 earlier build left there.
 
-After writing or modifying tests, check coverage with
-`python3 ci/diff_coverage.py --lang rust` (see "Measuring coverage locally"; add
-`--tests` with the Java tests that call the code through JNI). For every
-uncovered line or branch, either write a test that reaches it or prove it is
-unreachable and mark it with `expect()` / `debug_assert!`.
+For coverage of Rust changes, run `python3 ci/diff_coverage.py --lang rust`
+("Measuring coverage locally"), with `--tests` naming the Java tests that call
+the code through JNI. Mark a line proven unreachable with `expect()` /
+`debug_assert!`.
 
 A panic in Rust code called via JNI aborts the entire JVM with no recovery.
 Never use `unwrap()` or `expect()` on data derived from file contents or
@@ -548,7 +546,6 @@ cmake --build build/release --config Release
 - **benchmarks/** - JMH micro-benchmarks
 - **compat/** - Compatibility tests
 - **utils/** - Build utilities
-- **examples/** - Usage examples
 - **win64svc/** - Windows service wrapper
 - **java-questdb-client** - Java client for data ingestion (legacy ILP and
   QuestDB's QWP)
@@ -563,6 +560,7 @@ cmake --build build/release --config Release
     - `pgwire/` - PostgreSQL wire protocol
     - `http/` - REST API and web console
     - `line/` - InfluxDB Line Protocol (ILP)
+    - `qwp/` - QWP, QuestDB's own protocol for ingestion and query results
     - `text/` - CSV import
 - **std/** - Custom collections and utilities (zero-allocation data structures)
 - **mp/** - Message passing and worker queues
