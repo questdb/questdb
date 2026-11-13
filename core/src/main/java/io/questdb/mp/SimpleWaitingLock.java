@@ -24,54 +24,61 @@
 
 package io.questdb.mp;
 
+import org.jetbrains.annotations.TestOnly;
+
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
-import java.util.concurrent.locks.LockSupport;
+import java.util.concurrent.locks.AbstractQueuedSynchronizer;
 
 /**
- * Simple blocking lock which allows 2 arbitrary threads to compete for ownership. Behaviour is undefined for more than 2 threads.
- * The lock is not reentrant.
+ * Fair, non-reentrant, non-owner-bound lock: any thread may release it, so a lock taken by one
+ * thread (e.g. CHECKPOINT CREATE) can be released by another (e.g. CHECKPOINT RELEASE).
+ * <p>
+ * Waiters park in a FIFO queue (no spinning). Fairness means a barging {@link #tryLock()} fails
+ * while a thread is queued, so {@link #unlock()} effectively hands the lock to the first waiter.
+ * Without this, a thread re-taking the lock in a tight loop could starve a waiter indefinitely.
  */
 public final class SimpleWaitingLock {
-    private final AtomicReference<Thread> ownerOrWaiter = new AtomicReference<>(null);
+    private final Sync sync = new Sync();
+
+    @TestOnly
+    public Object getWaitBlocker() {
+        return sync;
+    }
 
     public boolean isLocked() {
-        return ownerOrWaiter.get() != null;
+        return sync.isLocked();
     }
 
     /**
-     * Acquires the lock. The method will block until the lock is acquired.
+     * Acquires the lock, blocking until it is available. Interrupts are ignored.
      */
     public void lock() {
-        tryLock(Long.MAX_VALUE, TimeUnit.NANOSECONDS);
+        sync.acquire(1);
     }
 
     /**
-     * Tries to acquire the lock, allowing for a specified timeout period.
-     * If the lock is not acquired within the given timeout, the method returns false.
+     * Tries to acquire the lock, waiting up to the given timeout. Interrupts do not abort the wait;
+     * the interrupt flag is preserved and restored on exit.
      *
      * @param timeout the maximum time to wait for acquiring the lock, in the given TimeUnit
      * @param unit    the time unit of the timeout parameter
      * @return true if the lock was acquired within the timeout period, false otherwise
      */
     public boolean tryLock(long timeout, TimeUnit unit) {
-        Thread currentThread = Thread.currentThread();
-        Thread expectedOwner = null;
-        long deadline = System.nanoTime() + unit.toNanos(timeout); // this might overflow, but that's OK. we subtract current nanoTime and that makes it positive again
+        if (sync.tryAcquire(1)) {
+            return true;
+        }
+        // this might overflow, but that's OK: subtracting the current nanoTime makes it positive again
+        final long deadline = System.nanoTime() + unit.toNanos(timeout);
         boolean isInterrupted = false;
         try {
             for (long remainingNanos = deadline - System.nanoTime(); remainingNanos > 0; remainingNanos = deadline - System.nanoTime()) {
-                if (ownerOrWaiter.compareAndSet(expectedOwner, currentThread)) {
-                    if (expectedOwner == null) {
-                        // there was no owner before -> we acquired the lock and we are the new owner. yay!
-                        return true;
-                    }
-                    // CAS succeeded, but there was an owner before -> we are a waiter
-                    LockSupport.parkNanos(this, remainingNanos);
-                    // Consume interrupts so the next park can block; restore the flag on exit.
-                    isInterrupted |= Thread.interrupted();
+                try {
+                    return sync.tryAcquireNanos(1, remainingNanos);
+                } catch (InterruptedException e) {
+                    // The interrupt flag is now clear, so the retry parks rather than spins.
+                    isInterrupted = true;
                 }
-                expectedOwner = ownerOrWaiter.get();
             }
             return false;
         } finally {
@@ -82,39 +89,40 @@ public final class SimpleWaitingLock {
     }
 
     /**
-     * Tries to acquire the lock. If the lock is available, it is acquired and the method returns true.
-     * If the lock is already acquired by another thread, the method returns false.
+     * Acquires the lock only if it is free and no other thread is waiting for it.
      *
      * @return true if the lock was acquired, false otherwise
      */
     public boolean tryLock() {
-        return ownerOrWaiter.compareAndSet(null, Thread.currentThread());
+        return sync.tryAcquire(1);
     }
 
     /**
-     * Releases the lock, allowing other threads to acquire it.
-     * <p>
-     * If the lock is not currently owned by any thread, an IllegalStateException is thrown.
-     * If there is another thread waiting to acquire the lock, it is unparked.
-     * If there is no waiting thread, the method returns without any additional action.
-     * <p>
-     * Implementation note: This method does not validate the calling thread is the owner of the lock. The method
-     * releases the lock regardless of the calling thread. This makes it somewhat similar to a single permit semaphore.
-     * In such case it may set the unpark flag for the formerly owning thread. The unpark flag should have no negative
-     * side effect on the formerly owning thread as programs must be designed to handle spurious wakeups anyway.
+     * Releases the lock and wakes the first waiter, if any. The calling thread does not have to
+     * be the one that acquired the lock.
      *
-     * @throws IllegalStateException if the lock is not owned by any thread
+     * @throws IllegalStateException if the lock is not held
      */
     public void unlock() {
-        Thread currentThread = Thread.currentThread();
-        Thread waitingOrOwningThread = ownerOrWaiter.getAndSet(null);
-        if (waitingOrOwningThread == null) {
-            throw new IllegalStateException("Lock is not owned");
+        sync.release(1);
+    }
+
+    private static final class Sync extends AbstractQueuedSynchronizer {
+        @Override
+        protected boolean tryAcquire(int ignore) {
+            return !hasQueuedPredecessors() && compareAndSetState(0, 1);
         }
-        if (waitingOrOwningThread == currentThread) {
-            // no waiters
-            return;
+
+        @Override
+        protected boolean tryRelease(int ignore) {
+            if (!compareAndSetState(1, 0)) {
+                throw new IllegalStateException("Lock is not owned");
+            }
+            return true;
         }
-        LockSupport.unpark(waitingOrOwningThread);
+
+        boolean isLocked() {
+            return getState() != 0;
+        }
     }
 }
