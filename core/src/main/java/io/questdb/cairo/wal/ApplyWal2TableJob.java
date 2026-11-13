@@ -31,6 +31,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoKeywords;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.ErrorTag;
@@ -548,7 +549,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
                             default:
                                 // Always set full path when using thread static path
-                                operationExecutor.setNowAndFixClock(commitTimestamp, writer.getTimestampType());
+                                operationExecutor.setNowAndFixClock(commitTimestamp, ColumnType.TIMESTAMP_MICRO);
                                 tempPath.of(engine.getConfiguration().getDbRoot()).concat(tableToken).slash().putAscii(WAL_NAME_BASE).put(walId).slash().put(segmentId);
                                 final long start = microClock.getTicks();
 
