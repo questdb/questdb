@@ -243,7 +243,10 @@ public class NestedLoopFullJoinRecordCursorFactory extends AbstractJoinRecordCur
             filter.toTop();
             isMatch = false;
             isMasterHasNextPending = true;
+            // A read that stopped right after a NULL-extended row left one side on its NULL record, and the
+            // filter of the first master row reads both sides.
             record.hasMaster(true);
+            record.hasSlave(true);
             matchIdsMap.clear();
         }
 

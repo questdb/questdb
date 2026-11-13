@@ -4794,6 +4794,82 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFullJoinNonEquiReReadAfterLimit() throws Exception {
+        // A LIMIT stops the nested-loop FULL JOIN after a row, and returns() reads the query again after
+        // toTop(). m = 4 matches s = 2 and 3, m = 1 matches nothing, m = 3 matches s = 2, m = 2 matches
+        // nothing, and s = 9 matches no m row. LIMIT 3 and LIMIT 5 stop right after a NULL-extended m row,
+        // LIMIT 6 after the unmatched s row, the others after a matched pair.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (x INT)");
+            execute("CREATE TABLE s (y INT)");
+            execute("INSERT INTO m VALUES (4), (1), (3), (2)");
+            execute("INSERT INTO s VALUES (2), (3), (9)");
+            final String join = "SELECT m.x, s.y FROM m FULL JOIN s ON m.x > s.y";
+            final String[] rows = {"4\t2\n", "4\t3\n", "1\tnull\n", "3\t2\n", "2\tnull\n", "null\t9\n"};
+            final StringBuilder expected = new StringBuilder("x\ty\n");
+            for (int n = 1; n <= rows.length; n++) {
+                expected.append(rows[n - 1]);
+                assertQuery(join + " LIMIT " + n)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("Nested Loop Full Join")
+                        .returns(expected);
+            }
+            // every read of LIMIT 1, 3 skips the first row and stops after the NULL-extended m = 1
+            assertQuery(join + " LIMIT 1, 3")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            x\ty
+                            4\t3
+                            1\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testFullJoinNonEquiReReadByCrossJoin() throws Exception {
+        // The CROSS JOIN reads its sub-query again for the second row of two, and the LIMIT stops the
+        // nested-loop FULL JOIN right after the NULL-extended row (1, 4). c.k != b.y holds for a NULL c.k,
+        // so a second read that kept the NULL c side the first read stopped on would pair (1, 1) with a
+        // NULL c.k instead of c.k = 4.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE two (v INT)");
+            execute("CREATE TABLE t4 (x INT)");
+            execute("CREATE TABLE t2 (y INT)");
+            execute("CREATE TABLE t3 (k INT)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO two VALUES (1), (2)");
+            execute("INSERT INTO t4 VALUES (1), (2)");
+            execute("INSERT INTO t2 VALUES (1), (4)");
+            execute("INSERT INTO t3 VALUES (4)");
+            execute("INSERT INTO t1 VALUES (1)");
+            assertQuery("""
+                    SELECT t.v, s.x, s.y, s.ck, s.dk
+                    FROM two t
+                    CROSS JOIN (
+                        SELECT a.x, b.y, c.k ck, d.k dk
+                        FROM t4 a
+                        CROSS JOIN t2 b
+                        FULL JOIN t3 c ON c.k != b.y
+                        LEFT JOIN t1 d ON d.k = a.x
+                        LIMIT 2
+                    ) s
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Nested Loop Full Join")
+                    .returns("""
+                            v\tx\ty\tck\tdk
+                            1\t1\t1\t4\t1
+                            1\t1\t4\tnull\t1
+                            2\t1\t1\t4\t1
+                            2\t1\t4\tnull\t1
+                            """);
+        });
+    }
+
+    @Test
     public void testFullJoinOnNameSharedWithLaterTable() throws Exception {
         // w exists in f1 and in the later f2. The ON clause of the FULL JOIN f1 sees only f0 and f1, so w
         // means f1.w. The optimiser must keep the CROSS JOIN f3 before the FULL JOIN f2: each unmatched f2
