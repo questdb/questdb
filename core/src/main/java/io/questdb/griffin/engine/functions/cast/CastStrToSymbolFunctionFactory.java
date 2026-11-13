@@ -125,27 +125,7 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
 
         @Override
         public @Nullable SymbolTable newSymbolTable() {
-            // A view owns its A/B flyweights but reads the live dictionary. Unlike copying
-            // the dictionary, it needs no native allocation with an otherwise unclear owner.
-            // The values it yields point into append-only text chunks, so they stay valid across
-            // further intern()/getInt() calls on the source function (see
-            // CastToSymbolDictionary.valueOf) and remain readable until the dictionary is
-            // released. The view only ever grows: a key minted after the view was taken resolves
-            // through it just as well.
-            return new SymbolTable() {
-                private final DirectString viewA = new DirectString();
-                private final DirectString viewB = new DirectString();
-
-                @Override
-                public CharSequence valueBOf(int key) {
-                    return dictionary.valueOf(key, viewB);
-                }
-
-                @Override
-                public CharSequence valueOf(int key) {
-                    return dictionary.valueOf(key, viewA);
-                }
-            };
+            return new CastToSymbolTable(dictionary);
         }
 
         @Override
