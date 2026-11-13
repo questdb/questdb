@@ -38,17 +38,25 @@ public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
     private static final Log LOG = LogFactory.getLog(MemoryCMORImpl.class);
     private final boolean bypassFdCache;
     private boolean closeFdOnClose = true;
+    // map at least this many bytes past the start of every range so that a later ofOffset() on the
+    // same fd whose range falls inside the live mapping keeps it instead of unmapping and remapping;
+    // mapping past the end of the file is legal, the bytes beyond EOF are never read
+    private final long mapHeadroom;
     private long mapFileOffset;
     private long offset;
 
     public MemoryCMORImpl() {
-        super(false);
-        bypassFdCache = false;
+        this(false, 0);
     }
 
     public MemoryCMORImpl(boolean bypassFdCache) {
+        this(bypassFdCache, 0);
+    }
+
+    public MemoryCMORImpl(boolean bypassFdCache, long mapHeadroom) {
         super(bypassFdCache);
         this.bypassFdCache = bypassFdCache;
+        this.mapHeadroom = mapHeadroom;
     }
 
     /**
@@ -127,6 +135,17 @@ public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
     public void ofOffset(FilesFacade ff, long fd, boolean keepFdOpen, LPSZ name, long lo, long hi, int memoryTag, int opts) {
         this.memoryTag = memoryTag;
         if (fd > -1) {
+            if (fd == this.fd) {
+                if (pageAddress != 0 && hi > lo && lo >= mapFileOffset && hi <= mapFileOffset + size) {
+                    // the live mapping already covers [lo, hi): keep it
+                    this.closeFdOnClose = !keepFdOpen;
+                    this.ff = ff;
+                    this.offset = lo;
+                    return;
+                }
+                // same file, range outside the mapping: unmap only, the fd is reused below
+                closeFdOnClose = false;
+            }
             close();
             this.closeFdOnClose = !keepFdOpen;
             this.ff = ff;
@@ -152,7 +171,7 @@ public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
         if (hi > lo) {
             this.offset = lo;
             this.mapFileOffset = Files.PAGE_SIZE * (lo / Files.PAGE_SIZE);
-            this.size = hi - mapFileOffset;
+            this.size = Math.max(hi, mapFileOffset + mapHeadroom) - mapFileOffset;
         } else {
             this.size = 0;
         }
