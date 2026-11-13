@@ -36,6 +36,30 @@ import org.junit.Test;
 public class LineTcpParserTest extends BaseLineTcpContextTest {
 
     @Test
+    public void testCommentsIgnored() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (LineTcpParser lineTcpParser = new LineTcpParser()) {
+                sink.clear();
+                sink.put("# This is a comment\n");
+                sink.put("t,v=k f=123i\n");
+                byte[] bytes = sink.toString().getBytes(Files.UTF_8);
+                final int len = bytes.length;
+                long mem = Unsafe.malloc(bytes.length, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    for (int i = 0; i < bytes.length; i++) {
+                        Unsafe.putByte(mem + i, bytes[i]);
+                    }
+                    lineTcpParser.of(mem);
+                    Assert.assertEquals(LineTcpParser.ParseResult.MEASUREMENT_COMPLETE, lineTcpParser.parseMeasurement(mem + len));
+                    Assert.assertEquals("t", lineTcpParser.getMeasurementName().toString());
+                } finally {
+                    Unsafe.free(mem, bytes.length, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testGetValueType() throws Exception {
         assertType(LineTcpParser.ENTITY_TYPE_TAG, "null");
         assertType(LineTcpParser.ENTITY_TYPE_TAG, "NULL");
