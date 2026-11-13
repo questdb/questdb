@@ -501,7 +501,10 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                     }
                     throw ex;
                 }
-                final long safeToPurgeTxn = getSafeToPurgeUpToTxn(txReader.getSeqTxn());
+                final long safeToPurgeTxn = Math.min(
+                        getSafeToPurgeUpToTxn(txReader.getSeqTxn()),
+                        Math.max(0, getExternalConsumerFloor(tableToken))
+                );
                 LOG.debug().$("checking outstanding WAL transactions [table=").$(tableToken)
                         .$(", writerTxn=").$(safeToPurgeTxn)
                         .I$();
@@ -847,6 +850,22 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         }
         // V1 sequencer (txnPartSize == 0) has no seq part files, so return MAX_VALUE
         // to make `seqPart < currentSeqPart` always true, purging any stray V2 parts.
+        return Long.MAX_VALUE;
+    }
+
+    /**
+     * Returns the highest sequencer transaction, inclusive, whose WAL segments and sequencer parts an external
+     * consumer of this table no longer needs. The sweep purges a table up to the lower of this value and the
+     * table's own purge floor (its applied transaction and the floors of its dependent views), so a subclass that
+     * returns a lower value holds every segment and sequencer part that carries a later transaction.
+     * {@code Long.MAX_VALUE}, the default, holds nothing; a negative value holds everything. A value lower than an
+     * earlier one brings back nothing a sweep has already removed. The sweep calls this method at most once per
+     * table per sweep, never for a dropped table, from its own thread, after it read the table's applied
+     * transaction. An override must not block, must have made a value durable before it returns it, so that a
+     * restart cannot purge what the consumer still needs, and throws only {@link CairoException}, which skips the
+     * table for this sweep.
+     */
+    protected long getExternalConsumerFloor(TableToken tableToken) {
         return Long.MAX_VALUE;
     }
 
