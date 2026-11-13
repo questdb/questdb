@@ -212,9 +212,11 @@ public final class DecimalParser {
         int literalScale = dot == -1 ? 0 : (digitHi - dot - 1);
         int literalDigits = digitHi - digitLo - (dot == -1 ? 0 : 1);
 
-        int virtualScale = literalScale;
+        // The exponent can be any int, so the scale, exponent and digit counts derived from it are longs,
+        // which cannot wrap round near the int limits.
+        long virtualScale = literalScale;
 
-        int exp = 0;
+        long exp = 0;
         if (lo != hi) {
             // Parses exponent
             if ((cs.charAt(lo) | 32) == 'e') {
@@ -238,7 +240,7 @@ public final class DecimalParser {
 
         // If lossy is enabled, we can strip digits after the provided scale (as long as it is provided)
         if (lossy && scale >= 0 && virtualScale > scale) {
-            int drop = virtualScale - scale;
+            long drop = virtualScale - scale;
             while (drop > 0 && digitHi > digitLo) {
                 digitHi--;
                 if (digitHi == dot) {
@@ -253,7 +255,8 @@ public final class DecimalParser {
 
         // We still need to adjust the exponent if the user specifies a target scale.
         if (scale == -1) {
-            scale = virtualScale;
+            // a scale past the int range is past the maximum scale too, which the check below rejects
+            scale = (int) Math.min(virtualScale, Integer.MAX_VALUE);
         } else if (virtualScale <= scale) {
             exp += scale - virtualScale;
         } else {
@@ -275,9 +278,9 @@ public final class DecimalParser {
 
         // Compute the final precision of the decimal. Leading zeroes are not significant digits, so a value
         // below one needs no more digits than its scale, and zero needs a single digit.
-        int pow = literalDigits + exp;
-        final int unscaledDigits = literalDigits > leadingZeroes ? pow - leadingZeroes : 0;
-        final int finalPrecision = Math.max(Math.max(unscaledDigits, scale), 1);
+        long pow = literalDigits + exp;
+        final long unscaledDigits = literalDigits > leadingZeroes ? pow - leadingZeroes : 0;
+        final long finalPrecision = Math.max(Math.max(unscaledDigits, scale), 1);
         if (precision != -1 && finalPrecision > precision) {
             throw NumericException.instance()
                     .put("decimal '").put(cs)
@@ -296,7 +299,9 @@ public final class DecimalParser {
                 continue;
             }
 
-            decimal.addPowerOfTenMultiple(--pow, cs.charAt(p) - '0');
+            // every nonzero digit lies within the precision checked above; only a leading zero, which adds
+            // nothing, can lie beyond it, so narrowing pow back to an int never misplaces a digit
+            decimal.addPowerOfTenMultiple((int) --pow, cs.charAt(p) - '0');
         }
         decimal.setScale(scale);
 
@@ -304,7 +309,7 @@ public final class DecimalParser {
             decimal.negate();
         }
 
-        return Numbers.encodeLowHighInts(finalPrecision, scale);
+        return Numbers.encodeLowHighInts((int) finalPrecision, scale);
     }
 
     /**
