@@ -138,6 +138,14 @@ public class FuzzQueryOperation implements FuzzTransactionOperation {
         return expected == null ? actual == null : actual != null && Chars.equals(expected, actual);
     }
 
+    private static boolean isSymbolColumn(CairoEngine engine, TableToken tableToken, String columnName) {
+        try (TableReader reader = engine.getReader(tableToken)) {
+            final TableReaderMetadata metadata = reader.getMetadata();
+            final int columnIndex = metadata.getColumnIndexQuiet(columnName);
+            return columnIndex > -1 && ColumnType.isSymbol(metadata.getColumnType(columnIndex));
+        }
+    }
+
     /**
      * Returns false when the table has no indexed SYMBOL column.
      */
@@ -192,7 +200,18 @@ public class FuzzQueryOperation implements FuzzTransactionOperation {
         sql.put(" LIMIT ").put(limit);
         final String query = sql.toString();
 
-        try (RecordCursorFactory factory = engine.select(query, sqlExecutionContext)) {
+        final RecordCursorFactory selectFactory;
+        try {
+            selectFactory = engine.select(query, sqlExecutionContext);
+        } catch (SqlException e) {
+            if (!isSymbolColumn(engine, tableToken, columnName)) {
+                // A concurrent transaction changed the column's type after it was picked, so the SYMBOL
+                // value no longer parses against it, e.g. "Invalid date" once it is a DATE
+                return true;
+            }
+            throw e;
+        }
+        try (RecordCursorFactory factory = selectFactory) {
             final RecordMetadata metadata = factory.getMetadata();
             final int symbolColumnIndex = metadata.getColumnIndexQuiet(columnName);
             final int timestampColumnIndex = metadata.getColumnIndexQuiet(timestampColumnName);
