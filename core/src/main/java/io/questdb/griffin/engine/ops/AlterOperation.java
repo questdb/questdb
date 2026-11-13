@@ -34,6 +34,7 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.MemoryFCRImpl;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryCR;
@@ -49,6 +50,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.DirectString;
 import io.questdb.tasks.TableWriterTask;
+import org.jetbrains.annotations.Nullable;
 
 public class AlterOperation extends AbstractOperation implements Mutable {
     public final static short DO_NOTHING = 0;
@@ -106,8 +108,12 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     // attached any. The WAL apply job queues the attached range for the base's materialized views.
     private long attachedPartitionTimestampHi = Numbers.LONG_NULL;
     private long attachedPartitionTimestampLo = Numbers.LONG_NULL;
+    // The EXPIRE ROWS predicate, null for none, that the compiler checked a materialized view DROP COLUMN against,
+    // see verifyCompiledState()
+    private String checkedExpiryPredicate;
     private short command;
     private MemoryFCRImpl deserializeMem;
+    private boolean isExpiryPolicyChecked;
 
     public AlterOperation() {
         this(new LongList(), new ObjList<>());
@@ -244,6 +250,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         extraInfo.clear();
         attachedPartitionTimestampLo = Numbers.LONG_NULL;
         attachedPartitionTimestampHi = Numbers.LONG_NULL;
+        clearCheckedState();
         clearCommandCorrelationId();
     }
 
@@ -258,6 +265,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         alterOperation.command = this.command;
         alterOperation.activeExtraStrInfo = alterOperation.extraStrInfo;
         alterOperation.init(this.getCmdType(), this.getCommandName(), this.tableToken, this.getTableId(), this.getTableVersion(), this.tableNamePosition);
+        alterOperation.isExpiryPolicyChecked = this.isExpiryPolicyChecked;
+        alterOperation.checkedExpiryPredicate = this.checkedExpiryPredicate;
         return alterOperation;
     }
 
@@ -471,6 +480,58 @@ public class AlterOperation extends AbstractOperation implements Mutable {
 
     @Override
     public void startAsync() {
+    }
+
+    /**
+     * Throws {@link TableReferenceOutOfDateException} when the materialized view state that the compiler checked
+     * this operation against has changed since. A caller that runs a compiled operation again, as pg-wire does for a
+     * prepared statement, then compiles the statement again and gets the checks and the refusal of a fresh compile.
+     * The WAL apply of the operation cannot repeat these checks: a SET EXPIRE whose policy no longer binds fails
+     * there and suspends the view's WAL, and a DROP COLUMN of a column that the view's EXPIRE ROWS policy reads
+     * leaves a view that no query can read.
+     * <p>
+     * SET EXPIRE checked the columns of its policy at the view's column structure version that
+     * {@link #withCheckedColumnStructureVersion(long)} keeps, and view DROP COLUMN checked the column against the
+     * EXPIRE ROWS policy that {@link #withCheckedExpiryPredicate(String)} keeps. Other operations check nothing here.
+     *
+     * @param columnStructureVersion the column structure version that the table's sequencer is at
+     */
+    public void verifyCompiledState(long columnStructureVersion) {
+        final long checkedColumnStructureVersion = getTableVersion();
+        if (command == SET_EXPIRE && checkedColumnStructureVersion > -1 && checkedColumnStructureVersion != columnStructureVersion) {
+            throw TableReferenceOutOfDateException.of(
+                    getTableToken(),
+                    getTableId(),
+                    getTableId(),
+                    columnStructureVersion,
+                    checkedColumnStructureVersion
+            );
+        }
+        if (isExpiryPolicyChecked) {
+            final String expiryPredicate = getCairoEngine().getMetadataCache().lookupExpiryPolicy(getTableToken()).getPredicate();
+            if (!Chars.equalsNullable(checkedExpiryPredicate, expiryPredicate)) {
+                throw TableReferenceOutOfDateException.ofExpiryPolicyChange(getTableToken());
+            }
+        }
+    }
+
+    /**
+     * Keeps the column structure version of the materialized view's sequencer metadata that the compiler checked
+     * the columns of this SET EXPIRE policy against, see {@link #verifyCompiledState(long)}.
+     */
+    public void withCheckedColumnStructureVersion(long columnStructureVersion) {
+        assert command == SET_EXPIRE;
+        setTableVersion(columnStructureVersion);
+    }
+
+    /**
+     * Keeps the EXPIRE ROWS predicate, null for none, of the materialized view that the compiler checked this
+     * DROP COLUMN against, see {@link #verifyCompiledState(long)}.
+     */
+    public void withCheckedExpiryPredicate(@Nullable String expiryPredicate) {
+        assert command == DROP_COLUMN;
+        isExpiryPolicyChecked = true;
+        checkedExpiryPredicate = expiryPredicate;
     }
 
     private void applyAddColumn(MetadataService svc) {
@@ -806,6 +867,11 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         CharSequence columnName = activeExtraStrInfo.getStrA(0);
         int newCapacity = (int) extraInfo.get(1);
         svc.changeSymbolCapacity(columnName, newCapacity, securityContext);
+    }
+
+    private void clearCheckedState() {
+        isExpiryPolicyChecked = false;
+        checkedExpiryPredicate = null;
     }
 
     private void doApply(MetadataService svc, boolean contextAllowsAnyStructureChanges) {

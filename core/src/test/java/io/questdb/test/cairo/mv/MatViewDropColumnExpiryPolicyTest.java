@@ -27,7 +27,11 @@ package io.questdb.test.cairo.mv;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.test.AbstractCairoTest;
@@ -50,6 +54,10 @@ import org.junit.Test;
  * a scalar WHEN policy that reads a column a pending ADD COLUMN adds is accepted. The read probe of a KEEP policy
  * still compiles against the view's applied columns.
  * <p>
+ * Both checks run when the statement compiles. A compiled statement that runs again, as pg-wire runs a prepared
+ * statement, fails with TableReferenceOutOfDateException, which makes its caller compile it again, when the policy
+ * changed since a DROP COLUMN compiled, or a column was added to or dropped from the view since a SET EXPIRE compiled.
+ * <p>
  * Expected rows follow from the base rows each test inserts and the policy's documented semantics: WHEN hides
  * the rows its predicate holds for, KEEP LATEST keeps the newest row per key, KEEP [N] HIGHEST / LOWEST keeps the
  * rows with the highest or lowest values per key.
@@ -62,6 +70,124 @@ public class MatViewDropColumnExpiryPolicyTest extends AbstractCairoTest {
             2024-01-01T01:00:00.000000Z\ta\t4.5\t40.0
             """;
     private static final String SAMPLED_VIEW_SQL = "SELECT ts, sym, last(price) AS price, last(amount) AS amount FROM base SAMPLE BY 1h";
+
+    @Test
+    public void testCompiledDropColumnRunAgainAfterPolicyChange() throws Exception {
+        assertMemoryLeak(() -> {
+            // the policy hides A 1.0 and B 0.5, and reads v only
+            createPassthroughView("EXPIRE ROWS WHEN v < 1.5");
+            drainWalAndMatViewQueues();
+            final TableToken viewToken = engine.verifyTableName("mv");
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                final CompiledQuery dropColumn = compiler.compile("ALTER MATERIALIZED VIEW mv DROP COLUMN w", sqlExecutionContext);
+                // the new policy reads w, and hides B 3.0 and B 0.5
+                execute("ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS WHEN w > 25.0");
+                drainWalAndMatViewQueues();
+                assertExpireClause("w > 25.0");
+
+                final long seqTxn = engine.getTableSequencerAPI().lastTxn(viewToken);
+                try (OperationFuture future = dropColumn.execute(sqlExecutionContext, null, false)) {
+                    future.await();
+                    Assert.fail("the compiled DROP COLUMN must ask for a fresh compile after the policy changed");
+                } catch (TableReferenceOutOfDateException e) {
+                    TestUtils.assertEquals(
+                            "cached statement cannot be used because the EXPIRE ROWS policy of the materialized view has changed [view=mv]",
+                            e.getFlyweightMessage()
+                    );
+                }
+                Assert.assertEquals(seqTxn, engine.getTableSequencerAPI().lastTxn(viewToken));
+                // the fresh compile refuses the column
+                assertDropColumnRefused("mv", "w", 2);
+                assertColumns("mv", """
+                        column\ttype
+                        k\tSYMBOL
+                        v\tDOUBLE
+                        w\tDOUBLE
+                        ts\tTIMESTAMP
+                        """);
+
+                // back to a policy equal to the one the statement compiled against, the statement runs as compiled
+                execute("ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS WHEN v < 1.5");
+                drainWalAndMatViewQueues();
+                try (OperationFuture future = dropColumn.execute(sqlExecutionContext, null, false)) {
+                    future.await();
+                }
+                drainWalAndMatViewQueues();
+                assertColumns("mv", """
+                        column\ttype
+                        k\tSYMBOL
+                        v\tDOUBLE
+                        ts\tTIMESTAMP
+                        """);
+
+                // A table's DROP COLUMN that the same compiler compiles next checks no policy.
+                execute(compiler, "ALTER TABLE base DROP COLUMN w");
+            }
+            execute("INSERT INTO base VALUES ('C', 5.0, '2024-01-05T00:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+            assertWalApplied(viewToken);
+            assertViewValid("mv");
+            assertExpireClause("v < 1.5");
+            assertQuery("mv ORDER BY ts").timestamp("ts").noLeakCheck().returns("""
+                    k\tv\tts
+                    A\t2.0\t2024-01-02T00:00:00.000000Z
+                    B\t3.0\t2024-01-03T00:00:00.000000Z
+                    C\t5.0\t2024-01-05T00:00:00.000000Z
+                    """);
+        });
+    }
+
+    @Test
+    public void testCompiledSetExpireRunAgainAfterViewColumnChange() throws Exception {
+        assertMemoryLeak(() -> {
+            createPassthroughView("EXPIRE ROWS WHEN v < 1.5");
+            drainWalAndMatViewQueues();
+            final TableToken viewToken = engine.verifyTableName("mv");
+            try (
+                    SqlCompiler setExpireCompiler = engine.getSqlCompiler();
+                    SqlCompiler dropExpireCompiler = engine.getSqlCompiler()
+            ) {
+                final CompiledQuery setExpire = setExpireCompiler.compile("ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS WHEN w > 25.0", sqlExecutionContext);
+                final CompiledQuery dropExpire = dropExpireCompiler.compile("ALTER MATERIALIZED VIEW mv DROP EXPIRE", sqlExecutionContext);
+                // the DROP COLUMN waits in the view's WAL
+                execute("ALTER MATERIALIZED VIEW mv DROP COLUMN w");
+
+                final long seqTxn = engine.getTableSequencerAPI().lastTxn(viewToken);
+                try (OperationFuture future = setExpire.execute(sqlExecutionContext, null, false)) {
+                    future.await();
+                    Assert.fail("the compiled SET EXPIRE must ask for a fresh compile after a view column change");
+                } catch (TableReferenceOutOfDateException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "table schema has changed [table=mv");
+                }
+                Assert.assertEquals(seqTxn, engine.getTableSequencerAPI().lastTxn(viewToken));
+                // the fresh compile refuses the policy
+                assertSetExpireRefused("WHEN w > 25.0", "invalid EXPIRE ROWS predicate: Invalid column: w");
+
+                // DROP EXPIRE reads no column, so it runs as compiled
+                try (OperationFuture future = dropExpire.execute(sqlExecutionContext, null, false)) {
+                    future.await();
+                }
+                Assert.assertEquals(seqTxn + 1, engine.getTableSequencerAPI().lastTxn(viewToken));
+            }
+            drainWalAndMatViewQueues();
+            assertWalApplied(viewToken);
+            assertViewValid("mv");
+            assertExpireClause("");
+            execute("INSERT INTO base VALUES ('C', 5.0, 50.0, '2024-01-05T00:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+            assertWalApplied(viewToken);
+            assertViewValid("mv");
+            // without a policy, a read of the view sees every row and knows their count
+            assertQuery("mv ORDER BY ts").timestamp("ts").noLeakCheck().expectSize().returns("""
+                    k\tv\tts
+                    A\t1.0\t2024-01-01T00:00:00.000000Z
+                    A\t2.0\t2024-01-02T00:00:00.000000Z
+                    B\t3.0\t2024-01-03T00:00:00.000000Z
+                    B\t0.5\t2024-01-04T00:00:00.000000Z
+                    C\t5.0\t2024-01-05T00:00:00.000000Z
+                    """);
+        });
+    }
 
     @Test
     public void testDropColumnAllowedAfterDropExpire() throws Exception {

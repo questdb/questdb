@@ -331,6 +331,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     @Override
     public long apply(AlterOperation alterOp, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
         alterOp.authorize();
+        // A compiled operation that runs again, such as a pg-wire prepared statement, asks for a fresh compile
+        // when the view state its compile-time checks read has changed since.
+        alterOp.verifyCompiledState(getColumnStructureVersion());
         // Flush the pending batch first. A structural change's endMetadataChangeEntry() syncs the sequencer log
         // with MS_SYNC, which would put this record on the device ahead of earlier data commits whose files are
         // still only in the page cache.

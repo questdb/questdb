@@ -60,7 +60,8 @@ public class HttpMatViewDdlTest extends AbstractTest {
     @Test
     public void testAlterAsBaseChangeTimesOutWaitingForLatch() throws Exception {
         // A base change waits for the view's latch and refuses once the statement timeout expires. The statement is the
-        // connection's first: /exec reads the Statement-Timeout header of a pooled connection's first request only.
+        // connection's first: /exec reads the Statement-Timeout header of a pooled connection's first request only
+        // (https://github.com/questdb/questdb/issues/4409).
         TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, context) -> {
             try (ExecClient client = new ExecClient()) {
                 createBaseAndView(engine, context);
@@ -142,7 +143,7 @@ public class HttpMatViewDdlTest extends AbstractTest {
 
                 // RESUME waits for the view's latch and refuses once the statement timeout expires. The statement is the
                 // connection's first: /exec reads the Statement-Timeout header of a pooled connection's first request
-                // only.
+                // only (https://github.com/questdb/questdb/issues/4409).
                 final long viewSeqTxn = viewSeqTxn(engine, viewToken);
                 final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
                 Assert.assertTrue(state.tryLock());

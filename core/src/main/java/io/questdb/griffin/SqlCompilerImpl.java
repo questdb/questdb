@@ -88,6 +88,7 @@ import io.questdb.griffin.engine.StaleViewCheckFactory;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
+import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.engine.ops.CopyCancelFactory;
 import io.questdb.griffin.engine.ops.CopyExportFactory;
@@ -2489,6 +2490,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             boolean isMatView
     ) throws SqlException {
         AlterOperationBuilder dropColumnStatement = alterOperationBuilder.ofDropColumn(tableNamePosition, tableToken, metadata.getTableId());
+        String checkedExpiryPredicate = null;
         int semicolonPos = -1;
         do {
             CharSequence tok = unquote(maybeExpectToken(lexer, "column name", semicolonPos < 0));
@@ -2507,7 +2509,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 throw SqlException.$(lexer.lastTokenPosition(), "cannot drop the designated timestamp column of a materialized view");
             }
             if (isMatView) {
-                checkMatViewDropColumnExpiryPolicy(tableToken, metadata.getColumnName(columnIndex), lexer.lastTokenPosition());
+                checkedExpiryPredicate = checkMatViewDropColumnExpiryPolicy(tableToken, metadata.getColumnName(columnIndex), lexer.lastTokenPosition());
             }
 
             CharSequence columnName = tok;
@@ -2528,7 +2530,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         } while (true);
 
         executionContext.getSecurityContext().authorizeAlterTableDropColumn(tableToken, dropColumnStatement.getExtraStrInfo());
-        compiledQuery.ofAlter(alterOperationBuilder.build());
+        final AlterOperation dropColumn = alterOperationBuilder.build();
+        if (isMatView) {
+            // A view takes one column per statement. The operation keeps the policy that the check above read, and the
+            // WAL writer asks for a fresh compile when a prepared statement runs it again after the policy changed.
+            dropColumn.withCheckedExpiryPredicate(checkedExpiryPredicate);
+        }
+        compiledQuery.ofAlter(dropColumn);
     }
 
     private void alterTableDropConvertDetachOrAttachPartition(
@@ -3151,14 +3159,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     // and it reads a string, quotes included, as one token, which never equals a column name. The check errs on the
     // side of refusal: it also refuses a column whose name the policy uses otherwise, such as a type name in a cast
     // or a table prefix. Changing the policy with SET EXPIRE, or removing it with DROP EXPIRE, lets the column go.
-    private void checkMatViewDropColumnExpiryPolicy(
+    // Returns the predicate of the policy it checked, null for none.
+    private String checkMatViewDropColumnExpiryPolicy(
             TableToken matViewToken,
             CharSequence columnName,
             int position
     ) throws SqlException {
         final String predicate = engine.getMetadataCache().lookupExpiryPolicy(matViewToken).getPredicate();
         if (predicate == null) {
-            return;
+            return null;
         }
         final CharSequence policyText;
         if (RowExpiryUtil.isKeepLatest(predicate)) {
@@ -3174,6 +3183,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     .put(columnName)
                     .put("], change the policy with SET EXPIRE or remove it with DROP EXPIRE first, and retry once that has applied");
         }
+        return predicate;
     }
 
     // Reads the statement that follows the name of a materialized view and fails RENAME COLUMN with the hint how to
@@ -7975,14 +7985,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             authorizeExpiryPredicateSelect(executionContext, tableToken, tableMetadata, validationResult);
         }
         warnIfExpiryKeepsDisk(validationResult, clause.predicate, tableToken.getTableName());
-        final AlterOperationBuilder setExpire = alterOperationBuilder.ofSetExpire(
+        final AlterOperation setExpire = alterOperationBuilder.ofSetExpire(
                 tableNamePosition,
                 tableToken,
                 tableMetadata.getTableId(),
                 clause.predicate,
                 clause.cleanupIntervalMicros
-        );
-        compiledQuery.ofAlter(setExpire.build());
+        ).build();
+        // Once a column is added to or dropped from the view, the WAL writer asks for a fresh compile, so a prepared
+        // statement that runs the operation again gets its policy checked against the view's columns at that point.
+        setExpire.withCheckedColumnStructureVersion(tableMetadata.getMetadataVersion());
+        compiledQuery.ofAlter(setExpire);
     }
 
     /**
