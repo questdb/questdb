@@ -26,18 +26,24 @@ public class LogCapture {
     public static final long STOP_DRAIN_TIMEOUT_MS = 30_000;
     private static final Log LOG = LogFactory.getLog(LogCapture.class);
     private static final AtomicLong SENTINEL_SEQ = new AtomicLong();
+    // The capture whose interceptor LogCapture last installed on the console writer, null once a
+    // stop() removed it. Volatile: a rule reads it on the thread that wraps a test, and the test may
+    // run on another one (a Timeout rule's).
+    private static volatile LogCapture installedCapture;
     private final LogConsoleWriter consoleWriter;
     private final StringSink sink = new SynchronizedSink();
     private final LogConsoleWriter.LogInterceptor interceptor = this::onLog;
     private boolean isCapturing;
-    // Real by default; a test pins the exact deadline boundary in waitFor(CharSequence, long) by
-    // swapping these for a fake clock/sleeper instead of racing real wall-clock granularity.
+    // Real by default; a test pins the exact deadline boundary in waitFor(CharSequence, long), or
+    // the moment drain(long) gives up, by swapping these for a fake clock/sleeper instead of racing
+    // real wall-clock granularity.
     private LongSupplier clockMillis = System::currentTimeMillis;
     private LongConsumer sleeper = Os::sleep;
 
     public LogCapture() {
         consoleWriter = getFirstConsoleWriter();
         consoleWriter.setInterceptor(logRecordSink -> logRecordSink.toSink(sink));
+        installedCapture = this;
     }
 
     public void assertLogged(String message) {
@@ -59,6 +65,21 @@ public class LogCapture {
     public void assertNotLogged(String message) {
         // The logging worker may still be appending the final line. Inspect one stable snapshot.
         assertNotLogged(message, sink.toString());
+    }
+
+    /**
+     * Fails as {@link #assertNotLogged(String)} does when {@code message} occurs after the end of
+     * the first occurrence of {@code marker}, read off one stable snapshot. A capture that does not
+     * hold {@code marker} has nothing after it to check, and passes: the console writer delivers
+     * records in the order they were logged, so nothing logged after the marker can have arrived
+     * ahead of it.
+     */
+    public void assertNotLoggedAfter(String marker, String message) {
+        final String snapshot = sink.toString();
+        final int markerIndex = snapshot.indexOf(marker);
+        if (markerIndex > -1) {
+            assertNotLogged(message, snapshot, markerIndex + marker.length());
+        }
     }
 
     /**
@@ -103,20 +124,36 @@ public class LogCapture {
         // advisory() waits for a ring slot, so a full ring cannot drop the sentinel;
         // the deadline only bounds delivery once the record is queued
         LOG.advisory().$(sentinel).$();
-        final long deadline = System.currentTimeMillis() + timeoutMs;
-        while (sink.indexOf(sentinel) == -1 && System.currentTimeMillis() < deadline) {
-            Os.sleep(1);
+        final long deadline = clockMillis.getAsLong() + timeoutMs;
+        while (sink.indexOf(sentinel) == -1 && clockMillis.getAsLong() < deadline) {
+            sleeper.accept(1);
         }
+    }
+
+    /**
+     * Whether this capture's interceptor is the one LogCapture last installed on the console
+     * writer: the constructor and {@link #start()} install it, and the {@link #stop()} of any
+     * capture removes whatever interceptor is there. A direct
+     * {@link LogConsoleWriter#setInterceptor} call bypasses this record. The tests that make one
+     * park the logging worker with it, and the capture they create or start next installs over it.
+     */
+    public boolean isInstalled() {
+        return installedCapture == this;
     }
 
     public void start() {
         consoleWriter.setInterceptor(interceptor);
+        installedCapture = this;
         isCapturing = true;
         drain();
         sink.clear();
     }
 
     public void stop() {
+        stop(STOP_DRAIN_TIMEOUT_MS);
+    }
+
+    public void stop(long drainTimeoutMs) {
         // A second stop() (a test's own finally plus assertMemoryLeak's) has nothing
         // to drain: the sentinel could no longer reach the sink and would only wait
         // out the deadline.
@@ -127,8 +164,9 @@ public class LogCapture {
         // returns. Without this drain a record logged just before stop() can still
         // be in the ring when the interceptor is removed, and it then reaches the
         // console instead of the capture.
-        drain(STOP_DRAIN_TIMEOUT_MS);
+        drain(drainTimeoutMs);
         consoleWriter.setInterceptor(null);
+        installedCapture = null;
         isCapturing = false;
     }
 
@@ -173,7 +211,13 @@ public class LogCapture {
     }
 
     static void assertNotLogged(String message, String capturedLog) {
-        final int idx = capturedLog.indexOf(message);
+        assertNotLogged(message, capturedLog, 0);
+    }
+
+    // Scans from fromIndex on, without copying the tail of a capture that can hold millions of
+    // chars, and quotes the whole line of the first match.
+    static void assertNotLogged(String message, String capturedLog, int fromIndex) {
+        final int idx = capturedLog.indexOf(message, fromIndex);
         if (idx > -1) {
             final int lo = capturedLog.lastIndexOf('\n', idx - 1) + 1;
             final int hi = capturedLog.indexOf('\n', idx);

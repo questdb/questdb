@@ -33,6 +33,8 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.regex.Pattern;
+
 public class LogCaptureTest extends AbstractCairoTest {
     // Not final: guaranteed-logging reflection re-fetches this field, the same constraint that
     // keeps EntCairoEngine.LOG non-final.
@@ -62,6 +64,67 @@ public class LogCaptureTest extends AbstractCairoTest {
     public void testAssertNotLoggedAcceptsAbsentMessage() {
         LogCapture.assertNotLogged("forbidden", "");
         LogCapture.assertNotLogged("forbidden", "before\nafter\n");
+    }
+
+    @Test
+    public void testAssertNotLoggedAfterIgnoresLinesBeforeTheMarker() {
+        final String forbidden = "log-capture-forbidden-" + System.nanoTime();
+        final String marker = "log-capture-marker-" + System.nanoTime();
+        LOG.info().$(forbidden).$();
+        LOG.info().$(marker).$();
+        capture.drain(LogCapture.STOP_DRAIN_TIMEOUT_MS);
+
+        capture.assertLogged(forbidden);
+        capture.assertNotLoggedAfter(marker, forbidden);
+    }
+
+    @Test
+    public void testAssertNotLoggedAfterPassesWithoutTheMarker() {
+        final String forbidden = "log-capture-forbidden-" + System.nanoTime();
+        LOG.info().$(forbidden).$();
+        capture.drain(LogCapture.STOP_DRAIN_TIMEOUT_MS);
+
+        capture.assertLogged(forbidden);
+        capture.assertNotLoggedAfter("log-capture-marker-never-logged-" + System.nanoTime(), forbidden);
+    }
+
+    @Test
+    public void testAssertNotLoggedAfterRejectsLinesAfterTheMarker() {
+        final String marker = "log-capture-marker-" + System.nanoTime();
+        final String forbidden = "log-capture-forbidden-" + System.nanoTime();
+        LOG.info().$(marker).$();
+        LOG.info().$(forbidden).$();
+        capture.drain(LogCapture.STOP_DRAIN_TIMEOUT_MS);
+
+        final AssertionError error = Assert.assertThrows(AssertionError.class, () -> capture.assertNotLoggedAfter(marker, forbidden));
+        // The whole line: the log timestamp, which no test can predict, then the level, the logger
+        // and the text, up to the '\n' of the record's "\r\n" (Misc.EOL).
+        final String prefix = "Message '" + forbidden + "' was logged: ";
+        final String lineAfterTimestamp = " I i.q.t.t.LogCaptureTest " + forbidden + "\r";
+        Assert.assertTrue(
+                "expected: " + prefix + "<timestamp>" + lineAfterTimestamp + ", actual: " + error.getMessage(),
+                Pattern.matches(Pattern.quote(prefix) + "\\S+" + Pattern.quote(lineAfterTimestamp), error.getMessage())
+        );
+    }
+
+    @Test
+    public void testAssertNotLoggedFromIndexAcceptsMatchesAheadOfIt() {
+        LogCapture.assertNotLogged("forbidden", "forbidden early\nafter\n", "forbidden early\n".length());
+        // a match that starts ahead of fromIndex and ends past it is ahead of it too
+        LogCapture.assertNotLogged("forbidden", "before forbidden\n", "before forb".length());
+    }
+
+    @Test
+    public void testAssertNotLoggedFromIndexQuotesTheWholeLineOfTheFirstMatchAfterIt() {
+        // The whole-log cases behind a head whose match lies ahead of fromIndex.
+        final String head = "forbidden early\n";
+        assertNotLoggedFromIndexFailure(head, "forbidden first\nafter\n", "forbidden first");
+        assertNotLoggedFromIndexFailure(head, "before\nprefix forbidden suffix\nafter\n", "prefix forbidden suffix");
+        assertNotLoggedFromIndexFailure(head, "before\nforbidden last\n", "forbidden last");
+        assertNotLoggedFromIndexFailure(head, "prefix forbidden suffix", "prefix forbidden suffix");
+        assertNotLoggedFromIndexFailure(head, "before\nprefix forbidden suffix", "prefix forbidden suffix");
+        // a match on the line fromIndex falls inside: the quote starts where that line does
+        assertNotLoggedFromIndexFailure(head + "marker", " forbidden\nafter\n", "marker forbidden");
     }
 
     @Test
@@ -215,6 +278,14 @@ public class LogCaptureTest extends AbstractCairoTest {
         final AssertionError error = Assert.assertThrows(
                 AssertionError.class,
                 () -> LogCapture.assertNotLogged("forbidden", capturedLog)
+        );
+        Assert.assertEquals("Message 'forbidden' was logged: " + expectedLine, error.getMessage());
+    }
+
+    private static void assertNotLoggedFromIndexFailure(String head, String tail, String expectedLine) {
+        final AssertionError error = Assert.assertThrows(
+                AssertionError.class,
+                () -> LogCapture.assertNotLogged("forbidden", head + tail, head.length())
         );
         Assert.assertEquals("Message 'forbidden' was logged: " + expectedLine, error.getMessage());
     }

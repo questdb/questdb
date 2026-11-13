@@ -50,9 +50,11 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 
 import java.time.Instant;
@@ -149,6 +151,10 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
     private static final String SYNTHETIC_TIE_KEY = "YY";
     // sum, count, max, row_number, avg, rank, dense_rank
     private static final int VARIANT_COUNT = 7;
+    // Fails a test during which a WAL apply suspended a table, which would leave the oracles comparing
+    // a frozen base or view table.
+    @Rule
+    public final WalApplySuspensionRule walApplySuspensionRule = new WalApplySuspensionRule();
     private final LiveViewRouteCoverage coverage = new LiveViewRouteCoverage();
     private final FaultLedger ledger = new FaultLedger();
     private final ObjList<String> runKeys = new ObjList<>();
@@ -213,6 +219,13 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
     public void testMixed() throws Exception {
         // Every anchor shape and knob, with some passes carrying an ALTER between late rows.
         runBatch(STEER_MIXED);
+    }
+
+    @Test
+    public void testRunsUnderTheWalApplySuspensionRule() {
+        final LogCapture capture = walApplySuspensionRule.getCapture();
+        Assert.assertNotNull("the rule must wrap every test of the class", capture);
+        Assert.assertTrue("the rule's capture must hold the console log interceptor", capture.isInstalled());
     }
 
     @Test

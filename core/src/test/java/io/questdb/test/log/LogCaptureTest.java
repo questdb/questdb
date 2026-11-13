@@ -38,10 +38,37 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 public class LogCaptureTest {
+    private static final String BOUNDED_STOP_MARKER = "log-capture-test-bounded-stop-marker";
     private static final Log LOG = LogFactory.getLog(LogCaptureTest.class);
     private static final String MARKER = "log-capture-test-stop-marker";
     private static final String POISON = "log-capture-test-poison-marker";
     private static final long RELEASE_DELAY_MS = 100;
+
+    @Test
+    public void testIsInstalledFollowsTheLastInstalledCapture() {
+        final LogConsoleWriter consoleWriter = getFirstConsoleWriter();
+        try {
+            final LogCapture first = new LogCapture();
+            Assert.assertTrue(first.isInstalled());
+            first.start();
+            Assert.assertTrue(first.isInstalled());
+
+            final LogCapture second = new LogCapture();
+            Assert.assertFalse(first.isInstalled());
+            Assert.assertTrue(second.isInstalled());
+            second.start();
+            second.stop();
+            Assert.assertFalse(first.isInstalled());
+            Assert.assertFalse(second.isInstalled());
+
+            first.start();
+            Assert.assertTrue(first.isInstalled());
+            first.stop();
+            Assert.assertFalse(first.isInstalled());
+        } finally {
+            consoleWriter.setInterceptor(null);
+        }
+    }
 
     /**
      * A record an earlier test enqueued must not land in a later test's capture.
@@ -146,6 +173,51 @@ public class LogCaptureTest {
             if (releaser != null) {
                 releaser.join();
             }
+            consoleWriter.setInterceptor(null);
+        }
+    }
+
+    /**
+     * stop(long) waits for a parked worker no longer than its bound, then takes the interceptor
+     * away, so a record the worker still holds never reaches the capture. The capture's fake clock
+     * measures the wait, so no real time decides it. testStopDrainsRecordsEnqueuedBeforeIt is the
+     * contrast: there the worker comes back inside stop()'s wait.
+     */
+    @Test
+    public void testStopWithABoundGivesUpOnAParkedWorker() throws Exception {
+        final LogConsoleWriter consoleWriter = getFirstConsoleWriter();
+        final CountDownLatch parked = new CountDownLatch(1);
+        final CountDownLatch release = new CountDownLatch(1);
+        final LogCapture capture = new LogCapture();
+        try {
+            consoleWriter.setInterceptor(_ -> {
+                parked.countDown();
+                try {
+                    release.await();
+                } catch (InterruptedException ignore) {
+                    Thread.currentThread().interrupt();
+                }
+            });
+
+            LOG.advisory().$("log-capture-test-park-trigger").$();
+            Assert.assertTrue(
+                    "test setup: the logging worker must be parked inside the interceptor",
+                    parked.await(30, TimeUnit.SECONDS)
+            );
+
+            final long[] nowMs = {0};
+            capture.setClockForTest(() -> nowMs[0]);
+            capture.setSleeperForTest(ms -> nowMs[0] += ms);
+            capture.start();
+            LOG.advisory().$(BOUNDED_STOP_MARKER).$();
+            final long stopStartMs = nowMs[0];
+            capture.stop(100);
+
+            Assert.assertEquals("stop(100) waits 100 ms for the parked worker", 100, nowMs[0] - stopStartMs);
+            Assert.assertFalse(capture.isInstalled());
+            Assert.assertEquals(0, capture.countOccurrences(BOUNDED_STOP_MARKER));
+        } finally {
+            release.countDown();
             consoleWriter.setInterceptor(null);
         }
     }

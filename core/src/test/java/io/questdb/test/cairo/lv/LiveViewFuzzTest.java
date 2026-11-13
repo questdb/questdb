@@ -80,6 +80,7 @@ import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 
 import java.util.Arrays;
@@ -317,6 +318,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     private static final int REMOVAL_DROP_PARTITION = 1;
     private static final int REMOVAL_TRUNCATE = 0;
     private static final int REMOVAL_TTL = 2;
+    // Numbers the marker each run of runAnchoredRemovalFuzz logs, so its check of the test's
+    // capture starts at its own run.
+    private static final AtomicLong ANCHORED_REMOVAL_RUN_SEQ = new AtomicLong();
     // What the restart after failTheOwedSealOfALateRow meets: the repair marker still live over
     // the splice, a root at the frontier that reads it as stale, or no timeline, which a streak of
     // failed seals retired.
@@ -360,6 +364,11 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             "AA", "BB", "CC", "DD", "EE", "FF", "GG", "HH",
             "II", "JJ", "KK", "LL", "MM", "NN", "OO", "PP"
     };
+    // Fails a test during which a WAL apply suspended a table, which would leave the oracles comparing
+    // a frozen base or view table. runAnchoredRemovalFuzz reads its live view lines through the
+    // rule's capture.
+    @Rule
+    public final WalApplySuspensionRule walApplySuspensionRule = new WalApplySuspensionRule();
     // The refresh jobs runDedupFuzz and runReplaceRangeFuzz ran, summed, so a batch can assert
     // which repairs its departures reached.
     private final LiveViewRouteCoverage coverage = new LiveViewRouteCoverage();
@@ -1244,6 +1253,22 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 runFuzz(rnd, v, 300 + rnd.nextInt(400), true, true, true, true);
             }
         });
+    }
+
+    @Test
+    public void testRunsUnderTheWalApplySuspensionRule() {
+        final LogCapture capture = walApplySuspensionRule.getCapture();
+        Assert.assertNotNull("the rule must wrap every test of the class", capture);
+        Assert.assertTrue("the rule's capture must hold the console log interceptor", capture.isInstalled());
+    }
+
+    // runAnchoredRemovalFuzz's check that no live view code logged a CRITICAL line during a run.
+    // The logging worker can lag a stalled stdout by seconds, so it waits for the run's lines up to
+    // the bound LogCapture.stop() waits, then reads from the run's marker on: the capture spans the
+    // whole test, and the lines of setUp and of earlier runs sit ahead of the marker.
+    static void assertNoLiveViewCriticalLineAfter(LogCapture capture, String runMarker) {
+        capture.drain(LogCapture.STOP_DRAIN_TIMEOUT_MS);
+        capture.assertNotLoggedAfter(runMarker, " C i.q.c.l.");
     }
 
     // Oracle (plain query over the base) for an anchored fuzz variant: the anchor
@@ -6956,7 +6981,6 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 + ", i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY"
                 + (removal == REMOVAL_TTL ? " TTL 1 DAY" : "") + " WAL");
 
-        final LogCapture capture = new LogCapture();
         final StringSink sink = new StringSink();
         long maxRemovedTs = Numbers.LONG_NULL;
         long dropLo = Numbers.LONG_NULL;
@@ -6967,7 +6991,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         int phaseTwoFrom = splitPoint;
         boolean isRestartedAfterRemoval = false;
         LiveViewRefreshJob job = null;
-        capture.start();
+        final String runMarker = "anchored removal run " + ANCHORED_REMOVAL_RUN_SEQ.incrementAndGet() + " starts";
+        LOG.advisory().$(runMarker).$();
         try {
             if (preCount > 0) {
                 final int[] preOrder = segmentOrder(rnd, 0, preCount, true);
@@ -7088,11 +7113,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             driveRefreshToQuiescence(job);
         } finally {
             Misc.free(job);
-            capture.drain();
-            capture.stop();
         }
 
-        capture.assertNotLogged(" C i.q.c.l.");
+        assertNoLiveViewCriticalLineAfter(walApplySuspensionRule.getCapture(), runMarker);
         final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
         Assert.assertNotNull(instance);
         if (instance.isCheckpointRecoveryBlocked()) {
