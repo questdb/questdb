@@ -112,7 +112,12 @@ public class SymbolTranslatingRecord extends DelegatingRecord implements QuietCl
     /**
      * @param configuration                configuration that provides the max cache size
      * @param masterColumnCount            total number of columns in the master record metadata
-     * @param masterSymbolKeyColumnIndices master column indices for symbol key columns used in join
+     * @param masterSymbolKeyColumnIndices the column indices that the key copiers read the master symbol key
+     *                                     columns through. A master column that keys against several slave
+     *                                     columns translates through the symbol table of each of them: the key
+     *                                     copiers read it through the column index plus a multiple of
+     *                                     masterColumnCount for every slave column but the first, see
+     *                                     SqlCodeGenerator.convertSymbolJoinKeysToInt()
      * @param slaveSymbolKeyColumnIndices  slave column indices for symbol key columns used in join
      */
     public SymbolTranslatingRecord(
@@ -126,10 +131,15 @@ public class SymbolTranslatingRecord extends DelegatingRecord implements QuietCl
         this.caches = newCaches(joinColumnCount);
         this.masterSymbolTableCache = new SymbolTable[joinColumnCount];
         this.slaveSymbolTableCache = new StaticSymbolTable[joinColumnCount];
-        this.masterColumnIndices = masterSymbolKeyColumnIndices;
+        this.masterColumnIndices = new int[joinColumnCount];
         this.slaveColumnIndices = slaveSymbolKeyColumnIndices;
 
-        columnToKeyIndex = new int[masterColumnCount];
+        int keyColumnIndexBound = masterColumnCount;
+        for (int i = 0; i < joinColumnCount; i++) {
+            masterColumnIndices[i] = masterSymbolKeyColumnIndices[i] % masterColumnCount;
+            keyColumnIndexBound = Math.max(keyColumnIndexBound, masterSymbolKeyColumnIndices[i] + 1);
+        }
+        columnToKeyIndex = new int[keyColumnIndexBound];
         Arrays.fill(columnToKeyIndex, -1);
         for (int i = 0; i < joinColumnCount; i++) {
             columnToKeyIndex[masterSymbolKeyColumnIndices[i]] = i;
@@ -153,7 +163,7 @@ public class SymbolTranslatingRecord extends DelegatingRecord implements QuietCl
     public int getInt(int col) {
         int idx = columnToKeyIndex[col];
         if (idx >= 0) {
-            int result = translate(idx, base.getInt(col));
+            int result = translate(idx, base.getInt(masterColumnIndices[idx]));
             if (result == SymbolTable.VALUE_NOT_FOUND) {
                 hadNonExistentKey = true;
             }

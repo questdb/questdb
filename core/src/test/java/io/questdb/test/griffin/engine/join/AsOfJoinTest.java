@@ -2530,10 +2530,116 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinOnKeysLinkingTwoSlaveColumns() throws Exception {
+        // The keys make s.a, s.c, m.mx, m.my and m.mz equal. m.mx keys against both s.a and s.c, which
+        // assign different symbol ids to the same strings, so the join translates m.mx through the symbol
+        // table of each of them for its own keys, and SYMBOL keys compare symbol ids in every order of the
+        // conjuncts. The master columns that share a slave column must hold equal values, NULL included,
+        // or the master row gets a NULL slave side. The full-fat join, over a UNION ALL, compares strings.
+        assertMemoryLeak(() -> {
+            for (String type : new String[]{"SYMBOL", "INT"}) {
+                final String x = type.equals("SYMBOL") ? "'X'" : "1";
+                final String y = type.equals("SYMBOL") ? "'Y'" : "2";
+                execute("CREATE TABLE s (id INT, a " + type + ", c " + type + ", ts TIMESTAMP) TIMESTAMP(ts)");
+                execute("INSERT INTO s VALUES "
+                        + "(1, " + x + ", " + y + ", 1::TIMESTAMP), (2, " + y + ", " + x + ", 2::TIMESTAMP), "
+                        + "(3, " + x + ", " + x + ", 3::TIMESTAMP), (4, " + y + ", " + y + ", 4::TIMESTAMP), (5, NULL, NULL, 4::TIMESTAMP)");
+                execute("CREATE TABLE m (id INT, mx " + type + ", my " + type + ", mz " + type + ", ts TIMESTAMP) TIMESTAMP(ts)");
+                execute("INSERT INTO m VALUES "
+                        + "(1, " + x + ", " + x + ", " + x + ", 3::TIMESTAMP), (2, " + y + ", " + y + ", " + y + ", 3::TIMESTAMP), "
+                        + "(3, " + x + ", " + x + ", " + x + ", 5::TIMESTAMP), (4, " + y + ", " + y + ", " + y + ", 5::TIMESTAMP), "
+                        + "(5, " + x + ", " + x + ", " + y + ", 5::TIMESTAMP), (6, " + x + ", " + y + ", " + x + ", 5::TIMESTAMP), "
+                        + "(7, NULL, NULL, NULL, 5::TIMESTAMP)");
+                // rows 5 and 6 have master columns of two values; row 2 precedes the first matching slave row
+                final String expectedAsOf = """
+                        id\tid1
+                        1\t3
+                        2\tnull
+                        3\t3
+                        4\t4
+                        5\tnull
+                        6\tnull
+                        7\t5
+                        """;
+                final String expectedLt = """
+                        id\tid1
+                        1\tnull
+                        2\tnull
+                        3\t3
+                        4\t4
+                        5\tnull
+                        6\tnull
+                        7\t5
+                        """;
+                final String symbolKeys = type.equals("SYMBOL") ? "symbolKeyJoin: true" : "";
+                for (String on : new String[]{
+                        "s.a = m.mx AND s.c = m.mz AND s.c = m.mx AND s.a = m.my",
+                        "s.c = m.mz AND s.c = m.mx AND s.a = m.my AND s.a = m.mx",
+                        "s.a = m.my AND s.a = m.mx AND s.c = m.mx AND s.c = m.mz",
+                        // the optimiser tells m.mx and m.MX apart, so m.mx keys against s.a twice
+                        "s.a = m.mx AND s.c = m.mz AND s.c = m.MX AND s.a = m.my AND s.a = m.MX"
+                }) {
+                    assertQuery("SELECT m.id, s.id FROM m ASOF JOIN s ON " + on)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .withPlanContaining("AsOf Join Fast", "sharedKeyCheck: true", symbolKeys)
+                            .returns(expectedAsOf);
+                    assertQuery("SELECT m.id, s.id FROM m ASOF JOIN (SELECT * FROM s WHERE id > 0) s ON " + on)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .withPlanContaining("Filtered AsOf Join Fast", "sharedKeyCheck: true", symbolKeys)
+                            .returns(expectedAsOf);
+                    assertQuery("SELECT m.id, s.id FROM m ASOF JOIN (SELECT ts, c, id, a FROM s WHERE id > 0) s ON " + on)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .withPlanContaining("Filtered AsOf Join Fast", "sharedKeyCheck: true", symbolKeys)
+                            .returns(expectedAsOf);
+                    assertQuery("SELECT /*+ asof_linear(m s) */ m.id, s.id FROM m ASOF JOIN s ON " + on)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .withPlanContaining("AsOf Join Light", symbolKeys)
+                            .returns(expectedAsOf);
+                    // the dense join, or the filtered one when the conjuncts make the merge of the keys filter s
+                    assertQuery("SELECT /*+ asof_dense(m s) */ m.id, s.id FROM m ASOF JOIN s ON " + on)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .withPlanContaining(symbolKeys)
+                            .returns(expectedAsOf);
+                    assertQuery("SELECT m.id, s.id FROM m ASOF JOIN ((SELECT * FROM s UNION ALL SELECT * FROM s WHERE id < 0) TIMESTAMP(ts)) s ON " + on)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .withPlanContaining("AsOf Join")
+                            .returns(expectedAsOf);
+                    assertQuery("SELECT m.id, s.id FROM m LT JOIN s ON " + on)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .withPlanContaining("Lt Join Light", symbolKeys)
+                            .returns(expectedLt);
+                    assertQuery("SELECT m.id, s.id FROM m LT JOIN ((SELECT * FROM s UNION ALL SELECT * FROM s WHERE id < 0) TIMESTAMP(ts)) s ON " + on)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .withPlanContaining("Lt Join")
+                            .returns(expectedLt);
+                }
+                execute("DROP TABLE s");
+                execute("DROP TABLE m");
+            }
+        });
+    }
+
+    @Test
     public void testAsOfJoinOnMasterSymbolKeyWithTwoSlavePartners() throws Exception {
         // ASOF and LT joins keep all four keys, so the master column m.mx is compared with both s.a and
-        // s.c. These assign different symbol ids to the same strings, so m.mx must not translate through
-        // one symbol table for both keys.
+        // s.c. These assign different symbol ids to the same strings, so m.mx translates through the
+        // symbol table of each of them for its own keys, which compare symbol ids.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE s (id INT, a SYMBOL, c SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("INSERT INTO s VALUES (1, 'X', 'Y', 1::TIMESTAMP), (2, 'Y', 'X', 2::TIMESTAMP), (3, 'X', 'X', 3::TIMESTAMP)");
@@ -2562,12 +2668,14 @@ public class AsOfJoinTest extends AbstractCairoTest {
                             .noLeakCheck()
                             .noRandomAccess()
                             .expectSize()
+                            .withPlanContaining("symbolKeyJoin: true")
                             .returns(expectedAsOf);
                 }
                 assertQuery("SELECT m.id, s.id FROM m LT JOIN s ON " + on)
                         .noLeakCheck()
                         .noRandomAccess()
                         .expectSize()
+                        .withPlanContaining("symbolKeyJoin: true")
                         .returns(expectedLt);
             }
         });

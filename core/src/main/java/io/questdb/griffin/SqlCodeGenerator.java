@@ -1946,6 +1946,31 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
+    // Returns the column index that the master key copiers read the master column of a symbol id key with the slave
+    // column through, see convertSymbolJoinKeysToInt(): the master column index for the first slave column that the
+    // master column keys against, and that index plus n times the master column count for the n-th other slave
+    // column, which SymbolTranslatingRecord translates the column for on its own. The lists hold the master key
+    // column indexes and the slave columns of the earlier symbol id keys of the join.
+    private static int getMasterKeyColumnIndex(
+            int masterColIndex,
+            int slaveColIndex,
+            int masterColumnCount,
+            IntList masterKeyColIndexes,
+            IntList slaveColIndexes
+    ) {
+        int translationCount = 0;
+        for (int i = 0, n = masterKeyColIndexes.size(); i < n; i++) {
+            final int masterKeyColIndex = masterKeyColIndexes.getQuick(i);
+            if (masterKeyColIndex % masterColumnCount == masterColIndex) {
+                if (slaveColIndexes.getQuick(i) == slaveColIndex) {
+                    return masterKeyColIndex;
+                }
+                translationCount = Math.max(translationCount, masterKeyColIndex / masterColumnCount + 1);
+            }
+        }
+        return masterColIndex + translationCount * masterColumnCount;
+    }
+
     private static int getOrderByDirectionOrDefault(IQueryModel model, int index) {
         final IntList direction = model.getOrderByDirectionAdvice();
         return index >= direction.size() ? IQueryModel.ORDER_DIRECTION_ASCENDING : direction.getQuick(index);
@@ -2070,11 +2095,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return false;
     }
 
-    // SymbolTranslatingRecord translates each column through the symbol table of one partner column. A
-    // translated column that compares symbol ids with two different columns would be translated through
-    // the wrong symbol table for one of them, so the callers keep every key a string. ASOF, LT and HORIZON
-    // joins translate master columns. Hash joins translate slave columns, and the light hash joins
-    // translate master columns when they swap the build side at runtime.
+    // SymbolTranslatingRecord translates each column it reads through the symbol table of one partner column.
+    // A translated column that compares symbol ids with two different columns would be translated through
+    // the wrong symbol table for one of them, so the callers keep every key a string. HORIZON joins
+    // translate master columns. Hash joins translate slave columns, and the light hash joins translate
+    // master columns when they swap the build side at runtime. ASOF and LT joins translate master columns
+    // and read such a column through a column index for each partner, see convertSymbolJoinKeysToInt().
     private static boolean hasSymbolIdKeyColumnWithTwoPartners(
             ListColumnFilter slaveKeyColumns,
             ListColumnFilter masterKeyColumns,
@@ -2212,12 +2238,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     // HORIZON JOIN translates master key columns, as ASOF and LT joins do, so a pair of SYMBOL columns
-    // compares symbol ids under the rules of convertSymbolJoinKeysToInt(). A slave SYMBOL column that two
-    // master SYMBOL columns share keeps symbol ids: SymbolTranslatingRecord translates both into the
-    // symbol table of that one slave column. SqlOptimiser.mergeContexts() leaves one key pair of a master
-    // column that two slave columns share, but it tells column names apart by letter case, so t.s and
-    // t.S still put one master column at two key positions. Those keys compare strings when they name two
-    // slave columns, and keep symbol ids when they name the same one.
+    // compares symbol ids under the rules of convertSymbolJoinKeysToInt(), except that a master column
+    // that two slave columns share has one translation only, see hasSymbolIdKeyColumnWithTwoPartners().
+    // A slave SYMBOL column that two master SYMBOL columns share keeps symbol ids: SymbolTranslatingRecord
+    // translates both into the symbol table of that one slave column. SqlOptimiser.mergeContexts() leaves
+    // one key pair of a master column that two slave columns share, but it tells column names apart by
+    // letter case, so t.s and t.S still put one master column at two key positions. Those keys compare
+    // strings when they name two slave columns, and keep symbol ids when they name the same one.
     private static boolean isHorizonSymbolIdKeyAllowed(
             ListColumnFilter masterKeyColumns,
             RecordMetadata masterMetadata,
@@ -3566,6 +3593,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      *   <li>Collects master/slave column indices into arrays</li>
      * </ul>
      * Must be called after createSymbolShortCircuit() and before createRecordCopierMaster/Slave().
+     * <p>
+     * ASOF and LT joins translate master key columns, see SymbolTranslatingRecord, which translates
+     * each column it reads through the symbol table of one slave column. A master column that keys
+     * against two different slave columns needs a translation for each of them, so the key positions
+     * after the first one that pairs the column with another slave column read it through a column
+     * index of their own: the column index plus a multiple of the master column count, see
+     * getMasterKeyColumnIndex(). The method writes that index into listColumnFilterB, and the master
+     * key copiers read the column through it, see createRecordCopierMaster().
      *
      * @param isSlaveTranslated true for hash joins, which translate slave key columns; ASOF and LT
      *                          joins translate only master key columns
@@ -3583,9 +3618,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
         if (hasMixedSymbolIdKeyColumn(listColumnFilterA, listColumnFilterB, symbolIdKeys)
-                || hasSymbolIdKeyColumnWithTwoPartners(listColumnFilterA, listColumnFilterB, symbolIdKeys, isSlaveTranslated)) {
+                || (isSlaveTranslated && hasSymbolIdKeyColumnWithTwoPartners(listColumnFilterA, listColumnFilterB, symbolIdKeys, true))) {
             return null;
         }
+        final int masterColumnCount = masterMetadata.getColumnCount();
         IntList masterSymbolKeyCols = null;
         IntList slaveSymbolKeyCols = null;
         for (int k = 0, m = listColumnFilterA.getColumnCount(); k < m; k++) {
@@ -3598,15 +3634,25 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     masterSymbolKeyCols = new IntList();
                     slaveSymbolKeyCols = new IntList();
                 }
-                masterSymbolKeyCols.add(masterColIndex);
+                final int masterKeyColIndex = isSlaveTranslated
+                        ? masterColIndex
+                        : getMasterKeyColumnIndex(masterColIndex, slaveColIndex, masterColumnCount, masterSymbolKeyCols, slaveSymbolKeyCols);
+                if (masterKeyColIndex != masterColIndex) {
+                    listColumnFilterB.setQuick(k, masterKeyColIndex + 1);
+                }
+                masterSymbolKeyCols.add(masterKeyColIndex);
                 slaveSymbolKeyCols.add(slaveColIndex);
             }
         }
         if (masterSymbolKeyCols != null) {
             // Unset the bits AFTER the loop, so that a column used by more than one
-            // key pair keeps its bit until the loop has checked every pair
+            // key pair keeps its bit until the loop has checked every pair. The column
+            // index of a second translation of a master column has no bit.
             for (int i = 0, n = masterSymbolKeyCols.size(); i < n; i++) {
-                writeSymbolAsStringB.unset(masterSymbolKeyCols.getQuick(i));
+                final int masterKeyColIndex = masterSymbolKeyCols.getQuick(i);
+                if (masterKeyColIndex < masterColumnCount) {
+                    writeSymbolAsStringB.unset(masterKeyColIndex);
+                }
                 writeSymbolAsStringA.unset(slaveSymbolKeyCols.getQuick(i));
             }
             return new int[][]{masterSymbolKeyCols.toArray(), slaveSymbolKeyCols.toArray()};
@@ -4034,7 +4080,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return RecordSinkFactory.getInstance(
                 configuration,
                 asm,
-                masterMetadata,
+                getMasterKeyColumnTypes(masterMetadata),
                 listColumnFilterB,
                 writeSymbolAsStringB,
                 writeStringAsVarcharB,
@@ -4084,7 +4130,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // of the earliest such position when isEarliestPosition is true, and the master column of the
     // position itself otherwise. The two copies are equal exactly when every group of positions
     // agrees. Returns null when no slave key column repeats. Like createRecordCopierMaster(), call it
-    // after convertSymbolJoinKeysToInt(), so both copiers encode the master columns the same way.
+    // after convertSymbolJoinKeysToInt(), so both copiers encode the master columns the same way, and
+    // before removeSharedSlaveKeyPositions(), which drops the positions that the copiers read.
     private @Nullable RecordSink createSharedKeyCopier(RecordMetadata masterMetadata, boolean isEarliestPosition) {
         final ListColumnFilter filter = collectSharedKeyMasterColumns(listColumnFilterA, listColumnFilterB, isEarliestPosition);
         if (filter == null) {
@@ -4093,7 +4140,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return RecordSinkFactory.getInstance(
                 configuration,
                 asm,
-                masterMetadata,
+                getMasterKeyColumnTypes(masterMetadata),
                 filter,
                 writeSymbolAsStringB,
                 writeStringAsVarcharB,
@@ -7416,6 +7463,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             );
                         } else {
                             int[][] fastSymbolKeyIndices = convertSymbolJoinKeysToInt(masterMetadata, slaveMetadata, false);
+                            final RecordSink earliestSharedKeySink = createSharedKeyCopier(masterMetadata, true);
+                            final RecordSink laterSharedKeySink = createSharedKeyCopier(masterMetadata, false);
+                            removeSharedSlaveKeyPositions();
                             return new AsOfJoinFastRecordCursorFactory(
                                     configuration,
                                     joinMetadata,
@@ -7429,8 +7479,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     toleranceInterval,
                                     fastSymbolKeyIndices != null ? fastSymbolKeyIndices[0] : null,
                                     fastSymbolKeyIndices != null ? fastSymbolKeyIndices[1] : null,
-                                    createSharedKeyCopier(masterMetadata, true),
-                                    createSharedKeyCopier(masterMetadata, false)
+                                    earliestSharedKeySink,
+                                    laterSharedKeySink
                             );
                         }
                     } else if (slave.supportsFilterStealing() && slave.getBaseFactory().supportsTimeFrameCursor()) {
@@ -7446,6 +7496,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         slave.halfClose();
 
                         int[][] filteredSymbolKeyIndices = convertSymbolJoinKeysToInt(masterMetadata, slaveMetadata, false);
+                        final RecordSink earliestSharedKeySink = createSharedKeyCopier(masterMetadata, true);
+                        final RecordSink laterSharedKeySink = createSharedKeyCopier(masterMetadata, false);
+                        removeSharedSlaveKeyPositions();
                         return new FilteredAsOfJoinFastRecordCursorFactory(
                                 configuration,
                                 joinMetadata,
@@ -7461,8 +7514,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 toleranceInterval,
                                 filteredSymbolKeyIndices != null ? filteredSymbolKeyIndices[0] : null,
                                 filteredSymbolKeyIndices != null ? filteredSymbolKeyIndices[1] : null,
-                                createSharedKeyCopier(masterMetadata, true),
-                                createSharedKeyCopier(masterMetadata, false)
+                                earliestSharedKeySink,
+                                laterSharedKeySink
                         );
                     } else if (slave.isProjection()) {
                         RecordCursorFactory projectionBase = slave.getBaseFactory();
@@ -7490,6 +7543,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 projectionBase.halfClose();
 
                                 int[][] projFilteredSymbolKeyIndices = convertSymbolJoinKeysToInt(masterMetadata, slaveMetadata, false);
+                                final RecordSink earliestSharedKeySink = createSharedKeyCopier(masterMetadata, true);
+                                final RecordSink laterSharedKeySink = createSharedKeyCopier(masterMetadata, false);
+                                removeSharedSlaveKeyPositions();
                                 return new FilteredAsOfJoinFastRecordCursorFactory(
                                         configuration,
                                         joinMetadata,
@@ -7505,8 +7561,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         toleranceInterval,
                                         projFilteredSymbolKeyIndices != null ? projFilteredSymbolKeyIndices[0] : null,
                                         projFilteredSymbolKeyIndices != null ? projFilteredSymbolKeyIndices[1] : null,
-                                        createSharedKeyCopier(masterMetadata, true),
-                                        createSharedKeyCopier(masterMetadata, false)
+                                        earliestSharedKeySink,
+                                        laterSharedKeySink
                                 );
                             }
                         }
@@ -15595,6 +15651,25 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return -1;
     }
 
+    // Returns the types of the master columns that listColumnFilterB reads. A column index past the master column
+    // count reads the master column of that index modulo the count through a symbol id translation of its own, see
+    // convertSymbolJoinKeysToInt().
+    private ColumnTypes getMasterKeyColumnTypes(RecordMetadata masterMetadata) {
+        final int columnCount = masterMetadata.getColumnCount();
+        int columnIndexBound = columnCount;
+        for (int k = 0, n = listColumnFilterB.getColumnCount(); k < n; k++) {
+            columnIndexBound = Math.max(columnIndexBound, listColumnFilterB.getColumnIndexFactored(k) + 1);
+        }
+        if (columnIndexBound == columnCount) {
+            return masterMetadata;
+        }
+        final ArrayColumnTypes columnTypes = new ArrayColumnTypes();
+        for (int i = 0; i < columnIndexBound; i++) {
+            columnTypes.add(masterMetadata.getColumnType(i % columnCount));
+        }
+        return columnTypes;
+    }
+
     // Returns the shared primary of the model, or null when the code generator has not built one, or when the primary
     // closed because the code generator dropped every place that read it, such as the sub-tree of a constant false
     // join. A reader of such a model then builds a copy of its own, and the model itself builds a new primary.
@@ -16528,6 +16603,32 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
         }
+    }
+
+    // Keeps the earliest key position of every slave key column and drops the others. The join then writes a slave
+    // column once into the key that it looks up: a slave row writes the same value at every position of its column,
+    // so it matches exactly the master rows whose values at those positions equal one another, which the copiers of
+    // createSharedKeyCopier() check before the lookup, and whose earliest position matches it. Call it after those
+    // copiers are built, as they read the dropped positions, and before the key copiers.
+    private void removeSharedSlaveKeyPositions() {
+        int keptCount = 0;
+        for (int k = 0, n = listColumnFilterA.getColumnCount(); k < n; k++) {
+            final int slaveColumnIndex = listColumnFilterA.getColumnIndexFactored(k);
+            boolean isShared = false;
+            for (int j = 0; j < keptCount; j++) {
+                if (listColumnFilterA.getColumnIndexFactored(j) == slaveColumnIndex) {
+                    isShared = true;
+                    break;
+                }
+            }
+            if (!isShared) {
+                listColumnFilterA.setQuick(keptCount, listColumnFilterA.getQuick(k));
+                listColumnFilterB.setQuick(keptCount, listColumnFilterB.getQuick(k));
+                keptCount++;
+            }
+        }
+        listColumnFilterA.setPos(keptCount);
+        listColumnFilterB.setPos(keptCount);
     }
 
     private void restoreScratch(GenerationScratch scratch) {
