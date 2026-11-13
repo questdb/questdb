@@ -81,6 +81,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cutlass.NetUtils;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
@@ -7698,6 +7699,33 @@ nodejs code:
     }
 
     @Test
+    public void testLoginWithoutUser() throws Exception {
+        // a startup message without a user, or with an empty one, fails the login like a wrong password
+        assertLoginsRejected(new String[][]{
+                {
+                        // database=qdb
+                        """
+                                >00000016000300006461746162617365007164620000
+                                <520000000800000003
+                                >700000000a717565737400
+                                <450000002e433030303030004d696e76616c696420757365726e616d652f70617373776f726400534552524f520000
+                                <!!""",
+                        "bad password for user [user=null]"
+                },
+                {
+                        // user=, database=qdb
+                        """
+                                >0000001c000300007573657200006461746162617365007164620000
+                                <520000000800000003
+                                >700000000a717565737400
+                                <450000002e433030303030004d696e76616c696420757365726e616d652f70617373776f726400534552524f520000
+                                <!!""",
+                        "bad password for user [user=]"
+                }
+        });
+    }
+
+    @Test
     public void testMalformedInitPropertyName() throws Exception {
         assertHexScript(
                 NetworkFacadeImpl.INSTANCE,
@@ -8402,6 +8430,34 @@ nodejs code:
                 assertResultSet("a[INTEGER],b[INTEGER]\n2,2\n", sink, result);
             }
         });
+    }
+
+    @Test
+    public void testPasswordMessageWrongType() throws Exception {
+        // the server requests a cleartext password; the protocol allows only a PasswordMessage ('p') in reply
+        final String[][] messagesAndTypes = {
+                {"5800000004", "88"}, // Terminate
+                {"5300000004", "83"}, // Sync
+                {"510000000d53454c454354203100", "81"}, // Query "SELECT 1"
+                {"000000000a717565737400", "0"}, // the correct password under type 0x00
+                {"7f00000004", "127"},
+                {"8000000004", "128"},
+                {"ff00000004", "255"},
+        };
+        final String[][] scriptsAndLogs = new String[messagesAndTypes.length][];
+        for (int i = 0; i < messagesAndTypes.length; i++) {
+            scriptsAndLogs[i] = new String[]{
+                    """
+                            >0000000804d2162f
+                            <4e
+                            >0000007500030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000
+                            <520000000800000003
+                            >%s
+                            <!!""".formatted(messagesAndTypes[i][0]),
+                    "unexpected password message type [msgType=" + messagesAndTypes[i][1] + ']'
+            };
+        }
+        assertLoginsRejected(scriptsAndLogs);
     }
 
     @Test
@@ -13164,6 +13220,51 @@ create table tab as (
 
     private void assertHexScriptAltCreds(String script) throws Exception {
         assertHexScript(NetworkFacadeImpl.INSTANCE, script, getStdPgWireConfigAltCreds());
+    }
+
+    private void assertLoginsRejected(String[][] scriptsAndLogs) throws Exception {
+        final LogCapture capture = new LogCapture();
+        capture.start();
+        try {
+            for (boolean isFiberEnabled : new boolean[]{true, false}) {
+                assertMemoryLeak(() -> {
+                    final PGConfiguration configuration = new Port0PGConfiguration() {
+                        @Override
+                        public boolean isFiberEnabled() {
+                            return isFiberEnabled;
+                        }
+                    };
+                    try (
+                            PGServer server = createPGServer(configuration, true);
+                            WorkerPool workerPool = server.getWorkerPool()
+                    ) {
+                        workerPool.start(LOG);
+                        for (int i = 0; i < scriptsAndLogs.length; i++) {
+                            // start() clears what earlier scripts logged
+                            capture.start();
+                            final long unhandledErrors = engine.getMetrics().healthMetrics().unhandledErrorsCount();
+                            NetUtils.playScript(NetworkFacadeImpl.INSTANCE, scriptsAndLogs[i][0], "127.0.0.1", server.getPort());
+                            Assert.assertEquals(
+                                    "fiber=" + isFiberEnabled + ", script=" + i,
+                                    unhandledErrors,
+                                    engine.getMetrics().healthMetrics().unhandledErrorsCount()
+                            );
+                            capture.drain();
+                            capture.assertLogged(scriptsAndLogs[i][1]);
+                        }
+                        try (
+                                Connection connection = getConnection(server.getPort(), true, false);
+                                ResultSet rs = connection.createStatement().executeQuery("SELECT 42 x")
+                        ) {
+                            Assert.assertTrue(rs.next());
+                            Assert.assertEquals(42, rs.getInt(1));
+                        }
+                    }
+                });
+            }
+        } finally {
+            capture.stop();
+        }
     }
 
     private void assertQueryAgainstIndexedSymbol(

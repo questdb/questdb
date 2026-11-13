@@ -93,7 +93,7 @@ public class DynamicUsernamePasswordMatcher implements UsernamePasswordMatcher, 
 
         lock.readLock().lock();
         try {
-            if (username.length() == 0) {
+            if (username == null || username.length() == 0) {
                 return AUTH_TYPE_NONE;
             }
             if (Chars.equals(username, pgWireConfig.getDefaultUsername())) {
