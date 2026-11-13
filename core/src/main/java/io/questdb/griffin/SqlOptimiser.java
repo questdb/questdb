@@ -7589,6 +7589,10 @@ public class SqlOptimiser implements Mutable {
         return null;
     }
 
+    // Returns the type of the column of the model, following a column that reads a column of the nested
+    // model down to the column that has a type, or -1 when the type is unknown. A qualified name, such as
+    // b.v of SELECT b.v FROM a JOIN b, reads the column of the table that its prefix names: the first table
+    // a may hold a column v of another type.
     private int getQueryColumnType(IQueryModel model, QueryColumn column) {
         while (column != null && column.getColumnType() < 0) {
             final ExpressionNode ast = column.getAst();
@@ -7596,8 +7600,19 @@ public class SqlOptimiser implements Mutable {
             if (ast == null || ast.type != LITERAL || model == null) {
                 return -1;
             }
-            column = findOutputColumn(model, ast.token);
+            column = model.getAliasToColumnMap().get(ast.token);
             if (column == null) {
+                final int dot = Chars.indexOfLastUnquoted(ast.token, '.');
+                if (dot > -1) {
+                    final int index = model.getModelAliasIndex(ast.token, 0, dot);
+                    if (index > -1) {
+                        model = model.getJoinModels().getQuick(index);
+                        column = model.getAliasToColumnMap().get(ast.token, dot + 1, ast.token.length());
+                    }
+                }
+            }
+            if (column == null) {
+                // a projection maps the names that it reads, qualified or not, to its own
                 final CharSequence alias = model.getColumnNameToAliasMap().get(ast.token);
                 if (alias != null) {
                     column = model.getAliasToColumnMap().get(alias);
