@@ -12,10 +12,12 @@ Analyze CI failures for PR `$ARGUMENTS` (or the current branch's PR if no argume
 ### 1a. Find the PR
 
 ```bash
-# If $ARGUMENTS is a number or URL, use it directly.
-# Otherwise detect from current branch:
-gh pr view --json number,title,headRefName --jq '{number, title, headRefName}'
+# gh views the PR given as the argument, or the current branch's PR without one:
+gh pr view $ARGUMENTS --json number,title,headRefName,headRefOid --jq '{number, title, headRefName, headRefOid}'
 ```
+
+`number` is `$PR` from here on. `headRefOid` is the PR's head commit: Step 5
+checks the checkout against it.
 
 ### 1b. Quick test summary (cheapest check, 1 API call)
 
@@ -138,7 +140,7 @@ Report these as Category E (non-test failures) in the final output. Common cases
 
 - **All passed + summary shows 0 failures** — report success, stop.
 - **Some failed** — proceed to Step 2 with failed checks. Report summary: "24 test failures across 14 runs out of 279K tests."
-- **All pending, none failed** — report "CI still running, no failures yet. Re-run this command later or use `/loop 2m /fix-ci $PR` to monitor."
+- **All pending, none failed** — report "CI still running, no failures yet." and stop. Never wait for the run, poll it or suggest looping this command (CLAUDE.md "Never monitor CI").
 - **Mix of pending + failed** — proceed with failed checks immediately. Don't wait for the full run.
 - **Only non-Azure checks failed** (e.g., Danger, build) — report those directly, skip Steps 2-3.
 
@@ -353,6 +355,9 @@ The heuristic: "Did the PR replace the functionality, or just remove the gate?" 
 
 ### For Category A (auto-fix):
 
+Do steps 1-3 for every Category A test, reproduce them all at once in step 4,
+then fix each test that reproduced.
+
 1. **Find the test source file:**
    - Convert class name to path: `io.questdb.test.griffin.FooTest` -> search in `core/src/test/java/`
    - Use Glob: `**/FooTest.java`
@@ -370,14 +375,51 @@ The heuristic: "Did the PR replace the functionality, or just remove the gate?" 
 
 3. **Read the test method** in the source file. Find the assertion call and its expected value.
 
-4. **Update the expected value** to match the actual output. Use the Edit tool.
+4. **Reproduce the failures locally** before editing anything (CLAUDE.md "Never
+   monitor CI"). First check that the checkout holds the PR's head commit:
+   ```bash
+   git merge-base --is-ancestor '<headRefOid from Step 1a>' HEAD && echo HAS-PR-HEAD || echo LACKS-PR-HEAD
+   ```
+   On `LACKS-PR-HEAD`, run and edit nothing: report under "Not auto-fixed" that
+   the checkout is not the PR's code, which `gh pr checkout $PR` or a pull of
+   the PR's branch fixes. Otherwise run all the tests in one call (CLAUDE.md
+   "Running Tests"):
+   ```bash
+   python3 ci/incremental_compile.py -- test -Dtest='FooTest#testBar+testBaz,BarTest#testQux'
+   ```
+   Maven reports a failure when the tests fail, as they should here: read each
+   test's result in its output.
+   - **It fails with the mismatch CI showed:** reproduced. Fix it in steps 5-6.
+   - **The build fails, or the test fails with an error that would fail any
+     test**, such as `NoClassDefFoundError` or `UnsatisfiedLinkError`: the local
+     environment is broken, not the test. Edit nothing, and report under "Not
+     auto-fixed" the first error and its remedy, such as one CLAUDE.md
+     "Building" gives.
+   - **It passes, or fails another way:** CI's failure does not reproduce here.
+     Edit nothing, and report the test under Behavior Precision (Category B)
+     with the local result.
 
-5. **Report** what was changed:
+   Leave a test out of the runs in steps 4 and 6 only when CI failed it on a
+   platform this machine is not, such as Windows while you run Linux, and it
+   does not run here; fix it without a local run and say so in the report. A
+   test that runs here is reproduced and verified here, even when CI failed it
+   elsewhere.
+
+5. **Update the expected value** to match the actual output. Use the Edit tool.
+
+6. **Run the fixed tests locally**, in one call as in step 4. Each must pass;
+   undo the edit of each one that fails and report it under Behavior Precision
+   (Category B) with the local failure. A compile error in an edited file is a
+   mistake in the edit: correct it and run again. Never wait on CI to check the
+   fix.
+
+7. **Report** what was changed:
    ```
    Auto-fixed: FooTest#testBar
    - Updated expected output: [brief description of what changed]
    - Reason: PR changed [behavior X], test expected old output
    - Platforms affected: mac-griffin, windows-griffin, linux-griffin
+   - Local run: passed | not run: [reason, e.g. the test runs only on Windows, this machine runs Linux]
    ```
 
 ### For Categories B-E (discuss with user):
@@ -390,7 +432,11 @@ Present a structured report. Group by category, within each category group by si
 Analyzed N failed jobs across M platforms.
 
 ### Auto-fixed (if any)
-- `FooTest#testBar`: updated expected output — [description]
+- `FooTest#testBar`: updated expected output — [description]; local run: passed | not run: [reason]
+
+### Not auto-fixed (if any)
+Local runs could not check the fixes: [the checkout lacks the PR's head <sha> | the build fails: <first error> | the tests fail to load: <first error>]. [Its remedy.] Then run this command again.
+- `FooTest#testBaz`: expected output to update — [description]
 
 ### Needs Discussion
 
