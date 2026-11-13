@@ -6005,6 +6005,82 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testSetOperationComputedColumnTypeMatchesCodeGenerator() throws Exception {
+        // An operand of a set operation that computes the column has the type that the function parser gives the
+        // expression over the types of the columns that it reads, as the code generator types a projection. The
+        // optimiser must know the type of every such query that compiles, except when the expression reads a
+        // bind variable, a sub-query or a column that only the projection names.
+        final String[] types = {
+                "BOOLEAN", "BYTE", "SHORT", "CHAR", "INT", "LONG", "DATE", "TIMESTAMP", "TIMESTAMP_NS", "FLOAT",
+                "DOUBLE", "STRING", "SYMBOL", "VARCHAR", "UUID", "IPv4", "LONG256", "GEOHASH(4c)", "GEOHASH(8c)",
+                "DECIMAL(10,2)", "DECIMAL(18,4)", "DOUBLE[]"
+        };
+        final int symbol = 12;
+        assertMemoryLeak(() -> {
+            for (int i = 0; i < types.length; i++) {
+                execute("CREATE TABLE t" + i + " (k " + types[i] + ", c INT, cl LONG)");
+            }
+            final StringSink mismatches = new StringSink();
+            try (SetOperationTypeCompiler compiler = new SetOperationTypeCompiler(engine)) {
+                for (String operation : new String[]{"UNION ALL", "EXCEPT"}) {
+                    for (int a = 0; a < types.length; a++) {
+                        for (int b = 0; b < types.length; b++) {
+                            if (isDecimalWithArray(types, a, b)) {
+                                continue;
+                            }
+                            final boolean isSymbol = a == symbol && b == symbol;
+                            final String first = "SELECT k, c FROM t" + a + ' ' + operation + ' ';
+                            // a cast to the type of the column, a CASE over it, and arithmetic, in the later operand
+                            for (String expression : new String[]{"k::" + types[b], "CASE WHEN c > 0 THEN k ELSE k END", "k + 1"}) {
+                                assertSetOperationColumnType(compiler, first + "SELECT " + expression + ", c FROM t" + b, true, isSymbol, mismatches);
+                            }
+                            // the first operand computes the column
+                            assertSetOperationColumnType(
+                                    compiler,
+                                    "SELECT k::" + types[a] + ", c FROM t" + a + ' ' + operation + " SELECT k, c FROM t" + b,
+                                    true,
+                                    isSymbol,
+                                    mismatches
+                            );
+                        }
+                        // NULL and a constant of another type in the later operand
+                        for (String constant : new String[]{"NULL", "1", "'1'", "1.5"}) {
+                            assertSetOperationColumnType(compiler, "SELECT k, c FROM t" + a + ' ' + operation + " SELECT " + constant + ", c FROM t" + a, true, false, mismatches);
+                        }
+                        // a bind variable or a sub-query leaves the type unknown
+                        bindVariableService.clear();
+                        bindVariableService.setInt(0, 1);
+                        assertSetOperationColumnType(compiler, "SELECT c, k FROM t" + a + ' ' + operation + " SELECT c + $1, k FROM t" + a, false, false, mismatches);
+                        bindVariableService.clear();
+                        assertSetOperationColumnType(compiler, "SELECT c, k FROM t" + a + ' ' + operation + " SELECT c + (SELECT max(c) FROM t" + a + "), k FROM t" + a, false, false, mismatches);
+                    }
+                }
+                // The second column of the later operand reads k, which names a DOUBLE column of the table and the
+                // INT first column of the projection: the code generator reads the column of the table. A name that
+                // only the projection has leaves the type unknown.
+                execute("CREATE TABLE td (k DOUBLE, c INT)");
+                assertSetOperationColumnType(compiler, "SELECT k, c FROM td UNION ALL SELECT c * 2 AS k, k + 0 AS x FROM td", 1, true, false, mismatches);
+                assertSetOperationColumnType(compiler, "SELECT k, c FROM td UNION ALL SELECT c * 2 AS k2, k2 + 0 AS x FROM td", 1, false, false, mismatches);
+                // the operand computes over a union of INT and LONG, which outputs LONG
+                assertSetOperationColumnType(compiler, "SELECT k, c FROM t4 UNION ALL SELECT k + 1, c FROM (SELECT k, c FROM t4 UNION ALL SELECT k, c FROM t5)", true, false, mismatches);
+                // a GROUP BY or a window function computes the column or its input, and a cursor is no column type
+                assertSetOperationColumnType(compiler, "SELECT k, c FROM t4 UNION ALL SELECT max(k), c FROM t4 GROUP BY c", false, false, mismatches);
+                assertSetOperationColumnType(compiler, "SELECT k, c FROM t5 UNION ALL SELECT row_number() OVER (), c FROM t4", false, false, mismatches);
+                assertSetOperationColumnType(compiler, "SELECT k, c FROM t4 UNION ALL SELECT m + 1, c FROM (SELECT max(k) m, c FROM t4 GROUP BY c)", false, false, mismatches);
+                assertSetOperationColumnType(compiler, "SELECT k, c FROM t4 UNION ALL SELECT long_sequence(1), c FROM t4", false, false, mismatches);
+                // the type of a computed column needs the context of the optimisation
+                IQueryModel model = (IQueryModel) compiler.generateExecutionModel("SELECT k, c FROM t4 UNION ALL SELECT k + 1, c FROM t4", sqlExecutionContext);
+                while (model.getUnionModel() == null) {
+                    model = model.getNestedModel();
+                }
+                assertEquals(ColumnType.INT, compiler.getSetOperationColumnType(model, 0));
+                assertEquals(-1, compiler.getSetOperationColumnTypeWithoutContext(model, 0));
+            }
+            assertEquals("", mismatches.toString());
+        });
+    }
+
+    @Test
     public void testSingleCountDistinct() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table y (x int, ts timestamp) timestamp(ts) partition by day;");
@@ -7010,14 +7086,26 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             boolean isSymbolInEveryOperand,
             StringSink mismatches
     ) throws SqlException {
+        assertSetOperationColumnType(compiler, query, 0, isTypeKnown, isSymbolInEveryOperand, mismatches);
+    }
+
+    // The same comparison for the column at the index
+    private static void assertSetOperationColumnType(
+            SetOperationTypeCompiler compiler,
+            String query,
+            int columnIndex,
+            boolean isTypeKnown,
+            boolean isSymbolInEveryOperand,
+            StringSink mismatches
+    ) throws SqlException {
         IQueryModel model = (IQueryModel) compiler.generateExecutionModel(query, sqlExecutionContext);
         while (model.getUnionModel() == null) {
             model = model.getNestedModel();
         }
-        final int computedType = compiler.getSetOperationColumnType(model);
+        final int computedType = compiler.getSetOperationColumnType(model, columnIndex);
         final int actualType;
         try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-            actualType = factory.getMetadata().getColumnType(0);
+            actualType = factory.getMetadata().getColumnType(columnIndex);
         } catch (SqlException e) {
             // the code generator rejects the operand types
             return;
@@ -7103,8 +7191,12 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             super(engine);
         }
 
-        int getSetOperationColumnType(IQueryModel model) {
-            return optimiser.getSetOperationColumnTypeForTesting(model, 0);
+        int getSetOperationColumnType(IQueryModel model, int columnIndex) {
+            return optimiser.getSetOperationColumnTypeForTesting(model, columnIndex, sqlExecutionContext);
+        }
+
+        int getSetOperationColumnTypeWithoutContext(IQueryModel model, int columnIndex) {
+            return optimiser.getSetOperationColumnTypeForTesting(model, columnIndex, null);
         }
     }
 }

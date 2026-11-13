@@ -501,6 +501,9 @@ public class SqlOptimiser implements Mutable {
     private long orderingEdgeApplications;
     private CharSequence tempColumnAlias;
     private IQueryModel tempQueryModel;
+    // The execution context of the query that optimise() optimises, which getVirtualColumnType() parses
+    // expressions with, or null outside optimise()
+    private SqlExecutionContext virtualColumnTypeContext;
 
     public SqlOptimiser(
             CairoConfiguration configuration,
@@ -720,8 +723,14 @@ public class SqlOptimiser implements Mutable {
     }
 
     @TestOnly
-    public int getSetOperationColumnTypeForTesting(IQueryModel model, int columnIndex) {
-        return getSetOperationColumnType(model, model.getColumns().getQuick(columnIndex));
+    public int getSetOperationColumnTypeForTesting(IQueryModel model, int columnIndex, SqlExecutionContext executionContext) {
+        final SqlExecutionContext previousContext = virtualColumnTypeContext;
+        virtualColumnTypeContext = executionContext;
+        try {
+            return getSetOperationColumnType(model, model.getColumns().getQuick(columnIndex));
+        } finally {
+            virtualColumnTypeContext = previousContext;
+        }
     }
 
     public boolean hasOrderedGroupByFunc(ExpressionNode node) {
@@ -2933,6 +2942,50 @@ public class SqlOptimiser implements Mutable {
                     }
                 }
             }
+        }
+    }
+
+    // Adds the column of each name that the expression of a column of the virtual model reads to the metadata, with
+    // the type of the column of the nested model of that name, which the code generator reads it from, see
+    // PriorityMetadata. Returns false when the type of the expression is unknown: a name has no known type, or names
+    // no column of the nested model, but one of the projection, or a node is one that the function parser must not
+    // parse here, such as a sub-query, which it would compile, or a bind variable, whose type it may assign.
+    private boolean addVirtualColumnInputTypes(IQueryModel model, ExpressionNode node, GenericRecordMetadata metadata) {
+        switch (node.type) {
+            case CONSTANT:
+                return true;
+            case LITERAL: {
+                final CharSequence token = node.token;
+                if (metadata.getColumnIndexQuiet(token) > -1) {
+                    return true;
+                }
+                final IQueryModel nested = model.getNestedModel();
+                final QueryColumn input = nested.getAliasToColumnMap().get(token);
+                if (input == null) {
+                    return false;
+                }
+                final int type = nested.getUnionModel() != null
+                        ? getSetOperationColumnType(nested, input)
+                        : getQueryColumnType(nested, input);
+                if (type < 0) {
+                    return false;
+                }
+                // the type of the result of a function does not depend on whether a SYMBOL column has a static
+                // symbol table, only its implementation does
+                metadata.add(new TableColumnMetadata(Chars.toString(token), type, IndexType.NONE, 0, false, null));
+                return true;
+            }
+            case FUNCTION:
+            case OPERATION:
+                for (int i = 0, n = node.args.size(); i < n; i++) {
+                    if (!addVirtualColumnInputTypes(model, node.args.getQuick(i), metadata)) {
+                        return false;
+                    }
+                }
+                return (node.lhs == null || addVirtualColumnInputTypes(model, node.lhs, metadata))
+                        && (node.rhs == null || addVirtualColumnInputTypes(model, node.rhs, metadata));
+            default:
+                return false;
         }
     }
 
@@ -7646,7 +7699,7 @@ public class SqlOptimiser implements Mutable {
     // SqlOptimiserTest.testSetOperationColumnTypeMatchesCodeGenerator() checks the result against the generator.
     private int getSetOperationColumnType(IQueryModel model, QueryColumn column) {
         final int index = model.getColumns().indexOf(column);
-        final int firstType = getQueryColumnType(model, column);
+        final int firstType = getSetOperationOperandColumnType(model, column);
         if (index < 0 || firstType < 0) {
             return -1;
         }
@@ -7659,7 +7712,7 @@ public class SqlOptimiser implements Mutable {
             if (index >= rightColumns.size()) {
                 return -1;
             }
-            final int rightType = getQueryColumnType(right, rightColumns.getQuick(index));
+            final int rightType = getSetOperationOperandColumnType(right, rightColumns.getQuick(index));
             if (rightType < 0) {
                 return -1;
             }
@@ -7697,6 +7750,15 @@ public class SqlOptimiser implements Mutable {
         return isUnionRun && isSymbolRun ? ColumnType.SYMBOL : type;
     }
 
+    // Returns the type of the column of an operand of a set operation: the type of the column that it reads, see
+    // getQueryColumnType(), or the type of the expression that it computes, see getVirtualColumnType()
+    private int getSetOperationOperandColumnType(IQueryModel operand, QueryColumn column) {
+        if (column.getAst().type != LITERAL) {
+            return getVirtualColumnType(operand, column);
+        }
+        return getQueryColumnType(operand, column);
+    }
+
     /**
      * Gets the timestamp column name for pushdown validation.
      * Returns the timestamp alias or designated timestamp token.
@@ -7729,6 +7791,34 @@ public class SqlOptimiser implements Mutable {
             return alias;
         } else {
             return null;
+        }
+    }
+
+    // Returns the type that SqlCodeGenerator.generateSelectVirtualWithSubQuery() gives the column that the virtual
+    // model computes, or -1 when it is unknown. The function parser types the expression as the code generator does,
+    // over the types of the columns of the nested model that it reads, see addVirtualColumnInputTypes(). A type that
+    // the code generator changes after it parses the expression, that of a bind variable the client left to it or of
+    // a cursor, which it rejects, is unknown.
+    private int getVirtualColumnType(IQueryModel model, QueryColumn column) {
+        final SqlExecutionContext executionContext = virtualColumnTypeContext;
+        if (executionContext == null || model.getSelectModelType() != SELECT_MODEL_VIRTUAL) {
+            return -1;
+        }
+        // the optimiser gives a projection without FROM the FROM long_sequence(1)
+        assert model.getNestedModel() != null;
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        if (!addVirtualColumnInputTypes(model, column.getAst(), metadata)) {
+            return -1;
+        }
+        Function function = null;
+        try {
+            function = functionParser.parseFunction(column.getAst(), metadata, executionContext);
+            final int type = function.getType();
+            return type == ColumnType.CURSOR || ColumnType.isUndefined(type) ? -1 : type;
+        } catch (CairoException | ImplicitCastException | SqlException | UnsupportedOperationException e) {
+            return -1;
+        } finally {
+            Misc.free(function);
         }
     }
 
@@ -19755,6 +19845,8 @@ public class SqlOptimiser implements Mutable {
         }
         IQueryModel rewrittenModel = model;
         optimiseDepth++;
+        final SqlExecutionContext previousVirtualColumnTypeContext = virtualColumnTypeContext;
+        virtualColumnTypeContext = sqlExecutionContext;
         try {
             rewrittenModel = bubbleUpOrderByAndLimitFromUnion(rewrittenModel);
             optimiseExpressionModels(rewrittenModel, sqlExecutionContext, sqlParserCallback, optimisingViewText);
@@ -19829,6 +19921,7 @@ public class SqlOptimiser implements Mutable {
             throw th;
         } finally {
             optimiseDepth--;
+            virtualColumnTypeContext = previousVirtualColumnTypeContext;
         }
     }
 

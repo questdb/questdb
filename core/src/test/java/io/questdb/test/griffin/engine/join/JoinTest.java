@@ -17761,8 +17761,8 @@ public class JoinTest extends AbstractCairoTest {
         // The union widens BYTE and INT to INT, whose NULL record passes u.k = NULL: the rows that RIGHT JOIN dq
         // NULL-extends survive the filter, so the constant must not filter bi below the join. A check on the type
         // of the BYTE branch, first or last, finds no NULL and filters bi: dq 2, 3 and 4 then lose their matches
-        // and return three extra NULL-extended rows. A branch that computes k leaves the type unknown, which keeps
-        // the scan as well; a type read from the other branches alone would be BYTE.
+        // and return three extra NULL-extended rows. A branch that computes k + 0 over INT has the type INT, which
+        // widens BYTE to INT and keeps the scan as well; a type read from the other branches alone would be BYTE.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE ub (k BYTE, v LONG)");
             execute("INSERT INTO ub VALUES (0, 1), (5, 2)");
@@ -17819,7 +17819,9 @@ public class JoinTest extends AbstractCairoTest {
             for (String[] sourceAndConstant : new String[][]{
                     {"(SELECT k, v FROM ub UNION ALL SELECT k, v FROM ush)", "0"},
                     {"(SELECT k, v FROM ush UNION ALL SELECT k, v FROM ub)", "0"},
-                    {"(SELECT k, v FROM uc UNION ALL SELECT k, v FROM ush)", "'0'"}
+                    {"(SELECT k, v FROM uc UNION ALL SELECT k, v FROM ush)", "'0'"},
+                    // a branch that computes the column types it as SHORT
+                    {"(SELECT k::SHORT AS k, v FROM ub UNION ALL SELECT k, v FROM ush)", "0"}
             }) {
                 assertQuery("SELECT u.k, u.v, bsh.bk, bsh.w, dq.x dx FROM " + sourceAndConstant[0]
                         + " u JOIN bsh ON bsh.bk = u.k RIGHT JOIN dq ON dq.x = bsh.x WHERE u.k = " + sourceAndConstant[1]
@@ -17861,6 +17863,75 @@ public class JoinTest extends AbstractCairoTest {
                             1\t5\t1\t5\t1
                             3\t8\t3\t8\t3
                             """);
+        });
+    }
+
+    @Test
+    public void testRightJoinAfterInnerOverUnionWithComputedBranchDerivesKeyFilter() throws Exception {
+        // A branch of the union computes k. The optimiser types the expression as the code generator does, so the
+        // union has a type, whose NULL record fails u.k = 5: the filter drops every row that RIGHT or FULL JOIN dq
+        // NULL-extends, and addTransitiveFilters() filters bl by the key below the join. When a computed branch
+        // left the type unknown, the INNER join hashed and matched every bl row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ui (k INT, v LONG)");
+            execute("INSERT INTO ui VALUES (5, 1), (6, 2), (null, 3)");
+            execute("CREATE TABLE ul (k LONG, v LONG)");
+            execute("INSERT INTO ul VALUES (5, 10), (7, 20), (null, 30)");
+            execute("CREATE TABLE bl (bk LONG, x INT, w LONG)");
+            execute("INSERT INTO bl VALUES (5, 1, 100), (6, 2, 200), (7, 3, 300), (null, 4, 400)");
+            execute("CREATE TABLE dq (x INT)");
+            execute("INSERT INTO dq VALUES (1), (2), (3), (4), (9)");
+            execute("CREATE VIEW uvc AS (SELECT k, v FROM ui UNION ALL SELECT k + 0 AS k, v FROM ul)");
+
+            final String expected = """
+                    k\tv\tbk\tw\tdx
+                    5\t1\t5\t100\t1
+                    5\t10\t5\t100\t1
+                    """;
+            for (String joinType : new String[]{"RIGHT", "FULL"}) {
+                final String tail = " u JOIN bl ON bl.bk = u.k " + joinType + " JOIN dq ON dq.x = bl.x WHERE u.k = 5 ORDER BY u.v";
+                for (String source : new String[]{
+                        "(SELECT k, v FROM ui UNION ALL SELECT k + 0 AS k, v FROM ul)",
+                        "(SELECT k + 0 AS k, v FROM ui UNION ALL SELECT k, v FROM ul)",
+                        "(SELECT k::LONG AS k, v FROM ui UNION ALL SELECT abs(k) AS k, v FROM ul)",
+                        "(SELECT k, v FROM ui UNION SELECT k + 0 AS k, v FROM ul)",
+                        "uvc"
+                }) {
+                    assertQuery("SELECT u.k, u.v, bl.bk, bl.w, dq.x dx FROM " + source + tail)
+                            .noLeakCheck()
+                            .withPlanContaining("filter: bk=5")
+                            .returns(expected);
+                }
+                assertQuery("WITH u AS (SELECT k, v FROM ui UNION ALL SELECT k + 0 AS k, v FROM ul) SELECT u.k, u.v, bl.bk, bl.w, dq.x dx FROM" + tail)
+                        .noLeakCheck()
+                        .withPlanContaining("filter: bk=5")
+                        .returns(expected);
+                // a constant branch has the type of the constant, INT, which LONG widens
+                assertQuery("SELECT u.k, u.v, bl.bk, bl.w, dq.x dx FROM (SELECT k, v FROM ul UNION ALL SELECT 5 AS k, v FROM ui)" + tail)
+                        .noLeakCheck()
+                        .withPlanContaining("filter: bk=5")
+                        .returns("""
+                                k\tv\tbk\tw\tdx
+                                5\t1\t5\t100\t1
+                                5\t2\t5\t100\t1
+                                5\t3\t5\t100\t1
+                                5\t10\t5\t100\t1
+                                """);
+                // The optimiser does not parse a sub-query, which it would compile, or a bind variable, whose type
+                // the parse may assign, so a branch that reads one leaves the type unknown and keeps the scan.
+                bindVariableService.clear();
+                bindVariableService.setLong(0, 0);
+                for (String source : new String[]{
+                        "(SELECT k, v FROM ui UNION ALL SELECT k + $1 AS k, v FROM ul)",
+                        "(SELECT k, v FROM ui UNION ALL SELECT CASE WHEN k >= (SELECT 0) THEN k ELSE k END AS k, v FROM ul)"
+                }) {
+                    assertQuery("SELECT u.k, u.v, bl.bk, bl.w, dq.x dx FROM " + source + tail)
+                            .noLeakCheck()
+                            .withPlanNotContaining("filter: bk=5")
+                            .returns(expected);
+                }
+                bindVariableService.clear();
+            }
         });
     }
 
