@@ -31,11 +31,14 @@ The body you post is **the most recent `review-pr` report in this conversation**
 
 - If no review report exists in this conversation, STOP and tell the user to run
   `/skill:review-pr` first — do not fabricate a review.
+- Reject only on a **request changes** verdict. On **approve** or **approve with
+  comments**, STOP and tell the user the review found nothing that blocks; on
+  **needs discussion**, name the decision the review leaves open and post only
+  if the user confirms.
 - Do not shorten or rewrite the review; post it verbatim. You only prepend the
   author mention and leave out what stays out of public view: the Deferred
   section, each Adjacent draft the hostile-input rule covers, each
-  security-sensitive draft (authentication or access-control bypass, data
-  exposed across users, memory corruption), and any never-run line the coverage
+  security-sensitive draft (authentication or access-control bypass, data exposed across users, memory corruption), and any never-run line the coverage
   section lists for a failure the hostile-input rule covers. Tell the user what
   you left out.
 

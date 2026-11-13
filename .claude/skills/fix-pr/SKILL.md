@@ -1,7 +1,7 @@
 ---
 name: fix-pr
-description: Develop features and fix bugs or review findings from a list, one item at a time, with exhaustive tests enforced while developing - design the change and its test plan against CLAUDE.md "Testing" and have both challenged independently, build test-first, run the item's tests with coverage (ci/diff_coverage.py) and add tests until every changed line, branch and condition runs, have the tests reviewed independently and close the gaps; commit. When the queue is empty, run review-pr at level 3 over the whole PR, as before approval, and treat what blocks it the same way until a review finds nothing that blocks. Bugs this PR caused that an independent risk rating finds unlikely to hurt users ship with a private issue draft, and bugs found on the way that the PR base already has get a GitHub issue draft; the user decides which to file, and neither is work for the run. Use when the user runs /fix-pr or asks to develop or fix items with it.
-argument-hint: "[--block-at=critical|high|medium|low] [--fix-moderate] [--include-adjacent] [--review-level=N] [--max-review-rounds=N] <items: features, bugs or review findings>"
+description: Develop features and fix bugs or review findings one at a time, test-first. Design each change and its test plan, have both challenged independently, and add tests until every changed line and branch runs. Then run review-pr at level 3 over the whole PR until nothing blocks. Use when the user runs /fix-pr or asks to develop or fix items with it.
+argument-hint: "[--block-at=critical|high|medium|low] [--fix-moderate] [--include-adjacent] [--decisions=<file>] [--review-level=N] [--max-review-rounds=N] <items: features, bugs or review findings>"
 disable-model-invocation: true
 allowed-tools: Bash, Read, Edit, Write, Grep, Glob, Agent, AskUserQuestion
 ---
@@ -51,9 +51,10 @@ review runs again after those items, until it finds nothing that blocks or
 
 The run's scope is what the PR sets out to do plus what it breaks, as in
 review-pr's "Keep the blast radius of the PR small": the items given, the
-review's Blocking findings, and the bugs this PR caused, this run's commits
-included, whose risk blocks the PR ("Risk gate"); `--include-adjacent` adds
-the review's Adjacent findings. Any other bug the PR base already has becomes
+review's Blocking findings and the Adjacent findings this PR introduced, and
+the bugs this PR caused, this run's commits included, whose risk blocks the
+PR ("Risk gate"); `--include-adjacent` adds the review's other Adjacent
+findings. Any other bug the PR base already has becomes
 an issue draft, even when an item's trigger reaches it: each fix in old code turns
 up more old bugs, so a run that chases them doesn't end. CLAUDE.md's "Bundle
 related fixes into one PR" says where a fix goes, not which bugs to fix. A
@@ -79,14 +80,15 @@ for them.
   work for the run: `critical`, `high` (default), `medium` or `low`. The
   backstop review gets the same value.
 - `--fix-moderate`: queue the review's Moderate findings too.
-- `--include-adjacent`: fix Adjacent review findings instead of filing them;
-  file one that ends blocked.
+- `--include-adjacent`: queue the review's Adjacent findings as items instead
+  of drafting issues for them; one that ends blocked gets an issue draft.
 - `--decisions=<file>`: design decisions every item follows, such as "make
   outer-to-inner column substitution type-safe". The answers to the
   analysis's questions join them.
 - `--review-level=N`: `review-pr` level of each backstop review; default `3`,
   the level of the review before approval.
-- `--max-review-rounds=N`: default `2`. A level-3 round takes hours.
+- `--max-review-rounds=N`: default `2`. A level-3 round is the costliest step
+  of a run.
 
 ## Keep the main session small
 
@@ -104,9 +106,9 @@ helper runs on this session's model.
 
 Every agent of the run thinks at max, except the review's discovery agents:
 review-pr runs them as `reviewer` at its default, high, because they only read
-code. Pass `effort: "max"` to every helper launch; `review-pr-runner`,
-`risk-assessor` and the review's `review-prober` falsifiers set max in their
-definitions.
+code. Pass `effort: "max"` to each helper launch the table below marks;
+`review-pr-runner`, `risk-assessor` and the review's `review-prober`
+falsifiers set max in their definitions.
 
 | Helper | Agent type | Extra parameters |
 |---|---|---|
@@ -128,13 +130,20 @@ with the helper's arguments.
 
 1. Record the repo root, the branch, `START=$(git rev-parse HEAD)`, the PR
    number if `gh pr view --json number` finds one, and the PR base:
-   `git merge-base HEAD origin/<base>`, where `<base>` comes from
-   `gh pr view --json baseRefName`, else from
-   `git symbolic-ref --short refs/remotes/origin/HEAD`. Record the helper
-   model too: the family of this session's model, from the model ID in the
-   system prompt (`claude-opus-5-5` gives `opus`).
+   `git fetch origin <base>`, then `git merge-base HEAD origin/<base>`, where
+   `<base>` comes from `gh pr view --json baseRefName`, else from
+   `git symbolic-ref --short refs/remotes/origin/HEAD` without its `origin/`
+   prefix. Without the fetch, a base branch merged into this one since the
+   last fetch moves the merge base back, and the review counts the base's
+   commits as the PR's. Record the helper
+   model too: the family name in this session's model ID, from the system
+   prompt, in the form the Agent tool's `model` parameter takes.
 2. If tracked files have uncommitted changes, list them and ask whether to
-   continue. Commits never include them.
+   continue. Commits never include them. If `core/pom.xml` names a
+   `-SNAPSHOT` `java-questdb-client` whose jar in `~/.m2` was built from
+   another commit than the submodule pointer (review-pr "Reviewed revision"
+   shows the check), say so and ask too: tests would run against that other
+   client.
 3. Create a state directory outside the repo: `mktemp -d /tmp/fix-pr.XXXXXX`.
    Write the user's design decisions, from the request and `--decisions`, to
    `<state>/decisions.md`, or create it empty.
@@ -295,8 +304,8 @@ the user's attention, and the user decides which to file. Prepare each one:
 
 - Repository: for an Adjacent bug, the one that owns the affected file. Run
   `gh repo view --json nameWithOwner -q .nameWithOwner` in that file's
-  directory. A Deferred bug, and a crash or hang that hostile input triggers
-  (`[crash]` on a helper's line), go to `questdb/questdb-enterprise`
+  directory. A Deferred bug, and a pre-existing crash or hang that hostile input
+  triggers (`[crash]` on a helper's line), go to `questdb/questdb-enterprise`
   instead: a Deferred bug with the labels `bug` and `deferred` (`deferred`
   alone for a missing test), creating the `deferred` label if it is
   missing, and a crash with `--label crash`. Never describe either anywhere
@@ -312,8 +321,7 @@ the user's attention, and the user decides which to file. Prepare each one:
   body opens with its risk: tier, impact, likelihood and the rarest
   condition. For a bug a helper found, the body is its bug file followed by
   the risk helper's rating file.
-- A security-sensitive bug (authentication or access-control bypass, data
-  exposed across users, memory corruption) goes to `questdb/questdb-enterprise`
+- A security-sensitive bug (authentication or access-control bypass, data exposed across users, memory corruption) goes to `questdb/questdb-enterprise`
   with the label `security`.
 
 ## Rules
@@ -469,7 +477,7 @@ from what it wrote in <state>/<ID>/; don't repeat its probes.]
    design as the check will: an input it newly lets through, a path it
    skips, a test it would fail, a query it rejects, a decision it breaks.
    Fix what you find; each flaw the check finds instead costs a revision.
-7. For BUILD and FIX: write the test plan. Go through the 14 dimensions of
+7. For BUILD and FIX: write the test plan. Go through the dimensions of
    CLAUDE.md "What exhaustive means". For each that applies, list the tests:
    name, input -> expected result, and where the expected result comes from
    (never from running the code under test). For each that doesn't apply,
@@ -610,8 +618,9 @@ Run `git status --porcelain` first and never edit a file it lists.
    breaking the code it protects; restore that file with
    `git checkout -- <file>`.
 2. Build the change as planned. When it changes Rust code that Java calls,
-   run the Java tests with `-P build-rust-library` so they load the changed
-   library, and run the Rust checks CLAUDE.md requires.
+   never pass `-DskipNative`: the Maven build then compiles the changed
+   library for the Java tests (CLAUDE.md "Building and Validating Rust
+   Code"). Run the Rust checks CLAUDE.md requires.
 3. Run the planned tests and the existing tests of the code you changed
    (listed in the plan) through
    `python3 ci/incremental_compile.py -- test -Dtest=<classes>`. All must
@@ -633,7 +642,7 @@ Run `git status --porcelain` first and never edit a file it lists.
    another approach or unplanned files are needed; a planned, amended or
    existing test that is right fails because of the change; or the change
    needs logic the plan doesn't describe - a guard, branch, early return or
-   fallback. Don't design that logic yourself and don't ask the supervisor
+   fallback. Don't design that logic yourself and don't ask the main session
    to approve it: the analysis and the check decide a design. Restore the
    files you modified with `git checkout --`, delete the files you created,
    and say why on STOPPED.

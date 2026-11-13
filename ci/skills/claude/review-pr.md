@@ -29,4 +29,4 @@ rules ask for. Give each falsifier, in its task, a budget of about 30 minutes: a
 that needs longer reports what it has and marks the rest `unknown`. Step 3c uses
 fresh-context `risk-assessor` agents (`.claude/agents/risk-assessor.md`), one per
 finding it rates. Launch each step's agents in parallel and wait for all of them
-before the step goes on. Each task is self-contained and read-only.
+before the step goes on.

@@ -23,9 +23,9 @@ helper runs on this session's model.
 
 Every agent of the run thinks at max, except the review's discovery agents:
 review-pr runs them as `reviewer` at its default, high, because they only read
-code. Pass `effort: "max"` to every helper launch; `review-pr-runner`,
-`risk-assessor` and the review's `review-prober` falsifiers set max in their
-definitions.
+code. Pass `effort: "max"` to each helper launch the table below marks;
+`review-pr-runner`, `risk-assessor` and the review's `review-prober`
+falsifiers set max in their definitions.
 
 | Helper | Agent type | Extra parameters |
 |---|---|---|
@@ -38,8 +38,8 @@ definitions.
 | Review | `review-pr-runner` | none |
 
 === setup-model
-   model too: the family of this session's model, from the model ID in the
-   system prompt (`claude-opus-5-5` gives `opus`).
+   model too: the family name in this session's model ID, from the system
+   prompt, in the form the Agent tool's `model` parameter takes.
 === setup-effort-check
 === helper-questions
 - A helper can't ask the main session anything mid-task. One that needs a

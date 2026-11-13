@@ -34,4 +34,4 @@ each falsifier `timeoutMs: 3600000` and, in its task, a budget of about 30 minut
 probe that needs longer reports what it has and marks the rest `unknown`. Step 3c uses
 fresh-context `risk-assessor` agents (`.pi/agents/risk-assessor.md`), one per finding
 it rates, each with `timeoutMs: 3600000`. Launch all of them as foreground calls (`async: false`; a parallel fanout
-still runs them at once). Each task is self-contained and read-only.
+still runs them at once).

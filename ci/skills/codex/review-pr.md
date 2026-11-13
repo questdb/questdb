@@ -36,5 +36,4 @@ the rest `unknown`. Step 3c uses `risk-assessor` agents, one per finding it rate
 The `review-prober` and `risk-assessor` definitions set `xhigh` effort, which
 overrides any `reasoning_effort` a launch passes. Launch each step's agents in
 parallel, as many at once as the session's concurrency slots allow, and wait for all
-of them with `wait_agent` before the step goes on. Each task is self-contained and
-read-only.
+of them with `wait_agent` before the step goes on.

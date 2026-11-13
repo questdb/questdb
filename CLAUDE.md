@@ -69,7 +69,7 @@ follows the same rules.
 
 Before writing code, list the behavior the change adds or alters and go through
 the dimensions below: each one that applies needs tests, and each one you skip
-needs a one-line reason in the commit message. Write the failing tests first.
+needs a one-line reason. Write the failing tests first.
 
 Expected results come from an independent source: the specification, plain
 Java or `BigDecimal` arithmetic, PostgreSQL or DuckDB behavior, documented
@@ -490,21 +490,12 @@ looks changed on every build and makes Maven recompile the whole module.
 ```bash
 # After building with web console:
 mkdir <root_directory>
-java \
-  --sun-misc-unsafe-memory-access=allow \
-  --enable-native-access=io.questdb \
-  --add-opens=java.base/java.lang=io.questdb \
-  --add-opens=java.base/java.lang.reflect=io.questdb \
-  --add-opens=java.base/java.nio=io.questdb \
-  --add-opens=java.base/java.time.zone=io.questdb \
-  --add-exports=java.base/jdk.internal.vm=io.questdb \
+# Read the JVM module options from the server's start script, so they stay current:
+java $(grep -E '^[[:space:]]+--(sun-misc-unsafe-memory-access|enable-native-access|add-opens|add-exports)' core/src/main/bin/questdb.sh) \
   -p core/target/questdb-<version>-SNAPSHOT.jar \
   -m io.questdb/io.questdb.ServerMain -d <root_directory>
 # Web console at http://localhost:9000
 ```
-
-The module options are the ones `core/src/main/bin/questdb.sh` passes; when it
-changes, take them from there.
 
 ### Building and Validating Rust Code
 

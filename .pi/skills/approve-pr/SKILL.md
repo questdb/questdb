@@ -39,12 +39,6 @@ bar either: tell the user which decision the review leaves open.
 
 - If no review report exists in this conversation, STOP and tell the user to run
   `/skill:review-pr` first — do not approve unreviewed code.
-- Post the review verbatim; do not shorten or rewrite it. The exceptions are
-  what stays out of public view: leave out the Deferred section, each Adjacent
-  draft the hostile-input rule covers, each security-sensitive draft
-  (authentication or access-control bypass, data exposed across users, memory
-  corruption), and any never-run line the coverage section lists for a failure
-  the hostile-input rule covers. Tell the user what you left out.
 
 ## Step 1: Detect the PR and match the reviewed revision
 
@@ -76,8 +70,12 @@ about to approve, then proceed.
 Write the review body to `/tmp/approve-pr-<PR>-<revision>.md`, where
 `<revision>` is the reviewed commit's first 12 characters, using the `write`
 tool (never inline it into a shell command — reviews contain backticks, quotes,
-and `$` that break shell quoting). The body is the full verbatim `review-pr`
-report, minus what Step 0 leaves out.
+and `$` that break shell quoting). The body is the full `review-pr` report,
+verbatim: do not shorten or rewrite it. Leave out only what stays out of public
+view: the Deferred section, each Adjacent draft the hostile-input rule covers,
+each security-sensitive draft (authentication or access-control bypass, data exposed across users, memory corruption), and any never-run line
+the coverage section lists for a failure the hostile-input rule covers. Tell
+the user what you left out.
 
 ## Step 2b: Check the issue drafts, file none
 

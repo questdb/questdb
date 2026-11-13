@@ -9,6 +9,7 @@ Sources, under ci/skills/:
   agents/<role>.md               shared body of an agent definition
   all/<skill>.md                 slot values every harness shares for one skill,
   all/agents/<role>.md           or for one agent, such as its description
+  all/_common.md                 slot values every source of every harness shares
   <harness>/<skill>.md           the harness's slot values for one skill
   <harness>/agents/<role>.md     the harness's slot values for one agent
   <harness>/_common.md           slot values all sources of the harness share
@@ -36,7 +37,8 @@ Fragment files. A line "=== name" starts the value of a slot. The value runs to
 the next "=== " line or the end of the file, every character included: a blank
 line before the next "===" belongs to the value. An inline value drops its
 final newline. A skill's own fragment file overrides _common.md. A value set
-in all/ applies to every harness, and no harness may set it again.
+in all/ applies to every harness, and neither a harness nor a more specific
+file of all/ may set it again.
 
 The renderer fails on a slot a source uses that the harness doesn't define, on
 a fragment value no source uses, on a multi-line inline value, and on a value
@@ -134,7 +136,19 @@ def add_header(text, src, where):
     if not text.startswith('---\n'):
         raise RenderError(f'{where}: output does not start with frontmatter')
     end = text.index('\n---\n', 3) + 5
+    check_frontmatter(text[4:end - 5], where)
     return text[:end] + MD_HEADER.format(src=src) + text[end:]
+
+
+def check_frontmatter(front, where):
+    """Reject unquoted YAML values that a strict parser reads differently."""
+    for line in front.splitlines():
+        key, sep, value = line.strip().partition(': ')
+        if not sep or value[:1] in ('"', "'"):
+            continue
+        if ': ' in value or ' #' in value or value[:1] in '&*!|>%@`[]{},':
+            raise RenderError(f'{where}: quote the frontmatter value of {key}; '
+                              'unquoted, YAML reads ": ", " #" or its first character differently')
 
 
 def render_toml_agent(text, values, src, target):
@@ -177,12 +191,19 @@ def outputs():
         'skill': ({p.stem: p for p in sorted(SRC.glob('*.md'))}, ''),
         'agent': ({p.stem: p for p in sorted((SRC / 'agents').glob('*.md'))}, 'agents'),
     }
+    global_path = SHARED_DIR / '_common.md'
+    global_values = parse_fragments(global_path) if global_path.exists() else {}
+    global_used = set()
     shared = {}
     for kind, (sources, sub) in kinds.items():
-        fragment_files(SHARED_DIR / sub, sources, kind)
+        fragment_files(SHARED_DIR / sub, sources, kind, skip=global_path)
         for name in sources:
             path = SHARED_DIR / sub / f'{name}.md'
-            shared[kind, name] = (path, parse_fragments(path) if path.exists() else {}, set())
+            values = parse_fragments(path) if path.exists() else {}
+            again = sorted(set(values) & set(global_values))
+            if again:
+                raise RenderError(f'{rel(path)}: {", ".join(again)} already set in {rel(global_path)}')
+            shared[kind, name] = (path, values, set())
 
     for harness, out_dir in HARNESSES.items():
         hdir = SRC / harness
@@ -197,11 +218,13 @@ def outputs():
                     continue
                 own = parse_fragments(frag)
                 shared_path, shared_values, shared_used = shared[kind, name]
-                again = sorted(set(shared_values) & (set(common) | set(own)))
-                if again:
-                    raise RenderError(f'{rel(frag)}: {", ".join(again)} already set for every harness '
-                                      f'in {rel(shared_path)}')
-                values = {**shared_values, **common, **own}
+                for every, every_path in ((shared_values, shared_path), (global_values, global_path)):
+                    for local, local_path in ((common, common_path), (own, frag)):
+                        again = sorted(set(every) & set(local))
+                        if again:
+                            raise RenderError(f'{rel(local_path)}: {", ".join(again)} already set for '
+                                              f'every harness in {rel(every_path)}')
+                values = {**global_values, **shared_values, **common, **own}
                 src_name = src.relative_to(SRC).as_posix()
                 if kind == 'agent' and harness in TOML_AGENTS:
                     target = ROOT / AGENT_DIRS[harness] / f'{name}.toml'
@@ -218,11 +241,12 @@ def outputs():
                     raise RenderError(f'{rel(frag)}: no source uses {", ".join(unused)}')
                 common_used |= used & set(common) - set(own)
                 shared_used |= used & set(shared_values)
+                global_used |= used & set(global_values)
                 result[target] = text
         unused = sorted(set(common) - common_used)
         if unused:
             raise RenderError(f'{rel(common_path)}: no source uses {", ".join(unused)}')
-    for path, shared_values, shared_used in shared.values():
+    for path, shared_values, shared_used in [*shared.values(), (global_path, global_values, global_used)]:
         unused = sorted(set(shared_values) - shared_used)
         if unused:
             raise RenderError(f'{rel(path)}: no harness uses {", ".join(unused)}')
