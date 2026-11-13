@@ -46,9 +46,9 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 
 /**
- * Builds, from row 0, the index of every indexed SYMBOL column of a Parquet partition directory that nobody reads
- * yet - a compaction staging directory - off the directory's own {@code data.parquet}, including the covered values of
- * a COVERING posting index.
+ * Builds indexes from row 0 off a Parquet partition directory's own {@code data.parquet}, including covered values.
+ * The caller must own the directory exclusively: either a compaction staging directory or a partition under
+ * checkpoint recovery.
  * <p>
  * Holds no {@link TableWriter}, so it is the caller's to make sure the result is what the partition will look like
  * once published: every column read from row 0, i.e. every column top zero. Posting chain entries are tagged with the
@@ -103,12 +103,33 @@ final class ParquetPartitionIndexBuilder implements QuietCloseable {
             long tableTxn,
             int commitMode
     ) {
+        buildIndexes(partitionDir, parquetFileSize, metadata, columnVersions, partitionTimestamp,
+                partitionRowCount, tableTxn, commitMode, -1);
+    }
+
+    /**
+     * Builds just {@code columnIndex}, or every indexed SYMBOL column when it is -1. Restore uses this
+     * overload to repair one posting index without rewriting the partition's other indexes.
+     */
+    void buildIndexes(
+            Path partitionDir,
+            long parquetFileSize,
+            TableRecordMetadata metadata,
+            ColumnVersionReader columnVersions,
+            long partitionTimestamp,
+            long partitionRowCount,
+            long tableTxn,
+            int commitMode,
+            int columnIndex
+    ) {
         this.commitMode = commitMode;
         final int dirLen = partitionDir.size();
         long parquetAddr = 0;
         long parquetSize = 0;
         try {
-            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            final int columnLo = Math.max(0, columnIndex);
+            final int columnHi = columnIndex < 0 ? metadata.getColumnCount() : columnIndex + 1;
+            for (int i = columnLo; i < columnHi; i++) {
                 if (!ColumnType.isSymbol(metadata.getColumnType(i)) || !metadata.isColumnIndexed(i)) {
                     continue;
                 }
