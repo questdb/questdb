@@ -1957,6 +1957,21 @@ public final class IntervalUtils {
             } catch (NumericException e) {
                 throw SqlException.$(position, "Duration not a number: ").put(seq, numStart, i);
             }
+            switch (c) {
+                case 'y':
+                case 'M':
+                case 'w':
+                case 'd':
+                case 'h':
+                case 'm':
+                case 's':
+                case 'T':
+                case 'u':
+                case 'n':
+                    break;
+                default:
+                    throw SqlException.$(position, "Invalid duration unit: ").put(c);
+            }
             irList.add(CompiledTickExpression.encodeDuration(c, value));
             durationPartCount++;
             numStart = i + 1;
