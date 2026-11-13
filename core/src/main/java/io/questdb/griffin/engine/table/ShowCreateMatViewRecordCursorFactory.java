@@ -276,12 +276,7 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
             ttlToSink(sink);
             expireToSink(sink);
             inVolumeToSink(configuration, table, sink);
-            putAdditional();
             sink.putAscii(';');
-        }
-
-        // placeholder for ent, do not remove!
-        protected void putAdditional() {
         }
 
         // overridden in ent, do not remove!

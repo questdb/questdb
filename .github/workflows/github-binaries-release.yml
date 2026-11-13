@@ -147,7 +147,7 @@ jobs:
 
   build-rust-macos-arm64:
     needs: validate-tag
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 30
     outputs:
       artifact-id: ${{ steps.upload.outputs.artifact-id }}
