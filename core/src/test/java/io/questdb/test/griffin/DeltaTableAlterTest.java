@@ -27,6 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -144,7 +145,7 @@ public class DeltaTableAlterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBorrowedWalWriterCannotChangeSchemaAfterHandoff() throws Exception {
+    public void testBorrowedWalWriterCannotApplyWalSchemaChangeAfterHandoff() throws Exception {
         assertMemoryLeak(() -> {
             isEmptySwitchHandlerEnabled = true;
             TableToken token = createWalTable();
@@ -157,9 +158,15 @@ public class DeltaTableAlterTest extends AbstractCairoTest {
                 Assert.assertEquals(OperationFuture.QUERY_COMPLETE, future.await(1));
                 Assert.assertTrue(engine.getUpdatedTableToken(token).isDelta());
                 Assert.assertEquals(-1, engine.getTableSequencerAPI().getPendingDeltaTableSwitch(token));
-                CairoException error = Assert.assertThrows(CairoException.class,
-                        () -> borrowed.addColumn("late_column", ColumnType.LONG, sqlExecutionContext.getSecurityContext()));
-                TestUtils.assertContains(error.getFlyweightMessage(), "WAL schema changes are not supported for Delta tables");
+                // Automatic addColumn hands off to the Delta writer (covered by ingress tests),
+                // but applying a generic WAL schema operation must still reject the old path.
+                AlterOperationBuilder builder = new AlterOperationBuilder().ofAddColumn(0, token, token.getTableId());
+                builder.addColumnToList("late_column", 0, ColumnType.LONG, 0, false, IndexType.NONE, 0, false);
+                try (AlterOperation operation = builder.build()) {
+                    operation.withSecurityContext(sqlExecutionContext.getSecurityContext());
+                    CairoException error = Assert.assertThrows(CairoException.class, () -> borrowed.apply(operation, true));
+                    TestUtils.assertContains(error.getFlyweightMessage(), "WAL schema changes are not supported for Delta tables");
+                }
                 Assert.assertEquals(1, engine.getTableSequencerAPI().lastTxn(token));
                 try (TableReader reader = engine.getReader(token); var metadata = engine.getSequencerMetadata(token)) {
                     Assert.assertEquals(2, reader.getMetadata().getColumnCount());
