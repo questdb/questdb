@@ -52,7 +52,11 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
      * gives it no columns to keep, when only the SELECT lists above the sub-query give it columns: the SELECT
      * joins it without a key, such as with a CROSS JOIN, or an ASOF, LT or SPLICE JOIN without ON, or selects from
      * it alone. The plan of such a read computes every column of the sub-query, as the plan of
-     * {@code SELECT n FROM v} does for a view {@code SELECT count() n, sum(a) s FROM (SELECT * FROM x)}. A read
+     * {@code SELECT n FROM v} does for a view {@code SELECT count() n, sum(a) s FROM (SELECT * FROM x)}. So does
+     * the plan of a read that filters on an output a SELECT above the sub-query computes, which gives the model
+     * under that SELECT the column of the same name alone, as
+     * {@code SELECT b FROM v WHERE b = 'all'} does for a view
+     * {@code SELECT 'all' b, max(a) m FROM (SELECT * FROM x) GROUP BY b}: the GROUP BY computes no aggregate. A read
      * that counts the rows of the view drops the ORDER BY of a sub-query, and a temporal join or a SAMPLE BY that
      * took its timestamp from it takes the timestamp of the source of the sub-query instead. A read that places the
      * view on a side of a join other than the first keeps the ORDER BY of every sub-query instead, also one the plan

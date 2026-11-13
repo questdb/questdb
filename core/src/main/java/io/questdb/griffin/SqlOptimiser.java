@@ -246,6 +246,9 @@ public class SqlOptimiser implements Mutable {
     private final ObjList<IntHashSet> keptWholeColumnJoins = new ObjList<>();
     // and the outputs of the view the column serves, null when every read of the view needs it
     private final ObjList<IntHashSet> keptWholeColumnOrigins = new ObjList<>();
+    // per column of the projection emitKeptWholeProjection() emits, the join model of its nested model a filter on the
+    // column gives a column, see filteredJoinIndex()
+    private final IntList keptWholeFilteredJoins = new IntList();
     // the outputs of the view whose columns need a join model, see collectWithholdingOutputs()
     private final IntHashSet keptWholeNeededBy = new IntHashSet();
     // the sets of outputs collectWithholdingOutputs() has added to keptWholeNeededBy
@@ -714,6 +717,25 @@ public class SqlOptimiser implements Mutable {
         } else {
             terms.add(node);
         }
+    }
+
+    // The index of the join model of nested that a filter on the column of the projection gives a column, or -1. A
+    // filter a read puts on a column the projection computes stays with the projection, see
+    // moveWhereInsideSubQueries(), and the projection gives the model under it the column of the same name, if it has
+    // one, see propagateTopDownColumns0(). A filter on a column the projection takes from the model under it moves
+    // there, and reaches what the column does.
+    private static int filteredJoinIndex(QueryColumn column, IQueryModel nested) {
+        final ExpressionNode ast = column.getAst();
+        if (ast == null || ast.type == LITERAL) {
+            return -1;
+        }
+        final ObjList<IQueryModel> joinModels = nested.getJoinModels();
+        for (int j = 0, n = joinModels.size(); j < n; j++) {
+            if (joinModels.getQuick(j).getAliasToColumnMap().contains(column.getAlias())) {
+                return j;
+            }
+        }
+        return -1;
     }
 
     // A SHOW that names an object reads it through the view the context reads table-name functions
@@ -5123,29 +5145,17 @@ public class SqlOptimiser implements Mutable {
                 } finally {
                     isKeptWholeDryRun = false;
                 }
+                keptWholeFilteredJoins.clear();
+                for (int i = 0; i < columnCount; i++) {
+                    keptWholeFilteredJoins.add(filteredJoinIndex(columns.getQuick(i), nested));
+                }
                 for (int j = 0; j < joinCount; j++) {
                     if (SqlUtil.isProjectionFedSubQuery(nested, j)) {
                         final IntHashSet outputs = intHashSetPool.next();
                         collectWithholdingOutputs(j, columnCount, outputs);
                         if (outputs.size() > 0) {
                             keptWholeWithheldJoins.add(j);
-                            // A read that names one of the outputs alone keeps the join model whole, so every column
-                            // of it serves the output, and the columns the projection gives it serve their own
-                            // outputs too, see recordWithheldColumn(). A join model that holds a sub-query, a CTE
-                            // or a view has no columns of its own, only the names of the columns of its nested
-                            // model, see passKeptWholeOriginsToNested().
-                            final IQueryModel joinModel = joinModels.getQuick(j);
-                            final ObjList<QueryColumn> joinColumns = joinModel.getBottomUpColumns();
-                            if (joinColumns.size() > 0) {
-                                for (int i = 0, n = joinColumns.size(); i < n; i++) {
-                                    recordKeptWholeOrigins(joinModel, joinColumns.getQuick(i).getAlias(), outputs);
-                                }
-                            } else {
-                                final ObjList<CharSequence> joinColumnNames = joinModel.getAliasToColumnMap().keys();
-                                for (int i = 0, n = joinColumnNames.size(); i < n; i++) {
-                                    recordKeptWholeOrigins(joinModel, joinColumnNames.getQuick(i), outputs);
-                                }
-                            }
+                            recordWithheldJoinOrigins(j, joinModels.getQuick(j), columns, columnCount, outputs);
                         }
                     }
                 }
@@ -5368,6 +5378,7 @@ public class SqlOptimiser implements Mutable {
         keptWholeColumnJoins.clear();
         keptWholeColumnOrigins.clear();
         keptWholeEmittedOrigins = null;
+        keptWholeFilteredJoins.clear();
         keptWholeNeededOrigins.clear();
         keptWholeOrigins.clear();
         keptWholeOutputCount = 0;
@@ -9005,6 +9016,24 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    // The first branch of a set operation the projection above it gives no column keeps every column of its SELECT,
+    // see emitKeptWholeProjection(), and so does every other branch. A read that gives the first branch a column gives
+    // every other branch the column at the same position, see propagateTopDownColumns0(), so the column of a branch
+    // serves the outputs its counterpart in the first branch does.
+    private void passKeptWholeOriginsToUnionBranches(IQueryModel nested) {
+        if (keptWholeOrigins.keyIndex(nested) > -1) {
+            // no projection gave the first branch outputs to serve, so every read needs each of its columns
+            return;
+        }
+        final ObjList<QueryColumn> nestedColumns = nested.getBottomUpColumns();
+        for (IQueryModel branch = nested.getUnionModel(); branch != null; branch = branch.getUnionModel()) {
+            final ObjList<QueryColumn> branchColumns = branch.getBottomUpColumns();
+            for (int i = 0, n = Math.min(nestedColumns.size(), branchColumns.size()); i < n; i++) {
+                recordKeptWholeOrigins(branch, branchColumns.getQuick(i).getAlias(), recordedKeptWholeOrigins(nested, nestedColumns.getQuick(i).getAlias()));
+            }
+        }
+    }
+
     /**
      * Sets {@link #hasNonEquiNullingJoin} for the current level. A RIGHT/FULL OUTER join whose ON
      * clause carries no plain cross-table equality gets no join context, so {@code homogenizeCrossJoins}
@@ -9524,6 +9553,11 @@ public class SqlOptimiser implements Mutable {
                 }
                 unionModel = unionModel.getUnionModel();
             }
+            // The branches of the set operation of the view itself serve the outputs at their positions, see
+            // keptWholeOutputOrigins().
+            if (isSubQueryKeptWhole && nestedTopDownColumns.size() == 0 && !keptWholeOutputLayers.contains(nested)) {
+                passKeptWholeOriginsToUnionBranches(nested);
+            }
         }
 
         // go down the nested path
@@ -9941,6 +9975,75 @@ public class SqlOptimiser implements Mutable {
     // projection of the model is emitted to its nested model, see addSameModelReaderOrigins().
     private void recordWithheldColumn(IQueryModel joinModel, CharSequence columnName) {
         recordKeptWholeOrigins(joinModel, columnName, keptWholeEmittedOrigins);
+    }
+
+    // Records the outputs of the view that the columns of the join model at joinIndex of projectionJoinHolder serve,
+    // when a read that names one of the outputs alone gives the join model no column of the projection, see
+    // emitKeptWholeProjection(). Such a read keeps the join model whole, so every column of it serves the outputs, and
+    // the columns the projection gives it serve their own outputs too, see recordWithheldColumn(). The read may also
+    // filter on the column of the projection that serves the output, which gives the join model the column of the same
+    // name alone, see filteredJoinIndex(): a GROUP BY then computes no aggregate, and a SELECT none of its other
+    // columns, which can leave a sub-query under the join model without columns. So only the column the filter names
+    // serves such an output. A join model that holds a sub-query, a CTE or a view has no columns of its own, only the
+    // names of the columns of its nested model, see passKeptWholeOriginsToNested().
+    private void recordWithheldJoinOrigins(
+            int joinIndex,
+            IQueryModel joinModel,
+            ObjList<QueryColumn> columns,
+            int columnCount,
+            IntHashSet outputs
+    ) {
+        // the outputs whose reads keep the join model whole, those a read can filter on to give it a column left out
+        IntHashSet keptOutputs = outputs;
+        for (int i = 0; i < columnCount; i++) {
+            final IntHashSet origins = keptWholeColumnOrigins.getQuick(i);
+            if (keptWholeFilteredJoins.getQuick(i) != joinIndex || origins == null || !takeKeptWholeWork(origins.size())) {
+                continue;
+            }
+            for (int k = 0, n = origins.size(); k < n; k++) {
+                final int output = origins.get(k);
+                if (keptOutputs.contains(output)) {
+                    if (keptOutputs == outputs) {
+                        if (!takeKeptWholeWork(outputs.size())) {
+                            break;
+                        }
+                        keptOutputs = intHashSetPool.next();
+                        keptOutputs.addAll(outputs);
+                    }
+                    keptOutputs.remove(output);
+                }
+            }
+        }
+        final ObjList<QueryColumn> joinColumns = joinModel.getBottomUpColumns();
+        if (joinColumns.size() > 0) {
+            for (int i = 0, n = joinColumns.size(); i < n; i++) {
+                recordKeptWholeOrigins(joinModel, joinColumns.getQuick(i).getAlias(), keptOutputs);
+            }
+        } else {
+            final ObjList<CharSequence> joinColumnNames = joinModel.getAliasToColumnMap().keys();
+            for (int i = 0, n = joinColumnNames.size(); i < n; i++) {
+                recordKeptWholeOrigins(joinModel, joinColumnNames.getQuick(i), keptOutputs);
+            }
+        }
+        if (keptOutputs == outputs) {
+            return;
+        }
+        // the column of the join model a filter names serves the outputs of the filtered column
+        for (int i = 0; i < columnCount; i++) {
+            final IntHashSet origins = keptWholeColumnOrigins.getQuick(i);
+            if (keptWholeFilteredJoins.getQuick(i) == joinIndex && origins != null) {
+                final IntHashSet filteredOutputs = intHashSetPool.next();
+                for (int k = 0, n = origins.size(); k < n; k++) {
+                    final int output = origins.get(k);
+                    if (outputs.contains(output)) {
+                        filteredOutputs.add(output);
+                    }
+                }
+                if (filteredOutputs.size() > 0) {
+                    recordKeptWholeOrigins(joinModel, columns.getQuick(i).getAlias(), filteredOutputs);
+                }
+            }
+        }
     }
 
     // The outputs of the view the top-down column alias of the model serves, null for every output, see
@@ -17622,7 +17725,9 @@ public class SqlOptimiser implements Mutable {
      * projection to a sub-query, CTE or view only the projection gives columns, the only source of a FROM clause
      * or one it joins without a key, such as with a CROSS JOIN, or an ASOF, LT or SPLICE JOIN without ON, when a
      * read of the view can leave the sub-query without columns: the read names only outputs whose columns do not
-     * need it. A join condition, a filter or an ORDER BY still gives it the columns they name. Such a read gets a
+     * need it, or filters on an output a SELECT above the sub-query computes, which gives the model under that
+     * SELECT the column of the same name alone, see recordWithheldJoinOrigins(). A join condition, a filter of the
+     * view or an ORDER BY still gives it the columns they name. Such a read gets a
      * plan that computes every column of the sub-query, so the dependencies of the view collect the columns of
      * such a plan too, see {@code SqlCompilerImpl.collectOtherReadDependencies()}. A sub-query every read
      * of the view gives columns keeps only the columns the outputs name, as in every read of the view. The mode

@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.view;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.file.BlockFileReader;
@@ -1682,6 +1683,48 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
     }
 
     @Test
+    public void testSubQueryKeptWholeByAReadFilteringOutputThatReadsNoColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // A filter on an output the SELECT computes without reading a column stays with that SELECT, which gives
+            // the model under it the column of the same name. A read that filters on such an output gives the model
+            // that column alone: a GROUP BY then computes no aggregate, and the sub-query under it gets no column.
+            assertReads(
+                    "SELECT 'all' bucket, max(a) mx FROM (SELECT * FROM x) GROUP BY bucket",
+                    "{x=[?*, a]}",
+                    "SELECT bucket FROM v WHERE bucket = 'all'", "SELECT count() FROM v WHERE bucket = 'all'", "SELECT bucket FROM v"
+            );
+            assertReads(
+                    "SELECT 'all' bucket, max(a) mx FROM (SELECT a, b FROM x) GROUP BY 1",
+                    "{x=[?b, a]}",
+                    "SELECT 1 FROM v WHERE bucket IS NOT NULL"
+            );
+            assertReads(
+                    "SELECT bucket, mx FROM (SELECT 'all' bucket, max(a) mx FROM (SELECT * FROM x) GROUP BY bucket)",
+                    "{x=[?*, a]}",
+                    "SELECT bucket FROM v WHERE bucket = 'all'"
+            );
+            assertReads(
+                    "WITH s AS (SELECT * FROM x) SELECT lower('ALL') lc, max(a) mx FROM s GROUP BY lc",
+                    "{x=[?*, a]}",
+                    "SELECT count() FROM v WHERE lc IS NOT NULL"
+            );
+            // the same for a SELECT under the one that computes the output
+            assertReads(
+                    "SELECT 'k' src, a FROM (SELECT 'k' src, a, b FROM (SELECT * FROM x))",
+                    "{x=[?*, a]}",
+                    "SELECT src FROM v WHERE src = 'k'", "SELECT src FROM v"
+            );
+            // a key that reads the sub-query gives it a column in every read
+            assertReads(
+                    "SELECT 'all' bucket, k, max(a) mx FROM (SELECT * FROM x) GROUP BY bucket, k",
+                    "{x=[a, k]}",
+                    "SELECT bucket FROM v WHERE bucket = 'all'"
+            );
+        });
+    }
+
+    @Test
     public void testSubQueryKeptWholeByAReadThroughFilterThatNamesNoColumn() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
@@ -1719,6 +1762,30 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
                     "SELECT t, s, 1 one FROM (SELECT a + b t, a + a s FROM (SELECT p.a, q.b FROM (SELECT * FROM x) p CROSS JOIN (SELECT * FROM x) q))",
                     "{x=[?*, a, b]}",
                     "SELECT s FROM v", "SELECT t FROM v", "SELECT one FROM v"
+            );
+        });
+    }
+
+    @Test
+    public void testSubQueryKeptWholeByReadOfUnionBranchConstant() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // A read that names only four keeps the set operation whole. A read that names only a gives its later
+            // branch the constant 1 alone, and so leaves the sub-query of that branch without columns.
+            assertReads(
+                    "SELECT u.a, u.b, 4 four FROM (SELECT a, b FROM x UNION ALL SELECT 1, c FROM (SELECT c, d FROM y)) u",
+                    "{x=[a, b], y=[?d, c]}",
+                    "SELECT a FROM v", "SELECT DISTINCT a FROM v", "SELECT four FROM v", "SELECT b FROM v"
+            );
+            assertReads(
+                    "SELECT u.a, u.b, 'src' src FROM (SELECT a, b FROM x UNION ALL SELECT 1, c FROM (SELECT * FROM y)) u",
+                    "{x=[a, b], y=[?*, c]}",
+                    "SELECT a FROM v", "SELECT src FROM v"
+            );
+            assertReads(
+                    "WITH u AS (SELECT a, b FROM x UNION ALL SELECT 1, c FROM (SELECT * FROM y)) SELECT a, b, lower('T') t FROM u",
+                    "{x=[a, b], y=[?*, c]}",
+                    "SELECT a FROM v"
             );
         });
     }
@@ -2780,9 +2847,11 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
 
     // Asserts that the dependencies CREATE VIEW records for the SELECT of a view list, for each table, the columns
     // the reads of the view scan, with every column of a table a "*" lends: the read that counts the rows of the
-    // view, and each read that names one output of it alone, which between them scan every column a read of the view
-    // scans, as a read that names several outputs scans what the reads of each of them scan, or less. Each of them
-    // runs on its own and on a side of a join after the first, whose plan keeps the ORDER BY of every sub-query of
+    // view, and each read that names one output of it alone, without a filter and with a filter on the output, which
+    // between them scan every column a read of the view scans, as a read that names several outputs scans what the
+    // reads of each of them scan, or less. A filter on an output the SELECT computes stays with the SELECT, which
+    // gives the model under it the column of that name. Each of the reads runs on its own and on a side of a join
+    // after the first, whose plan keeps the ORDER BY of every sub-query of
     // the view, also one the plan of a read on its own drops. The reads select from the SELECT of the view inline, so
     // that each authorizes every column it scans as the reader. A view that reads another one authorizes the columns
     // of the tables that view reads through it, and passes.
@@ -2811,6 +2880,11 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
             for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
                 reads.add("SELECT \"" + metadata.getColumnName(i) + "\" FROM (" + viewSql + ")");
                 reads.add("SELECT v.\"" + metadata.getColumnName(i) + "\" FROM long_sequence(1) CROSS JOIN (" + viewSql + ") v");
+                // an array has no IS NOT NULL
+                if (!ColumnType.isArray(metadata.getColumnType(i))) {
+                    reads.add("SELECT \"" + metadata.getColumnName(i) + "\" FROM (" + viewSql + ") WHERE \"" + metadata.getColumnName(i) + "\" IS NOT NULL");
+                    reads.add("SELECT v.\"" + metadata.getColumnName(i) + "\" FROM long_sequence(1) CROSS JOIN (" + viewSql + ") v WHERE v.\"" + metadata.getColumnName(i) + "\" IS NOT NULL");
+                }
             }
         }
         final ScanRecordingSecurityContext securityContext = new ScanRecordingSecurityContext();
