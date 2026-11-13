@@ -293,6 +293,22 @@ public class AddIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFailedPostingAddIndexKeepsKeyFileWhileValueFileStays() throws Exception {
+        // The build indexes 2024-01-01 and 2024-01-02, then fails reading the active partition's column.
+        assertFailedPostingAddIndexKeepsKeyFileWhileValueFileStays(
+                "PARTITION BY DAY BYPASS WAL",
+                "2024-01-03",
+                "2024-01-01",
+                "2024-01-01", "2024-01-02", "2024-01-03"
+        );
+    }
+
+    @Test
+    public void testFailedPostingAddIndexKeepsKeyFileWhileValueFileStaysOfNonPartitionedTable() throws Exception {
+        assertFailedPostingAddIndexKeepsKeyFileWhileValueFileStays("", "default", "default", "default");
+    }
+
+    @Test
     public void testFailedPostingAddIndexRemovesItsFilesFromEveryPartition() throws Exception {
         final SymbolReadFailingFacade ff = new SymbolReadFailingFacade("2024-01-03", "s.d");
         assertMemoryLeak(ff, () -> {
@@ -540,10 +556,27 @@ public class AddIndexTest extends AbstractCairoTest {
         }
     }
 
+    // The highest sealTxn of the value files of column s in a partition directory of table x.
+    private static long maxValueFileSealTxn(String partitionName) {
+        final String[] files = partitionDir(partitionName).list((_, name) -> name.startsWith("s.pv."));
+        Assert.assertNotNull(files);
+        Assert.assertTrue(partitionName, files.length > 0);
+        long maxSealTxn = -1;
+        for (String file : files) {
+            maxSealTxn = Math.max(maxSealTxn, valueFileSealTxn(file));
+        }
+        return maxSealTxn;
+    }
+
     // A partition directory of table x, or its table directory for an empty name.
     private static File partitionDir(String partitionName) {
         final File tableDir = new File(configuration.getDbRoot(), engine.verifyTableName("x").getDirName());
         return partitionName.isEmpty() ? tableDir : new File(tableDir, partitionName);
+    }
+
+    // The sealTxn of a value file of column s, s.pv.<sealTxn> for the column's first version.
+    private static long valueFileSealTxn(String fileName) {
+        return Long.parseLong(fileName.substring("s.pv.".length()));
     }
 
     private void assertFailedAddIndexKeepsColumn(String indexClause, String plan, boolean isCovering) throws Exception {
@@ -592,6 +625,80 @@ public class AddIndexTest extends AbstractCairoTest {
                     .returns("""
                             v
                             2
+                            """);
+        });
+    }
+
+    // An ADD INDEX that could not publish its index leaves its build behind, and a commit moves the table past the txn
+    // that build was made for, so the next ADD INDEX resets the leftover chains and builds past every sealTxn they used,
+    // past the value files a fresh build writes. That ADD INDEX fails reading the active partition, and its rollback
+    // cannot remove a value file of the chain it built in one partition. The partition keeps its key file, which leads
+    // the next ADD INDEX to that file, and the error of the build carries the failure of the rollback.
+    private void assertFailedPostingAddIndexKeepsKeyFileWhileValueFileStays(
+            String partitionClause,
+            String activePartitionName,
+            String stuckPartitionName,
+            String... partitionNames
+    ) throws Exception {
+        setProperty(PropertyKey.CAIRO_MAX_SWAP_FILE_COUNT, 1);
+        final SymbolReadFailingFacade ff = new SymbolReadFailingFacade(activePartitionName, "s.d");
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE x (s SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) " + partitionClause);
+            execute("""
+                    INSERT INTO x VALUES
+                    ('a', 1, '2024-01-01'), ('b', 2, '2024-01-01T12:00'),
+                    ('a', 3, '2024-01-02'), ('b', 4, '2024-01-02T12:00'),
+                    ('a', 5, '2024-01-03'), ('b', 6, '2024-01-03T12:00')
+                    """);
+            leaveBuildBehind(ff, partitionNames);
+            final long leftoverSealTxn = maxValueFileSealTxn(stuckPartitionName);
+            execute("INSERT INTO x VALUES ('a', 7, '2024-01-03T18:00')");
+
+            ff.failRemovalOnceReadFailed(stuckPartitionName, "s.pv.");
+            final CairoException e = assertAddIndexFails(ff, "POSTING INCLUDE (v)");
+            Assert.assertEquals(1, e.getSuppressed().length);
+            Assert.assertTrue(e.getSuppressed()[0] instanceof CairoException);
+            final CharSequence rollbackMessage = ((CairoException) e.getSuppressed()[0]).getFlyweightMessage();
+            TestUtils.assertContains(rollbackMessage, "could not remove posting index files [path=");
+            TestUtils.assertContains(rollbackMessage, Files.SEPARATOR + stuckPartitionName + ", column=s]");
+            // No fresh build writes the value file that stays: only the key file leads the next ADD INDEX to it.
+            final String stuckFileName = ff.refusedFileName;
+            Assert.assertNotNull(stuckFileName);
+            Assert.assertTrue(stuckFileName, valueFileSealTxn(stuckFileName) > leftoverSealTxn);
+            assertColumnFiles(stuckPartitionName, "[s.d, s.pk, " + stuckFileName + "]");
+            for (String partitionName : partitionNames) {
+                if (!partitionName.equals(stuckPartitionName)) {
+                    assertColumnFiles(partitionName, "[s.d]");
+                }
+            }
+            assertColumnNotIndexed();
+
+            execute(ADD_COVERING_POSTING_INDEX);
+            Assert.assertFalse(stuckFileName, new File(partitionDir(stuckPartitionName), stuckFileName).exists());
+            assertQuery("SELECT v, ts FROM x WHERE s = 'a'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanContaining("CoveringIndex on: s")
+                    .returns("""
+                            v\tts
+                            1\t2024-01-01T00:00:00.000000Z
+                            3\t2024-01-02T00:00:00.000000Z
+                            5\t2024-01-03T00:00:00.000000Z
+                            7\t2024-01-03T18:00:00.000000Z
+                            """);
+            assertQuery("SELECT v, ts FROM x WHERE s = 'b'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanContaining("CoveringIndex on: s")
+                    .returns("""
+                            v\tts
+                            2\t2024-01-01T12:00:00.000000Z
+                            4\t2024-01-02T12:00:00.000000Z
+                            6\t2024-01-03T12:00:00.000000Z
                             """);
         });
     }
@@ -759,20 +866,24 @@ public class AddIndexTest extends AbstractCairoTest {
 
     // Fails every read of one partition's symbol column file while armed: an I/O error in the middle of an index
     // build. Once a read has failed, it can also fail the listings of other partition directories, the way
-    // FilesFacadeImpl.findFirst reports an exhausted descriptor table.
-    private static class SymbolReadFailingFacade extends TestFilesFacadeImpl {
+    // FilesFacadeImpl.findFirst reports an exhausted descriptor table, and the removal of one file of a partition, the
+    // way a file that another process holds open refuses to go. It fails what LeftoverFacade fails as well.
+    private static class SymbolReadFailingFacade extends LeftoverFacade {
         private static final int EMFILE = 24;
-        private final String fileNamePrefix;
         private final AtomicInteger listingFailureCount = new AtomicInteger();
         private final String[] listingFailurePartitionNames;
-        private final String partitionName;
+        private final String symbolFileNamePrefix;
+        private final String symbolPartitionName;
         private volatile boolean isFailing;
         private volatile boolean isReadFailed;
+        private volatile String refusedFileName;
+        private volatile String removalFailureFileNamePrefix;
+        private volatile String removalFailurePartitionName;
         private volatile long symbolFd = -1;
 
-        private SymbolReadFailingFacade(String partitionName, String fileNamePrefix, String... listingFailurePartitionNames) {
-            this.partitionName = partitionName;
-            this.fileNamePrefix = fileNamePrefix;
+        private SymbolReadFailingFacade(String symbolPartitionName, String symbolFileNamePrefix, String... listingFailurePartitionNames) {
+            this.symbolPartitionName = symbolPartitionName;
+            this.symbolFileNamePrefix = symbolFileNamePrefix;
             this.listingFailurePartitionNames = listingFailurePartitionNames;
         }
 
@@ -816,8 +927,31 @@ public class AddIndexTest extends AbstractCairoTest {
             return super.read(fd, buf, len, offset);
         }
 
+        @Override
+        public boolean removeQuiet(LPSZ name) {
+            final String partition = removalFailurePartitionName;
+            if (isFailing && isReadFailed && partition != null
+                    && Utf8s.containsAscii(name, Files.SEPARATOR + partition + Files.SEPARATOR + removalFailureFileNamePrefix)) {
+                final String fileName = new File(Utf8s.stringFromUtf8Bytes(name)).getName();
+                if (refusedFileName == null) {
+                    refusedFileName = fileName;
+                }
+                if (refusedFileName.equals(fileName)) {
+                    return false;
+                }
+            }
+            return super.removeQuiet(name);
+        }
+
+        // Once a read has failed, fails the removal of the first file of the partition whose name starts with the
+        // prefix, and keeps failing it: the rollback of the failed build cannot remove that file.
+        private void failRemovalOnceReadFailed(String partitionName, String fileNamePrefix) {
+            removalFailureFileNamePrefix = fileNamePrefix;
+            removalFailurePartitionName = partitionName;
+        }
+
         private long trackSymbolFd(LPSZ name, long fd) {
-            if (fd > -1 && Utf8s.containsAscii(name, partitionName + Files.SEPARATOR + fileNamePrefix)) {
+            if (fd > -1 && Utf8s.containsAscii(name, symbolPartitionName + Files.SEPARATOR + symbolFileNamePrefix)) {
                 symbolFd = fd;
             }
             return fd;

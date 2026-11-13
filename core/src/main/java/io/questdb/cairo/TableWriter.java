@@ -18549,10 +18549,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
             final int plen = path.size();
             final long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
-            if (IndexType.isPosting(indexType)) {
-                // Enumerate every sealed .pv / .pc<N> for this column
-                // instance across all on-disk sealTxn generations.
-                PostingIndexUtils.removeAllSealedFiles(ff, path, plen, columnName, columnNameTxn);
+            // Every sealed .pv / .pc<N> of the column instance, across all on-disk sealTxn generations. The key file
+            // stays while one of them does: the next ADD INDEX resets the instance's files only when it finds the key
+            // file, see PostingIndexUtils.resetIndex.
+            if (IndexType.isPosting(indexType)
+                    && PostingIndexUtils.removeAllSealedFiles(ff, path, plen, columnName, columnNameTxn)) {
+                throw CairoException.critical(ff.errno()).put("could not remove posting index files [path=")
+                        .put(path.trimTo(plen)).put(", column=").put(columnName).put(']');
             }
             removeFileOrLog(ff, keyFileName(indexType, path.trimTo(plen), columnName, columnNameTxn));
             if (!IndexType.isPosting(indexType)) {
@@ -19583,9 +19586,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     /**
      * Removes the files of the index a failed {@link #writeIndex} built, and never the column it indexes: ADD INDEX
      * reads a committed column, and a column type change removes the column it converted itself, see
-     * {@link #removeConvertedColumnFiles}. A partition whose files it cannot remove, such as one it cannot list, keeps
-     * them, and the rollback goes on with the others: no committed index names those files, and the next ADD INDEX
-     * resets them. It throws the first such failure once it has visited every partition.
+     * {@link #removeConvertedColumnFiles}. A partition it cannot list, or whose sealed posting files it cannot all remove,
+     * keeps them with their key file, and the rollback goes on with the others: no committed index names those files,
+     * and the next ADD INDEX resets them. It throws the first such failure once it has visited every partition. A key
+     * file or BITMAP value file that will not go, it logs: an ADD INDEX of the same type replaces it.
      *
      * @param indexType the type of the index the build wrote; for ADD INDEX the metadata does not carry it yet
      */
