@@ -24,6 +24,7 @@
 
 package io.questdb.metrics;
 
+import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sink;
 
@@ -56,7 +57,12 @@ class PrometheusFormatUtils {
 
     static void appendSampleLineSuffix(CharSink<?> sink, long value) {
         sink.putAscii(' ');
-        sink.put(value);
+        // the sink renders LONG_NULL as "null", which fails parsing of the whole scrape
+        if (value == Numbers.LONG_NULL) {
+            sink.putAscii("NaN");
+        } else {
+            sink.put(value);
+        }
         sink.putAscii(LF);
     }
 
