@@ -27,6 +27,9 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.PageFrameMemory;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.ParquetDecodeHint;
@@ -77,6 +80,12 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
     // when the cache is populated with logically-remapped page frames (e.g. SelectedPageFrame).
     // Initialized from metadata in the constructor; may be overridden via of().
     private int timestampIndex;
+    // Engine to open indexReaderTable from, see enableIndexReaders(), or null
+    private CairoEngine indexReaderEngine;
+    // This cursor's own reader of the slave table at the shared reader's version, for its symbol
+    // index readers; opened on first use, released by close()
+    private TableReader indexReaderTable;
+    private boolean isIndexReaderTableUnavailable;
 
     public ConcurrentTimeFrameCursorImpl(
             @NotNull CairoConfiguration configuration,
@@ -96,6 +105,36 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
     public void close() {
         Misc.free(frameMemoryPool);
         Misc.free(frameTimestampCache);
+        indexReaderTable = Misc.free(indexReaderTable);
+        isIndexReaderTableUnavailable = false;
+    }
+
+    @Override
+    public void enableIndexReaders(CairoEngine engine) {
+        this.indexReaderEngine = engine;
+    }
+
+    @Override
+    public IndexReader getIndexReaderForCurrentFrame(int logicalColumnIndex, int direction) {
+        final int frameIndex = timeFrame.getFrameIndex();
+        if (frameIndex < 0 || frameIndex >= sharedState.getFrameCount()) {
+            return null;
+        }
+        final int partitionIndex = sharedState.getFramePartitionIndexes().get(frameIndex);
+        if (partitionIndex == sharedState.getLeadPartitionIndex()) {
+            // a lead frame is not a partition of any reader
+            return null;
+        }
+        final TableReader reader = indexReaderTable();
+        if (reader == null || reader.openPartition(partitionIndex) < 0) {
+            return null;
+        }
+        return reader.getIndexReader(partitionIndex, frameCursor.getColumnMapping().getColumnIndex(logicalColumnIndex), direction);
+    }
+
+    @Override
+    public long getIndexRowLoForCurrentFrame() {
+        return sharedState.getAddressCache().getIndexRowLo(timeFrame.getFrameIndex());
     }
 
     @Override
@@ -116,6 +155,32 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
     @Override
     public int getTimestampIndex() {
         return timestampIndex;
+    }
+
+    // The cursor's own reader of the slave table, or null when there is none at the version of the
+    // shared reader: a reader the pool gives at another transaction may hold other partition versions,
+    // whose index rows do not match the shared frames, so the cursor gives up on indexes for the query.
+    private TableReader indexReaderTable() {
+        if (indexReaderTable != null || indexReaderEngine == null || isIndexReaderTableUnavailable) {
+            return indexReaderTable;
+        }
+        final TableReader sharedReader = frameCursor.getTableReader();
+        TableReader reader = null;
+        try {
+            reader = indexReaderEngine.getReader(sharedReader.getTableToken());
+            if (reader.getTxn() == sharedReader.getTxn()
+                    && reader.getDataVersion() == sharedReader.getDataVersion()
+                    && reader.getMetadataVersion() == sharedReader.getMetadataVersion()
+                    && reader.getPartitionCount() == sharedReader.getPartitionCount()) {
+                indexReaderTable = reader;
+                return reader;
+            }
+        } catch (CairoException e) {
+            // e.g. the table was dropped or renamed since the query started: scan instead
+        }
+        Misc.free(reader);
+        isIndexReaderTableUnavailable = true;
+        return null;
     }
 
     @Override

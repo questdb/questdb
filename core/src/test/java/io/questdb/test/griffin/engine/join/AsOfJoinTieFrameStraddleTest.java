@@ -169,7 +169,7 @@ public class AsOfJoinTieFrameStraddleTest extends AbstractCairoTest {
             assertJoin("asof_parallel(t q)", keyed, "Async AsOf Join", true, expected);
             assertJoin("asof_memoized(t q)", keyed, "AsOf Join Memoized Scan", true, expected);
             assertJoin("asof_memoized_driveby(t q)", keyed, "driveByCache: true", true, expected);
-            assertJoin("asof_index(t q)", "trades t ASOF JOIN quotes_ix q ON (sym)", "AsOf Join Indexed Scan", true, expected);
+            assertJoin("asof_index(t q)", "trades t ASOF JOIN quotes_ix q ON (sym)", "AsOf Join Indexed Merge", true, expected);
             assertJoin("asof_linear(t q)", keyed, "AsOf Join Light", true, expected);
             // keyed on a VARCHAR: the generic key sink and the multi-key Dense
             assertJoin("asof_fast(t q)", "trades t ASOF JOIN quotes q ON (s)", "AsOf Join Fast", true, expected);
@@ -191,7 +191,7 @@ public class AsOfJoinTieFrameStraddleTest extends AbstractCairoTest {
             assertJoin("asof_parallel(t q)", keyedTol, "Async AsOf Join", true, expected);
             assertJoin("asof_dense(t q)", keyedTol, "AsOf Join Dense Single Symbol", true, expected);
             assertJoin("asof_memoized(t q)", keyedTol, "AsOf Join Memoized Scan", true, expected);
-            assertJoin("asof_index(t q)", "trades t ASOF JOIN quotes_ix q ON (sym) TOLERANCE 1m", "AsOf Join Indexed Scan", true, expected);
+            assertJoin("asof_index(t q)", "trades t ASOF JOIN quotes_ix q ON (sym) TOLERANCE 1m", "AsOf Join Indexed Merge", true, expected);
             assertJoin("asof_linear(t q)", keyedTol, "AsOf Join Light", true, expected);
             assertJoin("", "trades t ASOF JOIN (SELECT * FROM quotes WHERE sym IN ('A', 'B', 'K')) q ON (sym) TOLERANCE 1m", "Filtered AsOf Join Fast", true, expected);
             assertJoin("", "trades t ASOF JOIN quotes q TOLERANCE 1m", "AsOf Join Fast", false, expected);

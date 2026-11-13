@@ -1147,6 +1147,12 @@ public interface CairoConfiguration {
 
     long getSqlHorizonJoinBwdScanMinGap();
 
+    /**
+     * Rows that the ASOF lookup of a HORIZON JOIN on an indexed SYMBOL key scans back before it looks
+     * the key up in the slave's symbol index instead; negative disables the index lookup.
+     */
+    long getSqlHorizonJoinIndexScanRows();
+
     long getSqlHorizonJoinBwdScanSwitchFactor();
 
     int getSqlHorizonJoinMaxOffsets();

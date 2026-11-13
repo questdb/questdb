@@ -620,6 +620,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlHashJoinValuePageSize;
     private final long sqlHorizonJoinBwdScanAbsoluteThreshold;
     private final long sqlHorizonJoinBwdScanMinGap;
+    private final long sqlHorizonJoinIndexScanRows;
     private final long sqlHorizonJoinBwdScanSwitchFactor;
     private final int sqlHorizonJoinMaxOffsets;
     private final int sqlIndexKeyMajorMaxKeys;
@@ -2758,6 +2759,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlParallelTopKEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_TOP_K_ENABLED, defaultParallelSqlEnabled);
             this.sqlHorizonJoinBwdScanAbsoluteThreshold = getLong(properties, env, PropertyKey.CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_ABSOLUTE_THRESHOLD, 131_072);
             this.sqlHorizonJoinBwdScanMinGap = getLong(properties, env, PropertyKey.CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_MIN_GAP, 1_024);
+            this.sqlHorizonJoinIndexScanRows = getLong(properties, env, PropertyKey.CAIRO_SQL_HORIZON_JOIN_INDEX_SCAN_ROWS, 1_024);
             this.sqlHorizonJoinBwdScanSwitchFactor = getLong(properties, env, PropertyKey.CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_SWITCH_FACTOR, 8);
             this.sqlHorizonJoinMaxOffsets = getInt(properties, env, PropertyKey.CAIRO_SQL_HORIZON_JOIN_MAX_OFFSETS, 10_000);
             this.sqlParallelHorizonJoinEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_HORIZON_JOIN_ENABLED, defaultParallelSqlEnabled);
@@ -5795,6 +5797,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getSqlHorizonJoinBwdScanMinGap() {
             return sqlHorizonJoinBwdScanMinGap;
+        }
+
+        @Override
+        public long getSqlHorizonJoinIndexScanRows() {
+            return sqlHorizonJoinIndexScanRows;
         }
 
         @Override
