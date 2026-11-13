@@ -11825,14 +11825,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Whether the last partition refuses to be opened and positioned for an in-place append, so every commit into it
-     * has to go through the O3 path instead: it is parquet, it is composite, or the table is a merge-append table.
+     * Whether the last partition refuses to be opened and positioned for an in-place append: it is parquet or
+     * composite, or the table uses merge-append or Delta Runs. Delta bases stay immutable; new rows go into Runs.
      * An empty table has no last partition to block. For the table-wide rule, which holds from the empty table on and
      * says nothing about parquet or composite partitions, use {@link #isMergeAppendTable()}.
      */
     private boolean isLastPartitionAppendBlocked() {
         return txWriter.getPartitionCount() > 0
-                && (isLastPartitionParquet() || isLastPartitionComposite() || isMergeAppendTable());
+                && (isLastPartitionParquet() || isLastPartitionComposite() || isMergeAppendTable()
+                || metadata.getWriteMode() == TableWriteMode.DELTA_RUNS);
     }
 
     private boolean isLastPartitionClosed() {
@@ -13906,6 +13907,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // moved on - isLastPartitionClosed() only looks at the first column - and the writer's close would
             // then truncate the file back over every row a later merge-append wrote into it. A parquet last
             // partition is closed too: the rest of columns[] maps nothing, or an earlier native partition.
+            // Delta also keeps its adopted native base closed; ADD COLUMN must not open only the new column.
             final int lastPartitionIndex = txWriter.getPartitionCount() - 1;
             final boolean lastPartitionComposite = lastPartitionIndex > -1 && txWriter.isPartitionComposite(lastPartitionIndex);
             final boolean lastPartitionClosed = isLastPartitionAppendBlocked();
