@@ -141,7 +141,8 @@ public class JoinChainCompileBenchmark {
                 case "cross_inner_full" -> {
                     switch (i % 3) {
                         case 1 -> sb.append(" CROSS JOIN t").append(i);
-                        case 2 -> sb.append(" JOIN t").append(i).append(" ON t").append(i).append(".k = t").append(i - 1).append(".k");
+                        case 2 ->
+                                sb.append(" JOIN t").append(i).append(" ON t").append(i).append(".k = t").append(i - 1).append(".k");
                         default -> appendCrossOrOuter(sb, i, false, "FULL", "=", i - 1);
                     }
                 }
