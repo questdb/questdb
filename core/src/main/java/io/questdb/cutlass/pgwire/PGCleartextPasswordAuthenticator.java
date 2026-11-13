@@ -419,7 +419,7 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
         }
         byte msgType = Unsafe.getByte(recvBufReadPos);
         if (msgType != MESSAGE_TYPE_PASSWORD_MESSAGE) {
-            LOG.error().$("unexpected password message type [msgType=").$(msgType).$(']').$();
+            LOG.error().$("unexpected password message type [msgType=").$(msgType & 0xFF).$(']').$();
             throw PGMessageProcessingException.INSTANCE;
         }
 
