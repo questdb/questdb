@@ -2,6 +2,7 @@
 ---
 name: fix-pr
 description: {{description}}
+disable-model-invocation: true
 allowed-tools: bash read edit write subagent ctx_execute ctx_execute_file
 metadata:
   argument-hint: "{{argument_hint}}"

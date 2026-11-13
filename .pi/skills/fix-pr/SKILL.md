@@ -1,6 +1,7 @@
 ---
 name: fix-pr
 description: Develop features and fix bugs or review findings one at a time, test-first. Design each change and its test plan, have both challenged independently, and add tests until every changed line and branch runs. Then run review-pr at level 3 over the whole PR until nothing blocks. Use when the user runs /skill:fix-pr or asks to develop or fix items with it.
+disable-model-invocation: true
 allowed-tools: bash read edit write subagent ctx_execute ctx_execute_file
 metadata:
   argument-hint: "[--block-at=critical|high|medium|low] [--fix-moderate] [--include-adjacent] [--decisions=<file>] [--review-level=N] [--max-review-rounds=N] <items: features, bugs or review findings>"

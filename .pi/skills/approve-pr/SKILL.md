@@ -1,6 +1,7 @@
 ---
 name: approve-pr
 description: Approve the pull request the most recent review-pr report names, or the one for the checked-out branch. Posts that review as an approving review and adds the "QUEUED FOR MERGE" label. Use only when the user runs /skill:approve-pr after review-pr.
+disable-model-invocation: true
 allowed-tools: bash read write
 metadata:
   argument-hint: "[optional PR number or URL to override auto-detection]"
