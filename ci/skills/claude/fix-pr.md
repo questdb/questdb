@@ -9,7 +9,7 @@ allowed-tools: Bash, Read, Edit, Write, Grep, Glob, Agent, AskUserQuestion
 === harness-note
 > Harness note: this skill runs inside **Claude Code**. Helpers are
 > fresh-context agents launched through the Agent tool: `general-purpose`, and
-> `reviewer`, `risk-assessor` and `review-pr-runner` from `.claude/agents/`.
+> `review-reader`, `risk-assessor` and `review-pr-runner` from `.claude/agents/`.
 > Shell variables don't carry over between `Bash` calls, so write each value
 > Setup records, such as `START` or the PR base, literally into later commands
 > and task texts.
@@ -22,7 +22,7 @@ nothing else meanwhile. Pass `model` set to the helper model (Setup), so every
 helper runs on this session's model.
 
 Every agent of the run thinks at max, except the review's discovery agents:
-review-pr runs them as `reviewer` at its default, high, because they only read
+review-pr runs them as `review-reader` at its default, high, because they only read
 code. Pass `effort: "max"` to each helper launch the table below marks;
 `review-pr-runner`, `risk-assessor` and the review's `review-prober`
 falsifiers set max in their definitions.
@@ -30,9 +30,9 @@ falsifiers set max in their definitions.
 | Helper | Agent type | Extra parameters |
 |---|---|---|
 | Analysis | `general-purpose` | `effort: "max"` |
-| Check | `reviewer` | `effort: "max"` |
+| Check | `review-reader` | `effort: "max"` |
 | Build | `general-purpose` | `effort: "max"` |
-| Test review | `reviewer` | `effort: "max"` |
+| Test review | `review-reader` | `effort: "max"` |
 | Test gaps | `general-purpose` | `effort: "max"` |
 | Risk | `risk-assessor` | none |
 | Review | `review-pr-runner` | none |

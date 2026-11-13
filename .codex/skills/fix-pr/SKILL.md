@@ -99,18 +99,18 @@ templates at the end of this file. Wait for each one with `wait_agent`, in long
 waits, before the next step.
 
 Every agent of the run thinks at the highest effort, `xhigh`, except the
-review's discovery agents: review-pr runs them as `reviewer` at `high`, because
+review's discovery agents: review-pr runs them as `review-reader` at `high`, because
 they only read code. A definition's own effort overrides the `reasoning_effort`
-a launch passes, so `reviewer` sets none and its callers choose;
+a launch passes, so `review-reader` sets none and its callers choose;
 `review-pr-runner`, `risk-assessor` and the review's `review-prober` falsifiers
 set `xhigh` in their definitions in `.codex/agents/`.
 
 | Helper | `agent_type` | `reasoning_effort` |
 |---|---|---|
 | Analysis | none | `"xhigh"` |
-| Check | `reviewer` | `"xhigh"` |
+| Check | `review-reader` | `"xhigh"` |
 | Build | none | `"xhigh"` |
-| Test review | `reviewer` | `"xhigh"` |
+| Test review | `review-reader` | `"xhigh"` |
 | Test gaps | none | `"xhigh"` |
 | Risk | `risk-assessor` | none |
 | Review | `review-pr-runner` | none |

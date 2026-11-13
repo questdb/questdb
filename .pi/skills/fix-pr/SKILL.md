@@ -99,18 +99,19 @@ turn and is woken later by a background helper loses the cache and pays to
 rebuild it.
 
 Every agent of the run thinks at max, except the review's discovery agents:
-review-pr runs them as the builtin `reviewer` at its default, high, because
-they only read code. The builtin `worker` and `reviewer` default to high, and
-a launch overrides that only through the `:max` suffix of its model;
+review-pr runs them as `review-reader` (`.pi/agents/review-reader.md`) at its default,
+high, because they only read code. The builtin `worker` and the `review-reader`
+definition default to high, and a launch overrides that only through the `:max` suffix of its
+model;
 `review-pr-runner`, `risk-assessor` and the review's `review-prober`
 falsifiers set max in their definitions. The timeouts leave room for it.
 
 | Helper | Agent | Extra parameters |
 |---|---|---|
 | Analysis | `worker` | `timeoutMs: 7200000`, `acceptance: { level: "none", reason: "fix-pr checks the result" }` |
-| Check | `reviewer` | `timeoutMs: 3600000` |
+| Check | `review-reader` | `timeoutMs: 3600000` |
 | Build | `worker` | `timeoutMs: 10800000`, `acceptance: { level: "none", reason: "fix-pr checks the commit" }` |
-| Test review | `reviewer` | `timeoutMs: 3600000` |
+| Test review | `review-reader` | `timeoutMs: 3600000` |
 | Test gaps | `worker` | `timeoutMs: 5400000`, `acceptance: { level: "none", reason: "fix-pr checks the commit" }` |
 | Risk | `risk-assessor` | `timeoutMs: 3600000` |
 | Review | `review-pr-runner` | `timeoutMs: 28800000`, `acceptance: { level: "none", reason: "fix-pr reads the report" }` |

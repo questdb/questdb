@@ -1,3 +1,3 @@
 === frontmatter
-name = "reviewer"
+name = "review-reader"
 description = "{{description}}"

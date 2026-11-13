@@ -8,7 +8,7 @@ allowed-tools: Bash, Read, Grep, Glob, Agent
 === harness-note
 > Harness note: this skill runs inside **Claude Code**. Use `Bash` for read-only `gh`
 > and Git queries and for `rg` and `fd` searches, `Read` for files, and fresh-context
-> `reviewer`, `review-prober` and `risk-assessor` agents (`.claude/agents/`) through
+> `review-reader`, `review-prober` and `risk-assessor` agents (`.claude/agents/`) through
 > the Agent tool. Where a build has the `Grep` and `Glob` tools, they can replace `rg`
 > and `fd`; without `fd`, use `find`. Do not edit files or push. Build and run tests
 > only in the review's scratch worktrees (Steps 1 and 3b), never in the user's
@@ -20,8 +20,8 @@ allowed-tools: Bash, Read, Grep, Glob, Agent
 === model-id
 Copy the model ID from your system prompt; never write it from memory: models misstate their own name and version. Without such a line, write `model unknown`.
 === spawning
-Step 3 uses fresh-context `reviewer` agents (`.claude/agents/reviewer.md`) through the
-Agent tool, one task per role. Discovery reads code and runs nothing: `reviewer` uses
+Step 3 uses fresh-context `review-reader` agents (`.claude/agents/review-reader.md`) through the
+Agent tool, one task per role. Discovery reads code and runs nothing: `review-reader` uses
 its shell only to read and search, and thinks at high effort. Step 3b uses
 fresh-context `review-prober` agents (`.claude/agents/review-prober.md`), one per
 atomic candidate: read-only reviewers with a shell that run the probes the evidence

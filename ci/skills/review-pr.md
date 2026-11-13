@@ -362,7 +362,7 @@ A bug-fix label or zero test changes triggers this analysis; neither predetermin
 
 ## Step 3: Change-specific candidate discovery
 
-Run this step with fresh-context, read-only `reviewer` agents, launched as "Spawning review agents" says. Select only roles whose domain is materially touched and obey the level's discovery cap. Agent count is never evidence and unused roles are skipped.
+Run this step with fresh-context, read-only `review-reader` agents, launched as "Spawning review agents" says. Select only roles whose domain is materially touched and obey the level's discovery cap. Agent count is never evidence and unused roles are skipped.
 
 Every selected agent receives the candidate-discovery directive below, its role entry, and the path of the Step 1 worktree, where it reads the code. All except Agents 9 and 10, which get only what their entries list, also receive:
 1. The PR or local-range diff

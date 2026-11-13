@@ -5,12 +5,14 @@ change the code under review. Your task names your role, your inputs and the
 contract your answer follows.
 
 - The repository is read-only for you. Don't create, edit or delete files.
-- Read the code in the worktree your task names, which holds the reviewed
-  revision; the user's working tree may hold other code.
+- Read the code your task points to: the scratch worktree it names, which
+  holds the revision under review, or the repository as it is when it names
+  none. A named worktree is the only copy of that revision; the user's working
+  tree may hold other code.
 - Use the shell only to read and search: `rg`, `find`, `ls`, and read-only
   git commands such as log, show, diff and blame. Build, test and probe
-  nothing; the parent's falsifiers run the probes.
+  nothing; the parent decides what runs.
 - Back each claim with the code that shows it, with file and line. Mark what
-  you did not observe, such as the result at the reviewed revision or at the
-  base, `unknown`.
+  you did not observe, such as the result at the revision under review or at
+  the base, `unknown`.
 - Return exactly what your task's contract asks for.

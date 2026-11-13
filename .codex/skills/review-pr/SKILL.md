@@ -28,7 +28,7 @@ neither is supplied, ask for one.
 > Harness note: this skill runs inside **Codex**. Use shell tools for read-only `gh`,
 > Git, `rg` and `rg --files` queries (`rg --files` replaces `fd` wherever this skill
 > names it), local file reads for source inspection, and
-> fresh-context Codex subagents of the `reviewer`, `review-prober` and `risk-assessor`
+> fresh-context Codex subagents of the `review-reader`, `review-prober` and `risk-assessor`
 > agent types (`.codex/agents/`). Do not edit files or push. Build and run tests only in the review's scratch
 > worktrees (Steps 1 and 3b), never in the user's working tree. Shell variables
 > don't carry over between shell calls, so write each value a step records, such
@@ -86,9 +86,9 @@ If the level was defaulted, mention that level 3 exists for full review.
 
 Steps 3, 3b and 3c use fresh-context Codex subagents: `spawn_agent` with
 `fork_turns: "none"`, so a subagent sees only its task, and `agent_type` set to its
-role, whose definition is in `.codex/agents/<role>.toml`. Step 3 uses `reviewer`
+role, whose definition is in `.codex/agents/<role>.toml`. Step 3 uses `review-reader`
 agents, one task per role, at `reasoning_effort: "high"`. Discovery reads code and
-runs nothing: a `reviewer` uses the shell only to read and search. Step 3b uses
+runs nothing: a `review-reader` uses the shell only to read and search. Step 3b uses
 `review-prober` agents, one per atomic candidate: read-only reviewers with a shell
 that run the probes the evidence rules ask for. Give each falsifier, in its task, a
 budget of about 30 minutes: a probe that needs longer reports what it has and marks
@@ -392,7 +392,7 @@ A bug-fix label or zero test changes triggers this analysis; neither predetermin
 
 ## Step 3: Change-specific candidate discovery
 
-Run this step with fresh-context, read-only `reviewer` agents, launched as "Spawning review agents" says. Select only roles whose domain is materially touched and obey the level's discovery cap. Agent count is never evidence and unused roles are skipped.
+Run this step with fresh-context, read-only `review-reader` agents, launched as "Spawning review agents" says. Select only roles whose domain is materially touched and obey the level's discovery cap. Agent count is never evidence and unused roles are skipped.
 
 Every selected agent receives the candidate-discovery directive below, its role entry, and the path of the Step 1 worktree, where it reads the code. All except Agents 9 and 10, which get only what their entries list, also receive:
 1. The PR or local-range diff
