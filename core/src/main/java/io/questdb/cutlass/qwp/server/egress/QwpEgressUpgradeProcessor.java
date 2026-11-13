@@ -440,6 +440,13 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
     }
 
     @Override
+    public boolean isCrossSiteRequestAccepted() {
+        // validateHandshake() admits browser origins by the QWP policy, which
+        // includes the origins listed in qwp.browser.allowed.origins
+        return true;
+    }
+
+    @Override
     public void onConnectionClosed(HttpConnectionContext context) {
         LOG.info().$("Egress WebSocket connection closed [fd=").$(context.getFd()).I$();
         QwpEgressProcessorState state = LV.get(context);

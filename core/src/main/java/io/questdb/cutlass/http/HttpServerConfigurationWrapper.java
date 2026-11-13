@@ -57,6 +57,11 @@ public class HttpServerConfigurationWrapper implements DynamicFiberWorkerPoolCon
     }
 
     @Override
+    public HttpAllowedHosts getAllowedHosts() {
+        return getDelegate().getAllowedHosts();
+    }
+
+    @Override
     public int getBindIPv4Address() {
         return getDelegate().getBindIPv4Address();
     }
@@ -64,6 +69,11 @@ public class HttpServerConfigurationWrapper implements DynamicFiberWorkerPoolCon
     @Override
     public int getBindPort() {
         return getDelegate().getBindPort();
+    }
+
+    @Override
+    public QwpBrowserAllowedOrigins getBrowserAllowedOrigins() {
+        return getDelegate().getBrowserAllowedOrigins();
     }
 
     @Override

@@ -33,7 +33,9 @@ import org.jetbrains.annotations.Nullable;
 import java.util.Locale;
 
 /**
- * An immutable, pre-encoded snapshot of the browser origins allowed on QWP WebSockets.
+ * An immutable, pre-encoded snapshot of the browser origins allowed on QWP WebSockets
+ * (qwp.browser.allowed.origins), or to send cross-site requests to the other HTTP
+ * endpoints (http.browser.allowed.origins).
  * <p>
  * Entries are compared byte for byte with the Origin header, so each entry must
  * be written exactly as a browser serializes an origin: a lowercase http or https

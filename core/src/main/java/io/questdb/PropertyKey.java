@@ -333,6 +333,8 @@ public enum PropertyKey implements ConfigPropertyKey {
     HTTP_MIN_ENABLED("http.min.enabled"),
     HTTP_USER("http.user"),
     HTTP_PASSWORD("http.password", true),
+    HTTP_ALLOWED_HOSTS("http.allowed.hosts"),
+    HTTP_BROWSER_ALLOWED_ORIGINS("http.browser.allowed.origins"),
     HTTP_MIN_WORKER_AFFINITY("http.min.worker.affinity"),
     HTTP_MIN_WORKER_YIELD_THRESHOLD("http.min.worker.yield.threshold"),
     HTTP_MIN_WORKER_NAP_THRESHOLD("http.min.worker.nap.threshold"),

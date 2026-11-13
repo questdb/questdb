@@ -482,6 +482,91 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
     }
 
     @Test
+    public void testHttpAllowedHostsReload() throws Exception {
+        // without authentication, the server serves a host name public DNS can point at it
+        // only once http.allowed.hosts lists it, and a reload changes the list
+        assertMemoryLeak(() -> {
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write(QWP_ORIGINS_TEST_BOOT_CONFIG);
+            }
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+                int port = serverMain.getHttpServerPort();
+                String host = "Host: questdb.example.com:" + port + "\r\n";
+                Assert.assertEquals("HTTP/1.1 403 Forbidden", execStatusLine(port, host));
+
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write(QWP_ORIGINS_TEST_BOOT_CONFIG);
+                    w.write("http.allowed.hosts=questdb.example.com\n");
+                }
+                Assert.assertTrue(serverMain.getEngine().getConfigReloader().reload());
+                Assert.assertEquals("HTTP/1.1 200 OK", execStatusLine(port, host));
+
+                // an invalid value keeps the previous list in force
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write(QWP_ORIGINS_TEST_BOOT_CONFIG);
+                    w.write("http.allowed.hosts=questdb.example.com:" + port + "\n");
+                }
+                Assert.assertTrue(serverMain.getEngine().getConfigReloader().reload());
+                Assert.assertEquals("HTTP/1.1 200 OK", execStatusLine(port, host));
+
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write(QWP_ORIGINS_TEST_BOOT_CONFIG);
+                    w.write("http.allowed.hosts=*\n");
+                }
+                Assert.assertTrue(serverMain.getEngine().getConfigReloader().reload());
+                Assert.assertEquals("HTTP/1.1 200 OK", execStatusLine(port, "Host: rebind.example.net:" + port + "\r\n"));
+
+                // removing the property restores the default
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write(QWP_ORIGINS_TEST_BOOT_CONFIG);
+                }
+                Assert.assertTrue(serverMain.getEngine().getConfigReloader().reload());
+                Assert.assertEquals("HTTP/1.1 403 Forbidden", execStatusLine(port, host));
+                Assert.assertEquals("HTTP/1.1 200 OK", execStatusLine(port, "Host: localhost:" + port + "\r\n"));
+            }
+        });
+    }
+
+    @Test
+    public void testHttpBrowserAllowedOriginsReload() throws Exception {
+        assertMemoryLeak(() -> {
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write(QWP_ORIGINS_TEST_BOOT_CONFIG);
+            }
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+                int port = serverMain.getHttpServerPort();
+                String crossSite = "Host: localhost:" + port + "\r\nSec-Fetch-Site: cross-site\r\nOrigin: https://app.example.com\r\n";
+                Assert.assertEquals("HTTP/1.1 403 Forbidden", execStatusLine(port, crossSite));
+
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write(QWP_ORIGINS_TEST_BOOT_CONFIG);
+                    w.write("http.browser.allowed.origins=https://app.example.com\n");
+                }
+                Assert.assertTrue(serverMain.getEngine().getConfigReloader().reload());
+                Assert.assertEquals("HTTP/1.1 200 OK", execStatusLine(port, crossSite));
+
+                // an invalid value keeps the previous list in force
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write(QWP_ORIGINS_TEST_BOOT_CONFIG);
+                    w.write("http.browser.allowed.origins=https://app.example.com/*\n");
+                }
+                Assert.assertTrue(serverMain.getEngine().getConfigReloader().reload());
+                Assert.assertEquals("HTTP/1.1 200 OK", execStatusLine(port, crossSite));
+
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write(QWP_ORIGINS_TEST_BOOT_CONFIG);
+                    w.write("http.browser.allowed.origins=https://new.example.com\n");
+                }
+                Assert.assertTrue(serverMain.getEngine().getConfigReloader().reload());
+                Assert.assertEquals("HTTP/1.1 403 Forbidden", execStatusLine(port, crossSite));
+                Assert.assertEquals("HTTP/1.1 200 OK", execStatusLine(port, crossSite.replace("app.example.com", "new.example.com")));
+            }
+        });
+    }
+
+    @Test
     public void testHttpConnectionLimitReload() throws Exception {
         assertMemoryLeak(() -> {
             try (FileWriter w = new FileWriter(serverConf)) {
@@ -1564,7 +1649,10 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
     public void testQwpBrowserCrossOriginGateSkipsNonQwpEndpoints() throws Exception {
         // Only the QWP upgrade endpoints refuse ambient credentials from another
         // origin. A REST request carrying a foreign Origin still authenticates
-        // with the session cookie or the Authorization header.
+        // with the session cookie or the Authorization header when the browser
+        // reports it same-origin, as it does for a page served through a
+        // TLS-terminating proxy. Without Sec-Fetch-Site, the foreign Origin makes
+        // the connection reject the REST request as a cross-site one.
         assertMemoryLeak(() -> {
             try (FileWriter w = new FileWriter(serverConf)) {
                 w.write(QWP_ORIGINS_TEST_BOOT_CONFIG);
@@ -1579,16 +1667,19 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 String cookie = "Cookie: " + createHttpSessionCookie(port) + "\r\n";
                 for (String origin : new String[]{"https://app.example.com", "https://other.example.com"}) {
                     for (String credentials : new String[]{cookie, basicAuthorization}) {
-                        try (Socket socket = new Socket("localhost", port)) {
-                            socket.setSoTimeout(5_000);
-                            String request = "GET /exec?query=select%201 HTTP/1.1\r\n"
-                                    + "Host: localhost:" + port + "\r\n"
-                                    + "Origin: " + origin + "\r\n"
-                                    + credentials
-                                    + "Connection: close\r\n\r\n";
-                            socket.getOutputStream().write(request.getBytes(StandardCharsets.US_ASCII));
-                            String response = QwpWireTestFixtures.readHttpHeaders(socket.getInputStream());
-                            Assert.assertTrue(response, response.startsWith("HTTP/1.1 200"));
+                        for (boolean isSameOrigin : new boolean[]{true, false}) {
+                            try (Socket socket = new Socket("localhost", port)) {
+                                socket.setSoTimeout(5_000);
+                                String request = "GET /exec?query=select%201 HTTP/1.1\r\n"
+                                        + "Host: localhost:" + port + "\r\n"
+                                        + "Origin: " + origin + "\r\n"
+                                        + (isSameOrigin ? "Sec-Fetch-Site: same-origin\r\n" : "")
+                                        + credentials
+                                        + "Connection: close\r\n\r\n";
+                                socket.getOutputStream().write(request.getBytes(StandardCharsets.US_ASCII));
+                                String response = QwpWireTestFixtures.readHttpHeaders(socket.getInputStream());
+                                Assert.assertTrue(response, response.startsWith(isSameOrigin ? "HTTP/1.1 200" : "HTTP/1.1 403"));
+                            }
                         }
                     }
                 }
@@ -2325,6 +2416,18 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
             HttpClient.ResponseHeaders response = HttpUtils.newHttpRequest(httpClient, port, "select 1", "admin", "quest", "true");
             HttpUtils.awaitStatusCode(response, "200");
             return SESSION_COOKIE_NAME + '=' + HttpUtils.assertSessionCookie(response, false);
+        }
+    }
+
+    // returns the status line of a GET of select 1 that carries the given headers
+    private static String execStatusLine(int port, String headers) throws Exception {
+        try (Socket socket = new Socket("localhost", port)) {
+            socket.setSoTimeout(5_000);
+            String request = "GET /exec?query=select%201 HTTP/1.1\r\n" + headers + "Connection: close\r\n\r\n";
+            socket.getOutputStream().write(request.getBytes(StandardCharsets.US_ASCII));
+            String response = QwpWireTestFixtures.readHttpHeaders(socket.getInputStream());
+            int statusLineEnd = response.indexOf("\r\n");
+            return statusLineEnd < 0 ? response : response.substring(0, statusLineEnd);
         }
     }
 

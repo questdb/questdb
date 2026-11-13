@@ -25,11 +25,28 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.FactoryProvider;
+import io.questdb.cutlass.qwp.server.QwpBrowserAllowedOrigins;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.std.ObjHashSet;
 
 public interface HttpServerConfiguration extends IODispatcherConfiguration, WorkerPoolConfiguration {
+
+    /**
+     * The host names this server serves when it runs without authentication;
+     * custom configurations serve the ones public DNS cannot point at it.
+     */
+    default HttpAllowedHosts getAllowedHosts() {
+        return HttpAllowedHosts.DEFAULT;
+    }
+
+    /**
+     * The browser origins whose cross-site requests this server serves, on every
+     * endpoint that rejects cross-site requests; custom configurations serve none.
+     */
+    default QwpBrowserAllowedOrigins getBrowserAllowedOrigins() {
+        return QwpBrowserAllowedOrigins.EMPTY;
+    }
 
     default ObjHashSet<String> getContextPathLifecycle() {
         return new ObjHashSet<>() {{

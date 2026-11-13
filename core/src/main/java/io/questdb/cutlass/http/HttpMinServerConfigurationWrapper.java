@@ -26,6 +26,7 @@ package io.questdb.cutlass.http;
 
 import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
+import io.questdb.cutlass.qwp.server.QwpBrowserAllowedOrigins;
 import io.questdb.metrics.Counter;
 import io.questdb.metrics.LongGauge;
 import io.questdb.network.EpollFacade;
@@ -51,6 +52,11 @@ public class HttpMinServerConfigurationWrapper implements HttpServerConfiguratio
     }
 
     @Override
+    public HttpAllowedHosts getAllowedHosts() {
+        return getDelegate().getAllowedHosts();
+    }
+
+    @Override
     public int getBindIPv4Address() {
         return getDelegate().getBindIPv4Address();
     }
@@ -58,6 +64,11 @@ public class HttpMinServerConfigurationWrapper implements HttpServerConfiguratio
     @Override
     public int getBindPort() {
         return getDelegate().getBindPort();
+    }
+
+    @Override
+    public QwpBrowserAllowedOrigins getBrowserAllowedOrigins() {
+        return getDelegate().getBrowserAllowedOrigins();
     }
 
     @Override

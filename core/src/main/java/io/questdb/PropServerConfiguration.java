@@ -39,6 +39,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.auth.AuthUtils;
+import io.questdb.cutlass.http.HttpAllowedHosts;
 import io.questdb.cutlass.http.HttpContextConfiguration;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpServerConfiguration;
@@ -278,6 +279,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int fileOperationRetryCount;
     private final FilesFacade filesFacade;
     private final FactoryProviderFactory fpf;
+    private final HttpAllowedHosts httpAllowedHosts;
+    private final QwpBrowserAllowedOrigins httpBrowserAllowedOrigins;
     private final PropHttpContextConfiguration httpContextConfiguration;
     private final ObjHashSet<String> httpContextPathExport = new ObjHashSet<>();
     private final ObjHashSet<String> httpContextPathILP = new ObjHashSet<>();
@@ -1605,6 +1608,18 @@ public class PropServerConfiguration implements ServerConfiguration {
             } else if (Chars.empty(httpUsername) && !Chars.empty(httpPassword)) {
                 throw new ServerConfigurationException("HTTP password is set but username is missing. " +
                         "Use the '" + PropertyKey.HTTP_USER.getPropertyPath() + "' configuration property to set a username.");
+            }
+            try {
+                this.httpAllowedHosts = HttpAllowedHosts.parse(getString(properties, env, PropertyKey.HTTP_ALLOWED_HOSTS, ""));
+            } catch (IllegalArgumentException e) {
+                throw new ServerConfigurationException(PropertyKey.HTTP_ALLOWED_HOSTS.getPropertyPath() + ": " + e.getMessage());
+            }
+            try {
+                this.httpBrowserAllowedOrigins = QwpBrowserAllowedOrigins.parse(
+                        getString(properties, env, PropertyKey.HTTP_BROWSER_ALLOWED_ORIGINS, "")
+                );
+            } catch (IllegalArgumentException e) {
+                throw new ServerConfigurationException(PropertyKey.HTTP_BROWSER_ALLOWED_ORIGINS.getPropertyPath() + ": " + e.getMessage());
             }
 
             if (loadAdditionalConfigurations && httpServerEnabled) {
@@ -6557,6 +6572,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public HttpAllowedHosts getAllowedHosts() {
+            return httpAllowedHosts;
+        }
+
+        @Override
         public int getBindIPv4Address() {
             return httpMinBindIPv4Address;
         }
@@ -6564,6 +6584,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getBindPort() {
             return httpMinBindPort;
+        }
+
+        @Override
+        public QwpBrowserAllowedOrigins getBrowserAllowedOrigins() {
+            return httpBrowserAllowedOrigins;
         }
 
         @Override
@@ -6752,6 +6777,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public HttpAllowedHosts getAllowedHosts() {
+            return httpAllowedHosts;
+        }
+
+        @Override
         public int getBindIPv4Address() {
             return httpNetBindIPv4Address;
         }
@@ -6759,6 +6789,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getBindPort() {
             return httpNetBindPort;
+        }
+
+        @Override
+        public QwpBrowserAllowedOrigins getBrowserAllowedOrigins() {
+            return httpBrowserAllowedOrigins;
         }
 
         @Override

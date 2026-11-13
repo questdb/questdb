@@ -389,6 +389,13 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
     }
 
     @Override
+    public boolean isCrossSiteRequestAccepted() {
+        // validateHandshake() admits browser origins by the QWP policy, which
+        // includes the origins listed in qwp.browser.allowed.origins
+        return true;
+    }
+
+    @Override
     public void onConnectionClosed(HttpConnectionContext context) {
         LOG.info().$("WebSocket connection closed [fd=").$(context.getFd()).I$();
         QwpIngressProcessorState state = LV.get(context);
