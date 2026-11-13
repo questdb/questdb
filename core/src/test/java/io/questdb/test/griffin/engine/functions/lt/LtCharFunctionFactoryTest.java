@@ -42,6 +42,36 @@ public class LtCharFunctionFactoryTest extends AbstractFunctionFactoryTest {
         call(nullChar, nullChar).andAssert(false);
     }
 
+    @Test
+    public void testNullCharConstantMatchesBindVariable() throws Exception {
+        final String expected = """
+                a\tb\tc
+                false\tfalse\tfalse
+                """;
+        assertQuery("SELECT 0::CHAR <= null a, null >= 0::CHAR b, 0::CHAR >= 0::CHAR c")
+                .expectSize()
+                .returns(expected);
+        bindVariableService.setChar(0, (char) 0);
+        assertQuery("SELECT $1 <= null a, null >= $1 b, $1 >= $1 c")
+                .expectSize()
+                .returns(expected);
+    }
+
+    @Test
+    public void testNullCharConstantVersusSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQuery("SELECT ''::SYMBOL < null::CHAR a, null::CHAR > ''::SYMBOL b")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("a\tb\nfalse\tfalse\n");
+            execute("CREATE TABLE x (s SYMBOL)");
+            execute("INSERT INTO x VALUES (''), ('a'), (null)");
+            assertQuery("x WHERE s < null::CHAR OR null::CHAR > s")
+                    .noLeakCheck()
+                    .returns("s\n");
+        });
+    }
+
     @Override
     protected FunctionFactory getFunctionFactory() {
         return new LtCharFunctionFactory();
