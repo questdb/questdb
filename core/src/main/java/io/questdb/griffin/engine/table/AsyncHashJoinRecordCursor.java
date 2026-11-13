@@ -139,6 +139,13 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
     private int tupleStride;
     private DirectLongList tuples;
 
+    // Adds joined rows to a count, which fails rather than wrap past what a LONG holds: the counter
+    // takes the rows once their sum with its count fits.
+    private static void addRows(Counter counter, long rows) {
+        final long count = counter.get();
+        counter.add(HashJoinStageStepper.addRowCounts(count, rows) - count);
+    }
+
     AsyncHashJoinRecordCursor(AsyncHashJoinSpec spec) {
         this.stageCount = spec.getStageCount();
         this.chainHeads = new long[stageCount];
@@ -162,7 +169,7 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
             build();
         }
         if (chainStageCount > 0) {
-            counter.add(countRemainingChainMatches());
+            addRows(counter, countRemainingChainMatches());
         }
         if (cursor > -1) {
             // The rest of the frame the cursor holds, which a tuple-carrying task joined.
@@ -181,7 +188,7 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
                 if (frameSequence.isActive()) {
                     if (task.isCountOnly()) {
                         countOnlyFrameCount++;
-                        counter.add(task.getFilteredRowCount());
+                        addRows(counter, task.getFilteredRowCount());
                     } else {
                         // A task that the cursor dispatched before the count began carries tuples.
                         tuples = atom.getRing().getTuples(frameIndex);
@@ -390,7 +397,8 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
      * The combinations of the current tuple's chains that come after the current one,
      * odometer-style, see {@link #nextChainMatch()}: for each chain, the matches after its current
      * one, times the combinations of the chains after it. Walks the chains no further than to count
-     * them, and walks none of them from then on.
+     * them, and walks none of them from then on. Fails rather than wrap once the combinations pass
+     * what a LONG holds; a chain at its last match adds none, however many the chains after it have.
      */
     private long countRemainingChainMatches() {
         long remaining = 0;
@@ -402,9 +410,17 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
                 probe.next();
                 laterMatches++;
             }
-            remaining += laterMatches * laterCombinations;
+            if (laterMatches > 0) {
+                remaining = HashJoinStageStepper.addRowCounts(
+                        remaining,
+                        HashJoinStageStepper.multiplyRowCounts(laterMatches, laterCombinations)
+                );
+            }
             if (i > 0) {
-                laterCombinations *= countChain(chainStages[i], chainHeads[i]);
+                laterCombinations = HashJoinStageStepper.multiplyRowCounts(
+                        laterCombinations,
+                        countChain(chainStages[i], chainHeads[i])
+                );
             }
         }
         chainStageCount = 0;
@@ -426,12 +442,15 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
             for (int k = 0; k < stageCount; k++) {
                 final long entry = tuples.get(base + 1 + k);
                 if (entry < HashJoinStageStepper.NO_MATCH) {
-                    tupleRows *= countChain(k, HashJoinStageStepper.toChainHead(entry));
+                    tupleRows = HashJoinStageStepper.multiplyRowCounts(
+                            tupleRows,
+                            countChain(k, HashJoinStageStepper.toChainHead(entry))
+                    );
                 }
             }
-            rows += tupleRows;
+            rows = HashJoinStageStepper.addRowCounts(rows, tupleRows);
         }
-        counter.add(rows);
+        addRows(counter, rows);
         if (atom.getRing().getResumePosition(frameIndex) > -1) {
             countedContinuationCount++;
             // The breaker is checked before the rest, as before a chunk of a continuation.
@@ -441,7 +460,7 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
             if (restRows == HashJoinStageStepper.CANCELLED) {
                 allFramesActive = false;
             } else {
-                counter.add(restRows);
+                addRows(counter, restRows);
             }
         }
         collectCursor(false);

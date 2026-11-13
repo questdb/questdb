@@ -93,15 +93,6 @@ public class AvgIntVectorAggregateFunction extends DoubleFunction implements Vec
     }
 
     @Override
-    public boolean aggregateNullKeys(long pRosti, long pNullKeys, long valueAddress, long frameRowCount) {
-        if (valueAddress == 0) {
-            return Rosti.keyedIntDistinct(pRosti, pNullKeys, frameRowCount);
-        } else {
-            return Rosti.keyedIntSumInt(pRosti, pNullKeys, valueAddress, frameRowCount, valueOffset);
-        }
-    }
-
-    @Override
     public void clear() {
         sum.reset();
         count.reset();
@@ -140,6 +131,14 @@ public class AvgIntVectorAggregateFunction extends DoubleFunction implements Vec
     }
 
     @Override
+    public void initNullKeyRosti(long pRosti) {
+        // the keyed natives sum into a LONG, which the wrap-up replaces with the average; the sum of INT
+        // values in a double is exact up to 2^53
+        Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), (long) sum.sum());
+        Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, valueOffset + 1), count.sum());
+    }
+
+    @Override
     public void initRosti(long pRosti) {
         // as for sums, except we space out values
         // we will have to replace them with doubles
@@ -149,7 +148,9 @@ public class AvgIntVectorAggregateFunction extends DoubleFunction implements Vec
 
     @Override
     public boolean merge(long pRostiA, long pRostiB) {
-        return Rosti.keyedIntSumIntMerge(pRostiA, pRostiB, valueOffset);
+        // the keyed natives sum INT values into a LONG: keyedIntSumIntMerge() would read only its low
+        // 32 bits
+        return Rosti.keyedIntSumLongMerge(pRostiA, pRostiB, valueOffset);
     }
 
     @Override

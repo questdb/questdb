@@ -92,15 +92,6 @@ public class MinIntVectorAggregateFunction extends IntFunction implements Vector
     }
 
     @Override
-    public boolean aggregateNullKeys(long pRosti, long pNullKeys, long valueAddress, long frameRowCount) {
-        if (valueAddress == 0) {
-            return Rosti.keyedIntDistinct(pRosti, pNullKeys, frameRowCount);
-        } else {
-            return Rosti.keyedIntMinInt(pRosti, pNullKeys, valueAddress, frameRowCount, valueOffset);
-        }
-    }
-
-    @Override
     public void clear() {
         accumulator.reset();
     }
@@ -123,6 +114,12 @@ public class MinIntVectorAggregateFunction extends IntFunction implements Vector
     @Override
     public int getValueOffset() {
         return valueOffset;
+    }
+
+    @Override
+    public void initNullKeyRosti(long pRosti) {
+        // INT_NULL when no frame had a value
+        Unsafe.putInt(Rosti.getInitialValueSlot(pRosti, valueOffset), accumulator.intValue());
     }
 
     @Override

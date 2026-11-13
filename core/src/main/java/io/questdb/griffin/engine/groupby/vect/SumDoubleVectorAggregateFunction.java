@@ -92,15 +92,6 @@ public class SumDoubleVectorAggregateFunction extends DoubleFunction implements 
     }
 
     @Override
-    public boolean aggregateNullKeys(long pRosti, long pNullKeys, long valueAddress, long frameRowCount) {
-        if (valueAddress == 0) {
-            return Rosti.keyedIntDistinct(pRosti, pNullKeys, frameRowCount);
-        } else {
-            return Rosti.keyedIntSumDouble(pRosti, pNullKeys, valueAddress, frameRowCount, valueOffset);
-        }
-    }
-
-    @Override
     public void clear() {
         Arrays.fill(sum, 0);
         Arrays.fill(count, 0);
@@ -130,6 +121,18 @@ public class SumDoubleVectorAggregateFunction extends DoubleFunction implements 
     @Override
     public int getValueOffset() {
         return valueOffset;
+    }
+
+    @Override
+    public void initNullKeyRosti(long pRosti) {
+        double sum = 0;
+        long count = 0;
+        for (int i = 0; i < workerCount; i++) {
+            sum += this.sum[i * SUM_PADDING];
+            count += this.count[i * COUNT_PADDING];
+        }
+        Unsafe.putDouble(Rosti.getInitialValueSlot(pRosti, valueOffset), sum);
+        Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, valueOffset + 1), count);
     }
 
     @Override

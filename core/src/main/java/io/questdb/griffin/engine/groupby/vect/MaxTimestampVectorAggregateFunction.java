@@ -87,15 +87,6 @@ public class MaxTimestampVectorAggregateFunction extends TimestampFunction imple
     }
 
     @Override
-    public boolean aggregateNullKeys(long pRosti, long pNullKeys, long valueAddress, long frameRowCount) {
-        if (valueAddress == 0) {
-            return Rosti.keyedIntDistinct(pRosti, pNullKeys, frameRowCount);
-        } else {
-            return Rosti.keyedIntMaxLong(pRosti, pNullKeys, valueAddress, frameRowCount, valueOffset);
-        }
-    }
-
-    @Override
     public void clear() {
         accumulator.reset();
     }
@@ -118,6 +109,12 @@ public class MaxTimestampVectorAggregateFunction extends TimestampFunction imple
     @Override
     public int getValueOffset() {
         return valueOffset;
+    }
+
+    @Override
+    public void initNullKeyRosti(long pRosti) {
+        // LONG_NULL when no frame had a value
+        Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), accumulator.longValue());
     }
 
     @Override

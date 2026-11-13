@@ -84,15 +84,6 @@ public class MaxDoubleVectorAggregateFunction extends DoubleFunction implements 
     }
 
     @Override
-    public boolean aggregateNullKeys(long pRosti, long pNullKeys, long valueAddress, long frameRowCount) {
-        if (valueAddress == 0) {
-            return Rosti.keyedIntDistinct(pRosti, pNullKeys, frameRowCount);
-        } else {
-            return Rosti.keyedIntMaxDouble(pRosti, pNullKeys, valueAddress, frameRowCount, valueOffset);
-        }
-    }
-
-    @Override
     public void clear() {
         max.reset();
     }
@@ -116,6 +107,12 @@ public class MaxDoubleVectorAggregateFunction extends DoubleFunction implements 
     @Override
     public int getValueOffset() {
         return valueOffset;
+    }
+
+    @Override
+    public void initNullKeyRosti(long pRosti) {
+        // -Infinity, the natives' value of no row, when no frame had a value
+        Unsafe.putDouble(Rosti.getInitialValueSlot(pRosti, valueOffset), max.get());
     }
 
     @Override

@@ -144,8 +144,9 @@ final class HashJoinStageStepperTemplate extends HashJoinStageStepper {
         final HashJoinStageStepper next = this.next;
         if (next == null) {
             if (slot.isCountOnly) {
-                // The tuple stands for as many rows as the product of its deferred chains' lengths.
-                slot.pairCount += slot.pairMultiplier;
+                // The tuple stands for as many rows as the product of its deferred chains' lengths,
+                // and fails the count when they pass what a LONG holds.
+                slot.pairCount = HashJoinStageStepper.addRowCounts(slot.pairCount, slot.pairMultiplier);
             } else {
                 slot.appendTuple();
             }
@@ -168,7 +169,8 @@ final class HashJoinStageStepperTemplate extends HashJoinStageStepper {
             chainLength++;
         }
         final long pairMultiplier = slot.pairMultiplier;
-        slot.pairMultiplier = pairMultiplier * chainLength;
+        // A product that overflows fails the count only if a tuple comes out of the later stages.
+        slot.pairMultiplier = HashJoinStageStepper.multiplyRowCounts(pairMultiplier, chainLength);
         final boolean isActive = emit(slot, stage);
         slot.pairMultiplier = pairMultiplier;
         return isActive;

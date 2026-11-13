@@ -374,6 +374,99 @@ public class AsyncHashJoinCountTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCountOverflowAtTwoToThe63FailsTheCount() throws Exception {
+        // A probe row of key 1 meets one row of u, 65_536 rows of key 1 in each of h1 to h3, 32_768 in
+        // q4 and two in h5: 2^16 * 2^16 * 2^16 * 2^15 * 2 = 2^64 joined rows. The product of the
+        // chains passes what a LONG holds at q4, 2^63, whose 128-bit high half is 0 and whose low half
+        // reads as a negative LONG, and h5 multiplies the overflow on: every count fails. With one row
+        // in h5, the 2^63 rows still fail the count from the top, and so they do after the LEFT join's
+        // first row, key 2's, which leaves all of them; after the INNER join's first row, one of key
+        // 1's, the 2^63 - 1 rows left fit exactly.
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.setParallelHashJoinGroupByEnabled(false);
+            // fo holds key 2, which only a LEFT join keeps, then key 1.
+            execute("CREATE TABLE fo AS (SELECT (3 - x)::INT k, x v FROM long_sequence(2))");
+            execute("CREATE TABLE u AS (SELECT 1 k, 7L w FROM long_sequence(1))");
+            for (int i = 1; i <= 3; i++) {
+                execute("CREATE TABLE h" + i + " AS (SELECT 1 k, x w FROM long_sequence(65_536))");
+            }
+            execute("CREATE TABLE q4 AS (SELECT 1 k, x w FROM long_sequence(32_768))");
+            execute("CREATE TABLE h5 AS (SELECT 1 k, x w FROM long_sequence(2))");
+            final String inner = "SELECT fo.v, u.w, h1.w w1, h2.w w2, h3.w w3, q4.w w4, h5.w w5 FROM fo JOIN u ON fo.k = u.k"
+                    + " JOIN h1 ON fo.k = h1.k JOIN h2 ON fo.k = h2.k JOIN h3 ON fo.k = h3.k JOIN q4 ON fo.k = q4.k"
+                    + " JOIN h5 ON fo.k = h5.k";
+            final String left = inner.replace(" JOIN ", " LEFT JOIN ");
+            final String[] queries = {inner, left};
+            final RecordCursorFactory[] factories = new RecordCursorFactory[queries.length];
+            try {
+                for (int i = 0; i < queries.length; i++) {
+                    factories[i] = select(queries[i]);
+                }
+                for (int h5Rows = 2; h5Rows > 0; h5Rows--) {
+                    execute("TRUNCATE TABLE h5");
+                    execute("INSERT INTO h5 SELECT 1, x FROM long_sequence(" + h5Rows + ")");
+                    for (int i = 0; i < queries.length; i++) {
+                        final String sql = queries[i];
+                        final AsyncHashJoinRecordCursorFactory join = find(factories[i]);
+                        Assert.assertNotNull(sql, join);
+                        for (String query : new String[]{"SELECT count(*) FROM (" + sql + ")", sql + " LIMIT -1"}) {
+                            try (
+                                    RecordCursorFactory queryFactory = select(query);
+                                    RecordCursor cursor = queryFactory.getCursor(sqlExecutionContext)
+                            ) {
+                                Assert.assertNotNull(query, find(queryFactory));
+                                final String rows = printRows(cursor, queryFactory.getMetadata(), Integer.MAX_VALUE);
+                                Assert.fail(query + ": expected the count to overflow, read: " + rows);
+                            } catch (CairoException e) {
+                                TestUtils.assertContains(e.getFlyweightMessage(), OVERFLOW);
+                            }
+                        }
+                        for (int prefix = 0; prefix < 2; prefix++) {
+                            final boolean isFitting = h5Rows == 1 && prefix == 1 && sql.equals(inner);
+                            try (RecordCursor cursor = factories[i].getCursor(sqlExecutionContext)) {
+                                if (prefix > 0) {
+                                    Assert.assertTrue(sql, cursor.hasNext());
+                                }
+                                final RecordCursor.Counter counter = new RecordCursor.Counter();
+                                cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
+                                Assert.assertTrue(sql + ": expected the count to overflow with " + h5Rows + " rows in h5 after "
+                                        + prefix + " rows, counted " + counter.get(), isFitting);
+                                Assert.assertEquals(sql, Long.MAX_VALUE, counter.get());
+                            } catch (CairoException e) {
+                                Assert.assertFalse(sql + ": " + e.getFlyweightMessage(), isFitting);
+                                TestUtils.assertContains(e.getFlyweightMessage(), OVERFLOW);
+                            }
+                            Assert.assertFalse(sql, join.getAtom().isSwapped());
+                            assertReleased(join);
+                        }
+                    }
+                }
+                // With 32_767 rows in q4 and one in h5, 2^48 * 32_767 = 2^63 - 2^48 rows of key 1 fit, and
+                // for the LEFT join one more row, key 2's, without a match. The factories that failed
+                // count them.
+                execute("TRUNCATE TABLE q4");
+                execute("INSERT INTO q4 SELECT 1, x FROM long_sequence(32_767)");
+                final long[] expectedCounts = {9_223_090_561_878_065_152L, 9_223_090_561_878_065_153L};
+                for (int i = 0; i < queries.length; i++) {
+                    try (RecordCursor cursor = factories[i].getCursor(sqlExecutionContext)) {
+                        final RecordCursor.Counter counter = new RecordCursor.Counter();
+                        cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
+                        Assert.assertEquals(queries[i], expectedCounts[i], counter.get());
+                    }
+                    assertQuery("SELECT count(*) FROM (" + queries[i] + ")")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .withPlanContaining("Hash Join workers:")
+                            .returns("count\n" + expectedCounts[i] + "\n");
+                }
+            } finally {
+                Misc.free(factories);
+            }
+        });
+    }
+
+    @Test
     public void testCountOverflowFailsTheCount() throws Exception {
         // A probe row of key 1 meets one row of u and 65_536 rows of key 1 in each of h1 to h4:
         // 2^64 joined rows, more than a LONG count holds, which the ordinary plan would never finish

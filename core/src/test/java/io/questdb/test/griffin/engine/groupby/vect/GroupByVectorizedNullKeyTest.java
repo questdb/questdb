@@ -33,7 +33,6 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.griffin.engine.groupby.vect.VectorAggregateEntry;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolMode;
 import io.questdb.mp.WorkerPoolUtils;
@@ -231,10 +230,8 @@ public class GroupByVectorizedNullKeyTest extends AbstractCairoTest {
 
     @Test
     public void testNullKeyOverColumnTopFramesAroundChunkSize() throws Exception {
-        // Frames of column tops of NULL_KEY_CHUNK_SIZE rows, one row less and one more, and of two
-        // chunks and one row more: the GROUP BY aggregates each in chunks of at most
-        // NULL_KEY_CHUNK_SIZE NULL keys, the last one partial.
-        Assert.assertEquals(1_024, VectorAggregateEntry.NULL_KEY_CHUNK_SIZE);
+        // Frames of column tops of 1_024 rows, one row less and one more, and of two such chunks and
+        // one row more: the GROUP BY aggregates each frame whole and merges it into the NULL key.
         assertMemoryLeak(() -> {
             for (int rows : new int[]{1, 1_023, 1_024, 1_025, 2_048, 2_049}) {
                 execute("CREATE TABLE t (v LONG, d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY" + walSuffix());
@@ -327,9 +324,9 @@ public class GroupByVectorizedNullKeyTest extends AbstractCairoTest {
 
     @Test
     public void testNullKeyBufferFreedWhenMapAllocationFails() throws Exception {
-        // The factory allocates its NULL keys before the per-worker maps: when the first map's or a
-        // later map's allocation fails, the failed factory frees them, which assertMemoryLeak checks,
-        // and the query compiles once the maps allocate again.
+        // When the first per-worker map's or a later one's allocation fails, the failed factory frees
+        // the maps it has allocated, which assertMemoryLeak checks, and the query compiles once the maps
+        // allocate again.
         final AtomicInteger allocations = new AtomicInteger();
         final AtomicInteger failingAllocation = new AtomicInteger(-1);
         configOverrideRostiAllocFacade(new RostiAllocFacadeImpl() {

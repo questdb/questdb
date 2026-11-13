@@ -63,11 +63,6 @@ public class CountVectorAggregateFunction extends LongFunction implements Vector
     }
 
     @Override
-    public boolean aggregateNullKeys(long pRosti, long pNullKeys, long valueAddress, long frameRowCount) {
-        return Rosti.keyedIntCount(pRosti, pNullKeys, frameRowCount, valueOffset);
-    }
-
-    @Override
     public void clear() {
         count.reset();
     }
@@ -85,6 +80,11 @@ public class CountVectorAggregateFunction extends LongFunction implements Vector
     @Override
     public int getValueOffset() {
         return valueOffset;
+    }
+
+    @Override
+    public void initNullKeyRosti(long pRosti) {
+        Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), count.sum());
     }
 
     @Override

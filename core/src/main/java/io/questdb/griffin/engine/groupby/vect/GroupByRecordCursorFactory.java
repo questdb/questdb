@@ -63,7 +63,6 @@ import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -74,18 +73,18 @@ import io.questdb.std.Rosti;
 import io.questdb.std.RostiAllocFacade;
 import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
 import io.questdb.std.str.CharSink;
 import io.questdb.tasks.VectorAggregateTask;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 
 public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private final static Log LOG = LogFactory.getLog(GroupByRecordCursorFactory.class);
-    private final static long NULL_KEYS_SIZE = (long) VectorAggregateEntry.NULL_KEY_CHUNK_SIZE * Integer.BYTES;
     private final static int ROSTI_MINIMIZED_SIZE = 16; // 16 is the minimum size usable on arm
 
     private final AsyncQueryErrorState aggregateError = new AsyncQueryErrorState();
@@ -94,6 +93,9 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private final ObjectPool<VectorAggregateEntry> entryPool;
     private final PageFrameAddressCache frameAddressCache;
     private final int keyColumnIndex;
+    // Counts the calls, one per frame and function, that aggregate a frame whose key column holds no
+    // data; see VectorAggregateFunction.initNullKeyRosti().
+    private final AtomicLong nullKeyFrameCounter = new AtomicLong();
     private final AtomicInteger oomCounter = new AtomicInteger();
     private final QueryParallelOwnerLoop ownerLoop = new QueryParallelOwnerLoop();
     private final PerWorkerLocks perWorkerLocks; // used to protect pRosti and VAF's internal slots
@@ -101,15 +103,13 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RostiAllocFacade raf;
     private final AtomicBooleanCircuitBreaker sharedCircuitBreaker; // used to signal cancellation to workers
     private final AtomicInteger startedCounter = new AtomicInteger();
-    // The bytes of a value of each function's column, by function, 0 for a function without one.
-    private final IntList valueSizes;
     private final WorkStealingStrategy workStealingStrategy;
     private final int workerCount;
     private RecordCursorFactory base;
     private ObjList<PageFrameMemoryPool> frameMemoryPools; // per worker pools
-    // NULL_KEY_CHUNK_SIZE INT keys, each the NULL key, that every worker reads to aggregate the rows
-    // of a frame whose key column holds no data; see VectorAggregateFunction.aggregateNullKeys().
-    private long pNullKeys;
+    // A map with the value columns of the per-worker maps that carries the NULL key of the frames whose
+    // key column holds no data into the result map; see RostiRecordCursor.initNullKeyRosti().
+    private long pNullKeyRosti;
     private long[] pRosti;
     private ObjList<RostiSharedCursor> sharedCursors;
     private ObjList<VectorAggregateFunction> vafList;
@@ -148,14 +148,6 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             final int vafCount = vafList.size();
             this.vafList = new ObjList<>(vafCount);
             this.vafList.addAll(vafList);
-            final RecordMetadata baseMetadata = base.getMetadata();
-            valueSizes = new IntList(vafCount);
-            for (int i = 0; i < vafCount; i++) {
-                final int valueColumnIndex = vafList.getQuick(i).getColumnIndex();
-                valueSizes.add(valueColumnIndex > -1 ? ColumnType.sizeOf(baseMetadata.getColumnType(valueColumnIndex)) : 0);
-            }
-            pNullKeys = Unsafe.malloc(NULL_KEYS_SIZE, MemoryTag.NATIVE_FUNC_RSS);
-            Vect.setMemoryInt(pNullKeys, Numbers.INT_NULL, VectorAggregateEntry.NULL_KEY_CHUNK_SIZE);
             raf = configuration.getRostiAllocFacade();
             for (int i = 0; i < workerCount; i++) {
                 long ptr = raf.alloc(columnTypes, configuration.getGroupByMapCapacity());
@@ -190,6 +182,17 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                     this.vafList.getQuick(j).initRosti(pRosti[i]);
                 }
             }
+
+            // The map allocates directly, not through raf: it is not one of the per-worker maps, and it
+            // holds a single key, so it never grows.
+            pNullKeyRosti = Rosti.alloc(columnTypes, ROSTI_MINIMIZED_SIZE);
+            if (pNullKeyRosti == 0) {
+                throw CairoException.nonCritical()
+                        .put("could not allocate rosti hash table")
+                        .setOutOfMemory(true);
+            }
+            // The NULL key of the per-worker maps, which their wrap-ups read from the initial values too.
+            Unsafe.putInt(Rosti.getInitialValueSlot(pNullKeyRosti, 0), Unsafe.getInt(Rosti.getInitialValueSlot(pRosti[0], 0)));
 
             // all maps are the same at this point
             // check where our keys are and pull them to front
@@ -249,6 +252,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         aggregateError.clear();
         oomCounter.set(0);
+        nullKeyFrameCounter.set(0);
         // clear maps
         for (int i = 0, n = pRosti.length; i < n; i++) {
             raf.clear(pRosti[i]);
@@ -265,6 +269,16 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 executionContext.getCircuitBreaker(),
                 executionContext.getMemoryTracker()
         );
+    }
+
+    /**
+     * Returns the number of calls that the last execution made to aggregate a page frame whose key column
+     * holds no data, one per frame and function. Such a call runs the function's SIMD kernel, not the
+     * keyed natives.
+     */
+    @TestOnly
+    public long getNullKeyFrameCount() {
+        return nullKeyFrameCounter.get();
     }
 
     @Override
@@ -426,7 +440,12 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 }
             }
         }
-        pNullKeys = Unsafe.free(pNullKeys, NULL_KEYS_SIZE, MemoryTag.NATIVE_FUNC_RSS);
+        final long pNullKeyRosti = this.pNullKeyRosti;
+        this.pNullKeyRosti = 0;
+        if (pNullKeyRosti != 0) {
+            // Frees native memory and records it, which cannot fail.
+            Rosti.free(pNullKeyRosti);
+        }
         failure = Misc.freeBestEffort(failure, base);
         // Shared cursors hold no native memory; primary state freed above covers it.
         Misc.clear(sharedCursors);
@@ -636,19 +655,17 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                         // when column index = -1 we assume that vector function does not have value
                         // argument, and it can only derive count via memory size
                         final int valueColumnIndex = vaf.getColumnIndex();
-                        final int valueSize = valueSizes.getQuick(vafIndex);
 
                         if (!ownerLoop.hasPublication()) {
                             ownerLoop.checkBeforeHelping();
                             VectorAggregateEntry.aggregateUnsafe(
                                     workerId,
                                     oomCounter,
+                                    nullKeyFrameCounter,
                                     frameIndex,
                                     frameRowCount,
                                     keyColumnIndex,
                                     valueColumnIndex,
-                                    valueSize,
-                                    pNullKeys,
                                     pRosti,
                                     frameMemoryPools,
                                     raf,
@@ -673,12 +690,11 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                                     VectorAggregateEntry.aggregateUnsafe(
                                             workerId,
                                             oomCounter,
+                                            nullKeyFrameCounter,
                                             frameIndex,
                                             frameRowCount,
                                             keyColumnIndex,
                                             valueColumnIndex,
-                                            valueSize,
-                                            pNullKeys,
                                             pRosti,
                                             frameMemoryPools,
                                             raf,
@@ -702,14 +718,13 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                                         frameRowCount,
                                         keyColumnIndex,
                                         valueColumnIndex,
-                                        valueSize,
-                                        pNullKeys,
                                         vaf,
                                         pRosti,
                                         frameMemoryPools,
                                         startedCounter,
                                         doneLatch,
                                         oomCounter,
+                                        nullKeyFrameCounter,
                                         aggregateError,
                                         raf,
                                         perWorkerLocks,
@@ -778,6 +793,12 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             // otherwise assume error and save CPU cycles
             pRostiBig = pRosti[0];
             try {
+                // The frames whose key column holds no data aggregated into the functions' accumulators,
+                // and the NULL key takes them before each function wraps up.
+                final boolean hasNullKeyFrames = nullKeyFrameCounter.get() > 0;
+                if (hasNullKeyFrames) {
+                    initNullKeyRosti();
+                }
                 if (pRosti.length > 1) {
                     LOG.debug().$("merging").$();
 
@@ -809,6 +830,9 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                         }
 
                         circuitBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
+                        if (hasNullKeyFrames) {
+                            mergeNullKey(vaf);
+                        }
 
                         // some wrapUp() methods can increase rosti size
                         long oldSize = Rosti.getAllocMemory(pRostiBig);
@@ -833,6 +857,9 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 } else {
                     circuitBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
                     for (int j = 0; j < vafCount; j++) {
+                        if (hasNullKeyFrames) {
+                            mergeNullKey(vafList.getQuick(j));
+                        }
                         // some wrapUp() methods can increase rosti size (e.g. inserting the null key)
                         long oldSize = Rosti.getAllocMemory(pRostiBig);
                         if (!vafList.getQuick(j).wrapUp(pRostiBig)) {
@@ -862,6 +889,35 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 buildRosti();
                 isRostiBuilt = true;
             }
+        }
+
+        // Sets up the NULL key of pNullKeyRosti from what the functions accumulated over the frames whose
+        // key column holds no data: the SIMD kernels aggregated those frames, as in a non-keyed GROUP BY.
+        private void initNullKeyRosti() {
+            Rosti.clear(pNullKeyRosti);
+            for (int i = 0, n = vafList.size(); i < n; i++) {
+                vafList.getQuick(i).initNullKeyRosti(pNullKeyRosti);
+            }
+            // The key column of the initial values holds the NULL key: the map takes it as its only key,
+            // which starts with the initial values that the functions have just set.
+            final boolean isInserted = Rosti.keyedIntDistinct(pNullKeyRosti, Rosti.getInitialValueSlot(pNullKeyRosti, 0), 1);
+            // An empty map takes its first key without growing, so it allocates nothing.
+            assert isInserted;
+        }
+
+        // Merges the function's values of the NULL key of pNullKeyRosti into the result map, which takes
+        // the NULL key if it does not have it yet, then clears the function's accumulators, so that its
+        // wrapUp() does not merge them into the NULL key a second time.
+        private void mergeNullKey(VectorAggregateFunction vaf) {
+            final long oldSize = Rosti.getAllocMemory(pRostiBig);
+            if (!vaf.merge(pRostiBig, pNullKeyRosti)) {
+                resetRostiMemorySize();
+                throw CairoException.nonCritical()
+                        .put("could not resize rosti hash table")
+                        .setOutOfMemory(true);
+            }
+            raf.updateMemoryUsage(pRostiBig, oldSize);
+            vaf.clear();
         }
 
         private class RostiRecord implements Record {

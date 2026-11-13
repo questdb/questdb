@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.std.DirectLongList;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -73,7 +74,9 @@ import org.jetbrains.annotations.TestOnly;
  * the last stage adds the rows it stands for to the slot's pair count instead, one, or, for a tuple
  * with chains that the stages after the last enumerated one would hand to the consumer, the product
  * of those chains' lengths. A deferred stage walks its key's chain to count it, which leaves every
- * link of the build as it is, so that the same execution can join the frames again afterwards.
+ * link of the build as it is, so that the same execution can join the frames again afterwards. A
+ * count fails rather than wrap once its rows pass {@code Long.MAX_VALUE}; see
+ * {@link #addRowCounts(long, long)}.
  */
 abstract class HashJoinStageStepper {
     // The key reads an INT column of the key source.
@@ -91,6 +94,8 @@ abstract class HashJoinStageStepper {
     static final int PAIR_MATCHED = 1;
     // The entry of a LEFT join's probe row that the build has no row for.
     static final long NO_MATCH = -1;
+    // A product of row counts that a LONG does not hold; see multiplyRowCounts().
+    static final long ROW_COUNT_OVERFLOW = Long.MIN_VALUE;
     private static final HiddenClassCopies<HashJoinStageStepper> COPIES = new HiddenClassCopies<>(
             HashJoinStageStepper.class,
             HashJoinStageStepperTemplate.class,
@@ -108,6 +113,41 @@ abstract class HashJoinStageStepper {
     // The next stage's stepper, which each of this stage's matches goes on to; null for the last
     // stage, whose matches append their tuples.
     HashJoinStageStepper next;
+
+    /**
+     * Adds rows to a count of joined rows.
+     *
+     * @param count the rows counted so far
+     * @param rows  the rows to add, at least 0, or {@link #ROW_COUNT_OVERFLOW}
+     * @return the sum
+     * @throws CairoException when the rows carry {@link #ROW_COUNT_OVERFLOW} or the sum passes
+     *                        {@code Long.MAX_VALUE}: the count fails rather than wrap
+     */
+    static long addRowCounts(long count, long rows) {
+        if (rows < 0 || count > Long.MAX_VALUE - rows) {
+            throw CairoException.nonCritical().put("hash join row count overflow");
+        }
+        return count + rows;
+    }
+
+    /**
+     * Multiplies two row counts: the rows a tuple stands for by a chain's length, or the matches
+     * after a chain's current one by the combinations of the chains after it. A product that a LONG
+     * does not hold comes out as {@link #ROW_COUNT_OVERFLOW}, which stays so through later products
+     * and fails the count only once {@link #addRowCounts(long, long)} adds it: a later stage may
+     * still drop the tuple.
+     *
+     * @param a a row count, at least 1, or {@link #ROW_COUNT_OVERFLOW}
+     * @param b a row count, at least 1, or {@link #ROW_COUNT_OVERFLOW}
+     */
+    static long multiplyRowCounts(long a, long b) {
+        assert (a > 0 || a == ROW_COUNT_OVERFLOW) && (b > 0 || b == ROW_COUNT_OVERFLOW);
+        final long product = a * b;
+        // The product fits when the high half of the 128-bit product is 0 and its low half is not
+        // negative. ROW_COUNT_OVERFLOW, the smallest LONG, times a count of at least 1 is negative,
+        // and times itself is 2^126: either way the high half is not 0, so the overflow stays.
+        return Math.multiplyHigh(a, b) == 0 && product >= 0 ? product : ROW_COUNT_OVERFLOW;
+    }
 
     /**
      * Returns a stepper whose class no other stage shares, or the shared template when the JVM

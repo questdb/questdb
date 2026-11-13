@@ -84,15 +84,6 @@ public class MaxShortVectorAggregateFunction extends IntFunction implements Vect
     }
 
     @Override
-    public boolean aggregateNullKeys(long pRosti, long pNullKeys, long valueAddress, long frameRowCount) {
-        if (valueAddress == 0) {
-            return Rosti.keyedIntDistinct(pRosti, pNullKeys, frameRowCount);
-        } else {
-            return Rosti.keyedIntMaxShort(pRosti, pNullKeys, valueAddress, frameRowCount, valueOffset);
-        }
-    }
-
-    @Override
     public void clear() {
         accumulator.reset();
     }
@@ -115,6 +106,13 @@ public class MaxShortVectorAggregateFunction extends IntFunction implements Vect
     @Override
     public int getValueOffset() {
         return valueOffset;
+    }
+
+    @Override
+    public void initNullKeyRosti(long pRosti) {
+        // the keyed natives keep a SHORT in a LONG, LONG_NULL for no value
+        final long value = accumulator.longValue();
+        Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), value != Numbers.INT_NULL ? value : Numbers.LONG_NULL);
     }
 
     @Override

@@ -32,8 +32,10 @@ import io.questdb.std.Mutable;
 public interface VectorAggregateFunction extends Function, Mutable {
 
     /**
-     * Non-keyed aggregation that doesn't use rosti. A keyed aggregation does not use it: it aggregates
-     * a page frame whose key column holds no data with {@link #aggregateNullKeys}.
+     * Non-keyed aggregation that doesn't use rosti.
+     * Used either for truly non-keyed aggregation or, in a keyed aggregation, for a page frame whose key
+     * column holds no data: a column top, or a Parquet row group whose key column is all NULL. Every row
+     * of such a frame has the NULL key; see {@link #initNullKeyRosti(long)}.
      *
      * @param address       address
      * @param frameRowCount row count int the frame; this is provided to "count" functions
@@ -56,26 +58,6 @@ public interface VectorAggregateFunction extends Function, Mutable {
     boolean aggregate(long pRosti, long keyAddress, long valueAddress, long frameRowCount);
 
     /**
-     * Keyed aggregation of rows that all have the NULL key, the rows of a page frame whose key column
-     * holds no data: a column top, or a Parquet row group whose key column is all NULL. Aggregates them
-     * under the NULL key of the map as {@link #aggregate(long, long, long, long)} aggregates rows whose
-     * key is NULL.
-     * <p>
-     * The keys are INT keys, each {@link io.questdb.std.Numbers#INT_NULL}, the NULL key of the map
-     * whatever the key column: INT, SYMBOL, or a TIMESTAMP that the key takes hour() of. The
-     * implementation therefore reads them with the INT key natives, also when it reads its keys with
-     * the hour() natives, which take the key column's timestamps.
-     *
-     * @param pRosti        pointer to rosti
-     * @param pNullKeys     address of frameRowCount INT keys, each the NULL key
-     * @param valueAddress  value address; 0 when the value column holds no data either, so that only
-     *                      the NULL key should be processed
-     * @param frameRowCount row count
-     * @return true if processing went fine and false if it failed on memory allocation
-     */
-    boolean aggregateNullKeys(long pRosti, long pNullKeys, long valueAddress, long frameRowCount);
-
-    /**
      * Returns the column index for this aggregate function.
      *
      * @return the column index
@@ -88,6 +70,18 @@ public interface VectorAggregateFunction extends Function, Mutable {
      * @return the value offset
      */
     int getValueOffset();
+
+    /**
+     * Used for keyed aggregates only. Sets the initial slot values of a rosti that has the keyed map's
+     * value columns to what {@link #aggregate(long, long, int)} accumulated over the page frames whose key
+     * column holds no data, in the layout that the keyed natives use for a key's values, or to the values
+     * of a key without rows when it accumulated nothing. The NULL key that the rosti takes next starts with
+     * them, and {@link #merge(long, long)} merges that NULL key into the keyed map, as it merges the NULL
+     * key of a worker's map.
+     *
+     * @param pRosti pointer to rosti
+     */
+    void initNullKeyRosti(long pRosti);
 
     /**
      * Set initial/default slot values (e.g. 0 for count())
@@ -120,7 +114,10 @@ public interface VectorAggregateFunction extends Function, Mutable {
     /**
      * Used for keyed aggregates only.
      * Merges the value that {@link #aggregate(long, long, int)} accumulated into the null key, and
-     * (optionally) replaces null values with constant in rosti.
+     * (optionally) replaces null values with constant in rosti. The keyed GROUP BY merges that value with
+     * {@link #initNullKeyRosti(long)} and {@link #merge(long, long)} instead, and calls {@link #clear()}
+     * before this method, so that it finds nothing to merge: the natives' merge of the null key adds
+     * onto values that they have just set to NULL, and the avg() natives merge it in the wrong type.
      *
      * @param pRosti pointer to rosti
      * @return true if wrapUp was fine and false if it failed on memory allocation

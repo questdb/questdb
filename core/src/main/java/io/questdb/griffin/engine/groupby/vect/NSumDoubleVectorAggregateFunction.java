@@ -102,15 +102,6 @@ public class NSumDoubleVectorAggregateFunction extends DoubleFunction implements
     }
 
     @Override
-    public boolean aggregateNullKeys(long pRosti, long pNullKeys, long valueAddress, long frameRowCount) {
-        if (valueAddress == 0) {
-            return Rosti.keyedIntDistinct(pRosti, pNullKeys, frameRowCount);
-        } else {
-            return Rosti.keyedIntNSumDouble(pRosti, pNullKeys, valueAddress, frameRowCount, valueOffset);
-        }
-    }
-
-    @Override
     public void clear() {
         Arrays.fill(sum, 0);
         Arrays.fill(count, 0);
@@ -135,6 +126,16 @@ public class NSumDoubleVectorAggregateFunction extends DoubleFunction implements
     @Override
     public int getValueOffset() {
         return valueOffset;
+    }
+
+    @Override
+    public void initNullKeyRosti(long pRosti) {
+        computeSum();
+        // the compensated sum, as getDouble() returns it: the natives' merge into an existing key drops
+        // the compensation of the key it merges
+        Unsafe.putDouble(Rosti.getInitialValueSlot(pRosti, valueOffset), transientSum + transientC);
+        Unsafe.putDouble(Rosti.getInitialValueSlot(pRosti, valueOffset + 1), 0.0);
+        Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, valueOffset + 2), transientCount);
     }
 
     @Override

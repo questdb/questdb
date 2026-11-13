@@ -81,15 +81,6 @@ public class MaxIntVectorAggregateFunction extends IntFunction implements Vector
     }
 
     @Override
-    public boolean aggregateNullKeys(long pRosti, long pNullKeys, long valueAddress, long frameRowCount) {
-        if (valueAddress == 0) {
-            return Rosti.keyedIntDistinct(pRosti, pNullKeys, frameRowCount);
-        } else {
-            return Rosti.keyedIntMaxInt(pRosti, pNullKeys, valueAddress, frameRowCount, valueOffset);
-        }
-    }
-
-    @Override
     public void clear() {
         max.reset();
     }
@@ -112,6 +103,12 @@ public class MaxIntVectorAggregateFunction extends IntFunction implements Vector
     @Override
     public int getValueOffset() {
         return valueOffset;
+    }
+
+    @Override
+    public void initNullKeyRosti(long pRosti) {
+        // INT_NULL when no frame had a value
+        Unsafe.putInt(Rosti.getInitialValueSlot(pRosti, valueOffset), max.intValue());
     }
 
     @Override

@@ -2693,7 +2693,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             );
             this.sqlParallelReadParquetEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_READ_PARQUET_ENABLED, defaultParallelSqlEnabled);
             if (!sqlParallelFilterEnabled && !sqlParallelGroupByEnabled && !sqlParallelHorizonJoinEnabled
-                    && !sqlParallelReadParquetEnabled && !sqlParallelTopKEnabled && !sqlParallelWindowJoinEnabled) {
+                    && !sqlParallelReadParquetEnabled && !sqlParallelTopKEnabled && !sqlParallelWindowJoinEnabled
+                    && !sqlParallelHashJoinEnabled) {
                 // All type of parallel queries are disabled. Don't start the query thread pool
                 sharedWorkerPoolQueryConfiguration.sharedWorkerCount = 0;
             }
