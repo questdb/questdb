@@ -191,6 +191,84 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testAnchorShapesWhereEveryDrawnDepartureMissesTheSpliceTruncate() throws Exception {
+        // A seed whose ten departures all missed the splice frontier truncate before every other
+        // one was steered onto it: the key budget declined the chains of runs 1, 4 and 8, the
+        // count guard those of runs 2 and 5, and a repair the main loop parked took the passes of
+        // runs 0, 3, 6, 7 and 9. The steered runs 0, 2, 4, 6 and 8 truncate whatever they drew,
+        // one each; the drawn ones still miss, run 1's on the key budget.
+        runBatch(STEER_ANCHORS, TestUtils.generateRandom(LOG, 6340059912079L, 1794566112891L));
+        Assert.assertEquals(5, coverage.get(LiveViewRefreshStats.SPLICE_FRONTIER_TRUNCATE_COUNT));
+        Assert.assertEquals(1, coverage.get(LiveViewRefreshStats.RESUME_CHAIN_KEY_BUDGET_DECLINE_COUNT));
+    }
+
+    @Test
+    public void testDepartureResumeWinsAPriceTieWithTheSegmentRebuild() throws Exception {
+        // The departure a steered run commits, with its late row on the hour above the kept batch,
+        // under an hourly expression anchor over an HOUR-partitioned base. The resume from the kept
+        // batch's root and the rebuild of the late row's segment both price at the late row alone:
+        // the kept batch's hour spreads its rows over the whole hour, so the half second above them
+        // rounds down to none. The resume wins the tie and truncates its splice at the late row,
+        // which keeps a steered departure on the route when its late row crosses a segment start.
+        assertMemoryLeak(() -> {
+            final long hourTs = ts("2026-01-01T02:00:00.000000Z");
+            setCurrentMicros(hourTs - DAY_MICROS);
+            // Below DEPARTURE_BATCH_ROWS, so each batch seals a root at its newest row.
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 32);
+            final String bucket = "timestamp_floor('1h', ts)";
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS SELECT " + viewProjection(0)
+                    + " FROM base WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION " + bucket + ")");
+            final String oracleSql = "SELECT " + oracleProjection(0, bucket) + " FROM base";
+            final String orderBy = orderByAll(0);
+            runKeys.add(SYNTHETIC_KEY);
+            job = newJob();
+            try {
+                // A row two hours below, so the kept batch's hour is not the table's first
+                // partition, whose estimate would span from the table's minimum instead.
+                insertSynthetic(hourTs - 2 * HOUR_MICROS);
+                insertSyntheticBatch(hourTs - 500_000);
+                final long keptHighTs = maxInsertedTs;
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance instance = viewInstance();
+                Assert.assertEquals("a root seals the kept batch", keptHighTs, instance.getHeadCheckpointMaxTs());
+                final long departedLowTs = insertSyntheticBatch(hourTs + 500_000);
+                final long departedHighTs = maxInsertedTs;
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals("a root seals the departed batch", departedHighTs, instance.getHeadCheckpointMaxTs());
+
+                final LiveViewRefreshStats stats = job.getStatsForTest();
+                final long resumesBefore = stats.getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_RESUME_FROM_ANCHOR);
+                final long truncatesBefore = stats.get(LiveViewRefreshStats.SPLICE_FRONTIER_TRUNCATE_COUNT);
+                commitDeparture(departedLowTs, departedHighTs, hourTs);
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals(
+                        "the resume wins the tie",
+                        resumesBefore + 1,
+                        stats.getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_RESUME_FROM_ANCHOR)
+                );
+                Assert.assertEquals(
+                        "and truncates its splice at the late row",
+                        truncatesBefore + 1,
+                        stats.get(LiveViewRefreshStats.SPLICE_FRONTIER_TRUNCATE_COUNT)
+                );
+                Assert.assertEquals("where a root seals", hourTs, instance.getHeadCheckpointMaxTs());
+                assertView(oracleSql, orderBy, "after the departure");
+
+                restart();
+                driveRefreshToQuiescence(job);
+                assertRestoredFromTimeline("lv");
+                assertView(oracleSql, orderBy, "after the restart");
+            } finally {
+                job = Misc.free(job);
+            }
+        });
+    }
+
+    @Test
     public void testFaults() throws Exception {
         // One injected fault at most per pass, file faults and hook faults, with a restart
         // before the retry now and then. The view must come out ACTIVE and equal to the
@@ -381,7 +459,8 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
                 coverage.assertReached(LiveViewCheckpointRepairRoute.ROUTE_SEGMENT_REBUILD);
                 coverage.assertReached(LiveViewCheckpointRepairRoute.ROUTE_RESUME_FROM_ANCHOR);
                 coverage.assertReachedStat(LiveViewRefreshStats.SEGMENT_YIELD_COUNT);
-                // Reached through departureEpisode, which every run of these arms ends on.
+                // Reached through departureEpisode's steered departures, every other run's, each
+                // of which asserts it.
                 coverage.assertReachedStat(LiveViewRefreshStats.SPLICE_FRONTIER_TRUNCATE_COUNT);
                 assertTimestampGroupsRepaired();
             }
@@ -691,36 +770,81 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
      * draw that put no row through the window: a synthetic row the filter drops each, or, over a
      * view with no filter, one column added to the base. The departure left the newest timestamp
      * the view has seen above the newest row it holds, and no root may sit there.
+     * <p>
+     * A departure reaches the splice frontier truncate only when its repair resumes from the kept
+     * batch's root and chains to the departed batch's. The run's draws can decline the chain -
+     * {@code max.chained.boundaries} 0, or a {@code scan.max.keys} the keys of a rank() or
+     * dense_rank() view outgrow - and a repair the main loop parked can take the passes, so the
+     * batches seal no root of their own and the REPLACE_RANGE folds into it. A steered departure,
+     * {@code isTruncateSteered}, drives the refresh to quiescence after each pass, so each batch
+     * seals a root on its own, and runs the REPLACE_RANGE's repair under the configured chain
+     * count and key budget: the repair truncates its splice at the new frontier, the late row or
+     * the kept batch's newest row, and leaves the head on a root there, and the episode asserts
+     * both.
      */
-    private void departureEpisode(Rnd rnd, PassShape shape, boolean isFiltered) throws Exception {
+    private void departureEpisode(
+            Rnd rnd,
+            LiveViewFuzzKnobs knobs,
+            PassShape shape,
+            boolean isFiltered,
+            boolean isTruncateSteered
+    ) throws Exception {
         pass(rnd, shape, -1, PIN_NO, false);
+        if (isTruncateSteered) {
+            driveRefreshToQuiescence(job);
+        }
         insertSyntheticBatch(maxInsertedTs + 1 + rnd.nextInt(1_000_000));
         drainWalQueue();
         pass(rnd, shape, -1, PIN_NO, false);
         final long keptHighTs = maxInsertedTs;
+        if (isTruncateSteered) {
+            driveRefreshToQuiescence(job);
+            Assert.assertEquals("a root seals the kept batch", keptHighTs, viewInstance().getHeadCheckpointMaxTs());
+        }
         final long departedLowTs = insertSyntheticBatch(keptHighTs + 2 + rnd.nextInt(1_000_000));
         drainWalQueue();
         pass(rnd, shape, -1, PIN_NO, false);
         final long departedHighTs = maxInsertedTs;
+        if (isTruncateSteered) {
+            driveRefreshToQuiescence(job);
+            Assert.assertEquals("a root seals the departed batch", departedHighTs, viewInstance().getHeadCheckpointMaxTs());
+        }
         final int lateMode = rnd.nextInt(3);
         final long lateTs = keptHighTs + 1 + rnd.nextLong(departedLowTs - keptHighTs - 1);
         LOG.info().$("LV route fuzz: departure [departedLowTs=").$ts(departedLowTs)
                 .$(", departedHighTs=").$ts(departedHighTs)
                 .$(", lateMode=").$(lateMode)
-                .$(", lateTs=").$ts(lateTs).I$();
-        try (WalWriter walWriter = engine.getWalWriter(engine.verifyTableName("base"))) {
-            if (lateMode == 1) {
-                Assert.assertTrue(syntheticTs.add(lateTs));
-                final TableWriter.Row row = walWriter.newRow(lateTs);
-                row.putSym(1, SYNTHETIC_KEY);
-                row.putLong(2, 1 + (lateTs & 511));
-                row.putDouble(3, 1.0);
-                row.append();
-            }
-            walWriter.commitWithParams(lateMode == 1 ? lateTs : departedLowTs, departedHighTs + 1, WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE);
+                .$(", lateTs=").$ts(lateTs)
+                .$(", steered=").$(isTruncateSteered).I$();
+        final LiveViewRefreshStats stats = job.getStatsForTest();
+        final long truncatesBefore = stats.get(LiveViewRefreshStats.SPLICE_FRONTIER_TRUNCATE_COUNT);
+        if (isTruncateSteered) {
+            // The configured chain count and key budget admit the repair's one-boundary chain.
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, (String) null);
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_KEYS, (String) null);
         }
-        drainWalQueue();
-        pass(rnd, shape, -1, PIN_NO, false);
+        try {
+            commitDeparture(departedLowTs, departedHighTs, lateMode == 1 ? lateTs : Numbers.LONG_NULL);
+            drainWalQueue();
+            pass(rnd, shape, -1, PIN_NO, false);
+            if (isTruncateSteered) {
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals(
+                        "the steered departure's resume truncates its splice at the new frontier",
+                        truncatesBefore + 1,
+                        stats.get(LiveViewRefreshStats.SPLICE_FRONTIER_TRUNCATE_COUNT)
+                );
+                Assert.assertEquals(
+                        "and leaves the head on a root at the new frontier",
+                        lateMode == 1 ? lateTs : keptHighTs,
+                        viewInstance().getHeadCheckpointMaxTs()
+                );
+            }
+        } finally {
+            if (isTruncateSteered) {
+                knobs.apply(AbstractLiveViewTest::setProperty);
+            }
+        }
         if (lateMode == 2) {
             insertSynthetic(lateTs);
             drainWalQueue();
@@ -744,6 +868,27 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
         }
         driveRefreshToQuiescence(job);
         assertNoCheckpointRootAboveTheNewestRow(viewInstance());
+    }
+
+    // The REPLACE_RANGE that departs the synthetic rows from departedLowTs to departedHighTs: a
+    // pure delete, or, for a lateTs other than LONG_NULL, one from lateTs up that holds a synthetic
+    // row there.
+    private void commitDeparture(long departedLowTs, long departedHighTs, long lateTs) {
+        try (WalWriter walWriter = engine.getWalWriter(engine.verifyTableName("base"))) {
+            if (lateTs != Numbers.LONG_NULL) {
+                Assert.assertTrue(syntheticTs.add(lateTs));
+                final TableWriter.Row row = walWriter.newRow(lateTs);
+                row.putSym(1, SYNTHETIC_KEY);
+                row.putLong(2, 1 + (lateTs & 511));
+                row.putDouble(3, 1.0);
+                row.append();
+            }
+            walWriter.commitWithParams(
+                    lateTs != Numbers.LONG_NULL ? lateTs : departedLowTs,
+                    departedHighTs + 1,
+                    WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE
+            );
+        }
     }
 
     /**
@@ -1194,7 +1339,10 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
     }
 
     private void runBatch(int steer) throws Exception {
-        final Rnd rnd = TestUtils.generateRandom(LOG);
+        runBatch(steer, TestUtils.generateRandom(LOG));
+    }
+
+    private void runBatch(int steer, Rnd rnd) throws Exception {
         if (steer == STEER_FAULTS) {
             fault = new LiveViewMidDrainFault("ts", "ts", "sym");
             assertMemoryLeak(fault.facade(), () -> {
@@ -1449,7 +1597,9 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
                 tieInClosedSegmentEpisode(rnd, shape, rows, isFiltered);
             }
             if (steer == STEER_MIXED || steer == STEER_ANCHORS) {
-                departureEpisode(rnd, shape, isFiltered);
+                // Every other run steers its departure onto the splice frontier truncate, so the
+                // batch reaches it whatever the draws: see departureEpisode.
+                departureEpisode(rnd, knobs, shape, isFiltered, run % 2 == 0);
             }
             if (steer == STEER_KEYED_OPEN_SEGMENT) {
                 keyedOwedRootEpisode(knobs, oracleSql, orderBy, symCount);
