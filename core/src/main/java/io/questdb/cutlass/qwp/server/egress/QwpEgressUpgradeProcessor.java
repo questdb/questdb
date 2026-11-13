@@ -157,6 +157,10 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
      * into no-ops.
      */
     public static final int MAX_ROWS_PER_BATCH = 16_384;
+    /**
+     * {@link #pageFrameOrder} of a query that streams through its RecordCursor.
+     */
+    public static final int NO_PAGE_FRAMES = -1;
     private static final Log LOG = LogFactory.getLog(QwpEgressUpgradeProcessor.class);
     private static final LocalValue<QwpEgressProcessorState> LV = new LocalValue<>();
     private static final NoOpAssociativeCache<RecordCursorFactory> NO_OP_SELECT_CACHE = new NoOpAssociativeCache<>();
@@ -399,6 +403,25 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
      */
     public static int negotiateMaxBatchRows(Utf8Sequence headerValue, Utf8Sequence urlParamValue) {
         return Math.min(parseMaxBatchRows(headerValue), parseMaxBatchRows(urlParamValue));
+    }
+
+    /**
+     * Returns the order to ask {@code factory} for page frames in, or
+     * {@link #NO_PAGE_FRAMES} when the query streams through its RecordCursor:
+     * a factory without page frames does, and so does a query with a row window,
+     * which needs the RecordCursor's {@code skipRows} and {@code size}. A
+     * backward scan asks for {@link PartitionFrameCursorFactory#ORDER_DESC}
+     * frames, which come last first; {@link QwpResultBatchBuffer#appendPageFrame}
+     * then appends each frame's rows, stored ascending, last to first. Exposed
+     * for unit tests.
+     */
+    public static int pageFrameOrder(RecordCursorFactory factory, boolean hasRowWindow) {
+        if (hasRowWindow || !factory.supportsPageFrameCursor()) {
+            return NO_PAGE_FRAMES;
+        }
+        return factory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD
+                ? PartitionFrameCursorFactory.ORDER_DESC
+                : PartitionFrameCursorFactory.ORDER_ASC;
     }
 
     /**
@@ -1417,6 +1440,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         RecordCursorFactory factory = null;
         RecordCursor cursor = null;
         PageFrameCursor pageFrameCursor = null;
+        boolean isPageFrameDescending = false;
         try {
             // Seed requestId before decoding so a decode failure (e.g. a malformed
             // query_flags trailer) still reports the right id instead of 0.
@@ -1538,14 +1562,12 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                         DEBUG_FORCE_STALE_PLAN_RECOMPILES = forcedStalePlanRecompiles - 1;
                         throw TableReferenceOutOfDateException.of("qwp_debug_stale_plan");
                     }
-                    // The page-frame path copies each frame's rows in ascending
-                    // order, so a backward scan, whose frames come last-first but
-                    // whose rows must also be read last-first within each frame,
-                    // streams through the RecordCursor, which reverses them.
-                    if (!hasRowWindow
-                            && factory.supportsPageFrameCursor()
-                            && factory.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_BACKWARD) {
-                        pageFrameCursor = factory.getPageFrameCursor(sqlCtx, PartitionFrameCursorFactory.ORDER_ASC);
+                    // A backward scan's frames come last first, and streamResults
+                    // reads each one's rows last first too.
+                    final int pageFrameOrder = pageFrameOrder(factory, hasRowWindow);
+                    isPageFrameDescending = pageFrameOrder == PartitionFrameCursorFactory.ORDER_DESC;
+                    if (pageFrameOrder != NO_PAGE_FRAMES) {
+                        pageFrameCursor = factory.getPageFrameCursor(sqlCtx, pageFrameOrder);
                     }
                     if (pageFrameCursor == null) {
                         cursor = factory.getCursor(sqlCtx);
@@ -1592,7 +1614,8 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 // return so the next QWP query reuses the FdCache.
                 pageFrameCursor.setScanProfile(ReaderScanProfile.SEQUENTIAL_CACHED);
                 state.beginStreamingPageFrame(requestId, factory, pageFrameCursor,
-                        columnCount, decoder.initialCredit, cacheKey, compiledQueryType, queryCacheable);
+                        columnCount, decoder.initialCredit, cacheKey, compiledQueryType, queryCacheable,
+                        isPageFrameDescending);
             } else {
                 state.beginStreaming(requestId, factory, cursor,
                         columnCount, decoder.initialCredit, cacheKey, compiledQueryType, queryCacheable);
@@ -2326,13 +2349,20 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             boolean isCursorExhausted;
             boolean dictCapHit = false;
             if (isPageFrame) {
+                // A descending stream takes each slice from the top of the frame's
+                // unconsumed rows and appends it last row first.
+                final boolean isDescending = state.isStreamingPageFrameDescending();
                 PageFrame frame = null;
                 while (rowsToAdd > 0 && (frame = state.advanceToPageFrame()) != null) {
                     long lo = state.getStreamingPageFrameRow();
-                    long rowsAvailable = state.getStreamingPageFrameRowHi() - lo;
-                    int sliceRows = (int) Math.min(Math.min(rowsToAdd, rowsAvailable), 1024L);
-                    long hi = lo + sliceRows;
-                    batchBuffer.appendPageFrame(frame, state.getStreamingPageFrameMemoryRecord(), lo, hi);
+                    long hi = state.getStreamingPageFrameRowHi();
+                    int sliceRows = (int) Math.min(Math.min(rowsToAdd, hi - lo), 1024L);
+                    if (isDescending) {
+                        lo = hi - sliceRows;
+                    } else {
+                        hi = lo + sliceRows;
+                    }
+                    batchBuffer.appendPageFrame(frame, state.getStreamingPageFrameMemoryRecord(), lo, hi, isDescending);
                     state.consumePageFrameRows(sliceRows);
                     rowsToAdd -= sliceRows;
                     if (batchBuffer.currentBatchDeltaWireBytes() > dictBudgetWireBytes) {

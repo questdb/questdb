@@ -134,6 +134,9 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      * fragmented send buffer.
      */
     private boolean handshakeFlushPending;
+    // The page-frame stream emits its rows last to first: a backward scan hands
+    // out its frames last first, and each frame's rows are stored ascending.
+    private boolean isStreamingPageFrameDescending;
     // Effective per-batch row cap for this connection: the minimum of the
     // server's hard cap ({@code QwpEgressUpgradeProcessor.MAX_ROWS_PER_BATCH})
     // and any client-requested limit sent via {@code X-QWP-Max-Batch-Rows} or
@@ -274,8 +277,9 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     // PageFrame streaming state. streamingPageFrameCursor is the per-query cursor
     // (freed on endStreaming). streamingPageFrameIndex counts frames consumed since
     // the query started - used to key PageFrameAddressCache entries. row/rowHi track
-    // the iteration position inside the current frame; when row == rowHi we advance
-    // to the next frame or finish.
+    // the unconsumed rows of the current frame; when row == rowHi we advance to the
+    // next frame or finish. An ascending stream consumes from row up, a descending
+    // one (a backward scan, see isStreamingPageFrameDescending) from rowHi down.
     // The currently-loaded page frame. Kept around across batch boundaries so
     // callers can emit column-at-a-time over the slice [streamingPageFrameRow,
     // streamingPageFrameRowHi). Cleared on {@link #endStreaming}.
@@ -496,6 +500,28 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
             short compiledQueryType,
             boolean queryCacheable
     ) {
+        beginStreamingPageFrame(requestId, factory, pageFrameCursor, columnCount, initialCredit, sqlText,
+                compiledQueryType, queryCacheable, false);
+    }
+
+    /**
+     * As {@link #beginStreamingPageFrame(long, RecordCursorFactory, PageFrameCursor, int, long, CharSequence, short, boolean)},
+     * for a cursor whose frames stream in {@code isDescending} order: a backward
+     * scan hands out its frames last first, and each frame's rows, stored
+     * ascending, stream last to first, from the top of the unconsumed range down.
+     * See {@link #consumePageFrameRows}.
+     */
+    public void beginStreamingPageFrame(
+            long requestId,
+            RecordCursorFactory factory,
+            PageFrameCursor pageFrameCursor,
+            int columnCount,
+            long initialCredit,
+            CharSequence sqlText,
+            short compiledQueryType,
+            boolean queryCacheable,
+            boolean isDescending
+    ) {
         if (streamingActive) {
             endStreaming();
         }
@@ -526,6 +552,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         this.streamingPageFrameIndex = 0;
         this.streamingPageFrameRow = 0;
         this.streamingPageFrameRowHi = 0;
+        this.isStreamingPageFrameDescending = isDescending;
         this.streamingSqlText = sqlText != null ? Chars.toString(sqlText) : null;
         this.streamingActive = true;
         batchBuffer.resetForNewQuery();
@@ -678,12 +705,19 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
 
     /**
      * Called by the columnar emit path after it processes a slice of the
-     * current page frame. Advances the in-frame row cursor; the next call to
+     * current page frame. Narrows the frame's unconsumed range
+     * [{@link #getStreamingPageFrameRow}, {@link #getStreamingPageFrameRowHi})
+     * by {@code rows}: from its bottom for an ascending stream, from its top for
+     * a descending one, which emits each slice last row first. The next call to
      * {@link #advanceToPageFrame} returns the same frame if rows remain, or
      * pulls the next frame when the cursor is exhausted.
      */
     public void consumePageFrameRows(int rows) {
-        streamingPageFrameRow += rows;
+        if (isStreamingPageFrameDescending) {
+            streamingPageFrameRowHi -= rows;
+        } else {
+            streamingPageFrameRow += rows;
+        }
     }
 
     /**
@@ -1040,6 +1074,14 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      */
     public boolean isStreamingPageFrame() {
         return streamingPageFrameCursor != null;
+    }
+
+    /**
+     * True when the page-frame stream emits its rows in descending order, see
+     * {@link #consumePageFrameRows}.
+     */
+    public boolean isStreamingPageFrameDescending() {
+        return isStreamingPageFrameDescending;
     }
 
     public boolean isWsHandshakeSent() {
