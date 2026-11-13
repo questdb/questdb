@@ -2002,6 +2002,15 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
      * watermark is pinned below the failed table's first frame, and the failure goes out
      * against that frame (the frame the client replays first, so a deterministic
      * failure keeps striking it), or as the role-change close; returns false.
+     * <p>
+     * A failed batch may leave prepared WAL writers (WalWriter.prepareCommit). None of
+     * its exits frees them under the role-switch lock, and every exit frees them: a
+     * failure return abandons the batch here, which distresses the table cache, and the
+     * clear() below discards every writer. An unexpected throw out of commitBatch()
+     * unwinds processWebSocketFrames, whose finally abandons the batch, and reaches the
+     * catch-all of resumeRecv or resumeSend, which disconnects; onConnectionClosed then
+     * clears the state. handleBinaryMessage's boundary commit abandons in its catch and
+     * clears in its finally.
      */
     private boolean commitPendingBatch(HttpConnectionContext context, QwpIngressProcessorState state)
             throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {

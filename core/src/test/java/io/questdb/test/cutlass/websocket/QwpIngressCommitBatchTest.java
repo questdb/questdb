@@ -1251,6 +1251,44 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
      * The failed block's cancel cannot remap the column's first page: the batch is lost, the frame NACKed.
      */
     @Test
+    public void testFatalDueGroupFlushFailurePoisonsEngineAndKeepsTheAck() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables("a", "b");
+            final SequencerFlushFaultFacade ff = new SequencerFlushFaultFacade();
+            setCurrentMicros(1_000_000_000L);
+            try (CairoEngine pinnedEngine = new CairoEngine(pinnedConfiguration(CommitMode.ADAPTIVE, 50_000, ff))) {
+                assertPinnedMode(pinnedEngine, CommitMode.ADAPTIVE, 50_000);
+                try (Connection connection = new Connection(
+                        pinnedEngine,
+                        httpConfig,
+                        AllowAllSecurityContext.INSTANCE,
+                        false,
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 200L, 2_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 300L, 3_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 400L, 4_000_000L))
+                )) {
+                    connection.deliverFrames(2);
+                    setCurrentMicros(1_000_000_000L + 50_000);
+                    // a's due flush, after the unlock, fails with a data-sync failure: under ADAPTIVE it stops the
+                    // engine, whose test durability handler returns
+                    ff.failNextOutsideLock("a~", true);
+                    connection.deliverFrames(2);
+                    Assert.assertEquals(1, ff.failures);
+                    Assert.assertTrue("the failed flush stops the engine", pinnedEngine.isDurabilityFailed());
+                    // The rows are sequenced: the failed flush does not fail the batch, and the frontier stays
+                    // behind them.
+                    Assert.assertEquals(3, maxCumulativeOkAck(connection.sentFrames()));
+                    Assert.assertFalse(hasErrorResponseForSeq(connection.sentFrames(), 2));
+                    Assert.assertEquals(2, lastTxn(pinnedEngine, "a"));
+                    Assert.assertEquals(2, lastTxn(pinnedEngine, "b"));
+                    Assert.assertTrue(pinnedEngine.getTableSequencerAPI().getTxnTracker(pinnedEngine.verifyTableName("a")).getLocalDurableSeqTxn() < 2);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testFatalPrepareFailurePoisonsEngineAndReplayStoresRowsOnce() throws Exception {
         assertMemoryLeak(() -> {
             createTables("a", "b", "c");
@@ -6224,6 +6262,7 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         private final java.util.Map<Long, String> paths = new java.util.concurrent.ConcurrentHashMap<>();
         volatile int failures;
         private volatile String failedTable;
+        private volatile boolean isDataSyncFailure;
 
         @Override
         public boolean close(long fd) {
@@ -6239,12 +6278,20 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                     && path.contains(WalUtils.SEQ_DIR) && !SuspensionScope.hasAnyRoleSwitchLock()) {
                 this.failedTable = null;
                 failures++;
+                if (isDataSyncFailure) {
+                    throw CairoException.dataSyncFailure(this, 5, "fdatasync", "test: group flush failed");
+                }
                 throw CairoException.critical(5).put("test: group flush failed");
             }
             super.fdatasync(fd);
         }
 
         void failNextOutsideLock(String table) {
+            failNextOutsideLock(table, false);
+        }
+
+        void failNextOutsideLock(String table, boolean isDataSyncFailure) {
+            this.isDataSyncFailure = isDataSyncFailure;
             this.failedTable = table;
         }
 
