@@ -91,6 +91,89 @@ public class QwpEgressResourceLifecycleTest extends AbstractTest {
     }
 
     @Test
+    public void testOwnerEndFailureFreesFactoryInsteadOfCachingIt() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final DefaultTestCairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
+            try (
+                    TrackingCairoEngine engine = new TrackingCairoEngine(configuration);
+                    SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1)
+                            .with(AllowAllSecurityContext.INSTANCE);
+                    QwpEgressProcessorState state = new QwpEgressProcessorState(configuration)
+            ) {
+                final TrackingSelectCache cache = new TrackingSelectCache(engine.events);
+                try (cache) {
+                    final TrackingRecordCursorFactory factory = new TrackingRecordCursorFactory();
+                    engine.isEndFailing = true;
+                    state.beginSqlExecutionOwner("SELECT 1", executionContext, CompiledQuery.SELECT);
+                    state.beginStreaming(
+                            1,
+                            factory,
+                            new TrackingRecordCursor(engine.events),
+                            0,
+                            0,
+                            "SELECT 1",
+                            CompiledQuery.SELECT,
+                            true
+                    );
+                    state.cacheStreamingFactoryOnEnd(cache);
+                    try {
+                        state.endStreaming();
+                        Assert.fail("owner end failure was expected");
+                    } catch (RuntimeException e) {
+                        Assert.assertEquals("owner end failed", e.getMessage());
+                    }
+                    Assert.assertEquals(List.of("owner.begin", "cursor.close", "owner.end"), engine.events);
+                    Assert.assertNull(cache.factory);
+                    Assert.assertTrue(factory.closed);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testOwnerEndsBeforeFactoryIsCached() throws Exception {
+        // Ending the owner releases the execution's resources, which include state of the
+        // factory's functions. Another connection can take the factory from the shared select
+        // cache as soon as it is there, so the owner has to end first.
+        TestUtils.assertMemoryLeak(() -> {
+            final DefaultTestCairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
+            try (
+                    TrackingCairoEngine engine = new TrackingCairoEngine(configuration);
+                    SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1)
+                            .with(AllowAllSecurityContext.INSTANCE);
+                    QwpEgressProcessorState state = new QwpEgressProcessorState(configuration)
+            ) {
+                final TrackingSelectCache cache = new TrackingSelectCache(engine.events);
+                try (cache) {
+                    final TrackingRecordCursorFactory factory = new TrackingRecordCursorFactory();
+                    state.beginSqlExecutionOwner("SELECT 1", executionContext, CompiledQuery.SELECT);
+                    state.beginStreaming(
+                            1,
+                            factory,
+                            new TrackingRecordCursor(engine.events),
+                            0,
+                            0,
+                            "SELECT 1",
+                            CompiledQuery.SELECT,
+                            true
+                    );
+                    state.cacheStreamingFactoryOnEnd(cache);
+                    Assert.assertEquals(List.of("owner.begin"), engine.events);
+
+                    state.endStreaming();
+                    Assert.assertEquals(
+                            List.of("owner.begin", "cursor.close", "owner.end", "cache.put"),
+                            engine.events
+                    );
+                    Assert.assertSame(factory, cache.factory);
+                    Assert.assertEquals("SELECT 1", cache.key);
+                    Assert.assertFalse(factory.closed);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testParkResumeAndEndOrder() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final DefaultTestCairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
@@ -261,9 +344,10 @@ public class QwpEgressResourceLifecycleTest extends AbstractTest {
     }
 
     private static final class TrackingCairoEngine extends CairoEngine {
-        private long endedOwnerId = Long.MIN_VALUE;
         private final List<String> events = new ArrayList<>();
         private final long ownerId;
+        private long endedOwnerId = Long.MIN_VALUE;
+        private boolean isEndFailing;
 
         private TrackingCairoEngine(DefaultTestCairoConfiguration configuration) {
             this(configuration, 19);
@@ -288,6 +372,9 @@ public class QwpEgressResourceLifecycleTest extends AbstractTest {
         public void endSqlExecution(long ownerId, SqlExecutionContext executionContext) {
             endedOwnerId = ownerId;
             events.add("owner.end");
+            if (isEndFailing) {
+                throw new RuntimeException("owner end failed");
+            }
         }
 
         @Override
@@ -373,6 +460,48 @@ public class QwpEgressResourceLifecycleTest extends AbstractTest {
 
         @Override
         public void toTop() {
+        }
+    }
+
+    private static final class TrackingSelectCache implements AssociativeCache<RecordCursorFactory> {
+        private final List<String> events;
+        private RecordCursorFactory factory;
+        private String key;
+
+        private TrackingSelectCache(List<String> events) {
+            this.events = events;
+        }
+
+        @Override
+        public int capacity() {
+            return 1;
+        }
+
+        @Override
+        public void clear() {
+            factory = Misc.free(factory);
+            key = null;
+        }
+
+        @Override
+        public void close() {
+            clear();
+        }
+
+        @Override
+        public RecordCursorFactory poll(CharSequence key) {
+            final RecordCursorFactory polled = factory;
+            factory = null;
+            this.key = null;
+            return polled;
+        }
+
+        @Override
+        public void put(CharSequence key, RecordCursorFactory value) {
+            events.add("cache.put");
+            Misc.free(factory);
+            factory = value;
+            this.key = key.toString();
         }
     }
 }

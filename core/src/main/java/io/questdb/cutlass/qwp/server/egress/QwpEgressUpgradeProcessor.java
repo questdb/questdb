@@ -920,33 +920,17 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
     }
 
     /**
-     * Detaches a cacheable SELECT factory from {@code state} and puts it into
-     * the compile cache keyed by the query's SQL text. EXPLAIN and PSEUDO_SELECT
-     * factories deliberately remain owned by the state and are freed by
-     * {@link QwpEgressProcessorState#endStreaming}; a later cache hit cannot then
-     * lose their statement type by being classified as SELECT. Idempotent: safe
-     * to call when the factory was already detached (no-op), or when the SQL text
-     * is null (drops the factory via {@link Misc#free}). Called on the successful-
-     * completion paths only -- error/cancel paths continue to free the factory via
-     * the normal state cleanup, so a cursor that threw never seeds the cache with
-     * a poisoned factory.
+     * Makes {@link QwpEgressProcessorState#endStreaming} put a cacheable SELECT
+     * factory into the compile cache, keyed by the query's SQL text, once it has
+     * closed the cursor and ended the execution owner. EXPLAIN and PSEUDO_SELECT
+     * factories deliberately stay uncached and endStreaming() frees them; a later
+     * cache hit cannot then lose their statement type by being classified as
+     * SELECT. Called on the successful-completion paths only -- error/cancel paths
+     * leave the factory to be freed by the normal state cleanup, so a cursor that
+     * threw never seeds the cache with a poisoned factory.
      */
     private void cacheStreamingFactoryIfAvailable(QwpEgressProcessorState state) {
-        if (!state.isStreamingFactoryCacheable()) {
-            return;
-        }
-        RecordCursorFactory factory = state.detachStreamingFactory();
-        if (factory == null) {
-            return;
-        }
-        CharSequence sqlText = state.getStreamingSqlText();
-        if (sqlText == null) {
-            // Factory was detached but we have no SQL key to cache against.
-            // Shouldn't happen in the normal flow; belt-and-braces free.
-            Misc.free(factory);
-            return;
-        }
-        selectCache.put(sqlText, factory);
+        state.cacheStreamingFactoryOnEnd(selectCache);
     }
 
     private void dispatchEgressMessage(
@@ -2151,11 +2135,9 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             if (rowsBuffered == 0 && state.getStreamingBatchSeq() > 0) {
                 long finalSeq = state.getStreamingBatchSeq() - 1;
                 long totalRows = state.getStreamingRowsEmitted();
-                // Detach factory + SQL text BEFORE endStreaming so endStreaming
-                // doesn't free the factory -- we put it back into the compile
-                // cache for reuse instead. Cache-before-send so PeerIsSlowToReadException
-                // (framework parks and resumes) doesn't strand the factory outside
-                // the cache, and connection drops still drain via selectCache.close().
+                // Mark the factory for caching BEFORE endStreaming, which then puts it
+                // into the compile cache instead of freeing it, after it has ended the
+                // execution owner.
                 cacheStreamingFactoryIfAvailable(state);
                 state.endStreaming();
                 sendResultEnd(context, state, requestId, finalSeq, totalRows);
@@ -2218,10 +2200,10 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 // Partial-emit iterations cannot take this shortcut because
                 // the suffix still has to ship in a later iteration.
                 long totalRows = state.getStreamingRowsEmitted();
-                // Cache the factory for the next query with this SQL text. Must
-                // happen before sendResultBatchAndEnd because that method calls
-                // state.endStreaming() internally; after it runs, state no longer
-                // has the factory reference.
+                // Mark the factory for caching for the next query with this SQL text.
+                // Must happen before sendResultBatchAndEnd because that method calls
+                // state.endStreaming() internally, which caches the factory then. If the
+                // send parks, the state keeps the factory until a later endStreaming().
                 cacheStreamingFactoryIfAvailable(state);
                 sendResultBatchAndEnd(context, state, requestId, currentSeq,
                         batchBuffer, isFirstBatch, totalRows, rowsToShip);

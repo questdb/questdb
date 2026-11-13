@@ -24,15 +24,11 @@
 
 package io.questdb.griffin.engine.functions.cast;
 
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.std.ObjList;
+import io.questdb.std.str.DirectString;
 
 /**
- * The key-to-value view a cast-to-symbol function hands out from {@code newSymbolTable()}, so a
- * worker thread can resolve keys the function has already assigned without touching the function.
- * It copies the values at construction and never mutates them again, which is what makes it safe
- * to read from another thread.
+ * The key-to-value view a cast-to-symbol function hands out from {@code newSymbolTable()}.
  * <p>
  * It is deliberately not a {@link io.questdb.cairo.sql.Function}. Every cast-to-symbol function
  * used to answer {@code newSymbolTable()} with a clone of itself, and that clone held - and on
@@ -41,25 +37,34 @@ import io.questdb.std.ObjList;
  * resource-owning argument such as {@code json_extract}, every later read of the column came back
  * NULL. Handing out something that owns nothing removes that hazard rather than documenting it.
  * <p>
- * The view is a snapshot. A key the function assigns after the hand-out is not in it, which is the
- * same limit the clone carried.
+ * The view copies nothing. It reads the function's live {@link CastToSymbolDictionary} into its own
+ * A/B flyweights, so it resolves every key to what the function's own valueOf() answers at the time
+ * of the call: a key minted after the hand-out, the re-minted value of a key after the function is
+ * initialized again, and null for {@link SymbolTable#VALUE_IS_NULL}, for a key not minted yet, and
+ * for every key once the execution releases the dictionary or the function closes. The text it
+ * returns points into append-only chunks, so it stays valid across later minting, up to that
+ * release.
+ * <p>
+ * Reads are serial, or concurrent with no key being minted: minting may move the descriptor block
+ * that a concurrent read follows. No worker thread reads a cast's view, because casts report
+ * supportsParallelism() == false, and parallel operators take their symbol tables from page frames.
  */
 public final class CastToSymbolTable implements SymbolTable {
-    private final ObjList<CharSequence> symbols = new ObjList<>();
+    private final CastToSymbolDictionary dictionary;
+    private final DirectString viewA = new DirectString();
+    private final DirectString viewB = new DirectString();
 
-    public CastToSymbolTable(ObjList<? extends CharSequence> symbols) {
-        for (int i = 0, n = symbols.size(); i < n; i++) {
-            this.symbols.add(symbols.getQuick(i));
-        }
+    CastToSymbolTable(CastToSymbolDictionary dictionary) {
+        this.dictionary = dictionary;
     }
 
     @Override
     public CharSequence valueBOf(int key) {
-        return valueOf(key);
+        return dictionary.valueOf(key, viewB);
     }
 
     @Override
-    public CharSequence valueOf(int symbolKey) {
-        return symbols.getQuick(TableUtils.toIndexKey(symbolKey));
+    public CharSequence valueOf(int key) {
+        return dictionary.valueOf(key, viewA);
     }
 }

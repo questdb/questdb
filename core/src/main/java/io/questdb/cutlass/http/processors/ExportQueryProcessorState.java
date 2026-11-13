@@ -133,7 +133,8 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
      * Releases everything the state holds, in the order the resources depend on each other. The
      * HTTP exporter closes the task's Rust writer and drops a materialized temporary table while
      * the task identity is still intact, the task itself goes before the cursor unregisters its
-     * tracker, and the execution owner ends last. A closing state frees the pooled task,
+     * tracker, and the execution owner ends before the factory goes back to the shared select
+     * cache. A closing state frees the pooled task,
      * materializer and column data instead of clearing them and never caches its factory back.
      */
     private void release(boolean isClosing) {
@@ -174,10 +175,21 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         }
         firstParquetWriteCall = true;
 
+        // End the owner before the factory goes back to the select cache. Ending it releases the
+        // execution's resources, which include state of the factory's functions, and another
+        // connection can take the factory from the shared cache as soon as it is there.
+        boolean isOwnerEnded = false;
+        try {
+            sqlExecutionOwner.end();
+            isOwnerEnded = true;
+        } catch (Throwable th) {
+            cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
+        }
+
         final RecordCursorFactory recordCursorFactory = this.recordCursorFactory;
         this.recordCursorFactory = null;
         if (recordCursorFactory != null) {
-            if (queryCacheable && !isClosing) {
+            if (queryCacheable && !isClosing && isOwnerEnded) {
                 try {
                     httpConnectionContext.getSelectCache().put(
                             SelectCacheKey.of(selectCacheScope, sqlText, selectCacheKeySink),
@@ -220,11 +232,6 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         errorPosition = 0;
         serialExporterInit = false;
         writeCallback.of(null, null);
-        try {
-            sqlExecutionOwner.end();
-        } catch (Throwable th) {
-            cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
-        }
         CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
@@ -289,6 +296,12 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
             resumeCursorTimer();
             sqlExecutionOwner.mount();
         }
+    }
+
+    @TestOnly
+    public void setFactoryForTest(RecordCursorFactory factory, boolean queryCacheable) {
+        this.recordCursorFactory = factory;
+        this.queryCacheable = queryCacheable;
     }
 
     public void setParquetExportTableName(String tableName) {

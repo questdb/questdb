@@ -161,7 +161,7 @@ public class UnionSymbolCastCursorLifecycleTest extends AbstractUnionSymbolCastT
                 } catch (SqlException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "injected function initialization failure");
                 }
-                assertCursorClosed(base, tracker, functionA, functionB);
+                assertExecutionClosed(base, tracker, functionA, functionB);
             } finally {
                 releaseTracker(tracker);
             }
@@ -174,7 +174,7 @@ public class UnionSymbolCastCursorLifecycleTest extends AbstractUnionSymbolCastT
             // A tight per-query limit. The integrated native-key path charges the tracker for BOTH
             // the re-symbolising dictionary and the per-source native key cache, so interning enough
             // distinct source keys must breach the limit and surface the per-query out-of-memory
-            // error rather than growing unbounded. Cursor close must then leave the tracker balanced
+            // error rather than growing unbounded. Execution close must then leave the tracker balanced
             // even though the failure landed mid-iteration. 512 bytes trips on the very first
             // intern, inside the merged dictionary rather than the key cache: hash table 16*4,
             // descriptors 16*16, chunk directory 4*16 and the first 256-byte text chunk already
@@ -205,9 +205,9 @@ public class UnionSymbolCastCursorLifecycleTest extends AbstractUnionSymbolCastT
                     }
                     Assert.assertTrue("the native key path must charge the tracker before the breach", tracker.getUsed() > 0);
                 }
-                // Close releases the dictionary and the per-source key caches even after the
-                // mid-iteration breach, so the query-tracked balance returns to zero.
-                assertCursorClosed(base, tracker, function);
+                // Cursor close releases its key caches; execution close releases the dictionary,
+                // including the partial allocation from the mid-iteration failure.
+                assertExecutionClosed(base, tracker, function);
             } finally {
                 releaseTracker(tracker);
             }
@@ -267,7 +267,7 @@ public class UnionSymbolCastCursorLifecycleTest extends AbstractUnionSymbolCastT
                     Assert.assertEquals(keys[0], keys[33]);
                     Assert.assertEquals(32, function.internCount);
                 }
-                assertCursorClosed(base, tracker, function);
+                assertExecutionClosed(base, tracker, function);
             } finally {
                 releaseTracker(tracker);
             }
@@ -317,7 +317,7 @@ public class UnionSymbolCastCursorLifecycleTest extends AbstractUnionSymbolCastT
                     Assert.assertEquals(1, base.cursor.symbolTableLookupCount);
                     Assert.assertTrue(tracker.getUsed() > 0);
                 }
-                assertCursorClosed(base, tracker, function);
+                assertExecutionClosed(base, tracker, function);
             } finally {
                 releaseTracker(tracker);
             }
@@ -370,7 +370,7 @@ public class UnionSymbolCastCursorLifecycleTest extends AbstractUnionSymbolCastT
                 // allocations and fail the tracker balance. (That the map is charged at all is what
                 // testNativeKeyCacheChargesTheTrackerAboveTheTextPath measures differentially; the
                 // open-cursor assertion above passes on the dictionary's own bytes alone.)
-                assertCursorClosed(base, tracker, function);
+                assertExecutionClosed(base, tracker, function);
             } finally {
                 releaseTracker(tracker);
             }
@@ -417,7 +417,7 @@ public class UnionSymbolCastCursorLifecycleTest extends AbstractUnionSymbolCastT
                     // The source dictionary resolved each distinct native key once, not once per row.
                     Assert.assertEquals(1, base.cursor.symbolTableLookupCount);
                 }
-                assertCursorClosed(base, tracker, function);
+                assertExecutionClosed(base, tracker, function);
             } finally {
                 releaseTracker(tracker);
             }
@@ -444,7 +444,7 @@ public class UnionSymbolCastCursorLifecycleTest extends AbstractUnionSymbolCastT
                     }
                 }
                 Assert.assertEquals(2, base.cursor.symbolTableLookupCount);
-                assertCursorClosed(base, tracker, functionA, functionB);
+                assertExecutionClosed(base, tracker, functionA, functionB);
             } finally {
                 releaseTracker(tracker);
             }
@@ -481,7 +481,7 @@ public class UnionSymbolCastCursorLifecycleTest extends AbstractUnionSymbolCastT
                     Assert.assertTrue(tracker.getUsed() > 0);
                 }
                 Assert.assertEquals(2, registrationCount[0]);
-                assertCursorClosed(base, tracker, function);
+                assertExecutionClosed(base, tracker, function);
             } finally {
                 releaseTracker(tracker);
             }
@@ -491,6 +491,7 @@ public class UnionSymbolCastCursorLifecycleTest extends AbstractUnionSymbolCastT
     @Test
     public void testTextReadsBypassTheSymbolFunction() throws Exception {
         assertMemoryLeak(() -> {
+            final MemoryTracker tracker = acquireTracker();
             final StaticSymbolCursorFactory base = new StaticSymbolCursorFactory(SYMBOL_TABLE, new String[][]{{"alpha", "beta"}});
             final TrackingSymbolFunction functionA = new TrackingSymbolFunction(new StrColumn(0));
             final TrackingSymbolFunction functionB = new TrackingSymbolFunction(new StrColumn(1));
@@ -513,6 +514,8 @@ public class UnionSymbolCastCursorLifecycleTest extends AbstractUnionSymbolCastT
                 Assert.assertEquals(0, functionB.symbolCallCount);
                 // The source symbol tables answer keys, not text, so a text read must not reach them.
                 Assert.assertEquals(0, base.cursor.symbolTableLookupCount);
+            } finally {
+                releaseTracker(tracker);
             }
         });
     }
@@ -606,23 +609,11 @@ public class UnionSymbolCastCursorLifecycleTest extends AbstractUnionSymbolCastT
                     Assert.assertTrue(tracker.getUsed() > 0);
                 }
                 Assert.assertEquals(1, base.cursor.symbolTableLookupCount);
-                assertCursorClosed(base, tracker, function);
+                assertExecutionClosed(base, tracker, function);
             } finally {
                 releaseTracker(tracker);
             }
         });
-    }
-
-    private static void assertCursorClosed(
-            StaticSymbolCursorFactory base,
-            MemoryTracker tracker,
-            TrackingSymbolFunction... functions
-    ) {
-        Assert.assertEquals(1, base.cursor.closeCount);
-        for (int i = 0; i < functions.length; i++) {
-            Assert.assertEquals(1, functions[i].cursorClosedCount);
-        }
-        Assert.assertEquals(0, tracker.getUsed());
     }
 
     /**
@@ -724,6 +715,21 @@ public class UnionSymbolCastCursorLifecycleTest extends AbstractUnionSymbolCastT
                 return index >= 0 && index < count ? "v" + index : null;
             }
         };
+    }
+
+    private void assertExecutionClosed(
+            StaticSymbolCursorFactory base,
+            MemoryTracker tracker,
+            TrackingSymbolFunction... functions
+    ) {
+        Assert.assertEquals(1, base.cursor.closeCount);
+        for (int i = 0; i < functions.length; i++) {
+            Assert.assertEquals(1, functions[i].cursorClosedCount);
+        }
+        // QueryProgress normally ends the execution after the operator closes its cursor.
+        // These direct operator tests must do that themselves, before disposing the factory.
+        endExecution();
+        Assert.assertEquals(0, tracker.getUsed());
     }
 
     // Interns every row through the projection and reports what the query tracker holds while the
