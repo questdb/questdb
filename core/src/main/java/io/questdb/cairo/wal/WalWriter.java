@@ -273,6 +273,13 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             boolean isDedupKey,
             SecurityContext securityContext
     ) {
+        // A retained ingress writer may add a missing column before appending
+        // its first row after SWITCH. Use the same handoff as data commits.
+        if (switchToDeltaIfNeeded()) {
+            deltaWriter.addColumn(columnName, columnType, symbolCapacity, symbolCacheFlag,
+                    indexType, indexValueBlockCapacity, isDedupKey, securityContext);
+            return;
+        }
         alterOp.clear();
         alterOp.ofAddColumn(
                 getMetadata().getTableId(),

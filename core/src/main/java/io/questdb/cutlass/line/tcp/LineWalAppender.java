@@ -178,10 +178,15 @@ public class LineWalAppender implements QuietCloseable {
                                             .put(']');
                                 }
                                 writer.addColumn(columnNameUtf16, newColumnType, securityContext);
+                                // Adding a column can hand a retained WAL writer over to
+                                // Delta, replacing its metadata object. Resolve indexes from
+                                // the destination before the version check retries this row.
+                                metadata = writer.getMetadata();
                                 columnWriterIndex = metadata.getWriterIndex(metadata.getColumnIndexQuiet(columnNameUtf16));
                                 // Add the column to metadata cache too
                                 ld.addColumn(columnNameUtf16, columnWriterIndex, newColumnType);
                             } catch (CairoException e) {
+                                metadata = writer.getMetadata();
                                 columnWriterIndex = metadata.getColumnIndexQuiet(columnNameUtf16);
                                 if (columnWriterIndex < 0) {
                                     // the column is still not there, something must be wrong
