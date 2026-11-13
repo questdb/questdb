@@ -30,6 +30,22 @@ import org.junit.Test;
 public class NullIfFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
+    public void testCharEmptySymbol() throws Exception {
+        // nullif(sym, c) reads the symbol as a char. An empty symbol value used to call
+        // charAt(0) on an empty string and fail with an index out of bounds error. An empty
+        // symbol now reads as the null char, like a null symbol does.
+        execute("create table s (sym symbol, c char, ts timestamp) timestamp(ts)");
+        execute("insert into s values ('', 'a', 0), ('b', 'c', 1)");
+        assertQuery("select sym, c, nullif(sym, c) n from s")
+                .expectSize()
+                .returns("""
+                        sym\tc\tn
+                        \ta\t
+                        b\tc\tb
+                        """);
+    }
+
+    @Test
     public void testCharSimple() throws Exception {
         assertQuery("select ch1,ch2,nullif(ch1,ch2) from x")
                 .ddl("""
