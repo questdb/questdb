@@ -47,8 +47,14 @@ public class ViewStateStoreImpl implements ViewStateStore {
     // guards the pending busy retries, the task that queues them, and the writes of their next due time
     private final Object compileBusyRetryLock = new Object();
     private final ViewCompilerTask compileBusyRetryTask = new ViewCompilerTask();
-    // one word, so that a reader gets both counts from one read, see getCompileRunActivity()
+    // one word, so that a reader gets both counts from one read, see getCompileRunActivity(); it
+    // changes under compileRunLock only
     private final AtomicLong compileRunActivity = new AtomicLong();
+    // guards the record of the threads that run a view compile run, and the changes of
+    // compileRunActivity, see startCompileRun()
+    private final Object compileRunLock = new Object();
+    // the threads that run a view compile run, each followed by the number of its run
+    private final LongList compileRunThreadsAndNumbers = new LongList();
     private final CairoEngine engine;
     private final MicrosecondClock microsecondClock;
     // the pending busy retries, at most one per view with a state: the view, the update timestamp
@@ -62,6 +68,8 @@ public class ViewStateStoreImpl implements ViewStateStore {
     // generally not expecting too many view compile notifications, but if table schema changes
     // are very frequent, then the number of notifications can be high too
     private final Queue<ViewCompilerTask> taskQueue = ConcurrentQueue.createConcurrentQueue(ViewCompilerTask::new);
+    // the number of the view compile run that started last, under compileRunLock
+    private long lastCompileRunNumber;
     // The earliest due time of the pending busy retries, or Long.MAX_VALUE when none is ever due.
     // Written under the lock and read without it: a stale value only delays a retry to the next
     // drain, or takes the lock for nothing.
@@ -72,8 +80,8 @@ public class ViewStateStoreImpl implements ViewStateStore {
         this.microsecondClock = engine.getConfiguration().getMicrosecondClock();
     }
 
-    // Leaves the compile run counts alone: a run that is still running would finish after the
-    // reset and drive the running count below zero.
+    // Leaves the compile run counts and the record of their threads alone: a run that is still
+    // running would finish after the reset and drive the running count below zero.
     @TestOnly
     @Override
     public void clear() {
@@ -146,12 +154,26 @@ public class ViewStateStoreImpl implements ViewStateStore {
 
     @Override
     public void finishCompileRun() {
-        compileRunActivity.decrementAndGet();
+        synchronized (compileRunLock) {
+            final int index = indexOfCompileRun(Thread.currentThread().threadId());
+            // the callers start and finish a run on the same thread, in a try/finally
+            assert index > -1;
+            compileRunThreadsAndNumbers.removeIndexBlock(index, 2);
+            compileRunActivity.decrementAndGet();
+        }
     }
 
     @Override
     public long getCompileRunActivity() {
         return compileRunActivity.get();
+    }
+
+    @Override
+    public long getCompileRunOfThread(long threadId) {
+        synchronized (compileRunLock) {
+            final int index = indexOfCompileRun(threadId);
+            return index > -1 ? compileRunThreadsAndNumbers.getQuick(index + 1) : 0;
+        }
     }
 
     /**
@@ -211,13 +233,29 @@ public class ViewStateStoreImpl implements ViewStateStore {
 
     @Override
     public void startCompileRun() {
-        // one more run started, and one more running
-        compileRunActivity.addAndGet((1L << 32) + 1);
+        final long thread = Thread.currentThread().threadId();
+        synchronized (compileRunLock) {
+            compileRunThreadsAndNumbers.add(thread, ++lastCompileRunNumber);
+            // one more run started, and one more running
+            compileRunActivity.addAndGet((1L << 32) + 1);
+        }
     }
 
     @Override
     public boolean tryDequeueCompilerTask(ViewCompilerTask task) {
         return taskQueue.tryDequeue(task);
+    }
+
+    // the index of the thread's entry in the record of the threads that run a view compile run,
+    // the entry of the run that the thread started last, or -1 when the thread runs none; the
+    // caller holds compileRunLock
+    private int indexOfCompileRun(long threadId) {
+        for (int i = compileRunThreadsAndNumbers.size() - 2; i > -1; i -= 2) {
+            if (compileRunThreadsAndNumbers.getQuick(i) == threadId) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     private int indexOfPendingCompileBusyRetry(TableToken viewToken) {

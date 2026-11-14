@@ -136,6 +136,7 @@ import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestRecord;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
+import io.questdb.test.cairo.view.ReaderHoldingThread;
 import io.questdb.test.cairo.view.ViewCompileParker;
 import io.questdb.test.cutlass.NetUtils;
 import io.questdb.test.mp.TestWorkerPool;
@@ -629,11 +630,11 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testExecDdlAfterTableChangedDuringViewCompileWait() throws Exception {
-        // A query holds t's reader and a view compile run over another table runs, so DROP and
-        // RENAME of t wait for the run. During the wait another session replaces t with a new
-        // table, or drops it. The DDL must not act on the new table. /exec runs RENAME again on
-        // a busy table, which then renames the new table; it answers DROP of a busy table with an
-        // error. A table that is gone fails both, except DROP TABLE IF EXISTS.
+        // A view compile run holds t's reader, so DROP and RENAME of t wait for the run, which then
+        // lets go of t and moves on to another table. During the wait another session replaces t
+        // with a new table, or drops it. The DDL must not act on the new table. /exec runs RENAME
+        // again on a busy table, which then renames the new table; it answers DROP of a busy table
+        // with an error. A table that is gone fails both, except DROP TABLE IF EXISTS.
         getSimpleTester()
                 .withAlterTableStartWaitTimeout(Long.MAX_VALUE)
                 .run((engine, sqlExecutionContext) -> {
@@ -710,6 +711,61 @@ public class IODispatcherTest extends AbstractTest {
                         capture.stop();
                     }
                 });
+    }
+
+    @Test
+    public void testExecTruncateFailsAtOnceWhenQueryHoldsTableDuringUnrelatedViewCompile() throws Exception {
+        // A query holds the reader of the non-WAL table t while a view compile run over the table u
+        // runs. The run holds nothing of t, so /exec answers TRUNCATE of t with the busy error at
+        // once, as it does without views, and does not wait for the run while it holds t's
+        // writer: an INSERT into t goes through right after.
+        // The tester's busy wait timeout is the server default, 500 ms.
+        getSimpleTester().run((engine, sqlExecutionContext) -> {
+            // loads the view state store and its compile queue, as the server does at startup
+            engine.load();
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            try {
+                engine.execute("CREATE TABLE t (a INT)", sqlExecutionContext);
+                engine.execute("INSERT INTO t VALUES (1), (2)", sqlExecutionContext);
+                Assert.assertFalse(engine.verifyTableName("t").isWal());
+                engine.execute("CREATE TABLE u (a INT)", sqlExecutionContext);
+                engine.execute("CREATE VIEW vu AS (SELECT * FROM u)", sqlExecutionContext);
+                drainViewQueue(engine);
+                // queues the compile of the views over u
+                engine.execute("ALTER TABLE u ADD COLUMN b INT", sqlExecutionContext);
+                final ViewCompileParker run = ViewCompileParker.ofQueueDrain(engine, "u", PoolListener.SRC_READER);
+                engine.setPoolListener(run);
+                final ReaderHoldingThread query = ReaderHoldingThread.start(engine, "t");
+                try {
+                    run.start();
+                    testHttpClient.assertGetRegexp(
+                            "/exec",
+                            "\\{\"query\":\"TRUNCATE TABLE t\",\"error\":\"there is an active query against 't'\\. Try again\\.\",\"position\":\\d+\\}",
+                            "TRUNCATE TABLE t",
+                            null,
+                            null,
+                            null,
+                            null,
+                            "400"
+                    );
+                    testHttpClient.assertGet("/exec", "{\"dml\":\"OK\"}", "INSERT INTO t VALUES (3)");
+                } finally {
+                    run.join();
+                    engine.setPoolListener(null);
+                    query.close();
+                }
+                capture.drain();
+                capture.assertNotLogged(ViewCompileParker.DDL_WAIT_LINE_PREFIX);
+                testHttpClient.assertGet(
+                        "/exec",
+                        "{\"query\":\"SELECT * FROM t\",\"columns\":[{\"name\":\"a\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1],[2],[3]],\"count\":3}",
+                        "SELECT * FROM t"
+                );
+            } finally {
+                capture.stop();
+            }
+        });
     }
 
     @Test
@@ -7905,10 +7961,10 @@ public class IODispatcherTest extends AbstractTest {
         }
     }
 
-    // Creates t with the rows 1 and 2 and runs the DDL of t while a query holds t's reader and a
-    // view compile run holds t2's reader, so that the DDL waits for the run. Once the DDL logs that
-    // it waits, the query ends, another session drops t and, when asked, creates a new t with row
-    // 42, and the run ends.
+    // Creates t with the rows 1 and 2 and runs the DDL of t while a view compile run holds t's
+    // reader, so that the DDL waits for the run. Once the DDL logs that it waits, the run lets go of
+    // t and moves on to t2, another session drops t and, when asked, creates a new t with row 42,
+    // and the run ends.
     private static void assertExecDdlAfterTableChangedDuringViewCompileWait(
             CairoEngine engine,
             SqlExecutionContext sqlExecutionContext,
@@ -7919,7 +7975,7 @@ public class IODispatcherTest extends AbstractTest {
             String expectedStatus,
             String expectedResponseRegex
     ) throws Exception {
-        ViewCompileParker.executeWhileQueryAndViewCompileHold(
+        ViewCompileParker.executeWhileViewCompileHoldsThenMovesOn(
                 engine,
                 sqlExecutionContext,
                 capture,

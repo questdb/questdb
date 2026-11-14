@@ -41,6 +41,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
+import io.questdb.cairo.view.ViewStateStore;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cutlass.pgwire.DefaultPGCircuitBreakerRegistry;
 import io.questdb.cutlass.pgwire.PGConfiguration;
@@ -80,6 +81,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.view.ReaderHoldingThread;
 import io.questdb.test.cairo.view.ViewCompileParker;
 import io.questdb.test.cutlass.NetUtils;
 import io.questdb.test.mp.TestWorkerPool;
@@ -195,7 +197,7 @@ public class PGJobContextTest extends BasePGTest {
     private static String stringTypeName;
     private final Rnd bufferSizeRnd = TestUtils.generateRandom(LOG);
     private final boolean walEnabled;
-    private int addedColumnCount;
+    private int scenarioCount;
 
     public PGJobContextTest() {
         this.walEnabled = TestUtils.isWal();
@@ -3795,10 +3797,10 @@ if __name__ == "__main__":
 
     @Test
     public void testDdlAfterTableChangedDuringViewCompileWait() throws Exception {
-        // A query holds t's reader and a view compile run over another table runs, so DROP and
-        // RENAME of t wait for the run. During the wait another session replaces t with a new
-        // table, or drops it. The DDL must not act on the new table, and must answer with an
-        // error that both the parse path (RENAME) and the execute path (DROP) report as is.
+        // A view compile run holds t's reader, so DROP and RENAME of t wait for the run, which then
+        // lets go of t and moves on to another table. During the wait another session replaces t
+        // with a new table, or drops it. The DDL must not act on the new table, and must answer
+        // with an error that both the parse path (RENAME) and the execute path (DROP) report as is.
         assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             node1.setProperty(CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, Long.MAX_VALUE);
             final LogCapture capture = new LogCapture();
@@ -12061,6 +12063,72 @@ create table tab as (
     }
 
     @Test
+    public void testTruncateFailsAtOnceWhenQueryHoldsTableDuringUnrelatedViewCompile() throws Exception {
+        // A query holds the reader of the non-WAL table t while a view compile run over the table u
+        // runs. The run holds nothing of t, so TRUNCATE of t fails at once, as it does without
+        // views, and does not wait for the run while it holds t's writer: an INSERT into t goes
+        // through right after. The prepared TRUNCATE succeeds once the query ended, while the run
+        // still runs.
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
+            // the server default; a TRUNCATE that waited would log its wait before it fails
+            node1.setProperty(CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 500);
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            try {
+                try (Statement statement = connection.createStatement()) {
+                    statement.execute("CREATE TABLE t (a INT)");
+                    statement.execute("INSERT INTO t VALUES (1), (2)");
+                    statement.execute("CREATE TABLE u (a INT)");
+                    statement.execute("CREATE VIEW vu AS (SELECT * FROM u)");
+                    drainViewQueue();
+                    // queues the compile of the views over u
+                    statement.execute("ALTER TABLE u ADD COLUMN b INT");
+                }
+                Assert.assertFalse(engine.verifyTableName("t").isWal());
+                final ViewCompileParker run = ViewCompileParker.ofQueueDrain(engine, "u", PoolListener.SRC_READER);
+                engine.setPoolListener(run);
+                ReaderHoldingThread query = ReaderHoldingThread.start(engine, "t");
+                try (PreparedStatement truncate = connection.prepareStatement("TRUNCATE TABLE t")) {
+                    run.start();
+                    try {
+                        truncate.execute();
+                        Assert.fail("expected to fail: TRUNCATE TABLE t");
+                    } catch (SQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "there is an active query against 't'. Try again.");
+                    }
+                    try (Statement statement = connection.createStatement()) {
+                        statement.execute("INSERT INTO t VALUES (3)");
+                    }
+                    assertSql(connection, "SELECT * FROM t", """
+                            a[INTEGER]
+                            1
+                            2
+                            3
+                            """);
+                    query.close();
+                    query = null;
+                    truncate.execute();
+                    Assert.assertTrue(ViewStateStore.isCompileRunRunning(engine.getViewStateStore().getCompileRunActivity()));
+                } finally {
+                    run.join();
+                    engine.setPoolListener(null);
+                    if (query != null) {
+                        query.close();
+                    }
+                }
+                capture.drain();
+                capture.assertNotLogged(ViewCompileParker.DDL_WAIT_LINE_PREFIX);
+                assertSql(connection, "SELECT count() FROM t", """
+                        count[BIGINT]
+                        0
+                        """);
+            } finally {
+                capture.stop();
+            }
+        });
+    }
+
+    @Test
     public void testTruncateRetriesViewsWhoseCompileMetTheLock() throws Exception {
         // ALTER of a non-WAL table queues the recompile of the view over it, which runs while
         // TRUNCATE holds the lock of the table's readers, and leaves the view as it was. The
@@ -13393,10 +13461,10 @@ create table tab as (
         return count;
     }
 
-    // Creates t with the rows 1 and 2 and runs the DDL of t while a query holds t's reader and a
-    // view compile run holds t2's reader, so that the DDL waits for the run. Once the DDL logs that
-    // it waits, the query ends, another session drops t and, when asked, creates a new t, and the
-    // run ends.
+    // Creates t with the rows 1 and 2 and runs the DDL of t while a view compile run holds t's
+    // reader, so that the DDL waits for the run. Once the DDL logs that it waits, the run lets go of
+    // t and moves on to t2, another session drops t and, when asked, creates a new t, and the run
+    // ends.
     private void assertDdlAfterTableChangedDuringViewCompileWait(
             Connection connection,
             LogCapture capture,
@@ -13404,7 +13472,7 @@ create table tab as (
             boolean isRecreated,
             @Nullable String expectedError
     ) throws Exception {
-        ViewCompileParker.executeWhileQueryAndViewCompileHold(engine, sqlExecutionContext, capture, addedColumnCount++, () -> {
+        ViewCompileParker.executeWhileViewCompileHoldsThenMovesOn(engine, sqlExecutionContext, capture, scenarioCount++, () -> {
             try (PreparedStatement statement = connection.prepareStatement(ddl)) {
                 try {
                     statement.execute();

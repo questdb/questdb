@@ -399,6 +399,8 @@ public class CairoEngine implements Closeable, WriterSource {
     private volatile SqlCompilerPool sqlCompilerPool;
     // volatile: see metadataCache comment above.
     private volatile TableNameRegistry tableNameRegistry;
+    private volatile Runnable viewCompileHolderLookupCallback;
+    private volatile Runnable viewCompileHolderScanCallback;
     private volatile Runnable viewCompileRetryCallback;
     private @NotNull ViewStateStore viewStateStore = NoOpViewStateStore.INSTANCE;
     private @NotNull WalDirectoryPolicy walDirectoryPolicy = DefaultWalDirectoryPolicy.INSTANCE;
@@ -3396,14 +3398,14 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     /**
-     * Locks the readers of a non-WAL table for TRUNCATE. When the lock fails while a view compile
-     * run holds the table's reader, it waits until no run is running and tries again, see
-     * {@link #awaitViewCompiles}. The caller holds the table's writer, so no other session can
+     * Locks the readers of a non-WAL table for TRUNCATE. When the lock fails while only view
+     * compile runs hold the table's readers, it waits until those runs have ended and tries again,
+     * see {@link #awaitViewCompiles}. The caller holds the table's writer, so no other session can
      * drop or rename the table while the lock waits, and the token stays current.
      */
     public boolean lockReaders(TableToken tableToken) {
         verifyTableToken(tableToken);
-        long waitStartMs = Numbers.LONG_NULL;
+        long timeoutStartMs = Numbers.LONG_NULL;
         while (true) {
             if (checkpointAgent.isInProgress()) {
                 // prevent reader locking before checkpoint is released
@@ -3413,8 +3415,8 @@ public class CairoEngine implements Closeable, WriterSource {
             if (readerPool.lock(tableToken)) {
                 return true;
             }
-            waitStartMs = awaitViewCompiles(tableToken, compileRunActivity, waitStartMs);
-            if (waitStartMs == Numbers.LONG_NULL) {
+            timeoutStartMs = awaitViewCompiles(tableToken, readerPool, null, compileRunActivity, timeoutStartMs);
+            if (timeoutStartMs == Numbers.LONG_NULL) {
                 return false;
             }
         }
@@ -3993,9 +3995,33 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     /**
+     * Sets a callback that a DROP, RENAME or TRUNCATE of a non-WAL table runs each time after it
+     * scanned the pools for the threads that hold its table, see {@link #awaitViewCompiles}, and
+     * before it looks these threads up among the threads that run view compile runs.
+     *
+     * @param callback the callback to invoke, or null to clear
+     */
+    @TestOnly
+    public void setViewCompileHolderLookupCallback(Runnable callback) {
+        this.viewCompileHolderLookupCallback = callback;
+    }
+
+    /**
+     * Sets a callback that a DROP, RENAME or TRUNCATE of a non-WAL table runs after a failed lock
+     * attempt that a view compile run overlapped, each time before it scans the pools for the
+     * threads that hold its table, see {@link #awaitViewCompiles}.
+     *
+     * @param callback the callback to invoke, or null to clear
+     */
+    @TestOnly
+    public void setViewCompileHolderScanCallback(Runnable callback) {
+        this.viewCompileHolderScanCallback = callback;
+    }
+
+    /**
      * Sets a callback that a DROP or RENAME of a non-WAL table runs after it waited for view
-     * compile runs and found its table under the same name, right before it tries the lock
-     * again.
+     * compile runs, or found that nothing holds its table any more, and found its table under the
+     * same name, right before it tries the lock again.
      *
      * @param callback the callback to invoke, or null to clear
      */
@@ -4498,17 +4524,35 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     /**
-     * Called after a lock attempt of a non-WAL table failed on a busy reader or busy metadata.
-     * A view compile run borrows both, on behalf of the statement that queued it, so when a run
-     * overlapped the attempt, this waits until no run is running, within
-     * {@link CairoConfiguration#getWriterAsyncCommandBusyWaitTimeout()} counted from the first
-     * wait of the DDL. A query that holds the table fails the DDL at once, as without views.
+     * Called after a lock attempt of a non-WAL table failed on a busy reader or busy metadata. A
+     * view compile run borrows both, on behalf of the statement that queued it, on the thread that
+     * runs the run. When a run overlapped the attempt, this tells the runs that hold the table from
+     * its other holders by the thread that holds each slot of the table in the pools that the
+     * caller locks:
+     * <ul>
+     *     <li>when anything but a run holds the table, such as a query, it gives up at once, as
+     *     without views;</li>
+     *     <li>when only runs hold the table, it waits until each of these runs has ended, so the
+     *     DDL never locks the table in the middle of such a run;</li>
+     *     <li>when nothing holds the table any more, the caller tries the lock again at once.</li>
+     * </ul>
+     * All of it, over all lock attempts of the DDL, stays within
+     * {@link CairoConfiguration#getWriterAsyncCommandBusyWaitTimeout()} counted from the first time
+     * the DDL tells the holders apart.
      *
-     * @return the start of the first wait, when the caller should try the lock again, or
+     * @param pool      a pool that the caller locks
+     * @param otherPool another pool that the caller locks, or null
+     * @return the start of the timeout, when the caller should try the lock again, or
      * {@link Numbers#LONG_NULL} when it should give up
      */
-    private long awaitViewCompiles(TableToken tableToken, long compileRunActivityBeforeAttempt, long waitStartMs) {
-        final long compileRunActivity = viewStateStore.getCompileRunActivity();
+    private long awaitViewCompiles(
+            TableToken tableToken,
+            AbstractMultiTenantPool<?> pool,
+            @Nullable AbstractMultiTenantPool<?> otherPool,
+            long compileRunActivityBeforeAttempt,
+            long timeoutStartMs
+    ) {
+        long compileRunActivity = viewStateStore.getCompileRunActivity();
         if (!ViewStateStore.hasCompileRunOverlapped(compileRunActivityBeforeAttempt, compileRunActivity)) {
             return Numbers.LONG_NULL;
         }
@@ -4517,13 +4561,63 @@ public class CairoEngine implements Closeable, WriterSource {
             return Numbers.LONG_NULL;
         }
         final MillisecondClock clock = configuration.getMillisecondClock();
-        if (waitStartMs == Numbers.LONG_NULL) {
-            waitStartMs = clock.getTicks();
+        // an earlier call of the DDL returned the start of the timeout once it logged its wait
+        final boolean isWaitLogged = timeoutStartMs != Numbers.LONG_NULL;
+        if (!isWaitLogged) {
+            timeoutStartMs = clock.getTicks();
+        }
+        // the threads that hold a slot of the table, then the runs among them, each as its thread
+        // followed by the number of its run
+        final LongList holderThreads = new LongList();
+        final LongList holderRuns = new LongList();
+        while (true) {
+            final Runnable scanCallback = viewCompileHolderScanCallback;
+            if (scanCallback != null) {
+                scanCallback.run();
+            }
+            holderThreads.clear();
+            pool.getOwnerThreads(tableToken, holderThreads);
+            if (otherPool != null) {
+                otherPool.getOwnerThreads(tableToken, holderThreads);
+            }
+            final Runnable lookupCallback = viewCompileHolderLookupCallback;
+            if (lookupCallback != null) {
+                lookupCallback.run();
+            }
+            holderRuns.clear();
+            boolean isHeldOutsideRuns = false;
+            for (int i = 0, n = holderThreads.size(); i < n; i++) {
+                final long thread = holderThreads.getQuick(i);
+                final long run = viewStateStore.getCompileRunOfThread(thread);
+                if (run == 0) {
+                    isHeldOutsideRuns = true;
+                    break;
+                }
+                holderRuns.add(thread, run);
+            }
+            final long activityAfterScan = viewStateStore.getCompileRunActivity();
+            if (activityAfterScan == compileRunActivity) {
+                if (isHeldOutsideRuns) {
+                    // waiting for the runs cannot make the lock succeed
+                    return Numbers.LONG_NULL;
+                }
+                break;
+            }
+            // A run started or ended during the scan, so the threads of the runs may not match the
+            // slots that the scan saw: the slot of a run that ended looks like a query's.
+            compileRunActivity = activityAfterScan;
+            if (clock.getTicks() - timeoutStartMs >= timeoutMs) {
+                return Numbers.LONG_NULL;
+            }
+        }
+        if (!isWaitLogged) {
             LOG.info().$("waiting for view compilation to release table [table=").$safe(tableToken.getTableName()).I$();
         }
-        while (clock.getTicks() - waitStartMs < timeoutMs) {
-            if (!ViewStateStore.isCompileRunRunning(viewStateStore.getCompileRunActivity())) {
-                return waitStartMs;
+        // Waits for the end of the runs, not for the release of the table: a view compile borrows
+        // a table more than once, and a drain can compile more views over the table.
+        while (clock.getTicks() - timeoutStartMs < timeoutMs) {
+            if (!isAnyCompileRunRunning(holderRuns)) {
+                return timeoutStartMs;
             }
             Os.pause();
         }
@@ -4945,6 +5039,16 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    // tells whether any of the view compile runs, each as its thread followed by its number, still runs
+    private boolean isAnyCompileRunRunning(LongList threadsAndRuns) {
+        for (int i = 0, n = threadsAndRuns.size(); i < n; i += 2) {
+            if (viewStateStore.getCompileRunOfThread(threadsAndRuns.getQuick(i)) == threadsAndRuns.getQuick(i + 1)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /**
      * Loads one mat-view's definition and persisted state into {@code target}.
      * Shared by {@link #buildViewGraphs()} (boot, {@code forceCreateState=false}) and
@@ -5072,8 +5176,8 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     /**
-     * Locks a non-WAL table for DROP or RENAME, see {@link #lockAll}. When the lock fails while a
-     * view compile run holds the table, it waits for the runs and tries again, see
+     * Locks a non-WAL table for DROP or RENAME, see {@link #lockAll}. When the lock fails while only
+     * view compile runs hold the table, it waits for those runs and tries again, see
      * {@link #awaitViewCompiles}, but only on the table the statement resolved: after each wait it
      * checks that the name still maps to that table, and checks again under the lock of a retry.
      * The DDL then never acts on a table that another session created under the same name.
@@ -5082,7 +5186,7 @@ public class CairoEngine implements Closeable, WriterSource {
      * @throws CairoException when the name maps to no table after a wait
      */
     private String lockAllAfterViewCompiles(TableToken tableToken, String lockReason) {
-        long waitStartMs = Numbers.LONG_NULL;
+        long timeoutStartMs = Numbers.LONG_NULL;
         // the reason of the last attempt that a wait followed
         String waitedReason = null;
         while (true) {
@@ -5104,8 +5208,8 @@ public class CairoEngine implements Closeable, WriterSource {
             if (reason != REASON_BUSY_READER && reason != REASON_BUSY_TABLE_READER_METADATA_POOL) {
                 return reason;
             }
-            waitStartMs = awaitViewCompiles(tableToken, compileRunActivity, waitStartMs);
-            if (waitStartMs == Numbers.LONG_NULL) {
+            timeoutStartMs = awaitViewCompiles(tableToken, readerPool, tableMetadataPool, compileRunActivity, timeoutStartMs);
+            if (timeoutStartMs == Numbers.LONG_NULL) {
                 return reason;
             }
             if (!isTableTokenCurrent(tableToken, tableNameRegistry.getTableToken(tableToken.getTableName()))) {

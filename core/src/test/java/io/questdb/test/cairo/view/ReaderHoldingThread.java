@@ -25,18 +25,20 @@
 package io.questdb.test.cairo.view;
 
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.TableReader;
 import io.questdb.std.str.Path;
 import org.junit.Assert;
 
+import java.io.Closeable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 
 /**
- * A thread that borrows a table's pooled reader, as a running query does, until {@link #close} is
- * called. The thread is the only borrower of the table, so its reader sits in the pool's first
- * slot, where the lock attempt of a DDL stops before it takes any slot of the pool.
+ * A thread that borrows a table's pooled reader, as a running query does, or the table's pooled
+ * metadata, until {@link #close} is called. When the thread is the only borrower of the table,
+ * its reader sits in the pool's first slot, where the lock attempt of a DDL stops before it takes
+ * any slot of the pool.
  */
 public class ReaderHoldingThread {
     private final CountDownLatch close = new CountDownLatch(1);
@@ -44,9 +46,9 @@ public class ReaderHoldingThread {
     private final CountDownLatch holding = new CountDownLatch(1);
     private final Thread thread;
 
-    private ReaderHoldingThread(CairoEngine engine, String tableName) {
+    private ReaderHoldingThread(Supplier<Closeable> borrow) {
         thread = new Thread(() -> {
-            try (TableReader ignore = engine.getReader(tableName)) {
+            try (Closeable ignore = borrow.get()) {
                 holding.countDown();
                 close.await();
             } catch (Throwable th) {
@@ -58,10 +60,12 @@ public class ReaderHoldingThread {
     }
 
     public static ReaderHoldingThread start(CairoEngine engine, String tableName) throws InterruptedException {
-        final ReaderHoldingThread holder = new ReaderHoldingThread(engine, tableName);
-        holder.thread.start();
-        Assert.assertTrue("could not borrow the reader of " + tableName, holder.holding.await(30, TimeUnit.SECONDS));
-        return holder;
+        return start(() -> engine.getReader(tableName), tableName);
+    }
+
+    // borrows the table's pooled metadata, as a query compile and table_partitions() do
+    public static ReaderHoldingThread startHoldingTableMetadata(CairoEngine engine, String tableName) throws InterruptedException {
+        return start(() -> engine.getTableMetadata(engine.verifyTableName(tableName)), tableName);
     }
 
     /**
@@ -74,5 +78,12 @@ public class ReaderHoldingThread {
         if (th != null) {
             throw new AssertionError("reader holder failed", th);
         }
+    }
+
+    private static ReaderHoldingThread start(Supplier<Closeable> borrow, String tableName) throws InterruptedException {
+        final ReaderHoldingThread holder = new ReaderHoldingThread(borrow);
+        holder.thread.start();
+        Assert.assertTrue("could not borrow the reader of " + tableName, holder.holding.await(30, TimeUnit.SECONDS));
+        return holder;
     }
 }

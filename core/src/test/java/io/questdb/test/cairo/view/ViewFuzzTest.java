@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.view;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableToken;
@@ -45,12 +46,14 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.cairo.fuzz.AbstractFuzzTest;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.sql.RandomSelectGenerator;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.TreeMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.regex.Pattern;
 
 public class ViewFuzzTest extends AbstractFuzzTest {
     // a PIVOT over tp (k SYMBOL, x INT), whose compile fails while tp is empty
@@ -96,12 +99,14 @@ public class ViewFuzzTest extends AbstractFuzzTest {
         // An ALTER of a non-WAL table queues the recompile of the views over it, and a TRUNCATE,
         // RENAME or DROP of the table follows at once while view compile workers run. Every DDL
         // succeeds: it waits for a compile run that holds the table instead of failing as busy.
-        // A compile that meets the lock of a DDL leaves the views alone and retries once the busy
-        // retry timeout passed, so every view ends valid, with the columns of its SQL. TRUNCATE
-        // queues no compile of its own, so the PIVOT view over tp, which nothing ALTERs, keeps the
-        // status of its CREATE through the TRUNCATEs of tp. One session runs all DDLs;
-        // ViewOverNonWalTableTest pins what a DDL does when another session changes its table
-        // while it waits.
+        // At times a query holds the table on another thread during the DDL: the DDL then fails
+        // with its busy error at once, as it does without views, without waiting for the runs,
+        // and succeeds when it runs again once the query ended. A compile that meets the lock of a
+        // DDL leaves the views alone and retries once the busy retry timeout passed, so every view
+        // ends valid, with the columns of its SQL. TRUNCATE queues no compile of its own, so the
+        // PIVOT view over tp, which nothing ALTERs, keeps the status of its CREATE through the
+        // TRUNCATEs of tp. One session runs all DDLs; ViewOverNonWalTableTest pins what a DDL does
+        // when another session changes its table while it waits.
         assertMemoryLeak(() -> {
             final Rnd rnd = fuzzer.generateRandom(LOG);
             node1.setProperty(PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, Long.MAX_VALUE);
@@ -148,10 +153,13 @@ public class ViewFuzzTest extends AbstractFuzzTest {
             // TRUNCATE of two tables
             final int ddlShapeCount = tableCount > 1 ? 5 : 4;
             final int[] ddlCounts = new int[ddlShapeCount];
+            // the DDLs that ran while a query held their table
+            final int[] queryHeldDdlCounts = new int[ddlShapeCount];
             final int ddlOffset = rnd.nextInt(ddlShapeCount);
             // TRUNCATE of tp alone, and as the second table of a TRUNCATE of two tables
             final int[] tpTruncateCounts = new int[2];
             int addedColumnCount = 0;
+            final LogCapture capture = new LogCapture();
             try {
                 for (int i = 0, n = 1 + rnd.nextInt(4); i < n; i++) {
                     // short naps, so that a worker often compiles while the DDL locks the table
@@ -161,8 +169,13 @@ public class ViewFuzzTest extends AbstractFuzzTest {
                     final int tableIndex = rnd.nextInt(tableCount);
                     final String tableName = "t" + tableIndex;
                     execute("ALTER TABLE " + tableName + " ADD COLUMN c" + addedColumnCount++ + " INT");
-                    // the first iterations run each DDL once
-                    final int ddl = i < ddlShapeCount ? (i + ddlOffset) % ddlShapeCount : rnd.nextInt(ddlShapeCount);
+                    // the first iterations run each DDL once, then once more while a query holds the table
+                    final int ddl = i < 2 * ddlShapeCount ? (i + ddlOffset) % ddlShapeCount : rnd.nextInt(ddlShapeCount);
+                    final boolean isQueryHolding = i < 2 * ddlShapeCount ? i >= ddlShapeCount : rnd.nextInt(4) == 0;
+                    if (isQueryHolding) {
+                        queryHeldDdlCounts[ddl]++;
+                        assertDdlFailsAtOnceWhileQueryHoldsTable(capture, ddl, tableName);
+                    }
                     ddlCounts[ddl]++;
                     switch (ddl) {
                         case 0 -> execute("TRUNCATE TABLE " + tableName);
@@ -195,10 +208,12 @@ public class ViewFuzzTest extends AbstractFuzzTest {
                     }
                 }
             } finally {
+                capture.stop();
                 stopAndJoinJobs(stop, viewCompilerJobs);
             }
             for (int ddl = 0; ddl < ddlShapeCount; ddl++) {
                 Assert.assertTrue("DDL " + ddl + " did not run", ddlCounts[ddl] > 0);
+                Assert.assertTrue("DDL " + ddl + " did not run while a query held its table", queryHeldDdlCounts[ddl] > 0);
             }
             for (int tpTruncate = 0; tpTruncate < 2; tpTruncate++) {
                 Assert.assertTrue("TRUNCATE " + tpTruncate + " of tp did not run", tpTruncateCounts[tpTruncate] > 0);
@@ -239,6 +254,58 @@ public class ViewFuzzTest extends AbstractFuzzTest {
         final String tableName = testName.getMethodName();
         final String viewName = testName.getMethodName() + "_v";
         testViewFuzz(selectGenerator, rnd, tableName, viewName);
+    }
+
+    /**
+     * Runs the first statement of the DDL shape of testNonWalDdlWithConcurrentViewCompiles() while a
+     * query holds the table's reader on another thread. The statement fails with its busy error at
+     * once, as it does without views: it logs no wait for the view compile runs that the workers
+     * run meanwhile. DROP and RENAME lock the table's pooled metadata before its readers, so they
+     * fail on the metadata instead when a worker's compile holds it at that moment.
+     */
+    private static void assertDdlFailsAtOnceWhileQueryHoldsTable(LogCapture capture, int ddl, String tableName) throws Exception {
+        final String sql;
+        final String expectedErrorRegex;
+        switch (ddl) {
+            case 0 -> {
+                sql = "TRUNCATE TABLE " + tableName;
+                expectedErrorRegex = Pattern.quote("there is an active query against '" + tableName + "'. Try again.");
+            }
+            case 1 -> {
+                sql = "RENAME TABLE " + tableName + " TO " + tableName + "_tmp";
+                expectedErrorRegex = Pattern.quote("table busy [reason=") + "(busyReader|busyTableReaderMetaPool)" + Pattern.quote("]");
+            }
+            case 2 -> {
+                sql = "DROP TABLE " + tableName;
+                expectedErrorRegex = Pattern.quote("could not lock '" + engine.verifyTableName(tableName).getDirName() + "' [reason='")
+                        + "(busyReader|busyTableReaderMetaPool)" + Pattern.quote("']");
+            }
+            case 3 -> {
+                sql = "TRUNCATE TABLE " + tableName + " KEEP SYMBOL MAPS";
+                expectedErrorRegex = Pattern.quote("there is an active query against '" + tableName + "'. Try again.");
+            }
+            default -> {
+                // the query holds the first table of the statement
+                sql = "TRUNCATE TABLE " + tableName + ", tp";
+                expectedErrorRegex = Pattern.quote("there is an active query against '" + tableName + "'. Try again.");
+            }
+        }
+        LOG.info().$("DDL while a query holds the table [sql=").$(sql).I$();
+        final ReaderHoldingThread query = ReaderHoldingThread.start(engine, tableName);
+        try {
+            capture.start();
+            try {
+                execute(sql);
+                Assert.fail("expected to fail: " + sql);
+            } catch (SqlException | CairoException e) {
+                final String message = e.getFlyweightMessage().toString();
+                Assert.assertTrue("unexpected error of " + sql + ": " + message, Pattern.matches(expectedErrorRegex, message));
+            }
+            capture.drain();
+            capture.assertNotLogged(ViewCompileParker.DDL_WAIT_LINE_PREFIX);
+        } finally {
+            query.close();
+        }
     }
 
     /**

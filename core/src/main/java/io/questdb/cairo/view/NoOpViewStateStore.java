@@ -62,6 +62,11 @@ public class NoOpViewStateStore implements ViewStateStore {
     }
 
     @Override
+    public long getCompileRunOfThread(long threadId) {
+        return 0;
+    }
+
+    @Override
     public ViewState getViewState(TableToken viewToken) {
         return null;
     }

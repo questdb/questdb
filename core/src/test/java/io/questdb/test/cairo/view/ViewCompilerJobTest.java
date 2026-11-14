@@ -1021,6 +1021,93 @@ public class ViewCompilerJobTest extends AbstractViewTest {
     }
 
     @Test
+    public void testViewCompileRunsRecordTheirThreads() throws Exception {
+        // A DDL tells a view compile run's borrow of a table from another holder's by the thread
+        // that holds the table. The store knows the thread of each run under a number of the run's
+        // own, from the start of the run to its end, also when a compile of the run fails, and each
+        // start and end changes the compile run activity.
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            createTable(TABLE2);
+            createView(VIEW1, "SELECT * FROM " + TABLE1);
+            createView(VIEW2, "SELECT * FROM " + TABLE2);
+            final ViewStateStore stateStore = engine.getViewStateStore();
+            final long testThread = Thread.currentThread().threadId();
+            Assert.assertEquals(0, stateStore.getCompileRunOfThread(testThread));
+
+            // a drain and the startup pass run at once
+            engine.enqueueCompileView(engine.verifyTableName(TABLE1));
+            final ViewCompileParker drain = ViewCompileParker.ofQueueDrain(engine, TABLE1, PoolListener.SRC_READER);
+            final ViewCompileParker startupPass = ViewCompileParker.ofStartupPass(engine, TABLE2, PoolListener.SRC_READER);
+            engine.setPoolListener((factoryType, thread, tableToken, event, segment, position) -> {
+                drain.onEvent(factoryType, thread, tableToken, event, segment, position);
+                startupPass.onEvent(factoryType, thread, tableToken, event, segment, position);
+            });
+            final long idleActivity = stateStore.getCompileRunActivity();
+            final long drainRun;
+            final long startupPassRun;
+            try {
+                drain.start();
+                drainRun = stateStore.getCompileRunOfThread(drain.getCompileThreadId());
+                Assert.assertEquals(idleActivity + (1L << 32) + 1, stateStore.getCompileRunActivity());
+                startupPass.start();
+                startupPassRun = stateStore.getCompileRunOfThread(startupPass.getCompileThreadId());
+                Assert.assertEquals(idleActivity + 2 * ((1L << 32) + 1), stateStore.getCompileRunActivity());
+                Assert.assertEquals(drainRun, stateStore.getCompileRunOfThread(drain.getCompileThreadId()));
+                Assert.assertEquals(0, stateStore.getCompileRunOfThread(testThread));
+
+                // the drain ends, and the store forgets its thread
+                drain.join();
+                Assert.assertEquals(0, stateStore.getCompileRunOfThread(drain.getCompileThreadId()));
+                Assert.assertEquals(startupPassRun, stateStore.getCompileRunOfThread(startupPass.getCompileThreadId()));
+                Assert.assertEquals(idleActivity + 2 * (1L << 32) + 1, stateStore.getCompileRunActivity());
+            } finally {
+                drain.join();
+                startupPass.join();
+                engine.setPoolListener(null);
+            }
+            Assert.assertTrue(drainRun > 0);
+            Assert.assertTrue(startupPassRun > 0);
+            Assert.assertNotEquals(drainRun, startupPassRun);
+            Assert.assertEquals(0, stateStore.getCompileRunOfThread(startupPass.getCompileThreadId()));
+            Assert.assertEquals(idleActivity + 2 * (1L << 32), stateStore.getCompileRunActivity());
+
+            // a drain on this thread whose view compile fails: the store knows the thread while the
+            // compile borrows the table, and forgets it after the drain
+            createTableWithRows("t");
+            execute("ALTER TABLE t ADD COLUMN c INT");
+            createView("v", "SELECT c FROM t");
+            execute("ALTER TABLE t DROP COLUMN c");
+            final long[] runWhileCompiling = new long[1];
+            engine.setPoolListener((factoryType, thread, tableToken, event, segment, position) -> {
+                if (thread == testThread
+                        && factoryType == PoolListener.SRC_READER
+                        && (event == PoolListener.EV_GET || event == PoolListener.EV_CREATE)
+                        && Chars.equals(tableToken.getTableName(), "t")) {
+                    runWhileCompiling[0] = stateStore.getCompileRunOfThread(testThread);
+                }
+            });
+            final long activityBeforeFailingDrain = stateStore.getCompileRunActivity();
+            try {
+                drainViewQueue();
+            } finally {
+                engine.setPoolListener(null);
+            }
+            assertViewInvalid("v", "Invalid column: c");
+            Assert.assertTrue(runWhileCompiling[0] > startupPassRun);
+            Assert.assertEquals(0, stateStore.getCompileRunOfThread(testThread));
+            Assert.assertEquals(activityBeforeFailingDrain + (1L << 32), stateStore.getCompileRunActivity());
+
+            // no compiler consumes the queue of the no-op store, so it never knows a run's thread
+            final ViewStateStore noOpStore = NoOpViewStateStore.INSTANCE;
+            noOpStore.startCompileRun();
+            Assert.assertEquals(0, noOpStore.getCompileRunOfThread(testThread));
+            noOpStore.finishCompileRun();
+            Assert.assertEquals(0, noOpStore.getCompileRunOfThread(testThread));
+        });
+    }
+
+    @Test
     public void testViewCompilerJobPublishesCompileRuns() throws Exception {
         // A DDL tells a view compile run's borrow of a table from a query's by the compile runs
         // the job publishes: one run per drain that finds tasks, and one for the startup pass.

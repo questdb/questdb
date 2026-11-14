@@ -66,7 +66,8 @@ public interface ViewStateStore extends Mutable {
     void enqueueDueCompileBusyRetries();
 
     /**
-     * Ends the view compile run that {@link #startCompileRun()} started.
+     * Ends the view compile run that {@link #startCompileRun()} started on the calling thread, and
+     * forgets the thread.
      */
     void finishCompileRun();
 
@@ -75,6 +76,12 @@ public interface ViewStateStore extends Mutable {
      * started so far, the low 32 bits count the runs still running.
      */
     long getCompileRunActivity();
+
+    /**
+     * Returns the number of the view compile run that the thread runs, or 0 when it runs none, see
+     * {@link #startCompileRun()}.
+     */
+    long getCompileRunOfThread(long threadId);
 
     @Nullable
     ViewState getViewState(TableToken viewToken);
@@ -95,10 +102,17 @@ public interface ViewStateStore extends Mutable {
     long scheduleCompileBusyRetry(@NotNull TableToken viewToken, long updateTimestamp);
 
     /**
-     * Starts a view compile run: a drain of the compile queue, or the startup compile of all
-     * views. A run borrows the readers and the metadata of the tables its views read, so a
-     * DROP, RENAME or TRUNCATE of a non-WAL table that fails to lock the table waits until no
-     * run is running when a run overlapped its lock attempt.
+     * Starts a view compile run on the calling thread: a drain of the compile queue, or the startup
+     * compile of all views. The run gets a number of its own, never 0, and the store knows the
+     * thread as the run's until {@link #finishCompileRun()}. Both change the record of the thread
+     * and {@link #getCompileRunActivity()} together, so a reader that reads the same activity
+     * before and after a lookup of the record knows the record did not change in between.
+     * <p>
+     * A run borrows the readers and the metadata of the tables its views read, on the thread that
+     * runs it. A DROP, RENAME or TRUNCATE of a non-WAL table that fails to lock the table tells the
+     * runs that hold the table from its other holders by the thread that holds each pooled reader
+     * or metadata of the table. When only runs hold the table, the DDL waits until these runs have
+     * ended, so it never locks the table in the middle of such a run.
      */
     void startCompileRun();
 

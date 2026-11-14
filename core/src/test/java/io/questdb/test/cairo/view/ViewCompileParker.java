@@ -41,13 +41,16 @@ import org.junit.Assert;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Runs a view compile run on a thread of its own and parks the thread on its first borrow of a
- * table from a pool, so that a test can run a DDL against the table while the run holds it. The
- * engine passes its pool events to {@link #onEvent}: a test sets the parker, or a listener that
- * calls it, with {@link CairoEngine#setPoolListener}.
+ * table from a pool, so that a test can run a DDL against the table while the run holds it. A
+ * parker can park the thread at more tables, one after the other: at its first borrow of each
+ * table after it left the park before, see {@link #moveOnToNextPark}. The engine passes its pool
+ * events to {@link #onEvent}: a test sets the parker, or a listener that calls it, with
+ * {@link CairoEngine#setPoolListener}.
  */
 public class ViewCompileParker implements PoolListener {
     // the start of the line that DROP, RENAME or TRUNCATE of a non-WAL table logs when it waits for
@@ -57,17 +60,28 @@ public class ViewCompileParker implements PoolListener {
     private final Thread compileThread;
     private final CairoEngine engine;
     private final AtomicReference<Throwable> error = new AtomicReference<>();
-    private final CountDownLatch holding = new CountDownLatch(1);
+    // per park, counted down when the thread holds the park's table
+    private final ObjList<CountDownLatch> holdings = new ObjList<>();
     private final AtomicBoolean isJoining = new AtomicBoolean();
     private final byte poolSource;
-    private final CountDownLatch release = new CountDownLatch(1);
-    private final String tableName;
+    // the parks that the test let the thread leave, see moveOnToNextPark()
+    private final AtomicInteger releasedParkCount = new AtomicInteger();
+    // per park, counted down to let the thread leave the park
+    private final ObjList<CountDownLatch> releases = new ObjList<>();
+    // the tables of the parks, in the order the thread reaches them
+    private final ObjList<String> tableNames = new ObjList<>();
     private Thread helperThread;
+    // the park that the thread reaches next, read and written on the thread only
+    private int nextPark;
 
-    private ViewCompileParker(CairoEngine engine, String tableName, byte poolSource, Runnable compileRun) {
+    private ViewCompileParker(CairoEngine engine, byte poolSource, Runnable compileRun, String... tableNames) {
         this.engine = engine;
-        this.tableName = tableName;
         this.poolSource = poolSource;
+        for (String tableName : tableNames) {
+            this.tableNames.add(tableName);
+            holdings.add(new CountDownLatch(1));
+            releases.add(new CountDownLatch(1));
+        }
         this.compileThread = new Thread(() -> {
             try {
                 compileRun.run();
@@ -99,58 +113,79 @@ public class ViewCompileParker implements PoolListener {
     }
 
     /**
-     * Creates the table t (a INT) with the rows 1 and 2 and runs the DDL of t while a query holds t's reader and a
-     * view compile run holds t2's reader, so that the DDL fails on the query and waits for the run. The run compiles
-     * the views over t2, which the method queues by adding the column c{addedColumnIndex} to t2: the caller has
-     * created t2 and a view over it, and passes an index that names no column of t2. Once the DDL logs its wait, the
-     * query ends, the action runs and the run ends.
+     * Creates the table t (a INT) with the rows 1 and 2 and the view vt{scenarioIndex} over it, and runs the DDL of
+     * t while a view compile run holds t's reader, so that the DDL waits for the run. The run compiles the new view,
+     * then the views over t2, which the method queues by adding the column c{scenarioIndex} to t2: the caller has
+     * created t2 and a view over it, and passes an index that names no column of t2 and no view. Once the DDL logs
+     * its wait, the run returns t's reader and parks on t2's reader, so that it still runs while nothing holds t. The
+     * action runs then, and the run ends.
      */
-    public static void executeWhileQueryAndViewCompileHold(
+    public static void executeWhileViewCompileHoldsThenMovesOn(
             CairoEngine engine,
             SqlExecutionContext executionContext,
             LogCapture capture,
-            int addedColumnIndex,
+            int scenarioIndex,
             TestUtils.LeakProneCode ddl,
             @Nullable TestUtils.CheckedRunnable onWait
     ) throws Exception {
+        // the compiles that earlier statements queued must not run first
+        runQueueDrain(engine);
         engine.execute("CREATE TABLE t (a INT)", executionContext);
         engine.execute("INSERT INTO t VALUES (1), (2)", executionContext);
         // only a DDL of a non-WAL table waits for view compile runs
         Assert.assertFalse(engine.verifyTableName("t").isWal());
-        engine.execute("ALTER TABLE t2 ADD COLUMN c" + addedColumnIndex + " INT", executionContext);
-        final ReaderHoldingThread query = ReaderHoldingThread.start(engine, "t");
-        try {
-            ofQueueDrain(engine, "t2", PoolListener.SRC_READER).executeWhileHolding(capture, "t", ddl, () -> {
-                query.close();
-                if (onWait != null) {
-                    onWait.run();
-                }
-            });
-        } finally {
-            query.close();
-        }
+        // queues the compile of the new view, which reads t
+        engine.execute("CREATE VIEW vt" + scenarioIndex + " AS (SELECT * FROM t)", executionContext);
+        engine.execute("ALTER TABLE t2 ADD COLUMN c" + scenarioIndex + " INT", executionContext);
+        final ViewCompileParker run = ofQueueDrainParkingTwice(engine, PoolListener.SRC_READER, "t", "t2");
+        run.executeWhileHolding(capture, "t", ddl, () -> {
+            run.moveOnToNextPark();
+            if (onWait != null) {
+                onWait.run();
+            }
+        });
     }
 
     /**
      * A run that drains the view compile queue, as a view-compiler worker does.
      */
     public static ViewCompileParker ofQueueDrain(CairoEngine engine, String tableName, byte poolSource) {
-        return new ViewCompileParker(engine, tableName, poolSource, () -> {
-            try (ViewCompilerJob job = new ViewCompilerJob(0, engine)) {
-                job.run();
-            }
-        });
+        return new ViewCompileParker(engine, poolSource, () -> drainQueue(engine), tableName);
+    }
+
+    /**
+     * As {@link #ofQueueDrain}, but the run parks twice: at its first borrow of the first table, and then at its
+     * first borrow of the second table, see {@link #moveOnToNextPark}.
+     */
+    public static ViewCompileParker ofQueueDrainParkingTwice(CairoEngine engine, byte poolSource, String firstTableName, String secondTableName) {
+        return new ViewCompileParker(engine, poolSource, () -> drainQueue(engine), firstTableName, secondTableName);
     }
 
     /**
      * The run that compiles every view at server startup.
      */
     public static ViewCompileParker ofStartupPass(CairoEngine engine, String tableName, byte poolSource) {
-        return new ViewCompileParker(engine, tableName, poolSource, () -> {
+        return new ViewCompileParker(engine, poolSource, () -> {
             try (SqlExecutionContext executionContext = engine.createViewCompilerContext(0)) {
                 ViewCompilerJob.compileAllViews(engine, executionContext, new ObjList<>());
             }
-        });
+        }, tableName);
+    }
+
+    /**
+     * Two runs on one thread, one right after the other, as a view-compiler worker runs drains: a drain of the
+     * view compile queue, which parks at its first borrow of the first table, and, once it ended, a drain of the
+     * compile of the views over the second table, which the thread queues, and which parks at its first borrow of
+     * the second table.
+     */
+    public static ViewCompileParker ofTwoQueueDrains(CairoEngine engine, byte poolSource, String firstTableName, String secondTableName) {
+        return new ViewCompileParker(engine, poolSource, () -> {
+            try (ViewCompilerJob job = new ViewCompilerJob(0, engine)) {
+                job.run();
+                engine.enqueueCompileView(engine.verifyTableName(secondTableName));
+                job.run();
+            }
+        }, firstTableName, secondTableName);
     }
 
     /**
@@ -162,8 +197,8 @@ public class ViewCompileParker implements PoolListener {
     public static void runQueueDrain(CairoEngine engine) {
         final AtomicReference<Throwable> drainError = new AtomicReference<>();
         final Thread drainThread = new Thread(() -> {
-            try (ViewCompilerJob job = new ViewCompilerJob(0, engine)) {
-                job.run();
+            try {
+                drainQueue(engine);
             } catch (Throwable th) {
                 drainError.set(th);
             } finally {
@@ -212,17 +247,22 @@ public class ViewCompileParker implements PoolListener {
         }
     }
 
+    // the id of the thread that runs the run
+    public long getCompileThreadId() {
+        return compileThread.threadId();
+    }
+
     /**
-     * Releases the run and waits for it and for the helper thread of {@link #releaseAfterLogged}.
-     * Fails with the first error either thread met. A helper that is still waiting for its line
-     * stops waiting and skips its action.
+     * Releases the run at every park and waits for it and for the helper thread of
+     * {@link #releaseAfterLogged}. Fails with the first error either thread met. A helper that is
+     * still waiting for its line stops waiting and skips its action.
      */
     public void join() throws InterruptedException {
         isJoining.set(true);
         if (helperThread != null) {
             helperThread.join();
         }
-        release.countDown();
+        release();
         compileThread.join();
         final Throwable th = error.get();
         if (th != null) {
@@ -230,16 +270,27 @@ public class ViewCompileParker implements PoolListener {
         }
     }
 
+    /**
+     * Lets the run leave the park it holds, the first one the test has not let it leave yet, and
+     * waits until it holds the table of the next park.
+     */
+    public void moveOnToNextPark() throws InterruptedException {
+        final int park = releasedParkCount.getAndIncrement();
+        releases.getQuick(park).countDown();
+        awaitHolding(park + 1);
+    }
+
     @Override
     public void onEvent(byte factoryType, long thread, TableToken tableToken, short event, short segment, short position) {
         if (thread == compileThread.threadId()
                 && factoryType == poolSource
                 && (event == PoolListener.EV_GET || event == PoolListener.EV_CREATE)
-                && Chars.equals(tableToken.getTableName(), tableName)
-                && holding.getCount() > 0) {
-            holding.countDown();
+                && nextPark < tableNames.size()
+                && Chars.equals(tableToken.getTableName(), tableNames.getQuick(nextPark))) {
+            final int park = nextPark++;
+            holdings.getQuick(park).countDown();
             try {
-                release.await();
+                releases.getQuick(park).await();
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 throw new RuntimeException(e);
@@ -247,17 +298,40 @@ public class ViewCompileParker implements PoolListener {
         }
     }
 
+    /**
+     * Lets the run leave every park, so that it runs to its end.
+     */
     public void release() {
-        release.countDown();
+        for (int i = 0, n = releases.size(); i < n; i++) {
+            releases.getQuick(i).countDown();
+        }
     }
 
     /**
-     * Starts the run and waits until it holds the table.
+     * Starts a helper thread that releases the run once the capture holds the line that the DDL of
+     * the table logs when it waits for a view compile run, see {@link #join}.
+     */
+    public void releaseAfterDdlWaits(LogCapture capture, String ddlTableName) {
+        releaseAfterLogged(capture, ddlWaitLine(ddlTableName), null);
+    }
+
+    /**
+     * Starts the run and waits until it holds the table of its first park.
      */
     public void start() throws InterruptedException {
         compileThread.start();
-        if (!holding.await(HOLDING_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-            Assert.fail("view compile did not borrow table " + tableName + " [error=" + error.get() + ']');
+        awaitHolding(0);
+    }
+
+    private static void drainQueue(CairoEngine engine) {
+        try (ViewCompilerJob job = new ViewCompilerJob(0, engine)) {
+            job.run();
+        }
+    }
+
+    private void awaitHolding(int park) throws InterruptedException {
+        if (!holdings.getQuick(park).await(HOLDING_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+            Assert.fail("view compile did not borrow table " + tableNames.getQuick(park) + " [error=" + error.get() + ']');
         }
     }
 
@@ -288,7 +362,7 @@ public class ViewCompileParker implements PoolListener {
             } catch (Throwable th) {
                 error.compareAndSet(null, th);
             } finally {
-                release.countDown();
+                release();
                 Path.clearThreadLocals();
             }
         }, "view-compile-releaser");

@@ -94,8 +94,8 @@ public class ViewCompilerJob implements Job, QuietCloseable {
             SqlExecutionContext executionContext,
             ObjList<TableToken> tempSink
     ) {
-        // One run for the whole pass, so that a DDL that waits for compile runs to stop locks no
-        // table between two views of the pass.
+        // One run for the whole pass, so that a DDL that waits for the run, which holds its table,
+        // locks no table between two views of the pass.
         final ViewStateStore stateStore = engine.getViewStateStore();
         stateStore.startCompileRun();
         try {
@@ -369,8 +369,8 @@ public class ViewCompilerJob implements Job, QuietCloseable {
             return false;
         }
         // One run for the whole drain, so that the run stays running between the two borrows of
-        // a table that one view compile makes, and between views. A DDL that waits for compile
-        // runs to stop then never locks a table in the middle of a drain.
+        // a table that one view compile makes, and between views. A DDL that waits for a run,
+        // which holds its table, then never locks the table in the middle of the drain.
         stateStore.startCompileRun();
         try {
             do {

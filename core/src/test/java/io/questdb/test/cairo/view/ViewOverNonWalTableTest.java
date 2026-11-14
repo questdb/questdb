@@ -45,7 +45,9 @@ import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.Path;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.LogCapture;
@@ -61,6 +63,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.regex.Pattern;
@@ -72,12 +75,20 @@ import java.util.regex.Pattern;
  * catalogue, and stays valid after a change that breaks it (#7792).
  */
 public class ViewOverNonWalTableTest extends AbstractViewTest {
+    // Each DDL of t, with the lock attempts on t that recordLockAttemptsOfT() records when the
+    // DDL's first attempt fails at the first slot of t's reader pool, and its second attempt
+    // closes the reader that sits there and locks t.
+    private static final String[][] DDLS_LOCKING_T_AT_SECOND_ATTEMPT = {
+            {"TRUNCATE TABLE t", "close 0:0 lock "},
+            {"RENAME TABLE t TO t3", "meta meta close 0:0 lock "},
+            {"DROP TABLE t", "meta meta close 0:0 lock "}
+    };
     // 2025-06-19T12:00:00.000000Z
     private static final long TRUNCATE_MICROS = 1_750_334_400_000_000L;
     // a DROP, RENAME or TRUNCATE of t logs this line when it waits for a view compile run
     private static final String WAIT_LINE = ViewCompileParker.ddlWaitLine("t");
     private static final LogCapture capture = new LogCapture();
-    private int addedColumnCount;
+    private int scenarioCount;
 
     @Before
     @Override
@@ -338,6 +349,107 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
     }
 
     @Test
+    public void testDdlFailsAtOnceWhenItsOwnThreadHoldsTable() throws Exception {
+        // The thread that runs the DDL holds t's reader, as another portal of its session may,
+        // while a view compile run over the table u runs. The DDL cannot lock t while its own
+        // thread reads it, so it fails after one lock attempt, as it does without views, and does
+        // not wait for the run.
+        assertMemoryLeak(() -> {
+            // the server default; a DDL that waited would log its wait before it fails
+            node1.setProperty(PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 500);
+            createTableWithRows("t");
+            createTableWithRows("u");
+            createView("vu", "SELECT * FROM u");
+            // queues the compile of the views over u
+            execute("ALTER TABLE u ADD COLUMN b INT");
+            final ViewCompileParker run = ViewCompileParker.ofQueueDrain(engine, "u", PoolListener.SRC_READER);
+            final AtomicInteger lockAttempts = countTableMetadataLocks(run);
+            try (TableReader ignore = engine.getReader("t")) {
+                run.start();
+                assertDdlFails("TRUNCATE TABLE t", "there is an active query against 't'. Try again.");
+                assertDdlFails("DROP TABLE t", "could not lock 't~' [reason='busyReader']");
+                Assert.assertEquals(1, lockAttempts.get());
+                assertDdlFails("RENAME TABLE t TO t3", "table busy [reason=busyReader]");
+                Assert.assertEquals(2, lockAttempts.get());
+            } finally {
+                run.join();
+                engine.setPoolListener(null);
+            }
+            capture.drain();
+            capture.assertNotLogged(WAIT_LINE);
+            drainViewQueue();
+            assertViewState("vu");
+            assertViewColumns("vu", "a:INT, b:INT");
+
+            execute("TRUNCATE TABLE t");
+            execute("RENAME TABLE t TO t3");
+            execute("DROP TABLE t3");
+            assertTableListed("t3", false);
+        });
+    }
+
+    @Test
+    public void testDdlFailsAtOnceWhenQueryAndViewCompileHoldTable() throws Exception {
+        // A view compile run over t and a query both hold t's reader, in either order of the
+        // pool's slots. Waiting for the run cannot make the lock succeed while the query holds t,
+        // so DROP, RENAME and TRUNCATE of t fail after one lock attempt, as they do without views,
+        // and an INSERT into t from another session goes through while both still hold t.
+        assertMemoryLeak(() -> {
+            // the server default; a DDL that waited would log its wait before it fails
+            node1.setProperty(PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 500);
+            for (boolean isRunFirst : new boolean[]{true, false}) {
+                capture.start();
+                createTableWithRows("t");
+                createView("v", "SELECT * FROM t");
+                // queues the compile of the views over t
+                execute("ALTER TABLE t ADD COLUMN b INT");
+                final ViewCompileParker run = ViewCompileParker.ofQueueDrain(engine, "t", PoolListener.SRC_READER);
+                final AtomicInteger lockAttempts = countTableMetadataLocks(run);
+                ReaderHoldingThread query = null;
+                try {
+                    if (isRunFirst) {
+                        run.start();
+                        query = ReaderHoldingThread.start(engine, "t");
+                    } else {
+                        query = ReaderHoldingThread.start(engine, "t");
+                        run.start();
+                    }
+                    assertDdlFails("TRUNCATE TABLE t", "there is an active query against 't'. Try again.");
+                    assertDdlFails("DROP TABLE t", "could not lock 't~' [reason='busyReader']");
+                    Assert.assertEquals(1, lockAttempts.get());
+                    assertDdlFails("RENAME TABLE t TO t3", "table busy [reason=busyReader]");
+                    Assert.assertEquals(2, lockAttempts.get());
+                    executeInOwnContext("INSERT INTO t (a) VALUES (3)");
+                } finally {
+                    run.join();
+                    engine.setPoolListener(null);
+                    if (query != null) {
+                        query.close();
+                    }
+                }
+                capture.drain();
+                capture.assertNotLogged(WAIT_LINE);
+                assertQuery("t")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                a\tb
+                                1\tnull
+                                2\tnull
+                                3\tnull
+                                """);
+                drainViewQueue();
+                assertViewState("v");
+                assertViewColumns("v", "a:INT, b:INT");
+
+                execute("DROP VIEW v");
+                execute("DROP TABLE t");
+                drainViewQueue();
+            }
+        });
+    }
+
+    @Test
     public void testDdlFailsAtOnceWhenQueryHoldsTable() throws Exception {
         // A query holds t's reader and no view compile runs. The DDL fails after one lock
         // attempt, as it does today, and does not wait.
@@ -367,6 +479,27 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
             execute("DROP TABLE u");
             assertTableListed("u", false);
         });
+    }
+
+    @Test
+    public void testDdlFailsAtOnceWhenQueryHoldsTableDuringStartupViewCompile() throws Exception {
+        // As testDdlFailsAtOnceWhenQueryHoldsTableDuringUnrelatedViewCompile(), with the run that
+        // compiles every view at server startup.
+        assertMemoryLeak(() -> assertDdlFailsAtOnceWhenQueryHoldsTableDuringRunOverU(
+                ViewCompileParker.ofStartupPass(engine, "u", PoolListener.SRC_READER)
+        ));
+    }
+
+    @Test
+    public void testDdlFailsAtOnceWhenQueryHoldsTableDuringUnrelatedViewCompile() throws Exception {
+        // A query holds t's reader while a view compile run over the table u runs. The run holds
+        // nothing of t, so DROP, RENAME and TRUNCATE of t fail after one lock attempt, as they do
+        // without views, and do not wait for the run. TRUNCATE no longer holds t's writer once it
+        // failed, so an INSERT into t from another session goes through while the query and the
+        // run still run.
+        assertMemoryLeak(() -> assertDdlFailsAtOnceWhenQueryHoldsTableDuringRunOverU(
+                ViewCompileParker.ofQueueDrain(engine, "u", PoolListener.SRC_READER)
+        ));
     }
 
     @Test
@@ -407,34 +540,389 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
     }
 
     @Test
-    public void testDdlRetriesOnceAfterViewCompileWhenQueryHoldsTable() throws Exception {
-        // A query holds t's reader while a view compile run over another table runs. DROP cannot
-        // tell the query from the run, so it waits for the run, tries the lock once more, and then
-        // fails on the query as it does today.
+    public void testDdlRetriesAtOnceWhenHolderLetGoBeforeScan() throws Exception {
+        // The holder of t that failed the lock attempt of a DDL lets go of t before the DDL scans
+        // the pools for the holders of t: a view compile run over t that ends, or a query while an
+        // unrelated run over u runs. Nothing holds t when the DDL looks, so it tries the lock again
+        // at once and succeeds at its second attempt, without waiting for the run over u.
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, Long.MAX_VALUE);
-            createTableWithRows("t");
-            createTableWithRows("t2");
-            createView("v2", "SELECT * FROM t2");
-            execute("ALTER TABLE t2 ADD COLUMN b INT");
+            for (String[] ddl : DDLS_LOCKING_T_AT_SECOND_ATTEMPT) {
+                createTableWithRows("t");
+                createView("v", "SELECT * FROM t");
+                // queues the compile of the views over t
+                execute("ALTER TABLE t ADD COLUMN b INT");
+                final ViewCompileParker runOverT = ViewCompileParker.ofQueueDrain(engine, "t", PoolListener.SRC_READER);
+                final StringBuffer lockAttempts = recordLockAttemptsOfT(runOverT);
+                final AtomicInteger scans = new AtomicInteger();
+                engine.setViewCompileHolderScanCallback(() -> {
+                    if (scans.incrementAndGet() == 1) {
+                        joinRun(runOverT);
+                    }
+                });
+                try {
+                    runOverT.start();
+                    capture.start();
+                    execute(ddl[0]);
+                } finally {
+                    engine.setViewCompileHolderScanCallback(null);
+                    runOverT.join();
+                    engine.setPoolListener(null);
+                }
+                // the run ended during the first scan, so the DDL scanned again
+                Assert.assertEquals(2, scans.get());
+                Assert.assertEquals(ddl[1], lockAttempts.toString());
+                capture.drain();
+                capture.assertOnlyOnce(Pattern.quote(WAIT_LINE));
+                dropTablesAndViewOfT();
+            }
 
-            final AtomicInteger lockAttempts = countTableMetadataLocks();
-            try (
-                    RecordCursorFactory factory = select("SELECT * FROM t");
-                    RecordCursor ignore = factory.getCursor(sqlExecutionContext)
-            ) {
-                ViewCompileParker.ofQueueDrain(engine, "t2", PoolListener.SRC_READER).executeWhileHolding(capture, "t", () -> {
-                    assertDdlFails("DROP TABLE t", "could not lock 't~' [reason='busyReader']");
-                    Assert.assertEquals(2, lockAttempts.get());
-                }, null);
+            createTableWithRows("u");
+            createView("vu", "SELECT * FROM u");
+            // queues the compile of the views over u
+            execute("ALTER TABLE u ADD COLUMN b INT");
+            final ViewCompileParker runOverU = ViewCompileParker.ofQueueDrain(engine, "u", PoolListener.SRC_READER);
+            engine.setPoolListener(runOverU);
+            try {
+                runOverU.start();
+                for (String[] ddl : DDLS_LOCKING_T_AT_SECOND_ATTEMPT) {
+                    createTableWithRows("t");
+                    final ReaderHoldingThread query = ReaderHoldingThread.start(engine, "t");
+                    final StringBuffer lockAttempts = recordLockAttemptsOfT(null);
+                    final AtomicInteger scans = new AtomicInteger();
+                    engine.setViewCompileHolderScanCallback(() -> {
+                        if (scans.incrementAndGet() == 1) {
+                            closeQuery(query);
+                        }
+                    });
+                    try {
+                        capture.start();
+                        execute(ddl[0]);
+                        Assert.assertTrue(
+                                "the DDL waited for the run over u",
+                                ViewStateStore.isCompileRunRunning(engine.getViewStateStore().getCompileRunActivity())
+                        );
+                    } finally {
+                        engine.setViewCompileHolderScanCallback(null);
+                        engine.setPoolListener(null);
+                        query.close();
+                    }
+                    Assert.assertEquals(1, scans.get());
+                    Assert.assertEquals(ddl[1], lockAttempts.toString());
+                    capture.drain();
+                    capture.assertOnlyOnce(Pattern.quote(WAIT_LINE));
+                    dropTablesAndViewOfT();
+                }
             } finally {
+                runOverU.join();
                 engine.setPoolListener(null);
             }
+            drainViewQueue();
+            assertViewState("vu");
+            assertViewColumns("vu", "a:INT, b:INT");
+        });
+    }
+
+    @Test
+    public void testDdlRetryingAtOnceGivesUpOnceBusyWaitTimeoutPasses() throws Exception {
+        // The busy wait timeout bounds the lock attempts of a DDL that finds nothing that holds its
+        // table after a failed attempt. A query holds t while an unrelated view compile run over u
+        // runs. The query ends before each scan of the DDL for the holders of t, so the DDL tries
+        // the lock again at once, and another query takes t before each retry. The test clock moves
+        // by a quarter of the timeout at each scan, so the DDL gives up with the busy error at its
+        // fourth attempt, the first one after the timeout passed.
+        assertMemoryLeak(() -> {
+            final long timeoutMillis = 1_000;
+            node1.setProperty(PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, timeoutMillis);
+            setCurrentMicros(ALTER_MICROS);
+            createTableWithRows("t");
+            createTableWithRows("u");
+            createView("vu", "SELECT * FROM u");
+            // queues the compile of the views over u
+            execute("ALTER TABLE u ADD COLUMN b INT");
+            final ViewCompileParker runOverU = ViewCompileParker.ofQueueDrain(engine, "u", PoolListener.SRC_READER);
+            engine.setPoolListener(runOverU);
+            try {
+                runOverU.start();
+                assertDdlRetryingAtOnceGivesUpOnceBusyWaitTimeoutPasses("DROP TABLE t", "could not lock 't~' [reason='busyReader']", timeoutMillis);
+                assertDdlRetryingAtOnceGivesUpOnceBusyWaitTimeoutPasses("RENAME TABLE t TO t3", "table busy [reason=busyReader]", timeoutMillis);
+            } finally {
+                runOverU.join();
+                engine.setPoolListener(null);
+            }
+            assertQuery("t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a
+                            1
+                            2
+                            """);
+            execute("RENAME TABLE t TO t3");
+            execute("DROP TABLE t3");
+            assertTableListed("t3", false);
+        });
+    }
+
+    @Test
+    public void testDdlScanningAgainGivesUpOnceBusyWaitTimeoutPasses() throws Exception {
+        // The busy wait timeout bounds the scans of a DDL for the holders of its table, which the DDL
+        // repeats while view compile runs start or end during a scan. A query holds t while an
+        // unrelated view compile run over u runs. The query ends before the first scan, so the DDL
+        // tries the lock again at once, and another query takes t before the retry. Then a run starts
+        // and ends during each scan, so the DDL cannot tell whether the query's thread runs a run,
+        // and scans again; the test clock moves by a quarter of the timeout at each scan. The DDL
+        // gives up with the busy error once the timeout passed.
+        assertMemoryLeak(() -> {
+            final long timeoutMillis = 1_000;
+            node1.setProperty(PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, timeoutMillis);
+            setCurrentMicros(ALTER_MICROS);
+            createTableWithRows("t");
+            // a table with no views, whose compile is a run that compiles nothing
+            createTableWithRows("w");
+            createTableWithRows("u");
+            createView("vu", "SELECT * FROM u");
+            // queues the compile of the views over u
+            execute("ALTER TABLE u ADD COLUMN b INT");
+            final ViewCompileParker runOverU = ViewCompileParker.ofQueueDrain(engine, "u", PoolListener.SRC_READER);
+            engine.setPoolListener(runOverU);
+            try {
+                runOverU.start();
+                assertDdlScanningAgainGivesUpOnceBusyWaitTimeoutPasses("DROP TABLE t", "could not lock 't~' [reason='busyReader']", timeoutMillis);
+                assertDdlScanningAgainGivesUpOnceBusyWaitTimeoutPasses("RENAME TABLE t TO t3", "table busy [reason=busyReader]", timeoutMillis);
+            } finally {
+                runOverU.join();
+                engine.setPoolListener(null);
+            }
+            assertQuery("t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a
+                            1
+                            2
+                            """);
+            execute("RENAME TABLE t TO t3");
+            execute("DROP TABLE t3");
+            assertTableListed("t3", false);
+        });
+    }
+
+    @Test
+    public void testDdlScansAgainWhenViewCompileEndsDuringScan() throws Exception {
+        // A view compile run over t fails the lock attempt of a DDL of t. The DDL scans the pools
+        // and finds the run's thread in t's slot. Before the DDL looks the thread up among the
+        // threads of the runs, the run returns t's reader and ends, so the thread looks like a
+        // query's. The DDL sees that a run ended during the scan, scans again, finds nothing that
+        // holds t, and succeeds at its second attempt instead of failing as busy.
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, Long.MAX_VALUE);
+            for (String[] ddl : DDLS_LOCKING_T_AT_SECOND_ATTEMPT) {
+                createTableWithRows("t");
+                createView("v", "SELECT * FROM t");
+                // queues the compile of the views over t
+                execute("ALTER TABLE t ADD COLUMN b INT");
+                final ViewCompileParker runOverT = ViewCompileParker.ofQueueDrain(engine, "t", PoolListener.SRC_READER);
+                final StringBuffer lockAttempts = recordLockAttemptsOfT(runOverT);
+                final AtomicInteger scans = new AtomicInteger();
+                final AtomicInteger lookups = new AtomicInteger();
+                engine.setViewCompileHolderScanCallback(scans::incrementAndGet);
+                engine.setViewCompileHolderLookupCallback(() -> {
+                    if (lookups.incrementAndGet() == 1) {
+                        joinRun(runOverT);
+                    }
+                });
+                try {
+                    runOverT.start();
+                    capture.start();
+                    execute(ddl[0]);
+                } finally {
+                    engine.setViewCompileHolderScanCallback(null);
+                    engine.setViewCompileHolderLookupCallback(null);
+                    runOverT.join();
+                    engine.setPoolListener(null);
+                }
+                Assert.assertEquals(2, scans.get());
+                Assert.assertEquals(2, lookups.get());
+                Assert.assertEquals(ddl[1], lockAttempts.toString());
+                capture.drain();
+                capture.assertOnlyOnce(Pattern.quote(WAIT_LINE));
+                dropTablesAndViewOfT();
+            }
+        });
+    }
+
+    @Test
+    public void testDdlScansAgainWhenViewCompileStartsDuringScan() throws Exception {
+        // A query fails the lock attempt of a DDL of t while an unrelated view compile run over u
+        // runs. Before the DDL scans the pools for the holders of t, the query ends, and a run over
+        // t starts and takes t's reader. The DDL sees that a run started during the scan, scans
+        // again, finds only the run over t, waits for it, and then succeeds.
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, Long.MAX_VALUE);
+            createTableWithRows("u");
+            createView("vu", "SELECT * FROM u");
+            // queues the compile of the views over u
+            execute("ALTER TABLE u ADD COLUMN b INT");
+            final ViewCompileParker runOverU = ViewCompileParker.ofQueueDrain(engine, "u", PoolListener.SRC_READER);
+            engine.setPoolListener(runOverU);
+            try {
+                runOverU.start();
+                for (String[] ddl : DDLS_LOCKING_T_AT_SECOND_ATTEMPT) {
+                    createTableWithRows("t");
+                    createView("v", "SELECT * FROM t");
+                    final ReaderHoldingThread query = ReaderHoldingThread.start(engine, "t");
+                    final ViewCompileParker runOverT = ViewCompileParker.ofQueueDrain(engine, "t", PoolListener.SRC_READER);
+                    final StringBuffer lockAttempts = recordLockAttemptsOfT(runOverT);
+                    final AtomicInteger scans = new AtomicInteger();
+                    engine.setViewCompileHolderScanCallback(() -> {
+                        if (scans.incrementAndGet() == 1) {
+                            closeQuery(query);
+                            engine.enqueueCompileView(engine.verifyTableName("t"));
+                            startRun(runOverT);
+                        }
+                    });
+                    try {
+                        capture.start();
+                        runOverT.releaseAfterDdlWaits(capture, "t");
+                        execute(ddl[0]);
+                    } finally {
+                        engine.setViewCompileHolderScanCallback(null);
+                        runOverT.join();
+                        engine.setPoolListener(null);
+                        query.close();
+                    }
+                    Assert.assertEquals(2, scans.get());
+                    Assert.assertEquals(ddl[1], lockAttempts.toString());
+                    capture.drain();
+                    capture.assertOnlyOnce(Pattern.quote(WAIT_LINE));
+                    dropTablesAndViewOfT();
+                }
+            } finally {
+                runOverU.join();
+                engine.setPoolListener(null);
+            }
+        });
+    }
+
+    @Test
+    public void testDdlStopsWaitingWhenViewCompileThreadStartsAnotherRun() throws Exception {
+        // A view-compiler worker drains the compile of the views over t, which holds t's reader,
+        // and right after that drain ended, a drain of the compile of the views over t2, which
+        // holds t2's reader. A DDL of t that waits for the first drain stops waiting once that
+        // drain ended, although the same thread runs the second one: the DDL waits for the run, not
+        // for its thread. It locks t and succeeds while the second drain still runs. The DDL thread
+        // stays inside its first clock read of the wait until the worker moved on to the second
+        // drain, so that the DDL never sees the worker run no drain at all.
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, Long.MAX_VALUE);
+            createTableWithRows("t2");
+            createView("v2", "SELECT * FROM t2");
+            final long ddlThread = Thread.currentThread().threadId();
+            for (String[] ddl : DDLS_LOCKING_T_AT_SECOND_ATTEMPT) {
+                createTableWithRows("t");
+                createView("v", "SELECT * FROM t");
+                // queues the compile of the views over t, which the first drain takes
+                execute("ALTER TABLE t ADD COLUMN b INT");
+                final ViewCompileParker worker = ViewCompileParker.ofTwoQueueDrains(engine, PoolListener.SRC_READER, "t", "t2");
+                final StringBuffer lockAttempts = recordLockAttemptsOfT(worker);
+                final AtomicBoolean isScanned = new AtomicBoolean();
+                final AtomicBoolean isWorkerMovedOn = new AtomicBoolean();
+                engine.setViewCompileHolderLookupCallback(() -> isScanned.set(true));
+                testMicrosClock = () -> {
+                    if (Thread.currentThread().threadId() == ddlThread && isScanned.get() && isWorkerMovedOn.compareAndSet(false, true)) {
+                        moveOnToNextPark(worker);
+                    }
+                    return defaultMicrosecondClock.getTicks();
+                };
+                final AtomicBoolean isSecondDrainRunning = new AtomicBoolean();
+                // a DDL that waited for the worker's thread would wait for the second drain forever:
+                // release the worker after a while, so that such a DDL ends and fails the test
+                try (RunWatchdog ignore = new RunWatchdog(worker)) {
+                    worker.start();
+                    capture.start();
+                    execute(ddl[0]);
+                    isSecondDrainRunning.set(ViewStateStore.isCompileRunRunning(engine.getViewStateStore().getCompileRunActivity()));
+                } finally {
+                    testMicrosClock = defaultMicrosecondClock;
+                    engine.setViewCompileHolderLookupCallback(null);
+                    worker.join();
+                    engine.setPoolListener(null);
+                }
+                Assert.assertTrue(isWorkerMovedOn.get());
+                Assert.assertTrue("the DDL waited for the second drain", isSecondDrainRunning.get());
+                Assert.assertEquals(ddl[1], lockAttempts.toString());
+                capture.drain();
+                capture.assertOnlyOnce(Pattern.quote(WAIT_LINE));
+                dropTablesAndViewOfT();
+            }
+            assertViewState("v2");
+            assertViewColumns("v2", "a:INT");
+        });
+    }
+
+    @Test
+    public void testDdlWaitsForEveryViewCompileHoldingTable() throws Exception {
+        // Two view compile runs hold t's reader at once. A DDL of t waits until both have ended:
+        // it does not try the lock again when only the first one has, and so it never locks t in
+        // the middle of the second run. Its second lock attempt then succeeds.
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, Long.MAX_VALUE);
+            assertDdlWaitsForEveryViewCompileHoldingT("TRUNCATE TABLE t");
+            assertQuery("t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("a\tb\n");
+            drainViewQueue();
+            assertViewState("v");
+            assertViewColumns("v", "a:INT, b:INT");
+            execute("DROP VIEW v");
             execute("DROP TABLE t");
+
+            assertDdlWaitsForEveryViewCompileHoldingT("DROP TABLE t");
+            assertTableListed("t", false);
+        });
+    }
+
+    @Test
+    public void testDdlWaitsOnlyForViewCompileThatHoldsTable() throws Exception {
+        // Two view compile runs run at once, one holds t's reader and the other t2's reader. A DDL
+        // of t waits only for the run that holds t: once that run ends, the DDL locks t and
+        // succeeds while the run over t2 still runs.
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, Long.MAX_VALUE);
+            createTableWithRows("t2");
+            createView("v2", "SELECT * FROM t2");
+
+            assertDdlWaitsOnlyForViewCompileThatHoldsT("TRUNCATE TABLE t", 0);
+            assertQuery("t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("a\tb\n");
+            drainViewQueue();
+            assertViewState("v");
+            assertViewColumns("v", "a:INT, b:INT");
+            execute("DROP VIEW v");
+            execute("DROP TABLE t");
+
+            assertDdlWaitsOnlyForViewCompileThatHoldsT("RENAME TABLE t TO u", 1);
+            assertTableListed("t", false);
+            assertQuery("u")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a\tb
+                            1\tnull
+                            2\tnull
+                            """);
+            execute("DROP TABLE u");
+            execute("DROP VIEW v");
+
+            assertDdlWaitsOnlyForViewCompileThatHoldsT("DROP TABLE t", 2);
             assertTableListed("t", false);
             drainViewQueue();
             assertViewState("v2");
-            assertViewColumns("v2", "a:INT, b:INT");
+            assertViewColumns("v2", "a:INT, c0:INT, c1:INT, c2:INT");
         });
     }
 
@@ -481,6 +969,67 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
                             1\tnull
                             2\t20
                             """);
+        });
+    }
+
+    @Test
+    public void testDropFailsAtOnceWhenQueryHoldsTableMetadata() throws Exception {
+        // Another thread holds t's pooled metadata, as a query compile does, while a view compile
+        // run over the table u runs. DROP and RENAME of t fail on the metadata after one lock
+        // attempt, as they do without views. Then the compile run of a view over
+        // table_partitions('t') holds t's metadata while a query holds t's reader: DROP and RENAME
+        // fail on the metadata at once too, since waiting for the run cannot make the lock succeed
+        // while the query holds t.
+        assertMemoryLeak(() -> {
+            // the server default; a DDL that waited would log its wait before it fails
+            node1.setProperty(PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 500);
+            execute("CREATE TABLE t (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t VALUES (1, '2024-01-01T00:00:00.000000Z')");
+            Assert.assertFalse(engine.verifyTableName("t").isWal());
+            createTableWithRows("u");
+            createView("vu", "SELECT * FROM u");
+            // queues the compile of the views over u
+            execute("ALTER TABLE u ADD COLUMN b INT");
+            final ViewCompileParker runOverU = ViewCompileParker.ofQueueDrain(engine, "u", PoolListener.SRC_READER);
+            engine.setPoolListener(runOverU);
+            final ReaderHoldingThread metadataHolder = ReaderHoldingThread.startHoldingTableMetadata(engine, "t");
+            try {
+                runOverU.start();
+                assertDdlFails("DROP TABLE t", "could not lock 't~' [reason='busyTableReaderMetaPool']");
+                assertDdlFails("RENAME TABLE t TO t3", "table busy [reason=busyTableReaderMetaPool]");
+            } finally {
+                runOverU.join();
+                engine.setPoolListener(null);
+                metadataHolder.close();
+            }
+            capture.drain();
+            capture.assertNotLogged(WAIT_LINE);
+
+            createView("vp", "SELECT * FROM table_partitions('t')");
+            // queues the compile of the views over t
+            execute("ALTER TABLE t ADD COLUMN b INT");
+            final ViewCompileParker runOverT = ViewCompileParker.ofQueueDrain(engine, "t", PoolListener.SRC_TABLE_METADATA);
+            engine.setPoolListener(runOverT);
+            final ReaderHoldingThread query = ReaderHoldingThread.start(engine, "t");
+            try {
+                runOverT.start();
+                assertDdlFails("DROP TABLE t", "could not lock 't~' [reason='busyTableReaderMetaPool']");
+                assertDdlFails("RENAME TABLE t TO t3", "table busy [reason=busyTableReaderMetaPool]");
+            } finally {
+                runOverT.join();
+                engine.setPoolListener(null);
+                query.close();
+            }
+            capture.drain();
+            capture.assertNotLogged(WAIT_LINE);
+            drainViewQueue();
+            assertViewState("vp");
+            assertViewState("vu");
+            assertViewColumns("vu", "a:INT, b:INT");
+
+            execute("RENAME TABLE t TO t3");
+            execute("DROP TABLE t3");
+            assertTableListed("t3", false);
         });
     }
 
@@ -568,27 +1117,23 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
             final AtomicInteger lockAttempts = new AtomicInteger();
             final AtomicInteger unlocks = new AtomicInteger();
             final long ddlThread = Thread.currentThread().threadId();
+            // firstRun.executeWhileHolding() passes each pool event to the first run before this listener
             engine.setPoolListener((factoryType, thread, tableToken, event, segment, position) -> {
-                firstRun.onEvent(factoryType, thread, tableToken, event, segment, position);
                 secondRun.onEvent(factoryType, thread, tableToken, event, segment, position);
                 if (isTableMetadataLockOfT(ddlThread, factoryType, thread, tableToken, event)
                         && lockAttempts.incrementAndGet() == 2) {
                     engine.enqueueCompileView(tableToken);
                     startRun(secondRun);
-                } else if (isTableMetadataUnlockOfT(ddlThread, factoryType, thread, tableToken, event)) {
-                    final int unlockCount = unlocks.incrementAndGet();
-                    if (unlockCount == 1) {
-                        firstRun.release();
-                    } else if (unlockCount == 2) {
-                        joinRun(secondRun);
-                    }
+                } else if (isTableMetadataUnlockOfT(ddlThread, factoryType, thread, tableToken, event)
+                        && unlocks.incrementAndGet() == 2) {
+                    joinRun(secondRun);
                 }
             });
             try {
-                firstRun.start();
-                execute("DROP TABLE t");
+                // the first run ends once DROP logs its wait, so that DROP waits for it, and does
+                // not lock t between two of the run's borrows
+                firstRun.executeWhileHolding(capture, "t", () -> execute("DROP TABLE t"), null);
             } finally {
-                firstRun.join();
                 secondRun.join();
                 engine.setPoolListener(null);
             }
@@ -749,7 +1294,8 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
                     {"RENAME TABLE t TO u", "table busy [reason=busyReader]"}
             };
             for (String[] ddl : ddls) {
-                // the DDL gives up at once, or, at the server default, tries the lock once more
+                // the DDL gives up at once, with no busy wait as at the server default, since the
+                // query that holds t is no view compile run
                 for (long timeoutMillis : new long[]{0, 500}) {
                     node1.setProperty(PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, timeoutMillis);
                     createTableAndView("t", "v");
@@ -800,7 +1346,8 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
         // attempt then fails on the query, and so does TRUNCATE. The retry leaves the views valid
         // with the new column.
         assertMemoryLeak(() -> {
-            // TRUNCATE gives up at once, or, at the server default, tries the lock once more
+            // TRUNCATE gives up at once, with no busy wait as at the server default, since the
+            // query that holds t is no view compile run
             for (long timeoutMillis : new long[]{0, 500}) {
                 node1.setProperty(PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, timeoutMillis);
                 createTableAndViewsThenAddColumnAtAlterTime();
@@ -1190,6 +1737,75 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
     }
 
     @Test
+    public void testTruncateLockingInMiddleOfViewCompileRunRetriesTheCompile() throws Exception {
+        // The compile of the view vj, which joins t with t2, holds t's reader when TRUNCATE tries to
+        // lock t. Before TRUNCATE scans the pools for the holders of t, the optimiser of the compile
+        // returns t's reader and takes t2's, and the run keeps running. Nothing holds t then, so
+        // TRUNCATE tries the lock again at once, and locks t in the middle of the run. Code
+        // generation of the compile then meets the lock: the compile leaves vj as it was, and its
+        // busy retry leaves vj valid with the new column.
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, Long.MAX_VALUE);
+            setCurrentMicros(CREATE_MICROS);
+            createTableWithRows("t");
+            createTableWithRows("t2");
+            final String joinSql = "SELECT x.*, y.a a2 FROM t x JOIN t2 y ON x.a = y.a";
+            createView("vj", joinSql);
+            setCurrentMicros(ALTER_MICROS);
+            // queues the compile of the views over t
+            execute("ALTER TABLE t ADD COLUMN b INT");
+            setCurrentMicros(TRUNCATE_MICROS);
+
+            // the run parks at its first borrow of t, then at its first borrow of t2
+            final ViewCompileParker run = ViewCompileParker.ofQueueDrainParkingTwice(engine, PoolListener.SRC_READER, "t", "t2");
+            final long ddlThread = Thread.currentThread().threadId();
+            final StringBuffer lockAttempts = recordLockAttemptsOfT((factoryType, thread, tableToken, event, segment, position) -> {
+                run.onEvent(factoryType, thread, tableToken, event, segment, position);
+                if (thread == ddlThread
+                        && factoryType == PoolListener.SRC_READER
+                        && event == PoolListener.EV_LOCK_SUCCESS
+                        && Chars.equals(tableToken.getTableName(), "t")) {
+                    // code generation of the compile borrows t while TRUNCATE holds the lock
+                    joinRun(run);
+                }
+            });
+            final AtomicInteger scans = new AtomicInteger();
+            engine.setViewCompileHolderScanCallback(() -> {
+                if (scans.incrementAndGet() == 1) {
+                    moveOnToNextPark(run);
+                }
+            });
+            try {
+                run.start();
+                capture.start();
+                execute("TRUNCATE TABLE t");
+            } finally {
+                engine.setViewCompileHolderScanCallback(null);
+                run.join();
+                engine.setPoolListener(null);
+            }
+            Assert.assertEquals(1, scans.get());
+            Assert.assertEquals("close 0:0 lock ", lockAttempts.toString());
+            capture.drain();
+            capture.assertOnlyOnce(Pattern.quote(WAIT_LINE));
+            final long dueMicros = TRUNCATE_MICROS + busyRetryTimeoutMicros();
+            assertViewStatus("vj", "valid", "", "2025-06-19T10:00:00.000000Z");
+            assertViewColumns("vj", "a:INT, a2:INT");
+            assertPendingCompileBusyRetries(pendingCompileBusyRetry("vj", ALTER_MICROS, dueMicros));
+
+            setCurrentMicros(dueMicros);
+            drainViewQueue();
+            assertViewStatus("vj", "valid", "", "2025-06-19T11:00:00.000000Z");
+            assertViewColumns("vj", "a:INT, b:INT, a2:INT");
+            assertPendingCompileBusyRetries("");
+
+            execute("INSERT INTO t VALUES (3, 30)");
+            execute("INSERT INTO t2 VALUES (3)");
+            assertSqlCursors(joinSql, "vj");
+        });
+    }
+
+    @Test
     public void testTruncateOfTwoTablesRetriesViewsWhoseCompileMetEachLock() throws Exception {
         // TRUNCATE locks the readers of one table after the other. While it holds each lock, a
         // compile of the views over that table runs and meets the lock. The views keep their state,
@@ -1388,63 +2004,6 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
             assertSqlCursors(joinSql, "vj");
             assertSqlCursors(joinAllSql, "vj2");
             assertSqlCursors(groupBySql, "vg");
-        });
-    }
-
-    @Test
-    public void testTruncateRetriesOnceAfterViewCompileWhenQueryHoldsTable() throws Exception {
-        // A query holds t's reader while a view compile run over another table runs. TRUNCATE
-        // cannot tell the query from the run, so it waits for the run, tries the lock once more,
-        // and then fails on the query as it does today, instead of trying until the timeout.
-        assertMemoryLeak(() -> {
-            node1.setProperty(PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, Long.MAX_VALUE);
-            createTableWithRows("t");
-            createTableWithRows("t2");
-            createView("v2", "SELECT * FROM t2");
-            execute("ALTER TABLE t2 ADD COLUMN b INT");
-
-            final ReaderHoldingThread query = ReaderHoldingThread.start(engine, "t");
-            try {
-                ViewCompileParker.ofQueueDrain(engine, "t2", PoolListener.SRC_READER).executeWhileHolding(capture, "t", () -> {
-                    // TRUNCATE reads the clock when it waits for view compile runs. One that kept trying
-                    // the lock after the run ended would read it on every try, and never reach the
-                    // timeout: end the query after many reads with no run running, so that such a
-                    // TRUNCATE succeeds and fails the test.
-                    final long ddlThread = Thread.currentThread().threadId();
-                    final AtomicInteger clockReadsWithNoRun = new AtomicInteger();
-                    testMicrosClock = () -> {
-                        if (Thread.currentThread().threadId() == ddlThread
-                                && !ViewStateStore.isCompileRunRunning(engine.getViewStateStore().getCompileRunActivity())
-                                && clockReadsWithNoRun.incrementAndGet() == 1_000) {
-                            closeQuery(query);
-                        }
-                        return defaultMicrosecondClock.getTicks();
-                    };
-                    assertDdlFails("TRUNCATE TABLE t", "there is an active query against 't'. Try again.");
-                }, null);
-            } finally {
-                testMicrosClock = defaultMicrosecondClock;
-                query.close();
-            }
-            capture.drain();
-            capture.assertOnlyOnce(Pattern.quote(WAIT_LINE));
-            assertQuery("t")
-                    .noLeakCheck()
-                    .expectSize()
-                    .returns("""
-                            a
-                            1
-                            2
-                            """);
-
-            execute("TRUNCATE TABLE t");
-            assertQuery("t")
-                    .noLeakCheck()
-                    .expectSize()
-                    .returns("a\n");
-            drainViewQueue();
-            assertViewState("v2");
-            assertViewColumns("v2", "a:INT, b:INT");
         });
     }
 
@@ -1657,76 +2216,58 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
     @Test
     public void testTruncateWaitsAtMostBusyWaitTimeoutOverAllWaits() throws Exception {
         // The busy wait timeout bounds all waits of one TRUNCATE together. The test clock stands
-        // still while TRUNCATE waits for a view compile run over t, and a query holds t meanwhile.
-        // The second lock attempt of TRUNCATE closes the reader that the run left in the pool: at
-        // that moment the clock moves by the whole timeout, and a run over t2 starts. The attempt
-        // fails on the query while that run runs, and TRUNCATE gives up at once instead of waiting
-        // for the run.
+        // still while TRUNCATE waits for a view compile run over t. When the run returns t's
+        // reader, a second run over t takes t's reader, before the first run ends. TRUNCATE tries
+        // the lock again once the first run ended, and the clock moves by the whole timeout while
+        // that attempt runs. The attempt fails on the second run, and TRUNCATE gives up at once
+        // instead of waiting for it.
         assertMemoryLeak(() -> {
             final long timeoutMillis = 1_000;
             node1.setProperty(PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, timeoutMillis);
             createTableWithRows("t");
-            createTableWithRows("t2");
-            createView("v2", "SELECT * FROM t2");
-            createViewsThenAddColumn();
+            createView("v", "SELECT * FROM t");
+            // queues the compile of the views over t
+            execute("ALTER TABLE t ADD COLUMN b INT");
             setCurrentMicros(ALTER_MICROS);
 
-            final ViewCompileParker runOverT = ViewCompileParker.ofQueueDrain(engine, "t", PoolListener.SRC_READER);
-            final ViewCompileParker runOverT2 = ViewCompileParker.ofQueueDrain(engine, "t2", PoolListener.SRC_READER);
+            final ViewCompileParker firstRun = ViewCompileParker.ofQueueDrain(engine, "t", PoolListener.SRC_READER);
+            final ViewCompileParker secondRun = ViewCompileParker.ofQueueDrain(engine, "t", PoolListener.SRC_READER);
+            final AtomicInteger firstRunReturns = new AtomicInteger();
             final AtomicInteger readerCloses = new AtomicInteger();
             final long ddlThread = Thread.currentThread().threadId();
-            // runOverT.executeWhileHolding() passes each pool event to the run over t before this listener
+            // firstRun.executeWhileHolding() passes each pool event to the first run before this listener
             engine.setPoolListener((factoryType, thread, tableToken, event, segment, position) -> {
-                runOverT2.onEvent(factoryType, thread, tableToken, event, segment, position);
-                // Runs on the DDL thread, inside the second lock attempt, which reads the clock once
-                // it fails. The attempt holds the lock of t's readers, so a run over t could not
-                // borrow one: the run that starts here reads t2.
-                if (thread == ddlThread
-                        && factoryType == PoolListener.SRC_READER
-                        && event == PoolListener.EV_LOCK_CLOSE
-                        && Chars.equals(tableToken.getTableName(), "t")
-                        && readerCloses.incrementAndGet() == 1) {
-                    currentMicros += timeoutMillis * 1_000;
-                    engine.enqueueCompileView(engine.verifyTableName("t2"));
-                    startRun(runOverT2);
+                secondRun.onEvent(factoryType, thread, tableToken, event, segment, position);
+                if (factoryType == PoolListener.SRC_READER && Chars.equals(tableToken.getTableName(), "t")) {
+                    if (thread == firstRun.getCompileThreadId()
+                            && event == PoolListener.EV_RETURN
+                            && firstRunReturns.incrementAndGet() == 1) {
+                        // runs on the first run's thread, which keeps its slot until the listener
+                        // returns: the second run takes the next slot
+                        engine.enqueueCompileView(tableToken);
+                        startRun(secondRun);
+                    } else if (thread == ddlThread
+                            && event == PoolListener.EV_LOCK_CLOSE
+                            && readerCloses.incrementAndGet() == 1) {
+                        // the second lock attempt closes the reader that the first run returned to
+                        // the pool's first slot
+                        currentMicros += timeoutMillis * 1_000;
+                    }
                 }
             });
-            // a TRUNCATE that waited past the timeout would wait for the parked run over t2
-            // forever: release that run after a while, so that such a TRUNCATE ends and fails the
-            // test
-            final CountDownLatch isTruncateDone = new CountDownLatch(1);
-            final Thread watchdog = new Thread(() -> {
-                try {
-                    if (!isTruncateDone.await(30, TimeUnit.SECONDS)) {
-                        runOverT2.release();
-                    }
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-            });
-            watchdog.start();
-            try {
-                runOverT.executeWhileHolding(capture, "t", () -> {
-                    // The run holds t's reader in the pool's first slot, so the query takes the second
-                    // slot. The first lock attempt of TRUNCATE fails on the run's slot, and the second
-                    // one closes the reader that the run returned there before it fails on the query.
-                    final ReaderHoldingThread query = ReaderHoldingThread.start(engine, "t");
-                    try {
-                        assertDdlFails("TRUNCATE TABLE t", "there is an active query against 't'. Try again.");
-                        Assert.assertTrue(
-                                "TRUNCATE waited for the run over t2",
-                                ViewStateStore.isCompileRunRunning(engine.getViewStateStore().getCompileRunActivity())
-                        );
-                    } finally {
-                        query.close();
-                    }
+            final AtomicBoolean isSecondRunRunning = new AtomicBoolean();
+            // a TRUNCATE that waited past the timeout would wait for the parked second run forever:
+            // release that run after a while, so that such a TRUNCATE ends and fails the test
+            try (RunWatchdog ignore = new RunWatchdog(secondRun)) {
+                firstRun.executeWhileHolding(capture, "t", () -> {
+                    assertDdlFails("TRUNCATE TABLE t", "there is an active query against 't'. Try again.");
+                    isSecondRunRunning.set(ViewStateStore.isCompileRunRunning(engine.getViewStateStore().getCompileRunActivity()));
                 }, null);
             } finally {
-                isTruncateDone.countDown();
-                watchdog.join();
-                runOverT2.join();
+                secondRun.join();
                 engine.setPoolListener(null);
             }
+            Assert.assertTrue("TRUNCATE waited for the second run", isSecondRunRunning.get());
             Assert.assertEquals(1, readerCloses.get());
             capture.drain();
             capture.assertOnlyOnce(Pattern.quote(WAIT_LINE));
@@ -1751,42 +2292,43 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
     }
 
     @Test
-    public void testTruncateWaitsUntilAllViewCompilesFinish() throws Exception {
-        // Two view compile runs run at once, one holds t's reader and the other t2's reader.
-        // TRUNCATE of t waits until no run is running, not only the one that holds t, so it
-        // fails once the busy wait timeout passes while the run over t2 still runs.
+    public void testTruncateWaitsForViewCompileInSecondReaderSlot() throws Exception {
+        // An idle reader of t sits in the first slot of the pool, and a view compile run holds t's
+        // reader in the second. The lock attempt of TRUNCATE takes the first slot, closes the idle
+        // reader, and fails on the run. TRUNCATE passes over the slot that its own attempt took,
+        // waits for the run, and then succeeds.
         assertMemoryLeak(() -> {
-            createTableWithRows("t");
-            createView("v", "SELECT * FROM t");
-            createTableWithRows("t2");
-            createView("v2", "SELECT * FROM t2");
-            final ViewCompileParker runOverT = ViewCompileParker.ofQueueDrain(engine, "t", PoolListener.SRC_READER);
-            final ViewCompileParker runOverT2 = ViewCompileParker.ofQueueDrain(engine, "t2", PoolListener.SRC_READER);
-            engine.setPoolListener(runOverT2);
+            node1.setProperty(PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, Long.MAX_VALUE);
+            createTableAndViewsThenAddColumn();
+            final StringBuffer readerLockEvents = new StringBuffer();
+            final long ddlThread = Thread.currentThread().threadId();
+            engine.setPoolListener((factoryType, thread, tableToken, event, segment, position) ->
+                    recordReaderLockEventOfT(readerLockEvents, ddlThread, factoryType, thread, tableToken, event, segment, position)
+            );
+            final TableReader idleReader = engine.getReader("t");
             try {
-                execute("ALTER TABLE t ADD COLUMN b INT");
-                runOverT.executeWhileHolding(capture, "t", () -> {
-                    execute("ALTER TABLE t2 ADD COLUMN b INT");
-                    runOverT2.start();
-
-                    // the server default
-                    node1.setProperty(PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 500);
-                    assertDdlFailsAfter(500, "TRUNCATE TABLE t", "there is an active query against 't'. Try again.");
+                // the run borrows t's reader in the second slot
+                ViewCompileParker.ofQueueDrain(engine, "t", PoolListener.SRC_READER).executeWhileHolding(capture, "t", () -> {
+                    idleReader.close();
+                    execute("TRUNCATE TABLE t");
                 }, null);
             } finally {
-                runOverT2.join();
+                Misc.free(idleReader);
                 engine.setPoolListener(null);
             }
-            execute("TRUNCATE TABLE t");
+            // the second attempt closes the reader that the run returned to the second slot
+            Assert.assertEquals("close 0:0 close 0:1 lock ", readerLockEvents.toString());
+            capture.drain();
+            capture.assertOnlyOnce(Pattern.quote(WAIT_LINE));
             assertQuery("t")
                     .noLeakCheck()
                     .expectSize()
                     .returns("a\tb\n");
             drainViewQueue();
             assertViewState("v");
-            assertViewState("v2");
+            assertViewState("v_dep");
             assertViewColumns("v", "a:INT, b:INT");
-            assertViewColumns("v2", "a:INT, b:INT");
+            assertViewColumns("v_dep", "a:INT, b:INT");
         });
     }
 
@@ -1819,6 +2361,97 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
                             a\tb
                             1\t2
                             """);
+        });
+    }
+
+    @Test
+    public void testTwoTableTruncateFailsAtOnceOnQueryDuringUnrelatedViewCompile() throws Exception {
+        // TRUNCATE of t and t2 truncates t, then fails at once on a query that holds t2's reader
+        // while a view compile run over the table u runs, as it does without views. The writers
+        // of both tables are free right after, so INSERTs into both go through while the query and
+        // the run still run.
+        assertMemoryLeak(() -> {
+            // the server default; a TRUNCATE that waited would log its wait before it fails
+            node1.setProperty(PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 500);
+            createTableWithRows("t");
+            createTableWithRows("t2");
+            createTableWithRows("u");
+            createView("vu", "SELECT * FROM u");
+            // queues the compile of the views over u
+            execute("ALTER TABLE u ADD COLUMN b INT");
+            final ViewCompileParker run = ViewCompileParker.ofQueueDrain(engine, "u", PoolListener.SRC_READER);
+            engine.setPoolListener(run);
+            final ReaderHoldingThread query = ReaderHoldingThread.start(engine, "t2");
+            try {
+                run.start();
+                assertDdlFails("TRUNCATE TABLE t, t2", "there is an active query against 't2'. Try again.");
+                executeInOwnContext("INSERT INTO t VALUES (3)", "INSERT INTO t2 VALUES (3)");
+            } finally {
+                run.join();
+                engine.setPoolListener(null);
+                query.close();
+            }
+            capture.drain();
+            capture.assertNotLogged(ViewCompileParker.DDL_WAIT_LINE_PREFIX);
+            assertQuery("t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a
+                            3
+                            """);
+            assertQuery("t2")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a
+                            1
+                            2
+                            3
+                            """);
+            drainViewQueue();
+            assertViewState("vu");
+            assertViewColumns("vu", "a:INT, b:INT");
+        });
+    }
+
+    @Test
+    public void testWaitForViewCompileEndsOnQueryArrivingDuringWait() throws Exception {
+        // A DDL of t waits for a view compile run that holds t's reader, and a query takes t's
+        // reader during the wait. Once the run ends, the DDL tries the lock again and fails on the
+        // query. It gives up at once, as it does without views, although an unrelated run over the
+        // table u still runs.
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, Long.MAX_VALUE);
+            createTableWithRows("u");
+            createView("vu", "SELECT * FROM u");
+            final String[][] ddls = {
+                    {"TRUNCATE TABLE t", "there is an active query against 't'. Try again."},
+                    {"DROP TABLE t", "could not lock 't~' [reason='busyReader']"}
+            };
+            for (int i = 0; i < ddls.length; i++) {
+                // one lock of t's metadata per lock attempt of DROP
+                assertWaitForViewCompileEndsOnQueryArrivingDuringWait(ddls[i][0], ddls[i][1], i, i == 0 ? 0 : 2);
+                assertQuery("t")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                a\tb
+                                1\tnull
+                                2\tnull
+                                """);
+                drainViewQueue();
+                assertViewState("v");
+                assertViewColumns("v", "a:INT, b:INT");
+                // The failed second attempt kept the first slot of t's reader pool. DROP on the same
+                // thread passes over the slot, and drops t's pool entry with the slot.
+                execute("DROP VIEW v");
+                execute("DROP TABLE t");
+                assertTableListed("t", false);
+            }
+            drainViewQueue();
+            assertViewState("vu");
+            assertViewColumns("vu", "a:INT, c0:INT, c1:INT");
         });
     }
 
@@ -1892,9 +2525,16 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
 
     // counts the DDL thread's locks of t's pooled metadata, one per lock attempt of DROP or RENAME
     private static AtomicInteger countTableMetadataLocks() {
+        return countTableMetadataLocks((factoryType, thread, tableToken, event, segment, position) -> {
+        });
+    }
+
+    // passes each pool event to the listener, and counts as countTableMetadataLocks() does
+    private static AtomicInteger countTableMetadataLocks(PoolListener listener) {
         final AtomicInteger lockAttempts = new AtomicInteger();
         final long ddlThread = Thread.currentThread().threadId();
         engine.setPoolListener((factoryType, thread, tableToken, event, segment, position) -> {
+            listener.onEvent(factoryType, thread, tableToken, event, segment, position);
             if (isTableMetadataLockOfT(ddlThread, factoryType, thread, tableToken, event)) {
                 lockAttempts.incrementAndGet();
             }
@@ -1992,6 +2632,33 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
         }
     }
 
+    private static void moveOnToNextPark(ViewCompileParker run) {
+        try {
+            run.moveOnToNextPark();
+        } catch (InterruptedException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    // Sets a pool listener that passes each pool event to the listener, when one is given, and
+    // records the lock attempts that this thread, which runs the DDL, makes on t: "meta " for each
+    // lock of t's pooled metadata, which DROP and RENAME take once per attempt, and the events that
+    // recordReaderLockEventOfT() records.
+    private static StringBuffer recordLockAttemptsOfT(@Nullable PoolListener listener) {
+        final StringBuffer events = new StringBuffer();
+        final long ddlThread = Thread.currentThread().threadId();
+        engine.setPoolListener((factoryType, thread, tableToken, event, segment, position) -> {
+            if (listener != null) {
+                listener.onEvent(factoryType, thread, tableToken, event, segment, position);
+            }
+            if (isTableMetadataLockOfT(ddlThread, factoryType, thread, tableToken, event)) {
+                events.append("meta ");
+            }
+            recordReaderLockEventOfT(events, ddlThread, factoryType, thread, tableToken, event, segment, position);
+        });
+        return events;
+    }
+
     // records a borrow or a return of the reader of t or t2, as "t:borrow " or "t2:return "
     private static void recordReaderEvent(StringBuffer events, TableToken tableToken, short event) {
         if (tableToken != null && (Chars.equals(tableToken.getTableName(), "t") || Chars.equals(tableToken.getTableName(), "t2"))) {
@@ -2000,6 +2667,40 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
             } else if (event == PoolListener.EV_RETURN) {
                 events.append(tableToken.getTableName()).append(":return ");
             }
+        }
+    }
+
+    // Records the DDL thread's lock events on t's readers: a reader that a lock attempt closes in a
+    // slot of the pool, as "close 0:1 ", and a lock that succeeds, as "lock ". A lock attempt that
+    // fails at a slot before it closed any reader records nothing.
+    private static void recordReaderLockEventOfT(
+            StringBuffer events,
+            long ddlThread,
+            byte factoryType,
+            long thread,
+            TableToken tableToken,
+            short event,
+            short segment,
+            short position
+    ) {
+        if (thread == ddlThread
+                && factoryType == PoolListener.SRC_READER
+                && tableToken != null
+                && Chars.equals(tableToken.getTableName(), "t")) {
+            if (event == PoolListener.EV_LOCK_CLOSE) {
+                events.append("close ").append(segment).append(':').append(position).append(' ');
+            } else if (event == PoolListener.EV_LOCK_SUCCESS) {
+                events.append("lock ");
+            }
+        }
+    }
+
+    // a query on another thread that holds t's reader
+    private static ReaderHoldingThread startQuery() {
+        try {
+            return ReaderHoldingThread.start(engine, "t");
+        } catch (InterruptedException e) {
+            throw new AssertionError(e);
         }
     }
 
@@ -2018,7 +2719,7 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
     ) throws Exception {
         final TableToken[] reservedName = new TableToken[1];
         try {
-            executeWhileQueryAndViewCompileHold(ddl, () -> {
+            executeWhileViewCompileHoldsThenMovesOn(ddl, () -> {
                 ViewCompileParker.dropTableAsAnotherSession(engine, "t", false);
                 if (isNameReserved) {
                     reservedName[0] = engine.lockTableName("t");
@@ -2068,7 +2769,7 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
             }
         });
         try {
-            executeWhileQueryAndViewCompileHold(ddl, null);
+            executeWhileViewCompileHoldsThenMovesOn(ddl, null);
             Assert.fail("expected to fail: " + ddl);
         } catch (SqlException | CairoException e) {
             TestUtils.assertEquals(expectedError, e.getFlyweightMessage());
@@ -2109,7 +2810,7 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
 
     private void assertDdlDoesNotActOnTableReplacedDuringViewCompileWait(String ddl, String expectedError) throws Exception {
         try {
-            executeWhileQueryAndViewCompileHold(ddl, () -> ViewCompileParker.dropTableAsAnotherSession(engine, "t", true));
+            executeWhileViewCompileHoldsThenMovesOn(ddl, () -> ViewCompileParker.dropTableAsAnotherSession(engine, "t", true));
             Assert.fail("expected to fail: " + ddl);
         } catch (SqlException | CairoException e) {
             TestUtils.assertEquals(expectedError, e.getFlyweightMessage());
@@ -2158,6 +2859,54 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
         assertTableListed("u", false);
     }
 
+    // Runs TRUNCATE, DROP and RENAME of t while a query holds t's reader and the view compile run
+    // holds u's reader. Each fails after one lock attempt and logs no wait, and an INSERT into t from
+    // another session goes through while the query and the run still hold their tables.
+    private void assertDdlFailsAtOnceWhenQueryHoldsTableDuringRunOverU(ViewCompileParker run) throws Exception {
+        // the server default; a DDL that waited would log its wait before it fails
+        node1.setProperty(PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 500);
+        createTableWithRows("t");
+        createTableWithRows("u");
+        createView("vu", "SELECT * FROM u");
+        // queues the compile of the views over u, which a queue drain takes
+        execute("ALTER TABLE u ADD COLUMN b INT");
+        final AtomicInteger lockAttempts = countTableMetadataLocks(run);
+        final ReaderHoldingThread query = ReaderHoldingThread.start(engine, "t");
+        try {
+            run.start();
+            assertDdlFails("TRUNCATE TABLE t", "there is an active query against 't'. Try again.");
+            assertDdlFails("DROP TABLE t", "could not lock 't~' [reason='busyReader']");
+            Assert.assertEquals(1, lockAttempts.get());
+            assertDdlFails("RENAME TABLE t TO t3", "table busy [reason=busyReader]");
+            Assert.assertEquals(2, lockAttempts.get());
+            executeInOwnContext("INSERT INTO t VALUES (3)");
+            Assert.assertTrue(ViewStateStore.isCompileRunRunning(engine.getViewStateStore().getCompileRunActivity()));
+        } finally {
+            run.join();
+            engine.setPoolListener(null);
+            query.close();
+        }
+        capture.drain();
+        capture.assertNotLogged(WAIT_LINE);
+        assertQuery("t")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        a
+                        1
+                        2
+                        3
+                        """);
+        drainViewQueue();
+        assertViewState("vu");
+        assertViewColumns("vu", "a:INT, b:INT");
+
+        execute("TRUNCATE TABLE t");
+        execute("RENAME TABLE t TO t3");
+        execute("DROP TABLE t3");
+        assertTableListed("t3", false);
+    }
+
     // The listener starts a view compile run on the DDL thread's first lock of t's metadata, and
     // waits until the run holds t's reader. It releases the run, and waits for it to end, when
     // the failed lock attempt unlocks t's metadata.
@@ -2183,6 +2932,187 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
             engine.setPoolListener(null);
         }
         Assert.assertEquals(2, lockAttempts.get());
+    }
+
+    // Runs the DDL of t while a query holds t's reader. The query ends before each scan of the DDL
+    // for the holders of t, and a new one takes t's reader before each retry of the lock, so that
+    // the DDL keeps trying the lock again at once; the test clock moves by a quarter of the busy
+    // wait timeout at each scan. The DDL must fail with the error at its fourth attempt. A DDL that
+    // tried more often ends once nothing takes t any more, and succeeds.
+    private void assertDdlRetryingAtOnceGivesUpOnceBusyWaitTimeoutPasses(String ddl, String expectedError, long timeoutMillis) throws Exception {
+        final ObjList<ReaderHoldingThread> queries = new ObjList<>();
+        queries.add(ReaderHoldingThread.start(engine, "t"));
+        final AtomicInteger lockAttempts = countTableMetadataLocks();
+        final AtomicInteger scans = new AtomicInteger();
+        engine.setViewCompileHolderScanCallback(() -> {
+            scans.incrementAndGet();
+            closeQuery(queries.getLast());
+            currentMicros += timeoutMillis * 1_000 / 4;
+        });
+        engine.setViewCompileRetryCallback(() -> {
+            if (queries.size() < 10) {
+                queries.add(startQuery());
+            }
+        });
+        try {
+            capture.start();
+            assertDdlFails(ddl, expectedError);
+        } finally {
+            engine.setViewCompileHolderScanCallback(null);
+            engine.setViewCompileRetryCallback(null);
+            engine.setPoolListener(null);
+            for (int i = 0, n = queries.size(); i < n; i++) {
+                queries.getQuick(i).close();
+            }
+        }
+        Assert.assertEquals(4, lockAttempts.get());
+        Assert.assertEquals(4, scans.get());
+        capture.drain();
+        capture.assertOnlyOnce(Pattern.quote(WAIT_LINE));
+    }
+
+    // Runs the DDL of t while a query holds t's reader. The query ends before the first scan of the
+    // DDL for the holders of t, so the DDL tries the lock again at once, and a second query takes
+    // t's reader before the retry. Then a view compile run starts and ends during each scan, and the
+    // test clock moves by a quarter of the busy wait timeout. The DDL must fail with the error after
+    // its second attempt and four more scans. A DDL that scanned more often ends once no run starts
+    // during a scan, and fails on the second query.
+    private void assertDdlScanningAgainGivesUpOnceBusyWaitTimeoutPasses(String ddl, String expectedError, long timeoutMillis) throws Exception {
+        final ReaderHoldingThread firstQuery = ReaderHoldingThread.start(engine, "t");
+        final ReaderHoldingThread[] secondQuery = new ReaderHoldingThread[1];
+        final TableToken tableWithNoViews = engine.verifyTableName("w");
+        final AtomicInteger lockAttempts = countTableMetadataLocks();
+        final AtomicInteger scans = new AtomicInteger();
+        engine.setViewCompileHolderScanCallback(() -> {
+            final int scan = scans.incrementAndGet();
+            if (scan == 1) {
+                closeQuery(firstQuery);
+            } else if (scan <= 20) {
+                engine.enqueueCompileView(tableWithNoViews);
+                ViewCompileParker.runQueueDrain(engine);
+                currentMicros += timeoutMillis * 1_000 / 4;
+            }
+        });
+        engine.setViewCompileRetryCallback(() -> {
+            if (secondQuery[0] == null) {
+                secondQuery[0] = startQuery();
+            }
+        });
+        try {
+            capture.start();
+            assertDdlFails(ddl, expectedError);
+        } finally {
+            engine.setViewCompileHolderScanCallback(null);
+            engine.setViewCompileRetryCallback(null);
+            engine.setPoolListener(null);
+            firstQuery.close();
+            if (secondQuery[0] != null) {
+                secondQuery[0].close();
+            }
+        }
+        Assert.assertEquals(2, lockAttempts.get());
+        Assert.assertEquals(5, scans.get());
+        capture.drain();
+        capture.assertOnlyOnce(Pattern.quote(WAIT_LINE));
+    }
+
+    // Runs the DDL of t while two view compile runs hold t's reader, in the pool's first two slots.
+    // Once the DDL logs its wait, the first run ends. Once the DDL has read its clock twice after
+    // that, so that it looked at the runs after the first one ended, the DDL must not have tried the
+    // lock again; then the second run ends, and the DDL succeeds at its second lock attempt.
+    private void assertDdlWaitsForEveryViewCompileHoldingT(String ddl) throws Exception {
+        drainViewQueue();
+        createTableWithRows("t");
+        createView("v", "SELECT * FROM t");
+        // queues the compile of the views over t, which the first run takes
+        execute("ALTER TABLE t ADD COLUMN b INT");
+        final ViewCompileParker firstRun = ViewCompileParker.ofQueueDrain(engine, "t", PoolListener.SRC_READER);
+        final ViewCompileParker secondRun = ViewCompileParker.ofQueueDrain(engine, "t", PoolListener.SRC_READER);
+        final long ddlThread = Thread.currentThread().threadId();
+        final StringBuffer readerLockEvents = new StringBuffer();
+        final AtomicInteger metadataLocks = new AtomicInteger();
+        final AtomicLong ddlClockReads = new AtomicLong();
+        final AtomicBoolean isDdlDone = new AtomicBoolean();
+        final String[] readerLockEventsAfterFirstRun = new String[1];
+        final int[] metadataLocksAfterFirstRun = new int[1];
+        // secondRun.executeWhileHolding() passes each pool event to the second run before this listener
+        engine.setPoolListener((factoryType, thread, tableToken, event, segment, position) -> {
+            firstRun.onEvent(factoryType, thread, tableToken, event, segment, position);
+            if (isTableMetadataLockOfT(ddlThread, factoryType, thread, tableToken, event)) {
+                metadataLocks.incrementAndGet();
+            }
+            recordReaderLockEventOfT(readerLockEvents, ddlThread, factoryType, thread, tableToken, event, segment, position);
+        });
+        testMicrosClock = () -> {
+            if (Thread.currentThread().threadId() == ddlThread) {
+                ddlClockReads.incrementAndGet();
+            }
+            return defaultMicrosecondClock.getTicks();
+        };
+        try {
+            firstRun.start();
+            // a second compile of the views over t, which the second run takes
+            engine.enqueueCompileView(engine.verifyTableName("t"));
+            secondRun.executeWhileHolding(capture, "t", () -> {
+                try {
+                    execute(ddl);
+                } finally {
+                    isDdlDone.set(true);
+                }
+            }, () -> {
+                firstRun.join();
+                final long clockReads = ddlClockReads.get();
+                while (!isDdlDone.get() && ddlClockReads.get() < clockReads + 2) {
+                    Os.pause();
+                }
+                readerLockEventsAfterFirstRun[0] = readerLockEvents.toString();
+                metadataLocksAfterFirstRun[0] = metadataLocks.get();
+            });
+        } finally {
+            testMicrosClock = defaultMicrosecondClock;
+            firstRun.join();
+            engine.setPoolListener(null);
+        }
+        final boolean isDrop = ddl.startsWith("DROP");
+        Assert.assertEquals("", readerLockEventsAfterFirstRun[0]);
+        Assert.assertEquals(isDrop ? 1 : 0, metadataLocksAfterFirstRun[0]);
+        // the second attempt closes the readers that the runs returned to the pool, and locks t
+        Assert.assertEquals("close 0:0 close 0:1 lock ", readerLockEvents.toString());
+        Assert.assertEquals(isDrop ? 2 : 0, metadataLocks.get());
+        capture.drain();
+        capture.assertOnlyOnce(Pattern.quote(WAIT_LINE));
+    }
+
+    // Runs the DDL of t while one view compile run holds t's reader and another one holds t2's. The
+    // run over t ends once the DDL logs its wait, and the run over t2 must still run when the DDL
+    // returns. The run over t2 compiles the views over t2, which the method queues by adding the
+    // column c{t2ColumnIndex} to t2.
+    private void assertDdlWaitsOnlyForViewCompileThatHoldsT(String ddl, int t2ColumnIndex) throws Exception {
+        drainViewQueue();
+        createTableWithRows("t");
+        createView("v", "SELECT * FROM t");
+        // queues the compile of the views over t, which the run over t takes
+        execute("ALTER TABLE t ADD COLUMN b INT");
+        final ViewCompileParker runOverT = ViewCompileParker.ofQueueDrain(engine, "t", PoolListener.SRC_READER);
+        final ViewCompileParker runOverT2 = ViewCompileParker.ofQueueDrain(engine, "t2", PoolListener.SRC_READER);
+        final AtomicBoolean isRunOverT2Running = new AtomicBoolean();
+        engine.setPoolListener(runOverT2);
+        // a DDL that waited for the run over t2 too would wait for it forever: release that run
+        // after a while, so that such a DDL ends and fails the test
+        try (RunWatchdog ignore = new RunWatchdog(runOverT2)) {
+            runOverT.executeWhileHolding(capture, "t", () -> {
+                execute("ALTER TABLE t2 ADD COLUMN c" + t2ColumnIndex + " INT");
+                runOverT2.start();
+                execute(ddl);
+                isRunOverT2Running.set(ViewStateStore.isCompileRunRunning(engine.getViewStateStore().getCompileRunActivity()));
+            }, null);
+        } finally {
+            runOverT2.join();
+            engine.setPoolListener(null);
+        }
+        Assert.assertTrue("the DDL waited for the run over t2", isRunOverT2Running.get());
+        capture.drain();
+        capture.assertOnlyOnce(Pattern.quote(WAIT_LINE));
     }
 
     private void assertTableListed(String tableName, boolean isListed) throws Exception {
@@ -2215,6 +3145,63 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
         assertViewColumns("v", columns);
         assertViewColumns("v_dep", columns);
         assertPendingCompileBusyRetries("");
+    }
+
+    // Creates t with the rows 1 and 2 and the view v over it, and runs the DDL of t while a view
+    // compile run holds t's reader and an unrelated run holds u's. Once the DDL logs its wait, a
+    // query takes t's reader and the run over t ends. The DDL must fail with the error after its
+    // second lock attempt, while the run over u still runs. The runs compile the views over t and u,
+    // which the method queues by adding the column c{roundIndex} to u and b to t.
+    private void assertWaitForViewCompileEndsOnQueryArrivingDuringWait(
+            String ddl,
+            String expectedError,
+            int roundIndex,
+            int expectedMetadataLocks
+    ) throws Exception {
+        drainViewQueue();
+        createTableWithRows("t");
+        createView("v", "SELECT * FROM t");
+        final ViewCompileParker runOverU = ViewCompileParker.ofQueueDrain(engine, "u", PoolListener.SRC_READER);
+        final ViewCompileParker runOverT = ViewCompileParker.ofQueueDrain(engine, "t", PoolListener.SRC_READER);
+        final StringBuffer readerLockEvents = new StringBuffer();
+        final AtomicInteger metadataLocks = new AtomicInteger();
+        final long ddlThread = Thread.currentThread().threadId();
+        // runOverT.executeWhileHolding() passes each pool event to the run over t before this listener
+        engine.setPoolListener((factoryType, thread, tableToken, event, segment, position) -> {
+            runOverU.onEvent(factoryType, thread, tableToken, event, segment, position);
+            if (isTableMetadataLockOfT(ddlThread, factoryType, thread, tableToken, event)) {
+                metadataLocks.incrementAndGet();
+            }
+            recordReaderLockEventOfT(readerLockEvents, ddlThread, factoryType, thread, tableToken, event, segment, position);
+        });
+        final ReaderHoldingThread[] query = new ReaderHoldingThread[1];
+        final AtomicBoolean isRunOverURunning = new AtomicBoolean();
+        // a DDL that waited for the run over u would wait for it forever: release that run after
+        // a while, so that such a DDL ends and fails the test
+        try (RunWatchdog ignore = new RunWatchdog(runOverU)) {
+            // queues the compile of the views over u, which the run over u takes
+            execute("ALTER TABLE u ADD COLUMN c" + roundIndex + " INT");
+            runOverU.start();
+            // queues the compile of the views over t, which the run over t takes
+            execute("ALTER TABLE t ADD COLUMN b INT");
+            runOverT.executeWhileHolding(capture, "t", () -> {
+                assertDdlFails(ddl, expectedError);
+                isRunOverURunning.set(ViewStateStore.isCompileRunRunning(engine.getViewStateStore().getCompileRunActivity()));
+            }, () -> query[0] = ReaderHoldingThread.start(engine, "t"));
+        } finally {
+            runOverU.join();
+            engine.setPoolListener(null);
+            if (query[0] != null) {
+                query[0].close();
+            }
+        }
+        Assert.assertTrue("the DDL waited for the run over u", isRunOverURunning.get());
+        // the second attempt closes the reader that the run over t returned to the pool's first
+        // slot, and fails on the query in the second
+        Assert.assertEquals("close 0:0 ", readerLockEvents.toString());
+        Assert.assertEquals(expectedMetadataLocks, metadataLocks.get());
+        capture.drain();
+        capture.assertOnlyOnce(Pattern.quote(WAIT_LINE));
     }
 
     // creates a non-partitioned table, which is never a WAL table, and a view over it at CREATE_MICROS
@@ -2264,10 +3251,49 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
         createView("v_dep", "SELECT * FROM v");
     }
 
-    // Creates t with the rows 1 and 2 and runs the DDL of t while a query holds t's reader and a
-    // view compile run holds t2's reader, so that the DDL fails on the query and waits for the run.
-    // Once the DDL logs that it waits, the query ends, the action runs and the run ends.
-    private void executeWhileQueryAndViewCompileHold(String ddl, @Nullable TestUtils.CheckedRunnable onWait) throws Exception {
-        ViewCompileParker.executeWhileQueryAndViewCompileHold(engine, sqlExecutionContext, capture, addedColumnCount++, () -> execute(ddl), onWait);
+    // drops the view v, and t or the table t3 that a RENAME of t left, and runs the compiles that the
+    // drops queue
+    private void dropTablesAndViewOfT() throws SqlException {
+        execute("DROP VIEW IF EXISTS v");
+        execute("DROP TABLE IF EXISTS t");
+        execute("DROP TABLE IF EXISTS t3");
+        drainViewQueue();
+    }
+
+    // Creates t with the rows 1 and 2 and runs the DDL of t while a view compile run holds t's
+    // reader, so that the DDL waits for the run. Once the DDL logs that it waits, the run lets go of
+    // t and parks on t2's reader, the action runs, and the run ends.
+    private void executeWhileViewCompileHoldsThenMovesOn(String ddl, @Nullable TestUtils.CheckedRunnable onWait) throws Exception {
+        ViewCompileParker.executeWhileViewCompileHoldsThenMovesOn(engine, sqlExecutionContext, capture, scenarioCount++, () -> execute(ddl), onWait);
+    }
+
+    // Releases the run unless closed within 30 seconds: a DDL that waits for the run, which the test
+    // keeps parked, then ends instead of hanging, and the test fails.
+    private static class RunWatchdog implements QuietCloseable {
+        private final CountDownLatch isClosed = new CountDownLatch(1);
+        private final Thread thread;
+
+        private RunWatchdog(ViewCompileParker run) {
+            thread = new Thread(() -> {
+                try {
+                    if (!isClosed.await(30, TimeUnit.SECONDS)) {
+                        run.release();
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }, "parked-run-watchdog");
+            thread.start();
+        }
+
+        @Override
+        public void close() {
+            isClosed.countDown();
+            try {
+                thread.join();
+            } catch (InterruptedException e) {
+                throw new AssertionError(e);
+            }
+        }
     }
 }
