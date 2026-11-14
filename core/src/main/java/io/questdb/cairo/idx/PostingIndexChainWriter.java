@@ -811,6 +811,18 @@ public final class PostingIndexChainWriter {
         if (dropped == 0 && !isHeadTrimmed) {
             return 0;
         }
+        // A dropped entry hands its prev pointer on as the new head, and every entry lies after its predecessor. An
+        // entry whose bytes never reached the disk, such as one on a page a power loss lost, reads back as zeros: its
+        // txnAtSeal of 0 takes the visible branch above and hands on offset 0. Publishing that would lose the header
+        // page that still names the older chain, and fail every later open on the header itself.
+        if (newHead != PostingIndexUtils.V2_NO_HEAD && (newHead < regionBase || newHead >= newRegionLimit)) {
+            throw CairoException.critical(0)
+                    .put("posting index chain is corrupt, recovery would publish an out-of-region head [headEntryOffset=")
+                    .put(newHead)
+                    .put(", regionBase=").put(regionBase)
+                    .put(", regionLimit=").put(newRegionLimit)
+                    .put(']');
+        }
         isHeadTrimmedOnLastRecovery = isHeadTrimmed;
         headEntryOffset = newHead;
         entryCount = newEntryCount;

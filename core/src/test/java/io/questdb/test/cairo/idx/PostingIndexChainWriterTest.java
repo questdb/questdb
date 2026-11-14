@@ -804,6 +804,31 @@ public class PostingIndexChainWriterTest {
     }
 
     @Test
+    public void testRecoveryDropAbandonedDropsWholeChain() {
+        PostingIndexChainWriter w = new PostingIndexChainWriter();
+        w.initialiseEmpty(mem);
+        w.appendNewEntry(mem, 1, 40, 0, 0, 0, 1, 64, 0);
+        w.appendNewEntry(mem, 2, 50, 0, 0, 0, 1, 64, 0);
+
+        LongList orphans = new LongList();
+        int dropped = w.recoveryDropAbandoned(mem, /* currentTableTxn */ 30L, orphans);
+
+        Assert.assertEquals(2, dropped);
+        Assert.assertEquals(2, orphans.size());
+        Assert.assertEquals(2, orphans.get(0));
+        Assert.assertEquals(1, orphans.get(1));
+        Assert.assertEquals(0, w.getEntryCount());
+        Assert.assertEquals(PostingIndexUtils.V2_NO_HEAD, w.getHeadEntryOffset());
+        Assert.assertEquals(PostingIndexUtils.V2_ENTRY_REGION_BASE, w.getRegionLimit());
+        // The empty chain is published, and its sealTxns are not given out again.
+        PostingIndexChainHeader.Snapshot header = new PostingIndexChainHeader.Snapshot();
+        Assert.assertTrue(PostingIndexChainHeader.readUnderSeqlock(mem, header));
+        Assert.assertEquals(PostingIndexUtils.V2_NO_HEAD, header.headEntryOffset);
+        Assert.assertEquals(0, header.entryCount);
+        Assert.assertEquals(3, w.peekNextSealTxn());
+    }
+
+    @Test
     public void testRecoveryDropAbandonedNoOpOnEmptyChain() {
         PostingIndexChainWriter w = new PostingIndexChainWriter();
         w.initialiseEmpty(mem);
@@ -1236,6 +1261,42 @@ public class PostingIndexChainWriterTest {
                     "dropped entry byte at index " + i + " was overwritten by applyHeadTrim",
                     droppedBytes[i], mem.getLong(droppedOffset + (long) i * Long.BYTES)
             );
+        }
+    }
+
+    @Test
+    public void testRecoveryRefusesOutOfRegionHeadOfZeroedEntry() {
+        // A power loss kept the header that names the head entry but not the page the entry is on, which reads back
+        // as zeros: its txnAtSeal of 0 takes the visible branch, and its prev pointer of 0 would become the head. A
+        // prev pointer that does not lie before the entry names no predecessor either.
+        PostingIndexChainWriter w = new PostingIndexChainWriter();
+        w.initialiseEmpty(mem);
+        w.appendNewEntry(mem, 1, 10, 0, 0, 0, 1, 64, 0);
+        long headOffset = w.appendNewEntry(mem, 2, 20, 0, 0, 0, 1, 64, 0);
+        for (long o = headOffset, hi = headOffset + PostingIndexChainEntry.entrySize(1); o < hi; o += Long.BYTES) {
+            mem.putLong(o, 0L);
+        }
+        long[] header = new long[PostingIndexUtils.KEY_FILE_RESERVED / Long.BYTES];
+        for (int i = 0; i < header.length; i++) {
+            header[i] = mem.getLong((long) i * Long.BYTES);
+        }
+
+        for (long prevEntryOffset : new long[]{0, headOffset}) {
+            mem.putLong(headOffset + PostingIndexUtils.V2_ENTRY_OFFSET_PREV_ENTRY_OFFSET, prevEntryOffset);
+            PostingIndexChainWriter recovering = new PostingIndexChainWriter();
+            recovering.openExisting(mem);
+            try {
+                recovering.recoveryDropAbandoned(mem, /* currentTableTxn */ 30L, new LongList());
+                Assert.fail("expected CairoException for a head entry that reads back as zeros");
+            } catch (CairoException expected) {
+                String msg = expected.getMessage();
+                Assert.assertTrue(msg, msg.contains("posting index chain is corrupt, recovery would publish an out-of-region head"
+                        + " [headEntryOffset=" + prevEntryOffset + ", regionBase=8192, regionLimit=" + headOffset + ']'));
+            }
+            // Neither header page changed: the older one still names the entries the head was built on.
+            for (int i = 0; i < header.length; i++) {
+                Assert.assertEquals("header long " + i, header[i], mem.getLong((long) i * Long.BYTES));
+            }
         }
     }
 

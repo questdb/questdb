@@ -826,6 +826,34 @@ public class PostingIndexOracleTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testRecoveryLogsMultiByteIndexName() throws Exception {
+        // The recovery walk logs the index whose abandoned entry it drops. A name with 2-, 3- and 4-byte UTF-8
+        // characters must reach the log as valid UTF-8: test log paranoia fails the open on any other record.
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                final String name = "récupération_符号😀";
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    writer.setNextTxnAtSeal(100);
+                    for (int v = 0; v < BP_BATCH; v++) {
+                        writer.add(0, v);
+                    }
+                    writer.commit();
+                }
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.setCurrentTableTxn(50);
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, false);
+                    Assert.assertEquals("chain should be empty after recovery dropped the abandoned entry",
+                            0, writer.getKeyCount());
+                }
+            }
+        });
+    }
+
     private LongList readAllBP(Path path, CharSequence name, int key) {
         LongList values = new LongList();
         try (PostingIndexFwdReader reader = new PostingIndexFwdReader(configuration, path, name, COLUMN_NAME_TXN_NONE, -1, 0)) {
