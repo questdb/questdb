@@ -536,6 +536,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
                             ORDER_DESC,
                             null,
                             0,
+                            false,
                             false
                     );
                     final PartitionFrameCursor cursor = factory.getCursor(executionContext, columnIndexes, ORDER_DESC)
@@ -887,6 +888,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
                             ORDER_DESC,
                             null,
                             0,
+                            false,
                             false
                     );
                     final PartitionFrameCursor cursor = factory.getCursor(executionContext, columnIndexes, ORDER_DESC)

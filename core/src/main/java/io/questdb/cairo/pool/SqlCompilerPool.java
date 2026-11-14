@@ -36,6 +36,7 @@ import io.questdb.griffin.QueryBuilder;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
@@ -44,6 +45,7 @@ import io.questdb.griffin.model.InsertModel;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
@@ -150,6 +152,28 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         }
 
         @Override
+        public void collectFilteredReadDependencies(
+                CharSequence viewSql,
+                SqlExecutionContext executionContext,
+                LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies,
+                SqlUtil.ViewCompileRecord compileRecord,
+                ObjList<CharSequence> outputNames
+        ) throws SqlException {
+            delegate.collectFilteredReadDependencies(viewSql, executionContext, dependencies, compileRecord, outputNames);
+        }
+
+        @Override
+        public void collectOtherReadDependencies(
+                CharSequence viewSql,
+                SqlExecutionContext executionContext,
+                LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies,
+                SqlUtil.ViewCompileRecord compileRecord,
+                boolean isOrderByKept
+        ) throws SqlException {
+            delegate.collectOtherReadDependencies(viewSql, executionContext, dependencies, compileRecord, isOrderByKept);
+        }
+
+        @Override
         public CompiledQuery compile(CharSequence sqlText, SqlExecutionContext ctx) throws SqlException {
             return delegate.compile(sqlText, ctx);
         }
@@ -207,9 +231,9 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         public ExecutionModel generateViewExecutionModel(
                 CharSequence viewSql,
                 SqlExecutionContext executionContext,
-                LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> outDependencies
+                LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies
         ) throws SqlException {
-            return delegate.generateViewExecutionModel(viewSql, executionContext, outDependencies);
+            return delegate.generateViewExecutionModel(viewSql, executionContext, dependencies);
         }
 
         @Override

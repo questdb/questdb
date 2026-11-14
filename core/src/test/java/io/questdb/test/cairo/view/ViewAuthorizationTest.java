@@ -34,9 +34,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
-import io.questdb.std.ObjList;
 import io.questdb.test.tools.TestUtils;
-import org.jetbrains.annotations.NotNull;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
@@ -120,16 +118,6 @@ public class ViewAuthorizationTest extends AbstractViewTest {
         );
     }
 
-    private static SqlExecutionContext denyBaseTableSelectContext() {
-        return new SqlExecutionContextImpl(engine, 1).with(
-                new DenyBaseTableSelectSecurityContext(),
-                bindVariableService,
-                null,
-                -1,
-                null
-        );
-    }
-
     private static long readViewRowCount(SqlExecutionContext context) throws SqlException {
         long count = 0;
         try (RecordCursorFactory factory = engine.select("SELECT * FROM " + VIEW1, context)) {
@@ -149,17 +137,6 @@ public class ViewAuthorizationTest extends AbstractViewTest {
         @Override
         public void authorizeAlterView(TableToken tableToken) {
             throw CairoException.authorization().put("permission denied [view=").put(tableToken.getTableName()).put(']');
-        }
-    }
-
-    /**
-     * Grants everything except per-column SELECT on a base table, so view-level authorization
-     * passes while any fallback per-column base-table check is rejected.
-     */
-    private static final class DenyBaseTableSelectSecurityContext extends AllowAllSecurityContext {
-        @Override
-        public void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
-            throw CairoException.nonCritical().put("permission denied [table=").put(tableToken.getTableName()).put(']');
         }
     }
 }

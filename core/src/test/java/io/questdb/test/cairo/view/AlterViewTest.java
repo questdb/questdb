@@ -142,6 +142,31 @@ public class AlterViewTest extends AbstractViewTest {
     }
 
     @Test
+    public void testAlterViewReadsNoRowOfTheBody() throws Exception {
+        // A read of the view keeps the ORDER BY of the sub-query under the aggregate, and the sort holds every row of
+        // x, more than the sort memory allows. ALTER VIEW and CREATE OR REPLACE VIEW open the plan of the body, as
+        // CREATE VIEW does, and read no row of it, so they record the body, which a read then runs out of memory for.
+        setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES, 16_384);
+        setProperty(PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES, 16_384);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT x a, x * 7 % 10_000 b, timestamp_sequence(0, 1_000_000) ts FROM long_sequence(10_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            drainWalQueue();
+            final String viewSql = "SELECT sum(a) s FROM (SELECT * FROM x ORDER BY b)";
+            execute("CREATE VIEW v AS (SELECT sum(a) s FROM x)");
+            drainWalAndViewQueues();
+            execute("ALTER VIEW v AS (" + viewSql + ")");
+            drainWalAndViewQueues();
+            assertViewDefinition("v", viewSql, "x");
+            execute("ALTER VIEW v AS (SELECT sum(a) s FROM x)");
+            drainWalAndViewQueues();
+            execute("CREATE OR REPLACE VIEW v AS (" + viewSql + ")");
+            drainWalAndViewQueues();
+            assertViewDefinition("v", viewSql, "x");
+            assertQuery("SELECT * FROM v").noLeakCheck().failsWith("memory exceeded in EncodedSort");
+        });
+    }
+
+    @Test
     public void testAlterViewRejectsInvalidColumnName() throws Exception {
         // explicitly enable expression-based column names to test that view alteration
         setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");

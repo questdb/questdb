@@ -1069,7 +1069,7 @@ public class OrderByDescRowSkippingTest extends AbstractCairoTest {
         return new PageFrameRecordCursorFactory(
                 engine.getConfiguration(),
                 metadata,
-                new FullPartitionFrameCursorFactory(reader.getTableToken(), reader.getMetadataVersion(), GenericRecordMetadata.copyOfNew(metadata), PartitionFrameCursorFactory.ORDER_DESC, null, 0, false),
+                new FullPartitionFrameCursorFactory(reader.getTableToken(), reader.getMetadataVersion(), GenericRecordMetadata.copyOfNew(metadata), PartitionFrameCursorFactory.ORDER_DESC, null, 0, false, false),
                 new PageFrameRowCursorFactory(PartitionFrameCursorFactory.ORDER_DESC),
                 false,
                 null,

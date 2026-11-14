@@ -710,8 +710,16 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     default void unregisterPageFrameSequence(PageFrameSequence<?> frameSequence) {
     }
 
-    // the view definition, as of the compile, that a table-name function or SHOW statement reads through
-    record TableFunctionView(ViewDefinition definition) {
+    /**
+     * The view definition, as of the compile, that a table-name function, a SHOW statement or a scan reads through.
+     *
+     * @param definition       the definition the parser expanded the view from
+     * @param isReadOverridden whether a value reaches an OVERRIDABLE variable of the view, or of a view it reads, from
+     *                         the declarations in effect where the view is read, those of the statement or of a view
+     *                         whose expression reads it, or from the body of a view it reads, which the view lends
+     *                         only the columns its own plan reads, see {@link ViewDefinition#OTHER_READ_COLUMN_PREFIX}
+     */
+    record TableFunctionView(ViewDefinition definition, boolean isReadOverridden) {
 
         /**
          * Returns whether the view's definition names the object, i.e. whether CREATE VIEW or ALTER

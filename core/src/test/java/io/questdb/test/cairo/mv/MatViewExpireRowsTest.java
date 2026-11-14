@@ -3348,11 +3348,13 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
                 }
                 assertEquals(viewSqls[i], created, sortedDependencies(dependencies));
             }
-            // the "*" of v0 lets the view cover columns added to t later; v1 and v2 read mv through the
-            // policy's synthetic "SELECT * FROM mv WHERE ...", which adds the policy column v
-            assertDependencies("v0", "{t=[*, k, status, ts, x]}");
-            assertDependencies("v1", "{mv=[*, k, v]}");
-            assertDependencies("v2", "{mv=[*, k, v], t=[k, status, ts]}");
+            // The "*" of v0 lets the view cover columns added to t later, and lends every column of t, so t
+            // lists no other column. v1 and v2 read mv through the policy's synthetic
+            // "SELECT * FROM mv WHERE ...", which adds the policy column v. That wildcard sits under a SELECT
+            // list that names the columns it keeps, so the views read only those of mv, and no "*".
+            assertDependencies("v0", "{t=[*]}");
+            assertDependencies("v1", "{mv=[k, v]}");
+            assertDependencies("v2", "{mv=[k, v], t=[k, status, ts]}");
         });
     }
 

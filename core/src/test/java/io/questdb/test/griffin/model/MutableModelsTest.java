@@ -381,9 +381,10 @@ public class MutableModelsTest {
         WithClauseModel model = WithClauseModel.FACTORY.newInstance();
         LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses = new LowerCaseCharSequenceObjHashMap<>();
         withClauses.put("cte1", WithClauseModel.FACTORY.newInstance());
-        model.of(42, withClauses, QueryModel.FACTORY.newInstance());
+        model.of(42, withClauses, QueryModel.FACTORY.newInstance(), true);
         // of() sets every field, so clear() has each one to reset
         Assert.assertSame(withClauses, model.getWithClauses());
+        Assert.assertTrue(model.isViewReadOverridden());
         assertDifferentFromFresh(model, WithClauseModel.FACTORY.newInstance());
 
         model.clear();
