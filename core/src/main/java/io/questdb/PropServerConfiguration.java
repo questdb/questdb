@@ -39,6 +39,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.auth.AuthUtils;
+import io.questdb.cutlass.http.BrowserAllowedOrigins;
 import io.questdb.cutlass.http.HttpAllowedHosts;
 import io.questdb.cutlass.http.HttpContextConfiguration;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
@@ -55,7 +56,6 @@ import io.questdb.cutlass.line.tcp.LineTcpReceiverConfigurationHelper;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.PGConfiguration;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
-import io.questdb.cutlass.qwp.server.QwpBrowserAllowedOrigins;
 import io.questdb.cutlass.qwp.server.QwpUdpReceiverConfiguration;
 import io.questdb.cutlass.text.CsvFileIndexer;
 import io.questdb.cutlass.text.TextConfiguration;
@@ -280,7 +280,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final FilesFacade filesFacade;
     private final FactoryProviderFactory fpf;
     private final HttpAllowedHosts httpAllowedHosts;
-    private final QwpBrowserAllowedOrigins httpBrowserAllowedOrigins;
+    private final BrowserAllowedOrigins httpBrowserAllowedOrigins;
     private final PropHttpContextConfiguration httpContextConfiguration;
     private final ObjHashSet<String> httpContextPathExport = new ObjHashSet<>();
     private final ObjHashSet<String> httpContextPathILP = new ObjHashSet<>();
@@ -534,7 +534,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long queryContinuationWakeIntervalMillis;
     private final long queryMemoryLimitBytes;
     private final boolean queryWithinLatestByOptimisationEnabled;
-    private final QwpBrowserAllowedOrigins qwpBrowserAllowedOrigins;
+    private final BrowserAllowedOrigins qwpBrowserAllowedOrigins;
     private final boolean qwpBrowserTlsTerminationEnabled;
     private final int qwpEgressForcedZstdLevel;
     private final int qwpMaxRowsPerTable;
@@ -1615,7 +1615,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 throw new ServerConfigurationException(PropertyKey.HTTP_ALLOWED_HOSTS.getPropertyPath() + ": " + e.getMessage());
             }
             try {
-                this.httpBrowserAllowedOrigins = QwpBrowserAllowedOrigins.parse(
+                this.httpBrowserAllowedOrigins = BrowserAllowedOrigins.parse(
                         getString(properties, env, PropertyKey.HTTP_BROWSER_ALLOWED_ORIGINS, "")
                 );
             } catch (IllegalArgumentException e) {
@@ -2282,7 +2282,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             });
             this.qwpUdpGroupIPv4Address = getIPv4Address(properties, env, PropertyKey.QWP_UDP_JOIN, "224.1.1.1");
             try {
-                this.qwpBrowserAllowedOrigins = QwpBrowserAllowedOrigins.parse(
+                this.qwpBrowserAllowedOrigins = BrowserAllowedOrigins.parse(
                         getString(properties, env, PropertyKey.QWP_BROWSER_ALLOWED_ORIGINS, "")
                 );
             } catch (IllegalArgumentException e) {
@@ -6587,7 +6587,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public QwpBrowserAllowedOrigins getBrowserAllowedOrigins() {
+        public BrowserAllowedOrigins getBrowserAllowedOrigins() {
             return httpBrowserAllowedOrigins;
         }
 
@@ -6792,7 +6792,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public QwpBrowserAllowedOrigins getBrowserAllowedOrigins() {
+        public BrowserAllowedOrigins getBrowserAllowedOrigins() {
             return httpBrowserAllowedOrigins;
         }
 
@@ -6952,7 +6952,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public QwpBrowserAllowedOrigins getQwpBrowserAllowedOrigins() {
+        public BrowserAllowedOrigins getQwpBrowserAllowedOrigins() {
             return qwpBrowserAllowedOrigins;
         }
 

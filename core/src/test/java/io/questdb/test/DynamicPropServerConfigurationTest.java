@@ -1648,12 +1648,13 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
 
     @Test
     public void testQwpBrowserCrossOriginGateSkipsNonQwpEndpoints() throws Exception {
-        // Only the QWP upgrade endpoints refuse ambient credentials from another
-        // origin. A REST request carrying a foreign Origin still authenticates
-        // with the session cookie or the Authorization header when the browser
-        // reports it same-origin, as it does for a page served through a
-        // TLS-terminating proxy. Without Sec-Fetch-Site, the foreign Origin makes
-        // the connection reject the REST request as a cross-site one.
+        // The QWP gate that refuses ambient credentials on a cross-origin upgrade
+        // does not apply to REST endpoints: a REST request carrying a foreign
+        // Origin still authenticates with the session cookie or the Authorization
+        // header when the browser reports it same-origin, as it does for a page
+        // served through a TLS-terminating proxy. Without Sec-Fetch-Site, the
+        // connection rejects the foreign Origin as a cross-site request, whatever
+        // credentials the request carries.
         assertMemoryLeak(() -> {
             try (FileWriter w = new FileWriter(serverConf)) {
                 w.write(QWP_ORIGINS_TEST_BOOT_CONFIG);

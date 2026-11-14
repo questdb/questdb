@@ -29,7 +29,6 @@ import io.questdb.Metrics;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
-import io.questdb.cutlass.qwp.server.QwpBrowserAllowedOrigins;
 import io.questdb.metrics.Counter;
 import io.questdb.metrics.LongGauge;
 import io.questdb.mp.DynamicFiberWorkerPoolConfiguration;
@@ -72,7 +71,7 @@ public class HttpServerConfigurationWrapper implements DynamicFiberWorkerPoolCon
     }
 
     @Override
-    public QwpBrowserAllowedOrigins getBrowserAllowedOrigins() {
+    public BrowserAllowedOrigins getBrowserAllowedOrigins() {
         return getDelegate().getBrowserAllowedOrigins();
     }
 
@@ -282,7 +281,7 @@ public class HttpServerConfigurationWrapper implements DynamicFiberWorkerPoolCon
     }
 
     @Override
-    public QwpBrowserAllowedOrigins getQwpBrowserAllowedOrigins() {
+    public BrowserAllowedOrigins getQwpBrowserAllowedOrigins() {
         return getDelegate().getQwpBrowserAllowedOrigins();
     }
 

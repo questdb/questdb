@@ -49,7 +49,7 @@ public final class HttpAllowedHosts {
     public static final HttpAllowedHosts ANY = new HttpAllowedHosts(true, new ObjList<>(), new ObjList<>());
     public static final HttpAllowedHosts DEFAULT = new HttpAllowedHosts(false, new ObjList<>(), new ObjList<>());
     // no public DNS server answers for these domains (RFC 6761, RFC 6762, RFC 8375, ICANN)
-    private static final String[] SPECIAL_USE_DOMAINS = {".home.arpa", ".internal", ".local", ".localhost", ".test"};
+    private static final ObjList<String> SPECIAL_USE_DOMAINS = new ObjList<>(".home.arpa", ".internal", ".local", ".localhost", ".test");
     // configured domains, each with its leading dot
     private final ObjList<String> domains;
     private final boolean isAnyHostAllowed;
@@ -119,8 +119,8 @@ public final class HttpAllowedHosts {
         if (lastDot < 0 || isNumber(host, lastDot + 1, hi)) {
             return true;
         }
-        for (String domain : SPECIAL_USE_DOMAINS) {
-            if (isInDomain(host, hi, domain)) {
+        for (int i = 0, n = SPECIAL_USE_DOMAINS.size(); i < n; i++) {
+            if (isInDomain(host, hi, SPECIAL_USE_DOMAINS.getQuick(i))) {
                 return true;
             }
         }

@@ -86,6 +86,7 @@ import static java.net.HttpURLConnection.*;
 public class HttpConnectionContext extends IOContext<HttpConnectionContext> implements Locality, Retry {
     private static final String CROSS_ORIGIN_REQUEST_REJECTED = "cross-origin browser request rejected: Origin does not match Host and is not listed in http.browser.allowed.origins";
     private static final String CROSS_SITE_REQUEST_REJECTED = "cross-site browser request rejected: Sec-Fetch-Site is neither same-origin nor none, and Origin is not listed in http.browser.allowed.origins";
+    private static final String CROSS_SITE_REQUEST_WITHOUT_ORIGIN_REJECTED = "cross-site browser request rejected: Sec-Fetch-Site is neither same-origin nor none, and the request has no Origin, like any link or embedded resource on another site, so http.browser.allowed.origins cannot admit it; open the URL directly";
     private static final String FALSE = "false";
     private static final String HOST_NAME_REJECTED = "host name rejected: without authentication, the server serves only IP addresses, single-label names, special-use domains such as localhost, and the names listed in http.allowed.hosts";
     private static final Log LOG = LogFactory.getLog(HttpConnectionContext.class);
@@ -756,7 +757,13 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     || isBrowserOriginAllowed()) {
                 return processor;
             }
-            return rejectProcessor.reject(HTTP_FORBIDDEN, CROSS_SITE_REQUEST_REJECTED);
+            // A link or an embedded resource on another site sends no Origin, so no
+            // entry of http.browser.allowed.origins can admit it. The message says
+            // so, rather than send the operator to list an origin.
+            return rejectProcessor.reject(
+                    HTTP_FORBIDDEN,
+                    headerParser.getHeader(HEADER_ORIGIN) == null ? CROSS_SITE_REQUEST_WITHOUT_ORIGIN_REJECTED : CROSS_SITE_REQUEST_REJECTED
+            );
         }
         if (QwpIngressHttpProcessor.isCrossOrigin(headerParser, socket.isTlsSessionStarted()) && !isBrowserOriginAllowed()) {
             return rejectProcessor.reject(HTTP_FORBIDDEN, CROSS_ORIGIN_REQUEST_REJECTED);

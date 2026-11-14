@@ -27,7 +27,6 @@ package io.questdb.cutlass.http;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
-import io.questdb.cutlass.qwp.server.QwpBrowserAllowedOrigins;
 import io.questdb.mp.WorkerPoolMode;
 import io.questdb.std.ConcurrentCacheConfiguration;
 import io.questdb.std.ObjHashSet;
@@ -136,8 +135,8 @@ public interface HttpFullFatServerConfiguration extends HttpServerConfiguration 
     /**
      * The current QWP WebSocket browser allowlist; custom configurations default to same-origin only.
      */
-    default QwpBrowserAllowedOrigins getQwpBrowserAllowedOrigins() {
-        return QwpBrowserAllowedOrigins.EMPTY;
+    default BrowserAllowedOrigins getQwpBrowserAllowedOrigins() {
+        return BrowserAllowedOrigins.EMPTY;
     }
 
     StaticContentProcessorConfiguration getStaticContentProcessorConfiguration();

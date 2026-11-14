@@ -57,6 +57,7 @@ import static io.questdb.test.cutlass.qwp.QwpWireTestFixtures.statusLine;
 public class HttpCrossSiteRequestTest extends AbstractBootstrapTest {
     private static final String CROSS_ORIGIN_REJECTED = "cross-origin browser request rejected: Origin does not match Host and is not listed in http.browser.allowed.origins";
     private static final String CROSS_SITE_REJECTED = "cross-site browser request rejected: Sec-Fetch-Site is neither same-origin nor none, and Origin is not listed in http.browser.allowed.origins";
+    private static final String CROSS_SITE_WITHOUT_ORIGIN_REJECTED = "cross-site browser request rejected: Sec-Fetch-Site is neither same-origin nor none, and the request has no Origin, like any link or embedded resource on another site, so http.browser.allowed.origins cannot admit it; open the URL directly";
     private static final String DUMMY_WEB_CONSOLE = "<html><body><p>Dummy Web Console</p></body></html>";
     private static final String HOST = "localhost:" + HTTP_PORT;
     private static final String HOST_NAME_REJECTED = "host name rejected: without authentication, the server serves only IP addresses, single-label names, special-use domains such as localhost, and the names listed in http.allowed.hosts";
@@ -128,6 +129,9 @@ public class HttpCrossSiteRequestTest extends AbstractBootstrapTest {
                 final Endpoint drop = Endpoint.get("/exec?query=DROP%20TABLE%20victim");
 
                 HttpClient.ResponseHeaders response = send(client, drop, true, null, "Sec-Fetch-Site", "cross-site");
+                assertRejected(response, CROSS_SITE_WITHOUT_ORIGIN_REJECTED);
+
+                response = send(client, drop, true, null, "Sec-Fetch-Site", "cross-site", "Origin", "https://evil.example.com");
                 assertRejected(response, CROSS_SITE_REJECTED);
 
                 response = send(client, drop, true, null, "Origin", "http://evil.example.com");
@@ -144,7 +148,7 @@ public class HttpCrossSiteRequestTest extends AbstractBootstrapTest {
                 assertChunkedBody(response, SELECT_ONE_JSON);
 
                 response = send(client, drop, false, sessionId, "Sec-Fetch-Site", "same-site");
-                assertRejected(response, CROSS_SITE_REJECTED);
+                assertRejected(response, CROSS_SITE_WITHOUT_ORIGIN_REJECTED);
                 serverMain.assertSql("SELECT count() FROM victim", "count\n3\n");
 
                 // the session survives the rejected request and serves the same-origin one
@@ -191,11 +195,11 @@ public class HttpCrossSiteRequestTest extends AbstractBootstrapTest {
                 new SendAndReceiveRequestBuilder()
                         .withPort(HTTP_PORT)
                         .executeMany(executor -> {
-                            executor.execute(crossSiteImport, forbiddenResponse(CROSS_SITE_REJECTED));
+                            executor.execute(crossSiteImport, forbiddenResponse(CROSS_SITE_WITHOUT_ORIGIN_REJECTED));
                             executor.execute(selectOne, SELECT_ONE_RESPONSE);
                             executor.execute(crossOriginChunkedIlp, forbiddenResponse(CROSS_ORIGIN_REJECTED));
                             executor.execute(selectOne, SELECT_ONE_RESPONSE);
-                            executor.execute(crossSiteIlp, forbiddenResponse(CROSS_SITE_REJECTED));
+                            executor.execute(crossSiteIlp, forbiddenResponse(CROSS_SITE_WITHOUT_ORIGIN_REJECTED));
                             executor.execute(selectOne, SELECT_ONE_RESPONSE);
                         });
 
@@ -343,8 +347,10 @@ public class HttpCrossSiteRequestTest extends AbstractBootstrapTest {
         };
         final String[][] rejectedHeaders = {
                 {CROSS_SITE_REJECTED, "Sec-Fetch-Site", "cross-site", "Origin", "https://other.example.com"},
-                // a link or an image on a page of the listed origin sends no Origin
-                {CROSS_SITE_REJECTED, "Sec-Fetch-Site", "cross-site"},
+                // a link or an image on a page of the listed origin sends no Origin, and the
+                // message says that listing the origin cannot admit it
+                {CROSS_SITE_WITHOUT_ORIGIN_REJECTED, "Sec-Fetch-Site", "cross-site"},
+                {CROSS_SITE_WITHOUT_ORIGIN_REJECTED, "Sec-Fetch-Site", "same-site"},
                 // origins compare byte for byte, as browsers serialize them
                 {CROSS_SITE_REJECTED, "Sec-Fetch-Site", "cross-site", "Origin", LISTED_ORIGIN + "/"},
                 {CROSS_ORIGIN_REJECTED, "Origin", "https://other.example.com"},
@@ -583,12 +589,13 @@ public class HttpCrossSiteRequestTest extends AbstractBootstrapTest {
     private static String[][] crossSiteHeaders(String authority) {
         final String sameOrigin = "http://" + authority;
         return new String[][]{
-                // without a listed Origin, Sec-Fetch-Site decides when present: only same-origin and none pass
-                {CROSS_SITE_REJECTED, "Sec-Fetch-Site", "cross-site"},
-                {CROSS_SITE_REJECTED, "Sec-Fetch-Site", "same-site"},
-                {CROSS_SITE_REJECTED, "Sec-Fetch-Site", "Same-Origin"},
-                {CROSS_SITE_REJECTED, "Sec-Fetch-Site", "navigate"},
-                {CROSS_SITE_REJECTED, "Sec-Fetch-Site", ""},
+                // without a listed Origin, Sec-Fetch-Site decides when present: only same-origin and none pass;
+                // a request without Origin, as a link sends, gets a message that no listed origin admits it
+                {CROSS_SITE_WITHOUT_ORIGIN_REJECTED, "Sec-Fetch-Site", "cross-site"},
+                {CROSS_SITE_WITHOUT_ORIGIN_REJECTED, "Sec-Fetch-Site", "same-site"},
+                {CROSS_SITE_WITHOUT_ORIGIN_REJECTED, "Sec-Fetch-Site", "Same-Origin"},
+                {CROSS_SITE_WITHOUT_ORIGIN_REJECTED, "Sec-Fetch-Site", "navigate"},
+                {CROSS_SITE_WITHOUT_ORIGIN_REJECTED, "Sec-Fetch-Site", ""},
                 {CROSS_SITE_REJECTED, "Sec-Fetch-Site", "cross-site", "Origin", sameOrigin},
                 {CROSS_SITE_REJECTED, "Sec-Fetch-Site", "same-site", "Origin", sameOrigin},
                 // without Sec-Fetch-Site, Origin must be the origin of Host

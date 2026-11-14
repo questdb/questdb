@@ -25,6 +25,7 @@
 package io.questdb.cutlass.qwp.server;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cutlass.http.BrowserAllowedOrigins;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpConstants;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
@@ -584,7 +585,7 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
      * @param allowedOrigins   cross-origin browser origins allowed to upgrade
      * @return null if valid, error message otherwise
      */
-    public static String validateHandshake(HttpRequestHeader header, boolean secureConnection, QwpBrowserAllowedOrigins allowedOrigins) {
+    public static String validateHandshake(HttpRequestHeader header, boolean secureConnection, BrowserAllowedOrigins allowedOrigins) {
         // Browsers always send Origin. Permit same-origin and explicitly listed
         // browser applications, but retain the CSWSH guard for all others.
         // Machine clients normally omit Origin. The upgrade processors'

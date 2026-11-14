@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.qwp.server;
+package io.questdb.cutlass.http;
 
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8Sequence;
@@ -44,16 +44,16 @@ import java.util.Locale;
  * rejected rather than normalized, so the configured value always equals the
  * value on the wire.
  */
-public final class QwpBrowserAllowedOrigins {
-    public static final QwpBrowserAllowedOrigins EMPTY = new QwpBrowserAllowedOrigins(new ObjList<>());
+public final class BrowserAllowedOrigins {
+    public static final BrowserAllowedOrigins EMPTY = new BrowserAllowedOrigins(new ObjList<>());
 
     private final ObjList<Utf8String> origins;
 
-    private QwpBrowserAllowedOrigins(ObjList<Utf8String> origins) {
+    private BrowserAllowedOrigins(ObjList<Utf8String> origins) {
         this.origins = origins;
     }
 
-    public static QwpBrowserAllowedOrigins parse(String value) {
+    public static BrowserAllowedOrigins parse(String value) {
         if (value == null || value.isBlank()) {
             return EMPTY;
         }
@@ -83,7 +83,7 @@ public final class QwpBrowserAllowedOrigins {
             }
             origins.add(new Utf8String(origin));
         }
-        return new QwpBrowserAllowedOrigins(origins);
+        return new BrowserAllowedOrigins(origins);
     }
 
     public boolean isAllowed(Utf8Sequence origin) {
