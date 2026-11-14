@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.NanosTimestampDriver;
@@ -327,6 +328,12 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // Numbers the marker each run over a nanosecond base logs, so its check of the test's capture
     // starts at its own run.
     private static final AtomicLong NANOS_BASE_RUN_SEQ = new AtomicLong();
+    // What the restatement guard logs when a restore that failed its count stands it down: see
+    // failTheSecondRepairsCommit.
+    private static final String RESTATEMENT_GUARD_STAND_DOWN = "live view rebuild from the applied base runs without the restatement guard";
+    // Numbers the marker each episode of failTheSecondRepairsCommit logs, so the check of the
+    // test's capture after it starts at its own episode.
+    private static final AtomicLong SECOND_REPAIR_EPISODE_SEQ = new AtomicLong();
     // What the restart after failTheOwedSealOfALateRow meets: the repair marker still live over
     // the splice, a root at the frontier that reads it as stale, or no timeline, which a streak of
     // failed seals retired.
@@ -382,6 +389,10 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // reaches its frontier truncate's marker: see runUnderTheFrontierTruncateCrash. The tests whose
     // runs end on departures install it.
     private final FrontierTruncateCrash frontierTruncateCrash = new FrontierTruncateCrash();
+    // The second late row failTheSecondRepairsCommit committed to the base alone, which base_shadow
+    // takes once the restart after the episode has been checked against it; empty outside such an
+    // episode.
+    private final StringSink secondRepairShadowValues = new StringSink();
     // Heads a departure left below the newest timestamp the view has seen whose base coordinate
     // the stretch of cycles without rows after it moved, past the commits of any late rows ahead
     // of them, over a batch: see commitRowlessStretch.
@@ -451,6 +462,20 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     private int markerLiveInsideThePauseOwedSealEpisodes;
     private int restoredAfterThePauseOwedSealEpisodes;
     private int restoredAfterThePauseResumedOwedSealEpisodes;
+    // Set while testFuzzDedup or testFuzzReplaceRange runs: every other owed-seal episode of its
+    // batch, from the first, counted rather than drawn, so a pinned-seed batch of another test
+    // draws what it drew before, ends on a second late row whose replacement commit fails inside
+    // the window the failed closing seal left open: see failTheSecondRepairsCommit. Then those
+    // episodes, the ones of them that failed the commit in the process, and the ones whose
+    // in-place rebuild the restatement guard refused over the day the run dropped.
+    private boolean isSecondRepairCommitFaultArm;
+    private int secondRepairCommitFaultCandidates;
+    private int secondRepairCommitFaultEpisodes;
+    private int secondRepairCommitFaultsInPlace;
+    private int secondRepairRebuildsRefusedInPlace;
+    // The marker failTheSecondRepairsCommit logged ahead of its fault, which the check after the
+    // restart that follows it reads the capture from; null outside such an episode.
+    private String secondRepairEpisodeMarker;
     // Sparse departures whose rebuild re-stamped the head on the root at the new frontier inside a
     // pause the seal's failures armed ahead of them: see departNewestRowsOverSparseRoots.
     private int restampsInsideThePause;
@@ -692,6 +717,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // - a removed row the LV never emitted must not leak onto the raw-WAL path.
         final Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
+        isSecondRepairCommitFaultArm = true;
         final int firstSparseDepartureShape = rnd.nextInt(SPARSE_DEPARTURE_SHAPES);
         assertMemoryLeak(frontierTruncateCrash, () -> {
             for (int i = 0, rangeFrameRuns = 0; i < DEDUP_VARIANTS.length; i++) {
@@ -713,6 +739,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         assertReachedEveryHeadMissSpliceOutcome();
         assertReachedEveryRowlessStretchOutcome();
         assertReachedAnOwedSealEpisode();
+        assertReachedASecondRepairCommitFault();
         assertReachedAResumeFrontierTruncateCrash();
     }
 
@@ -1087,6 +1114,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // trigger end to end, under optional restart / SEED / IN MEMORY:
         // any ghost row a converging replay failed to erase diverges from the
         // recompute oracle at quiescence.
+        isSecondRepairCommitFaultArm = true;
         runReplaceRangeFuzzVariants(TestUtils.generateRandom(LOG), true);
         // Each run ends moving its newest rows out of the view: see departNewestRows, and
         // departNewestRowsOverSparseRoots for the RANGE-frame runs, which take one shape each.
@@ -1097,6 +1125,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         assertReachedEveryHeadMissSpliceOutcome();
         assertReachedEveryRowlessStretchOutcome();
         assertReachedAnOwedSealEpisode();
+        assertReachedASecondRepairCommitFault();
         assertReachedAResumeFrontierTruncateCrash();
     }
 
@@ -3156,6 +3185,20 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         );
     }
 
+    // Every other owed-seal episode of the arm, from the first, ends on failTheSecondRepairsCommit,
+    // so every batch of it fails the replacement commit of a second late row inside the window.
+    // Whether in the process, over a day the run dropped, and on which route, turns on the draws,
+    // so those are logged.
+    private void assertReachedASecondRepairCommitFault() {
+        LOG.info().$("LV fuzz second repair commit faults [episodes=").$(secondRepairCommitFaultEpisodes)
+                .$(", inPlace=").$(secondRepairCommitFaultsInPlace)
+                .$(", refusedInPlace=").$(secondRepairRebuildsRefusedInPlace).I$();
+        Assert.assertTrue(
+                "no second late row inside the owed window failed its replacement commit",
+                secondRepairCommitFaultEpisodes > 0
+        );
+    }
+
     // The repair marker on disk names markerBaseGeneration, under the splice's generation one past
     // it, which a restore reads as live, or, when isStale, under a later one, which it reads as
     // stale.
@@ -3178,7 +3221,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
      * restore. With the marker still live or the timeline retired, the rebuild from the applied
      * base: over the day the run dropped, which {@code droppedDayTs} names, the restatement guard
      * refuses it and the view stops with every row {@code base_shadow} keeps, until the day goes
-     * back into the base and a restart rebuilds the view past the guard.
+     * back into the base and a restart rebuilds the view past the guard. After an episode that
+     * ended on {@link #failTheSecondRepairsCommit}, nothing stood the guard down, and
+     * {@code base_shadow} takes the second late row once the view is checked against it.
      */
     private LiveViewRefreshJob assertTheRestartAfterTheOwedSealEpisode(
             LiveViewRefreshJob job,
@@ -3191,6 +3236,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         if (owedSealOutcome == OWED_SEAL_RESTORABLE) {
             assertRestoredFromTimeline("lv");
             restoredOwedSealEpisodes++;
+            settleTheSecondRepairsCommitFault();
             return job;
         }
         if (owedSealOutcome == OWED_SEAL_RETIRED) {
@@ -3199,6 +3245,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         if (droppedDayTs == Numbers.LONG_NULL) {
             assertRebuiltFromAppliedBase("lv");
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, oracleOrderedSql, viewOrderedSql, LOG, true);
+            settleTheSecondRepairsCommitFault();
             return job;
         }
         final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
@@ -3213,7 +3260,31 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         );
         TestUtils.assertSqlCursors(engine, sqlExecutionContext, shadowOracleOrderedSql, viewOrderedSql, LOG, true);
         blockedOwedSealEpisodes++;
+        settleTheSecondRepairsCommitFault();
         return restoreTheDroppedDayAndRestart(job, droppedDayTs, oracleOrderedSql, viewOrderedSql);
+    }
+
+    /**
+     * After an episode that ended on {@link #failTheSecondRepairsCommit}, once the restart after
+     * it has been checked: asserts that nothing stood the restatement guard down from the
+     * episode's marker on, and gives {@code base_shadow} the second late row the episode committed
+     * to the base alone, if the view had not consumed it in the episode. A no-op after any other
+     * episode.
+     */
+    private void settleTheSecondRepairsCommitFault() throws Exception {
+        if (secondRepairEpisodeMarker == null) {
+            return;
+        }
+        final LogCapture capture = walApplySuspensionRule.getCapture();
+        capture.drain(LogCapture.STOP_DRAIN_TIMEOUT_MS);
+        Assert.assertTrue("the capture must hold the episode's marker", capture.countOccurrences(secondRepairEpisodeMarker) > 0);
+        capture.assertNotLoggedAfter(secondRepairEpisodeMarker, RESTATEMENT_GUARD_STAND_DOWN);
+        secondRepairEpisodeMarker = null;
+        if (secondRepairShadowValues.length() > 0) {
+            execute("INSERT INTO base_shadow (ts, sym, i, x) VALUES " + secondRepairShadowValues);
+            drainWalQueue();
+            secondRepairShadowValues.clear();
+        }
     }
 
     private Path checkpointsDirOf(LiveViewInstance instance) {
@@ -3365,6 +3436,11 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
      * none of the rows between A's root and the frame under the late row a resume reads, and the
      * plan takes the head-miss rebuild.
      *
+     * <p>
+     * Under {@link #isSecondRepairCommitFaultArm}, every other episode ends right after the late
+     * row's failed closing seal, on {@link #failTheSecondRepairsCommit}, with the day the run
+     * dropped, if any, named by {@code droppedDayTs} and the oracles the episode checks against.
+     *
      * @param frameMinutes the width of the view's RANGE frame, in minutes
      * @return what the restart after the episode meets: {@link #OWED_SEAL_RETIRED} when the k
      * commits made four failures in a row, which retired the timeline and armed a cooldown the
@@ -3379,7 +3455,11 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             @Nullable LongHashSet usedTs,
             int symCount,
             int frameMinutes,
-            boolean isHeadMissShaped
+            boolean isHeadMissShaped,
+            long droppedDayTs,
+            String oracleOrderedSql,
+            String shadowOracleOrderedSql,
+            String viewOrderedSql
     ) throws Exception {
         final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
         Assert.assertNotNull(instance);
@@ -3478,6 +3558,22 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             if (isHeadMissShaped) {
                 headMissOwedSealEpisodes++;
             }
+            if (isSecondRepairCommitFaultArm && secondRepairCommitFaultCandidates++ % 2 == 0) {
+                return failTheSecondRepairsCommit(
+                        episodeRnd,
+                        job,
+                        instance,
+                        usedTs,
+                        symCount,
+                        batchA,
+                        batchB,
+                        isHeadMissShaped,
+                        droppedDayTs,
+                        oracleOrderedSql,
+                        shadowOracleOrderedSql,
+                        viewOrderedSql
+                );
+            }
             for (int i = 0; i < k; i++) {
                 if (i == 2) {
                     // Past the pause, so the fourth failure in a row is attempted.
@@ -3562,6 +3658,118 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // The head-miss rebuild cleared the head, so every commit after the late row seals at once.
         Assert.assertEquals("the clean commit's seal lands", cleanTs, instance.getHeadCheckpointMaxTs());
         assertRepairMarker(instance, markerBaseGeneration, true);
+        return OWED_SEAL_RESTORABLE;
+    }
+
+    /**
+     * Run by failTheOwedSealOfALateRow on every other episode of {@link #isSecondRepairCommitFaultArm},
+     * right after the late row's closing seal failed and left the repair marker live over the
+     * splice's generation. A second late row inside that window, placed for the route the first
+     * took, goes to the base alone, and its repair writes its marker over the live one, so the
+     * marker records no seqTxn. Its replacement commit fails from the role-switch mint seam: in the
+     * process with a critical error, or, as the episode draws, by stopping the process there, which
+     * the caller's restart then comes back from. In the process, the fault meets the in-place
+     * recovery, unless a head-miss rebuild that converged below the frontier kept the primary
+     * runtime and retries. A recovery that meets the marker rebuilds from the applied base, which
+     * the restatement guard refuses over the day the run dropped, {@code droppedDayTs}: the view
+     * stops with the rows {@code base_shadow} keeps, the second late row unconsumed. Otherwise the
+     * view consumes the row and matches the recompute, over {@code base_shadow} when the base lost
+     * a day. Nothing may stand the guard down: see
+     * {@link #assertTheRestartAfterTheOwedSealEpisode}, which also gives {@code base_shadow} the
+     * row once the view holds it.
+     *
+     * @return what the restart after the episode meets: {@link #OWED_SEAL_MARKER_LIVE} after the
+     * stop or a rebuild refused in place, and {@link #OWED_SEAL_RESTORABLE} once the view holds the
+     * row, whose rebuild or retry left no live marker
+     */
+    private int failTheSecondRepairsCommit(
+            Rnd episodeRnd,
+            LiveViewRefreshJob job,
+            LiveViewInstance instance,
+            @Nullable LongHashSet usedTs,
+            int symCount,
+            long[] batchA,
+            long[] batchB,
+            boolean isHeadMissShaped,
+            long droppedDayTs,
+            String oracleOrderedSql,
+            String shadowOracleOrderedSql,
+            String viewOrderedSql
+    ) throws Exception {
+        final boolean isInPlace = episodeRnd.nextBoolean();
+        long lateTs;
+        if (isHeadMissShaped) {
+            lateTs = batchB[0] - 1 - episodeRnd.nextLong(Micros.SECOND_MICROS);
+            while (usedTs != null && !usedTs.add(lateTs)) {
+                lateTs--;
+            }
+        } else {
+            lateTs = batchA[3] + 1 + episodeRnd.nextLong(batchB[0] - batchA[3] - 1);
+            while (usedTs != null && !usedTs.add(lateTs)) {
+                lateTs++;
+            }
+        }
+        Assert.assertTrue("the second late row sits between batches A and B", lateTs > batchA[3] && lateTs < batchB[0]);
+        secondRepairShadowValues.clear();
+        appendEpisodeRow(secondRepairShadowValues, lateTs, episodeRnd.nextInt(symCount), 1 + episodeRnd.nextInt(1000), episodeRnd.nextDouble() * 1000.0);
+        secondRepairEpisodeMarker = "second repair commit fault episode " + SECOND_REPAIR_EPISODE_SEQ.incrementAndGet() + " starts";
+        LOG.advisory().$(secondRepairEpisodeMarker).$();
+        LOG.info().$("LV fuzz second repair commit fault [lateTs=").$ts(lateTs).$(", headMissShaped=").$(isHeadMissShaped)
+                .$(", inPlace=").$(isInPlace).$(", dayDropped=").$(droppedDayTs != Numbers.LONG_NULL).I$();
+        // The second repair's publications land: its replacement commit is the step that fails.
+        job.setCheckpointTimelineTestFailureStage(0);
+        final long lvSeqTxnBefore = engine.getTableSequencerAPI().lastTxn(instance.getLiveViewToken());
+        final LiveViewReplacementCommitWitness witness = new LiveViewReplacementCommitWitness(
+                engine,
+                instance,
+                publishedCheckpointGeneration(instance),
+                isInPlace ? LiveViewReplacementCommitWitness.FAIL_CRITICAL : LiveViewReplacementCommitWitness.FAIL_CANCELLATION
+        );
+        execute("INSERT INTO base (ts, sym, i, x) VALUES " + secondRepairShadowValues);
+        drainWalQueue();
+        CairoEngine.setRoleSwitchMintObserver(witness::onMint);
+        try {
+            if (isInPlace) {
+                driveRefreshToQuiescence(job);
+            } else {
+                for (int pass = 0; pass < REFRESH_QUIESCENCE_PASSES && !witness.hasFailed(); pass++) {
+                    setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                    drainWalQueue();
+                    job.processNotificationsForTest();
+                }
+            }
+        } finally {
+            CairoEngine.setRoleSwitchMintObserver(null);
+        }
+        Assert.assertTrue("the second late row's repair must reach its replacement commit", witness.hasFailed());
+        for (int i = 0, n = witness.size(); i < n; i++) {
+            Assert.assertEquals("a marker written over a live one records no seqTxn", Numbers.LONG_NULL, witness.getRecordedLvSeqTxn(i));
+        }
+        secondRepairCommitFaultEpisodes++;
+        if (!isInPlace) {
+            Assert.assertEquals("the replacement never commits", lvSeqTxnBefore, engine.getTableSequencerAPI().lastTxn(instance.getLiveViewToken()));
+            return OWED_SEAL_MARKER_LIVE;
+        }
+        secondRepairCommitFaultsInPlace++;
+        if (instance.isCheckpointRecoveryBlocked()) {
+            Assert.assertNotEquals("only a day the base lost refuses the rebuild", Numbers.LONG_NULL, droppedDayTs);
+            TestUtils.assertContains(instance.getCheckpointRecoveryReason(), "would drop rows it retains [cause=mid-drain refresh failure]: ");
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, shadowOracleOrderedSql, viewOrderedSql, LOG, true);
+            secondRepairRebuildsRefusedInPlace++;
+            return OWED_SEAL_MARKER_LIVE;
+        }
+        // The view consumed the row, so base_shadow takes it now.
+        execute("INSERT INTO base_shadow (ts, sym, i, x) VALUES " + secondRepairShadowValues);
+        drainWalQueue();
+        secondRepairShadowValues.clear();
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                droppedDayTs != Numbers.LONG_NULL ? shadowOracleOrderedSql : oracleOrderedSql,
+                viewOrderedSql,
+                LOG,
+                true
+        );
         return OWED_SEAL_RESTORABLE;
     }
 
@@ -5503,7 +5711,11 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                             null,
                             symCount,
                             n,
-                            sparseDepartureShape == SPARSE_DEPARTURE_KEEP
+                            sparseDepartureShape == SPARSE_DEPARTURE_KEEP,
+                            droppedDayTs,
+                            oracleOrderedSql,
+                            shadowOracleOrderedSql,
+                            viewOrderedSql
                     );
                     departureOracleOrderedSql = shadowOracleOrderedSql;
                     coverage.absorb(job);
@@ -7537,7 +7749,11 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                             usedTs,
                             symCount,
                             n,
-                            sparseDepartureShape == SPARSE_DEPARTURE_KEEP
+                            sparseDepartureShape == SPARSE_DEPARTURE_KEEP,
+                            droppedDayTs,
+                            oracleOrderedSql,
+                            shadowOracleOrderedSql,
+                            viewOrderedSql
                     );
                     departureOracleOrderedSql = shadowOracleOrderedSql;
                     coverage.absorb(job);

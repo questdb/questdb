@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointAnchorPlan;
@@ -180,6 +181,12 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
     // Cycles without rows that sealed the root a keyed resume owed once its closing seal failed:
     // see keyedOwedRootEpisode.
     private int keyedOwedRootSeals;
+    // Second keyed late rows inside the window a failed closing seal left open whose replacement
+    // commit failed in process, and whose process stopped at it, and the episodes that reached
+    // either: see secondKeyedRepairCommitFaultEpisode.
+    private int secondKeyedRepairCommitFaultEpisodes;
+    private int secondKeyedRepairCommitFaults;
+    private int secondKeyedRepairCommitStops;
     // The highest timestamp inserted into the base so far this run.
     private long maxInsertedTs;
     // The keyed prices and keyed closed-segment repairs of sparsePublicationEpisode's steps this
@@ -602,6 +609,13 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
                 coverage.assertReachedStat(LiveViewRefreshStats.SPARSE_PUBLICATION_COUNT);
                 coverage.assertReachedStat(LiveViewRefreshStats.OPEN_SEGMENT_KEYED_PRICED_COUNT);
                 Assert.assertTrue("no cycle without rows sealed the root a keyed resume owed", keyedOwedRootSeals > 0);
+                LOG.info().$("LV route fuzz second keyed repairs inside the owed window [commitFaults=")
+                        .$(secondKeyedRepairCommitFaults)
+                        .$(", stops=").$(secondKeyedRepairCommitStops).I$();
+                Assert.assertTrue(
+                        "no second keyed repair inside the owed window met a replacement commit fault",
+                        secondKeyedRepairCommitFaults + secondKeyedRepairCommitStops > 0
+                );
             }
             case STEER_SPARSE_FALLBACK -> {
                 // Reached through sparsePublicationEpisode's steps, every other run's, each of which
@@ -1416,8 +1430,107 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
             driveRefreshToQuiescence(job);
             assertRestoredFromTimeline("lv");
             assertView(oracleSql, orderBy, "after the restore from the keyed owed root");
+            secondKeyedRepairCommitFaultEpisode(oracleSql, orderBy, symCount);
         } finally {
             knobs.apply(AbstractLiveViewTest::setProperty);
+        }
+    }
+
+    /**
+     * Run by keyedOwedRootEpisode once its keyed resume took the late row, under its settings.
+     * Batches A and B, a row of every run key each, above every row, commit past the duration
+     * cadence and seal a root each, with room for two rows between them, and batch C, a row of
+     * every run key but the first, commits above them inside the cadence. A late row of the first
+     * key just above A's root takes the keyed resume, whose closing seal fails on the writer stage
+     * the seal hook sets, so its marker stays live over B's re-versioned root, below the frontier.
+     * A second late row of the first key above it takes the keyed resume again: its marker
+     * replaces the live one, records no seqTxn, and its replacement commit fails from the
+     * role-switch mint seam. Every other such episode stops the process at that commit, and the
+     * restart, which finds the live marker, rebuilds from the applied base. The others fail the
+     * commit in process, where the keyed replay ran beside the primary runtime, so no recovery
+     * runs and the retry repairs the row under its own live marker. The run's base lost nothing,
+     * so the view matches the oracle either way.
+     */
+    private void secondKeyedRepairCommitFaultEpisode(String oracleSql, String orderBy, int symCount) throws Exception {
+        final LiveViewInstance instance = viewInstance();
+        setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+        final long batchAHighTs = insertKeyBatch(Math.max(maxInsertedTs, instance.getLatestSeenTs()) + 1, 0, symCount);
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+        Assert.assertEquals("a root seals batch A", batchAHighTs, instance.getHeadCheckpointMaxTs());
+        setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+        final long batchBHighTs = insertKeyBatch(batchAHighTs + 3, 0, symCount);
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+        Assert.assertEquals("a root seals batch B", batchBHighTs, instance.getHeadCheckpointMaxTs());
+        insertKeyBatch(batchBHighTs + 1, 1, symCount);
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+        Assert.assertEquals("no root seals batch C", batchBHighTs, instance.getHeadCheckpointMaxTs());
+
+        final long keyedResumesBefore = instance.getO3OpenSegmentKeyedResumeCount();
+        final long markerBaseGeneration = publishedCheckpointGeneration(instance);
+        hooks(job).setSimulateResumeHeadSealStart(
+                () -> job.setCheckpointTimelineTestFailureStage(LiveViewCheckpointTimelineStoreWriter.TEST_FAIL_AFTER_METADATA_PUBLISH)
+        );
+        try {
+            execute("INSERT INTO base (ts, sym, i, x) VALUES (" + (batchAHighTs + 1) + "::timestamp, '" + SYMBOLS[0] + "', 1, 1.0)");
+            drainWalQueue();
+            driveRefreshToQuiescence(job);
+        } finally {
+            hooks(job).setSimulateResumeHeadSealStart(null);
+            job.setCheckpointTimelineTestFailureStage(0);
+        }
+        if (instance.getO3OpenSegmentKeyedResumeCount() == keyedResumesBefore) {
+            LOG.info().$("LV route fuzz: second keyed repair episode ends, no keyed resume took the late row").$();
+            return;
+        }
+        assertRepairMarkerLive(instance, markerBaseGeneration);
+
+        final boolean isStop = secondKeyedRepairCommitFaultEpisodes++ % 2 == 1;
+        final long lvSeqTxnBefore = engine.getTableSequencerAPI().lastTxn(instance.getLiveViewToken());
+        final long runtimeRestoresBefore = instance.getCheckpointRuntimeRestores();
+        final LiveViewReplacementCommitWitness witness = new LiveViewReplacementCommitWitness(
+                engine,
+                instance,
+                markerBaseGeneration + 1,
+                isStop ? LiveViewReplacementCommitWitness.FAIL_CANCELLATION : LiveViewReplacementCommitWitness.FAIL_CRITICAL
+        );
+        execute("INSERT INTO base (ts, sym, i, x) VALUES (" + (batchAHighTs + 2) + "::timestamp, '" + SYMBOLS[0] + "', 2, 1.0)");
+        drainWalQueue();
+        // The refresh fault the witness throws is the one this episode injects.
+        ledger.isInjectionOpen = true;
+        CairoEngine.setRoleSwitchMintObserver(witness::onMint);
+        try {
+            if (isStop) {
+                for (int pass = 0; pass < REFRESH_QUIESCENCE_PASSES && !witness.hasFailed(); pass++) {
+                    setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                    drainWalQueue();
+                    job.processNotificationsForTest();
+                }
+            } else {
+                driveRefreshToQuiescence(job);
+            }
+        } finally {
+            CairoEngine.setRoleSwitchMintObserver(null);
+            ledger.isInjectionOpen = false;
+        }
+        Assert.assertTrue("the second keyed resume must reach its replacement commit", witness.hasFailed());
+        Assert.assertEquals("over the live marker, its marker records no seqTxn", Numbers.LONG_NULL, witness.getRecordedLvSeqTxn(0));
+        if (isStop) {
+            Assert.assertEquals("the replacement never commits", lvSeqTxnBefore, engine.getTableSequencerAPI().lastTxn(instance.getLiveViewToken()));
+            restart();
+            driveRefreshToQuiescence(job);
+            assertRebuiltFromAppliedBase("lv");
+            secondKeyedRepairCommitStops++;
+            assertView(oracleSql, orderBy, "after the restart behind the second keyed repair's marker");
+        } else {
+            Assert.assertEquals("the faulted commit and its retry", 2, witness.size());
+            Assert.assertEquals("over its own live marker, the retry's records none either", Numbers.LONG_NULL, witness.getRecordedLvSeqTxn(1));
+            Assert.assertEquals("the keyed replay keeps the primary runtime", runtimeRestoresBefore, instance.getCheckpointRuntimeRestores());
+            Assert.assertFalse(instance.isCheckpointRecoveryBlocked());
+            secondKeyedRepairCommitFaults++;
+            assertView(oracleSql, orderBy, "after the second keyed repair's commit fault");
         }
     }
 
