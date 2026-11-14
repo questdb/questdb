@@ -513,6 +513,11 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     private int owedSealKeptTimelineRetires;
     private int sparseFrontierSealKeptTimelineRetires;
     private int restartRebuildsOverTheMarkerBefore;
+    // Retires that answered the failed frontier seal of a sparse departure with no lock on
+    // _timeline, which removed the timeline and its marker, and whose restart the restatement
+    // guard refused over the day the run dropped, as a rebuild over an absent timeline: see
+    // departOverSparseRootsFailingTheFrontierSeal.
+    private int blockedTimelineAbsentSparseFrontierSeals;
 
     @Test
     public void testFuzzAnchored() throws Exception {
@@ -1172,15 +1177,17 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // publication, and the restart from what the crash left never restores. The first retire
         // at the fourth failure, and the one after a filtered sparse departure's failed frontier
         // seal, meet a lock on _timeline: each keeps the timeline and its live marker, and the
-        // restart rebuilds over the marker. The last batch draws a lock for its first such retire
-        // and none for its second, which removes the timeline and its marker: the restatement
-        // guard refuses the restart's rebuild over the day the run dropped, as a rebuild over an
-        // absent timeline.
+        // restart rebuilds over the marker. The fourth batch draws a lock for its first retire at
+        // the fourth failure and none for its second, and the fifth none for the retire after its
+        // filtered sparse departure's failed frontier seal: each unlocked retire removes the
+        // timeline and its marker, and the restatement guard refuses the restart's rebuild over
+        // the day the run dropped, as a rebuild over an absent timeline.
         final long[][] seeds = {
                 {2277450534470274333L, 984054158561696L},
                 {8920866532787660373L, 984089867478109L},
                 {1611528458713692810L, 984110371927461L},
-                {99928471246783L, 1794659701302L}
+                {99928471246783L, 1794659701302L},
+                {101175290116121L, 1794660948121L}
         };
         for (long[] seed : seeds) {
             setCurrentMicros(-1);
@@ -1204,6 +1211,10 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         Assert.assertTrue(
                 "no retire after the pause removed the timeline ahead of a rebuild the guard refused",
                 blockedTimelineAbsentOwedSealEpisodes > 0
+        );
+        Assert.assertTrue(
+                "no retire after a failed frontier seal removed the timeline ahead of a rebuild the guard refused",
+                blockedTimelineAbsentSparseFrontierSeals > 0
         );
     }
 
@@ -2747,6 +2758,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                             + (isTimelineLockedForTheRetire ? "prefix preservation repair marker present" : "timeline is absent")
                             + "]: "
             );
+            if (!isTimelineLockedForTheRetire) {
+                blockedTimelineAbsentSparseFrontierSeals++;
+            }
             return restoreTheDroppedDayAndRestart(restartedJob, droppedDayTs, oracleOrderedSql, viewOrderedSql);
         }
         assertRebuiltFromAppliedBase("lv");
