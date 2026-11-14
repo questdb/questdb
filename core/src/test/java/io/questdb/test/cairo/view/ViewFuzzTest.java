@@ -53,6 +53,7 @@ import org.junit.Test;
 
 import java.util.TreeMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
 
 public class ViewFuzzTest extends AbstractFuzzTest {
@@ -109,7 +110,11 @@ public class ViewFuzzTest extends AbstractFuzzTest {
         // when another session changes its table while it waits.
         assertMemoryLeak(() -> {
             final Rnd rnd = fuzzer.generateRandom(LOG);
-            node1.setProperty(PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, Long.MAX_VALUE);
+            // Far above any wait for a compile run here, so that every DDL succeeds on a slow
+            // machine too, but finite: a run that never ends, such as the run of a job that died
+            // inside it, fails the DDL that waits for it, and the job's failure then fails the
+            // test, instead of the DDL waiting until the JUnit timeout.
+            node1.setProperty(PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 60_000);
             // a busy retry at the next compile run, or at the server default
             final long busyRetryTimeoutMillis = rnd.nextBoolean() ? 0 : 1_000;
             LOG.info().$("view compile busy retry timeout [millis=").$(busyRetryTimeoutMillis).I$();
@@ -148,6 +153,7 @@ public class ViewFuzzTest extends AbstractFuzzTest {
             printSql(VP_STATUS_SQL, vpCreateStatus);
 
             final AtomicBoolean stop = new AtomicBoolean();
+            final AtomicReference<Throwable> viewCompilerJobError = new AtomicReference<>();
             final ObjList<Thread> viewCompilerJobs = new ObjList<>();
             // TRUNCATE, RENAME, DROP, TRUNCATE KEEP SYMBOL MAPS and, with two tables or more,
             // TRUNCATE of two tables
@@ -163,7 +169,7 @@ public class ViewFuzzTest extends AbstractFuzzTest {
             try {
                 for (int i = 0, n = 1 + rnd.nextInt(4); i < n; i++) {
                     // short naps, so that a worker often compiles while the DDL locks the table
-                    viewCompilerJobs.add(startViewCompilerJob(i, stop, rnd, 3));
+                    viewCompilerJobs.add(startViewCompilerJob(i, stop, viewCompilerJobError, rnd, 3));
                 }
                 for (int i = 0, n = 20 + rnd.nextInt(20); i < n; i++) {
                     final int tableIndex = rnd.nextInt(tableCount);
@@ -210,6 +216,9 @@ public class ViewFuzzTest extends AbstractFuzzTest {
             } finally {
                 capture.stop();
                 stopAndJoinJobs(stop, viewCompilerJobs);
+                // in the finally, so that a job's failure replaces the error it caused here, such
+                // as the busy error of a DDL that waited for the run of the dead job
+                TestUtils.rethrowFirst(viewCompilerJobError);
             }
             for (int ddl = 0; ddl < ddlShapeCount; ddl++) {
                 Assert.assertTrue("DDL " + ddl + " did not run", ddlCounts[ddl] > 0);
@@ -435,6 +444,7 @@ public class ViewFuzzTest extends AbstractFuzzTest {
 
     private void runViewFuzz(Rnd rnd, String tableNameBase, int tableCount) throws Exception {
         final AtomicBoolean stop = new AtomicBoolean();
+        final AtomicReference<Throwable> viewCompilerJobError = new AtomicReference<>();
         final ObjList<Thread> viewCompilerJobs = new ObjList<>();
         final int viewCompilerJobCount = 1 + rnd.nextInt(4);
 
@@ -443,7 +453,7 @@ public class ViewFuzzTest extends AbstractFuzzTest {
 
         try {
             for (int i = 0; i < viewCompilerJobCount; i++) {
-                viewCompilerJobs.add(startViewCompilerJob(i, stop, rnd, 50));
+                viewCompilerJobs.add(startViewCompilerJob(i, stop, viewCompilerJobError, rnd, 50));
             }
 
             for (int i = 0; i < tableCount; i++) {
@@ -460,6 +470,7 @@ public class ViewFuzzTest extends AbstractFuzzTest {
             fuzzer.applyManyWalParallel(fuzzTransactions, rnd, tableNameBase, true, true);
         } finally {
             stopAndJoinJobs(stop, viewCompilerJobs);
+            TestUtils.rethrowFirst(viewCompilerJobError);
         }
 
         drainWalQueue();
@@ -527,7 +538,7 @@ public class ViewFuzzTest extends AbstractFuzzTest {
         );
     }
 
-    private Thread startViewCompilerJob(int workerId, AtomicBoolean stop, Rnd outsideRnd, int maxNapMillis) {
+    private Thread startViewCompilerJob(int workerId, AtomicBoolean stop, AtomicReference<Throwable> jobError, Rnd outsideRnd, int maxNapMillis) {
         final Rnd rnd = new Rnd(outsideRnd.nextLong(), outsideRnd.nextLong());
         final Thread th = new Thread(
                 () -> {
@@ -546,6 +557,8 @@ public class ViewFuzzTest extends AbstractFuzzTest {
                             }
                         }
                     } catch (Throwable throwable) {
+                        // the caller fails the test with the first failure of its jobs once it joined them
+                        jobError.compareAndSet(null, throwable);
                         LOG.error().$("View compiler job failed: ").$(throwable).$();
                     } finally {
                         Path.clearThreadLocals();
@@ -585,10 +598,11 @@ public class ViewFuzzTest extends AbstractFuzzTest {
             }
 
             AtomicBoolean stop = new AtomicBoolean();
+            final AtomicReference<Throwable> viewCompilerJobError = new AtomicReference<>();
             ObjList<Thread> viewCompilerJobs = new ObjList<>();
 
             try {
-                viewCompilerJobs.add(startViewCompilerJob(0, stop, rnd, 50));
+                viewCompilerJobs.add(startViewCompilerJob(0, stop, viewCompilerJobError, rnd, 50));
 
                 setFuzzParams(rnd);
 
@@ -604,6 +618,7 @@ public class ViewFuzzTest extends AbstractFuzzTest {
                 );
             } finally {
                 stopAndJoinJobs(stop, viewCompilerJobs);
+                TestUtils.rethrowFirst(viewCompilerJobError);
             }
 
             drainWalQueue();
