@@ -58,6 +58,7 @@ public class LowerCaseUtf8SequenceObjHashMap<V> extends AbstractLowerCaseUtf8Seq
     public final void clear() {
         super.clear();
         list.clear();
+        Arrays.fill(values, null);
     }
 
     public V get(Utf8Sequence key) {

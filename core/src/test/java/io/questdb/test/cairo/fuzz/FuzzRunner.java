@@ -142,6 +142,9 @@ public class FuzzRunner {
     private static final int SNAPSHOT_SAMPLE_ROWS = 16;
     private static final int SNAPSHOT_TAIL_ROWS = 16;
     private final TableSequencerAPI.TableSequencerCallback checkNoSuspendedTablesRef;
+    // Prepared commits that the WAL apply paths abandoned and sequenced, see commitWal() and rollbackWal().
+    private final AtomicInteger abandonedPreparedCommitCount = new AtomicInteger();
+    private final AtomicInteger sequencedPreparedCommitCount = new AtomicInteger();
     // the native conversions of every value of a type without a NULL sentinel, by source type and target type
     private final Map<String, Map<String, String>> noSentinelConversions = new HashMap<>();
     private final Map<TableReader, ReaderSnapshot> readerSnapshots = Collections.synchronizedMap(new IdentityHashMap<>());
@@ -180,6 +183,8 @@ public class FuzzRunner {
     private double partitionDropProb;
     private double partitionToNativeProb;
     private double partitionToParquetProb;
+    // The chance that a WAL commit or rollback goes through WalWriter.prepareCommit(); 0 keeps the plain path.
+    private double preparedCommitProb;
     private double queryProb;
     private double replaceInsertProb;
     private double rollbackProb;
@@ -516,8 +521,11 @@ public class FuzzRunner {
             }
 
             Rnd tempRnd = newApplyRnd();
+            // A stream of its own, so that the draws of applyRnd and tempRnd stay as without prepared commits.
+            final Rnd prepareRnd = new Rnd(tempRnd.getSeed0() ^ 0x5DEECE66DL, tempRnd.getSeed1());
             for (int i = 0, n = transactions.size(); i < n; i++) {
-                WalWriter writer = writers.getQuick(applyRnd.nextPositiveInt() % walWriterCount);
+                final int activeWriterIndex = applyRnd.nextPositiveInt() % walWriterCount;
+                WalWriter writer = writers.getQuick(activeWriterIndex);
                 writer.goActive();
                 FuzzTransaction transaction = transactions.getQuick(i);
                 for (int operationIndex = 0; operationIndex < transaction.operationList.size(); operationIndex++) {
@@ -535,7 +543,7 @@ public class FuzzRunner {
                     }
                 } else {
                     if (transaction.rollback) {
-                        writer.rollback();
+                        writers.setQuick(activeWriterIndex, rollbackWal(writer, prepareRnd));
                     } else {
                         if (transaction.hasReplaceRange()) {
                             writer.commitWithParams(
@@ -544,7 +552,7 @@ public class FuzzRunner {
                                     WAL_DEDUP_MODE_REPLACE_RANGE
                             );
                         } else {
-                            writer.commit();
+                            commitWal(writer, prepareRnd);
                         }
                     }
                 }
@@ -790,6 +798,20 @@ public class FuzzRunner {
         this.createWalAsParquet = createWalAsParquet;
     }
 
+    /**
+     * The number of prepared commits the WAL apply paths abandoned since this runner was created.
+     */
+    public int getAbandonedPreparedCommitCount() {
+        return abandonedPreparedCommitCount.get();
+    }
+
+    /**
+     * The number of prepared commits the WAL apply paths sequenced since this runner was created.
+     */
+    public int getSequencedPreparedCommitCount() {
+        return sequencedPreparedCommitCount.get();
+    }
+
     public void setFuzzCounts(
             boolean isO3,
             int fuzzRowCount,
@@ -836,6 +858,14 @@ public class FuzzRunner {
         this.partitionCount = partitionCount;
         this.parallelWalCount = parallelWalCount;
         this.ioFailureCount = ioFailureCount;
+    }
+
+    /**
+     * Sends a share of the WAL commits and rollbacks through {@link WalWriter#prepareCommit()}: a commit then
+     * sequences the prepared record, a rollback abandons it and replaces the writer.
+     */
+    public void setPreparedCommitProbability(double preparedCommitProb) {
+        this.preparedCommitProb = preparedCommitProb;
     }
 
     public void setFuzzProbabilities(
@@ -2001,6 +2031,8 @@ public class FuzzRunner {
         }
 
         final Rnd tempRnd = newApplyRnd();
+        // A stream of its own, so that the draws of tempRnd stay as without prepared commits.
+        final Rnd prepareRnd = new Rnd(tempRnd.getSeed0() ^ 0x5DEECE66DL, tempRnd.getSeed1());
         return new Thread(() -> {
             int opIndex;
 
@@ -2072,7 +2104,12 @@ public class FuzzRunner {
                     } else {
                         if (transaction.rollback) {
                             assert !transaction.hasReplaceRange();
-                            walWriter.rollback();
+                            final WalWriter next = rollbackWal(walWriter, prepareRnd);
+                            if (next != walWriter) {
+                                synchronized (writers) {
+                                    writers.setQuick(writerIndex, next);
+                                }
+                            }
                         } else {
                             if (transaction.hasReplaceRange()) {
                                 walWriter.commitWithParams(
@@ -2082,7 +2119,7 @@ public class FuzzRunner {
                                 );
                                 increment = true;
                             } else {
-                                walWriter.commit();
+                                commitWal(walWriter, prepareRnd);
                             }
                         }
                     }
@@ -2231,6 +2268,53 @@ public class FuzzRunner {
             }
         }
         return false;
+    }
+
+    // Commits the writer's rows, through a prepared commit when prepareRnd draws one: the prepare, a segment roll that
+    // the prepared writer refuses, then the commit that sequences the record and the group flush it left due.
+    private void commitWal(WalWriter writer, Rnd prepareRnd) {
+        if (!isPreparedCommitDrawn(writer, prepareRnd)) {
+            writer.commit();
+            return;
+        }
+        writer.prepareCommit();
+        if (prepareRnd.nextBoolean()) {
+            try {
+                writer.rollSegment();
+                Assert.fail("a prepared writer must refuse a segment roll");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "while a WAL commit is prepared");
+            }
+            Assert.assertTrue(writer.isCommitPrepared());
+        }
+        writer.commit();
+        writer.flushDueGroupCommit();
+        sequencedPreparedCommitCount.incrementAndGet();
+    }
+
+    private boolean isPreparedCommitDrawn(WalWriter writer, Rnd prepareRnd) {
+        return preparedCommitProb > 0
+                && prepareRnd.nextDouble() < preparedCommitProb
+                && writer.getUncommittedRowCount() > 0
+                && !writer.isInColumnarWrite();
+    }
+
+    // Rolls the writer's rows back, or, when prepareRnd draws a prepared commit, prepares them and abandons the
+    // prepared commit, which distresses the writer: the pool discards it and the caller takes the returned writer.
+    private WalWriter rollbackWal(WalWriter writer, Rnd prepareRnd) {
+        if (!isPreparedCommitDrawn(writer, prepareRnd)) {
+            writer.rollback();
+            return writer;
+        }
+        writer.prepareCommit();
+        writer.rollback();
+        Assert.assertTrue(writer.isDistressed());
+        final TableToken tableToken = writer.getTableToken();
+        writer.close();
+        abandonedPreparedCommitCount.incrementAndGet();
+        final WalWriter next = engine.getWalWriter(tableToken);
+        next.goActive();
+        return next;
     }
 
     private Rnd newApplyRnd() {

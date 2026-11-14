@@ -24,8 +24,10 @@
 
 package io.questdb.test.std;
 
+import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.std.LowerCaseUtf8SequenceObjHashMap;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8Sink;
@@ -41,6 +43,89 @@ import java.util.ArrayList;
 import java.util.HashMap;
 
 public class LowerCaseUtf8SequenceObjHashMapTest {
+
+    /**
+     * Also on a map that grew large: the HTTP server clears its header maps for every request.
+     */
+    @Test
+    public void testClearAllocatesNothing() {
+        // The default QWP limit of tables per connection, which bounds how far a table
+        // cache's map grows: 10_000 keys take 32_768 slots.
+        final int keyCount = QwpConstants.DEFAULT_MAX_TABLES_PER_CONNECTION;
+        final ObjList<Utf8String> keys = new ObjList<>();
+        final ObjList<String> values = new ObjList<>();
+        for (int i = 0; i < keyCount; i++) {
+            keys.add(new Utf8String("Key_" + i));
+            values.add("v" + i);
+        }
+        final LowerCaseUtf8SequenceObjHashMap<String> map = new LowerCaseUtf8SequenceObjHashMap<>();
+        // Grows the map, then warms clear() up.
+        putAll(map, keys, values);
+        for (int i = 0; i < 100; i++) {
+            map.clear();
+        }
+        try (TestUtils.ThreadMetricsScope<com.sun.management.ThreadMXBean> scope = TestUtils.threadAllocationScope()) {
+            final com.sun.management.ThreadMXBean bean = scope.getBean();
+            long minAllocatedBytes = Long.MAX_VALUE;
+            for (int round = 0; round < 5; round++) {
+                putAll(map, keys, values);
+                final long allocatedBefore = bean.getCurrentThreadAllocatedBytes();
+                for (int i = 0; i < 100; i++) {
+                    map.clear();
+                }
+                minAllocatedBytes = Math.min(minAllocatedBytes, bean.getCurrentThreadAllocatedBytes() - allocatedBefore);
+            }
+            Assert.assertEquals(0, map.size());
+            Assert.assertEquals(0, minAllocatedBytes);
+        }
+    }
+
+    /**
+     * Also after the map grew and after removals; the map then takes the keys again.
+     */
+    @Test
+    public void testClearReleasesValues() {
+        // 15 and 16 keys: one below and at the first growth. 10_000 keys: the default QWP
+        // limit of tables per connection, which bounds how far a table cache's map grows.
+        final int[] keyCounts = {0, 1, 15, 16, 40, 200, QwpConstants.DEFAULT_MAX_TABLES_PER_CONNECTION};
+        for (int keyCount : keyCounts) {
+            final String what = keyCount + " keys";
+            final ObjList<Utf8String> keys = new ObjList<>();
+            final LowerCaseUtf8SequenceObjHashMap<String> map = new LowerCaseUtf8SequenceObjHashMap<>();
+            for (int i = 0; i < keyCount; i++) {
+                final Utf8String key = new Utf8String("Key_" + i);
+                keys.add(key);
+                Assert.assertTrue(what, map.put(key, "v" + i));
+            }
+            // Removes every fourth key, alternating the two removals the table caches use.
+            int removedCount = 0;
+            for (int i = 3; i < keyCount; i += 4) {
+                final Utf8String key = keys.getQuick(i);
+                if ((i / 4) % 2 == 0) {
+                    Assert.assertTrue(what, map.remove(key) > -1);
+                } else {
+                    // The map lists the key instance that put() stored.
+                    final int listIndex = map.keys().indexOf(key);
+                    Assert.assertTrue(what, listIndex > -1);
+                    map.removeAtQuick(map.keyIndex(key), listIndex);
+                }
+                Assert.assertNull(what, map.get(key));
+                removedCount++;
+            }
+            Assert.assertEquals(what, keyCount - removedCount, map.size());
+            assertClearReleasesValues(what, map, keys);
+
+            // The map takes every key again, as a new entry.
+            for (int i = 0; i < keyCount; i++) {
+                Assert.assertTrue(what, map.put(keys.getQuick(i), "w" + i));
+            }
+            for (int i = 0; i < keyCount; i++) {
+                Assert.assertEquals(what, "w" + i, map.get(keys.getQuick(i)));
+            }
+            Assert.assertEquals(what, keyCount, map.size());
+            assertClearReleasesValues(what + ", reused", map, keys);
+        }
+    }
 
     @Test
     public void testHashMapCompatibility() {
@@ -261,6 +346,34 @@ public class LowerCaseUtf8SequenceObjHashMapTest {
         assertMap(map);
     }
 
+    // Clears the map, then asserts that it holds no key and that no slot that held a key
+    // still holds a value.
+    private static void assertClearReleasesValues(String what, LowerCaseUtf8SequenceObjHashMap<String> map, ObjList<Utf8String> keys) {
+        final int keyCount = keys.size();
+        // A present key's index is negative: -slot - 1.
+        final int[] keyIndexes = new int[keyCount];
+        int presentCount = 0;
+        for (int i = 0; i < keyCount; i++) {
+            keyIndexes[i] = map.keyIndex(keys.getQuick(i));
+            if (keyIndexes[i] < 0) {
+                presentCount++;
+            }
+        }
+        Assert.assertEquals(what, map.size(), presentCount);
+        map.clear();
+        Assert.assertEquals(what, 0, map.size());
+        Assert.assertEquals(what, 0, map.keys().size());
+        for (int i = 0; i < keyCount; i++) {
+            final Utf8String key = keys.getQuick(i);
+            Assert.assertNull(what, map.get(key));
+            Assert.assertTrue(what, map.excludes(key));
+            if (keyIndexes[i] < 0) {
+                Assert.assertNull(what, map.keyAt(keyIndexes[i]));
+                Assert.assertNull(what + ": the slot of " + key + " keeps its value", map.valueAtQuick(keyIndexes[i]));
+            }
+        }
+    }
+
     private static void assertMap(LowerCaseUtf8SequenceObjHashMap<Integer> map, String... expectedKeys) {
         Assert.assertEquals(expectedKeys.length, map.size());
         Assert.assertEquals(expectedKeys.length, map.keys().size());
@@ -293,6 +406,12 @@ public class LowerCaseUtf8SequenceObjHashMapTest {
             map.put(new Utf8String(Character.toString(key)), key - 'a' + 1);
         }
         return map;
+    }
+
+    private static void putAll(LowerCaseUtf8SequenceObjHashMap<String> map, ObjList<Utf8String> keys, ObjList<String> values) {
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            Assert.assertTrue(map.put(keys.getQuick(i), values.getQuick(i)));
+        }
     }
 
     private static void removeAtQuick(LowerCaseUtf8SequenceObjHashMap<Integer> map, int listIndex) {
