@@ -40,6 +40,9 @@ import org.junit.Test;
  *     by FULL or by RESUME;</li>
  *     <li>an ALTER ... AS that the same-position rule refuses and one it accepts, and one that moves ts and sym out of
  *     their place;</li>
+ *     <li>an ALTER ... AS whose SQL copies by position: refused for a moved column, for a renamed one and for another
+ *     column count, and accepted with the view's columns in their order, after which view ADD and DROP COLUMN are
+ *     refused; and none on a view that dropped a column;</li>
  *     <li>a view ADD COLUMN of a column the SQL produces under another type than the SQL's, which name mapping casts,
  *     and of a column no SQL produces;</li>
  *     <li>an ATTACH of a partition the same round detached, and a row into a day whose base partition the round
@@ -66,6 +69,8 @@ public class MatViewFuzzOpGeneratorCoverageTest {
     // incremental refresh
     private static final int CHECK_STEPS = 6;
     private static final int DAY_COUNT = 6;
+    // each shape of an ALTER ... AS that copies by position, and the column changes it refuses
+    private static final int POSITIONAL_ALTER_MIN = 20;
     private static final int ROUNDS = 500;
     private static final int STEPS_PER_ROUND = 60;
 
@@ -88,6 +93,12 @@ public class MatViewFuzzOpGeneratorCoverageTest {
         int setExpireTwoColumns = 0;
         int dropColumnRefused = 0;
         int dropColumnBesidePolicy = 0;
+        int positionalAlterMoved = 0;
+        int positionalAlterRenamed = 0;
+        int positionalAlterCountDiffers = 0;
+        int positionalAlterAccepted = 0;
+        int addColumnRefusedPositional = 0;
+        int dropColumnRefusedPositional = 0;
         final int[] policyShapes = new int[5];
         final MatViewFuzzOpGenerator.Op op = new MatViewFuzzOpGenerator.Op();
         for (int round = 0; round < ROUNDS; round++) {
@@ -99,25 +110,60 @@ public class MatViewFuzzOpGeneratorCoverageTest {
             }
             final boolean[] isDetached = new boolean[DAY_COUNT];
             final boolean[] isDropped = new boolean[DAY_COUNT];
+            boolean hasDroppedViewColumn = false;
             for (int step = 0; step < STEPS_PER_ROUND; step++) {
                 final ObjList<String> sqlBefore = new ObjList<>();
                 sqlBefore.addAll(generator.getSqlColumns());
+                final boolean wasSqlPositional = generator.isSqlPositional();
                 generator.next(rnd, op);
                 kindCounts[op.kind.ordinal()]++;
                 switch (op.kind) {
                     case VIEW_ALTER_AS -> {
                         if (op.isRefused) {
-                            alterRefused++;
                             Assert.assertEquals("a refused ALTER ... AS must keep the SQL", sqlBefore, generator.getSqlColumns());
+                            Assert.assertEquals(wasSqlPositional, generator.isSqlPositional());
                         } else {
-                            alterAccepted++;
                             Assert.assertEquals(op.sqlColumns, generator.getSqlColumns());
+                            Assert.assertEquals(op.isPositional, generator.isSqlPositional());
                         }
-                        if (!op.sqlColumns.getQuick(0).equals(MatViewFuzzOpGenerator.TS) || !op.sqlColumns.getQuick(1).equals(MatViewFuzzOpGenerator.SYM)) {
-                            alterReordered++;
+                        if (op.isPositional) {
+                            Assert.assertFalse("a SQL that copies by position on a view that dropped a column", hasDroppedViewColumn);
+                            final ObjList<String> viewColumns = generator.getViewColumns();
+                            if (!op.isRefused) {
+                                positionalAlterAccepted++;
+                                Assert.assertEquals("an accepted SQL that copies by position has the view's columns", viewColumns, op.sqlColumns);
+                            } else if (op.sqlColumns.size() != viewColumns.size()) {
+                                positionalAlterCountDiffers++;
+                            } else {
+                                boolean isEveryColumnInView = true;
+                                for (int i = 0, n = op.sqlColumns.size(); i < n; i++) {
+                                    isEveryColumnInView &= viewColumns.indexOf(op.sqlColumns.getQuick(i)) > -1;
+                                }
+                                if (isEveryColumnInView) {
+                                    positionalAlterMoved++;
+                                } else {
+                                    positionalAlterRenamed++;
+                                }
+                            }
+                        } else {
+                            if (op.isRefused) {
+                                alterRefused++;
+                            } else {
+                                alterAccepted++;
+                            }
+                            if (!op.sqlColumns.getQuick(0).equals(MatViewFuzzOpGenerator.TS) || !op.sqlColumns.getQuick(1).equals(MatViewFuzzOpGenerator.SYM)) {
+                                alterReordered++;
+                            }
                         }
                     }
                     case VIEW_ADD_COLUMN -> {
+                        Assert.assertEquals("view ADD COLUMN refused exactly while the SQL copies by position", generator.isSqlPositional(), op.isRefused);
+                        if (op.isRefused) {
+                            addColumnRefusedPositional++;
+                            Assert.assertTrue("a refused ADD COLUMN keeps the view's columns", generator.getViewColumns().indexOf(op.column) < 0);
+                        } else {
+                            Assert.assertTrue(generator.getViewColumns().indexOf(op.column) > -1);
+                        }
                         final int catalogueIndex = MatViewFuzzOpGenerator.catalogueIndex(op.column);
                         if (catalogueIndex < 0) {
                             addUnproduced++;
@@ -185,10 +231,17 @@ public class MatViewFuzzOpGeneratorCoverageTest {
                     }
                     case VIEW_DROP_COLUMN -> {
                         if (op.isRefused) {
-                            dropColumnRefused++;
+                            if (generator.getPolicyColumns().indexOf(op.column) > -1) {
+                                dropColumnRefused++;
+                            } else {
+                                Assert.assertTrue("view DROP COLUMN refused while the SQL maps by name", generator.isSqlPositional());
+                                dropColumnRefusedPositional++;
+                            }
                             Assert.assertTrue("a refused DROP COLUMN keeps the column", generator.getViewColumns().indexOf(op.column) > -1);
                         } else {
+                            Assert.assertFalse("view DROP COLUMN accepted while the SQL copies by position", generator.isSqlPositional());
                             Assert.assertTrue(generator.getViewColumns().indexOf(op.column) < 0);
+                            hasDroppedViewColumn = true;
                             if (generator.getExpireClause() != null) {
                                 dropColumnBesidePolicy++;
                             }
@@ -250,6 +303,12 @@ public class MatViewFuzzOpGeneratorCoverageTest {
         assertShare("SET EXPIRE of a KEEP N HIGHEST or LOWEST policy", policyShapes[4], 100);
         assertShare("view DROP COLUMN refused by the EXPIRE ROWS policy", dropColumnRefused, 100);
         assertShare("view DROP COLUMN of a column the EXPIRE ROWS policy does not read", dropColumnBesidePolicy, 100);
+        assertShare("ALTER ... AS copying by position refused for a moved column", positionalAlterMoved, POSITIONAL_ALTER_MIN);
+        assertShare("ALTER ... AS copying by position refused for a renamed column", positionalAlterRenamed, POSITIONAL_ALTER_MIN);
+        assertShare("ALTER ... AS copying by position refused on the column count", positionalAlterCountDiffers, POSITIONAL_ALTER_MIN);
+        assertShare("ALTER ... AS copying by position accepted", positionalAlterAccepted, POSITIONAL_ALTER_MIN);
+        assertShare("view ADD COLUMN refused while the SQL copies by position", addColumnRefusedPositional, POSITIONAL_ALTER_MIN);
+        assertShare("view DROP COLUMN refused while the SQL copies by position", dropColumnRefusedPositional, POSITIONAL_ALTER_MIN);
 
         // rounds of a period view
         final int[] periodKindCounts = new int[MatViewFuzzOpGenerator.Kind.values().length];
@@ -326,6 +385,18 @@ public class MatViewFuzzOpGeneratorCoverageTest {
                 periodRefreshOverEmptyDayWithQueuedRange,
                 50
         );
+    }
+
+    @Test
+    public void testPositionalCopyRule() {
+        // the rule ALTER MATERIALIZED VIEW ... AS applies to a SQL that copies by position, which the generator predicts
+        final ObjList<String> view = new ObjList<>("ts", "sym", "price", "qty");
+        Assert.assertFalse(MatViewFuzzOpGenerator.isRefusedByPositionalCopy(view, new ObjList<>("ts", "sym", "price", "qty")));
+        // a moved, a renamed, a missing and an extra column
+        Assert.assertTrue(MatViewFuzzOpGenerator.isRefusedByPositionalCopy(view, new ObjList<>("ts", "sym", "qty", "price")));
+        Assert.assertTrue(MatViewFuzzOpGenerator.isRefusedByPositionalCopy(view, new ObjList<>("ts", "sym", "price", "cnt")));
+        Assert.assertTrue(MatViewFuzzOpGenerator.isRefusedByPositionalCopy(view, new ObjList<>("ts", "sym", "price")));
+        Assert.assertTrue(MatViewFuzzOpGenerator.isRefusedByPositionalCopy(view, new ObjList<>("ts", "sym", "price", "qty", "cnt")));
     }
 
     @Test

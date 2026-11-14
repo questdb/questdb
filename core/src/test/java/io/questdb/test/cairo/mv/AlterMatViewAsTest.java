@@ -84,6 +84,14 @@ import java.util.concurrent.atomic.AtomicReference;
 public class AlterMatViewAsTest extends AbstractCairoTest {
     private static final String ALTER_PREFIX = "ALTER MATERIALIZED VIEW price_1h ";
     private static final String BASE2_SQL = "SELECT ts, sym, last(price) AS price FROM base2 SAMPLE BY 1h";
+    // column names of the base of the positional copy tests, see createLongNameBase()
+    private static final String L64 = "long_col_" + "w".repeat(55);
+    private static final String L65 = "long_col_" + "y".repeat(56);
+    private static final String M65 = "more_col_" + "z".repeat(56);
+    // the hourly maximum and minimum of the price in the base rows of createLongNameBase() and insertSecondHour()
+    private static final String MIN_MAX_SQL = "SELECT ts, max(price) mx, min(price) mn FROM base SAMPLE BY 1h";
+    private static final String POSITIONAL_COPY_HINT = "; the query relies on generated column names, so refresh copies its columns by position: "
+            + "keep each view column at its position, or give the query's columns explicit names";
     private static final String RESUME_SKIP_SQL = "REFRESH MATERIALIZED VIEW price_1h RESUME SKIP BACKLOG";
     private static final String RESUME_SQL = "REFRESH MATERIALIZED VIEW price_1h RESUME";
     private static final int VIEW_NAME_POSITION = ALTER_PREFIX.indexOf("price_1h");
@@ -1582,6 +1590,355 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPositionalAlterAfterByNameReorder() throws Exception {
+        // A by-name ALTER that reordered the SQL leaves the view's columns in their order, so a later SQL that drops
+        // the long reference's alias, and so copies by position, must follow the view's order, not the previous SQL's.
+        assertMemoryLeak(() -> {
+            createLongNameBase("base");
+            execute("CREATE MATERIALIZED VIEW pv AS (SELECT ts, " + L65 + ", max(price) AS mx, min(price) AS mn FROM base SAMPLE BY 1h) PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+            execute("ALTER MATERIALIZED VIEW pv AS (SELECT ts, " + L65 + " AS " + L65 + ", min(price) AS mn, max(price) AS mx FROM base SAMPLE BY 1h)");
+            drainWalAndMatViewQueues();
+            final String sqlOrder = "ALTER MATERIALIZED VIEW pv AS (SELECT ts, " + L65 + ", min(price) AS mn, max(price) AS mx FROM base SAMPLE BY 1h)";
+            assertPositionalAlterRefused("pv", sqlOrder, "min(price)", "mx", "mn");
+            execute("ALTER MATERIALIZED VIEW pv AS (SELECT ts, " + L65 + ", max(price) AS mx, min(price) AS mn FROM base SAMPLE BY 1h)");
+            drainWalQueue();
+            insertSecondHour("base");
+            assertViewStatus("pv", "valid", "");
+            assertMinMaxRows("pv", """
+                    2024-01-01T00:00:00.000000Z\t9.0\t1.0
+                    2024-01-01T01:00:00.000000Z\t6.0\t2.0
+                    """);
+            assertSqlCursors(MIN_MAX_SQL, "SELECT ts, mx, mn FROM pv");
+        });
+    }
+
+    @Test
+    public void testPositionalAlterAfterViewAddColumn() throws Exception {
+        // A view column added while the SQL named its columns sits at the end, where a SQL that copies by position
+        // must produce it; the rows computed before read NULL there until a refresh recomputes them.
+        assertMemoryLeak(() -> {
+            createLongNameBase("base");
+            execute("CREATE MATERIALIZED VIEW av AS (SELECT ts, " + L65 + " AS " + L65 + ", max(price) AS mx FROM base SAMPLE BY 1h) PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+            execute("ALTER MATERIALIZED VIEW av ADD COLUMN mn DOUBLE");
+            drainWalAndMatViewQueues();
+            final String moved = "ALTER MATERIALIZED VIEW av AS (SELECT ts, " + L65 + ", min(price) AS mn, max(price) AS mx FROM base SAMPLE BY 1h)";
+            assertPositionalAlterRefused("av", moved, "min(price)", "mx", "mn");
+            execute("ALTER MATERIALIZED VIEW av AS (SELECT ts, " + L65 + ", max(price) AS mx, min(price) AS mn FROM base SAMPLE BY 1h)");
+            assertMappingColumns("av", "", "");
+            drainWalQueue();
+            insertSecondHour("base");
+            assertViewStatus("av", "valid", "");
+            assertMinMaxRows("av", """
+                    2024-01-01T00:00:00.000000Z\t9.0\tnull
+                    2024-01-01T01:00:00.000000Z\t6.0\t2.0
+                    """);
+        });
+    }
+
+    @Test
+    public void testPositionalAlterChecksNamesBeforeCasts() throws Exception {
+        // A moved column fails on its name before its type meets the view column at its position; with the names in
+        // place, a type that does not cast to the view column's still fails with the cast error.
+        assertMemoryLeak(() -> {
+            createLongNameBase("base");
+            execute("CREATE MATERIALIZED VIEW bv AS (SELECT ts, " + L65 + ", max(price) AS mx, last(ok) AS flag FROM base SAMPLE BY 1h) PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+            final String moved = "ALTER MATERIALIZED VIEW bv AS (SELECT ts, " + L65 + ", last(ok) AS flag, max(price) AS mx FROM base SAMPLE BY 1h)";
+            assertPositionalAlterRefused("bv", moved, "last(ok)", "mx", "flag");
+            final String typesSwapped = "ALTER MATERIALIZED VIEW bv AS (SELECT ts, " + L65 + ", last(ok) AS mx, max(price) AS flag FROM base SAMPLE BY 1h)";
+            assertAlterRefused("bv", typesSwapped, typesSwapped.indexOf("SELECT"), "inconvertible types: BOOLEAN -> DOUBLE [from=mx, to=mx]");
+            insertSecondHour("base");
+            assertViewStatus("bv", "valid", "");
+            assertQuery("SELECT ts, mx, flag FROM bv ORDER BY ts").timestamp("ts").noLeakCheck().expectSize().returns("""
+                    ts\tmx\tflag
+                    2024-01-01T00:00:00.000000Z\t9.0\tfalse
+                    2024-01-01T01:00:00.000000Z\t6.0\tfalse
+                    """);
+        });
+    }
+
+    @Test
+    public void testPositionalAlterKeepingPositionsIsAccepted() throws Exception {
+        // A SQL that copies by position and keeps every view column's name at its position, in any letter case, is
+        // taken as it is: the view's columns keep their names, and the next refresh computes with the new SQL.
+        assertMemoryLeak(() -> {
+            createLongNameBase("base");
+            execute("CREATE MATERIALIZED VIEW pv AS (SELECT ts, " + L65 + ", max(price) AS mx, min(price) AS mn FROM base SAMPLE BY 1h) PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+            final long viewSeqTxn = engine.getTableSequencerAPI().getTxnTracker(engine.verifyTableName("pv")).getSeqTxn();
+            final String newSql = "SELECT ts, " + L65 + ", max(price) * 2 AS MX, min(price) AS Mn FROM base SAMPLE BY 1h";
+            execute("ALTER MATERIALIZED VIEW pv AS (" + newSql + ")");
+            Assert.assertEquals(viewSeqTxn + 1, engine.getTableSequencerAPI().getTxnTracker(engine.verifyTableName("pv")).getSeqTxn());
+            assertMappingColumns("pv", "", "");
+            drainWalQueue();
+            Assert.assertEquals(newSql, engine.getDependentViewGraph().getViewDefinition(engine.verifyTableName("pv")).getMatViewSql());
+            insertSecondHour("base");
+            assertViewStatus("pv", "valid", "");
+            assertQuery("pv ORDER BY ts").timestamp("ts").noLeakCheck().expectSize().returns(
+                    "ts\t" + L65 + "\tmx\tmn\n"
+                            + "2024-01-01T00:00:00.000000Z\ta\t9.0\t1.0\n"
+                            + "2024-01-01T01:00:00.000000Z\ta\t12.0\t2.0\n"
+            );
+        });
+    }
+
+    @Test
+    public void testPositionalAlterRefusesDriftedGeneratedName() throws Exception {
+        // CREATE under the default alias rules names an unaliased reference to a 65-character column after its first
+        // 64 characters. Under the legacy rules the same reference takes the full name, which is not the view
+        // column's at its position; the alias of the view column's name keeps it.
+        setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            final String l65Cut = L65.substring(0, 64);
+            createLongNameBase("base");
+            execute("CREATE MATERIALIZED VIEW pv AS (SELECT ts, " + L65 + ", max(price) AS mx, min(price) AS mn FROM base SAMPLE BY 1h) PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+            assertViewColumns("pv", "ts", l65Cut, "mx", "mn");
+            setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "false");
+            final String drifted = "ALTER MATERIALIZED VIEW pv AS (SELECT ts, " + L65 + ", max(price) * 2 AS mx, min(price) AS mn FROM base SAMPLE BY 1h)";
+            assertPositionalAlterRefused("pv", drifted, L65, l65Cut, L65);
+            execute("ALTER MATERIALIZED VIEW pv AS (SELECT ts, " + L65 + " AS " + l65Cut + ", max(price) * 2 AS mx, min(price) AS mn FROM base SAMPLE BY 1h)");
+            assertMappingColumns("pv", "", "");
+            drainWalQueue();
+            insertSecondHour("base");
+            assertViewStatus("pv", "valid", "");
+            assertMinMaxRows("pv", """
+                    2024-01-01T00:00:00.000000Z\t9.0\t1.0
+                    2024-01-01T01:00:00.000000Z\t12.0\t2.0
+                    """);
+        });
+    }
+
+    @Test
+    public void testPositionalAlterRefusesMovedColumn() throws Exception {
+        // An unaliased reference to a column name longer than 64 characters makes the SQL copy by position, so a
+        // moved view column would take another column's values: refused. With the long reference aliased, the same
+        // order maps by name. A reference to a 64-character name keeps its name, so its SQL maps by name too.
+        assertMemoryLeak(() -> {
+            createLongNameBase("base");
+            execute("CREATE MATERIALIZED VIEW pv AS (SELECT ts, " + L65 + ", max(price) AS mx, min(price) AS mn FROM base SAMPLE BY 1h) PARTITION BY DAY");
+            execute("CREATE MATERIALIZED VIEW pv64 AS (SELECT ts, " + L64 + ", max(price) AS mx, min(price) AS mn FROM base SAMPLE BY 1h) PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+            final String moved = "ALTER MATERIALIZED VIEW pv AS (SELECT ts, " + L65 + ", min(price) AS mn, max(price) AS mx FROM base SAMPLE BY 1h)";
+            assertPositionalAlterRefused("pv", moved, "min(price)", "mx", "mn");
+
+            execute("ALTER MATERIALIZED VIEW pv AS (SELECT ts, " + L65 + " AS " + L65 + ", min(price) AS mn, max(price) AS mx FROM base SAMPLE BY 1h)");
+            assertMappingColumns("pv", "", "");
+            execute("ALTER MATERIALIZED VIEW pv64 AS (SELECT ts, " + L64 + ", min(price) AS mn, max(price) AS mx FROM base SAMPLE BY 1h)");
+            assertMappingColumns("pv64", "", "");
+            drainWalQueue();
+            insertSecondHour("base");
+            for (String view : new String[]{"pv", "pv64"}) {
+                assertViewStatus(view, "valid", "");
+                assertMinMaxRows(view, """
+                        2024-01-01T00:00:00.000000Z\t9.0\t1.0
+                        2024-01-01T01:00:00.000000Z\t6.0\t2.0
+                        """);
+                assertSqlCursors(MIN_MAX_SQL, "SELECT ts, mx, mn FROM " + view);
+            }
+        });
+    }
+
+    @Test
+    public void testPositionalAlterRefusesMovedColumnFromSubqueryOrCte() throws Exception {
+        // An unaliased long reference anywhere in the SQL's text makes it copy by position, in a subquery or a CTE
+        // too, even when its column never reaches the output; the error points at the outer SELECT's column.
+        assertMemoryLeak(() -> {
+            createLongNameBase("base");
+            execute("CREATE MATERIALIZED VIEW sv AS (SELECT ts, max(price) AS mx, min(price) AS mn FROM base SAMPLE BY 1h) PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+            final String subquery = "ALTER MATERIALIZED VIEW sv AS (SELECT ts, min(price) AS mn, max(price) AS mx FROM (SELECT ts, " + L65 + ", price FROM base) SAMPLE BY 1h)";
+            assertPositionalAlterRefused("sv", subquery, "min(price)", "mx", "mn");
+            final String cte = "ALTER MATERIALIZED VIEW sv AS (WITH q AS (SELECT ts, " + L65 + ", price FROM base) SELECT ts, min(price) AS mn, max(price) AS mx FROM q SAMPLE BY 1h)";
+            assertPositionalAlterRefused("sv", cte, "min(price)", "mx", "mn");
+            execute("ALTER MATERIALIZED VIEW sv AS (SELECT ts, min(price) AS mn, max(price) AS mx FROM (SELECT ts, " + L65 + " AS k, price FROM base) SAMPLE BY 1h)");
+            assertMappingColumns("sv", "", "");
+            drainWalQueue();
+            insertSecondHour("base");
+            assertViewStatus("sv", "valid", "");
+            assertMinMaxRows("sv", """
+                    2024-01-01T00:00:00.000000Z\t9.0\t1.0
+                    2024-01-01T01:00:00.000000Z\t6.0\t2.0
+                    """);
+            assertSqlCursors(MIN_MAX_SQL, "SELECT ts, mx, mn FROM sv");
+        });
+    }
+
+    @Test
+    public void testPositionalAlterRefusesMovedColumnUnderWildcard() throws Exception {
+        // A top-level wildcard records no column position, so the error points at the SQL. Refresh, which checks such
+        // a SQL's names, never meets the moved column.
+        assertMemoryLeak(() -> {
+            createLongNameBase("base");
+            execute("CREATE MATERIALIZED VIEW wv AS (SELECT * FROM (SELECT ts, " + L65 + ", max(price) AS mx, min(price) AS mn FROM base SAMPLE BY 1h)) PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+            final String moved = "ALTER MATERIALIZED VIEW wv AS (SELECT * FROM (SELECT ts, " + L65 + ", min(price) AS mn, max(price) AS mx FROM base SAMPLE BY 1h))";
+            assertPositionalAlterRefused("wv", moved, "SELECT", "mx", "mn");
+            insertSecondHour("base");
+            assertViewStatus("wv", "valid", "");
+            assertMinMaxRows("wv", """
+                    2024-01-01T00:00:00.000000Z\t9.0\t1.0
+                    2024-01-01T01:00:00.000000Z\t6.0\t2.0
+                    """);
+        });
+    }
+
+    @Test
+    public void testPositionalAlterRefusesMovedTimestamp() throws Exception {
+        // The designated timestamp moved out of its position is a moved column like any other.
+        assertMemoryLeak(() -> {
+            createLongNameBase("base");
+            execute("CREATE MATERIALIZED VIEW pv AS (SELECT ts, " + L65 + ", max(price) AS mx, min(price) AS mn FROM base SAMPLE BY 1h) PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+            final String moved = "ALTER MATERIALIZED VIEW pv AS (SELECT " + L65 + ", ts, max(price) AS mx, min(price) AS mn FROM base SAMPLE BY 1h)";
+            assertPositionalAlterRefused("pv", moved, L65, "ts", L65);
+            insertSecondHour("base");
+            assertViewStatus("pv", "valid", "");
+            assertMinMaxRows("pv", """
+                    2024-01-01T00:00:00.000000Z\t9.0\t1.0
+                    2024-01-01T01:00:00.000000Z\t6.0\t2.0
+                    """);
+        });
+    }
+
+    @Test
+    public void testPositionalAlterRefusesRenamedColumn() throws Exception {
+        // A query column the view lacks at a view column's position replaces the view column: a renamed column, a long
+        // reference that lost its alias, or another long column in its place.
+        assertMemoryLeak(() -> {
+            createLongNameBase("base");
+            execute("CREATE MATERIALIZED VIEW pv AS (SELECT ts, " + L65 + ", max(price) AS mx, min(price) AS mn FROM base SAMPLE BY 1h) PARTITION BY DAY");
+            execute("CREATE MATERIALIZED VIEW nv AS (SELECT ts, " + L65 + " AS s, max(price) AS mx, min(price) AS mn FROM base SAMPLE BY 1h) PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+            final String renamed = "ALTER MATERIALIZED VIEW pv AS (SELECT ts, " + L65 + ", avg(price) AS av, min(price) AS mn FROM base SAMPLE BY 1h)";
+            assertPositionalAlterRefused("pv", renamed, "avg(price)", "mx", "av");
+            final String aliasLost = "ALTER MATERIALIZED VIEW nv AS (SELECT ts, " + L65 + ", max(price) AS mx, min(price) AS mn FROM base SAMPLE BY 1h)";
+            assertPositionalAlterRefused("nv", aliasLost, L65, "s", L65);
+            final String otherColumn = "ALTER MATERIALIZED VIEW nv AS (SELECT ts, " + M65 + ", max(price) AS mx, min(price) AS mn FROM base SAMPLE BY 1h)";
+            assertPositionalAlterRefused("nv", otherColumn, M65, "s", M65);
+            execute("ALTER MATERIALIZED VIEW nv AS (SELECT ts, " + L65 + " AS s, max(price) AS mx, min(price) AS mn FROM base SAMPLE BY 1h)");
+            assertMappingColumns("nv", "", "");
+            drainWalQueue();
+            insertSecondHour("base");
+            for (String view : new String[]{"pv", "nv"}) {
+                assertViewStatus(view, "valid", "");
+                assertMinMaxRows(view, """
+                        2024-01-01T00:00:00.000000Z\t9.0\t1.0
+                        2024-01-01T01:00:00.000000Z\t6.0\t2.0
+                        """);
+            }
+        });
+    }
+
+    @Test
+    public void testPositionalAlterUnderServerDefaultAliasRules() throws Exception {
+        // Under the default alias rules an unaliased reference to a 65-character column takes its first 64 characters
+        // as its name, which the view's column has; the moved and the renamed column are refused as under the legacy
+        // rules, and a SQL that keeps the names in place is taken.
+        setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            final String l65Cut = L65.substring(0, 64);
+            createLongNameBase("base");
+            execute("CREATE MATERIALIZED VIEW pv AS (SELECT ts, " + L65 + ", max(price) AS mx, min(price) AS mn FROM base SAMPLE BY 1h) PARTITION BY DAY");
+            execute("CREATE MATERIALIZED VIEW nv AS (SELECT ts, " + L65 + " AS s, max(price) AS mx, min(price) AS mn FROM base SAMPLE BY 1h) PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+            assertViewColumns("pv", "ts", l65Cut, "mx", "mn");
+            final String moved = "ALTER MATERIALIZED VIEW pv AS (SELECT ts, " + L65 + ", min(price) AS mn, max(price) AS mx FROM base SAMPLE BY 1h)";
+            assertPositionalAlterRefused("pv", moved, "min(price)", "mx", "mn");
+            final String aliasLost = "ALTER MATERIALIZED VIEW nv AS (SELECT ts, " + L65 + ", max(price) AS mx, min(price) AS mn FROM base SAMPLE BY 1h)";
+            assertPositionalAlterRefused("nv", aliasLost, L65, "s", l65Cut);
+            execute("ALTER MATERIALIZED VIEW pv AS (SELECT ts, " + L65 + ", max(price) * 2 AS mx, min(price) AS mn FROM base SAMPLE BY 1h)");
+            assertMappingColumns("pv", "", "");
+            drainWalQueue();
+            insertSecondHour("base");
+            assertViewStatus("pv", "valid", "");
+            assertMinMaxRows("pv", """
+                    2024-01-01T00:00:00.000000Z\t9.0\t1.0
+                    2024-01-01T01:00:00.000000Z\t12.0\t2.0
+                    """);
+        });
+    }
+
+    @Test
+    public void testPositionalAlterUnderSmallGeneratedNameSize() throws Exception {
+        // Under a generated name size of 16, an unaliased reference to a 20-character column takes its first 16
+        // characters as its name, so the SQL copies by position, as for a name over 64 characters.
+        setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
+        setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_GENERATED_MAX_SIZE, 16);
+        assertMemoryLeak(() -> {
+            final String c20 = "c".repeat(20);
+            execute("CREATE TABLE base (ts TIMESTAMP, " + c20 + " SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base VALUES ('2024-01-01T00:10:00.000000Z', 'a', 1.0), ('2024-01-01T00:20:00.000000Z', 'a', 9.0)");
+            drainWalQueue();
+            execute("CREATE MATERIALIZED VIEW zv AS (SELECT ts, " + c20 + ", max(price) AS mx, min(price) AS mn FROM base SAMPLE BY 1h) PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+            assertViewColumns("zv", "ts", c20.substring(0, 16), "mx", "mn");
+            final String moved = "ALTER MATERIALIZED VIEW zv AS (SELECT ts, " + c20 + ", min(price) AS mn, max(price) AS mx FROM base SAMPLE BY 1h)";
+            assertPositionalAlterRefused("zv", moved, "min(price)", "mx", "mn");
+            execute("ALTER MATERIALIZED VIEW zv AS (SELECT ts, " + c20 + ", max(price) * 2 AS mx, min(price) AS mn FROM base SAMPLE BY 1h)");
+            drainWalQueue();
+            execute("INSERT INTO base VALUES ('2024-01-01T01:10:00.000000Z', 'a', 2.0), ('2024-01-01T01:20:00.000000Z', 'a', 6.0)");
+            drainWalAndMatViewQueues();
+            // the generated name size cuts the names of unaliased columns, the materialized_views() ones too
+            assertQuery("SELECT view_status status, invalidation_reason reason, unmapped_view_columns unmapped, ignored_query_columns ignored "
+                    + "FROM materialized_views() WHERE view_name = 'zv'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("status\treason\tunmapped\tignored\nvalid\t\t\t\n");
+            assertMinMaxRows("zv", """
+                    2024-01-01T00:00:00.000000Z\t9.0\t1.0
+                    2024-01-01T01:00:00.000000Z\t12.0\t2.0
+                    """);
+        });
+    }
+
+    @Test
+    public void testPositionalAlterWithBaseRefusedKeepsBase() throws Exception {
+        // A base change whose SQL moves a view column fails before it invalidates the view, which keeps its base
+        // table.
+        assertMemoryLeak(() -> {
+            createLongNameBase("base");
+            createLongNameBase("base2");
+            execute("CREATE MATERIALIZED VIEW pv AS (SELECT ts, " + L65 + ", max(price) AS mx, min(price) AS mn FROM base SAMPLE BY 1h) PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+            final String moved = "ALTER MATERIALIZED VIEW pv WITH BASE base2 AS (SELECT ts, " + L65 + ", min(price) AS mn, max(price) AS mx FROM base2 SAMPLE BY 1h)";
+            assertPositionalAlterRefused("pv", moved, "min(price)", "mx", "mn");
+            Assert.assertNull(engine.getMatViewStateStore().getViewState(engine.verifyTableName("pv")).getBacklogLostReason());
+            assertDependents("base", "pv");
+            assertDependents("base2");
+            insertSecondHour("base");
+            assertViewStatus("pv", "valid", "");
+            assertMinMaxRows("pv", """
+                    2024-01-01T00:00:00.000000Z\t9.0\t1.0
+                    2024-01-01T01:00:00.000000Z\t6.0\t2.0
+                    """);
+        });
+    }
+
+    @Test
+    public void testPositionalPassthroughAlterRefusesMovedColumn() throws Exception {
+        // A non-aggregating view copies by position the same way.
+        assertMemoryLeak(() -> {
+            createLongNameBase("base");
+            execute("CREATE MATERIALIZED VIEW ptv AS (SELECT ts, " + L65 + ", price, amount FROM base) PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+            final String moved = "ALTER MATERIALIZED VIEW ptv AS (SELECT ts, " + L65 + ", amount, price FROM base)";
+            assertPositionalAlterRefused("ptv", moved, "amount", "price", "amount");
+            insertSecondHour("base");
+            assertViewStatus("ptv", "valid", "");
+            assertQuery("SELECT ts, price, amount FROM ptv").timestamp("ts").noLeakCheck().expectSize().returns("""
+                    ts\tprice\tamount
+                    2024-01-01T00:10:00.000000Z\t1.0\t100.0
+                    2024-01-01T00:20:00.000000Z\t9.0\t900.0
+                    2024-01-01T01:10:00.000000Z\t2.0\t200.0
+                    2024-01-01T01:20:00.000000Z\t6.0\t600.0
+                    """);
+        });
+    }
+
+    @Test
     public void testRebaseRegistersViewOnLoop() throws Exception {
         // A rebase of a view on a loop registers the rebased view with its edge, on the loop.
         setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
@@ -1825,11 +2182,50 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
         assertExceptionNoLeakCheck(sql, position, message);
     }
 
+    // Fails the statement twice, with the message at the position, and asserts that it left the view as it was: no
+    // view transaction, the same SQL, base table and rows, valid, and its latch free.
+    private void assertAlterRefused(String viewName, String sql, int position, String message) throws Exception {
+        Assert.assertTrue(position > -1);
+        final TableToken viewToken = engine.verifyTableName(viewName);
+        final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
+        final long viewSeqTxn = engine.getTableSequencerAPI().getTxnTracker(viewToken).getSeqTxn();
+        final MatViewDefinition definition = engine.getDependentViewGraph().getViewDefinition(viewToken);
+        final StringSink rowsBefore = new StringSink();
+        printSql(viewName, rowsBefore);
+        for (int i = 0; i < 2; i++) {
+            try {
+                execute(sql);
+                Assert.fail("the statement must fail: " + sql);
+            } catch (SqlException e) {
+                TestUtils.assertEquals(message, e.getFlyweightMessage());
+                Assert.assertEquals(position, e.getPosition());
+            }
+        }
+        Assert.assertEquals(viewSeqTxn, engine.getTableSequencerAPI().getTxnTracker(viewToken).getSeqTxn());
+        final MatViewDefinition definitionAfter = engine.getDependentViewGraph().getViewDefinition(viewToken);
+        Assert.assertEquals(definition.getMatViewSql(), definitionAfter.getMatViewSql());
+        Assert.assertEquals(definition.getBaseTableName(), definitionAfter.getBaseTableName());
+        Assert.assertFalse(state.isInvalid());
+        Assert.assertFalse(state.isLocked());
+        final StringSink rowsAfter = new StringSink();
+        printSql(viewName, rowsAfter);
+        TestUtils.assertEquals(rowsBefore, rowsAfter);
+    }
+
     private void assertMappingColumns(String unmapped, String ignored) throws Exception {
-        assertQuery("SELECT unmapped_view_columns, ignored_query_columns FROM materialized_views() WHERE view_name = 'price_1h'")
+        assertMappingColumns("price_1h", unmapped, ignored);
+    }
+
+    private void assertMappingColumns(String viewName, String unmapped, String ignored) throws Exception {
+        assertQuery("SELECT unmapped_view_columns, ignored_query_columns FROM materialized_views() WHERE view_name = '" + viewName + "'")
                 .noLeakCheck()
                 .noRandomAccess()
                 .returns("unmapped_view_columns\tignored_query_columns\n" + unmapped + "\t" + ignored + "\n");
+    }
+
+    // The rows of a view with the mx and mn columns.
+    private void assertMinMaxRows(String viewName, String expected) throws Exception {
+        assertQuery("SELECT ts, mx, mn FROM " + viewName + " ORDER BY ts").timestamp("ts").noLeakCheck().expectSize().returns("ts\tmx\tmn\n" + expected);
     }
 
     // A base renamed under a valid view invalidates it; ALTER ... WITH BASE follows the renamed table, whose table id
@@ -1875,6 +2271,19 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
         });
     }
 
+    // Fails an ALTER ... AS whose SQL copies by position, see assertAlterRefused(), with the query column at the view
+    // column's position, at the token. No positional test drops a view column first: the view's table keeps a dropped
+    // column's slot, which positional copy meets at refresh.
+    private void assertPositionalAlterRefused(String viewName, String sql, String token, String viewColumn, String queryColumn) throws Exception {
+        assertAlterRefused(
+                viewName,
+                sql,
+                sql.indexOf(token),
+                "materialized view column does not match the query column at the same position [view column=" + viewColumn
+                        + ", query column=" + queryColumn + ']' + POSITIONAL_COPY_HINT
+        );
+    }
+
     private void assertRefreshBaseTxn(long expected) {
         Assert.assertEquals(expected, viewState().getLastRefreshBaseTxn());
     }
@@ -1892,12 +2301,24 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
         Assert.assertFalse(viewState().isLocked());
     }
 
+    private void assertViewColumns(String viewName, String... expected) throws Exception {
+        final StringBuilder sb = new StringBuilder("column\n");
+        for (String column : expected) {
+            sb.append(column).append('\n');
+        }
+        assertQuery("SELECT \"column\" FROM table_columns('" + viewName + "')").noLeakCheck().noRandomAccess().returns(sb.toString());
+    }
+
     private void assertViewRows(String expected) throws Exception {
         assertQuery("price_1h ORDER BY ts, sym").timestamp("ts").noLeakCheck().expectSize().returns(expected);
     }
 
     private void assertViewStatus(String status, String reason) throws Exception {
-        assertQuery("SELECT view_status, invalidation_reason FROM materialized_views() WHERE view_name = 'price_1h'")
+        assertViewStatus("price_1h", status, reason);
+    }
+
+    private void assertViewStatus(String viewName, String status, String reason) throws Exception {
+        assertQuery("SELECT view_status, invalidation_reason FROM materialized_views() WHERE view_name = '" + viewName + "'")
                 .noLeakCheck()
                 .noRandomAccess()
                 .returns("view_status\tinvalidation_reason\n" + status + "\t" + reason + "\n");
@@ -1931,6 +2352,28 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
         assertViewRows(VIEW_ROWS);
         assertViewStatus("valid", "");
         assertRefreshBaseTxn(1);
+    }
+
+    // The base of the positional copy tests: SYMBOL columns of 65, 65 and 64 characters, each holding one value, and
+    // two rows in the first hour, whose price has the maximum 9.0 and the minimum 1.0.
+    private void createLongNameBase(String name) throws Exception {
+        execute("CREATE TABLE " + name + " (ts TIMESTAMP, " + L65 + " SYMBOL, " + M65 + " SYMBOL, " + L64
+                + " SYMBOL, price DOUBLE, amount DOUBLE, ok BOOLEAN) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("INSERT INTO " + name + " VALUES " + """
+                ('2024-01-01T00:10:00.000000Z', 'a', 'b', 'c', 1.0, 100.0, true),
+                ('2024-01-01T00:20:00.000000Z', 'a', 'b', 'c', 9.0, 900.0, false)
+                """);
+        drainWalQueue();
+    }
+
+    // Two rows in the second hour of the base of createLongNameBase(), whose price has the maximum 6.0 and the minimum
+    // 2.0, and the refreshes they trigger.
+    private void insertSecondHour(String name) throws Exception {
+        execute("INSERT INTO " + name + " VALUES " + """
+                ('2024-01-01T01:10:00.000000Z', 'a', 'b', 'c', 2.0, 200.0, true),
+                ('2024-01-01T01:20:00.000000Z', 'a', 'b', 'c', 6.0, 600.0, false)
+                """);
+        drainWalAndMatViewQueues();
     }
 
     private void invalidate(String reason) {

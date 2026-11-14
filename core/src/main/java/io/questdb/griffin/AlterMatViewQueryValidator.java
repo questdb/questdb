@@ -51,7 +51,8 @@ import org.jetbrains.annotations.Nullable;
  *     <li>the view's designated timestamp produced under its name and type, as the query's designated timestamp;</li>
  *     <li>an implicit cast from every query column to the view column of its name, see
  *     {@link io.questdb.griffin.RecordToRowCopierUtils#isCopierConvertible(int, int)};</li>
- *     <li>no view column replaced by a differently named query column at its position.</li>
+ *     <li>no view column replaced by a differently named query column at its position, and, for a SQL that copies by
+ *     position, every view column's name at its position.</li>
  * </ul>
  * The view's columns come from its sequencer metadata, which holds the column changes still in its WAL and lists the
  * view's columns in their order, with no dropped column. Errors point at the query column or the SAMPLE BY interval in
@@ -114,6 +115,20 @@ final class AlterMatViewQueryValidator implements MatViewQueryValidator {
             // refresh does: the query's columns must fit the view's one to one.
             try {
                 MatViewRefreshJob.validateViewSchema(viewToken, queryMetadata, viewMetadata, false);
+                // Refresh copies such a SQL by position and, without a top-level wildcard, checks only the column
+                // count: a SQL that CREATE stored fixed what each view column computes, a new one does not. So every
+                // query column must carry the name of the view column at its position, as a name mapping would place
+                // it; a moved or renamed column would otherwise land in another view column without a word.
+                for (int i = 0, n = queryMetadata.getColumnCount(); i < n; i++) {
+                    final CharSequence queryColumnName = queryMetadata.getColumnName(i);
+                    if (viewMetadata.getColumnIndexQuiet(queryColumnName) != i) {
+                        throw SqlException.$(query.getColumnPosition(queryColumnName), "materialized view column does not match the query column at the same position [view column=")
+                                .put(viewMetadata.getColumnName(i))
+                                .put(", query column=").put(queryColumnName)
+                                .put("]; the query relies on generated column names, so refresh copies its columns by position: "
+                                        + "keep each view column at its position, or give the query's columns explicit names");
+                    }
+                }
                 MatViewColumnMapping.newRecordToRowCopier(asm, queryMetadata, viewMetadata, true, configuration);
             } catch (CairoException e) {
                 throw SqlException.$(query.sqlPosition, e.getFlyweightMessage());

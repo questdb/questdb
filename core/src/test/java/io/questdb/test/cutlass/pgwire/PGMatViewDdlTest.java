@@ -288,6 +288,56 @@ public class PGMatViewDdlTest extends BasePGTest {
     }
 
     @Test
+    public void testPositionalAlterAsRefusedAtEachExecution() throws Exception {
+        // An unaliased reference to a column name longer than 64 characters makes the SQL copy by position, so ALTER
+        // ... AS refuses one that moves a view column. A prepared one compiles again at each execution, so it fails
+        // each time as a fresh compile does, and writes nothing.
+        final String longName = "long_col_" + "y".repeat(56);
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, " + longName + " SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base VALUES ('2024-01-01T00:10:00.000000Z', 'a', 1.0), ('2024-01-01T00:20:00.000000Z', 'a', 9.0)");
+            drainWalQueue();
+            final String viewSql = "SELECT ts, " + longName + ", max(price) AS mx, min(price) AS mn FROM base SAMPLE BY 1h";
+            execute("CREATE MATERIALIZED VIEW mv AS (" + viewSql + ") PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+            final long viewSeqTxn = viewSeqTxn();
+            final String alterSql = "ALTER MATERIALIZED VIEW mv AS (SELECT ts, " + longName + ", min(price) AS mn, max(price) AS mx FROM base SAMPLE BY 1h)";
+            final ServerErrorMessage expected = freshError(connection, alterSql);
+            TestUtils.assertEquals(
+                    "materialized view column does not match the query column at the same position [view column=mx, query column=mn]; "
+                            + "the query relies on generated column names, so refresh copies its columns by position: "
+                            + "keep each view column at its position, or give the query's columns explicit names",
+                    expected.getMessage()
+            );
+            // the position the server reports counts from 1
+            Assert.assertEquals(alterSql.indexOf("min(price)") + 1, expected.getPosition());
+            try (PreparedStatement alter = connection.prepareStatement(alterSql)) {
+                for (int i = 0; i < 2; i++) {
+                    try {
+                        alter.execute();
+                        Assert.fail("the prepared ALTER ... AS must fail as a fresh compile does");
+                    } catch (PSQLException e) {
+                        Assert.assertNotNull(e.getServerErrorMessage());
+                        TestUtils.assertEquals(expected.getMessage(), e.getServerErrorMessage().getMessage());
+                        Assert.assertEquals(expected.getPosition(), e.getServerErrorMessage().getPosition());
+                    }
+                }
+            }
+            drainWalAndMatViewQueues();
+            Assert.assertEquals(viewSeqTxn, viewSeqTxn());
+            assertQueryResult(connection, "SELECT view_status, view_sql, suspended FROM materialized_views() JOIN wal_tables() ON view_name = name",
+                    "view_status[VARCHAR],view_sql[VARCHAR],suspended[BIT]\nvalid," + viewSql + ",false\n");
+            execute("INSERT INTO base VALUES ('2024-01-01T01:10:00.000000Z', 'a', 2.0), ('2024-01-01T01:20:00.000000Z', 'a', 6.0)");
+            drainWalAndMatViewQueues();
+            assertQueryResult(connection, "SELECT ts, mx, mn FROM mv ORDER BY ts", """
+                    ts[TIMESTAMP],mx[DOUBLE],mn[DOUBLE]
+                    2024-01-01 00:00:00.0,9.0,1.0
+                    2024-01-01 01:00:00.0,6.0,2.0
+                    """);
+        });
+    }
+
+    @Test
     public void testRangeRefreshRefusesBindVariables() throws Exception {
         // REFRESH ... RANGE takes timestamp literals only, as before this feature.
         assertWithPgServer(CONN_AWARE_EXTENDED, (connection, _, _, _) -> {
