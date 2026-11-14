@@ -44,6 +44,7 @@ import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Misc;
 import org.jetbrains.annotations.NotNull;
@@ -100,6 +101,9 @@ public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursor
     private UnorderedPageFrameSequence<HashJoinBuildRoundAtom> buildRounds;
     private AsyncHashJoinRecordCursor cursor;
     private PageFrameSequence<AsyncHashJoinAtom> frameSequence;
+    // The LIMIT that the optimiser advised the join's model, until the planner hands it over, see
+    // ofLimit(); a planning-time reference to a pooled node, which the factory does not own.
+    private ExpressionNode limitAdvice;
     // The LIMIT of the query over the join, null when it states none.
     private Function limitLoFunction;
     private AsyncHashJoinSpec spec;
@@ -263,6 +267,15 @@ public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursor
     }
 
     /**
+     * The lo-only LIMIT that the optimiser advised the join's model, as {@link #ofLimitAdvice} took
+     * it, or null once {@link #ofLimit} took the LIMIT.
+     */
+    @Nullable
+    public ExpressionNode getLimitAdvice() {
+        return limitAdvice;
+    }
+
+    /**
      * Probe frames reported through the frame sequence: zero until an execution prepares the probe's
      * dispatch, which an INNER join over an empty build never does.
      */
@@ -321,15 +334,28 @@ public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursor
 
     /**
      * Takes the LIMIT of the query over the join, which the factory then owns, as
-     * {@code AsyncFilteredRecordCursorFactory} takes the LIMIT of a query over its filter: the
-     * planner hands it over once the join is final, when the LIMIT applies to the join's rows. Each
-     * execution reads it once; a positive LIMIT narrows the execution's first window, see
-     * {@link AsyncHashJoinRecordCursor}, and any other leaves the execution as it is. The LIMIT
-     * itself stays with its own factory, so the join returns its rows whatever the LIMIT reads.
+     * {@code AsyncFilteredRecordCursorFactory} takes the LIMIT of a query over its filter. The
+     * planner hands it over from the model that states the LIMIT, once that model's SELECT list
+     * compiled, to the join that the optimiser advised that LIMIT, see {@link #ofLimitAdvice}, and
+     * the advice is then spent. Each execution reads the LIMIT once; a positive LIMIT narrows the
+     * execution's first window, see {@link AsyncHashJoinRecordCursor}, and any other leaves the
+     * execution as it is. The LIMIT itself stays with its own factory, so the join returns its rows
+     * whatever the LIMIT reads.
      */
     public void ofLimit(@Nullable Function limitLoFunction) {
         assert this.limitLoFunction == null;
         this.limitLoFunction = limitLoFunction;
+        limitAdvice = null;
+    }
+
+    /**
+     * Takes the lo-only LIMIT that the optimiser advised the join's model, once the join is final:
+     * the LIMIT of the model that states it, which applies to the join's rows. The planner hands the
+     * LIMIT over, see {@link #ofLimit}, only when it parses the LIMIT of that very model, after its
+     * SELECT list, so that the LIMIT reads its bind variables as the SELECT list typed them.
+     */
+    public void ofLimitAdvice(@Nullable ExpressionNode limitAdvice) {
+        this.limitAdvice = limitAdvice;
     }
 
     @Override

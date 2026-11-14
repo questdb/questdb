@@ -40,8 +40,10 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.sql.Connection;
+import java.sql.ParameterMetaData;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.Types;
 
 /**
  * Drives the parallel hash join under a bound LIMIT through PG wire with the real pgjdbc driver:
@@ -49,7 +51,8 @@ import java.sql.ResultSet;
  * many times with new values, positive, larger than the table, zero and negative, in text and binary
  * transfer, against a server whose connections run the operator and one whose connections run the
  * ordinary plan. Each execution of the cached statement reads its own LIMIT, and the two servers
- * return the same rows in the same order.
+ * return the same rows in the same order. A parameter that the SELECT list and the LIMIT share, sent
+ * without a type, takes the type of its first use, in the SELECT list, on both servers.
  */
 public class PGAsyncHashJoinLimitTest extends BasePGTest {
     // [residual value, LIMIT]: the values each execution binds.
@@ -59,6 +62,15 @@ public class PGAsyncHashJoinLimitTest extends BasePGTest {
             "SELECT f.k, f.v, d.w, e.w FROM f JOIN d ON f.k = d.k LEFT JOIN d e ON f.k = e.k AND e.w > f.v + ? LIMIT ?",
             "SELECT f.ts, f.k, f.v, d.w FROM f JOIN d ON f.k = d.k WHERE d.w > ? ORDER BY ts DESC LIMIT ?",
     };
+    // One JDBC placeholder and a literal $1 that reuses it, which pgjdbc leaves to the server.
+    private static final String[] UNTYPED_QUERIES = {
+            "SELECT left(f.v::VARCHAR, ?) y FROM f JOIN d ON f.k = d.k LIMIT $1",
+            "SELECT f.k + ? y FROM f JOIN d ON f.k = d.k LIMIT $1",
+    };
+    // The parameter's and the column's types that Describe reports for each untyped query: the first
+    // use of the parameter, left(VARCHAR, INT) or INT + INT, types it, as PostgreSQL's does, int4.
+    private static final String[] UNTYPED_QUERY_TYPES = {"int4, varchar", "int4, int4"};
+    private static final long[] UNTYPED_VALUES = {2, 3, 0, -1, 500};
     private static final int WORKER_COUNT = 4;
 
     @Test
@@ -71,10 +83,19 @@ public class PGAsyncHashJoinLimitTest extends BasePGTest {
         assertNamedStatements(WorkerPoolMode.LEGACY);
     }
 
+    @Test
+    public void testUntypedParameterSharedWithTheLimit() throws Exception {
+        assertUntypedParameter(null);
+    }
+
+    @Test
+    public void testUntypedParameterSharedWithTheLimitOnQueryWorkers() throws Exception {
+        assertUntypedParameter(WorkerPoolMode.LEGACY);
+    }
+
     private void assertNamedStatements(@Nullable WorkerPoolMode queryPoolMode) throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE f AS (SELECT (x % 9)::INT k, x v, timestamp_sequence('2024-01-01', 1_800_000_000) ts FROM long_sequence(120)) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE d AS (SELECT CASE WHEN x % 10 = 0 THEN NULL ELSE (x % 7)::INT END k, x w FROM long_sequence(40))");
+            createTables();
             // The rows of every query and bind set, read through the ordinary plan.
             final StringSink expected = new StringSink();
             final StringSink actual = new StringSink();
@@ -83,6 +104,24 @@ public class PGAsyncHashJoinLimitTest extends BasePGTest {
             Assert.assertTrue(expected.length() > 0);
             TestUtils.assertEquals(expected, actual);
         });
+    }
+
+    private void assertUntypedParameter(@Nullable WorkerPoolMode queryPoolMode) throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // The rows of every query and value, read through the ordinary plan.
+            final StringSink expected = new StringSink();
+            final StringSink actual = new StringSink();
+            withServer(false, queryPoolMode, port -> readUntyped(port, expected, false));
+            withServer(true, queryPoolMode, port -> readUntyped(port, actual, true));
+            Assert.assertTrue(expected.length() > 0);
+            TestUtils.assertEquals(expected, actual);
+        });
+    }
+
+    private void createTables() throws Exception {
+        execute("CREATE TABLE f AS (SELECT (x % 9)::INT k, x v, timestamp_sequence('2024-01-01', 1_800_000_000) ts FROM long_sequence(120)) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE d AS (SELECT CASE WHEN x % 10 = 0 THEN NULL ELSE (x % 7)::INT END k, x w FROM long_sequence(40))");
     }
 
     // Executes every query's named statement with every bind set, twice over, in binary and text
@@ -111,6 +150,52 @@ public class PGAsyncHashJoinLimitTest extends BasePGTest {
                     try (PreparedStatement explain = connection.prepareStatement("EXPLAIN " + sql)) {
                         explain.setLong(1, BINDS[0][0]);
                         explain.setLong(2, BINDS[0][1]);
+                        final StringBuilder plan = new StringBuilder();
+                        try (ResultSet resultSet = explain.executeQuery()) {
+                            while (resultSet.next()) {
+                                plan.append(resultSet.getString(1)).append('\n');
+                            }
+                        }
+                        Assert.assertEquals(plan.toString(), isParallel, plan.toString().contains("Hash Join workers:"));
+                    }
+                }
+            }
+        }
+    }
+
+    // Describes and executes every untyped query's named statement, its parameter sent without a
+    // type, as node-postgres, asyncpg and pgx send theirs, with every value, twice over, in binary and
+    // text transfer, and appends the rows to the sink.
+    private void readUntyped(int port, StringSink sink, boolean isParallel) throws Exception {
+        final StringSink rows = new StringSink();
+        for (boolean isBinary : new boolean[]{true, false}) {
+            for (int q = 0; q < UNTYPED_QUERIES.length; q++) {
+                final String sql = UNTYPED_QUERIES[q];
+                // A prepare threshold of 1 makes pgjdbc parse a named statement once and bind it again
+                // on every later execution.
+                try (
+                        Connection connection = getConnection(Mode.EXTENDED, port, isBinary, 1);
+                        PreparedStatement statement = connection.prepareStatement(sql)
+                ) {
+                    final ParameterMetaData parameters = statement.getParameterMetaData();
+                    Assert.assertEquals(sql, 1, parameters.getParameterCount());
+                    Assert.assertEquals(
+                            sql,
+                            UNTYPED_QUERY_TYPES[q],
+                            parameters.getParameterTypeName(1) + ", " + statement.getMetaData().getColumnTypeName(1)
+                    );
+                    for (int pass = 0; pass < 2; pass++) {
+                        for (long value : UNTYPED_VALUES) {
+                            statement.setObject(1, Long.toString(value), Types.OTHER);
+                            try (ResultSet resultSet = statement.executeQuery()) {
+                                rows.clear();
+                                printToSink(rows, resultSet, null);
+                            }
+                            sink.put(sql).put(' ').put(value).put('\n').put(rows);
+                        }
+                    }
+                    try (PreparedStatement explain = connection.prepareStatement("EXPLAIN " + sql)) {
+                        explain.setObject(1, "2", Types.OTHER);
                         final StringBuilder plan = new StringBuilder();
                         try (ResultSet resultSet = explain.executeQuery()) {
                             while (resultSet.next()) {

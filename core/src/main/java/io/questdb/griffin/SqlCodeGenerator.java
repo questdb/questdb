@@ -1902,6 +1902,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return result;
     }
 
+    // The LIMIT that the optimiser advised the model, when it has no upper bound, else null.
+    @Nullable
+    private static ExpressionNode getLimitAdviceLoOnly(IQueryModel model) {
+        // A LATEST ON on this model sits above the filter (generateLatestBy consumes the filter's
+        // full output, then generateLimit applies the limit), so the filter must scan every row.
+        // Pushing the limit advice into it would feed LATEST ON only the first N rows and return
+        // the earliest row per key instead of the latest.
+        if (model.getLatestBy().size() > 0) {
+            return null;
+        }
+        return model.getLimitAdviceHi() == null ? model.getLimitAdviceLo() : null;
+    }
+
     private static int getOrderByDirectionOrDefault(IQueryModel model, int index) {
         final IntList direction = model.getOrderByDirectionAdvice();
         return index >= direction.size() ? IQueryModel.ORDER_DIRECTION_ASCENDING : direction.getQuick(index);
@@ -8962,8 +8975,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
             if (master instanceof AsyncHashJoinRecordCursorFactory join) {
                 // The query's LIMIT applies to the parallel hash join's rows, which then joins at
-                // first only the probe rows the LIMIT may need. The LIMIT itself stays above it.
-                join.ofLimit(getLimitLoFunctionOnly(model, executionContext));
+                // first only the probe rows the LIMIT may need. The LIMIT itself stays above it. The
+                // model that states the LIMIT hands it over from generateLimit(), once the SELECT
+                // lists above the join compiled: parsing it here would type its bind variables
+                // before the SELECT lists do.
+                join.ofLimitAdvice(getLimitAdviceLoOnly(model));
             }
             return master;
         } catch (Throwable e) {
@@ -9457,6 +9473,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         try {
             loFunc = getLoFunction(model, executionContext);
             hiFunc = getHiFunction(model, executionContext);
+            if (limitLo != null && limitHi == null) {
+                // The parallel hash join that the optimiser advised this very LIMIT takes a parse of
+                // its own, see generateJoins(). The parse above typed the LIMIT's bind variables,
+                // after the SELECT lists of this model and of the models below it, so this one
+                // types none.
+                for (RecordCursorFactory base = factory; base != null; base = base.getBaseFactory()) {
+                    if (base instanceof AsyncHashJoinRecordCursorFactory join) {
+                        if (join.getLimitAdvice() == limitLo) {
+                            join.ofLimit(getLoFunction(model, executionContext));
+                        }
+                        break;
+                    }
+                }
+            }
             final Function adoptedLoFunc = loFunc;
             final Function adoptedHiFunc = hiFunc;
             loFunc = null;
@@ -15486,17 +15516,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     @Nullable
     private Function getLimitLoFunctionOnly(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        // A LATEST ON on this model sits above the filter (generateLatestBy consumes the filter's
-        // full output, then generateLimit applies the limit), so the filter must scan every row.
-        // Pushing the limit advice into it would feed LATEST ON only the first N rows and return
-        // the earliest row per key instead of the latest.
-        if (model.getLatestBy().size() > 0) {
-            return null;
-        }
-        if (model.getLimitAdviceLo() != null && model.getLimitAdviceHi() == null) {
-            return toLimitFunction(executionContext, model.getLimitAdviceLo(), LongConstant.ZERO);
-        }
-        return null;
+        final ExpressionNode limitAdvice = getLimitAdviceLoOnly(model);
+        return limitAdvice != null ? toLimitFunction(executionContext, limitAdvice, LongConstant.ZERO) : null;
     }
 
     @NotNull

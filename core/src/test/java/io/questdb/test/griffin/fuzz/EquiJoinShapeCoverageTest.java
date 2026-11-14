@@ -39,6 +39,7 @@ import io.questdb.test.griffin.fuzz.types.VarcharType;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
@@ -152,6 +153,47 @@ public class EquiJoinShapeCoverageTest {
             bound += ctx.getBindValues().size() > 0 ? 1 : 0;
         }
         Assert.assertTrue("no query bound a value", bound > 0);
+    }
+
+    @Test
+    public void testBindFormSharesTheLimitWithTheSelectList() {
+        // A query with a LIMIT and a projection list projects the left input's INT key plus the
+        // LIMIT's value last, and its bind form reads both through the positional $1, which
+        // QueryRunner leaves undefined at compile and binds to the value after it: the SELECT list
+        // types $1 before the LIMIT reads it, on every plan. A query of SELECT * keeps its literal
+        // LIMIT, and a query without a LIMIT binds none.
+        final FuzzTable left = table("t0");
+        final FuzzTable right = table("t1");
+        final Rnd literalRnd = new Rnd(0x5eed, 0x9507);
+        final Rnd bindRnd = new Rnd(0x5eed, 0x9507);
+        final Pattern limit = Pattern.compile(" LIMIT (-?)(\\d+)$");
+        int positive = 0;
+        int negative = 0;
+        int selectStar = 0;
+        for (int i = 0; i < CORPUS_SIZE; i++) {
+            final GeneratedQuery literal = EquiJoinClause.generate(literalRnd, left, right, null, false);
+            final BindContext ctx = new BindContext(new Rnd(i, i), 50);
+            final GeneratedQuery bind = EquiJoinClause.generate(bindRnd, left, right, ctx, false);
+            final Matcher matcher = limit.matcher(literal.sql());
+            final boolean hasLimit = matcher.find();
+            if (!hasLimit || literal.sql().startsWith("SELECT * ")) {
+                selectStar += hasLimit ? 1 : 0;
+                Assert.assertNull(bind.sql(), ctx.getLimitValue());
+                Assert.assertFalse(bind.sql(), bind.sql().contains("$1"));
+                continue;
+            }
+            final String sign = matcher.group(1);
+            final String value = matcher.group(2);
+            Assert.assertTrue(literal.sql(), Pattern.compile(", l\\.k(?:_v)? \\+ " + value + " AS c\\d+ FROM ").matcher(literal.sql()).find());
+            Assert.assertTrue(bind.sql(), Pattern.compile(", l\\.k(?:_v)? \\+ \\$1 AS c\\d+ FROM ").matcher(bind.sql()).find());
+            Assert.assertTrue(bind.sql(), bind.sql().endsWith(" LIMIT " + sign + "$1"));
+            Assert.assertEquals(bind.sql(), value, ctx.getLimitValue());
+            positive += sign.isEmpty() ? 1 : 0;
+            negative += sign.isEmpty() ? 0 : 1;
+        }
+        Assert.assertTrue("bound LIMITs: " + positive, positive > 0);
+        Assert.assertTrue("bound negative LIMITs: " + negative, negative > 0);
+        Assert.assertTrue("literal LIMITs under SELECT *: " + selectStar, selectStar > 0);
     }
 
     @Test

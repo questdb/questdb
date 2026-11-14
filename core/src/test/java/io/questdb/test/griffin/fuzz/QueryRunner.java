@@ -61,6 +61,7 @@ import io.questdb.test.cairo.Overrides;
 import io.questdb.test.cairo.fuzz.FailureFileFacade;
 import io.questdb.test.griffin.ParallelHashJoinTestUtils;
 import io.questdb.test.griffin.fuzz.FuzzTableFactory.ParquetMode;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.Arrays;
 import java.util.regex.Matcher;
@@ -114,7 +115,13 @@ import java.util.regex.Pattern;
  *       compares it with the pivot, which may use the operator, row for row and in
  *       order: the operator returns the ordinary plan's rows in the ordinary plan's
  *       order, so any difference, even in the order alone, is a defect. Every other
- *       axis runs the operator on both of its sides and compares multisets.</li>
+ *       axis runs the operator on both of its sides and compares multisets. When
+ *       the query's bind form reads its LIMIT and an expression of its SELECT list
+ *       through the positional {@code $1}, which the compile leaves undefined, as a
+ *       PostgreSQL Parse without parameter types does, the axis also runs the bind
+ *       form with the operator disabled, and the two runs must give {@code $1} and
+ *       the columns the same types and return the same rows in the same order: the
+ *       plan must not change the statement's types.</li>
  *   <li>the map page axis, on when the runner gets the engine's
  *       {@link Overrides}, runs every query on the primary at JIT-off once
  *       more, and an equi-join GROUP BY query several more times, with
@@ -298,6 +305,9 @@ public final class QueryRunner {
     private final Pattern[] primaryPatterns;
     // Comparisons the reference axis ran, i.e. queries whose rewrite and pivot both ran.
     private int referenceAxisRuns;
+    // Comparisons of the bind forms whose LIMIT and SELECT list share an untyped $1, with the
+    // parallel hash join on and off.
+    private int untypedLimitAxisRuns;
     // Worker-thread name prefix of the query pool, used to scope a parallel FILE
     // fault to the query execution (test thread + query workers). See runFault.
     private final String queryWorkerNamePrefix;
@@ -309,11 +319,16 @@ public final class QueryRunner {
     private final StringSink rowsF = new StringSink();
     private final StringSink rowsG = new StringSink();
     private final StringSink rowsH = new StringSink();
+    private final StringSink rowsI = new StringSink();
     // Scratch sink for the toTop() re-iteration pass; compared against the
     // first pass to confirm the cursor reproduces its result set on rewind.
     private final StringSink rowsToTop = new StringSink();
     private final boolean shadowHasAnyParquet;
     private final String[] shadowReplacements;
+    // The types that the compile of a bind form whose LIMIT and SELECT list share an untyped $1
+    // gives $1 and the columns, with the parallel hash join as the pivot runs it, and disabled.
+    private final StringSink untypedLimitTypes = new StringSink();
+    private final StringSink untypedLimitTypesOrdinary = new StringSink();
     private final boolean verifyCursor;
 
     public QueryRunner(
@@ -607,6 +622,14 @@ public final class QueryRunner {
      */
     public int getReferenceAxisRuns() {
         return referenceAxisRuns;
+    }
+
+    /**
+     * Comparisons of a bind form whose LIMIT and SELECT list share an untyped {@code $1}, with the
+     * parallel hash join as the pivot runs it and disabled.
+     */
+    public int getUntypedLimitAxisRuns() {
+        return untypedLimitAxisRuns;
     }
 
     /**
@@ -2149,31 +2172,21 @@ public final class QueryRunner {
      * own bind-variable handling that doesn't share code with the
      * Java-filter path. Returns null when both comparisons are benign;
      * otherwise returns a Result describing the divergence.
+     * <p>
+     * A bind form whose LIMIT and SELECT list share the positional {@code $1}
+     * leaves it undefined for each compile and binds the LIMIT's value once the
+     * query compiled, see {@link #runOnce(String, StringSink, boolean, boolean, String, StringSink)},
+     * so each run sets the named variables afresh. Under the parallel join axis
+     * such a bind form also runs with the parallel hash join disabled, see
+     * {@link #runUntypedLimitVariant}.
      */
     private Result runBindVariant(GeneratedQuery query, Outcome aJ, Outcome bJ) {
-        BindVariableService bvs = executionContext.getBindVariableService();
-        ObjList<String> names = query.bindNames();
-        ObjList<String> values = query.bindValues();
+        final BindVariableService bvs = executionContext.getBindVariableService();
+        final String limitValue = query.bindLimitValue();
         try {
-            // Two clears are intentional. The leading clear() ensures a clean
-            // slate independent of any caller-side state. The clear() in the
-            // catch handles the partial-population case where setStr threw
-            // mid-loop -- the trailing finally only runs when the second try
-            // is entered, so on the early-skip path we need an explicit reset.
-            bvs.clear();
-            for (int i = 0, n = values.size(); i < n; i++) {
-                bvs.setStr(names.getQuick(i), values.getQuick(i));
-            }
-        } catch (SqlException e) {
-            // Setter rejected the value (rare; e.g. malformed UTF-8). Treat as
-            // skip: the bind path is not the thing under test for this kind
-            // of failure.
-            bvs.clear();
-            return Result.skipped("bind setter rejected value: " + e.getFlyweightMessage());
-        }
-        try {
+            setNamedBindVariables(query);
             executionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-            Outcome bindOff = runOnce(query.bindSql(), rowsD, primaryHasAnyParquet, query.deterministic());
+            Outcome bindOff = runOnce(query.bindSql(), rowsD, primaryHasAnyParquet, query.deterministic(), limitValue, untypedLimitTypes);
             Result offResult = reconcilePair(
                     query.sql(),
                     bJ,
@@ -2188,9 +2201,24 @@ public final class QueryRunner {
             if (offResult.isFailed()) {
                 return offResult;
             }
+            if (limitValue != null && isParallelJoinAxisApplicable(query)) {
+                setNamedBindVariables(query);
+                executionContext.setParallelHashJoinEnabled(false);
+                final Outcome bindOrdinary;
+                try {
+                    bindOrdinary = runOnce(query.bindSql(), rowsI, primaryHasAnyParquet, query.deterministic(), limitValue, untypedLimitTypesOrdinary);
+                } finally {
+                    executionContext.setParallelHashJoinEnabled(true);
+                }
+                final Result untypedLimitResult = runUntypedLimitVariant(query, bindOff, bindOrdinary);
+                if (untypedLimitResult.isFailed()) {
+                    return untypedLimitResult;
+                }
+            }
             if (aJ != null) {
+                setNamedBindVariables(query);
                 executionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
-                Outcome bindOn = runOnce(query.bindSql(), rowsD, primaryHasAnyParquet, query.deterministic());
+                Outcome bindOn = runOnce(query.bindSql(), rowsD, primaryHasAnyParquet, query.deterministic(), limitValue, untypedLimitTypes);
                 return reconcilePair(
                         query.sql(),
                         aJ,
@@ -2204,14 +2232,110 @@ public final class QueryRunner {
                 );
             }
             return offResult;
+        } catch (SqlException e) {
+            // Setter rejected the value (rare; e.g. malformed UTF-8). Treat as
+            // skip: the bind path is not the thing under test for this kind
+            // of failure.
+            return Result.skipped("bind setter rejected value: " + e.getFlyweightMessage());
         } finally {
             bvs.clear();
         }
     }
 
+    /**
+     * Reconciles the bind form of a query whose LIMIT and SELECT list share the untyped {@code $1}
+     * between the run with the parallel hash join as the pivot runs it, {@code parallel}, and the
+     * run with it disabled, {@code ordinary}: the plan must not change the statement's types, so
+     * both give {@code $1} and the columns the ordinary plan's types, and return the same rows in
+     * the same order, as the parallel join axis requires of the literal form, or fail alike.
+     */
+    private Result runUntypedLimitVariant(GeneratedQuery query, Outcome parallel, Outcome ordinary) {
+        untypedLimitAxisRuns++;
+        final String sql = query.bindSql() + " [$1 = " + query.bindLimitValue() + ']';
+        if (ordinary.hasParallelHashJoin()) {
+            return Result.failed(sql, new AssertionError("the parallel hash join is disabled but the plan still uses it: " + sql));
+        }
+        if (parallel.failure == null && ordinary.failure == null) {
+            if (!Chars.equals(untypedLimitTypes, untypedLimitTypesOrdinary)) {
+                return Result.failed(sql, new AssertionError("untyped LIMIT type divergence:\n"
+                        + "  parallel on : " + untypedLimitTypes + '\n'
+                        + "  parallel off: " + untypedLimitTypesOrdinary));
+            }
+            if (Chars.equals(rowsD, rowsI)) {
+                return Result.ok();
+            }
+            return Result.failed(sql, divergence(
+                    "untyped LIMIT divergence (in order)",
+                    parallel,
+                    ordinary,
+                    rowsD,
+                    rowsI,
+                    "parallel on ",
+                    "parallel off"
+            ));
+        }
+        return reconcilePair(
+                sql,
+                parallel,
+                ordinary,
+                rowsD,
+                rowsI,
+                query.deterministic(),
+                "untyped LIMIT divergence",
+                "parallel on ",
+                "parallel off"
+        );
+    }
+
+    // Writes the types that the compile gave the untyped $1 and the columns to the sink, then binds
+    // the LIMIT's value to $1.
+    private void bindUntypedLimit(RecordMetadata metadata, String limitValue, StringSink types) throws SqlException {
+        final BindVariableService bvs = executionContext.getBindVariableService();
+        types.clear();
+        types.put("$1 ").put(ColumnType.nameOf(bvs.getFunction(0).getType())).put(':');
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            types.put(' ').put(metadata.getColumnName(i)).put(' ').put(ColumnType.nameOf(metadata.getColumnType(i)));
+        }
+        bvs.setStr(0, limitValue);
+    }
+
+    // Clears the bind variables and sets the bind form's named ones, which leaves its positional $1,
+    // if any, undefined for the compile.
+    private void setNamedBindVariables(GeneratedQuery query) throws SqlException {
+        final BindVariableService bvs = executionContext.getBindVariableService();
+        final ObjList<String> names = query.bindNames();
+        final ObjList<String> values = query.bindValues();
+        bvs.clear();
+        for (int i = 0, n = values.size(); i < n; i++) {
+            bvs.setStr(names.getQuick(i), values.getQuick(i));
+        }
+    }
+
     private Outcome runOnce(String sql, StringSink rows, boolean usesParquet, boolean deterministic) {
+        return runOnce(sql, rows, usesParquet, deterministic, null, null);
+    }
+
+    /**
+     * Compiles, executes and materializes the query, as {@link #runOnce(String, StringSink, boolean, boolean)}
+     * does. With a {@code limitValue}, the query's LIMIT and SELECT list share the positional
+     * {@code $1}, which the compile leaves undefined, as a PostgreSQL Parse without parameter types
+     * does: the run writes the types that the compile gave {@code $1} and the columns to
+     * {@code types}, then binds the value to {@code $1}, in text, as a PostgreSQL Bind sends it, and
+     * executes the query.
+     */
+    private Outcome runOnce(
+            String sql,
+            StringSink rows,
+            boolean usesParquet,
+            boolean deterministic,
+            @Nullable String limitValue,
+            @Nullable StringSink types
+    ) {
         rows.clear();
         try (RecordCursorFactory factory = engine.select(sql, executionContext)) {
+            if (limitValue != null) {
+                bindUntypedLimit(factory.getMetadata(), limitValue, types);
+            }
             int rowsRead;
             boolean[] fpColumnMask;
             try (RecordCursor cursor = factory.getCursor(executionContext)) {

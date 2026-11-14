@@ -48,7 +48,7 @@ import org.jetbrains.annotations.Nullable;
  * <p>
  * Shape:
  * <pre>
- * SELECT (* | input.column AS cN, ... [, window AS cN, ...])
+ * SELECT (* | input.column AS cN, ... [, window AS cN, ...] [, l.k + N AS cN])
  * FROM input l
  *   (JOIN | LEFT JOIN) input r ON key [AND (residual)]
  *   [(JOIN | LEFT JOIN) input r2 ON key [AND (residual)] ...]
@@ -102,6 +102,12 @@ import org.jetbrains.annotations.Nullable;
  * values in the order the join returns them, which the parallel join axis checks but a storage
  * shadow that reads an index may change, so a window function marks the query non-deterministic for
  * the multiset axes, as a {@code LIMIT} without a total order does.
+ * <p>
+ * A query with a {@code LIMIT} and a projection list projects the left input's INT key plus the
+ * {@code LIMIT}'s value last. The bind form reads both through the positional {@code $1}, see
+ * {@link BindContext#bindLimit(String)}, which the runner leaves undefined at compile: the SELECT
+ * list types it INT before the {@code LIMIT} reads it, whichever plan runs, as a PostgreSQL client
+ * that sends untyped parameters relies on.
  * <p>
  * A {@code LIMIT} without an {@code ORDER BY} never comes with a filter on the left input: such a
  * query orders by the left input's designated timestamp before its {@code LIMIT}. The optimiser
@@ -246,6 +252,8 @@ public final class EquiJoinClause {
                 sql.put(" AS c").put(projected + i);
             }
         }
+        // A LIMIT's value goes into the projection list here, once the LIMIT is drawn.
+        final int projectionEnd = sql.length();
 
         sql.put(" FROM ").put(l.fromSql).put(' ').put(LEFT_ALIAS);
         for (int j = 0, n = joins.size(); j < n; j++) {
@@ -372,15 +380,29 @@ public final class EquiJoinClause {
             default -> hasOrderBy = false;
         }
         final boolean hasLimit = rnd.nextInt(6) == 0;
+        String limitReuse = null;
         if (hasLimit) {
             if (!hasOrderBy && isLeftFiltered) {
                 // A bare LIMIT would be pushed into the left input's filter (questdb/questdb#7982);
                 // the order adds no draw, so the bind form keeps the literal form's tree.
                 sql.put(" ORDER BY ").put(LEFT_ALIAS).put('.').put(TS);
             }
-            sql.put(" LIMIT ").put(rnd.nextBoolean() ? "" : "-").put(1 + rnd.nextInt(30));
+            final String sign = rnd.nextBoolean() ? "" : "-";
+            final String value = Integer.toString(1 + rnd.nextInt(30));
+            if (isSelectStar) {
+                sql.put(" LIMIT ").put(sign).put(value);
+            } else {
+                // The projection reuses the LIMIT's value, which the bind form reads as $1.
+                final String limit = ctx != null ? ctx.bindLimit(value) : value;
+                sql.put(" LIMIT ").put(sign).put(limit);
+                limitReuse = ", " + LEFT_ALIAS + '.' + l.name(INT_KEY) + " + " + limit + " AS c" + (projected + windows);
+            }
         }
-        return new GeneratedQuery(sql.toString(), !hasLimit && windows == 0);
+        final String text = sql.toString();
+        return new GeneratedQuery(
+                limitReuse == null ? text : text.substring(0, projectionEnd) + limitReuse + text.substring(projectionEnd),
+                !hasLimit && windows == 0
+        );
     }
 
     /**

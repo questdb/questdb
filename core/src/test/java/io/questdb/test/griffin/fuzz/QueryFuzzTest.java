@@ -41,6 +41,7 @@ import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.fuzz.FailureFileFacade;
+import io.questdb.test.griffin.ParallelHashJoinTestUtils;
 import io.questdb.test.griffin.fuzz.expr.BindContext;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
@@ -879,6 +880,43 @@ public class QueryFuzzTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testUntypedLimitBindComparedAcrossPlans() throws Exception {
+        // The bind form of an equi-join reads its LIMIT and an expression of its SELECT list through
+        // the positional $1, which the runner leaves undefined at compile, as a PostgreSQL Parse
+        // without parameter types does, and binds after it. The runner compares the bind form with
+        // the parallel hash join on and off: $1's type and the columns' types, as the SELECT list's
+        // INT key makes them, and the rows in order, for a LIMIT and a negative LIMIT.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 AS (SELECT (x % 4)::INT k, x v, timestamp_sequence('2024-01-01', 60_000_000) ts FROM long_sequence(64)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t1 AS (SELECT (x % 4)::INT k, x * 10 w FROM long_sequence(4))");
+            final boolean wasParallelHashJoinEnabled = sqlExecutionContext.isParallelHashJoinEnabled();
+            sqlExecutionContext.setParallelHashJoinEnabled(true);
+            try {
+                final QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, false, false, true, null, false, new ObjList<>(), null);
+                for (String sign : new String[]{"", "-"}) {
+                    final String bindSql = "SELECT l.v AS c0, l.k + $1 AS c1 FROM t0 l JOIN t1 r ON l.k = r.k LIMIT " + sign + "$1";
+                    // The bind form runs the parallel hash join.
+                    bindVariableService.clear();
+                    try (RecordCursorFactory factory = select(bindSql)) {
+                        Assert.assertNotNull(bindSql, ParallelHashJoinTestUtils.find(factory));
+                    } finally {
+                        bindVariableService.clear();
+                    }
+                    final GeneratedQuery query = new GeneratedQuery(bindSql.replace("$1", "3"), false)
+                            .withShape(QueryShape.EQUI_JOIN)
+                            .withBind(bindSql, new ObjList<>(), new ObjList<>(), "3");
+                    final QueryRunner.Result result = runner.run(query);
+                    Assert.assertFalse(result.getFailure() != null ? result.getFailure().getMessage() : "", result.isFailed());
+                    Assert.assertFalse(result.getSkipReason(), result.isSkipped());
+                }
+                Assert.assertEquals(2, runner.getUntypedLimitAxisRuns());
+            } finally {
+                sqlExecutionContext.setParallelHashJoinEnabled(wasParallelHashJoinEnabled);
+            }
+        });
+    }
+
     private static void withSystemProperties(String[][] properties, ThrowingRunnable code) throws Exception {
         final String[] previous = new String[properties.length];
         for (int i = 0; i < properties.length; i++) {
@@ -1382,8 +1420,8 @@ public class QueryFuzzTest extends AbstractCairoTest {
                         rnd.reset(preGenS0, preGenS1);
                         BindContext ctx = new BindContext(new Rnd(bindS0, bindS1), CONSTANT_BIND_PROBABILITY_PCT);
                         GeneratedQuery bindForm = QueryGenerator.generate(rnd, tables, ctx, injectFaultFn, config.isWindowEnabled(), config.isLatestOnEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled(), config.isHashJoinEnabled(), config.isGroupingSetsEnabled(), config.isEquiJoinEnabled());
-                        if (ctx.getBindValues().size() > 0) {
-                            query = query.withBind(bindForm.sql(), ctx.getBindNames(), ctx.getBindValues());
+                        if (ctx.getBindValues().size() > 0 || ctx.getLimitValue() != null) {
+                            query = query.withBind(bindForm.sql(), ctx.getBindNames(), ctx.getBindValues(), ctx.getLimitValue());
                             bindGen++;
                             LOG.info().$("fuzz bind: ").$safe(query.bindSql()).$();
                         }
@@ -1474,7 +1512,8 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 .$(runner.getParallelJoinAxisSwapCandidates()).$(" whose first join may swap its inputs, ")
                 .$(runner.getParallelJoinAxisSwapped()).$(" whose execution swapped them; ")
                 .$(runner.getParallelJoinAxisRuns()).$(" comparisons across ")
-                .$(generatedByShape[QueryShape.EQUI_JOIN.ordinal()]).$(" equi-join queries")
+                .$(generatedByShape[QueryShape.EQUI_JOIN.ordinal()]).$(" equi-join queries; ")
+                .$(runner.getUntypedLimitAxisRuns()).$(" comparisons of bind forms whose LIMIT and SELECT list share an untyped $1")
                 .$();
         LOG.info().$("fuzz parallel join pressure: ").$(runner.getParallelJoinAliasedRuns()).$(" executions with more frames than ring entries, ")
                 .$(runner.getParallelJoinNarrowedWindowRuns()).$(" with a window that narrowed, ")
