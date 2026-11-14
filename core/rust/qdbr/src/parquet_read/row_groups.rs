@@ -1712,7 +1712,8 @@ pub(super) fn has_no_null_sentinel(tag: ColumnTypeTag) -> bool {
 ///
 /// A chunk without definition levels (a Required column of QuestDB 9.4.x and older) stores its
 /// top rows as 0: the `_pm` decode takes the top from the chunk null counts. The footer decoder,
-/// which serves CONVERT TO NATIVE, records none, see [`takes_file_column_top`].
+/// which serves CONVERT TO NATIVE, records them only for a type with a NULL, see
+/// [`footer_records_top_rows`].
 pub(super) fn decode_records_top_rows(
     source_type: ColumnType,
     decode_type: ColumnType,
@@ -1729,12 +1730,32 @@ pub(super) fn decode_records_top_rows(
         )
 }
 
+/// Whether the footer decoder records the column-top rows of a chunk from its definition levels, as
+/// a `_pm` decode does (see [`decode_records_top_rows`]): when it decodes a type without a NULL
+/// sentinel at its own width for `to_type`, a type with a NULL. The conversion reads that NULL in
+/// every column-top row, wherever the row sits, see [`post_convert`], and so do the readers of the
+/// table, which decode through `_pm`. The decoder serves CONVERT TO NATIVE, which must keep what
+/// they read, and a native column of such a type holds a NULL at any row. A `to_type` of STRING or
+/// VARCHAR, which Java converts to after the decode (`TableWriter.produceNativeFromParquet`), counts
+/// as such a type. A decode for a type without a NULL takes the column top of the file metadata, see
+/// [`takes_file_column_top`].
+pub(super) fn footer_records_top_rows(
+    source_type: ColumnType,
+    decode_type: ColumnType,
+    to_type: ColumnType,
+    descriptor: &Descriptor,
+) -> bool {
+    !has_no_null_sentinel(to_type.tag())
+        && decode_records_top_rows(source_type, decode_type, descriptor)
+}
+
 /// Whether the footer decoder takes the column-top rows of a chunk from the column top of the file
-/// metadata, as the leading rows it counts. It records none from the definition levels: it serves
-/// CONVERT TO NATIVE, which keeps only the leading column top, as a native column holds no later
-/// one, and the metadata top is the one the PartitionUpdater keeps as a native O3 merge does. An
-/// O3 merge that ends a top lowers it in the metadata but can leave the NULLs of the ended rows in
-/// the row groups that the update keeps, which then read as the 0 or false that native stores.
+/// metadata, as the leading rows it counts, when it records none from the definition levels (see
+/// [`footer_records_top_rows`]). It serves CONVERT TO NATIVE, which keeps only the leading column
+/// top of a type without a NULL, as a native column of such a type holds no later one, and the
+/// metadata top is the one the PartitionUpdater keeps as a native O3 merge does. An O3 merge that
+/// ends a top lowers it in the metadata but can leave the NULLs of the ended rows in the row groups
+/// that the update keeps, which then read as the 0 or false that native stores.
 ///
 /// A source type without a NULL sentinel needs the rows for a conversion to read NULL there, see
 /// [`post_convert`], wherever the decode wrote them as 0: at the width of such a type, and at any
@@ -1947,7 +1968,13 @@ impl ParquetDecoder {
             }
 
             let col_info = QdbMetaCol { column_type, column_top, format, ascii, id: None };
-            match self.decode_column_chunk(
+            let records_top_rows = self.records_top_rows(
+                column_idx,
+                original_column_type,
+                column_type,
+                to_column_type,
+            );
+            match self.decode_column_chunk_recording_top_rows(
                 ctx,
                 column_chunk_bufs,
                 row_group_index as usize,
@@ -1955,6 +1982,7 @@ impl ParquetDecoder {
                 row_group_hi as usize,
                 column_idx,
                 col_info,
+                records_top_rows,
             ) {
                 Ok(column_chunk_decoded) => {
                     if decoded > 0 && decoded != column_chunk_decoded {
@@ -1970,11 +1998,13 @@ impl ParquetDecoder {
                 }
             }
 
-            if takes_file_column_top(
-                original_column_type,
-                column_type,
-                self.has_def_levels(column_idx),
-            ) {
+            if !records_top_rows
+                && takes_file_column_top(
+                    original_column_type,
+                    column_type,
+                    self.has_def_levels(column_idx),
+                )
+            {
                 // The rows of this chunk that fall in the column top of the file metadata.
                 let leading_nulls = column_top
                     .saturating_sub(accumulated_size + row_group_lo as usize)
@@ -2118,6 +2148,12 @@ impl ParquetDecoder {
             }
 
             let col_info = QdbMetaCol { column_type, column_top, format, ascii, id: None };
+            let records_top_rows = self.records_top_rows(
+                column_idx,
+                original_column_type,
+                column_type,
+                to_column_type,
+            );
 
             // Decode the column chunk with row filter
             match self.decode_column_chunk_filtered::<FILL_NULLS>(
@@ -2129,6 +2165,7 @@ impl ParquetDecoder {
                 column_idx,
                 col_info,
                 rows_filter,
+                records_top_rows,
             ) {
                 Ok(column_chunk_decoded) => {
                     if decoded > 0 && decoded != column_chunk_decoded {
@@ -2144,11 +2181,13 @@ impl ParquetDecoder {
                 }
             }
 
-            if takes_file_column_top(
-                original_column_type,
-                column_type,
-                self.has_def_levels(column_idx),
-            ) {
+            if !records_top_rows
+                && takes_file_column_top(
+                    original_column_type,
+                    column_type,
+                    self.has_def_levels(column_idx),
+                )
+            {
                 // column_top here is partition-absolute, so make it window-relative the same way
                 // as the non-filtered path above. rows_filter is window-relative and ascending
                 // and the output preserves order, so the matched column-top rows are a
@@ -2197,6 +2236,26 @@ impl ParquetDecoder {
             .columns()
             .get(column_idx)
             .is_some_and(|column| column.descriptor.max_def_level > 0)
+    }
+
+    /// Whether the decode of column `column_idx` from `source_type`, as `decode_type`, for
+    /// `to_type` records the column-top rows of its chunks from their definition levels, see
+    /// footer_records_top_rows(). A column out of range records none; the callers check the index
+    /// first.
+    fn records_top_rows(
+        &self,
+        column_idx: usize,
+        source_type: ColumnType,
+        decode_type: ColumnType,
+        to_type: ColumnType,
+    ) -> bool {
+        self.metadata
+            .schema_descr
+            .columns()
+            .get(column_idx)
+            .is_some_and(|column| {
+                footer_records_top_rows(source_type, decode_type, to_type, &column.descriptor)
+            })
     }
 
     /// The `leading_nulls` rows that a decoded chunk of column `column_idx` starts with in its
@@ -2269,6 +2328,9 @@ impl ParquetDecoder {
         column_index: usize,
         col_info: QdbMetaCol,
         rows_filter: &[i64],
+        // Whether the decode records the column-top rows of the chunk from its definition levels, see
+        // footer_records_top_rows().
+        records_top_rows: bool,
     ) -> ParquetResult<usize> {
         let columns = self.metadata.row_groups[row_group_index].columns();
         let column_metadata = &columns[column_index];
@@ -2305,6 +2367,7 @@ impl ParquetDecoder {
         } = ctx;
 
         column_chunk_bufs.reset_for_decode(varchar_slice_buf_pool);
+        let mut top_rows = records_top_rows.then(|| column_chunk_bufs.take_top_rows());
 
         // Reuse the hoisted scratch outer-vecs across calls so we don't pay an outer
         // allocation per column chunk. Defensive clear: the end-of-chunk append and the
@@ -2379,7 +2442,7 @@ impl ParquetDecoder {
                                 row_lo,
                                 row_hi,
                                 &rows_filter[page_filter_start..filter_idx],
-                                None,
+                                top_rows.as_mut(),
                             )
                             .with_context(|_| {
                                 format!(
@@ -2415,7 +2478,7 @@ impl ParquetDecoder {
                                 0,
                                 0,
                                 &rows_filter[page_filter_start..filter_idx],
-                                None,
+                                top_rows.as_mut(),
                             )
                             .with_context(|_| {
                                 format!(
@@ -2481,7 +2544,7 @@ impl ParquetDecoder {
                                 row_lo,
                                 row_hi,
                                 &rows_filter[page_filter_start..filter_idx],
-                                None,
+                                top_rows.as_mut(),
                             )
                             .with_context(|_| {
                                 format!(
@@ -2506,7 +2569,7 @@ impl ParquetDecoder {
                                 0,
                                 0,
                                 &rows_filter[page_filter_start..filter_idx],
-                                None,
+                                top_rows.as_mut(),
                             )
                             .with_context(|_| {
                                 format!(
@@ -2540,6 +2603,9 @@ impl ParquetDecoder {
                 .append(varchar_slice_page_bufs);
         }
 
+        if let Some(top_rows) = top_rows {
+            column_chunk_bufs.restore_top_rows(top_rows);
+        }
         column_chunk_bufs.refresh_ptrs()?;
         if FILL_NULLS {
             Ok(row_group_hi.saturating_sub(row_group_lo))
@@ -2558,6 +2624,32 @@ impl ParquetDecoder {
         row_group_hi: usize,
         column_index: usize,
         col_info: QdbMetaCol,
+    ) -> ParquetResult<usize> {
+        self.decode_column_chunk_recording_top_rows(
+            ctx,
+            column_chunk_bufs,
+            row_group_index,
+            row_group_lo,
+            row_group_hi,
+            column_index,
+            col_info,
+            false,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn decode_column_chunk_recording_top_rows(
+        &self,
+        ctx: &mut DecodeContext,
+        column_chunk_bufs: &mut ColumnChunkBuffers,
+        row_group_index: usize,
+        row_group_lo: usize,
+        row_group_hi: usize,
+        column_index: usize,
+        col_info: QdbMetaCol,
+        // Whether the decode records the column-top rows of the chunk from its definition levels, see
+        // footer_records_top_rows().
+        records_top_rows: bool,
     ) -> ParquetResult<usize> {
         let columns = self.metadata.row_groups[row_group_index].columns();
         let column_metadata = &columns[column_index];
@@ -2592,6 +2684,7 @@ impl ParquetDecoder {
         } = ctx;
 
         column_chunk_bufs.reset_for_decode(varchar_slice_buf_pool);
+        let mut top_rows = records_top_rows.then(|| column_chunk_bufs.take_top_rows());
 
         // Reuse the hoisted scratch outer-vecs across calls so we don't pay an outer
         // allocation per column chunk. Defensive clear: the end-of-chunk append and the
@@ -2639,7 +2732,7 @@ impl ParquetDecoder {
                                 col_info,
                                 row_group_lo.saturating_sub(row_count),
                                 cmp::min(page_row_count, row_group_hi - row_count),
-                                None,
+                                top_rows.as_mut(),
                             )
                             .with_context(|_| {
                                 format!(
@@ -2676,7 +2769,7 @@ impl ParquetDecoder {
                                 col_info,
                                 row_group_lo.saturating_sub(row_count),
                                 cmp::min(page_row_count, row_group_hi - row_count),
-                                None,
+                                top_rows.as_mut(),
                             )
                             .with_context(|_| {
                                 format!(
@@ -2710,6 +2803,9 @@ impl ParquetDecoder {
                 .append(varchar_slice_page_bufs);
         }
 
+        if let Some(top_rows) = top_rows {
+            column_chunk_bufs.restore_top_rows(top_rows);
+        }
         column_chunk_bufs.refresh_ptrs()?;
         Ok(row_count)
     }
@@ -4548,6 +4644,74 @@ mod multi_dict_tests {
             post_convert(src.into_type(), dst.into_type(), &mut bufs)
                 .unwrap_or_else(|e| panic!("expected no-op for {src:?} -> {dst:?}, got {e}"));
         }
+    }
+
+    /// The footer decoder records the column-top rows of a chunk from its definition levels only
+    /// for a decode of a type without a NULL sentinel at its own width, of a chunk with definition
+    /// levels, for a type with a NULL: the decodes post_convert, or Java for STRING and VARCHAR,
+    /// stamps that NULL over the rows of.
+    #[test]
+    fn footer_records_top_rows_for_a_type_with_a_null_only() {
+        use crate::parquet::tests::ColumnTypeTagExt;
+        let descriptor = |physical_type: PhysicalType, max_def_level: i16| Descriptor {
+            primitive_type: PrimitiveType::from_physical("v".to_string(), physical_type),
+            max_def_level,
+            max_rep_level: 0,
+        };
+        let int32 = descriptor(PhysicalType::Int32, 1);
+        let boolean = descriptor(PhysicalType::Boolean, 1);
+        use ColumnTypeTag::*;
+        for (src, physical, decode, to, expected) in [
+            // at the width of the source, for a type with a NULL
+            (Byte, &int32, Byte, Date, true),
+            (Byte, &int32, Byte, Float, true),
+            (Short, &int32, Short, Double, true),
+            (Short, &int32, Short, Decimal64, true),
+            (Byte, &int32, Byte, Varchar, true),
+            (Short, &int32, Short, String, true),
+            (Char, &int32, Char, Varchar, true),
+            (Char, &int32, Char, String, true),
+            (Boolean, &boolean, Boolean, Int, true),
+            (Boolean, &boolean, Boolean, Timestamp, true),
+            (Boolean, &boolean, Boolean, Varchar, true),
+            // for a type without a NULL: the leading column top of the file metadata
+            (Byte, &int32, Byte, Byte, false),
+            (Byte, &int32, Byte, Boolean, false),
+            (Short, &int32, Short, Byte, false),
+            (Char, &int32, Char, Char, false),
+            (Boolean, &boolean, Boolean, Boolean, false),
+            (Boolean, &boolean, Boolean, Short, false),
+            // straight to the target, which reads the definition levels into its NULL itself
+            (Byte, &int32, Int, Int, false),
+            (Short, &int32, Timestamp, Timestamp, false),
+            // a source with a NULL decodes it from the definition levels
+            (Int, &int32, Int, Long, false),
+            (Int, &int32, Int, Varchar, false),
+        ] {
+            assert_eq!(
+                footer_records_top_rows(
+                    src.into_type(),
+                    decode.into_type(),
+                    to.into_type(),
+                    physical
+                ),
+                expected,
+                "{src:?} as {decode:?} -> {to:?}"
+            );
+        }
+        // a Required chunk of QuestDB 9.4.x and older has no definition levels to read them from
+        assert!(!footer_records_top_rows(
+            Byte.into_type(),
+            Byte.into_type(),
+            Date.into_type(),
+            &descriptor(PhysicalType::Int32, 0),
+        ));
+        assert!(!footer_records_top_rows(
+            Boolean.into_type(),
+            Boolean.into_type(),
+            Double.into_type(),
+            &descriptor(PhysicalType::Boolean, 0),
+        ));
     }
 
     /// BYTE/SHORT -> INT/LONG/TIMESTAMP decode straight to the target width

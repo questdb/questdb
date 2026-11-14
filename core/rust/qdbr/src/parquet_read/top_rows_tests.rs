@@ -29,7 +29,8 @@
 //! that way: a frame per folder, through the encoder the conversion uses. The `_pm` decode, which
 //! the readers of a table use, must report those rows exactly, and each conversion to a type with
 //! a NULL must read NULL there and the stored value, 0 included, everywhere else. The footer
-//! decoder, which serves CONVERT TO NATIVE, takes the leading column top of the file metadata.
+//! decoder, which serves CONVERT TO NATIVE, must read a conversion to a type with a NULL as the
+//! `_pm` decode does, and takes the leading column top of the file metadata for the others.
 
 use crate::allocator::TestAllocatorState;
 use crate::parquet::error::ParquetResult;
@@ -590,33 +591,26 @@ fn pm_decode_reads_column_tops_of_later_folders() -> ParquetResult<()> {
     Ok(())
 }
 
-/// The rows the footer decoder reads for `rows` of `source` decoded as `target`, where the file
-/// metadata records no column top: the decoder takes no column-top rows from the definition levels
-/// (see `ParquetDecoder::decode_row_group`), so a definition-level-0 row reads as the page decode
-/// writes it - the NULL of a type a BYTE or SHORT decodes straight to, see
-/// decode_to_a_type_with_a_null_reads_definition_levels_itself(), and 0 or false otherwise.
-fn footer_rows(
-    source: ColumnTypeTag,
-    target: ColumnType,
-    rows: &[Option<i64>],
-) -> Vec<Option<i64>> {
-    let is_decoded_as_target = matches!(source, ColumnTypeTag::Byte | ColumnTypeTag::Short)
-        && matches!(
-            target.tag(),
-            ColumnTypeTag::Int | ColumnTypeTag::Long | ColumnTypeTag::Timestamp
-        );
-    rows.iter()
-        .map(|&row| row.or(if is_decoded_as_target { None } else { Some(0) }))
-        .collect()
+/// The STRING and VARCHAR targets of a type without a NULL sentinel: the decode stays at the
+/// width of the source and Java converts it, reading NULL in the column-top rows of the buffer.
+fn var_size_targets() -> [ColumnType; 2] {
+    [
+        ColumnTypeTag::String.into_type(),
+        ColumnTypeTag::Varchar.into_type(),
+    ]
 }
 
 #[test]
-fn footer_decode_takes_leading_column_top_of_the_file_metadata_only() -> ParquetResult<()> {
-    // The footer decoder serves CONVERT TO NATIVE, which keeps only the leading column top: a
-    // native column holds no later one. It takes that top from the QuestDB metadata, where the
-    // PartitionUpdater ends a top as a native O3 merge does, over rows whose NULLs it can leave in
-    // the row groups it keeps. FOLDERS records no top: the later tops read as stored rows. With a
-    // leading top of 2 recorded, as the frame writer records it, the rows of that top read NULL.
+fn footer_decode_reads_later_column_tops_for_a_type_with_a_null_only() -> ParquetResult<()> {
+    // The footer decoder serves CONVERT TO NATIVE. A conversion to a type with a NULL reads it in
+    // every column-top row, wherever the row sits, as the _pm decode that the readers of a table
+    // use does, and a native column of such a type holds a NULL at any row: the decoder records
+    // the column-top rows from the definition levels. A native column of a type without a NULL
+    // holds only a leading column top, which the decoder takes from the QuestDB metadata, where
+    // the PartitionUpdater ends a top as a native O3 merge does, over rows whose NULLs it can
+    // leave in the row groups it keeps. FOLDERS records no top: for such a type its later tops
+    // read 0 or false. With a leading top of 2 recorded, as the frame writer records it, the rows
+    // of that top are its column-top rows.
     let rows = model(&FOLDERS);
     const LEADING: [Folder; 2] = [folder(2, &[5, 0]), folder(1, &[7])];
     let leading_rows = model(&LEADING);
@@ -646,14 +640,13 @@ fn footer_decode_takes_leading_column_top_of_the_file_metadata_only() -> Parquet
                 )?;
                 assert_eq!(decoded, rows.len(), "{context}");
                 let chunk = &bufs.column_bufs[0];
-                assert!(chunk.top_rows().is_empty(), "{context}");
-                assert_rows(
-                    &context,
-                    chunk,
-                    source,
-                    target,
-                    &footer_rows(source, target, &rows),
-                );
+                if has_null(target) {
+                    assert_eq!(chunk.top_rows(), &FOLDERS_TOP_ROWS, "{context}");
+                } else {
+                    assert!(chunk.top_rows().is_empty(), "{context}");
+                }
+                // a column-top row reads the NULL of a target with one, 0 or false otherwise
+                assert_rows(&context, chunk, source, target, &rows);
 
                 let mut ctx = leading_file.decode_context();
                 let mut bufs = RowGroupBuffers::new(tas.allocator());
@@ -667,15 +660,199 @@ fn footer_decode_takes_leading_column_top_of_the_file_metadata_only() -> Parquet
                 )?;
                 let chunk = &bufs.column_bufs[0];
                 let context = format!("{context}, leading top");
-                assert_eq!(chunk.top_rows(), &[[0, 2]], "{context}");
-                let mut expected = footer_rows(source, target, &leading_rows);
-                expected[0] = None;
-                expected[1] = None;
-                assert_rows(&context, chunk, source, target, &expected);
+                if has_null(target) {
+                    assert_eq!(chunk.top_rows(), &[[0, 2], [4, 5]], "{context}");
+                } else {
+                    assert_eq!(chunk.top_rows(), &[[0, 2]], "{context}");
+                }
+                assert_rows(&context, chunk, source, target, &leading_rows);
             }
         }
     }
     Ok(())
+}
+
+#[test]
+fn footer_decode_reads_as_the_pm_decode_for_a_type_with_a_null() -> ParquetResult<()> {
+    // CONVERT TO NATIVE decodes through the footer decoder, the readers of the table through the
+    // _pm decode: for a conversion to a type with a NULL the two must read the same rows, or the
+    // conversion changes what the table reads. The whole row group, the window of rows [2, 8),
+    // and the filters of decode_filtered_compacts_column_top_rows() and
+    // decode_filling_filter_keeps_column_top_runs_whole(). A STRING or VARCHAR target decodes at
+    // the width of the source, which the readers ask for, and Java converts the buffer after. A
+    // BYTE or SHORT decoded straight to INT, LONG or TIMESTAMP writes the NULL itself and records
+    // no column-top rows.
+    let compacting_filter: [i64; 5] = [1, 3, 4, 6, 8];
+    let filling_filter: [i64; 4] = [0, 2, 4, 6];
+    let rows = model(&FOLDERS);
+    for (source, encodings) in no_sentinel_sources() {
+        for (&encoding, version) in encodings
+            .iter()
+            .flat_map(|e| [(e, Version::V1), (e, Version::V2)])
+        {
+            let file = write_folders_with_version(source, encoding, &FOLDERS, 9, None, version);
+            let reader = file.parquet_meta_reader();
+            let decoder = file.footer_decoder();
+            let decoded_as_target: Vec<ColumnType> =
+                if matches!(source, ColumnTypeTag::Byte | ColumnTypeTag::Short) {
+                    vec![
+                        ColumnTypeTag::Int.into_type(),
+                        ColumnTypeTag::Long.into_type(),
+                        ColumnTypeTag::Timestamp.into_type(),
+                    ]
+                } else {
+                    vec![]
+                };
+            let targets = targets_of(source)
+                .into_iter()
+                .filter(|&t| has_null(t))
+                .chain(decoded_as_target.iter().copied())
+                .chain(var_size_targets());
+            for target in targets {
+                let pm_target = if var_size_targets().contains(&target) {
+                    source.into_type()
+                } else {
+                    target
+                };
+                let top_rows = |rows: &[Option<i64>]| -> Vec<[u64; 2]> {
+                    if decoded_as_target.contains(&target) {
+                        vec![]
+                    } else {
+                        top_rows_of(rows)
+                    }
+                };
+                let context = format!("{source:?} -> {target:?}, encoding {encoding}, {version:?}");
+                let tas = TestAllocatorState::new();
+                let mut ctx = file.decode_context();
+                for (lo, hi) in [(0usize, rows.len()), (2, 8)] {
+                    let mut pm = RowGroupBuffers::new(tas.allocator());
+                    decode_row_group(
+                        &mut ctx,
+                        &mut pm,
+                        ColumnChunkSource::File(&file.parquet),
+                        &reader,
+                        &[(1, pm_target)],
+                        0,
+                        lo,
+                        hi,
+                    )?;
+                    let mut footer = RowGroupBuffers::new(tas.allocator());
+                    decoder.decode_row_group(
+                        &mut ctx,
+                        &mut footer,
+                        &[(1, target)],
+                        0,
+                        lo as u32,
+                        hi as u32,
+                    )?;
+                    let context = format!("{context}, rows [{lo}, {hi})");
+                    assert_eq!(
+                        footer.column_bufs[0].top_rows(),
+                        top_rows(&rows[lo..hi]).as_slice(),
+                        "{context}"
+                    );
+                    assert_same_chunk(&context, &footer.column_bufs[0], &pm.column_bufs[0]);
+                }
+                let mut pm = RowGroupBuffers::new(tas.allocator());
+                decode_row_group_filtered::<false>(
+                    &mut ctx,
+                    &mut pm,
+                    ColumnChunkSource::File(&file.parquet),
+                    &reader,
+                    0,
+                    &[(1, pm_target)],
+                    0,
+                    0,
+                    rows.len(),
+                    &compacting_filter,
+                )?;
+                let mut footer = RowGroupBuffers::new(tas.allocator());
+                decoder.decode_row_group_filtered::<false>(
+                    &mut ctx,
+                    &mut footer,
+                    0,
+                    &[(1, target)],
+                    0,
+                    0,
+                    rows.len() as u32,
+                    &compacting_filter,
+                )?;
+                let compacting_context = format!("{context}, compacting filter");
+                let compacted_rows: Vec<Option<i64>> = compacting_filter
+                    .iter()
+                    .map(|&r| rows[r as usize])
+                    .collect();
+                assert_eq!(
+                    footer.column_bufs[0].top_rows(),
+                    top_rows(&compacted_rows).as_slice(),
+                    "{compacting_context}"
+                );
+                assert_same_chunk(
+                    &compacting_context,
+                    &footer.column_bufs[0],
+                    &pm.column_bufs[0],
+                );
+                let mut pm = RowGroupBuffers::new(tas.allocator());
+                decode_row_group_filtered::<true>(
+                    &mut ctx,
+                    &mut pm,
+                    ColumnChunkSource::File(&file.parquet),
+                    &reader,
+                    0,
+                    &[(1, pm_target)],
+                    0,
+                    0,
+                    rows.len(),
+                    &filling_filter,
+                )?;
+                let mut footer = RowGroupBuffers::new(tas.allocator());
+                decoder.decode_row_group_filtered::<true>(
+                    &mut ctx,
+                    &mut footer,
+                    0,
+                    &[(1, target)],
+                    0,
+                    0,
+                    rows.len() as u32,
+                    &filling_filter,
+                )?;
+                let filling_context = format!("{context}, filling filter");
+                // see decode_filling_filter_keeps_column_top_runs_whole()
+                let filled_top_rows: &[[u64; 2]] = if decoded_as_target.contains(&target) {
+                    &[]
+                } else {
+                    &[[4, 9]]
+                };
+                assert_eq!(
+                    footer.column_bufs[0].top_rows(),
+                    filled_top_rows,
+                    "{filling_context}"
+                );
+                assert_same_chunk(&filling_context, &footer.column_bufs[0], &pm.column_bufs[0]);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Asserts that the footer decode `footer` holds the column-top rows, the values and the aux
+/// entries of the `_pm` decode `pm`.
+fn assert_same_chunk(context: &str, footer: &ColumnChunkBuffers, pm: &ColumnChunkBuffers) {
+    assert_eq!(
+        footer.top_rows(),
+        pm.top_rows(),
+        "{context}: column-top rows"
+    );
+    assert_eq!(
+        footer.data_vec.as_slice(),
+        pm.data_vec.as_slice(),
+        "{context}: values"
+    );
+    assert_eq!(
+        footer.aux_vec.as_slice(),
+        pm.aux_vec.as_slice(),
+        "{context}: aux entries"
+    );
 }
 
 #[test]
@@ -1318,8 +1495,9 @@ fn footer_filtered_decode_takes_column_top_of_a_source_with_a_null() -> ParquetR
 #[test]
 fn decode_records_top_rows_of_rle_booleans() -> ParquetResult<()> {
     // QuestDB writes BOOLEAN pages Plain; another writer may write them RLE. Rows T T 1 0 T 1. The
-    // _pm decode records the column tops from the definition levels; the footer decoder takes the
-    // column top of the QuestDB metadata, 0 rows, so its rows of a top read false.
+    // _pm decode records the column tops from the definition levels, and so does the footer
+    // decoder for INT, a type with a NULL; for BOOLEAN it takes the column top of the QuestDB
+    // metadata, 0 rows, so its rows of a top read false.
     use parquet::basic::{Encoding, Repetition as P1Repetition, Type as P1Type};
     use parquet::file::properties::{WriterProperties, WriterVersion};
     use parquet::file::writer::SerializedFileWriter;
@@ -1419,13 +1597,17 @@ fn decode_records_top_rows_of_rle_booleans() -> ParquetResult<()> {
         let mut bufs = RowGroupBuffers::new(tas.allocator());
         decoder.decode_row_group(&mut ctx, &mut bufs, &[(0, target)], 0, 0, 6)?;
         let chunk = &bufs.column_bufs[0];
-        assert!(chunk.top_rows().is_empty(), "footer {target:?}");
+        if has_null(target) {
+            assert_eq!(chunk.top_rows(), &[[0, 2], [4, 5]], "footer {target:?}");
+        } else {
+            assert!(chunk.top_rows().is_empty(), "footer {target:?}");
+        }
         assert_rows(
             &format!("footer {target:?}"),
             chunk,
             ColumnTypeTag::Boolean,
             target,
-            &footer_rows(ColumnTypeTag::Boolean, target, &rows),
+            &rows,
         );
     }
     Ok(())

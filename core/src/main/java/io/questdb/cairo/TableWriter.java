@@ -16825,7 +16825,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 final int parquetColumnType = parquetMetadata.getColumnType(parquetIdx);
                 parquetColumnIdsAndTypes.add(parquetIdx);
-                parquetColumnIdsAndTypes.add(ParquetColumnTypeConverter.chooseDecodeType(parquetColumnType, tableColumnType));
+                // A type without a NULL sentinel converts to STRING or VARCHAR here, after the decoder
+                // leaves it at its own width. Asking for the target, which the decoder does not convert,
+                // makes it record every column-top row of the chunk, wherever the row sits, for the
+                // conversion to read as NULL, as the readers of the table do.
+                parquetColumnIdsAndTypes.add(
+                        ColumnType.isNoNullSentinelFixedType(parquetColumnType)
+                                && (ColumnType.isString(tableColumnType) || ColumnType.isVarchar(tableColumnType))
+                                ? tableColumnType
+                                : ParquetColumnTypeConverter.chooseDecodeType(parquetColumnType, tableColumnType)
+                );
                 parquetDecodedTableColumnIdx.setQuick(decodedColumnCount, i);
 
                 // Open destination files based on TABLE type (not parquet type).
