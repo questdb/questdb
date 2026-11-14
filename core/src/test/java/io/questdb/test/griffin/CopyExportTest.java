@@ -8104,9 +8104,10 @@ public class CopyExportTest extends AbstractCairoTest {
         return compileCount.get();
     }
 
-    // The lines of a query's printed rows, header first and the rows sorted.
+    // The lines of a query's printed rows, header first and the rows sorted. The limit of -1 keeps trailing empty
+    // lines: a NULL or empty value prints as one, and split() would otherwise drop it when its row comes last.
     private static String sortedLines(CharSequence printedRows) {
-        final String[] lines = printedRows.toString().split("\n");
+        final String[] lines = printedRows.toString().split("\n", -1);
         Arrays.sort(lines, 1, lines.length);
         return String.join("\n", lines);
     }
