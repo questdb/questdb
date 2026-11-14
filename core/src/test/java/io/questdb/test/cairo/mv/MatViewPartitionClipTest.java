@@ -29,6 +29,9 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.file.BlockFileReader;
+import io.questdb.cairo.mv.MatViewState;
+import io.questdb.cairo.mv.MatViewStateReader;
 import io.questdb.cairo.mv.MatViewTimerJob;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -37,6 +40,8 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.LongList;
+import io.questdb.std.Numbers;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
@@ -66,6 +71,20 @@ import static io.questdb.cairo.wal.WalUtils.*;
 @RunWith(Parameterized.class)
 public class MatViewPartitionClipTest extends AbstractCairoTest {
     private static final Log LOG = LogFactory.getLog(MatViewPartitionClipTest.class);
+    // The rows of the period view of createPeriodTimerView().
+    private static final String PERIOD_VIEW_ROWS = """
+            ts\tsym\tprice
+            2024-01-01T00:00:00.000000Z\ta\t1.0
+            2024-01-01T05:00:00.000000Z\tb\t2.0
+            """;
+    private static final String PERIOD_VIEW_SQL = "SELECT ts, sym, last(price) AS price FROM base SAMPLE BY 1h";
+    // The rows of the period view of createPeriodTimerView() once it recomputed the base UPDATE of
+    // createPeriodTimerViewWithUpdatedDay(), which multiplies the prices of 2024-01-01 by 10.
+    private static final String UPDATED_PERIOD_VIEW_ROWS = """
+            ts\tsym\tprice
+            2024-01-01T00:00:00.000000Z\ta\t10.0
+            2024-01-01T05:00:00.000000Z\tb\t20.0
+            """;
     private final TestTimestampType timestampType;
 
     public MatViewPartitionClipTest(TestTimestampType timestampType) {
@@ -119,6 +138,30 @@ public class MatViewPartitionClipTest extends AbstractCairoTest {
                     "2022-06-20T06:00:00", "2023-02-10T06:00:00", "2023-12-31T12:00:00",
                     "2022-06-01T00:00:00", "2023-01-01T00:00:00"
             );
+        });
+    }
+
+    @Test
+    public void testConsecutiveEmptyPeriodsKeepQueuedUpdateRange() throws Exception {
+        // The base holds no partition of 2024-01-02 and 2024-01-03, as over a weekend. The period timer's refresh of
+        // each day commits only the period it reached, with one view state event, and keeps the range that a base
+        // UPDATE queued before them, which the incremental refresh after them recomputes.
+        assertMemoryLeak(() -> {
+            createPeriodTimerViewWithUpdatedDay();
+            for (String periodHi : new String[]{"2024-01-03T00:00:00", "2024-01-04T00:00:00"}) {
+                final long viewTxns = walTxnCount("price_1h");
+                runPeriodRefresh(periodHi);
+                Assert.assertEquals(viewTxns + 1, walTxnCount("price_1h"));
+                assertRefreshPosition(1, periodHi);
+                assertCache(2, ts("2024-01-01T00:00:00"), ts("2024-01-02T00:00:00") - 1);
+            }
+            assertViewRows(PERIOD_VIEW_ROWS);
+
+            runIncrementalRefresh("2024-01-04T00:30:00");
+            assertViewRows(UPDATED_PERIOD_VIEW_ROWS);
+            assertCache(-1);
+            assertViewCaughtUp("price_1h");
+            assertViewValid();
         });
     }
 
@@ -490,6 +533,89 @@ public class MatViewPartitionClipTest extends AbstractCairoTest {
                     2024-01-03T00:00:00.000000Z\tc\t30.0
                     2024-01-04T00:00:00.000000Z\td\t4.0
                     """);
+            assertViewValid();
+        });
+    }
+
+    @Test
+    public void testPeriodRefreshOverEmptyPeriodKeepsCachedIntervalInsideIt() throws Exception {
+        // A late row into 2024-01-02 is cached, and the base then drops 2024-01-02. The period timer's refresh of the
+        // day keeps the cached interval inside it, next to the range of a base UPDATE of 2024-01-01. The incremental
+        // refresh after it clips the interval of the dropped day away, recomputes the UPDATE's range and clears the
+        // cache.
+        assertMemoryLeak(() -> {
+            createPeriodTimerView();
+            currentMicros = parseFloorPartialTimestamp("2024-01-02T23:00:00.000000Z");
+            execute("INSERT INTO base VALUES ('d', 4.0, '2024-01-02T10:10:00.000000Z')");
+            drainWalQueue();
+            engine.getMatViewStateStore().enqueueUpdateRefreshIntervals(engine.verifyTableName("price_1h"));
+            drainWalAndMatViewQueues();
+            assertCache(2, ts("2024-01-02T10:10:00"), ts("2024-01-02T10:10:00"));
+            execute("ALTER TABLE base DROP PARTITION LIST '2024-01-02'");
+            drainWalQueue();
+            assertBasePartitions("2024-01-01\n");
+            currentMicros = parseFloorPartialTimestamp("2024-01-02T23:45:00.000000Z");
+            execute("UPDATE base SET price = price * 10 WHERE ts IN '2024-01-01'");
+            drainWalAndMatViewQueues();
+            // the range task brings the cache up to the UPDATE, base txn 4, then adds the UPDATE's range
+            final long[] cached = {
+                    ts("2024-01-01T00:00:00"), ts("2024-01-02T00:00:00") - 1,
+                    ts("2024-01-02T10:10:00"), ts("2024-01-02T10:10:00")
+            };
+            assertCache(4, cached);
+
+            runPeriodRefresh("2024-01-03T00:00:00");
+            assertRefreshPosition(1, "2024-01-03T00:00:00");
+            assertCache(4, cached);
+            assertViewRows(PERIOD_VIEW_ROWS);
+
+            runIncrementalRefresh("2024-01-03T00:30:00");
+            assertViewRows(UPDATED_PERIOD_VIEW_ROWS);
+            assertCache(-1);
+            assertViewCaughtUp("price_1h");
+            assertViewValid();
+        });
+    }
+
+    @Test
+    public void testPeriodRefreshOverEmptyPeriodKeepsQueuedUpdateRange() throws Exception {
+        // A TIMER period view has refreshed its periods up to 2024-01-02, and a base UPDATE of 2024-01-01 after the
+        // view's last EVERY firing queues the day's range in the view's cache. The period timer's refresh of
+        // 2024-01-02, a day the base holds no partition of, recomputes nothing: it commits only the period it
+        // reached, in memory and on disk, and leaves the cached range to the next incremental refresh, which
+        // recomputes it.
+        assertMemoryLeak(() -> {
+            createPeriodTimerViewWithUpdatedDay();
+            final long viewTxns = walTxnCount("price_1h");
+            runPeriodRefresh("2024-01-03T00:00:00");
+            Assert.assertEquals(viewTxns + 1, walTxnCount("price_1h"));
+            assertRefreshPosition(1, "2024-01-03T00:00:00");
+            assertCache(2, ts("2024-01-01T00:00:00"), ts("2024-01-02T00:00:00") - 1);
+            assertViewRows(PERIOD_VIEW_ROWS);
+            assertViewValid();
+
+            runIncrementalRefresh("2024-01-03T00:30:00");
+            assertViewRows(UPDATED_PERIOD_VIEW_ROWS);
+            assertSqlEquals("price_1h ORDER BY ts, sym", "(" + PERIOD_VIEW_SQL + ") ORDER BY ts, sym");
+            assertCache(-1);
+            assertViewCaughtUp("price_1h");
+            assertViewValid();
+        });
+    }
+
+    @Test
+    public void testPeriodRefreshOverEmptyPeriodWithEmptyCacheCommitsOnlyPeriod() throws Exception {
+        // The period timer's refresh of 2024-01-02, a day the base holds no partition of, with nothing cached: one
+        // view state event that moves the period, and keeps the refresh position, the empty cache and the rows.
+        assertMemoryLeak(() -> {
+            createPeriodTimerView();
+            final long viewTxns = walTxnCount("price_1h");
+            runPeriodRefresh("2024-01-03T00:00:00");
+            Assert.assertEquals(viewTxns + 1, walTxnCount("price_1h"));
+            assertRefreshPosition(1, "2024-01-03T00:00:00");
+            assertCache(-1);
+            assertViewRows(PERIOD_VIEW_ROWS);
+            assertViewCaughtUp("price_1h");
             assertViewValid();
         });
     }
@@ -911,6 +1037,32 @@ public class MatViewPartitionClipTest extends AbstractCairoTest {
         assertViewValid();
     }
 
+    // Asserts the cached refresh intervals of price_1h, in base table units, and their base txn, in memory and in the
+    // view's state file.
+    private void assertCache(long baseTxn, long... bounds) {
+        final LongList expected = new LongList();
+        for (long bound : bounds) {
+            expected.add(bound);
+        }
+        final MatViewState state = getViewState();
+        Assert.assertEquals(baseTxn, state.getRefreshIntervalsBaseTxn());
+        TestUtils.assertEquals(expected, state.getRefreshIntervals());
+        final MatViewStateReader persisted = readPersistedState();
+        Assert.assertEquals(baseTxn, persisted.getRefreshIntervalsBaseTxn());
+        TestUtils.assertEquals(expected, persisted.getRefreshIntervals());
+    }
+
+    // Asserts the refresh position of price_1h and the end of its last refreshed period, in memory and in the view's
+    // state file.
+    private void assertRefreshPosition(long baseTxn, String periodHi) throws Exception {
+        final MatViewState state = getViewState();
+        Assert.assertEquals(baseTxn, state.getLastRefreshBaseTxn());
+        Assert.assertEquals(ts(periodHi), state.getLastPeriodHi());
+        final MatViewStateReader persisted = readPersistedState();
+        Assert.assertEquals(baseTxn, persisted.getLastRefreshBaseTxn());
+        Assert.assertEquals(ts(periodHi), persisted.getLastPeriodHi());
+    }
+
     private void assertSqlEquals(String actual, String expected) throws Exception {
         TestUtils.assertSqlCursors(engine, sqlExecutionContext, expected, actual, LOG);
     }
@@ -1088,6 +1240,31 @@ public class MatViewPartitionClipTest extends AbstractCairoTest {
         assertViewRows(allFourDays());
     }
 
+    // A TIMER period view over the base's rows of 2024-01-01, built at 2024-01-02T12:00 as an EVERY firing would: it
+    // holds the periods up to 2024-01-02, at base txn 1. The base holds no partition of 2024-01-02.
+    private void createPeriodTimerView() throws Exception {
+        currentMicros = parseFloorPartialTimestamp("2024-01-01T00:00:00.000000Z");
+        createBase("DAY", null);
+        execute("CREATE MATERIALIZED VIEW price_1h REFRESH EVERY 1h PERIOD (LENGTH 1d) AS (" + PERIOD_VIEW_SQL + ") PARTITION BY DAY");
+        execute("INSERT INTO base VALUES ('a', 1.0, '2024-01-01T00:10:00.000000Z'), ('b', 2.0, '2024-01-01T05:10:00.000000Z')");
+        drainWalQueue();
+        runIncrementalRefresh("2024-01-02T12:00:00");
+        assertViewRows(PERIOD_VIEW_ROWS);
+        assertRefreshPosition(1, "2024-01-02T00:00:00");
+        assertCache(-1);
+    }
+
+    // createPeriodTimerView(), then a base UPDATE of 2024-01-01 after the view's last EVERY firing of 2024-01-02. The
+    // range task queues the day's range in the view's cache, at the UPDATE's base txn 2.
+    private void createPeriodTimerViewWithUpdatedDay() throws Exception {
+        createPeriodTimerView();
+        currentMicros = parseFloorPartialTimestamp("2024-01-02T23:45:00.000000Z");
+        execute("UPDATE base SET price = price * 10 WHERE ts IN '2024-01-01'");
+        drainWalAndMatViewQueues();
+        assertCache(2, ts("2024-01-01T00:00:00"), ts("2024-01-02T00:00:00") - 1);
+        assertViewRows(PERIOD_VIEW_ROWS);
+    }
+
     private void createView(String sampleBy, String viewPartitionBy) throws Exception {
         execute("CREATE MATERIALIZED VIEW price_1h AS (SELECT ts, sym, last(price) AS price FROM base SAMPLE BY " + sampleBy + ") PARTITION BY " + viewPartitionBy);
     }
@@ -1118,8 +1295,38 @@ public class MatViewPartitionClipTest extends AbstractCairoTest {
                 """);
     }
 
+    private static MatViewState getViewState() {
+        final MatViewState state = engine.getMatViewStateStore().getViewState(engine.verifyTableName("price_1h"));
+        Assert.assertNotNull(state);
+        return state;
+    }
+
+    private static MatViewStateReader readPersistedState() {
+        final TableToken viewToken = engine.verifyTableName("price_1h");
+        try (Path path = new Path(); BlockFileReader reader = new BlockFileReader(configuration)) {
+            path.of(configuration.getDbRoot()).concat(viewToken).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME);
+            reader.of(path.$());
+            return new MatViewStateReader().of(reader, viewToken);
+        }
+    }
+
     private String replaceTs(String expected) {
         return ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? expected : expected.replace(".000000Z", ".000000000Z");
+    }
+
+    // Enqueues the incremental refresh of price_1h that its EVERY timer enqueues, at the given time, and runs it.
+    private static void runIncrementalRefresh(String clock) {
+        currentMicros = parseFloorPartialTimestamp(clock + ".000000Z");
+        engine.getMatViewStateStore().enqueueIncrementalRefresh(engine.verifyTableName("price_1h"));
+        drainWalAndMatViewQueues();
+    }
+
+    // Enqueues the range refresh of price_1h that the firing of MatViewTimerJob's period timer at the end of the
+    // period enqueues, at that time, and runs it.
+    private void runPeriodRefresh(String periodHi) throws Exception {
+        currentMicros = parseFloorPartialTimestamp(periodHi + ".000000Z");
+        engine.getMatViewStateStore().enqueueRangeRefresh(engine.verifyTableName("price_1h"), Numbers.LONG_NULL, ts(periodHi) - 1);
+        drainWalAndMatViewQueues();
     }
 
     // Rows every six hours, at 00:00, 06:00, 12:00 and 18:00 of each day from 2024-01-0<firstDay> to

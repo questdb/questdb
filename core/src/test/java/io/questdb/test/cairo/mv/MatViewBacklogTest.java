@@ -41,6 +41,7 @@ import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.test.TestTimestampCounterFactory;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
@@ -86,6 +87,12 @@ public class MatViewBacklogTest extends AbstractCairoTest {
             2024-01-01T00:00:00.000000Z\ta\t3.0
             2024-01-01T01:00:00.000000Z\tb\t2.0
             2024-01-02T00:00:00.000000Z\tc\t4.0
+            """;
+    // The rows of the period view of createRefreshedPeriodTimerView().
+    private static final String PERIOD_VIEW_ROWS = """
+            ts\tsym\tprice
+            2024-01-01T00:00:00.000000Z\ta\t1.0
+            2024-01-01T05:00:00.000000Z\tb\t2.0
             """;
     private static final String RESUME_SKIP_SQL = "REFRESH MATERIALIZED VIEW price_1h RESUME SKIP BACKLOG";
     private static final String RESUME_SQL = "REFRESH MATERIALIZED VIEW price_1h RESUME";
@@ -1412,6 +1419,156 @@ public class MatViewBacklogTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPeriodRefreshOverEmptyPeriodKeepsCachePositionAfterBasePurge() throws Exception {
+        // A TIMER period view's refresh intervals update scans a base transaction that changes no rows, an UPDATE of a
+        // day the base holds no partition of, which queues no range either: the cache stays empty, and its position
+        // moves to that transaction, up to which the base's WAL is then purged. The period timer's refresh of
+        // 2024-01-02, a day the base holds no partition of, keeps the position, so the next incremental refresh reads
+        // no purged WAL.
+        assertMemoryLeak(() -> {
+            createRefreshedPeriodTimerView(VIEW_SQL);
+            currentMicros = parseFloorPartialTimestamp("2024-01-02T23:45:00.000000Z");
+            execute("UPDATE base SET price = price * 10 WHERE ts IN '2024-01-05'");
+            drainWalAndMatViewQueues();
+            updateBacklog();
+            assertCache(2);
+            assertPersistedCache(2);
+            purgeBaseWal();
+            Assert.assertFalse(isBaseWalSegmentPresent(2));
+
+            runPeriodRefresh("2024-01-03T00:00:00.000000Z");
+            Assert.assertEquals(parseFloorPartialTimestamp("2024-01-03T00:00:00.000000Z"), viewState().getLastPeriodHi());
+            assertRefreshBaseTxn(1);
+            assertCache(2);
+            assertPersistedCache(2);
+
+            runIncrementalRefresh("2024-01-03T00:30:00.000000Z");
+            assertViewStatus("valid", "");
+            assertViewRows(PERIOD_VIEW_ROWS);
+            assertRefreshBaseTxn(2);
+        });
+    }
+
+    @Test
+    public void testPeriodRefreshOverEmptyPeriodKeepsCachedWalIntervalsAfterBasePurge() throws Exception {
+        // A TIMER period view's refresh intervals update caches the interval of a late row into 2024-01-01, and the
+        // base's WAL up to the cache position is then purged. The period timer's refresh of 2024-01-02, a day the
+        // base holds no partition of, keeps the cache, so the next incremental refresh recomputes the late row's
+        // bucket from the cache without the purged WAL.
+        assertMemoryLeak(() -> {
+            createRefreshedPeriodTimerView(VIEW_SQL);
+            currentMicros = parseFloorPartialTimestamp("2024-01-02T23:45:00.000000Z");
+            insert("a", 5.0, "2024-01-01T00:20:00.000000Z");
+            drainWalAndMatViewQueues();
+            updateBacklog();
+            assertCache(2, "2024-01-01T00:20:00.000000Z", "2024-01-01T00:20:00.000000Z");
+            purgeBaseWal();
+            Assert.assertFalse(isBaseWalSegmentPresent(2));
+
+            runPeriodRefresh("2024-01-03T00:00:00.000000Z");
+            assertCache(2, "2024-01-01T00:20:00.000000Z", "2024-01-01T00:20:00.000000Z");
+            assertPersistedCache(2, "2024-01-01T00:20:00.000000Z", "2024-01-01T00:20:00.000000Z");
+
+            runIncrementalRefresh("2024-01-03T00:30:00.000000Z");
+            assertViewStatus("valid", "");
+            assertViewRows("""
+                    ts\tsym\tprice
+                    2024-01-01T00:00:00.000000Z\ta\t5.0
+                    2024-01-01T05:00:00.000000Z\tb\t2.0
+                    """);
+            assertSqlCursors(VIEW_SQL, "price_1h");
+        });
+    }
+
+    @Test
+    public void testPeriodRefreshOverEmptyPeriodKeepsResumedBacklog() throws Exception {
+        // A TIMER period view goes invalid, and its backlog takes a row written while it is invalid and the range of
+        // a base UPDATE of 2024-01-01. RESUME keeps the backlog in the cache for the next incremental refresh, and so
+        // does the period timer's refresh of 2024-01-02, a day the base holds no partition of. The incremental
+        // refresh after it catches up on both.
+        assertMemoryLeak(() -> {
+            createRefreshedPeriodTimerView(VIEW_SQL);
+            invalidate("test invalidation");
+            insert("c", 3.0, "2024-01-01T03:10:00.000000Z");
+            drainWalAndMatViewQueues();
+            updateBacklog();
+            assertCache(2, "2024-01-01T03:10:00.000000Z", "2024-01-01T03:10:00.000000Z");
+            execute("UPDATE base SET price = price * 10 WHERE ts IN '2024-01-01'");
+            drainWalAndMatViewQueues();
+            assertCache(3, "2024-01-01T00:00:00.000000Z", "2024-01-01T23:59:59.999999Z");
+
+            currentMicros = parseFloorPartialTimestamp("2024-01-02T23:45:00.000000Z");
+            assertResumeSucceeds(RESUME_SQL);
+            drainWalAndMatViewQueues();
+            assertRefreshBaseTxn(1);
+            assertCache(3, "2024-01-01T00:00:00.000000Z", "2024-01-01T23:59:59.999999Z");
+            assertViewRows(PERIOD_VIEW_ROWS);
+
+            runPeriodRefresh("2024-01-03T00:00:00.000000Z");
+            assertCache(3, "2024-01-01T00:00:00.000000Z", "2024-01-01T23:59:59.999999Z");
+            assertPersistedCache(3, "2024-01-01T00:00:00.000000Z", "2024-01-01T23:59:59.999999Z");
+
+            runIncrementalRefresh("2024-01-03T00:30:00.000000Z");
+            assertViewStatus("valid", "");
+            assertViewRows("""
+                    ts\tsym\tprice
+                    2024-01-01T00:00:00.000000Z\ta\t10.0
+                    2024-01-01T03:00:00.000000Z\tc\t30.0
+                    2024-01-01T05:00:00.000000Z\tb\t20.0
+                    """);
+            assertSqlCursors(VIEW_SQL, "price_1h");
+            assertRefreshBaseTxn(3);
+            assertCache(-1);
+        });
+    }
+
+    @Test
+    public void testPeriodRefreshOverEmptyPeriodRecomputesOnlyCachedBucketAfterBasePurge() throws Exception {
+        // Performance property, with missing WAL files not fatal, the server default: the period timer's refresh of
+        // 2024-01-02, a day the base holds no partition of, keeps the cached interval of a late row whose WAL is
+        // purged, so the next incremental refresh recomputes the one bucket of the late row, not every bucket of the
+        // base, as a refresh that cannot read the WAL from its refresh position would. In dev mode,
+        // test_timestamp_counter() counts the view rows the refresh computes, one per bucket here.
+        setProperty(PropertyKey.DEBUG_MAT_VIEW_REFRESH_MISSING_WAL_FILES_FATAL, "false");
+        setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            final String viewSql = "SELECT ts, test_timestamp_counter(ts) ts0, sym, last(price) AS price FROM base SAMPLE BY 1h";
+            currentMicros = parseFloorPartialTimestamp("2024-01-01T00:00:00.000000Z");
+            createBase();
+            execute("CREATE MATERIALIZED VIEW price_1h REFRESH EVERY 1h PERIOD (LENGTH 1d) AS (" + viewSql + ") PARTITION BY DAY");
+            // seven buckets, six of them in 2024-01-01
+            execute("""
+                    INSERT INTO base VALUES
+                    ('z', 0.5, 1.0, '2023-12-31T10:10:00.000000Z'),
+                    ('a', 1.0, 1.0, '2024-01-01T00:10:00.000000Z'),
+                    ('b', 2.0, 1.0, '2024-01-01T01:10:00.000000Z'),
+                    ('c', 3.0, 1.0, '2024-01-01T02:10:00.000000Z'),
+                    ('d', 4.0, 1.0, '2024-01-01T03:10:00.000000Z'),
+                    ('e', 5.0, 1.0, '2024-01-01T04:10:00.000000Z'),
+                    ('f', 6.0, 1.0, '2024-01-01T05:10:00.000000Z')
+                    """);
+            drainWalQueue();
+            runIncrementalRefresh("2024-01-02T12:00:00.000000Z");
+            assertRefreshBaseTxn(1);
+
+            currentMicros = parseFloorPartialTimestamp("2024-01-02T23:45:00.000000Z");
+            insert("a", 5.0, "2024-01-01T00:20:00.000000Z");
+            drainWalAndMatViewQueues();
+            updateBacklog();
+            assertCache(2, "2024-01-01T00:20:00.000000Z", "2024-01-01T00:20:00.000000Z");
+            purgeBaseWal();
+            Assert.assertFalse(isBaseWalSegmentPresent(2));
+            runPeriodRefresh("2024-01-03T00:00:00.000000Z");
+
+            final long counterBefore = TestTimestampCounterFactory.COUNTER.get();
+            runIncrementalRefresh("2024-01-03T00:30:00.000000Z");
+            Assert.assertEquals(1, TestTimestampCounterFactory.COUNTER.get() - counterBefore);
+            assertViewStatus("valid", "");
+            assertSqlCursors(viewSql, "price_1h");
+        });
+    }
+
+    @Test
     public void testRangeTaskFailureInvalidatesValidView() throws Exception {
         // A failure while a valid view takes an ATTACH range still invalidates the view, with the error, through
         // refreshFailState(); the failed task has no view WAL writer to persist the invalidation with.
@@ -2096,6 +2253,21 @@ public class MatViewBacklogTest extends AbstractCairoTest {
         });
     }
 
+    // Asserts the view's cached refresh intervals and their base txn in the view's state file, as pairs of timestamps.
+    private void assertPersistedCache(long baseTxn, String... bounds) {
+        final LongList expected = new LongList();
+        for (String bound : bounds) {
+            expected.add(parseFloorPartialTimestamp(bound));
+        }
+        try (Path path = new Path(); BlockFileReader reader = new BlockFileReader(configuration)) {
+            path.of(configuration.getDbRoot()).concat(viewToken()).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME);
+            reader.of(path.$());
+            final MatViewStateReader stateReader = new MatViewStateReader().of(reader, viewToken());
+            Assert.assertEquals(baseTxn, stateReader.getRefreshIntervalsBaseTxn());
+            TestUtils.assertEquals(expected, stateReader.getRefreshIntervals());
+        }
+    }
+
     private void assertRefreshBaseTxn(long expected) {
         Assert.assertEquals(expected, viewState().getLastRefreshBaseTxn());
     }
@@ -2183,6 +2355,25 @@ public class MatViewBacklogTest extends AbstractCairoTest {
         return viewState();
     }
 
+    // A TIMER period view with the given SQL over two base rows of 2024-01-01, built at 2024-01-02T12:00 as an EVERY
+    // firing would: it holds the periods up to 2024-01-02, at base txn 1. The base holds no partition of 2024-01-02.
+    private void createRefreshedPeriodTimerView(String viewSql) throws Exception {
+        currentMicros = parseFloorPartialTimestamp("2024-01-01T00:00:00.000000Z");
+        createBase();
+        execute("CREATE MATERIALIZED VIEW price_1h REFRESH EVERY 1h PERIOD (LENGTH 1d) AS (" + viewSql + ") PARTITION BY DAY");
+        execute("""
+                INSERT INTO base VALUES
+                ('a', 1.0, 1.0, '2024-01-01T00:10:00.000000Z'),
+                ('b', 2.0, 1.0, '2024-01-01T05:10:00.000000Z')
+                """);
+        drainWalQueue();
+        runIncrementalRefresh("2024-01-02T12:00:00.000000Z");
+        assertViewRows(PERIOD_VIEW_ROWS);
+        assertViewStatus("valid", "");
+        assertRefreshBaseTxn(1);
+        Assert.assertEquals(parseFloorPartialTimestamp("2024-01-02T00:00:00.000000Z"), viewState().getLastPeriodHi());
+    }
+
     private void createView(String refreshType) throws SqlException {
         execute("CREATE MATERIALIZED VIEW price_1h REFRESH " + refreshType + " AS (" + VIEW_SQL + ") PARTITION BY DAY");
     }
@@ -2247,6 +2438,21 @@ public class MatViewBacklogTest extends AbstractCairoTest {
             reader.of(path.$());
             return new MatViewStateReader().of(reader, viewToken);
         }
+    }
+
+    // Runs the incremental refresh of the view that its EVERY timer enqueues, at the given time.
+    private void runIncrementalRefresh(String clock) {
+        currentMicros = parseFloorPartialTimestamp(clock);
+        engine.getMatViewStateStore().enqueueIncrementalRefresh(viewToken());
+        drainWalAndMatViewQueues();
+    }
+
+    // Runs the range refresh of the view that the firing of MatViewTimerJob's period timer at the end of the period
+    // enqueues, at that time.
+    private void runPeriodRefresh(String periodHi) {
+        currentMicros = parseFloorPartialTimestamp(periodHi);
+        engine.getMatViewStateStore().enqueueRangeRefresh(viewToken(), Numbers.LONG_NULL, currentMicros - 1);
+        drainWalAndMatViewQueues();
     }
 
     // Attaches the base's first day and runs the view's ATTACH range task, which the change hits between the task's

@@ -1145,18 +1145,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             // with the new lastPeriodHi, but the same base txn and cached txn intervals.
             // If we did a mat view data commit, we'd unintentionally reset the cached intervals.
             if (refreshContext.periodHi != Numbers.LONG_NULL) {
-                fencedResetMatViewState(
-                        walWriter,
-                        viewState.getLastRefreshBaseTxn(),
-                        refreshFinishTimestampUs,
-                        false,
-                        null,
-                        commitPeriodHi,
-                        viewState.getRefreshIntervals(),
-                        viewState.getRefreshIntervalsBaseTxn(),
-                        viewState.getBaseTableId(),
-                        viewState.getBacklogLostReason()
-                );
+                fencedResetRangeRefreshState(walWriter, viewState, refreshFinishTimestampUs, commitPeriodHi);
             }
             viewState.rangeRefreshSuccess(
                     factory,
@@ -1286,6 +1275,29 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 refreshIntervalsBaseTxn,
                 baseTableId,
                 backlogLostReason
+        );
+    }
+
+    // Writes the view state event of a range refresh that reached the period that ends at periodHi. A range refresh
+    // leaves the refresh position and the cached intervals to the incremental refreshes, so the event carries both as
+    // they are.
+    private void fencedResetRangeRefreshState(
+            WalWriter walWriter,
+            MatViewState viewState,
+            long refreshFinishTimestampUs,
+            long periodHi
+    ) {
+        fencedResetMatViewState(
+                walWriter,
+                viewState.getLastRefreshBaseTxn(),
+                refreshFinishTimestampUs,
+                false,
+                null,
+                periodHi,
+                viewState.getRefreshIntervals(),
+                viewState.getRefreshIntervalsBaseTxn(),
+                viewState.getBaseTableId(),
+                viewState.getBacklogLostReason()
         );
     }
 
@@ -4004,14 +4016,24 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         // self-re-enqueueing refresh loop can emit millions of these, flooding the view's WAL
         // and stalling replicas that apply them.
         if (commitBaseTxn > viewState.getLastRefreshBaseTxn() || commitPeriodHi > viewState.getLastPeriodHi() || hasCachedIntervals) {
-            refreshSuccessNoRows(
-                    viewState,
-                    walWriter,
-                    microsecondClock.getTicks(),
-                    refreshTriggerTimestamp,
-                    commitBaseTxn,
-                    commitPeriodHi
-            );
+            final long refreshFinishTimestampUs = microsecondClock.getTicks();
+            if (refreshContext.toBaseTxn == -1) {
+                // A range refresh gets here only as a period refresh whose period the partition clip emptied. It
+                // commits the period it reached and leaves the refresh position and the cached intervals, which hold
+                // base changes such as the range of an UPDATE or an ATTACH PARTITION, to the incremental refreshes, as
+                // commitMatView() does for a range refresh that wrote rows.
+                fencedResetRangeRefreshState(walWriter, viewState, refreshFinishTimestampUs, commitPeriodHi);
+                viewState.rangeRefreshSuccessNoRows(refreshFinishTimestampUs, refreshTriggerTimestamp, commitPeriodHi);
+            } else {
+                refreshSuccessNoRows(
+                        viewState,
+                        walWriter,
+                        refreshFinishTimestampUs,
+                        refreshTriggerTimestamp,
+                        commitBaseTxn,
+                        commitPeriodHi
+                );
+            }
             return true;
         }
         // The watermark did not advance, so we skip the no-op WAL commit, leaving the persisted

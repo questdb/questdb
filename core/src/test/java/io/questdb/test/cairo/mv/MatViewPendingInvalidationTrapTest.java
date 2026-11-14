@@ -30,11 +30,13 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.mv.ForwardingMatViewStateStore;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewRefreshTask;
 import io.questdb.cairo.mv.MatViewState;
+import io.questdb.cairo.mv.MatViewStateReader;
 import io.questdb.cairo.mv.MatViewStateStore;
 import io.questdb.cairo.mv.MatViewStateStoreImpl;
 import io.questdb.cairo.mv.MatViewTimerJob;
@@ -42,6 +44,7 @@ import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.Micros;
@@ -3111,6 +3114,80 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReadOnlyRefusalOfPeriodOnlyCommitKeepsStateAndCache() throws Exception {
+        assertMemoryLeak(() -> {
+            // A TIMER period view whose cache holds the range of a base UPDATE of 2024-01-01. The node turns read-only
+            // while the period timer's refresh of 2024-01-02, a day the base holds no partition of, holds the view
+            // lock, so the commit fence refuses the view state event that would commit the period. The refusal is a
+            // deferral: the view stays valid, with its period, its cache and its WAL as they were. Once the node is
+            // writable again, the period refresh commits its period and keeps the cache, which the next incremental
+            // refresh recomputes.
+            currentMicros = parseFloorPartialTimestamp("2024-01-01T00:00:00.000000Z");
+            execute("CREATE TABLE base (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE MATERIALIZED VIEW price_1h REFRESH EVERY 1h PERIOD (LENGTH 1d) AS (" +
+                    "SELECT ts, sym, last(price) AS price FROM base SAMPLE BY 1h" +
+                    ") PARTITION BY DAY");
+            execute("INSERT INTO base VALUES ('a', 1.0, '2024-01-01T00:10:00.000000Z'), ('b', 2.0, '2024-01-01T05:10:00.000000Z')");
+            drainWalQueue();
+            final MatViewFixture fixture = resolvePriceViewFixture();
+            final TableToken viewToken = fixture.viewToken();
+            final MatViewState state = fixture.state();
+            final MatViewStateStore store = engine.getMatViewStateStore();
+            currentMicros = parseFloorPartialTimestamp("2024-01-02T12:00:00.000000Z");
+            store.enqueueIncrementalRefresh(viewToken);
+            drainWalAndMatViewQueues();
+            currentMicros = parseFloorPartialTimestamp("2024-01-02T23:45:00.000000Z");
+            execute("UPDATE base SET price = price * 10 WHERE ts IN '2024-01-01'");
+            drainWalAndMatViewQueues();
+            final LongList updatedDay = new LongList();
+            updatedDay.add(parseFloorPartialTimestamp("2024-01-01T00:00:00.000000Z"));
+            updatedDay.add(parseFloorPartialTimestamp("2024-01-01T23:59:59.999999Z"));
+            assertPeriodAndCache(viewToken, state, "2024-01-02T00:00:00.000000Z", updatedDay);
+
+            final long viewSeqTxn = engine.getTableSequencerAPI().lastTxn(viewToken);
+            currentMicros = parseFloorPartialTimestamp("2024-01-03T00:00:00.000000Z");
+            final long periodHi = currentMicros - 1;
+            final AtomicBoolean hasFired = new AtomicBoolean();
+            try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
+                job.setOnHoldingLockForTesting(() -> {
+                    if (hasFired.compareAndSet(false, true)) {
+                        isReadOnly.set(true);
+                    }
+                });
+                store.enqueueRangeRefresh(viewToken, Numbers.LONG_NULL, periodHi);
+                drainMatViewQueue(job);
+            } finally {
+                isReadOnly.set(false);
+            }
+            drainWalQueue();
+            Assert.assertTrue("the seam must have fired during the hold", hasFired.get());
+            Assert.assertFalse("a read-only refusal must not invalidate the view", state.isInvalid());
+            Assert.assertFalse(state.isLocked());
+            Assert.assertEquals("the refused refresh must write nothing", viewSeqTxn, engine.getTableSequencerAPI().lastTxn(viewToken));
+            assertPeriodAndCache(viewToken, state, "2024-01-02T00:00:00.000000Z", updatedDay);
+            Assert.assertTrue("a read-only node must not re-queue the refused refresh", store.isRefreshQueueEmpty());
+
+            store.enqueueRangeRefresh(viewToken, Numbers.LONG_NULL, periodHi);
+            drainWalAndMatViewQueues();
+            Assert.assertEquals(viewSeqTxn + 1, engine.getTableSequencerAPI().lastTxn(viewToken));
+            assertPeriodAndCache(viewToken, state, "2024-01-03T00:00:00.000000Z", updatedDay);
+
+            currentMicros = parseFloorPartialTimestamp("2024-01-03T00:30:00.000000Z");
+            store.enqueueIncrementalRefresh(viewToken);
+            drainWalAndMatViewQueues();
+            assertQuery("price_1h ORDER BY ts, sym").timestamp("ts").noLeakCheck().expectSize().returns("""
+                    ts\tsym\tprice
+                    2024-01-01T00:00:00.000000Z\ta\t10.0
+                    2024-01-01T05:00:00.000000Z\tb\t20.0
+                    """);
+            assertQuery("SELECT view_name, view_status FROM materialized_views()")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("view_name\tview_status\nprice_1h\tvalid\n");
+        });
+    }
+
+    @Test
     public void testReenqueuePendingOnResumeIgnoresBaseTableToken() throws Exception {
         assertMemoryLeak(() -> {
             createAutoPriceViewFixture();
@@ -4508,6 +4585,24 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             while (stateStore.tryDequeueRefreshTask(unexpectedTask)) {
                 unexpectedTask.clear();
             }
+        }
+    }
+
+    // Asserts the last refreshed period of the period view and its cached refresh intervals, which the base UPDATE at
+    // base txn 2 queued after the refresh at base txn 1, in memory and in the view's state file.
+    private void assertPeriodAndCache(TableToken viewToken, MatViewState state, String periodHi, LongList intervals) {
+        Assert.assertEquals(parseFloorPartialTimestamp(periodHi), state.getLastPeriodHi());
+        Assert.assertEquals(1, state.getLastRefreshBaseTxn());
+        Assert.assertEquals(2, state.getRefreshIntervalsBaseTxn());
+        TestUtils.assertEquals(intervals, state.getRefreshIntervals());
+        try (Path path = new Path(); BlockFileReader reader = new BlockFileReader(configuration)) {
+            path.of(configuration.getDbRoot()).concat(viewToken).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME);
+            reader.of(path.$());
+            final MatViewStateReader persisted = new MatViewStateReader().of(reader, viewToken);
+            Assert.assertEquals(parseFloorPartialTimestamp(periodHi), persisted.getLastPeriodHi());
+            Assert.assertEquals(1, persisted.getLastRefreshBaseTxn());
+            Assert.assertEquals(2, persisted.getRefreshIntervalsBaseTxn());
+            TestUtils.assertEquals(intervals, persisted.getRefreshIntervals());
         }
     }
 

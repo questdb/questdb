@@ -1397,6 +1397,28 @@ public class MatViewState implements QuietCloseable {
     }
 
     /**
+     * Records a range refresh that recomputed nothing and committed only the period it reached: a period refresh
+     * whose period the partition clip emptied. A range refresh leaves the refresh position and the cached refresh
+     * intervals to the incremental refreshes, so this keeps both, as {@link #rangeRefreshSuccess} does.
+     */
+    public void rangeRefreshSuccessNoRows(
+            long refreshFinishedTimestampUs,
+            long refreshTriggeredTimestampUs,
+            long periodHi
+    ) {
+        assert latch.get();
+        this.lastRefreshFinishTimestampUs = refreshFinishedTimestampUs;
+        this.lastPeriodHi = periodHi;
+        telemetryFacade.store(
+                MAT_VIEW_REFRESH_SUCCESS,
+                viewDefinition.getMatViewToken(),
+                -1,
+                null,
+                refreshFinishedTimestampUs - refreshTriggeredTimestampUs
+        );
+    }
+
+    /**
      * Folds a sampled REPLACE_RANGE commit latency into the rolling average used
      * for {@link #getCommitGapThresholdTsUnits()}. Samples in nanoseconds.
      * <p>
