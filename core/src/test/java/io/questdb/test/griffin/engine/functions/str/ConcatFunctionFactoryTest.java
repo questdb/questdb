@@ -198,6 +198,32 @@ public class ConcatFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNullChar() throws Exception {
+        // A null CHAR is the null char (0). Concatenating it used to append a NUL byte, so
+        // concat(null::char, 'x') returned a two-char string starting with '\0'. A null CHAR
+        // now contributes nothing, like a null string.
+        assertMemoryLeak(() -> {
+            // constant folding path
+            assertQuery("select concat(null::char, 'x') r, length(concat(null::char, 'x')) len, null::char || 'x' r2")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            r\tlen\tr2
+                            x\t1\tx
+                            """);
+
+            // runtime path: a CHAR column holding null
+            execute("create table c as (select cast(null as char) ch from long_sequence(1))");
+            assertQuery("select concat(ch, 'x') r, length(concat(ch, 'x')) len from c")
+                    .expectSize()
+                    .returns("""
+                            r\tlen
+                            x\t1
+                            """);
+        });
+    }
+
+    @Test
     public void testNullStr() throws Exception {
         assertQuery("select concat(sym, str, v) from x")
                 .ddl("create table x as (select rnd_symbol(null) sym, rnd_str(null) str, rnd_varchar(null) v from long_sequence(1))")
