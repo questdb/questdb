@@ -33,7 +33,8 @@
         <outputPath>target</outputPath>
         <runtime.assembly>none</runtime.assembly>
         <javac.target>25</javac.target>
-        <!-- Empty unless the ram-disk-test-root profile fills it in; see that profile. Surefire does not
+        <!-- Empty unless the ram-disk-test-root profile fills it in (see that profile) or the command line
+             sets it, as the Windows CI jobs do (ci/templates/steps.yml). Surefire does not
              forward a -Djava.io.tmpdir given on the Maven command line into its forked JVM, so the test
              root can only be relocated through argLine. -->
         <testTmpDirArg />

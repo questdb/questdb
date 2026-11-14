@@ -65,6 +65,9 @@ steps:
       # this step runs in every job, and "Run tests" would otherwise pass the undefined macro to
       # Maven as literal text.
       echo "##vso[task.setvariable variable=TEST_COMMIT_MODE_OPT]"
+      # Empty unless the Windows-only step before the tests moves the test root. Defined here for the
+      # same reason.
+      echo "##vso[task.setvariable variable=TEST_TMPDIR_OPT]"
     displayName: "Select Maven settings (local proxy vs default)"
   - bash: |
       rm -rf /tmp/junit* /tmp/surefire-agent /tmp/libquestdbr* /tmp/libqdbsqllogic*
@@ -291,6 +294,16 @@ steps:
           eq(variables['SOURCE_CODE_CHANGED'], 'false')
         )
       )
+  # On Windows the test root goes to the agent temp directory, on D:. The default java.io.tmpdir is
+  # %TEMP% on C:, which takes about ten times longer to flush than D:, and adaptive commit mode flushes
+  # on every commit. Use $(Agent.TempDirectory), never a literal D:, because Microsoft may change the
+  # drive layout of the hosted agents. The JVM does not create java.io.tmpdir, so the directory must
+  # exist first.
+  - powershell: |
+      New-Item -ItemType Directory -Force "$(Agent.TempDirectory)/qdb-test" | Out-Null
+      Write-Host "##vso[task.setvariable variable=TEST_TMPDIR_OPT]-DtestTmpDirArg=-Djava.io.tmpdir=$(Agent.TempDirectory)/qdb-test"
+    displayName: "Create the test root on the agent temp drive"
+    condition: and(succeeded(), eq(variables['os'], 'Windows'))
   - task: Maven@3
     displayName: "Run tests (prebuilt Rust library)"
     inputs:
@@ -305,7 +318,7 @@ steps:
         -DfailIfNoTests=false
         -Dsurefire.failIfNoSpecifiedTests=false
         $(WEB_CONSOLE_PROFILE)
-        $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS) $(RUST_NATIVE_ARGS) $(TEST_COMMIT_MODE_OPT)"
+        $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS) $(RUST_NATIVE_ARGS) $(TEST_COMMIT_MODE_OPT) $(TEST_TMPDIR_OPT)"
       jdkVersionOption: $(jdk)
       ${{ if ne(parameters.testCommitModeGroup, '') }}:
         testRunTitle: "$(TEST_RUN_TITLE)"
