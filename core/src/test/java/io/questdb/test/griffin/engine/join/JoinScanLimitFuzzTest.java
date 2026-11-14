@@ -130,8 +130,10 @@ public class JoinScanLimitFuzzTest extends AbstractCairoTest {
         final int right = tables[joined];
         switch (rnd.nextInt(8)) {
             case 0 -> sql.append('c').append(left).append(" < c").append(right);
-            case 1 -> sql.append('c').append(left).append(" = c").append(right).append(" OR c").append(left).append(" = c").append(right).append(" + 2");
-            case 2 -> sql.append('c').append(left).append(" = c").append(right).append(" AND v").append(right).append(" > 1");
+            case 1 ->
+                    sql.append('c').append(left).append(" = c").append(right).append(" OR c").append(left).append(" = c").append(right).append(" + 2");
+            case 2 ->
+                    sql.append('c').append(left).append(" = c").append(right).append(" AND v").append(right).append(" > 1");
             default -> sql.append('c').append(left).append(" = c").append(right);
         }
     }
@@ -332,6 +334,7 @@ public class JoinScanLimitFuzzTest extends AbstractCairoTest {
     }
 
     // a query of generateQuery() and its shape
-    private record Query(String sql, boolean hasInnerJoin, boolean hasLeftJoin, boolean hasTimeSeriesJoin, boolean hasFilterAfterJoin) {
+    private record Query(String sql, boolean hasInnerJoin, boolean hasLeftJoin, boolean hasTimeSeriesJoin,
+                         boolean hasFilterAfterJoin) {
     }
 }

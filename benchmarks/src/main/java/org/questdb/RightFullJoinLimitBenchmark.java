@@ -194,7 +194,8 @@ public class RightFullJoinLimitBenchmark {
             case "inner_join_limit_range" ->
                     "SELECT t.sym, t.qty, i.lot FROM trades t JOIN inst i ON t.sym = i.sym WHERE t.qty > 1000 LIMIT 3_000_000, 3_000_010";
             // inst holds every symbol, so every row that passes the filter has a match
-            case "inner_join_limit" -> "SELECT t.sym, t.qty, i.lot FROM trades t JOIN inst i ON t.sym = i.sym WHERE t.qty > 1000 LIMIT 10";
+            case "inner_join_limit" ->
+                    "SELECT t.sym, t.qty, i.lot FROM trades t JOIN inst i ON t.sym = i.sym WHERE t.qty > 1000 LIMIT 10";
             case "inner_join_negative_limit" ->
                     "SELECT t.sym, t.qty, i.lot FROM trades t JOIN inst i ON t.sym = i.sym WHERE t.qty > 1000 LIMIT -10";
             case "inner_join_no_match_limit" ->
