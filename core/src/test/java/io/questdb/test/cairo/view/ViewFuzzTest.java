@@ -35,6 +35,7 @@ import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -97,6 +98,37 @@ public class ViewFuzzTest extends AbstractFuzzTest {
         testViewFuzz(selectGenerator, rnd, tableName, viewName);
     }
 
+    @Test
+    public void testUnusedCteOverridesWithRandomNesting() throws Exception {
+        assertMemoryLeak(() -> {
+            final Rnd rnd = fuzzer.generateRandom(LOG);
+            execute("CREATE TABLE t (a LONG, b LONG)");
+            execute("INSERT INTO t VALUES (1, 2), (NULL, 4)");
+            execute("CREATE VIEW v_in AS (DECLARE OVERRIDABLE @c := a SELECT @c AS a FROM t)");
+            drainWalAndViewQueues();
+            try (SqlExecutionContext context = AbstractViewTest.denyBaseTableSelectContext()) {
+                for (int round = 0, rounds = Integer.getInteger("questdb.fuzz.queries", 50); round < rounds; round++) {
+                    String viewSql = "SELECT 1 one, a FROM (SELECT * FROM t)";
+                    int rowCount = 2;
+                    for (int depth = 0, maxDepth = 1 + rnd.nextInt(5); depth < maxDepth; depth++) {
+                        final int shape = rnd.nextInt(6);
+                        viewSql = wrapWithCte(viewSql, shape);
+                        if (shape == 5) {
+                            rowCount *= 2;
+                        }
+                    }
+                    LOG.info().$("CTE override fuzz [sql=").$(viewSql).I$();
+                    execute("CREATE OR REPLACE VIEW v_outer AS (" + viewSql + ")");
+                    drainWalAndViewQueues();
+                    assertQuery("SELECT one FROM v_outer").withContext(context).noLeakCheck().expectSize().inferRandomAccess()
+                            .returns("one\n" + "1\n".repeat(rowCount));
+                    assertQuery("SELECT count() FROM v_outer").withContext(context).noLeakCheck().expectSize().noRandomAccess()
+                            .returns("count\n" + rowCount + '\n');
+                }
+            }
+        });
+    }
+
     /**
      * Reads a random view from inside a random nest of sub-queries, in a statement that fails to
      * compile, and checks that the failure queues one recompile for that view and for each view it
@@ -154,6 +186,19 @@ public class ViewFuzzTest extends AbstractFuzzTest {
 
     private static void createView(String viewName, String viewSql) throws SqlException {
         execute("create view " + viewName + " as (" + viewSql + ")");
+    }
+
+    // The deterministic CTE tests in ViewColumnDependencyTest pin each wrapper; this combines nested wrappers.
+    private static String wrapWithCte(String query, int shape) {
+        final String unused = "DECLARE @c := a SELECT a FROM v_in";
+        return switch (shape) {
+            case 0 -> "WITH unused AS (" + unused + ") SELECT * FROM (" + query + ")";
+            case 1 -> "WITH unused AS (" + unused + "), used AS (" + query + ") SELECT * FROM used";
+            case 2 -> "WITH used AS (WITH unused AS (" + unused + ") SELECT * FROM (" + query + ")) SELECT * FROM used";
+            case 3 -> "WITH unused AS (" + unused + ") SELECT * FROM (WITH unused AS (" + query + ") SELECT * FROM unused)";
+            case 4 -> "WITH c AS (" + unused + "), unused AS (SELECT * FROM c) SELECT * FROM (" + query + ")";
+            default -> "WITH used AS (" + query + ") SELECT * FROM used UNION ALL SELECT * FROM used";
+        };
     }
 
     private ObjList<FuzzTransaction> createTransactionsAndView(

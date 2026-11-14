@@ -311,6 +311,8 @@ public class SqlParser {
     // lookupExpiryPredicate), so the keep-filter rewrite can null-safely flip only timestamp comparisons.
     private CharSequence expiryTimestampColumnName;
     private boolean isParsingExpiryPredicate;
+    // An eager CTE definition defers overrides of its enclosing views until a reference reads the CTE.
+    private boolean isWithClauseViewReadOverridden;
     // For each table (by id) whose EXPIRE ROWS policy this parse read straight from the table metadata while a
     // SET/DROP EXPIRE was still in flight: the metadata version that read saw. The optimiser compares it
     // against the version the reader opens and rejects the compile if they differ, so a filter chosen from the
@@ -338,6 +340,8 @@ public class SqlParser {
     // The length of the bodies of the views the statement has expanded, each counted once, for its
     // parse budget, see checkParseBudget().
     private int viewTextLength;
+    // The first view frame expanded inside the CTE definition currently being parsed, or zero outside one.
+    private int withClauseViewReadFrameLo;
     // The WITH clauses a table name resolves against at the current parse position, which a
     // sub-query in an expression inherits: those of the query being parsed, which hold the ones
     // of the queries around it, or the statement's top-level WITH outside any query. The query
@@ -1413,6 +1417,8 @@ public class SqlParser {
         viewReadOverrides.clear();
         viewReferencePosition = 0;
         viewTextLength = 0;
+        withClauseViewReadFrameLo = 0;
+        isWithClauseViewReadOverridden = false;
     }
 
     /**
@@ -2732,7 +2738,12 @@ public class SqlParser {
     // were recorded, they lend, marked, columns that a read setting the variable has to read with the permission of the
     // reader, see ViewDefinition.OTHER_READ_COLUMN_PREFIX.
     private void flagViewReads() {
-        for (int i = viewReadFrameLo, n = viewReadOverrides.size(); i < n; i++) {
+        if (viewReadFrameLo < withClauseViewReadFrameLo) {
+            isWithClauseViewReadOverridden = true;
+        }
+        // Views expanded inside the definition need their flags now; the enclosing views need them only if
+        // the CTE is referenced. Keep looking up declarations in all reachable frames while deferring those flags.
+        for (int i = Math.max(viewReadFrameLo, withClauseViewReadFrameLo), n = viewReadOverrides.size(); i < n; i++) {
             viewReadOverrides.setQuick(i, true);
         }
     }
@@ -9016,6 +9027,9 @@ public class SqlParser {
     ) throws SqlException {
         IQueryModel m = wcm.popModel();
         if (m != null) {
+            if (wcm.isViewReadOverridden()) {
+                flagViewReads();
+            }
             // The definition parsed before whatever this reference sits in began, so its reads
             // are counted here, as the reads of the copy a later reference parses are.
             final int index = viewAuditWithModels.indexOf(m);
@@ -9076,7 +9090,19 @@ public class SqlParser {
             WithClauseModel wcm = withClauseModelPool.next();
             final int definitionDigit = digit;
             final int firstViewAuditRead = viewAuditTrace.size();
-            final IQueryModel definitionModel = parseAsSubQueryAndExpectClosingBrace(lexer, model, false, sqlParserCallback, decls);
+            final int enclosingWithClauseViewReadFrameLo = withClauseViewReadFrameLo;
+            final boolean isEnclosingWithClauseViewReadOverridden = isWithClauseViewReadOverridden;
+            final IQueryModel definitionModel;
+            final boolean isDefinitionViewReadOverridden;
+            withClauseViewReadFrameLo = viewReadOverrides.size();
+            isWithClauseViewReadOverridden = false;
+            try {
+                definitionModel = parseAsSubQueryAndExpectClosingBrace(lexer, model, false, sqlParserCallback, decls);
+                isDefinitionViewReadOverridden = isWithClauseViewReadOverridden;
+            } finally {
+                withClauseViewReadFrameLo = enclosingWithClauseViewReadFrameLo;
+                isWithClauseViewReadOverridden = isEnclosingWithClauseViewReadOverridden;
+            }
             if (viewAuditTrace.size() > firstViewAuditRead) {
                 // for the reference that takes this model, see parseWith()
                 viewAuditWithModels.add(definitionModel);
@@ -9090,7 +9116,7 @@ public class SqlParser {
                 visibleCtes = withClausesCopyPool.next();
                 visibleCtes.putAll(model);
             }
-            wcm.of(lo + 1, visibleCtes, definitionModel);
+            wcm.of(lo + 1, visibleCtes, definitionModel, isDefinitionViewReadOverridden);
             // For every later reference, see parseWith(). The declarations stay as the definition's
             // parse saw them: they belong to the query that holds this WITH, whose DECLARE block
             // comes ahead of the WITH, and a statement's top-level WITH has none.

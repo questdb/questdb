@@ -31,6 +31,7 @@ import org.jetbrains.annotations.Nullable;
 
 public class WithClauseModel implements Mutable {
     public static final ObjectFactory<WithClauseModel> FACTORY = WithClauseModel::new;
+    private boolean isViewReadOverridden;
     private IQueryModel model;
     private int position;
     // The CTEs visible at the definition, as they stood there, which every parse of the body
@@ -42,6 +43,7 @@ public class WithClauseModel implements Mutable {
 
     @Override
     public void clear() {
+        isViewReadOverridden = false;
         position = 0;
         model = null;
         withClauses = null;
@@ -59,6 +61,11 @@ public class WithClauseModel implements Mutable {
         return withClauses;
     }
 
+    // Whether taking the cached model must propagate the definition's deferred view-read overrides.
+    public boolean isViewReadOverridden() {
+        return isViewReadOverridden;
+    }
+
     /**
      * @param withClauses the CTEs visible at the definition, or null for none: a copy that nothing
      *                    changes while this model is in use. The map of the WITH that defines the
@@ -68,7 +75,13 @@ public class WithClauseModel implements Mutable {
      *                    name as the definition's parse did, so a CTE that names itself reads the
      *                    CTE it shadows rather than itself.
      */
-    public void of(int position, @Nullable LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses, IQueryModel model) {
+    public void of(
+            int position,
+            @Nullable LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses,
+            IQueryModel model,
+            boolean isViewReadOverridden
+    ) {
+        this.isViewReadOverridden = isViewReadOverridden;
         this.position = position;
         this.model = model;
         this.withClauses = withClauses;

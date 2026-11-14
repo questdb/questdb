@@ -226,6 +226,129 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
     }
 
     @Test
+    public void testCteUnusedOverridesDoNotReachTheView() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a LONG, b LONG)");
+            execute("CREATE VIEW v_in AS (DECLARE OVERRIDABLE @c := a SELECT @c AS a FROM t)");
+            drainWalAndViewQueues();
+            final ObjList<String> queries = new ObjList<>();
+            queries.add("""
+                    WITH unused AS (DECLARE @c := a SELECT a FROM v_in)
+                    SELECT 1 one, a FROM (SELECT * FROM t)
+                    """);
+            queries.add("""
+                    WITH unused AS (SELECT a FROM v_in)
+                    SELECT 1 one, a FROM (SELECT * FROM t)
+                    """);
+            queries.add("""
+                    WITH unused AS (DECLARE @c := a SELECT 1)
+                    SELECT 1 one, a FROM (SELECT * FROM t)
+                    """);
+            queries.add("""
+                    WITH c AS (DECLARE @c := a SELECT a FROM v_in), unused AS (SELECT * FROM c)
+                    SELECT 1 one, a FROM (SELECT * FROM t)
+                    """);
+            queries.add("""
+                    WITH c AS (WITH unused AS (DECLARE @c := a SELECT a FROM v_in) SELECT * FROM t)
+                    SELECT 1 one, a FROM c
+                    """);
+            queries.add("""
+                    WITH c AS (DECLARE @c := a SELECT a FROM v_in)
+                    SELECT 1 one, a FROM (WITH c AS (SELECT * FROM t) SELECT * FROM c)
+                    """);
+            queries.add("""
+                    WITH c AS (WITH unused AS (DECLARE @c := a SELECT a FROM v_in) SELECT * FROM t)
+                    SELECT 1 one, a FROM c UNION ALL SELECT 1 one, a FROM c
+                    """);
+            for (boolean hasRows : new boolean[]{false, true}) {
+                if (hasRows) {
+                    execute("INSERT INTO t VALUES (1, 2), (NULL, 4)");
+                }
+                for (int i = 0; i < queries.size(); i++) {
+                    final String viewSql = queries.getQuick(i);
+                    final int repetitions = i == 6 ? 2 : 1;
+                    forEachViewStatement(viewSql, statement -> {
+                        assertViewDependencies(viewSql, "{t=[?*, a]}", null, statement);
+                        try (SqlExecutionContext context = denyBaseTableSelectContext()) {
+                            assertQuery("SELECT one FROM v").withContext(context).noLeakCheck().expectSize().inferRandomAccess()
+                                    .returns("one\n" + (hasRows ? "1\n1\n".repeat(repetitions) : ""));
+                            assertQuery("SELECT a FROM v").withContext(context).noLeakCheck().expectSize().inferRandomAccess()
+                                    .returns("a\n" + (hasRows ? "1\nnull\n".repeat(repetitions) : ""));
+                            assertQuery("SELECT count() FROM v").withContext(context).noLeakCheck().expectSize().noRandomAccess()
+                                    .returns("count\n" + (hasRows ? 2 * repetitions : 0) + '\n');
+                        }
+                    });
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCteUsedOverridesReachTheView() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            final String innerSql = "SELECT l.k, l.a, 0 AS z FROM (SELECT u.ts, u.k, u.a, u.b FROM x u) l";
+            execute("CREATE VIEW v_in AS (" + innerSql + ")");
+            drainWalAndViewQueues();
+            final ObjList<String> queries = new ObjList<>();
+            queries.add("""
+                    WITH c AS (DECLARE @c := l.b SELECT k, a, z FROM v_in)
+                    SELECT * FROM c
+                    """);
+            queries.add("""
+                    WITH c AS (DECLARE @c := l.b SELECT k, a, z FROM v_in)
+                    SELECT * FROM c UNION ALL SELECT * FROM c
+                    """);
+            queries.add("""
+                    WITH c AS (DECLARE @c := l.b SELECT k, a, z FROM v_in), d AS (SELECT * FROM c)
+                    SELECT * FROM d
+                    """);
+            queries.add("""
+                    WITH c AS (WITH d AS (DECLARE @c := l.b SELECT k, a, z FROM v_in) SELECT * FROM d)
+                    SELECT * FROM c
+                    """);
+            // Parsing another definition must retain an override already deferred by the live CTE.
+            queries.add("""
+                    WITH c AS (
+                        DECLARE @c := l.b
+                        SELECT k, a, z FROM v_in CROSS JOIN (
+                            WITH unused AS (SELECT x FROM long_sequence(1)) SELECT x FROM long_sequence(1)
+                        )
+                    )
+                    SELECT * FROM c
+                    """);
+            // An unused definition can consume the cached model before a live reference reparses it.
+            queries.add("""
+                    WITH c AS (DECLARE @c := l.b SELECT k, a, z FROM v_in), unused AS (SELECT * FROM c)
+                    SELECT * FROM c
+                    """);
+            for (int i = 0; i < queries.size(); i++) {
+                final String viewSql = queries.getQuick(i);
+                final int repetitions = i == 1 ? 2 : 1;
+                forEachViewStatement(viewSql, statement -> {
+                    assertViewDependencies(viewSql, "{v_in=[], x=[?b, ?ts, a, k]}", null, statement);
+                    // The outer map predates the variable. A live CTE reference must still mark its read overridden.
+                    execute("""
+                            ALTER VIEW v_in AS (
+                                DECLARE OVERRIDABLE @c := l.a
+                                SELECT l.k, @c AS a, 0 AS z FROM (SELECT u.ts, u.k, u.a, u.b FROM x u) l
+                            )
+                            """);
+                    drainWalAndViewQueues();
+                    assertQuery("SELECT a FROM v").noLeakCheck().inferRandomAccess().sizeMayVary()
+                            .returns("a\n" + "2\n4\n".repeat(repetitions));
+                    try (SqlExecutionContext context = denyBaseTableSelectContext()) {
+                        assertQuery("SELECT a FROM v").withContext(context).noLeakCheck()
+                                .failsWith("permission denied [table=x, columns=b]");
+                    }
+                    execute("ALTER VIEW v_in AS (" + innerSql + ")");
+                    drainWalAndViewQueues();
+                });
+            }
+        });
+    }
+
+    @Test
     public void testExplicitTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
