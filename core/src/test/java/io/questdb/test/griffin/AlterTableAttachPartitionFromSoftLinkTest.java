@@ -52,6 +52,7 @@ import org.junit.Test;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 
@@ -131,6 +132,16 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                     }
             );
         });
+    }
+
+    @Test
+    public void testCheckpointRestoreKeepsReadOnlyPartition() throws Exception {
+        assertCheckpointRestoreKeepsReadOnlyPartition(false);
+    }
+
+    @Test
+    public void testCheckpointRestoreKeepsReadOnlyPartitionOfWalTable() throws Exception {
+        assertCheckpointRestoreKeepsReadOnlyPartition(true);
     }
 
     @Test
@@ -1379,6 +1390,68 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                 Os.pause();
             }
         }
+    }
+
+    // DROP COLUMN purges no read-only partition, so the posting chain of a dropped column stays in one for good. The
+    // restore resets the chains the restored metadata does not commit, but leaves a read-only partition as it is: its
+    // soft link can lead to cold storage that QuestDB must not write.
+    private void assertCheckpointRestoreKeepsReadOnlyPartition(boolean isWal) throws Exception {
+        Assume.assumeFalse(Os.isWindows());
+        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+            final String tableName = testName.getMethodName();
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, "00000000-0000-0000-0000-000000000000");
+            execute("CREATE TABLE " + tableName + " (l LONG, s SYMBOL INDEX TYPE POSTING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY "
+                    + (isWal ? "WAL" : "BYPASS WAL"));
+            execute("""
+                    INSERT INTO %s VALUES
+                    (1, 'a', '2022-10-17T01:00'), (2, 'b', '2022-10-17T02:00'),
+                    (3, 'a', '2022-10-18T01:00'), (4, 'b', '2022-10-18T02:00')
+                    """.formatted(tableName));
+            drainWalQueue();
+            final TableToken tableToken = engine.verifyTableName(tableName);
+            execute("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + readOnlyPartitionName + "'");
+            drainWalQueue();
+            copyToDifferentLocationAndMakeAttachableViaSoftLink(tableToken, readOnlyPartitionName, "COLD");
+            final File coldPartition = new File(other.toString());
+            execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + readOnlyPartitionName + "'");
+            drainWalQueue();
+            execute("ALTER TABLE " + tableName + " DROP COLUMN s");
+            drainWalQueue();
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            final String[] coldFiles = coldPartition.list();
+            Assert.assertNotNull(coldFiles);
+            Arrays.sort(coldFiles);
+            TestUtils.assertContains(Arrays.toString(coldFiles), "s.pk, s.pv.0");
+            final byte[] keyFile = java.nio.file.Files.readAllBytes(new File(coldPartition, "s.pk").toPath());
+
+            execute("CHECKPOINT CREATE");
+            try {
+                engine.clear();
+                setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, "123e4567-e89b-12d3-a456-426614174004");
+                engine.checkpointRecover();
+                drainWalQueue();
+
+                final String[] restoredColdFiles = coldPartition.list();
+                Assert.assertNotNull(restoredColdFiles);
+                Arrays.sort(restoredColdFiles);
+                Assert.assertEquals(Arrays.toString(coldFiles), Arrays.toString(restoredColdFiles));
+                Assert.assertArrayEquals(keyFile, java.nio.file.Files.readAllBytes(new File(coldPartition, "s.pk").toPath()));
+                assertQuery("SELECT l, ts FROM " + tableName)
+                        .noLeakCheck()
+                        .expectSize()
+                        .timestamp("ts")
+                        .returns("""
+                                l\tts
+                                1\t2022-10-17T01:00:00.000000Z
+                                2\t2022-10-17T02:00:00.000000Z
+                                3\t2022-10-18T01:00:00.000000Z
+                                4\t2022-10-18T02:00:00.000000Z
+                                """);
+            } finally {
+                engine.checkpointRelease();
+            }
+        });
     }
 
     private void assertUpdateFailsBecausePartitionIsReadOnly(String updateSql, String tableName, String partitionName) {
