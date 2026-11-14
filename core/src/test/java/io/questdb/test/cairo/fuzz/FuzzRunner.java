@@ -47,6 +47,9 @@ import io.questdb.cairo.TxReader;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.PartitionFormat;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.api.MemoryR;
@@ -563,6 +566,29 @@ public class FuzzRunner {
             drainWalQueue(applyRnd, tableName);
         }
         Assert.assertFalse("Table is suspended", engine.getTableSequencerAPI().isSuspended(tableToken));
+    }
+
+    /**
+     * Holds the index of every indexed SYMBOL column of the table against scans that read no index: for each distinct
+     * key, up to {@link #MAX_COVERED_KEYS_CHECKED} of them, {@code WHERE sym = key} must return through the index the
+     * rows a full scan returns. Unlike {@link #assertRandomIndexes}, it needs no second table, so it can check a table
+     * that no other table mirrors, such as one a checkpoint restore just left.
+     */
+    public void assertIndexesMatchScans(String tableName) throws SqlException {
+        final ObjList<String> indexedColumnNames = new ObjList<>();
+        try (TableReader reader = getReader(tableName)) {
+            final TableReaderMetadata metadata = reader.getMetadata();
+            for (int columnIndex = 0, n = metadata.getColumnCount(); columnIndex < n; columnIndex++) {
+                if (ColumnType.isSymbol(metadata.getColumnType(columnIndex)) && metadata.isColumnIndexed(columnIndex)) {
+                    indexedColumnNames.add(metadata.getColumnName(columnIndex));
+                }
+            }
+        }
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            for (int i = 0, n = indexedColumnNames.size(); i < n; i++) {
+                checkIndexAgainstScan(compiler, tableName, indexedColumnNames.getQuick(i));
+            }
+        }
     }
 
     public void assertRandomIndexes(String tableNameNoWal, String tableNameWal, Rnd rnd) throws SqlException {
@@ -1454,6 +1480,47 @@ public class FuzzRunner {
         if (checked == MAX_COVERED_KEYS_CHECKED) {
             LOG.info().$("covered value check capped at ").$(MAX_COVERED_KEYS_CHECKED)
                     .$(" keys [table=").$safe(tableName).$(", column=").$safe(symbolColumnName).I$();
+        }
+    }
+
+    // Compares, key by key, the rows an equality filter on the indexed column reads through the index with those it
+    // reads from a scan that uses no index. Each comparison is a single-key equality, which both plans emit in the
+    // same order. The keys come from a scan too: a DISTINCT over a posting index reads them from that index, and so
+    // would never name a key the index lost. They come off the cursor rather than its printout, where the empty
+    // string, a key of its own, reads the same as NULL.
+    private void checkIndexAgainstScan(SqlCompiler compiler, String tableName, String symbolColumnName) throws SqlException {
+        final ObjList<String> keys = new ObjList<>();
+        try (
+                RecordCursorFactory factory = compiler.compile(
+                        "select /*+ no_index */ distinct \"" + symbolColumnName + "\" a from " + tableName + " order by 1",
+                        sqlExecutionContext
+                ).getRecordCursorFactory();
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            final Record record = cursor.getRecord();
+            while (cursor.hasNext()) {
+                final CharSequence key = record.getSymA(0);
+                keys.add(key != null ? key.toString() : null);
+            }
+        }
+        final StringSink plan = new StringSink();
+        int checked = 0;
+        for (int i = 0, n = keys.size(); i < n && checked < MAX_COVERED_KEYS_CHECKED; i++) {
+            final String key = keys.getQuick(i);
+            if (key != null && key.indexOf('\'') >= 0) {
+                continue; // a quote would need escaping; skip this key
+            }
+            checked++;
+            final String whereClause = " where \"" + symbolColumnName + "\" = " + (key != null ? "'" + key + "'" : "null");
+            final String indexed = "select * from " + tableName + whereClause;
+            plan.clear();
+            TestUtils.printSql(compiler, sqlExecutionContext, "explain " + indexed, plan);
+            Assert.assertTrue(
+                    "index not chosen for " + indexed + ", plan was:\n" + plan,
+                    Chars.contains(plan, "on: " + symbolColumnName)
+            );
+            LOG.info().$("checking index against scan: ").$safe(indexed).I$();
+            TestUtils.assertSqlCursors(compiler, sqlExecutionContext, "select /*+ no_index */ * from " + tableName + whereClause, indexed, LOG);
         }
     }
 
