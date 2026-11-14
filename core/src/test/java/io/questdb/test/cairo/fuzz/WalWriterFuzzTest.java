@@ -322,6 +322,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     public void testConvertPartitionToParquet() throws Exception {
         Rnd rnd = generateRandom(LOG);
         setTestParams(rnd);
+        setRndParquetRewriteGate(rnd);
 
         setFuzzProbabilities(
                 0.01,
@@ -339,8 +340,8 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0.5,
                 0.01, // truncateProb: rare, so the days behind the active one outlive several conversions
                 0.0,
-                0.05, // setTtlProb: rare, for the same reason
-                0.00,
+                0.05, // setTtlProb: rare, for the same reason; replace also stops at the SET TTL iteration
+                0.1, // replaceProb
                 0,
                 0.1,
                 0.1,
@@ -352,7 +353,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         setFuzzProperties(rnd);
         setRndConvertedDayShapeProperties(rnd, fuzzer);
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, getRndSmallParquetRowGroupSize(rnd));
-        runFuzz(rnd);
+        runParquetFuzz(rnd, false);
     }
 
     /**
@@ -416,7 +417,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0.0, // truncateProb
                 0.0,
                 0.0, // setTtlProb
-                0.0, // replaceProb: a replace commit is not supported over a parquet partition
+                0.0, // replaceProb
                 0,
                 0.05,
                 0.05,
@@ -436,6 +437,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         Rnd rnd = generateRandom(LOG);
         setTestParams(rnd);
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, getRndSmallParquetRowGroupSize(rnd));
+        setRndParquetRewriteGate(rnd);
         setCreateWalAsParquet(true);
 
         setFuzzProbabilities(
@@ -454,8 +456,8 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0.0, // partitionToNativeProb — disabled
                 0.1,
                 0.0,
-                0.8,
-                0.00,
+                0.3, // setTtlProb: replace stops at the SET TTL iteration
+                0.1, // replaceProb
                 0,
                 0.01,
                 0.1,
@@ -463,13 +465,14 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0.0 // setTableFormatProb — disabled
         );
         setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 10, 1000, 100, 3);
-        runFuzz(rnd);
+        runParquetFuzz(rnd, true);
     }
 
     @Test
     public void testConvertPartitionToParquetWithCoveringIndex() throws Exception {
         Rnd rnd = generateRandom(LOG);
         setTestParams(rnd);
+        setRndParquetRewriteGate(rnd);
 
         setFuzzProbabilities(
                 0.01,
@@ -487,8 +490,8 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0.5,
                 0.01, // truncateProb: rare, so the days behind the active one outlive several conversions
                 0.0,
-                0.05, // setTtlProb: rare, for the same reason
-                0.00,
+                0.05, // setTtlProb: rare, for the same reason; replace also stops at the SET TTL iteration
+                0.1, // replaceProb
                 0,
                 0.01,
                 0.1,
@@ -500,7 +503,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         setFuzzProperties(rnd);
         setRndConvertedDayShapeProperties(rnd, fuzzer);
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, getRndSmallParquetRowGroupSize(rnd));
-        runFuzz(rnd);
+        runParquetFuzz(rnd, false);
     }
 
     @Test
@@ -1916,6 +1919,19 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 .$(", deadMinSize=").$(deadMinSize)
                 .$(", tableDeadThreshold=").$(tableDeadThreshold)
                 .I$();
+    }
+
+    /**
+     * Runs the fuzz and logs the parquet O3 paths it took. With isAllParquet (FORMAT PARQUET),
+     * every partition is parquet from its first write, so the run must write parquet O3.
+     */
+    private void runParquetFuzz(Rnd rnd, boolean isAllParquet) throws Exception {
+        final O3ParquetPathCounts counts = new O3ParquetPathCounts();
+        runFuzz(rnd);
+        counts.log(LOG, getTestName());
+        if (isAllParquet) {
+            Assert.assertTrue("no parquet O3 ran: " + counts, counts.getWritten() > 0);
+        }
     }
 
     private void setTestParams(Rnd rnd) throws Exception {

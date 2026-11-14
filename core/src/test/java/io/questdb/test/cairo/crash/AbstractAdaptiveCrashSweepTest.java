@@ -134,10 +134,9 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractAdaptiveCra
          * Whether a table left suspended by the count pass, which runs with no fault armed, rejects the drawn workload
          * as unable to exercise crash recovery.
          * <p>
-         * Randomized workloads want this: a generator can emit a combination the product does not support (such as a
-         * replace-range insert over a Parquet partition), and sweeping it would report that suspend as a recovery
-         * failure at every crash point. Some curated workloads end their clean pass suspended by design, so they opt
-         * out.
+         * Randomized workloads want this: a generator can emit a combination that suspends the table even on a
+         * clean, uncrashed pass, and sweeping it would report that suspend as a recovery failure at every crash
+         * point. Some curated workloads end their clean pass suspended by design, so they opt out.
          */
         default boolean rejectWhenCountPassSuspends() {
             return false;
@@ -461,9 +460,9 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractAdaptiveCra
         phaseFirstOp = opsBeforeCommit + 1; // the facade numbers ops from 1
         phaseOpCount = n;
         // The count pass ran with no fault armed. If it already suspended the table, every crash point would fail on a
-        // condition unrelated to durability. A randomized generator can emit such a combination (a replace-range insert
-        // over a partition an earlier txn converted to Parquet, which QuestDB does not support), so this rejects the
-        // drawn seed once instead of reporting N crash-recovery failures.
+        // condition unrelated to durability. A randomized generator can emit a combination that suspends the table even
+        // on a clean, uncrashed pass, so this rejects the drawn seed once instead of reporting N crash-recovery
+        // failures.
         final String uncrashedSuspend = workload.rejectWhenCountPassSuspends()
                 ? firstSuspendReason(countPassTokens)
                 : null;

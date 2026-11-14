@@ -26,6 +26,7 @@ package io.questdb.test.cairo.parquet;
 
 import io.questdb.MessageBus;
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnIndexerJob;
 import io.questdb.cairo.ColumnPurgeJob;
@@ -35,6 +36,7 @@ import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.O3CopyJob;
 import io.questdb.cairo.O3OpenColumnJob;
+import io.questdb.cairo.O3ParquetCounters;
 import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.ParquetMetaFileReader;
@@ -69,6 +71,7 @@ import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TxnExtendFailingFacade;
@@ -97,6 +100,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Predicate;
+import java.util.regex.Pattern;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
@@ -248,6 +252,8 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             new SymRow("c", 94, "2024-01-02", "04:00")
     };
     private static final String[] ATTACH_INDEX_DEFINITIONS = {"INDEX", "INDEX CAPACITY 2", "INDEX TYPE POSTING", "INDEX TYPE POSTING INCLUDE (v)"};
+    // column s as a whole word of a query, see renameSymbolColumn()
+    private static final Pattern SYMBOL_COLUMN_S = Pattern.compile("\\bs\\b");
     // the columns of the failure tests added after 5 of 8 rows of partition 2024-01-01
     private static final String[] CONVERT_FAILURE_COLUMNS = {"s", "bt", "st"};
     // one row in each of 300 new partitions: the next _txn record outgrows the _txn file
@@ -1223,9 +1229,9 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
 
     @Test
     public void testInPlaceColumnTopRepairSurvivesRestart() throws Exception {
-        // The first in-place commit into a partition with top -1 rebuilds the index of s in place and
-        // zeroes the tops. Both survive a writer and reader restart. The next in-order commit appends to
-        // the live index: it opens and truncates the live s.k and s.v once each, and writes no _cv.
+        // The first in-place commit into a partition with top -1 rebuilds the index of s under its own txn
+        // and zeroes the tops. Both survive a writer and reader restart. The next in-order commit rebuilds
+        // the index again under its own txn, and leaves the s.k and s.v of the first one as they are.
         setInPlaceParquetO3Properties();
         final LiveIndexTruncateCounter ff = new LiveIndexTruncateCounter();
         assertMemoryLeak(ff, () -> {
@@ -1237,37 +1243,32 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             execute(columnTopShapeInsert("pt", mergeRow));
             execute(columnTopShapeInsert("tw", mergeRow));
             drainWalQueue();
-            // case A: no reader used the index, so it stays under the live name
-            Assert.assertEquals(columnNameTxn, getColumnNameTxn("pt", 0, "s"));
-            Assert.assertFalse(isIndexKeyFilePresent("pt", 0, IndexType.BITMAP, txnBefore));
+            // the in-place commit names the new version of the index after the txn it commits over
+            Assert.assertNotEquals(columnNameTxn, txnBefore);
+            Assert.assertEquals(txnBefore, getColumnNameTxn("pt", 0, "s"));
+            Assert.assertTrue(isIndexKeyFilePresent("pt", 0, IndexType.BITMAP, txnBefore));
 
             engine.releaseAllWriters();
             engine.releaseAllReaders();
             assertColumnTopsZero("after restart");
-            Assert.assertEquals(columnNameTxn, getColumnNameTxn("pt", 0, "s"));
+            Assert.assertEquals(txnBefore, getColumnNameTxn("pt", 0, "s"));
             assertColumnTopShapeQueriesMatchTwin("after restart");
 
-            final long columnVersionBefore;
-            try (TableReader reader = getReader("pt")) {
-                columnVersionBefore = reader.getTxFile().getColumnVersion();
-            }
-            final String nameTxnSuffix = columnNameTxn > -1 ? "." + columnNameTxn : "";
+            final String nameTxnSuffix = "." + txnBefore;
             try (Path path = new Path()) {
                 setPartitionPath("pt", 0, path);
                 ff.track(path.toString(), "s.k" + nameTxnSuffix, "s.v" + nameTxnSuffix);
             }
+            final long appendTxnBefore = getTableTxn("pt");
             final String appendRow = columnTopShapeRow(102, "2024-01-01T08:30:00.000000Z", "x");
             execute(columnTopShapeInsert("pt", appendRow));
             execute(columnTopShapeInsert("tw", appendRow));
             drainWalQueue();
-            try (TableReader reader = getReader("pt")) {
-                Assert.assertEquals(columnVersionBefore, reader.getTxFile().getColumnVersion());
-            }
-            Assert.assertEquals(columnNameTxn, getColumnNameTxn("pt", 0, "s"));
-            Assert.assertEquals(1, ff.getOpenCount("s.k" + nameTxnSuffix));
-            Assert.assertEquals(1, ff.getOpenCount("s.v" + nameTxnSuffix));
-            Assert.assertEquals(1, ff.getTruncateCount("s.k" + nameTxnSuffix));
-            Assert.assertEquals(1, ff.getTruncateCount("s.v" + nameTxnSuffix));
+            Assert.assertEquals(appendTxnBefore, getColumnNameTxn("pt", 0, "s"));
+            Assert.assertTrue(isIndexKeyFilePresent("pt", 0, IndexType.BITMAP, appendTxnBefore));
+            // the rebuild never opens the files of the committed version for write
+            Assert.assertEquals(0, ff.getOpenCount("s.k" + nameTxnSuffix));
+            Assert.assertEquals(0, ff.getOpenCount("s.v" + nameTxnSuffix));
             assertQuery("SELECT v, ts, s FROM pt WHERE s = 'x'")
                     .noLeakCheck()
                     .timestamp("ts")
@@ -2402,7 +2403,12 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
         // added after 7 of its 10 rows: a top that spans a row group. At the end CONVERT TO NATIVE must
         // give the rows of a native twin table that got the same rows. For BITMAP, s also starts in
         // partition 2024-01-01 attached from another table, with s at a foreign column version equal to
-        // the first merge's txn, and at one above it. For both index types, s also starts unindexed, with
+        // the first merge's txn, and at a random one at or above the txn of the first append: that append
+        // rewrites the partition and names the index after its txn, and every later batch updates it in
+        // place. Two more BITMAP starts attach such a partition and run a pair of DDLs before the first
+        // append, under an index cursor opened before them: DROP INDEX and ADD INDEX, or RENAME COLUMN s
+        // and back. The first DDL moves the partition to a directory named after its txn, and every batch
+        // updates it in place. For both index types, s also starts unindexed, with
         // the index added while partition 2024-01-01 is detached: ATTACH leaves it without index files, and
         // the first append must build the index. Each start makes pt a WAL or a non-WAL table. Some merges
         // fail to msync the _txn file after it switched its record: the commit landed. On a WAL table it
@@ -2422,6 +2428,10 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             final int[][] shapeBatches = new int[ColumnTopShape.values().length][2];
             // appends that build the index missing from the partition re-attached after ADD INDEX
             int healingAppends = 0;
+            // first appends that rewrote an attached partition with a foreign version at or above their txn
+            int attachedRewrites = 0;
+            // starts that ran a pair of DDLs on such a partition before the first append
+            int ddlStarts = 0;
             // merges whose commit landed although the _txn msync failed, per index type, WAL and non-WAL
             final int[] landedMsyncFailureMerges = new int[2];
             final int[] landedNonWalMsyncFailureMerges = new int[2];
@@ -2431,16 +2441,25 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                 final String indexDefinition = indexDefinitions[indexDefinitionIndex];
                 // POSTING skips the attached starts: a POSTING index copied from another table hides the
                 // rows its chain stamped with a txn above the reader's, a separate bug
-                final int startCount = shapes.length + (indexDefinition.equals("INDEX") ? 2 : 0) + 1;
+                final int startCount = shapes.length + (indexDefinition.equals("INDEX") ? 4 : 0) + 1;
                 for (int start = 0; start < startCount; start++) {
                     // the last start: s added unindexed, the index added while 2024-01-01 is detached
                     final boolean isIndexAddedWhileDetached = start == startCount - 1;
                     // the attached partition holds s from row 0, as the ZERO shape does
                     final boolean isAttached = !isIndexAddedWhileDetached && start >= shapes.length;
+                    // the attached starts: foreign version at the first merge's txn, a random one, DROP INDEX and
+                    // ADD INDEX, RENAME COLUMN s and back
+                    final int attachedStart = start - shapes.length;
+                    final boolean isDropAddIndexStart = isAttached && attachedStart == 2;
+                    final boolean isRenameStart = isAttached && attachedStart == 3;
+                    final boolean isDdlStart = isDropAddIndexStart || isRenameStart;
                     final ColumnTopShape shape = isAttached || isIndexAddedWhileDetached ? ColumnTopShape.ZERO : shapes[start];
                     // the first start is WAL and the second non-WAL, so that each mode sees a failing msync
                     final boolean isWal = start == 0 || (start != 1 && rnd.nextBoolean());
-                    final String startName = (isIndexAddedWhileDetached ? "ATTACHED_INDEX_ADDED_WHILE_DETACHED" : isAttached ? "ATTACHED" : shape.name())
+                    final String startName = (isIndexAddedWhileDetached ? "ATTACHED_INDEX_ADDED_WHILE_DETACHED"
+                            : isDropAddIndexStart ? "ATTACHED_DROP_ADD_INDEX"
+                              : isRenameStart ? "ATTACHED_RENAME"
+                                : isAttached ? "ATTACHED" : shape.name())
                             + (isWal ? " WAL" : " BYPASS WAL");
                     execute("DROP TABLE IF EXISTS pt");
                     execute("DROP TABLE IF EXISTS tw");
@@ -2476,10 +2495,22 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                     }
                     drainWalQueue();
                     // the txn of the first merge, batch 1: after ATTACH, a commit per partition CONVERT takes,
-                    // and the append of batch 0
-                    long firstMergeTxn = getTableTxn("pt") + (isAttached ? 4 : 3);
+                    // the DDLs and the append of batch 0
+                    long firstMergeTxn = getTableTxn("pt") + (isAttached ? 4 : 3) + (isDdlStart ? 2 : 0);
                     if (isAttached) {
-                        final long foreignNameTxn = start == shapes.length ? firstMergeTxn : firstMergeTxn + 1 + rnd.nextInt(40);
+                        // Each foreign version is at or above the txn that first supersedes it, the first DDL's or
+                        // batch 0's: below it but above the name txn of the partition directory, the purge of the
+                        // version would not wait for the readers pinned since the attach, a separate bug. A
+                        // version equal to the txn of DROP INDEX is left out: DROP INDEX then deletes the index
+                        // ADD INDEX builds, another separate bug.
+                        final long batchZeroTxn = firstMergeTxn - 1;
+                        final long ddlTxn = firstMergeTxn - 3;
+                        final long foreignNameTxn = switch (attachedStart) {
+                            case 0 -> firstMergeTxn;
+                            case 1 -> batchZeroTxn + rnd.nextInt(42);
+                            case 2 -> ddlTxn + 1 + rnd.nextInt(42);
+                            default -> ddlTxn + rnd.nextInt(43);
+                        };
                         execute("CREATE TABLE src (v LONG, ts TIMESTAMP, s SYMBOL " + indexDefinition + ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
                         execute("INSERT INTO src (s, v, ts) VALUES ('a', 0, '2024-01-09T00:00:00.000000Z'), ('b', 0, '2024-01-09T01:00:00.000000Z'), " +
                                 "('c', 0, '2024-01-09T02:00:00.000000Z'), ('d', 0, '2024-01-09T03:00:00.000000Z')");
@@ -2497,7 +2528,32 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                         // after the append of batch 0
                         firstMergeTxn = getTableTxn("pt") + 1;
                     }
-                    final long partitionNameTxn = getParquetPartitionNameTxn("pt", 0);
+                    if (isDdlStart) {
+                        // The first DDL supersedes the foreign version of s, which is at or above its txn: it moves
+                        // the partition to a directory named after its txn, and the version leaves with the old
+                        // directory once the cursor opened before the DDLs lets go of it.
+                        final long ddlTxn = getTableTxn("pt");
+                        Assert.assertEquals(startName, firstMergeTxn - 3, ddlTxn);
+                        final String key = symbols[rnd.nextInt(symbols.length - 1)];
+                        printSql("SELECT s, v, ts FROM pt WHERE s::VARCHAR = '" + key + "' AND ts IN '2024-01-01'");
+                        final String rowsBefore = sink.toString();
+                        try (
+                                RecordCursorFactory factory = select("SELECT s, v, ts FROM pt WHERE s = '" + key + "' AND ts IN '2024-01-01'");
+                                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+                        ) {
+                            execute(isDropAddIndexStart ? "ALTER TABLE pt ALTER COLUMN s DROP INDEX" : "ALTER TABLE pt RENAME COLUMN s TO s_old");
+                            drainWalQueue();
+                            Assert.assertEquals(startName, ddlTxn, getParquetPartitionNameTxn("pt", 0));
+                            execute(isDropAddIndexStart ? "ALTER TABLE pt ALTER COLUMN s ADD " + indexDefinition : "ALTER TABLE pt RENAME COLUMN s_old TO s");
+                            drainWalQueue();
+                            runPurgeJobs();
+                            assertStaleCursor(startName + ", the cursor opened before the DDLs", rowsBefore, factory, cursor);
+                        }
+                        Assert.assertFalse(startName, isWal && engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("pt")));
+                        Assert.assertEquals(startName, firstMergeTxn - 1, getTableTxn("pt"));
+                        ddlStarts++;
+                    }
+                    long partitionNameTxn = getParquetPartitionNameTxn("pt", 0);
                     long nextV = 1_000;
                     long maxTimestamp = dayStart + 39 * 1_800_000_000L;
                     for (int batch = 0; batch < batchCount; batch++) {
@@ -2563,7 +2619,15 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                             }
                         }
                         Assert.assertFalse(context, isWal && engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("pt")));
+                        if (isAttached && !isDdlStart && batch == 0) {
+                            // the append rewrites the partition, which names the index of the foreign version after its txn
+                            Assert.assertNotEquals(context, partitionNameTxn, getParquetPartitionNameTxn("pt", 0));
+                            partitionNameTxn = txnBefore;
+                            attachedRewrites++;
+                        }
                         Assert.assertEquals(context, partitionNameTxn, getParquetPartitionNameTxn("pt", 0));
+                        // the commit named the index after the txn it commits over
+                        Assert.assertEquals(context, txnBefore, getColumnNameTxn("pt", 0, "s"));
                         if (isHealingAppend) {
                             // the append builds the index it found missing
                             healingAppends++;
@@ -2604,6 +2668,9 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             }
             // one per index type
             Assert.assertEquals("appends that build a missing index", 2, healingAppends);
+            // the BITMAP attached starts without DDLs, and the two with them
+            Assert.assertEquals("first appends that rewrite an attached partition", 2, attachedRewrites);
+            Assert.assertEquals("starts with DDLs before the first append", 2, ddlStarts);
             for (int i = 0; i < indexDefinitions.length; i++) {
                 Assert.assertTrue(indexDefinitions[i] + " WAL merges with a failing _txn msync", landedMsyncFailureMerges[i] > 0);
                 Assert.assertTrue(indexDefinitions[i] + " non-WAL merges with a failing _txn msync", landedNonWalMsyncFailureMerges[i] > 0);
@@ -2612,16 +2679,16 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testInPlaceIndexAppendFailureLeavesNoDuplicates() throws Exception {
-        // An append fails after it appended to the live index of s: opening the live index of k, the
-        // next indexed column, fails. RESUME WAL retries the append, which drops the entries the failed
-        // attempt left past the committed rows, so the index of s holds each row once.
+    public void testInPlaceIndexRebuildFailureLeavesNoDuplicates() throws Exception {
+        // An append fails after it built the new version of the index of s: opening the new key file of
+        // k, the next indexed column, fails. RESUME WAL retries the append at the same txn, which
+        // re-initializes the files the failed attempt left, so the index of s holds each row once.
         setInPlaceParquetO3Properties();
         final AtomicBoolean isArmed = new AtomicBoolean();
         final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public long openRW(LPSZ name, int opts) {
-                if (Utf8s.endsWithAscii(name, Files.SEPARATOR + "k.k") && isArmed.compareAndSet(true, false)) {
+                if (Utf8s.containsAscii(name, Files.SEPARATOR + "k.k.") && isArmed.compareAndSet(true, false)) {
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -2638,16 +2705,19 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             Assert.assertEquals(-1, getColumnNameTxn("pt", 0, "k"));
             // 2_000 'a' rows after the last row of the partition, a second apart
             final String append = "INSERT INTO pt (s, v, ts) SELECT 'a', 1_000 + x, '2024-01-01T11:00:00.000000Z'::TIMESTAMP + x * 1_000_000L FROM long_sequence(2_000)";
+            final long txnBefore = getTableTxn("pt");
             isArmed.set(true);
             execute(append);
             drainWalQueue();
             Assert.assertFalse(isArmed.get());
             Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+            Assert.assertEquals(-1, getColumnNameTxn("pt", 0, "s"));
 
             execute("ALTER TABLE pt RESUME WAL");
             drainWalQueue();
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
-            Assert.assertEquals(-1, getColumnNameTxn("pt", 0, "s"));
+            Assert.assertEquals(txnBefore, getColumnNameTxn("pt", 0, "s"));
+            Assert.assertEquals(txnBefore, getColumnNameTxn("pt", 0, "k"));
             // 4 'a' rows of the partition before the append, plus the 2_000 appended ones
             assertQuery("SELECT count(), min(v), max(v), sum(v) FROM pt WHERE s = 'a' AND ts IN '2024-01-01'")
                     .noLeakCheck()
@@ -2665,10 +2735,10 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testInPlaceIndexAppendExtendsLiveIndex() throws Exception {
-        // An in-order commit into the parquet partition appends to the live index of s. The job opens
-        // the live s.k and s.v once each and truncates each only when it closes them, to trim the
-        // mapped tail. A rebuild would also truncate both when it re-initializes them.
+    public void testInPlaceIndexRebuildLeavesLiveIndexUntouched() throws Exception {
+        // An in-order commit into the parquet partition rebuilds the index of s under the txn it commits
+        // over, next to the live s.k and s.v, which readers of the committed txn read: the job never opens
+        // them for write.
         setInPlaceParquetO3Properties();
         final LiveIndexTruncateCounter ff = new LiveIndexTruncateCounter();
         assertMemoryLeak(ff, () -> {
@@ -2680,15 +2750,15 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                 ff.track(path.toString());
             }
 
+            final long txnBefore = getTableTxn("pt");
             execute(symRowsInsert(SYM_APPEND_ROWS));
             drainWalQueue();
 
             Assert.assertEquals(partitionNameTxn, getParquetPartitionNameTxn("pt", 0));
-            Assert.assertEquals(-1, getColumnNameTxn("pt", 0, "s"));
-            Assert.assertEquals(1, ff.getOpenCount("s.k"));
-            Assert.assertEquals(1, ff.getOpenCount("s.v"));
-            Assert.assertEquals(1, ff.getTruncateCount("s.k"));
-            Assert.assertEquals(1, ff.getTruncateCount("s.v"));
+            Assert.assertEquals(txnBefore, getColumnNameTxn("pt", 0, "s"));
+            Assert.assertTrue(isIndexKeyFilePresent("pt", 0, IndexType.BITMAP, txnBefore));
+            Assert.assertEquals(0, ff.getOpenCount("s.k"));
+            Assert.assertEquals(0, ff.getOpenCount("s.v"));
             assertQuery(STALE_INDEX_QUERIES[0])
                     .noLeakCheck()
                     .timestamp("ts")
@@ -2935,33 +3005,387 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
 
     @Test
     public void testAttachedForeignIndexTwoIndexedColumns() throws Exception {
-        // A merge into a partition attached from another table with two indexed columns: s carries the
-        // foreign version 31, t the default version. Both indexes answer as a full scan does.
+        // A merge into a partition attached from another table with two indexed columns, s and t: one of them
+        // carries a foreign version, the other the default version. A foreign version at or above the txn of the
+        // merge, in either column, sends the partition to a rewrite, which names that index after the txn and keeps
+        // the name of the other. Version 2, the name txn of the partition directory, is below the txn: the merge
+        // updates both indexes in place. Both indexes answer as a full scan does.
+        setInPlaceParquetO3Properties();
+        final String[] symbolColumnNames = {"s", "t"};
+        assertMemoryLeak(() -> {
+            for (String foreignColumnName : symbolColumnNames) {
+                for (long foreignNameTxn : new long[]{31, 2}) {
+                    for (boolean isWal : new boolean[]{true, false}) {
+                        final String otherColumnName = foreignColumnName.equals("s") ? "t" : "s";
+                        final String context = foreignColumnName + " at foreign version " + foreignNameTxn + (isWal ? ", WAL" : ", non-WAL");
+                        execute("DROP TABLE IF EXISTS pt");
+                        execute("DROP TABLE IF EXISTS src");
+                        createAttachedForeignParquetTable(symbolColumnNames, "s SYMBOL INDEX, t SYMBOL INDEX", isWal, "TIMESTAMP", "", SYM_ATTACHED_ROWS, foreignNameTxn, foreignColumnName);
+                        final long otherColumnNameTxn = getColumnNameTxn("pt", 0, otherColumnName);
+                        Assert.assertTrue(context, otherColumnNameTxn < 3);
+                        final boolean isRewrite = foreignNameTxn >= 3;
+                        final long rewriteCount = O3ParquetCounters.getRewriteCount();
+
+                        execute(twoSymbolRowsInsert("pt", SYM_MERGE_ROWS));
+                        drainWalQueue();
+                        assertNotSuspended(context);
+                        Assert.assertEquals(context, rewriteCount + (isRewrite ? 1 : 0), O3ParquetCounters.getRewriteCount());
+                        Assert.assertEquals(context, isRewrite ? 3 : 2, getParquetPartitionNameTxn("pt", 0));
+                        Assert.assertEquals(context, 3, getColumnNameTxn("pt", 0, foreignColumnName));
+                        // a rewrite keeps the committed name of an index below the txn, an in-place update moves it to the txn
+                        Assert.assertEquals(context, isRewrite ? otherColumnNameTxn : 3, getColumnNameTxn("pt", 0, otherColumnName));
+                        assertIndexMatchesFullScan("s");
+                        assertIndexMatchesFullScan("t");
+                        assertQuery("SELECT t, v, ts FROM pt WHERE t = 'a' AND ts IN '2024-01-01'")
+                                .noLeakCheck()
+                                .timestamp("ts")
+                                .returns(expectedStaleIndexQueryResult(0, false, SYM_ATTACHED_ROWS, SYM_MERGE_ROWS).replace("s\tv", "t\tv"));
+
+                        engine.releaseInactive();
+                        releaseSavePointHolds("pt");
+                        runPurgeJobs();
+                        assertIndexMatchesFullScan("s");
+                        assertIndexMatchesFullScan("t");
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAttachedForeignNonIndexedSymbolStaysInPlace() throws Exception {
+        // u, a SYMBOL column without an index, carries the foreign version 31 in the attached partition, the indexed
+        // s the default version. The merge at txn 3 rebuilds no index of u: it updates the partition in place.
+        setInPlaceParquetO3Properties();
+        final String[] symbolColumnNames = {"s", "u"};
+        assertMemoryLeak(() -> {
+            for (boolean isWal : new boolean[]{true, false}) {
+                final String context = isWal ? "WAL" : "non-WAL";
+                execute("DROP TABLE IF EXISTS pt");
+                execute("DROP TABLE IF EXISTS src");
+                createAttachedForeignParquetTable(symbolColumnNames, "s SYMBOL INDEX, u SYMBOL", isWal, "TIMESTAMP", "", SYM_ATTACHED_ROWS, 31, "u");
+                final long inPlaceCount = O3ParquetCounters.getInPlaceCount();
+                execute(symbolRowsInsert("pt", symbolColumnNames, "v", SYM_MERGE_ROWS));
+                drainWalQueue();
+                assertNotSuspended(context);
+                Assert.assertEquals(context, inPlaceCount + 1, O3ParquetCounters.getInPlaceCount());
+                Assert.assertEquals(context, 2, getParquetPartitionNameTxn("pt", 0));
+                Assert.assertEquals(context, 31, getColumnNameTxn("pt", 0, "u"));
+                Assert.assertEquals(context, 3, getColumnNameTxn("pt", 0, "s"));
+                assertAttachedRows(context, SYM_MERGE_ROWS);
+                assertQuery("SELECT u, v, ts FROM pt WHERE u = 'a' AND ts IN '2024-01-01'")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .returns(expectedStaleIndexQueryResult(0, false, SYM_ATTACHED_ROWS, SYM_MERGE_ROWS).replace("s\tv", "u\tv"));
+            }
+        });
+    }
+
+    @Test
+    public void testAttachedForeignIndexPostingRenames() throws Exception {
+        // The merge at txn 3 into a partition whose POSTING index carries the foreign version 31 rewrites the
+        // partition and names the index after txn 3 in the new directory. No cursor stays open across the merge: a
+        // POSTING index copied from another table hides the rows its chain stamped with a txn above the reader's, a
+        // separate bug.
         setInPlaceParquetO3Properties();
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE src (s SYMBOL INDEX, t SYMBOL INDEX, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-            execute(twoSymbolRowsInsert("src", SYM_ATTACHED_ROWS));
-            updateSourceColumnAtTxn(0, 31);
-            execute("CREATE TABLE pt (s SYMBOL INDEX, t SYMBOL INDEX, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-            execute(twoSymbolRowsInsert("pt", SYM_ATTACH_TARGET_ROWS));
-            attachFromSource(0, "2024-01-01");
-            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
-            Assert.assertEquals(3, getTableTxn("pt"));
-
-            execute(twoSymbolRowsInsert("pt", SYM_MERGE_ROWS));
-            assertIndexMatchesFullScan("s");
-            assertIndexMatchesFullScan("t");
-            assertQuery("SELECT t, v, ts FROM pt WHERE t = 'a' AND ts IN '2024-01-01'")
-                    .noLeakCheck()
-                    .timestamp("ts")
-                    .returns(expectedStaleIndexQueryResult(0, false, SYM_ATTACHED_ROWS, SYM_MERGE_ROWS).replace("s\tv", "t\tv"));
-
-            engine.releaseInactive();
-            try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
-                purgeJob.run();
+            for (String indexDefinition : new String[]{"INDEX TYPE POSTING", "INDEX TYPE POSTING INCLUDE (v)"}) {
+                for (boolean isWal : new boolean[]{true, false}) {
+                    final String context = indexDefinition + (isWal ? ", WAL" : ", non-WAL");
+                    execute("DROP TABLE IF EXISTS pt");
+                    execute("DROP TABLE IF EXISTS src");
+                    createAttachedForeignParquetTable(indexDefinition, isWal, 31);
+                    final long rewriteCount = O3ParquetCounters.getRewriteCount();
+                    execute(symRowsInsert(SYM_MERGE_ROWS));
+                    drainWalQueue();
+                    assertNotSuspended(context);
+                    Assert.assertEquals(context, rewriteCount + 1, O3ParquetCounters.getRewriteCount());
+                    Assert.assertEquals(context, 3, getParquetPartitionNameTxn("pt", 0));
+                    Assert.assertEquals(context, 3, getColumnNameTxn("pt", 0, "s"));
+                    Assert.assertTrue(context, isIndexKeyFilePresent("pt", 0, IndexType.POSTING, 3));
+                    Assert.assertFalse(context, isIndexKeyFilePresent("pt", 0, IndexType.POSTING, 31));
+                    assertAttachedRows(context, SYM_MERGE_ROWS);
+                    if (indexDefinition.contains("INCLUDE")) {
+                        assertQuery(STALE_INDEX_QUERIES[0])
+                                .noLeakCheck()
+                                .timestamp("ts")
+                                .noRandomAccess()
+                                .expectSize()
+                                .withPlanContaining("CoveringIndex on: s")
+                                .returns(expectedStaleIndexQueryResult(0, false, SYM_ATTACHED_ROWS, SYM_MERGE_ROWS));
+                    }
+                }
             }
+        });
+    }
+
+    @Test
+    public void testAttachedForeignIndexCoveredColumnRenamed() throws Exception {
+        // s carries the foreign version 31, and so does t, a POSTING index that INCLUDEs s: the UPDATE of s in the
+        // source table rebuilt it. The merge at txn 3 rewrites the partition and names both indexes after txn 3. The
+        // covering sidecars of t carry the name txn of the column they cover, so they must name s after txn 3 too.
+        setInPlaceParquetO3Properties();
+        final String[] symbolColumnNames = {"s", "t"};
+        assertMemoryLeak(() -> {
+            for (boolean isWal : new boolean[]{true, false}) {
+                final String context = isWal ? "WAL" : "non-WAL";
+                execute("DROP TABLE IF EXISTS pt");
+                execute("DROP TABLE IF EXISTS src");
+                createAttachedForeignParquetTable(
+                        symbolColumnNames,
+                        "s SYMBOL INDEX, t SYMBOL INDEX TYPE POSTING INCLUDE (s, v)",
+                        isWal,
+                        "TIMESTAMP",
+                        "",
+                        SYM_ATTACHED_ROWS,
+                        31,
+                        "s"
+                );
+                // No query reads t before the merge rebuilds it: a POSTING index copied from another table hides the
+                // rows its chain stamped with a txn above the reader's, a separate bug.
+                Assert.assertEquals(context, 31, getColumnNameTxn("pt", 0, "t"));
+                execute(twoSymbolRowsInsert("pt", SYM_MERGE_ROWS));
+                drainWalQueue();
+                assertNotSuspended(context);
+                Assert.assertEquals(context, 3, getParquetPartitionNameTxn("pt", 0));
+                Assert.assertEquals(context, 3, getColumnNameTxn("pt", 0, "s"));
+                Assert.assertEquals(context, 3, getColumnNameTxn("pt", 0, "t"));
+                assertCoveredSymbolRows(context, SYM_ATTACHED_ROWS, SYM_MERGE_ROWS);
+                engine.releaseInactive();
+                releaseSavePointHolds("pt");
+                runPurgeJobs();
+                assertCoveredSymbolRows(context + ", after the purge", SYM_ATTACHED_ROWS, SYM_MERGE_ROWS);
+            }
+        });
+    }
+
+    @Test
+    public void testAttachedForeignIndexCompiledFactoryAcrossRewrite() throws Exception {
+        // A factory compiled before the merge that rewrites the attached partition, as a PostgreSQL wire prepared
+        // statement is, reads the rewritten index, and the one the next merge updates in place
+        setInPlaceParquetO3Properties();
+        final SymRow[] secondMergeRows = {
+                new SymRow("a", 111, "2024-01-01", "01:30"),
+                new SymRow(null, 112, "2024-01-01", "07:30")
+        };
+        assertMemoryLeak(() -> {
+            for (boolean isWal : new boolean[]{true, false}) {
+                final String context = isWal ? "WAL" : "non-WAL";
+                execute("DROP TABLE IF EXISTS pt");
+                execute("DROP TABLE IF EXISTS src");
+                createAttachedForeignParquetTable("INDEX", isWal, 31);
+                try (RecordCursorFactory factory = select(STALE_INDEX_QUERIES[0])) {
+                    execute(symRowsInsert(SYM_MERGE_ROWS));
+                    drainWalQueue();
+                    assertNotSuspended(context);
+                    Assert.assertEquals(context, 3, getParquetPartitionNameTxn("pt", 0));
+                    Assert.assertEquals(context, 3, getColumnNameTxn("pt", 0, "s"));
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        assertStaleCursor(context + ", after the rewrite", expectedStaleIndexQueryResult(0, false, SYM_ATTACHED_ROWS, SYM_MERGE_ROWS), factory, cursor);
+                    }
+                    execute(symRowsInsert(secondMergeRows));
+                    drainWalQueue();
+                    assertNotSuspended(context);
+                    Assert.assertEquals(context, 3, getParquetPartitionNameTxn("pt", 0));
+                    Assert.assertEquals(context, 4, getColumnNameTxn("pt", 0, "s"));
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        assertStaleCursor(
+                                context + ", after the in-place merge",
+                                expectedStaleIndexQueryResult(0, false, SYM_ATTACHED_ROWS, SYM_MERGE_ROWS, secondMergeRows),
+                                factory,
+                                cursor
+                        );
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAttachedForeignIndexRewriteIndexOpenFailure() throws Exception {
+        // The merge at txn 3 rewrites the attached partition with the foreign version 31 and fails to open the key
+        // file of the index it names after txn 3 in the new directory. Nothing is committed: the partition keeps its
+        // directory and its foreign version, the new directory goes, and the retry lands.
+        setInPlaceParquetO3Properties();
+        final ConvertToNativeFailingFacade ff = new ConvertToNativeFailingFacade("pt");
+        assertMemoryLeak(ff, () -> {
+            for (boolean isWal : new boolean[]{true, false}) {
+                final String context = isWal ? "WAL" : "non-WAL";
+                execute("DROP TABLE IF EXISTS pt");
+                execute("DROP TABLE IF EXISTS src");
+                createAttachedForeignParquetTable("INDEX", isWal, 31);
+                ff.arm(false, "s.k.3");
+                if (isWal) {
+                    execute(symRowsInsert(SYM_MERGE_ROWS));
+                    drainWalQueue();
+                    Assert.assertTrue(context, engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("pt")));
+                } else {
+                    try {
+                        execute(symRowsInsert(SYM_MERGE_ROWS));
+                        Assert.fail(context + ": the merge must fail");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(context, e.getFlyweightMessage(), "bulk update failed and will be rolled back");
+                    }
+                }
+                Assert.assertTrue(context, ff.hasFired());
+                engine.releaseInactive();
+                Assert.assertEquals(context, 3, getTableTxn("pt"));
+                Assert.assertEquals(context, 2, getParquetPartitionNameTxn("pt", 0));
+                Assert.assertEquals(context, 31, getColumnNameTxn("pt", 0, "s"));
+                Assert.assertFalse(context, new File(partitionDir("pt", "2024-01-01", 3)).exists());
+                assertAttachedRows(context + ", after the failure");
+
+                if (isWal) {
+                    execute("ALTER TABLE pt RESUME WAL");
+                    drainWalQueue();
+                    assertNotSuspended(context);
+                } else {
+                    execute(symRowsInsert(SYM_MERGE_ROWS));
+                }
+                Assert.assertEquals(context, 4, getTableTxn("pt"));
+                Assert.assertEquals(context, 3, getParquetPartitionNameTxn("pt", 0));
+                Assert.assertEquals(context, 3, getColumnNameTxn("pt", 0, "s"));
+                assertAttachedRows(context + ", after the retry", SYM_MERGE_ROWS);
+            }
+        });
+    }
+
+    @Test
+    public void testAttachedForeignIndexDedupSkip() throws Exception {
+        // DEDUP SKIP: a resend of rows the attached partition holds leaves it as it is, its foreign version 31
+        // included. The resend plus one new row rewrites the partition and names the index after its txn.
+        setInPlaceParquetO3Properties();
+        final SymRow[] newRows = {new SymRow("a", 105, "2024-01-01", "05:30")};
+        final SymRow[] resendAndNewRows = Arrays.copyOf(SYM_ATTACHED_ROWS, SYM_ATTACHED_ROWS.length + 1);
+        resendAndNewRows[SYM_ATTACHED_ROWS.length] = newRows[0];
+        assertMemoryLeak(() -> {
+            createAttachedForeignParquetTable(new String[]{"s"}, "s SYMBOL INDEX", true, "TIMESTAMP", " DEDUP SKIP KEYS(ts, s)", SYM_ATTACHED_ROWS, 31, "s");
+            final long rewriteCount = O3ParquetCounters.getRewriteCount();
+            final long dedupIdenticalCount = O3ParquetCounters.getDedupIdenticalCount();
+            execute(symRowsInsert(SYM_ATTACHED_ROWS));
+            drainWalQueue();
+            assertNotSuspended("resend");
+            Assert.assertEquals(dedupIdenticalCount + 1, O3ParquetCounters.getDedupIdenticalCount());
+            Assert.assertEquals(rewriteCount, O3ParquetCounters.getRewriteCount());
+            Assert.assertEquals(2, getParquetPartitionNameTxn("pt", 0));
+            Assert.assertEquals(31, getColumnNameTxn("pt", 0, "s"));
+            Assert.assertEquals("[s.k.31, s.v.31]", listColumnFiles("pt", 0, "s"));
+            assertAttachedRows("resend");
+
+            final long txnBefore = getTableTxn("pt");
+            execute(symRowsInsert(resendAndNewRows));
+            drainWalQueue();
+            assertNotSuspended("resend and a new row");
+            Assert.assertEquals(rewriteCount + 1, O3ParquetCounters.getRewriteCount());
+            Assert.assertEquals(txnBefore, getParquetPartitionNameTxn("pt", 0));
+            Assert.assertEquals(txnBefore, getColumnNameTxn("pt", 0, "s"));
+            assertAttachedRows("resend and a new row", newRows);
+        });
+    }
+
+    @Test
+    public void testAttachedForeignIndexReplaceRange() throws Exception {
+        // A replace commit over [04:00, 07:59:59] of the attached partition with the foreign version 31, bringing one
+        // row at 05:30: it rewrites the partition without the row group the range covers, and names the index after
+        // its txn
+        setInPlaceParquetO3Properties();
+        final SymRow[] newRows = {new SymRow("a", 105, "2024-01-01", "05:30")};
+        final SymRow[] keptRows = Arrays.stream(SYM_ATTACHED_ROWS)
+                .filter(row -> row.time.compareTo("04:00") < 0 || row.time.compareTo("08:00") >= 0)
+                .toArray(SymRow[]::new);
+        final long dayStart = 1_704_067_200_000_000L; // 2024-01-01T00:00:00Z
+        assertMemoryLeak(() -> {
+            createAttachedForeignParquetTable("INDEX", true, 31);
+            final long rewriteCount = O3ParquetCounters.getRewriteCount();
+            ParquetCommitTestUtils.replace(
+                    engine,
+                    sqlExecutionContext,
+                    "pt",
+                    "SELECT 'a' s, 105 v FROM long_sequence(1)",
+                    dayStart + 4 * Micros.HOUR_MICROS,
+                    dayStart + 8 * Micros.HOUR_MICROS - Micros.SECOND_MICROS,
+                    dayStart + 5 * Micros.HOUR_MICROS + 30 * Micros.MINUTE_MICROS
+            );
+            drainWalQueue();
+            assertNotSuspended("replace");
+            Assert.assertEquals(rewriteCount + 1, O3ParquetCounters.getRewriteCount());
+            Assert.assertEquals(3, getParquetPartitionNameTxn("pt", 0));
+            Assert.assertEquals(3, getColumnNameTxn("pt", 0, "s"));
+            assertStaleIndexQueryRows("replace", false, new SymRow[][]{keptRows, SYM_ATTACH_TARGET_ROWS, newRows});
             assertIndexMatchesFullScan("s");
-            assertIndexMatchesFullScan("t");
+        });
+    }
+
+    @Test
+    public void testAttachedForeignIndexLastPartitionAppends() throws Exception {
+        // The attached partition, with s at the foreign version 31, is the last partition of a WAL table, which
+        // converts it to parquet. The first in-order append into it rewrites it and names the index after its txn,
+        // the next one updates it in place.
+        setInPlaceParquetO3Properties();
+        // partition 2023-12-31, its symbols in the order SYM_ATTACHED_ROWS first uses them
+        final SymRow[] firstDayRows = Arrays.stream(SYM_ATTACH_TARGET_ROWS)
+                .map(row -> new SymRow(row.s, row.v, "2023-12-31", row.time))
+                .toArray(SymRow[]::new);
+        final SymRow[] firstAppendRows = Arrays.copyOf(SYM_APPEND_ROWS, 2);
+        final SymRow[] secondAppendRows = Arrays.copyOfRange(SYM_APPEND_ROWS, 2, SYM_APPEND_ROWS.length);
+        assertMemoryLeak(() -> {
+            createAttachedForeignLastParquetPartition(firstDayRows, 31);
+            final long rewriteCount = O3ParquetCounters.getRewriteCount();
+            final long inPlaceCount = O3ParquetCounters.getInPlaceCount();
+            final long firstAppendTxn = getTableTxn("pt");
+            execute(symRowsInsert(firstAppendRows));
+            drainWalQueue();
+            assertNotSuspended("first append");
+            Assert.assertEquals(rewriteCount + 1, O3ParquetCounters.getRewriteCount());
+            Assert.assertEquals(firstAppendTxn, getParquetPartitionNameTxn("pt", 1));
+            Assert.assertEquals(firstAppendTxn, getColumnNameTxn("pt", 1, "s"));
+
+            final long secondAppendTxn = getTableTxn("pt");
+            execute(symRowsInsert(secondAppendRows));
+            drainWalQueue();
+            assertNotSuspended("second append");
+            Assert.assertEquals(rewriteCount + 1, O3ParquetCounters.getRewriteCount());
+            Assert.assertEquals(inPlaceCount + 1, O3ParquetCounters.getInPlaceCount());
+            Assert.assertEquals(firstAppendTxn, getParquetPartitionNameTxn("pt", 1));
+            Assert.assertEquals(secondAppendTxn, getColumnNameTxn("pt", 1, "s"));
+            assertStaleIndexQueryRows("appends", false, new SymRow[][]{SYM_ATTACHED_ROWS, firstDayRows, firstAppendRows, secondAppendRows});
+            assertIndexMatchesFullScan("s");
+        });
+    }
+
+    @Test
+    public void testAttachedForeignIndexRenamedAcrossDetachAttach() throws Exception {
+        // The merge that rewrites the attached partition names the index after its txn. The partition keeps that name
+        // across DETACH and ATTACH, which brings _cv back with it, so the next merge updates it in place.
+        setInPlaceParquetO3Properties();
+        final SymRow[] secondMergeRows = {
+                new SymRow("a", 111, "2024-01-01", "01:30"),
+                new SymRow("d", 112, "2024-01-01", "07:30")
+        };
+        assertMemoryLeak(() -> {
+            for (boolean isWal : new boolean[]{true, false}) {
+                final String context = isWal ? "WAL" : "non-WAL";
+                execute("DROP TABLE IF EXISTS pt");
+                execute("DROP TABLE IF EXISTS src");
+                createAttachedForeignParquetTable("INDEX", isWal, 31);
+                final long firstRewriteCount = O3ParquetCounters.getRewriteCount();
+                execute(symRowsInsert(SYM_MERGE_ROWS));
+                drainWalQueue();
+                Assert.assertEquals(context, firstRewriteCount + 1, O3ParquetCounters.getRewriteCount());
+                Assert.assertEquals(context, 3, getColumnNameTxn("pt", 0, "s"));
+                reattachPartition("2024-01-01");
+                Assert.assertEquals(context, 3, getColumnNameTxn("pt", 0, "s"));
+                assertAttachedRows(context + ", after ATTACH", SYM_MERGE_ROWS);
+
+                final long rewriteCount = O3ParquetCounters.getRewriteCount();
+                final long txnBefore = getTableTxn("pt");
+                execute(symRowsInsert(secondMergeRows));
+                drainWalQueue();
+                assertNotSuspended(context);
+                Assert.assertEquals(context, rewriteCount, O3ParquetCounters.getRewriteCount());
+                Assert.assertEquals(context, txnBefore, getColumnNameTxn("pt", 0, "s"));
+                assertAttachedRows(context + ", after the merge", SYM_MERGE_ROWS, secondMergeRows);
+            }
         });
     }
 
@@ -2979,9 +3403,14 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             Assert.assertFalse(ff.isArmed.get());
             engine.releaseInactive();
             Assert.assertEquals(3, getTableTxn("pt"));
+            // the rewrite did not land: the partition keeps its directory and the foreign version
+            Assert.assertEquals(2, getParquetPartitionNameTxn("pt", 0));
+            Assert.assertEquals(31, getColumnNameTxn("pt", 0, "s"));
             assertAttachedRows("after the rollback");
 
             execute(symRowsInsert(o3Rows));
+            Assert.assertEquals(3, getParquetPartitionNameTxn("pt", 0));
+            Assert.assertEquals(3, getColumnNameTxn("pt", 0, "s"));
             assertAttachedRows("after the retry", o3Rows);
         });
     }
@@ -3000,6 +3429,9 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(symRowsInsert(o3Rows), -1, "could not msync");
             Assert.assertFalse(ff.isArmed.get());
             Assert.assertEquals(4, getTableTxn("pt"));
+            // the rewrite landed with the index named after its txn
+            Assert.assertEquals(3, getParquetPartitionNameTxn("pt", 0));
+            Assert.assertEquals(3, getColumnNameTxn("pt", 0, "s"));
             engine.releaseInactive();
             try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
                 purgeJob.run();
@@ -3028,6 +3460,9 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             drainWalQueue();
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
             Assert.assertEquals(4, getTableTxn("pt"));
+            // the rewrite landed with the index named after its txn
+            Assert.assertEquals(3, getParquetPartitionNameTxn("pt", 0));
+            Assert.assertEquals(3, getColumnNameTxn("pt", 0, "s"));
             assertAttachedRows("after RESUME WAL", SYM_MERGE_ROWS);
 
             execute("VACUUM TABLE pt");
@@ -3071,12 +3506,19 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             drainWalQueue();
             engine.releaseAllReaders();
             engine.releaseAllWriters();
+            // the first merge rewrote the partition and named the index after its txn
+            Assert.assertEquals(3, getParquetPartitionNameTxn("pt", 0));
+            Assert.assertEquals(3, getColumnNameTxn("pt", 0, "s"));
             assertAttachedRows("after the restart", SYM_MERGE_ROWS);
 
             Assert.assertEquals(4, getTableTxn("pt"));
+            final long inPlaceCount = O3ParquetCounters.getInPlaceCount();
             execute(symRowsInsert(secondMergeRows));
             drainWalQueue();
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("pt")));
+            Assert.assertEquals(inPlaceCount + 1, O3ParquetCounters.getInPlaceCount());
+            Assert.assertEquals(3, getParquetPartitionNameTxn("pt", 0));
+            Assert.assertEquals(4, getColumnNameTxn("pt", 0, "s"));
             engine.releaseInactive();
             try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
                 purgeJob.run();
@@ -3152,31 +3594,41 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAttachedForeignIndexAppendAndMergeInPlace() throws Exception {
-        // An in-order commit into the attached partition extends the index of the foreign version 31 in
-        // place, and so does the merge after it. BITMAP only: a POSTING index copied from another table
-        // hides the rows its chain stamped with a txn above the reader's, a separate bug.
+    public void testAttachedForeignIndexAppendRewritesThenMergesInPlace() throws Exception {
+        // The in-order commit at txn 3 into the attached partition finds the index at the foreign version 31, at
+        // or above its txn: it rewrites the partition and names the index after txn 3 in the new directory. The
+        // merge at txn 4 then updates the partition in place and rebuilds the index under txn 4. BITMAP only: a
+        // POSTING index copied from another table hides the rows its chain stamped with a txn above the reader's, a
+        // separate bug.
         setInPlaceParquetO3Properties();
         assertMemoryLeak(() -> {
             for (String indexDefinition : new String[]{"INDEX", "INDEX CAPACITY 2"}) {
                 execute("DROP TABLE IF EXISTS pt");
                 execute("DROP TABLE IF EXISTS src");
                 createAttachedForeignParquetTable(indexDefinition, true, 31);
+                final long rewriteCount = O3ParquetCounters.getRewriteCount();
                 execute(symRowsInsert(SYM_APPEND_ROWS));
                 drainWalQueue();
+                Assert.assertEquals(indexDefinition, rewriteCount + 1, O3ParquetCounters.getRewriteCount());
+                Assert.assertEquals(indexDefinition, 3, getParquetPartitionNameTxn("pt", 0));
+                Assert.assertEquals(indexDefinition, 3, getColumnNameTxn("pt", 0, "s"));
                 assertAttachedRows(indexDefinition + ", append", SYM_APPEND_ROWS);
 
+                final long inPlaceCount = O3ParquetCounters.getInPlaceCount();
                 execute(symRowsInsert(SYM_MERGE_ROWS));
                 drainWalQueue();
+                Assert.assertEquals(indexDefinition, inPlaceCount + 1, O3ParquetCounters.getInPlaceCount());
+                Assert.assertEquals(indexDefinition, 3, getParquetPartitionNameTxn("pt", 0));
+                Assert.assertEquals(indexDefinition, 4, getColumnNameTxn("pt", 0, "s"));
                 assertAttachedRows(indexDefinition + ", merge", SYM_APPEND_ROWS, SYM_MERGE_ROWS);
             }
         });
     }
 
     @Test
-    public void testAttachedForeignIndexRewriteKeepsName() throws Exception {
-        // A single row group takes the rewrite: the index goes into the new partition directory under
-        // the foreign version 31
+    public void testAttachedForeignIndexRewriteRenamesForeignVersion() throws Exception {
+        // A single row group takes the rewrite: the index goes into the new partition directory under the txn of
+        // the merge, not under the foreign version 31, which a later in-place commit at txn 31 would rebuild
         setInPlaceParquetO3Properties();
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
         assertMemoryLeak(() -> {
@@ -3185,8 +3637,8 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             execute(symRowsInsert(SYM_MERGE_ROWS));
             drainWalQueue();
             Assert.assertNotEquals(partitionNameTxn, getParquetPartitionNameTxn("pt", 0));
-            Assert.assertEquals(31, getColumnNameTxn("pt", 0, "s"));
-            Assert.assertEquals("[s.k.31, s.v.31]", listColumnFiles("pt", 0, "s"));
+            Assert.assertEquals(3, getColumnNameTxn("pt", 0, "s"));
+            Assert.assertEquals("[s.k.3, s.v.3]", listColumnFiles("pt", 0, "s"));
             assertAttachedRows("rewrite", SYM_MERGE_ROWS);
         });
     }
@@ -3227,6 +3679,12 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             } finally {
                 pool.halt();
             }
+            // both foreign versions are at or above the txn: the commit rewrote both partitions and named their
+            // indexes after its txn
+            for (int partitionIndex = 0; partitionIndex < 2; partitionIndex++) {
+                Assert.assertEquals(5, getParquetPartitionNameTxn("pt", partitionIndex));
+                Assert.assertEquals(5, getColumnNameTxn("pt", partitionIndex, "s"));
+            }
             assertQuery(sql)
                     .noLeakCheck()
                     .timestamp("ts")
@@ -3256,6 +3714,7 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             attachFromSource(0, "2024-01-01");
             execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
             execute(symRowsInsert(SYM_MERGE_ROWS));
+            Assert.assertEquals(3, getColumnNameTxn("pt", 0, "s"));
             assertQuery(STALE_INDEX_QUERIES[1])
                     .noLeakCheck()
                     .timestamp("ts")
@@ -3275,7 +3734,8 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
     @Test
     public void testAttachedForeignIndexAtServerDefaults() throws Exception {
         // Server default row group size (100_000) and rewrite thresholds: a merge into a 200_001-row
-        // partition attached with foreign version 31 stays in place
+        // partition attached with foreign version 31 rewrites it once, naming the index after its txn, and
+        // the next commit into it updates it in place
         assertMemoryLeak(() -> {
             execute("CREATE TABLE src (s SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
             // s cycles through k1..k6, k0, one row every 100 ms from the start of the day
@@ -3288,11 +3748,11 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             attachFromSource(0, "2024-01-01");
             execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
             drainWalQueue();
-            final long partitionNameTxn = getParquetPartitionNameTxn("pt", 0);
             Assert.assertEquals(3, getTableTxn("pt"));
             execute("INSERT INTO pt VALUES ('k3', 300_001, '2024-01-01T01:00:00.050000Z')");
             drainWalQueue();
-            Assert.assertEquals(partitionNameTxn, getParquetPartitionNameTxn("pt", 0));
+            Assert.assertEquals(3, getParquetPartitionNameTxn("pt", 0));
+            Assert.assertEquals(3, getColumnNameTxn("pt", 0, "s"));
             // k3 rows: x = 3, 10, ..., 200_000, i.e. 28_572 rows summing to 3 * 28_572 + 7 * (28_571 * 28_572 / 2), plus 300_001
             assertQuery("SELECT count(), min(v), max(v), sum(v) FROM pt WHERE s = 'k3' AND ts IN '2024-01-01'")
                     .noLeakCheck()
@@ -3303,6 +3763,1059 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                     "SELECT s, v, ts FROM pt WHERE s::VARCHAR = 'k3'",
                     "SELECT s, v, ts FROM pt WHERE s = 'k3'"
             );
+
+            // past the last row of the partition, 05:33:20
+            execute("INSERT INTO pt VALUES ('k3', 300_002, '2024-01-01T06:00:00.000000Z')");
+            drainWalQueue();
+            Assert.assertEquals(3, getParquetPartitionNameTxn("pt", 0));
+            Assert.assertEquals(4, getColumnNameTxn("pt", 0, "s"));
+            // plus 300_002
+            assertQuery("SELECT count(), min(v), max(v), sum(v) FROM pt WHERE s = 'k3' AND ts IN '2024-01-01'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\tmin\tmax\tsum\n28574\t3\t300002\t2857842861\n");
+            assertSqlCursors(
+                    "SELECT s, v, ts FROM pt WHERE s::VARCHAR = 'k3'",
+                    "SELECT s, v, ts FROM pt WHERE s = 'k3'"
+            );
+        });
+    }
+
+    @Test
+    public void testAttachedForeignIndexOneCommitAtForeignVersionAdaptive() throws Exception {
+        assertAttachedForeignIndexOneCommitAtForeignVersion("adaptive");
+    }
+
+    @Test
+    public void testAttachedForeignIndexOneCommitAtForeignVersionNosync() throws Exception {
+        assertAttachedForeignIndexOneCommitAtForeignVersion("nosync");
+    }
+
+    @Test
+    public void testAttachedForeignIndexTwoCommitsThenPurgeAdaptive() throws Exception {
+        assertAttachedForeignIndexTwoCommitsThenPurge("adaptive");
+    }
+
+    @Test
+    public void testAttachedForeignIndexTwoCommitsThenPurgeNosync() throws Exception {
+        assertAttachedForeignIndexTwoCommitsThenPurge("nosync");
+    }
+
+    @Test
+    public void testAttachedForeignIndexTwoCommitsThenPurgeSync() throws Exception {
+        assertAttachedForeignIndexTwoCommitsThenPurge("sync");
+    }
+
+    @Test
+    public void testAttachedForeignIndexVersionBoundary() throws Exception {
+        // The merge at txn 3 into the attached partition rewrites it when the committed version of the index is at
+        // or above txn 3, and names the index after txn 3. Version 2, the name txn of the partition directory, is
+        // below it: the merge updates the partition in place. Either way the next merge updates it in place.
+        setInPlaceParquetO3Properties();
+        final SymRow[] secondMergeRows = {
+                new SymRow("d", 111, "2024-01-01", "01:30"),
+                new SymRow(null, 112, "2024-01-01", "07:30")
+        };
+        assertMemoryLeak(() -> {
+            for (long foreignNameTxn : new long[]{3, 4, 31, 2}) {
+                for (boolean isWal : new boolean[]{true, false}) {
+                    final String context = "foreign version " + foreignNameTxn + (isWal ? ", WAL" : ", non-WAL");
+                    execute("DROP TABLE IF EXISTS pt");
+                    execute("DROP TABLE IF EXISTS src");
+                    createAttachedForeignParquetTable("INDEX", isWal, foreignNameTxn);
+                    final boolean isRewrite = foreignNameTxn >= 3;
+                    long rewriteCount = O3ParquetCounters.getRewriteCount();
+                    long inPlaceCount = O3ParquetCounters.getInPlaceCount();
+                    execute(symRowsInsert(SYM_MERGE_ROWS));
+                    drainWalQueue();
+                    assertNotSuspended(context);
+                    Assert.assertEquals(context, rewriteCount + (isRewrite ? 1 : 0), O3ParquetCounters.getRewriteCount());
+                    Assert.assertEquals(context, inPlaceCount + (isRewrite ? 0 : 1), O3ParquetCounters.getInPlaceCount());
+                    Assert.assertEquals(context, isRewrite ? 3 : 2, getParquetPartitionNameTxn("pt", 0));
+                    Assert.assertEquals(context, 3, getColumnNameTxn("pt", 0, "s"));
+                    assertAttachedRows(context + ", first merge", SYM_MERGE_ROWS);
+
+                    rewriteCount = O3ParquetCounters.getRewriteCount();
+                    inPlaceCount = O3ParquetCounters.getInPlaceCount();
+                    execute(symRowsInsert(secondMergeRows));
+                    drainWalQueue();
+                    assertNotSuspended(context);
+                    Assert.assertEquals(context, rewriteCount, O3ParquetCounters.getRewriteCount());
+                    Assert.assertEquals(context, inPlaceCount + 1, O3ParquetCounters.getInPlaceCount());
+                    Assert.assertEquals(context, isRewrite ? 3 : 2, getParquetPartitionNameTxn("pt", 0));
+                    Assert.assertEquals(context, 4, getColumnNameTxn("pt", 0, "s"));
+                    engine.releaseInactive();
+                    releaseSavePointHolds("pt");
+                    runPurgeJobs();
+                    Assert.assertEquals(context, "[s.k.4, s.v.4]", listColumnFiles("pt", 0, "s"));
+                    assertAttachedRows(context + ", second merge", SYM_MERGE_ROWS, secondMergeRows);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAttachedForeignIndexDropAddIndexThenMergeAdaptive() throws Exception {
+        assertAttachedForeignIndexDdlPairThenMerge("adaptive", true);
+    }
+
+    @Test
+    public void testAttachedForeignIndexDropAddIndexThenMergeNosync() throws Exception {
+        assertAttachedForeignIndexDdlPairThenMerge("nosync", true);
+    }
+
+    @Test
+    public void testAttachedForeignIndexRenameRoundTripThenMergeAdaptive() throws Exception {
+        assertAttachedForeignIndexDdlPairThenMerge("adaptive", false);
+    }
+
+    @Test
+    public void testAttachedForeignIndexRenameRoundTripThenMergeNosync() throws Exception {
+        assertAttachedForeignIndexDdlPairThenMerge("nosync", false);
+    }
+
+    @Test
+    public void testAttachedForeignIndexDropIndexMovesPartition() throws Exception {
+        // DROP INDEX at txn 3 on the attached partition. A foreign version at or above txn 3 leaves with the partition
+        // directory: DROP INDEX moves the partition to a directory named after its txn and queues no purge of the
+        // version, so the cursors opened before it keep reading it until they let go. Version 2, the name txn of the
+        // partition directory, is below txn 3: its purge waits for the cursors, as for any superseded version.
+        // Version 3, the txn of DROP INDEX itself, is left out: DROP INDEX at the txn of an attached version deletes
+        // the index ADD INDEX then builds, a separate bug.
+        setInPlaceParquetO3Properties();
+        assertMemoryLeak(() -> {
+            for (long foreignNameTxn : new long[]{4, 31, 2}) {
+                for (boolean isWal : new boolean[]{true, false}) {
+                    final String context = "foreign version " + foreignNameTxn + (isWal ? ", WAL" : ", non-WAL");
+                    execute("DROP TABLE IF EXISTS pt");
+                    execute("DROP TABLE IF EXISTS src");
+                    createAttachedForeignParquetTable("INDEX", isWal, foreignNameTxn);
+                    final boolean isMoved = foreignNameTxn >= 3;
+                    final String oldDir = partitionDir("pt", "2024-01-01", 2);
+                    final long nativePartitionNameTxn = getPartitionNameTxn("pt", 1);
+                    final ObjList<RecordCursorFactory> factories = new ObjList<>();
+                    final ObjList<RecordCursor> cursors = new ObjList<>();
+                    try {
+                        openStaleIndexCursors(factories, cursors);
+                        execute("ALTER TABLE pt ALTER COLUMN s DROP INDEX");
+                        drainWalQueue();
+                        assertNotSuspended(context);
+                        runPurgeJobs();
+                        assertStaleIndexCursors(context + ", after DROP INDEX", factories, cursors, SYM_ATTACHED_ROWS, SYM_ATTACH_TARGET_ROWS);
+                        // the cursors hold the version they read
+                        Assert.assertEquals(context, "[s.k." + foreignNameTxn + ", s.v." + foreignNameTxn + "]", listColumnFiles(oldDir, "s"));
+                        Assert.assertEquals(context, isMoved ? 3 : 2, getParquetPartitionNameTxn("pt", 0));
+                        Assert.assertEquals(context, 3, getColumnNameTxn("pt", 0, "s"));
+                        if (isMoved) {
+                            Assert.assertEquals(context, "[]", listColumnFiles("pt", 0, "s"));
+                        }
+                        // the native partition keeps its directory
+                        Assert.assertEquals(context, nativePartitionNameTxn, getPartitionNameTxn("pt", 1));
+                    } finally {
+                        Misc.freeObjList(cursors);
+                        Misc.freeObjList(factories);
+                    }
+                    engine.releaseInactive();
+                    releaseSavePointHolds("pt");
+                    runPurgeJobs();
+                    Assert.assertEquals(context, isMoved, !new File(oldDir).exists());
+                    Assert.assertEquals(context, "[]", listColumnFiles("pt", 0, "s"));
+
+                    execute("ALTER TABLE pt ALTER COLUMN s ADD INDEX");
+                    drainWalQueue();
+                    assertNotSuspended(context);
+                    Assert.assertEquals(context, "[s.k.3, s.v.3]", listColumnFiles("pt", 0, "s"));
+                    assertAttachedRows(context + ", after ADD INDEX");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAttachedForeignIndexDropIndexMovesPartitionsAtOrAboveTxn() throws Exception {
+        // Two attached parquet partitions with s at foreign versions, and DROP INDEX at txn 5: the partitions whose
+        // version is at or above the txn move to new directories, the one at version 3 keeps its own. u, a SYMBOL
+        // column without an index, has no index to rebuild in a moved partition.
+        setInPlaceParquetO3Properties();
+        final String[] symbolColumnNames = {"s", "u"};
+        final SymRow[] thirdDayRows = {
+                new SymRow("a", 91, "2024-01-03", "01:00"),
+                new SymRow("b", 92, "2024-01-03", "02:00"),
+                new SymRow("", 93, "2024-01-03", "03:00"),
+                new SymRow("c", 94, "2024-01-03", "04:00")
+        };
+        assertMemoryLeak(() -> {
+            for (long firstForeignNameTxn : new long[]{3, 10}) {
+                for (boolean isWal : new boolean[]{true, false}) {
+                    final String context = "first partition at foreign version " + firstForeignNameTxn + (isWal ? ", WAL" : ", non-WAL");
+                    final boolean isFirstPartitionMoved = firstForeignNameTxn >= 5;
+                    execute("DROP TABLE IF EXISTS pt");
+                    execute("DROP TABLE IF EXISTS src");
+                    execute("CREATE TABLE src (s SYMBOL INDEX, u SYMBOL, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                    execute(symbolRowsInsert("src", symbolColumnNames, "v", SYM_ATTACHED_ROWS));
+                    execute(symbolRowsInsert("src", symbolColumnNames, "v", SYM_SECOND_DAY_ROWS));
+                    updateSourceColumnAtTxn(0, firstForeignNameTxn);
+                    updateSourceColumnAtTxn(1, 20);
+                    execute("CREATE TABLE pt (s SYMBOL INDEX, u SYMBOL, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY " + (isWal ? "WAL" : "BYPASS WAL"));
+                    execute(symbolRowsInsert("pt", symbolColumnNames, "v", thirdDayRows));
+                    drainWalQueue();
+                    copyPartitionFromSource(0, "2024-01-01");
+                    copyPartitionFromSource(1, "2024-01-02");
+                    engine.releaseAllWriters();
+                    execute("ALTER TABLE pt ATTACH PARTITION LIST '2024-01-01', '2024-01-02'");
+                    drainWalQueue();
+                    execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01', '2024-01-02'");
+                    drainWalQueue();
+                    // a commit per attached and per converted partition
+                    Assert.assertEquals(context, 5, getTableTxn("pt"));
+                    final long firstPartitionNameTxn = getParquetPartitionNameTxn("pt", 0);
+                    final long secondPartitionNameTxn = getParquetPartitionNameTxn("pt", 1);
+                    final long lastPartitionNameTxn = getPartitionNameTxn("pt", 2);
+
+                    execute("ALTER TABLE pt ALTER COLUMN s DROP INDEX");
+                    drainWalQueue();
+                    assertNotSuspended(context);
+                    Assert.assertEquals(context, isFirstPartitionMoved ? 5 : firstPartitionNameTxn, getParquetPartitionNameTxn("pt", 0));
+                    Assert.assertEquals(context, 5, getParquetPartitionNameTxn("pt", 1));
+                    Assert.assertEquals(context, lastPartitionNameTxn, getPartitionNameTxn("pt", 2));
+                    Assert.assertEquals(context, 5, getColumnNameTxn("pt", 0, "s"));
+                    Assert.assertEquals(context, 5, getColumnNameTxn("pt", 1, "s"));
+                    engine.releaseInactive();
+                    releaseSavePointHolds("pt");
+                    runPurgeJobs();
+                    Assert.assertEquals(context, isFirstPartitionMoved, !new File(partitionDir("pt", "2024-01-01", firstPartitionNameTxn)).exists());
+                    Assert.assertFalse(context, new File(partitionDir("pt", "2024-01-02", secondPartitionNameTxn)).exists());
+                    Assert.assertEquals(context, "[]", listColumnFiles("pt", 0, "s"));
+                    Assert.assertEquals(context, "[]", listColumnFiles("pt", 1, "s"));
+                    Assert.assertEquals(context, "[]", listColumnFiles("pt", 0, "u"));
+                    Assert.assertEquals(context, "[]", listColumnFiles("pt", 1, "u"));
+
+                    execute("ALTER TABLE pt ALTER COLUMN s ADD INDEX");
+                    drainWalQueue();
+                    assertNotSuspended(context);
+                    Assert.assertEquals(context, "[s.k.5, s.v.5]", listColumnFiles("pt", 0, "s"));
+                    Assert.assertEquals(context, "[s.k.5, s.v.5]", listColumnFiles("pt", 1, "s"));
+                    assertQuery("SELECT s, v, ts FROM pt WHERE s = 'a'")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .returns(symRowsText(false, row -> "a".equals(row.s), SYM_ROW_BY_TS, SYM_ATTACHED_ROWS, SYM_SECOND_DAY_ROWS, thirdDayRows));
+                    assertIndexMatchesFullScan("s");
+                    assertQuery("SELECT u, v, ts FROM pt WHERE u = 'a'")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .returns(symRowsText(false, row -> "a".equals(row.s), SYM_ROW_BY_TS, SYM_ATTACHED_ROWS, SYM_SECOND_DAY_ROWS, thirdDayRows).replace("s\tv\tts", "u\tv\tts"));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAttachedForeignIndexDropIndexMovesAllNullPartition() throws Exception {
+        // the attached partition holds no s value but NULL, at the foreign version 31
+        setInPlaceParquetO3Properties();
+        final SymRow[] nullRows = new SymRow[8];
+        for (int i = 0; i < nullRows.length; i++) {
+            nullRows[i] = new SymRow(null, i + 1, "2024-01-01", "0" + i + ":00");
+        }
+        assertMemoryLeak(() -> {
+            for (boolean isWal : new boolean[]{true, false}) {
+                final String context = isWal ? "WAL" : "non-WAL";
+                execute("DROP TABLE IF EXISTS pt");
+                execute("DROP TABLE IF EXISTS src");
+                createAttachedForeignParquetTable(new String[]{"s"}, "s SYMBOL INDEX", isWal, "TIMESTAMP", "", nullRows, 31, "s");
+                execute("ALTER TABLE pt ALTER COLUMN s DROP INDEX");
+                drainWalQueue();
+                assertNotSuspended(context);
+                Assert.assertEquals(context, 3, getParquetPartitionNameTxn("pt", 0));
+                Assert.assertEquals(context, 3, getColumnNameTxn("pt", 0, "s"));
+                execute("ALTER TABLE pt ALTER COLUMN s ADD INDEX");
+                drainWalQueue();
+                assertNotSuspended(context);
+                Assert.assertEquals(context, "[s.k.3, s.v.3]", listColumnFiles("pt", 0, "s"));
+                assertQuery(STALE_INDEX_QUERIES[1])
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .returns(symRowsText(false, row -> row.s == null && row.day.equals("2024-01-01"), SYM_ROW_BY_TS, nullRows));
+                assertIndexMatchesFullScan("s");
+                engine.releaseInactive();
+                releaseSavePointHolds("pt");
+                runPurgeJobs();
+                Assert.assertFalse(context, new File(partitionDir("pt", "2024-01-01", 2)).exists());
+            }
+        });
+    }
+
+    @Test
+    public void testAttachedForeignIndexDropIndexMovesPartitionNanos() throws Exception {
+        // a TIMESTAMP_NS table, the attached partition's s at the foreign version 31
+        setInPlaceParquetO3Properties();
+        assertMemoryLeak(() -> {
+            for (boolean isWal : new boolean[]{true, false}) {
+                final String context = isWal ? "WAL" : "non-WAL";
+                execute("DROP TABLE IF EXISTS pt");
+                execute("DROP TABLE IF EXISTS src");
+                createAttachedForeignParquetTable(new String[]{"s"}, "s SYMBOL INDEX", isWal, "TIMESTAMP_NS", "", SYM_ATTACHED_ROWS, 31, "s");
+                execute("ALTER TABLE pt ALTER COLUMN s DROP INDEX");
+                drainWalQueue();
+                assertNotSuspended(context);
+                Assert.assertEquals(context, 3, getParquetPartitionNameTxn("pt", 0));
+                Assert.assertEquals(context, 3, getColumnNameTxn("pt", 0, "s"));
+                execute("ALTER TABLE pt ALTER COLUMN s ADD INDEX");
+                drainWalQueue();
+                assertNotSuspended(context);
+                Assert.assertEquals(context, "[s.k.3, s.v.3]", listColumnFiles("pt", 0, "s"));
+                assertStaleIndexQueryRows(context, true, new SymRow[][]{SYM_ATTACHED_ROWS, SYM_ATTACH_TARGET_ROWS});
+                assertIndexMatchesFullScan("s");
+                engine.releaseInactive();
+                releaseSavePointHolds("pt");
+                runPurgeJobs();
+                Assert.assertFalse(context, new File(partitionDir("pt", "2024-01-01", 2)).exists());
+            }
+        });
+    }
+
+    @Test
+    public void testAttachedForeignIndexRenameMovesPartition() throws Exception {
+        // RENAME COLUMN s TO s2 at txn 3 on the attached partition. A foreign version of s at or above txn 3, the
+        // txn of RENAME itself included, leaves with the partition directory: RENAME moves the partition to a
+        // directory named after its txn, builds the index there under the new name, and queues no purge of the
+        // version. Version 2, the name txn of the partition directory, is linked under the new name in place, and
+        // its purge waits for the cursors opened before RENAME.
+        setInPlaceParquetO3Properties();
+        assertMemoryLeak(() -> {
+            for (long foreignNameTxn : new long[]{3, 4, 31, 2}) {
+                for (boolean isWal : new boolean[]{true, false}) {
+                    final String context = "foreign version " + foreignNameTxn + (isWal ? ", WAL" : ", non-WAL");
+                    execute("DROP TABLE IF EXISTS pt");
+                    execute("DROP TABLE IF EXISTS src");
+                    createAttachedForeignParquetTable("INDEX", isWal, foreignNameTxn);
+                    final boolean isMoved = foreignNameTxn >= 3;
+                    final String oldDir = partitionDir("pt", "2024-01-01", 2);
+                    final ObjList<RecordCursorFactory> factories = new ObjList<>();
+                    final ObjList<RecordCursor> cursors = new ObjList<>();
+                    try {
+                        openStaleIndexCursors(factories, cursors);
+                        execute("ALTER TABLE pt RENAME COLUMN s TO s2");
+                        drainWalQueue();
+                        assertNotSuspended(context);
+                        runPurgeJobs();
+                        assertStaleIndexCursors(context + ", after RENAME", factories, cursors, SYM_ATTACHED_ROWS, SYM_ATTACH_TARGET_ROWS);
+                        // the cursors hold the version they read
+                        Assert.assertEquals(context, "[s.k." + foreignNameTxn + ", s.v." + foreignNameTxn + "]", listColumnFiles(oldDir, "s"));
+                        Assert.assertEquals(context, isMoved ? 3 : 2, getParquetPartitionNameTxn("pt", 0));
+                        Assert.assertEquals(context, 3, getColumnNameTxn("pt", 0, "s2"));
+                        Assert.assertEquals(context, "[s2.k.3, s2.v.3]", listColumnFiles("pt", 0, "s2"));
+                        if (isMoved) {
+                            Assert.assertEquals(context, "[]", listColumnFiles("pt", 0, "s"));
+                        }
+                    } finally {
+                        Misc.freeObjList(cursors);
+                        Misc.freeObjList(factories);
+                    }
+                    engine.releaseInactive();
+                    releaseSavePointHolds("pt");
+                    runPurgeJobs();
+                    Assert.assertEquals(context, isMoved, !new File(oldDir).exists());
+                    Assert.assertEquals(context, "[]", listColumnFiles("pt", 0, "s"));
+                    Assert.assertEquals(context, "[s2.k.3, s2.v.3]", listColumnFiles("pt", 0, "s2"));
+                    assertRenamedAttachedRows(context + ", after RENAME", "s2");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAttachedForeignIndexRenameMovesPostingPartition() throws Exception {
+        // As testAttachedForeignIndexRenameMovesPartition, for POSTING indexes and the foreign version 31. No cursor
+        // stays open across RENAME: a POSTING index copied from another table hides the rows its chain stamped with
+        // a txn above the reader's, a separate bug.
+        setInPlaceParquetO3Properties();
+        assertMemoryLeak(() -> {
+            for (String indexDefinition : new String[]{"INDEX TYPE POSTING", "INDEX TYPE POSTING INCLUDE (v)"}) {
+                for (boolean isWal : new boolean[]{true, false}) {
+                    final String context = indexDefinition + (isWal ? ", WAL" : ", non-WAL");
+                    execute("DROP TABLE IF EXISTS pt");
+                    execute("DROP TABLE IF EXISTS src");
+                    createAttachedForeignParquetTable(indexDefinition, isWal, 31);
+                    execute("ALTER TABLE pt RENAME COLUMN s TO s2");
+                    drainWalQueue();
+                    assertNotSuspended(context);
+                    Assert.assertEquals(context, 3, getParquetPartitionNameTxn("pt", 0));
+                    Assert.assertEquals(context, 3, getColumnNameTxn("pt", 0, "s2"));
+                    Assert.assertTrue(context, isIndexKeyFilePresent("pt", 0, IndexType.POSTING, "s2", 3));
+                    Assert.assertEquals(context, "[]", listColumnFiles("pt", 0, "s"));
+                    assertRenamedAttachedRows(context + ", after RENAME", "s2");
+                    if (indexDefinition.contains("INCLUDE")) {
+                        assertQuery(renameSymbolColumn(STALE_INDEX_QUERIES[0], "s2"))
+                                .noLeakCheck()
+                                .timestamp("ts")
+                                .noRandomAccess()
+                                .expectSize()
+                                .withPlanContaining("CoveringIndex on: s2")
+                                .returns(expectedStaleIndexQueryResult(0, false, SYM_ATTACHED_ROWS).replace("s\tv\tts", "s2\tv\tts"));
+                    }
+                    engine.releaseInactive();
+                    releaseSavePointHolds("pt");
+                    runPurgeJobs();
+                    Assert.assertFalse(context, new File(partitionDir("pt", "2024-01-01", 2)).exists());
+                    assertRenamedAttachedRows(context + ", after the purge", "s2");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAttachedForeignIndexDropIndexRebuildsOtherIndexes() throws Exception {
+        // s carries the foreign version 31, and so does t, a POSTING index that INCLUDEs s: the UPDATE of s in the
+        // source table rebuilt it. DROP INDEX on s at txn 3 moves the partition to a new directory and rebuilds t
+        // there, under its own name, with covering sidecars that name s after txn 3. No cursor stays open across
+        // DROP INDEX, and no query reads t before it: a POSTING index copied from another table hides the rows its
+        // chain stamped with a txn above the reader's, a separate bug.
+        setInPlaceParquetO3Properties();
+        final String[] symbolColumnNames = {"s", "t"};
+        assertMemoryLeak(() -> {
+            for (boolean isWal : new boolean[]{true, false}) {
+                final String context = isWal ? "WAL" : "non-WAL";
+                execute("DROP TABLE IF EXISTS pt");
+                execute("DROP TABLE IF EXISTS src");
+                createAttachedForeignParquetTable(
+                        symbolColumnNames,
+                        "s SYMBOL INDEX, t SYMBOL INDEX TYPE POSTING INCLUDE (s, v)",
+                        isWal,
+                        "TIMESTAMP",
+                        "",
+                        SYM_ATTACHED_ROWS,
+                        31,
+                        "s"
+                );
+                execute("ALTER TABLE pt ALTER COLUMN s DROP INDEX");
+                drainWalQueue();
+                assertNotSuspended(context);
+                Assert.assertEquals(context, 3, getParquetPartitionNameTxn("pt", 0));
+                Assert.assertEquals(context, 3, getColumnNameTxn("pt", 0, "s"));
+                Assert.assertEquals(context, 31, getColumnNameTxn("pt", 0, "t"));
+                Assert.assertEquals(context, "[]", listColumnFiles("pt", 0, "s"));
+                Assert.assertTrue(context, isIndexKeyFilePresent("pt", 0, IndexType.POSTING, "t", 31));
+                assertCoveredSymbolRows(context, SYM_ATTACHED_ROWS);
+                assertIndexMatchesFullScan("t");
+                engine.releaseInactive();
+                releaseSavePointHolds("pt");
+                runPurgeJobs();
+                Assert.assertFalse(context, new File(partitionDir("pt", "2024-01-01", 2)).exists());
+                assertCoveredSymbolRows(context + ", after the purge", SYM_ATTACHED_ROWS);
+                assertIndexMatchesFullScan("t");
+            }
+        });
+    }
+
+    @Test
+    public void testAttachedForeignIndexDropIndexMoveRepairsStaleColumnTop() throws Exception {
+        // QuestDB 9.3.4 - 10.0.1 kept the _cv column top of a column across an in-place merge that wrote its values
+        // into the rows below the top, see StaleParquetColumnTopTest. Here t has such a top, 6 of the 12 rows of the
+        // attached partition, whose s carries the foreign version 31. No statement leaves such a top now, and no
+        // fixture has a foreign version, so the test writes the top through the writer. DROP INDEX on s moves the
+        // partition and rebuilds the index of t in the new directory: it zeroes the stale tops first, as ADD INDEX
+        // does, and the index covers the rows below the old top.
+        setInPlaceParquetO3Properties();
+        final String[] symbolColumnNames = {"s", "t"};
+        assertMemoryLeak(() -> {
+            createAttachedForeignParquetTable(symbolColumnNames, "s SYMBOL INDEX, t SYMBOL INDEX", false, "TIMESTAMP", "", SYM_ATTACHED_ROWS, 31, "s");
+            try (TableWriter writer = getWriter("pt")) {
+                writer.getColumnVersionWriter().upsertColumnTop(writer.getPartitionTimestamp(0), writer.getMetadata().getColumnIndex("t"), 6);
+                writer.commit();
+            }
+            Assert.assertEquals(4, getTableTxn("pt"));
+            Assert.assertEquals(6, getColumnTop("pt", 0, "t"));
+            assertExceptionNoLeakCheck(
+                    "SELECT t, v, ts FROM pt WHERE t = 'a'",
+                    -1,
+                    STALE_PARQUET_INDEX_ERROR + ", rebuild it with ALTER TABLE pt FORCE REINDEX PARQUET PARTITION LIST '2024-01-01'"
+                            + " [table=pt, partition=2024-01-01, index=t, column=t]"
+            );
+
+            execute("ALTER TABLE pt ALTER COLUMN s DROP INDEX");
+            Assert.assertEquals(4, getParquetPartitionNameTxn("pt", 0));
+            Assert.assertEquals(4, getColumnNameTxn("pt", 0, "s"));
+            for (String columnName : new String[]{"s", "t", "v", "ts"}) {
+                Assert.assertEquals(columnName, 0, getColumnTop("pt", 0, columnName));
+            }
+            Assert.assertEquals("[]", listColumnFiles("pt", 0, "s"));
+            Assert.assertEquals("[t.k, t.v]", listColumnFiles("pt", 0, "t"));
+            // rows 0 and 3, v 1 and 4, are below the old top
+            assertQuery("SELECT t, v, ts FROM pt WHERE t = 'a'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlanContaining("Index forward scan on: t")
+                    .returns(symRowsText(false, row -> "a".equals(row.s), SYM_ROW_BY_TS, SYM_ATTACHED_ROWS, SYM_ATTACH_TARGET_ROWS).replace("s\tv\tts", "t\tv\tts"));
+            assertIndexMatchesFullScan("t");
+        });
+    }
+
+    @Test
+    public void testAttachedForeignIndexRenameCoveredByPosting() throws Exception {
+        // As testAttachedForeignIndexDropIndexRebuildsOtherIndexes, RENAME COLUMN s TO s2 at txn 3: the partition
+        // moves to a new directory, which holds the index of s2 under txn 3, and t's covering sidecars name s2 after
+        // txn 3.
+        setInPlaceParquetO3Properties();
+        final String[] symbolColumnNames = {"s", "t"};
+        assertMemoryLeak(() -> {
+            for (boolean isWal : new boolean[]{true, false}) {
+                final String context = isWal ? "WAL" : "non-WAL";
+                execute("DROP TABLE IF EXISTS pt");
+                execute("DROP TABLE IF EXISTS src");
+                createAttachedForeignParquetTable(
+                        symbolColumnNames,
+                        "s SYMBOL INDEX, t SYMBOL INDEX TYPE POSTING INCLUDE (s, v)",
+                        isWal,
+                        "TIMESTAMP",
+                        "",
+                        SYM_ATTACHED_ROWS,
+                        31,
+                        "s"
+                );
+                execute("ALTER TABLE pt RENAME COLUMN s TO s2");
+                drainWalQueue();
+                assertNotSuspended(context);
+                Assert.assertEquals(context, 3, getParquetPartitionNameTxn("pt", 0));
+                Assert.assertEquals(context, 3, getColumnNameTxn("pt", 0, "s2"));
+                Assert.assertEquals(context, "[s2.k.3, s2.v.3]", listColumnFiles("pt", 0, "s2"));
+                assertRenamedCoveredSymbolRows(context);
+                engine.releaseInactive();
+                releaseSavePointHolds("pt");
+                runPurgeJobs();
+                Assert.assertFalse(context, new File(partitionDir("pt", "2024-01-01", 2)).exists());
+                assertRenamedCoveredSymbolRows(context + ", after the purge");
+                assertIndexMatchesFullScan("s2");
+            }
+        });
+    }
+
+    @Test
+    public void testAttachedForeignIndexDropIndexMoveLinkFailure() throws Exception {
+        // DROP INDEX at txn 3 fails to link data.parquet into the new directory of the attached partition, whose s
+        // carries the foreign version 31. Nothing is committed, the new directory goes, and the retry moves the
+        // partition.
+        assertAttachedForeignIndexDropIndexMoveFailure("data.parquet", "could not create hard link");
+    }
+
+    @Test
+    public void testAttachedForeignIndexDropIndexMoveNativeLinkFailure() throws Exception {
+        // DROP INDEX at txn 3 moves the attached partition, whose s carries the foreign version 31, and then fails to
+        // link the data of s under txn 3 in the native partition 2024-01-02. DROP INDEX removes the new directory of
+        // the moved partition and reloads _txn and _cv, and the retry moves the partition.
+        assertAttachedForeignIndexDropIndexMoveFailure("s.d", "cannot hardLink");
+    }
+
+    @Test
+    public void testAttachedForeignIndexDropIndexMoveFailureOnBusyWriter() throws Exception {
+        // DROP INDEX on s runs on the command queue of a writer the test holds, and no rollback follows a failed
+        // command there: the writer goes on with what DROP INDEX left. In table pt of
+        // testAttachedForeignIndexDropIndexMoveNativeLinkFailure, DROP INDEX at txn 3 moves the attached partition,
+        // whose s carries the foreign version 31, then fails to link the data of s under txn 3 in the native partition
+        // 2024-01-02. In an all-native table, it fails to link that of 2024-01-01, which no move precedes. DROP INDEX
+        // removes the new directory and reloads _txn and _cv either way, so the writer commits its next row on the
+        // state of before it.
+        setInPlaceParquetO3Properties();
+        final ConvertToNativeFailingFacade ff = new ConvertToNativeFailingFacade("pt");
+        final String[] symbolColumnNames = {"s", "t"};
+        final SymRow[] newRows = {new SymRow("a", 95, "2024-01-02", "05:00")};
+        assertMemoryLeak(ff, () -> {
+            for (boolean isParquet : new boolean[]{true, false}) {
+                final String context = isParquet ? "attached parquet partition" : "all-native";
+                execute("DROP TABLE IF EXISTS pt");
+                execute("DROP TABLE IF EXISTS src");
+                if (isParquet) {
+                    createAttachedForeignParquetTable(symbolColumnNames, "s SYMBOL INDEX, t SYMBOL INDEX", false, "TIMESTAMP", "", SYM_ATTACHED_ROWS, 31, "s");
+                } else {
+                    execute("CREATE TABLE pt (s SYMBOL INDEX, t SYMBOL INDEX, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                    execute(twoSymbolRowsInsert("pt", SYM_ATTACHED_ROWS));
+                    execute(twoSymbolRowsInsert("pt", SYM_ATTACH_TARGET_ROWS));
+                }
+                final long txn = getTableTxn("pt");
+                final long partitionNameTxn = getPartitionNameTxn("pt", 0);
+                final long columnNameTxn = getColumnNameTxn("pt", 0, "s");
+                Assert.assertEquals(context, isParquet ? 31 : -1, columnNameTxn);
+                try (TableWriter writer = getWriter("pt")) {
+                    final int columnIndex = writer.getMetadata().getColumnIndex("s");
+                    ff.arm(false, "s.d");
+                    try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                        final CompiledQuery cq = compiler.compile("ALTER TABLE pt ALTER COLUMN s DROP INDEX", sqlExecutionContext);
+                        try (OperationFuture fut = cq.execute(eventSubSequence)) {
+                            writer.tick();
+                            fut.await();
+                        }
+                        Assert.fail(context + ": DROP INDEX must fail");
+                    } catch (SqlException | CairoException e) {
+                        TestUtils.assertContains(context, e.getMessage(), "cannot remove index for [txn=" + txn + ", table=pt, column=s]");
+                        TestUtils.assertContains(context, e.getMessage(), "cannot hardLink");
+                    }
+                    Assert.assertTrue(context, ff.hasFired());
+                    Assert.assertEquals(context, txn, writer.getTxn());
+                    Assert.assertEquals(context, partitionNameTxn, writer.getPartitionNameTxn(0));
+                    Assert.assertEquals(context, columnNameTxn, writer.getColumnNameTxn(writer.getPartitionTimestamp(0), columnIndex));
+                    Assert.assertEquals(context, -1, writer.getColumnNameTxn(writer.getPartitionTimestamp(1), columnIndex));
+                    if (isParquet) {
+                        Assert.assertFalse(context, new File(partitionDir("pt", "2024-01-01", txn)).exists());
+                    }
+                    // 2024-01-02T05:00
+                    final TableWriter.Row row = writer.newRow(1_704_153_600_000_000L + 5 * Micros.HOUR_MICROS);
+                    row.putSym(columnIndex, "a");
+                    row.putSym(writer.getMetadata().getColumnIndex("t"), "a");
+                    row.putInt(writer.getMetadata().getColumnIndex("v"), 95);
+                    row.append();
+                    writer.commit();
+                }
+                Assert.assertEquals(context, txn + 1, getTableTxn("pt"));
+                Assert.assertEquals(context, partitionNameTxn, getPartitionNameTxn("pt", 0));
+                Assert.assertEquals(context, columnNameTxn, getColumnNameTxn("pt", 0, "s"));
+                assertSColumnIndexed(context, true);
+                assertAttachedRows(context + ", after the commit", newRows);
+                assertIndexMatchesFullScan("t");
+            }
+        });
+    }
+
+    @Test
+    public void testAttachedForeignIndexDropIndexMoveRebuildFailure() throws Exception {
+        // DROP INDEX on s at txn 3 moves the attached partition, whose s carries the foreign version 31, and fails to
+        // open the key file of t when it rebuilds the index of t in the new directory
+        assertAttachedForeignIndexDropIndexMoveFailure("t.k", "could not open");
+    }
+
+    @Test
+    public void testAttachedForeignIndexDropIndexMoveDirectoryFailures() throws Exception {
+        // DROP INDEX at txn 3 moves the attached partition, whose s carries the foreign version 31, to a new directory
+        // and fails on the way: data.parquet or _pm of the partition is missing, the new directory cannot be created,
+        // or, after the link of data.parquet failed, it cannot be removed. Nothing is committed, and the retry moves
+        // the partition, into the directory the failed attempt could not remove too.
+        setInPlaceParquetO3Properties();
+        final PartitionMoveFailingFacade ff = new PartitionMoveFailingFacade();
+        final String[] faults = {"missing data.parquet", "missing _pm", "mkdirs", "rmdir"};
+        assertMemoryLeak(ff, () -> {
+            for (String fault : faults) {
+                for (boolean isWal : new boolean[]{true, false}) {
+                    final String context = fault + (isWal ? ", WAL" : ", non-WAL");
+                    execute("DROP TABLE IF EXISTS pt");
+                    execute("DROP TABLE IF EXISTS src");
+                    createAttachedForeignParquetTable("INDEX", isWal, 31);
+                    final String error;
+                    switch (fault) {
+                        case "missing data.parquet" -> {
+                            ff.missingFileName.set("2024-01-01.2" + Files.SEPARATOR + TableUtils.PARQUET_PARTITION_NAME);
+                            error = "could not link parquet partition file";
+                        }
+                        case "missing _pm" -> {
+                            ff.missingFileName.set("2024-01-01.2" + Files.SEPARATOR + TableUtils.PARQUET_METADATA_FILE_NAME);
+                            error = "could not link parquet partition file";
+                        }
+                        case "mkdirs" -> {
+                            ff.failingMkdirsDir.set("2024-01-01.3");
+                            error = "could not create directories";
+                        }
+                        default -> {
+                            ff.failingHardLinkFileName.set("2024-01-01.2" + Files.SEPARATOR + TableUtils.PARQUET_PARTITION_NAME);
+                            ff.failingRmdirDir.set("2024-01-01.3");
+                            error = "could not create hard link";
+                        }
+                    }
+                    if (isWal) {
+                        execute("ALTER TABLE pt ALTER COLUMN s DROP INDEX");
+                        drainWalQueue();
+                        final TableToken tableToken = engine.verifyTableName("pt");
+                        Assert.assertTrue(context, engine.getTableSequencerAPI().isSuspended(tableToken));
+                        TestUtils.assertContains(context, engine.getTableSequencerAPI().getTxnTracker(tableToken).getErrorMessage(), error);
+                    } else {
+                        try {
+                            execute("ALTER TABLE pt ALTER COLUMN s DROP INDEX");
+                            Assert.fail(context + ": DROP INDEX must fail");
+                        } catch (CairoException e) {
+                            TestUtils.assertContains(context, e.getFlyweightMessage(), "cannot remove index for [txn=3, table=pt, column=s]");
+                            TestUtils.assertContains(context, e.getFlyweightMessage(), error);
+                        }
+                    }
+                    Assert.assertTrue(context, ff.hasFired());
+                    Assert.assertEquals(context, 3, getTableTxn("pt"));
+                    Assert.assertEquals(context, 2, getParquetPartitionNameTxn("pt", 0));
+                    Assert.assertEquals(context, 31, getColumnNameTxn("pt", 0, "s"));
+                    // a directory the failed attempt could not remove stays until the retry takes it
+                    Assert.assertEquals(context, fault.equals("rmdir"), new File(partitionDir("pt", "2024-01-01", 3)).exists());
+                    assertSColumnIndexed(context, true);
+                    assertAttachedRows(context + ", after the failure");
+
+                    if (isWal) {
+                        execute("ALTER TABLE pt RESUME WAL");
+                        drainWalQueue();
+                        assertNotSuspended(context);
+                    } else {
+                        execute("ALTER TABLE pt ALTER COLUMN s DROP INDEX");
+                    }
+                    Assert.assertEquals(context, 3, getParquetPartitionNameTxn("pt", 0));
+                    Assert.assertEquals(context, 3, getColumnNameTxn("pt", 0, "s"));
+                    assertSColumnIndexed(context, false);
+                    execute("ALTER TABLE pt ALTER COLUMN s ADD INDEX");
+                    drainWalQueue();
+                    assertNotSuspended(context);
+                    Assert.assertEquals(context, "[s.k.3, s.v.3]", listColumnFiles("pt", 0, "s"));
+                    assertAttachedRows(context + ", after the retry and ADD INDEX");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAttachedForeignIndexDropIndexMoveTxnMsyncFailure() throws Exception {
+        // DROP INDEX at txn 3 moves the attached partition, whose s carries the foreign version 31, and the msync of
+        // _txn fails after the commit switched its record: DROP INDEX landed, with the partition in its new directory
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
+        setInPlaceParquetO3Properties();
+        final TxnMsyncFailingFacade ff = new TxnMsyncFailingFacade("pt");
+        assertMemoryLeak(ff, () -> {
+            for (boolean isWal : new boolean[]{true, false}) {
+                final String context = isWal ? "WAL" : "non-WAL";
+                execute("DROP TABLE IF EXISTS pt");
+                execute("DROP TABLE IF EXISTS src");
+                createAttachedForeignParquetTable("INDEX", isWal, 31);
+                ff.isArmed.set(true);
+                if (isWal) {
+                    execute("ALTER TABLE pt ALTER COLUMN s DROP INDEX");
+                    drainWalQueue();
+                    Assert.assertTrue(context, engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("pt")));
+                    execute("ALTER TABLE pt RESUME WAL");
+                    drainWalQueue();
+                    assertNotSuspended(context);
+                } else {
+                    try {
+                        execute("ALTER TABLE pt ALTER COLUMN s DROP INDEX");
+                        Assert.fail(context + ": the _txn msync must fail");
+                    } catch (CairoError e) {
+                        // the writer is distressed
+                        TestUtils.assertContains(context, e.getMessage(), "could not msync");
+                    }
+                }
+                Assert.assertFalse(context, ff.isArmed.get());
+                // the distressed writer goes; the next one removes the directory version _txn does not name
+                engine.releaseInactive();
+                try (TableWriter writer = getWriter("pt")) {
+                    Assert.assertEquals(context, 4, writer.getTxn());
+                }
+                Assert.assertEquals(context, 4, getTableTxn("pt"));
+                Assert.assertEquals(context, 3, getParquetPartitionNameTxn("pt", 0));
+                Assert.assertEquals(context, 3, getColumnNameTxn("pt", 0, "s"));
+                assertSColumnIndexed(context, false);
+                releaseSavePointHolds("pt");
+                runPurgeJobs();
+                Assert.assertFalse(context, new File(partitionDir("pt", "2024-01-01", 2)).exists());
+                assertQuery("SELECT s, v, ts FROM pt")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns(symRowsText(false, row -> true, SYM_ROW_BY_TS, SYM_ATTACHED_ROWS, SYM_ATTACH_TARGET_ROWS));
+            }
+        });
+    }
+
+    @Test
+    public void testAttachedForeignIndexRenameMoveFailure() throws Exception {
+        // RENAME COLUMN s TO s2 at txn 3 fails to link data.parquet into the new directory of the attached partition,
+        // whose s carries the foreign version 31. The writer reopens with the column named s, its foreign version and
+        // its directory, and the retry moves the partition.
+        setInPlaceParquetO3Properties();
+        final ConvertToNativeFailingFacade ff = new ConvertToNativeFailingFacade("pt");
+        assertMemoryLeak(ff, () -> {
+            for (boolean isWal : new boolean[]{true, false}) {
+                final String context = isWal ? "WAL" : "non-WAL";
+                execute("DROP TABLE IF EXISTS pt");
+                execute("DROP TABLE IF EXISTS src");
+                createAttachedForeignParquetTable("INDEX", isWal, 31);
+                ff.arm(false, "data.parquet");
+                if (isWal) {
+                    execute("ALTER TABLE pt RENAME COLUMN s TO s2");
+                    drainWalQueue();
+                    Assert.assertTrue(context, engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("pt")));
+                } else {
+                    try {
+                        execute("ALTER TABLE pt RENAME COLUMN s TO s2");
+                        Assert.fail(context + ": RENAME must fail");
+                    } catch (CairoError e) {
+                        // the writer is distressed
+                        TestUtils.assertContains(context, e.getMessage(), "could not create hard link");
+                    }
+                }
+                Assert.assertTrue(context, ff.hasFired());
+                // the reopened writer brings _meta back from _todo
+                engine.releaseInactive();
+                try (TableWriter writer = getWriter("pt")) {
+                    Assert.assertEquals(context, 3, writer.getTxn());
+                }
+                Assert.assertEquals(context, 3, getTableTxn("pt"));
+                assertSColumnIndexed(context, true);
+                Assert.assertEquals(context, 2, getParquetPartitionNameTxn("pt", 0));
+                Assert.assertEquals(context, 31, getColumnNameTxn("pt", 0, "s"));
+                Assert.assertFalse(context, new File(partitionDir("pt", "2024-01-01", 3)).exists());
+                assertAttachedRows(context + ", after the failure");
+
+                if (isWal) {
+                    execute("ALTER TABLE pt RESUME WAL");
+                    drainWalQueue();
+                    assertNotSuspended(context);
+                } else {
+                    execute("ALTER TABLE pt RENAME COLUMN s TO s2");
+                }
+                Assert.assertEquals(context, 3, getParquetPartitionNameTxn("pt", 0));
+                Assert.assertEquals(context, 3, getColumnNameTxn("pt", 0, "s2"));
+                assertRenamedAttachedRows(context + ", after the retry", "s2");
+            }
+        });
+    }
+
+    @Test
+    public void testAttachedForeignIndexDropIndexOnLastPartition() throws Exception {
+        // The attached partition is the last partition of a WAL table, with s at the foreign version 5, the txn of
+        // the append after DROP INDEX at txn 3 and ADD INDEX at txn 4. DROP INDEX moves the partition to a new
+        // directory, and the appends at txns 5 and 6 update it in place.
+        assertAttachedForeignIndexDdlOnLastPartition(true);
+    }
+
+    @Test
+    public void testAttachedForeignIndexRenameOnLastPartition() throws Exception {
+        // As testAttachedForeignIndexDropIndexOnLastPartition, with RENAME COLUMN s TO s2 at txn 3
+        assertAttachedForeignIndexDdlOnLastPartition(false);
+    }
+
+    @Test
+    public void testAttachedForeignIndexDropIndexColdPartitionStays() throws Exception {
+        // A cold partition has no local data to link into a new directory version: DROP INDEX leaves it in its
+        // directory, as REINDEX does
+        setInPlaceParquetO3Properties();
+        assertMemoryLeak(() -> {
+            createAttachedForeignParquetTable("INDEX", false, 31);
+            try (TableWriter writer = getWriter("pt")) {
+                writer.getTxWriter().setPartitionParquetGenerated(0, false);
+                writer.getTxWriter().setPartitionRemote(0, true);
+                writer.bumpPartitionTableVersion();
+                writer.commit();
+            }
+            Assert.assertEquals(4, getTableTxn("pt"));
+            execute("ALTER TABLE pt ALTER COLUMN s DROP INDEX");
+            Assert.assertEquals(2, getParquetPartitionNameTxn("pt", 0));
+            Assert.assertEquals(4, getColumnNameTxn("pt", 0, "s"));
+            Assert.assertFalse(new File(partitionDir("pt", "2024-01-01", 4)).exists());
+        });
+    }
+
+    @Test
+    public void testAttachedForeignIndexDropIndexRemotePartitionKeepsRemoteBit() throws Exception {
+        // A partition uploaded to the object store that keeps its local data moves to a new directory version as any
+        // other, and stays marked remote: its parquet file does not change
+        setInPlaceParquetO3Properties();
+        assertMemoryLeak(() -> {
+            createAttachedForeignParquetTable("INDEX", false, 31);
+            try (TableWriter writer = getWriter("pt")) {
+                writer.getTxWriter().setPartitionRemote(0, true);
+                writer.bumpPartitionTableVersion();
+                writer.commit();
+            }
+            Assert.assertEquals(4, getTableTxn("pt"));
+            execute("ALTER TABLE pt ALTER COLUMN s DROP INDEX");
+            Assert.assertEquals(4, getParquetPartitionNameTxn("pt", 0));
+            Assert.assertEquals(4, getColumnNameTxn("pt", 0, "s"));
+            try (TableReader reader = getReader("pt")) {
+                Assert.assertTrue(reader.getTxFile().isPartitionRemote(0));
+            }
+            assertQuery("SELECT s, v, ts FROM pt")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(symRowsText(false, row -> true, SYM_ROW_BY_TS, SYM_ATTACHED_ROWS, SYM_ATTACH_TARGET_ROWS));
+        });
+    }
+
+    @Test
+    public void testAttachedForeignIndexDdlReadOnlyPartitionStays() throws Exception {
+        // The attached partition, detached and attached back through a soft link, is read-only and keeps the foreign
+        // version 31 of s. It cannot move off its volume, and no in-place commit reaches it: DROP INDEX and RENAME
+        // COLUMN leave it in its directory.
+        setInPlaceParquetO3Properties();
+        assertMemoryLeak(() -> {
+            for (boolean isDropIndex : new boolean[]{true, false}) {
+                final String context = isDropIndex ? "DROP INDEX" : "RENAME";
+                execute("DROP TABLE IF EXISTS pt");
+                execute("DROP TABLE IF EXISTS src");
+                createAttachedForeignParquetTable("INDEX", false, 31);
+                reattachPartitionFromSoftLink("2024-01-01", isDropIndex ? "read-only-drop-index" : "read-only-rename");
+                final long partitionNameTxn = getParquetPartitionNameTxn("pt", 0);
+                final long txn = getTableTxn("pt");
+                try (TableReader reader = getReader("pt")) {
+                    Assert.assertTrue(context, reader.getTxFile().isPartitionReadOnly(0));
+                }
+                Assert.assertEquals(context, 31, getColumnNameTxn("pt", 0, "s"));
+
+                execute(isDropIndex ? "ALTER TABLE pt ALTER COLUMN s DROP INDEX" : "ALTER TABLE pt RENAME COLUMN s TO s2");
+                Assert.assertEquals(context, partitionNameTxn, getParquetPartitionNameTxn("pt", 0));
+                Assert.assertEquals(context, txn, getColumnNameTxn("pt", 0, isDropIndex ? "s" : "s2"));
+                try (TableReader reader = getReader("pt")) {
+                    Assert.assertTrue(context, reader.getTxFile().isPartitionReadOnly(0));
+                }
+                engine.releaseInactive();
+                runPurgeJobs();
+                assertQuery("SELECT * FROM pt")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns(symRowsText(false, row -> true, SYM_ROW_BY_TS, SYM_ATTACHED_ROWS, SYM_ATTACH_TARGET_ROWS).replace("s\tv\tts", (isDropIndex ? "s" : "s2") + "\tv\tts"));
+            }
+        });
+    }
+
+    @Test
+    public void testAttachedForeignIndexDropIndexMoveAcrossRestartAndReattach() throws Exception {
+        // DROP INDEX moves the attached partition with the foreign version 31 to a new directory version. The move
+        // survives a writer and reader restart, ADD INDEX builds the index there, and after DETACH and ATTACH the
+        // next merge updates the partition in place.
+        setInPlaceParquetO3Properties();
+        assertMemoryLeak(() -> {
+            createAttachedForeignParquetTable("INDEX", true, 31);
+            execute("ALTER TABLE pt ALTER COLUMN s DROP INDEX");
+            drainWalQueue();
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            Assert.assertEquals(3, getParquetPartitionNameTxn("pt", 0));
+            Assert.assertEquals(3, getColumnNameTxn("pt", 0, "s"));
+            assertSColumnIndexed("after the restart", false);
+
+            execute("ALTER TABLE pt ALTER COLUMN s ADD INDEX");
+            drainWalQueue();
+            Assert.assertEquals("[s.k.3, s.v.3]", listColumnFiles("pt", 0, "s"));
+            reattachPartition("2024-01-01");
+            Assert.assertEquals(3, getColumnNameTxn("pt", 0, "s"));
+
+            final long rewriteCount = O3ParquetCounters.getRewriteCount();
+            final long txnBefore = getTableTxn("pt");
+            execute(symRowsInsert(SYM_MERGE_ROWS));
+            drainWalQueue();
+            assertNotSuspended("merge");
+            Assert.assertEquals(rewriteCount, O3ParquetCounters.getRewriteCount());
+            Assert.assertEquals(txnBefore, getColumnNameTxn("pt", 0, "s"));
+            assertAttachedRows("after the merge", SYM_MERGE_ROWS);
+        });
+    }
+
+    @Test
+    public void testAttachedForeignNativeDdlKeepsDirectory() throws Exception {
+        // The attached partition stays native, with s at the foreign version 31. DROP INDEX and RENAME COLUMN link its
+        // column files under their txn in place, as for any native partition: a native directory version that
+        // hard-links the live column files would let a later in-place write change the rows readers of the old one
+        // see. No reader stays open: the column purge of the foreign version would not wait for one pinned since the
+        // attach, a separate bug.
+        assertMemoryLeak(() -> {
+            for (boolean isDropIndex : new boolean[]{true, false}) {
+                for (boolean isWal : new boolean[]{true, false}) {
+                    final String context = (isDropIndex ? "DROP INDEX" : "RENAME") + (isWal ? ", WAL" : ", non-WAL");
+                    execute("DROP TABLE IF EXISTS pt");
+                    execute("DROP TABLE IF EXISTS src");
+                    execute("CREATE TABLE src (s SYMBOL INDEX, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                    execute(symbolRowsInsert("src", new String[]{"s"}, "v", SYM_ATTACHED_ROWS));
+                    updateSourceColumnAtTxn(0, 31);
+                    execute("CREATE TABLE pt (s SYMBOL INDEX, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY " + (isWal ? "WAL" : "BYPASS WAL"));
+                    execute(symRowsInsert(SYM_ATTACH_TARGET_ROWS));
+                    drainWalQueue();
+                    attachFromSource(0, "2024-01-01");
+                    Assert.assertEquals(context, 31, getColumnNameTxn("pt", 0, "s"));
+                    final long partitionNameTxn = getPartitionNameTxn("pt", 0);
+                    final long txn = getTableTxn("pt");
+
+                    execute(isDropIndex ? "ALTER TABLE pt ALTER COLUMN s DROP INDEX" : "ALTER TABLE pt RENAME COLUMN s TO s2");
+                    drainWalQueue();
+                    assertNotSuspended(context);
+                    Assert.assertEquals(context, partitionNameTxn, getPartitionNameTxn("pt", 0));
+                    Assert.assertFalse(context, new File(partitionDir("pt", "2024-01-01", txn)).exists());
+                    final String columnName = isDropIndex ? "s" : "s2";
+                    Assert.assertEquals(context, txn, getColumnNameTxn("pt", 0, columnName));
+                    engine.releaseInactive();
+                    releaseSavePointHolds("pt");
+                    runPurgeJobs();
+                    if (isDropIndex) {
+                        // s.d, s.k and s.v are the version the source table's UPDATE superseded, copied with the directory
+                        Assert.assertEquals(context, "[s.d, s.d." + txn + ", s.k, s.v]", listColumnFiles("pt", 0, "s"));
+                    } else {
+                        Assert.assertEquals(context, "[s2.d." + txn + ", s2.k." + txn + ", s2.v." + txn + "]", listColumnFiles("pt", 0, "s2"));
+                    }
+                    final String expectedRows = symRowsText(false, row -> true, SYM_ROW_BY_TS, SYM_ATTACHED_ROWS, SYM_ATTACH_TARGET_ROWS);
+                    assertQuery("SELECT " + columnName + ", v, ts FROM pt")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .expectSize()
+                            .returns(expectedRows.replace("s\tv\tts", columnName + "\tv\tts"));
+                    if (!isDropIndex) {
+                        assertRenamedAttachedRows(context, "s2");
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAttachedForeignNonIndexedRenameQueuesNoPurge() throws Exception {
+        // u (SYMBOL, not indexed) and v (INT) of the attached partition carry the foreign version 31, and a parquet
+        // partition directory holds no file of them. RENAME of such a column queues no purge of the version, which
+        // would delete the index a later in-place commit at txn 31 builds under that name once the column has its
+        // name back and an index: RENAME u TO u2, RENAME v TO v2, RENAME u2 TO u, ADD INDEX on u, commits up to txn
+        // 31 and a merge into the partition at txn 31, all under a reader pinned at txn 3
+        setInPlaceParquetO3Properties();
+        final String[] symbolColumnNames = {"s", "u"};
+        assertMemoryLeak(() -> {
+            for (boolean isWal : new boolean[]{true, false}) {
+                final String context = isWal ? "WAL" : "non-WAL";
+                execute("DROP TABLE IF EXISTS pt");
+                execute("DROP TABLE IF EXISTS src");
+                createAttachedForeignParquetTable(symbolColumnNames, "s SYMBOL INDEX, u SYMBOL", isWal, "TIMESTAMP", "", SYM_ATTACHED_ROWS, 31, "u", "v");
+                // after the 3 RENAMEs and ADD INDEX at txns 3 to 6, appends to partition 2024-01-02 move the table to txn 31
+                final SymRow[] appendRows = new SymRow[24];
+                try (TableReader ignore = getReader("pt")) {
+                    execute("ALTER TABLE pt RENAME COLUMN u TO u2");
+                    drainWalQueue();
+                    assertNotSuspended(context);
+                    Assert.assertEquals(context, 2, getParquetPartitionNameTxn("pt", 0));
+                    Assert.assertEquals(context, 3, getColumnNameTxn("pt", 0, "u2"));
+                    execute("ALTER TABLE pt RENAME COLUMN v TO v2");
+                    drainWalQueue();
+                    assertNotSuspended(context);
+                    Assert.assertEquals(context, 2, getParquetPartitionNameTxn("pt", 0));
+                    Assert.assertEquals(context, 4, getColumnNameTxn("pt", 0, "v2"));
+                    execute("ALTER TABLE pt RENAME COLUMN u2 TO u");
+                    drainWalQueue();
+                    execute("ALTER TABLE pt ALTER COLUMN u ADD INDEX");
+                    drainWalQueue();
+                    assertNotSuspended(context);
+                    Assert.assertEquals(context, "[u.k.5, u.v.5]", listColumnFiles("pt", 0, "u"));
+                    for (int i = 0; i < appendRows.length; i++) {
+                        appendRows[i] = new SymRow("b", 200 + i, "2024-01-02", String.format("05:%02d", i));
+                        execute(symbolRowsInsert("pt", symbolColumnNames, "v2", appendRows[i]));
+                        drainWalQueue();
+                    }
+                    Assert.assertEquals(context, 31, getTableTxn("pt"));
+                    execute(symbolRowsInsert("pt", symbolColumnNames, "v2", SYM_MERGE_ROWS));
+                    drainWalQueue();
+                    assertNotSuspended(context);
+                    Assert.assertEquals(context, 2, getParquetPartitionNameTxn("pt", 0));
+                    Assert.assertEquals(context, 31, getColumnNameTxn("pt", 0, "u"));
+                }
+                engine.releaseInactive();
+                releaseSavePointHolds("pt");
+                runPurgeJobs();
+                Assert.assertEquals(context, "[u.k.31, u.v.31]", listColumnFiles("pt", 0, "u"));
+                assertQuery("SELECT u, v2, ts FROM pt WHERE u = 'a' AND ts IN '2024-01-01'")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .returns(expectedStaleIndexQueryResult(0, false, SYM_ATTACHED_ROWS, SYM_MERGE_ROWS).replace("s\tv\tts", "u\tv2\tts"));
+                assertSqlCursors("SELECT u, v2, ts FROM pt WHERE u::VARCHAR = 'a'", "SELECT u, v2, ts FROM pt WHERE u = 'a'");
+                assertQuery("SELECT s, v2, ts FROM pt WHERE ts IN '2024-01-01'")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .returns(symRowsText(false, row -> true, SYM_ROW_BY_TS, SYM_ATTACHED_ROWS, SYM_MERGE_ROWS).replace("s\tv\tts", "s\tv2\tts"));
+                assertSqlCursors("SELECT s, v2, ts FROM pt WHERE s::VARCHAR = 'a'", "SELECT s, v2, ts FROM pt WHERE s = 'a'");
+            }
         });
     }
 
@@ -3364,11 +4877,10 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAttachedMissingIndexSecondAppendExtendsLiveIndex() throws Exception {
-        // The append that builds the missing index builds it under the live names of s. Its single row
+    public void testAttachedMissingIndexSecondAppendRebuildsIndexUnderNewVersion() throws Exception {
+        // The append that builds the missing index builds it under the txn it commits over. Its single row
         // starts a new row group after the 3 full ones. The next append merges into that small row group
-        // and finds the key file: it extends the index in place, opening each file once and truncating it
-        // only on close.
+        // and rebuilds the index under its own txn, leaving the files the healing append built as they are.
         setInPlaceParquetO3Properties();
         final LiveIndexTruncateCounter ff = new LiveIndexTruncateCounter();
         final SymRow[] healingRows = {SYM_APPEND_ROWS[0]};
@@ -3376,30 +4888,30 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
         assertMemoryLeak(ff, () -> {
             createReattachedMissingIndexTable("INDEX", true, "TIMESTAMP", SYM_BASE_ROWS);
             final long partitionNameTxn = getParquetPartitionNameTxn("pt", 0);
-            final long columnNameTxn = getColumnNameTxn("pt", 0, "s");
-            final String nameTxnSuffix = columnNameTxn > -1 ? "." + columnNameTxn : "";
-            final String keyFileName = "s.k" + nameTxnSuffix;
-            final String valueFileName = "s.v" + nameTxnSuffix;
+
+            final long healingTxn = getTableTxn("pt");
+            execute(symRowsInsert(healingRows));
+            drainWalQueue();
+            Assert.assertEquals(partitionNameTxn, getParquetPartitionNameTxn("pt", 0));
+            Assert.assertEquals(healingTxn, getColumnNameTxn("pt", 0, "s"));
+            assertReattachedRows("healing append", false, healingRows);
+
+            final String keyFileName = "s.k." + healingTxn;
+            final String valueFileName = "s.v." + healingTxn;
             try (Path path = new Path()) {
                 setPartitionPath("pt", 0, path);
                 ff.track(path.toString(), keyFileName, valueFileName);
             }
-
-            execute(symRowsInsert(healingRows));
-            drainWalQueue();
-            Assert.assertEquals(partitionNameTxn, getParquetPartitionNameTxn("pt", 0));
-            assertReattachedRows("healing append", false, healingRows);
-
-            final int keyTruncatesBefore = ff.getTruncateCount(keyFileName);
-            final int valueTruncatesBefore = ff.getTruncateCount(valueFileName);
             final long secondTxn = getTableTxn("pt");
             execute(symRowsInsert(secondRows));
             drainWalQueue();
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("pt")));
             Assert.assertEquals(secondTxn + 1, getTableTxn("pt"));
             Assert.assertEquals(partitionNameTxn, getParquetPartitionNameTxn("pt", 0));
-            Assert.assertEquals(keyTruncatesBefore + 1, ff.getTruncateCount(keyFileName));
-            Assert.assertEquals(valueTruncatesBefore + 1, ff.getTruncateCount(valueFileName));
+            Assert.assertEquals(secondTxn, getColumnNameTxn("pt", 0, "s"));
+            // the rebuild never opens the files of the committed version for write
+            Assert.assertEquals(0, ff.getOpenCount(keyFileName));
+            Assert.assertEquals(0, ff.getOpenCount(valueFileName));
             assertReattachedRows("second append", false, healingRows, secondRows);
         });
     }
@@ -3438,8 +4950,8 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
     public void testAttachedMissingIndexTwoPartitionsOneCommitWorkerPool() throws Exception {
         // One non-WAL commit, run by a worker pool, appends to two parquet partitions. 2024-01-01, re-attached
         // without the index added while it was detached, builds the index. 2024-01-02, whose index ADD INDEX
-        // built, extends its live index. Opening that live index fails on the first attempt, and the retry
-        // builds both.
+        // built, rebuilds its index under the txn the commit goes over. Opening the new key file fails on the
+        // first attempt, and the retry builds both.
         setInPlaceParquetO3Properties();
         final SymRow[] o3Rows = {
                 new SymRow("a", 101, "2024-01-01", "11:30"),
@@ -3451,7 +4963,7 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             public long openRW(LPSZ name, int opts) {
                 if (
                         Utf8s.containsAscii(name, Files.SEPARATOR + "2024-01-02.")
-                                && Utf8s.endsWithAscii(name, Files.SEPARATOR + "s.k")
+                                && Utf8s.containsAscii(name, Files.SEPARATOR + "s.k.")
                                 && isArmed.compareAndSet(true, false)
                 ) {
                     return -1;
@@ -3554,7 +5066,7 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
     @Test
     public void testAttachedMissingIndexTwoIndexedColumns() throws Exception {
         // t, indexed before partition 2024-01-01 was detached, keeps its index files across ATTACH; s,
-        // indexed while it was detached, has none. The append extends the index of t and builds the index
+        // indexed while it was detached, has none. The append rebuilds the index of t and builds the index
         // of s from row 0.
         setInPlaceParquetO3Properties();
         assertMemoryLeak(() -> {
@@ -3707,6 +5219,12 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
         }
     }
 
+    private static long getPartitionNameTxn(String tableName, int partitionIndex) {
+        try (TableReader reader = getReader(tableName)) {
+            return reader.getTxFile().getPartitionNameTxn(partitionIndex);
+        }
+    }
+
     private static long readColumnVersionFileVersion(String tableName) {
         try (ColumnVersionReader columnVersionReader = new ColumnVersionReader(); Path path = new Path()) {
             path.of(configuration.getDbRoot()).concat(engine.verifyTableName(tableName)).concat(TableUtils.COLUMN_VERSION_FILE_NAME);
@@ -3743,11 +5261,16 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
     private static String listColumnFiles(String tableName, int partitionIndex, String columnName) {
         try (Path path = new Path()) {
             setPartitionPath(tableName, partitionIndex, path);
-            final String[] names = new File(path.toString()).list((dir, name) -> name.startsWith(columnName + '.'));
-            Assert.assertNotNull(path.toString(), names);
-            Arrays.sort(names);
-            return Arrays.toString(names);
+            return listColumnFiles(path.toString(), columnName);
         }
+    }
+
+    // the names of the files of column columnName in directory partitionDir, sorted
+    private static String listColumnFiles(String partitionDir, String columnName) {
+        final String[] names = new File(partitionDir).list((dir, name) -> name.startsWith(columnName + '.'));
+        Assert.assertNotNull(partitionDir, names);
+        Arrays.sort(names);
+        return Arrays.toString(names);
     }
 
     private static void setPartitionPath(String tableName, int partitionIndex, Path path) {
@@ -3862,7 +5385,8 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
 
     private void assertFormatParquetInOrderAppendKeepsCursorSnapshot(String indexDefinition) throws Exception {
         // On a FORMAT PARQUET table every commit into the last partition updates its parquet file in
-        // place. In-order commits append to the live index and queue no purge task.
+        // place. Each in-order commit rebuilds the indexes under the txn it commits over, and the cursor
+        // opened before the commits keeps reading the versions of its snapshot.
         setInPlaceParquetO3Properties();
         final String keyFileSuffix = indexDefinition.contains("POSTING") ? ".pk." : ".k.";
         final IndexFileOpenCounter ff = new IndexFileOpenCounter();
@@ -3871,9 +5395,6 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             execute(symRowsInsert(Arrays.copyOf(SYM_BASE_ROWS, 12)));
             drainWalQueue();
             final long partitionNameTxn = getParquetPartitionNameTxn("pt", 0);
-            final long sNameTxn = getColumnNameTxn("pt", 0, "s");
-            final long kNameTxn = getColumnNameTxn("pt", 0, "k");
-            final long purgeTasksBefore = engine.getMessageBus().getColumnPurgePubSeq().current();
             try (
                     RecordCursorFactory factory = select(STALE_INDEX_QUERIES[0]);
                     RecordCursor cursor = factory.getCursor(sqlExecutionContext)
@@ -3885,15 +5406,14 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                     drainWalQueue();
                     Assert.assertEquals(txn + 1, getTableTxn("pt"));
                     Assert.assertEquals(partitionNameTxn, getParquetPartitionNameTxn("pt", 0));
-                    Assert.assertEquals(sNameTxn, getColumnNameTxn("pt", 0, "s"));
-                    Assert.assertEquals(kNameTxn, getColumnNameTxn("pt", 0, "k"));
-                    // the append creates no index file named after the commit's txn
-                    Assert.assertEquals(0, ff.getOpenCount("s" + keyFileSuffix + txn));
-                    Assert.assertEquals(0, ff.getOpenCount("k" + keyFileSuffix + txn));
+                    Assert.assertEquals(txn, getColumnNameTxn("pt", 0, "s"));
+                    Assert.assertEquals(txn, getColumnNameTxn("pt", 0, "k"));
+                    // the append creates the index files named after the txn it commits over
+                    Assert.assertTrue(ff.getOpenCount("s" + keyFileSuffix + txn) > 0);
+                    Assert.assertTrue(ff.getOpenCount("k" + keyFileSuffix + txn) > 0);
                 }
                 assertStaleCursor("in-order appends", expectedStaleIndexQueryResult(0, false, Arrays.copyOf(SYM_BASE_ROWS, 12)), factory, cursor);
             }
-            Assert.assertEquals(purgeTasksBefore, engine.getMessageBus().getColumnPurgePubSeq().current());
             assertQuery(STALE_INDEX_QUERIES[0])
                     .noLeakCheck()
                     .timestamp("ts")
@@ -3994,6 +5514,419 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
     }
 
     /**
+     * Table pt with t SYMBOL INDEX TYPE POSTING INCLUDE (s, v), t taking the symbol of s in every row: the query
+     * on t = 'a' over partition 2024-01-01 returns the 'a' rows of {@code rowSets} there, reading s and v from the
+     * covering sidecars of t.
+     */
+    private void assertCoveredSymbolRows(String context, SymRow[]... rowSets) throws Exception {
+        assertCoveredSymbolRows(context, "s", rowSets);
+    }
+
+    // As assertCoveredSymbolRows(), with column s renamed to s2
+    private void assertRenamedCoveredSymbolRows(String context) throws Exception {
+        assertCoveredSymbolRows(context, "s2", SYM_ATTACHED_ROWS);
+    }
+
+    private void assertCoveredSymbolRows(String context, String coveredColumnName, SymRow[]... rowSets) throws Exception {
+        final String[] rows = symRowsText(false, row -> "a".equals(row.s) && row.day.equals("2024-01-01"), SYM_ROW_BY_TS, rowSets).split("\n");
+        final StringSink expected = new StringSink();
+        expected.put("t\t").put(coveredColumnName).put("\tv\tts\n");
+        // the first line is the header of s, v, ts
+        for (int i = 1; i < rows.length; i++) {
+            expected.put("a\t").put(rows[i]).put('\n');
+        }
+        try {
+            assertQuery("SELECT t, " + coveredColumnName + ", v, ts FROM pt WHERE t = 'a' AND ts IN '2024-01-01'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("CoveringIndex on: t")
+                    .returns(expected.toString());
+        } catch (AssertionError e) {
+            throw new AssertionError(context, e);
+        }
+    }
+
+    /**
+     * As assertAttachedRows(), with column s of table pt renamed to {@code newColumnName}.
+     */
+    private void assertRenamedAttachedRows(String context, String newColumnName, SymRow[]... rowSets) throws Exception {
+        final SymRow[][] allRowSets = new SymRow[rowSets.length + 2][];
+        allRowSets[0] = SYM_ATTACHED_ROWS;
+        allRowSets[1] = SYM_ATTACH_TARGET_ROWS;
+        System.arraycopy(rowSets, 0, allRowSets, 2, rowSets.length);
+        assertRenamedStaleIndexQueryRows(context, newColumnName, allRowSets);
+        assertIndexMatchesFullScan(newColumnName);
+    }
+
+    // As assertStaleIndexQueryRows(), with column s of table pt renamed to newColumnName
+    private void assertRenamedStaleIndexQueryRows(String context, String newColumnName, SymRow[][] rowSets) throws Exception {
+        for (int q = 0; q < STALE_INDEX_QUERIES.length; q++) {
+            final String sql = renameSymbolColumn(STALE_INDEX_QUERIES[q], newColumnName);
+            try {
+                assertQuery(sql)
+                        .noLeakCheck()
+                        .inferTimestamp()
+                        .inferRandomAccess()
+                        .sizeMayVary()
+                        .returns(expectedStaleIndexQueryResult(q, false, rowSets).replace("s\tv\tts", newColumnName + "\tv\tts"));
+            } catch (AssertionError e) {
+                throw new AssertionError(context + ", " + sql, e);
+            }
+        }
+    }
+
+    // whether the _meta of table pt, which a reader loads, gives column s an index
+    private static void assertSColumnIndexed(String context, boolean isIndexed) {
+        try (TableReader reader = getReader("pt")) {
+            Assert.assertEquals(context, isIndexed, reader.getMetadata().isColumnIndexed(reader.getMetadata().getColumnIndex("s")));
+        }
+    }
+
+    /**
+     * DROP INDEX on s at txn 3, over table pt with s at the foreign version 31 in its attached partition and t
+     * SYMBOL INDEX at the default version, fails once to open or link {@code failingFileName}. Nothing is committed:
+     * the partition keeps its directory and the foreign version, s keeps its index, and the moved partition's new
+     * directory goes. The retry moves the partition.
+     */
+    private void assertAttachedForeignIndexDropIndexMoveFailure(String failingFileName, String error) throws Exception {
+        setInPlaceParquetO3Properties();
+        final ConvertToNativeFailingFacade ff = new ConvertToNativeFailingFacade("pt");
+        final String[] symbolColumnNames = {"s", "t"};
+        assertMemoryLeak(ff, () -> {
+            for (boolean isWal : new boolean[]{true, false}) {
+                final String context = failingFileName + (isWal ? ", WAL" : ", non-WAL");
+                execute("DROP TABLE IF EXISTS pt");
+                execute("DROP TABLE IF EXISTS src");
+                createAttachedForeignParquetTable(symbolColumnNames, "s SYMBOL INDEX, t SYMBOL INDEX", isWal, "TIMESTAMP", "", SYM_ATTACHED_ROWS, 31, "s");
+                ff.arm(false, failingFileName);
+                if (isWal) {
+                    execute("ALTER TABLE pt ALTER COLUMN s DROP INDEX");
+                    drainWalQueue();
+                    final TableToken tableToken = engine.verifyTableName("pt");
+                    Assert.assertTrue(context, engine.getTableSequencerAPI().isSuspended(tableToken));
+                    TestUtils.assertContains(context, engine.getTableSequencerAPI().getTxnTracker(tableToken).getErrorMessage(), error);
+                } else {
+                    try {
+                        execute("ALTER TABLE pt ALTER COLUMN s DROP INDEX");
+                        Assert.fail(context + ": DROP INDEX must fail");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(context, e.getFlyweightMessage(), "cannot remove index for [txn=3, table=pt, column=s]");
+                        TestUtils.assertContains(context, e.getFlyweightMessage(), error);
+                    }
+                }
+                Assert.assertTrue(context, ff.hasFired());
+                // the writer that failed stays: it retries the DDL
+                Assert.assertEquals(context, 3, getTableTxn("pt"));
+                Assert.assertEquals(context, 2, getParquetPartitionNameTxn("pt", 0));
+                Assert.assertEquals(context, 31, getColumnNameTxn("pt", 0, "s"));
+                Assert.assertFalse(context, new File(partitionDir("pt", "2024-01-01", 3)).exists());
+                assertSColumnIndexed(context, true);
+                assertAttachedRows(context + ", after the failure");
+                assertIndexMatchesFullScan("t");
+
+                if (isWal) {
+                    execute("ALTER TABLE pt RESUME WAL");
+                    drainWalQueue();
+                    assertNotSuspended(context);
+                } else {
+                    execute("ALTER TABLE pt ALTER COLUMN s DROP INDEX");
+                }
+                Assert.assertEquals(context, 3, getParquetPartitionNameTxn("pt", 0));
+                Assert.assertEquals(context, 3, getColumnNameTxn("pt", 0, "s"));
+                assertSColumnIndexed(context, false);
+                execute("ALTER TABLE pt ALTER COLUMN s ADD INDEX");
+                drainWalQueue();
+                assertNotSuspended(context);
+                assertAttachedRows(context + ", after the retry and ADD INDEX");
+                assertIndexMatchesFullScan("t");
+            }
+        });
+    }
+
+    /**
+     * The attached partition is the last partition of a WAL table, with s at the foreign version 5: the txn of the
+     * append after DROP INDEX at txn 3 and ADD INDEX at txn 4, or of the second append after RENAME COLUMN s TO s2 at
+     * txn 3. The DDL at txn 3 moves the partition to a new directory, and the appends update it in place.
+     */
+    private void assertAttachedForeignIndexDdlOnLastPartition(boolean isDropIndex) throws Exception {
+        setInPlaceParquetO3Properties();
+        // partition 2023-12-31, its symbols in the order SYM_ATTACHED_ROWS first uses them
+        final SymRow[] firstDayRows = Arrays.stream(SYM_ATTACH_TARGET_ROWS)
+                .map(row -> new SymRow(row.s, row.v, "2023-12-31", row.time))
+                .toArray(SymRow[]::new);
+        final SymRow[] firstAppendRows = Arrays.copyOf(SYM_APPEND_ROWS, 2);
+        final SymRow[] secondAppendRows = Arrays.copyOfRange(SYM_APPEND_ROWS, 2, SYM_APPEND_ROWS.length);
+        final String columnName = isDropIndex ? "s" : "s2";
+        final String[] symbolColumnNames = {columnName};
+        assertMemoryLeak(() -> {
+            createAttachedForeignLastParquetPartition(firstDayRows, 5);
+            Assert.assertEquals(3, getTableTxn("pt"));
+            Assert.assertEquals(2, getParquetPartitionNameTxn("pt", 1));
+            execute(isDropIndex ? "ALTER TABLE pt ALTER COLUMN s DROP INDEX" : "ALTER TABLE pt RENAME COLUMN s TO s2");
+            drainWalQueue();
+            assertNotSuspended("DDL");
+            Assert.assertEquals(3, getParquetPartitionNameTxn("pt", 1));
+            Assert.assertEquals(3, getColumnNameTxn("pt", 1, columnName));
+            if (isDropIndex) {
+                execute("ALTER TABLE pt ALTER COLUMN s ADD INDEX");
+                drainWalQueue();
+                assertNotSuspended("ADD INDEX");
+                Assert.assertEquals("[s.k.3, s.v.3]", listColumnFiles("pt", 1, "s"));
+            }
+            final long rewriteCount = O3ParquetCounters.getRewriteCount();
+            final long inPlaceCount = O3ParquetCounters.getInPlaceCount();
+            for (SymRow[] appendRows : new SymRow[][]{firstAppendRows, secondAppendRows}) {
+                final long txnBefore = getTableTxn("pt");
+                execute(symbolRowsInsert("pt", symbolColumnNames, "v", appendRows));
+                drainWalQueue();
+                assertNotSuspended("append at txn " + txnBefore);
+                Assert.assertEquals(3, getParquetPartitionNameTxn("pt", 1));
+                Assert.assertEquals(txnBefore, getColumnNameTxn("pt", 1, columnName));
+            }
+            Assert.assertEquals(rewriteCount, O3ParquetCounters.getRewriteCount());
+            Assert.assertEquals(inPlaceCount + 2, O3ParquetCounters.getInPlaceCount());
+            engine.releaseInactive();
+            releaseSavePointHolds("pt");
+            runPurgeJobs();
+            Assert.assertFalse(new File(partitionDir("pt", "2024-01-01", 2)).exists());
+            final SymRow[][] rowSets = {SYM_ATTACHED_ROWS, firstDayRows, firstAppendRows, secondAppendRows};
+            if (isDropIndex) {
+                assertStaleIndexQueryRows("after the appends", false, rowSets);
+            } else {
+                assertRenamedStaleIndexQueryRows("after the appends", "s2", rowSets);
+            }
+            assertIndexMatchesFullScan(columnName);
+        });
+    }
+
+    /**
+     * Detaches partition {@code day} of table pt, copies its directory to another volume and attaches it back
+     * through a soft link: the partition becomes read-only.
+     */
+    private static void reattachPartitionFromSoftLink(String day, String volumeName) throws Exception {
+        execute("ALTER TABLE pt DETACH PARTITION LIST '" + day + "'");
+        drainWalQueue();
+        engine.releaseAllReaders();
+        engine.releaseAllWriters();
+        final TableToken tableToken = engine.verifyTableName("pt");
+        final String volume = temp.newFolder(volumeName).getAbsolutePath();
+        try (Path from = new Path(); Path to = new Path(); Path link = new Path()) {
+            from.of(configuration.getDbRoot()).concat(tableToken).concat(day).put(TableUtils.DETACHED_DIR_MARKER).slash$();
+            to.of(volume).concat(day).put(TableUtils.DETACHED_DIR_MARKER).slash$();
+            TestUtils.copyDirectory(from, to, configuration.getMkDirMode());
+            to.of(volume).concat(day).put(TableUtils.DETACHED_DIR_MARKER).$();
+            link.of(configuration.getDbRoot()).concat(tableToken).concat(day).put(configuration.getAttachPartitionSuffix()).$();
+            Assert.assertEquals(0, Files.softLink(to.$(), link.$()));
+        }
+        execute("ALTER TABLE pt ATTACH PARTITION LIST '" + day + "'");
+        drainWalQueue();
+    }
+
+    /**
+     * The attached partition's s carries the foreign version 3, the txn of the merge. An in-place rebuild of the
+     * index under that txn would re-initialize the committed files under the cursors opened before the merge. The
+     * merge rewrites the partition into a new directory instead and names the index after its txn there: the
+     * cursors keep their snapshot, and the old directory goes once they let go.
+     */
+    private void assertAttachedForeignIndexOneCommitAtForeignVersion(String commitMode) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
+        setInPlaceParquetO3Properties();
+        assertMemoryLeak(() -> {
+            for (boolean isWal : new boolean[]{true, false}) {
+                final String context = commitMode + (isWal ? ", WAL" : ", non-WAL");
+                execute("DROP TABLE IF EXISTS pt");
+                execute("DROP TABLE IF EXISTS src");
+                createAttachedForeignParquetTable("INDEX", isWal, 3);
+                final String oldDir = partitionDir("pt", "2024-01-01", 2);
+                final long rewriteCount = O3ParquetCounters.getRewriteCount();
+                final ObjList<RecordCursorFactory> factories = new ObjList<>();
+                final ObjList<RecordCursor> cursors = new ObjList<>();
+                try {
+                    openStaleIndexCursors(factories, cursors);
+                    execute(symRowsInsert(SYM_MERGE_ROWS));
+                    drainWalQueue();
+                    assertNotSuspended(context);
+                    assertStaleIndexCursors(context + ", after the merge", factories, cursors, SYM_ATTACHED_ROWS, SYM_ATTACH_TARGET_ROWS);
+                    // the purge jobs keep the directory the cursors read
+                    runPurgeJobs();
+                    Assert.assertEquals(context, "[s.k.3, s.v.3]", listColumnFiles(oldDir, "s"));
+                    assertStaleIndexCursors(context + ", after the purge jobs", factories, cursors, SYM_ATTACHED_ROWS, SYM_ATTACH_TARGET_ROWS);
+                } finally {
+                    Misc.freeObjList(cursors);
+                    Misc.freeObjList(factories);
+                }
+                Assert.assertEquals(context, 4, getTableTxn("pt"));
+                Assert.assertEquals(context, rewriteCount + 1, O3ParquetCounters.getRewriteCount());
+                Assert.assertEquals(context, 3, getParquetPartitionNameTxn("pt", 0));
+                Assert.assertEquals(context, 3, getColumnNameTxn("pt", 0, "s"));
+                Assert.assertEquals(context, "[s.k.3, s.v.3]", listColumnFiles("pt", 0, "s"));
+                assertAttachedRows(context + ", after the merge", SYM_MERGE_ROWS);
+
+                engine.releaseInactive();
+                releaseSavePointHolds("pt");
+                runPurgeJobs();
+                Assert.assertFalse(context, new File(oldDir).exists());
+                Assert.assertEquals(context, "[s.k.3, s.v.3]", listColumnFiles("pt", 0, "s"));
+                assertAttachedRows(context + ", after the purge", SYM_MERGE_ROWS);
+            }
+        });
+    }
+
+    /**
+     * The attached partition's s carries the foreign version 4. The append at txn 3 supersedes it, and the merge at
+     * txn 4 would rebuild the index in place under that name, which the purge of the superseded version then deletes.
+     * The append rewrites the partition instead and names the index after txn 3, so the merge updates it in place
+     * under txn 4 beside a version no purge targets. With and without cursors opened before the commits.
+     */
+    private void assertAttachedForeignIndexTwoCommitsThenPurge(String commitMode) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
+        setInPlaceParquetO3Properties();
+        assertMemoryLeak(() -> {
+            for (boolean isPinned : new boolean[]{true, false}) {
+                for (boolean isWal : new boolean[]{true, false}) {
+                    final String context = commitMode + (isWal ? ", WAL" : ", non-WAL") + (isPinned ? ", cursors pinned" : "");
+                    execute("DROP TABLE IF EXISTS pt");
+                    execute("DROP TABLE IF EXISTS src");
+                    createAttachedForeignParquetTable("INDEX", isWal, 4);
+                    final String oldDir = partitionDir("pt", "2024-01-01", 2);
+                    final long rewriteCount = O3ParquetCounters.getRewriteCount();
+                    final long inPlaceCount = O3ParquetCounters.getInPlaceCount();
+                    final long appendPartitionNameTxn;
+                    final long appendColumnNameTxn;
+                    final long appendRewriteCount;
+                    final String mergeFiles;
+                    final ObjList<RecordCursorFactory> factories = new ObjList<>();
+                    final ObjList<RecordCursor> cursors = new ObjList<>();
+                    try {
+                        if (isPinned) {
+                            openStaleIndexCursors(factories, cursors);
+                        }
+                        execute(symRowsInsert(SYM_APPEND_ROWS));
+                        drainWalQueue();
+                        assertNotSuspended(context);
+                        appendPartitionNameTxn = getParquetPartitionNameTxn("pt", 0);
+                        appendColumnNameTxn = getColumnNameTxn("pt", 0, "s");
+                        appendRewriteCount = O3ParquetCounters.getRewriteCount() - rewriteCount;
+                        execute(symRowsInsert(SYM_MERGE_ROWS));
+                        drainWalQueue();
+                        assertNotSuspended(context);
+                        mergeFiles = listColumnFiles("pt", 0, "s");
+                        if (isPinned) {
+                            assertStaleIndexCursors(context + ", after the commits", factories, cursors, SYM_ATTACHED_ROWS, SYM_ATTACH_TARGET_ROWS);
+                            runPurgeJobs();
+                            assertStaleIndexCursors(context + ", after the purge jobs", factories, cursors, SYM_ATTACHED_ROWS, SYM_ATTACH_TARGET_ROWS);
+                        }
+                    } finally {
+                        Misc.freeObjList(cursors);
+                        Misc.freeObjList(factories);
+                    }
+                    engine.releaseInactive();
+                    releaseSavePointHolds("pt");
+                    runPurgeJobs();
+                    assertAttachedRows(context + ", after the purge", SYM_APPEND_ROWS, SYM_MERGE_ROWS);
+
+                    // the append rewrote the partition into the directory of txn 3 and named the index after txn 3
+                    Assert.assertEquals(context, 1, appendRewriteCount);
+                    Assert.assertEquals(context, 3, appendPartitionNameTxn);
+                    Assert.assertEquals(context, 3, appendColumnNameTxn);
+                    // the merge updated it in place under txn 4
+                    Assert.assertEquals(context, rewriteCount + 1, O3ParquetCounters.getRewriteCount());
+                    Assert.assertEquals(context, inPlaceCount + 1, O3ParquetCounters.getInPlaceCount());
+                    Assert.assertEquals(context, 3, getParquetPartitionNameTxn("pt", 0));
+                    Assert.assertEquals(context, 4, getColumnNameTxn("pt", 0, "s"));
+                    // The merge deletes version 3 at once, unless a reader below its txn holds it or the table is an
+                    // adaptive WAL table: the purge job deletes it then.
+                    final boolean isPurgeDeferred = isPinned || (isWal && commitMode.equals("adaptive"));
+                    Assert.assertEquals(context, isPurgeDeferred ? "[s.k.3, s.k.4, s.v.3, s.v.4]" : "[s.k.4, s.v.4]", mergeFiles);
+                    Assert.assertEquals(context, "[s.k.4, s.v.4]", listColumnFiles("pt", 0, "s"));
+                    Assert.assertFalse(context, new File(oldDir).exists());
+                }
+            }
+        });
+    }
+
+    /**
+     * The attached partition's s carries the foreign version 5. A pair of DDLs at txns 3 and 4 supersedes it and
+     * gives s an index again, DROP INDEX and ADD INDEX, or RENAME COLUMN s TO s2 and back. The merge at txn 5 then
+     * updates the partition in place and builds the index under txn 5. The first DDL moves the partition to a new
+     * directory and queues no purge of version 5, which would delete that index, or the files of the cursors opened
+     * before it. With and without such cursors.
+     */
+    private void assertAttachedForeignIndexDdlPairThenMerge(String commitMode, boolean isDropIndex) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
+        setInPlaceParquetO3Properties();
+        final String firstDdl = isDropIndex ? "ALTER TABLE pt ALTER COLUMN s DROP INDEX" : "ALTER TABLE pt RENAME COLUMN s TO s2";
+        final String secondDdl = isDropIndex ? "ALTER TABLE pt ALTER COLUMN s ADD INDEX" : "ALTER TABLE pt RENAME COLUMN s2 TO s";
+        assertMemoryLeak(() -> {
+            for (boolean isPinned : new boolean[]{true, false}) {
+                for (boolean isWal : new boolean[]{true, false}) {
+                    final String context = commitMode + (isDropIndex ? ", DROP INDEX" : ", RENAME") + (isWal ? ", WAL" : ", non-WAL")
+                            + (isPinned ? ", cursors pinned" : "");
+                    execute("DROP TABLE IF EXISTS pt");
+                    execute("DROP TABLE IF EXISTS src");
+                    createAttachedForeignParquetTable("INDEX", isWal, 5);
+                    final String oldDir = partitionDir("pt", "2024-01-01", 2);
+                    final long inPlaceCount = O3ParquetCounters.getInPlaceCount();
+                    final ObjList<RecordCursorFactory> factories = new ObjList<>();
+                    final ObjList<RecordCursor> cursors = new ObjList<>();
+                    try {
+                        if (isPinned) {
+                            openStaleIndexCursors(factories, cursors);
+                        }
+                        execute(firstDdl);
+                        drainWalQueue();
+                        assertNotSuspended(context);
+                        runPurgeJobs();
+                        if (isPinned) {
+                            assertStaleIndexCursors(context + ", after the first DDL", factories, cursors, SYM_ATTACHED_ROWS, SYM_ATTACH_TARGET_ROWS);
+                            // the cursors hold the directory with the version they read
+                            Assert.assertEquals(context, "[s.k.5, s.v.5]", listColumnFiles(oldDir, "s"));
+                        }
+                        // the first DDL moved the partition to the directory of its txn
+                        Assert.assertEquals(context, 3, getParquetPartitionNameTxn("pt", 0));
+                        Assert.assertEquals(context, "[]", listColumnFiles("pt", 0, "s"));
+                        if (isDropIndex) {
+                            Assert.assertEquals(context, 3, getColumnNameTxn("pt", 0, "s"));
+                        } else {
+                            Assert.assertEquals(context, 3, getColumnNameTxn("pt", 0, "s2"));
+                            Assert.assertEquals(context, "[s2.k.3, s2.v.3]", listColumnFiles("pt", 0, "s2"));
+                        }
+
+                        execute(secondDdl);
+                        drainWalQueue();
+                        assertNotSuspended(context);
+                        Assert.assertEquals(context, 3, getParquetPartitionNameTxn("pt", 0));
+                        Assert.assertEquals(context, isDropIndex ? 3 : 4, getColumnNameTxn("pt", 0, "s"));
+                        Assert.assertTrue(context, isIndexKeyFilePresent("pt", 0, IndexType.BITMAP, isDropIndex ? 3 : 4));
+
+                        execute(symRowsInsert(SYM_MERGE_ROWS));
+                        drainWalQueue();
+                        assertNotSuspended(context);
+                        if (isPinned) {
+                            assertStaleIndexCursors(context + ", after the merge", factories, cursors, SYM_ATTACHED_ROWS, SYM_ATTACH_TARGET_ROWS);
+                        }
+                    } finally {
+                        Misc.freeObjList(cursors);
+                        Misc.freeObjList(factories);
+                    }
+                    // the merge updated the partition in place under its txn
+                    Assert.assertEquals(context, inPlaceCount + 1, O3ParquetCounters.getInPlaceCount());
+                    Assert.assertEquals(context, 3, getParquetPartitionNameTxn("pt", 0));
+                    Assert.assertEquals(context, 5, getColumnNameTxn("pt", 0, "s"));
+                    engine.releaseInactive();
+                    releaseSavePointHolds("pt");
+                    runPurgeJobs();
+                    Assert.assertFalse(context, new File(oldDir).exists());
+                    Assert.assertEquals(context, "[s.k.5, s.v.5]", listColumnFiles("pt", 0, "s"));
+                    assertAttachedRows(context + ", after the purge", SYM_MERGE_ROWS);
+                }
+            }
+        });
+    }
+
+    /**
      * Every STALE_INDEX_QUERIES query over table pt, built by createReattachedMissingIndexTable() from
      * SYM_BASE_ROWS, returns the model rows of SYM_BASE_ROWS and {@code rowSets}, the index of s returns
      * the rows a full scan does, and a key no row holds returns no row.
@@ -4083,17 +6016,142 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
      * SYM_ATTACH_TARGET_ROWS, and pt is at txn 3.
      */
     private void createAttachedForeignParquetTable(String indexDefinition, boolean isWal, long foreignNameTxn) throws Exception {
-        execute("CREATE TABLE src (s SYMBOL " + indexDefinition + ", v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-        execute(symRowsInsert(SYM_ATTACHED_ROWS).replace("INSERT INTO pt ", "INSERT INTO src "));
-        updateSourceColumnAtTxn(0, foreignNameTxn);
-        execute("CREATE TABLE pt (s SYMBOL " + indexDefinition + ", v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY " + (isWal ? "WAL" : "BYPASS WAL"));
-        execute(symRowsInsert(SYM_ATTACH_TARGET_ROWS));
+        createAttachedForeignParquetTable(new String[]{"s"}, "s SYMBOL " + indexDefinition, isWal, "TIMESTAMP", "", SYM_ATTACHED_ROWS, foreignNameTxn, "s");
+    }
+
+    /**
+     * Table pt with parquet partition 2024-01-01 attached from table src. Both tables have the columns
+     * {@code symbolColumnDefinitions}, v INT and ts of {@code timestampType}, and {@code tableSuffix} follows the
+     * PARTITION BY clause of pt. The partition holds {@code attachedRows}, every column of {@code symbolColumnNames}
+     * taking the row's symbol, and {@code foreignColumnNames} carry the foreign column version {@code foreignNameTxn}
+     * there. Partition 2024-01-02 holds SYM_ATTACH_TARGET_ROWS. pt is at txn 3, and the attached partition is in
+     * directory 2024-01-01.2.
+     */
+    private static void createAttachedForeignParquetTable(
+            String[] symbolColumnNames,
+            String symbolColumnDefinitions,
+            boolean isWal,
+            String timestampType,
+            String tableSuffix,
+            SymRow[] attachedRows,
+            long foreignNameTxn,
+            String... foreignColumnNames
+    ) throws Exception {
+        execute("CREATE TABLE src (" + symbolColumnDefinitions + ", v INT, ts " + timestampType + ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+        execute(symbolRowsInsert("src", symbolColumnNames, "v", attachedRows));
+        updateSourceColumnsAtTxn(0, foreignNameTxn, foreignColumnNames);
+        execute("CREATE TABLE pt (" + symbolColumnDefinitions + ", v INT, ts " + timestampType + ") TIMESTAMP(ts) PARTITION BY DAY "
+                + (isWal ? "WAL" : "BYPASS WAL") + tableSuffix);
+        execute(symbolRowsInsert("pt", symbolColumnNames, "v", SYM_ATTACH_TARGET_ROWS));
         drainWalQueue();
         attachFromSource(0, "2024-01-01");
         execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
         drainWalQueue();
         Assert.assertEquals(3, getTableTxn("pt"));
-        Assert.assertEquals(foreignNameTxn, getColumnNameTxn("pt", 0, "s"));
+        Assert.assertEquals(2, getParquetPartitionNameTxn("pt", 0));
+        for (String columnName : foreignColumnNames) {
+            Assert.assertEquals(columnName, foreignNameTxn, getColumnNameTxn("pt", 0, columnName));
+        }
+    }
+
+    /**
+     * WAL table pt with partition 2023-12-31 holding {@code firstDayRows}, and parquet partition 2024-01-01, the
+     * last one, attached from table src: it holds SYM_ATTACHED_ROWS, and its s carries the foreign column version
+     * {@code foreignNameTxn}.
+     */
+    private static void createAttachedForeignLastParquetPartition(SymRow[] firstDayRows, long foreignNameTxn) throws Exception {
+        execute("CREATE TABLE src (s SYMBOL INDEX, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+        execute(symbolRowsInsert("src", new String[]{"s"}, "v", SYM_ATTACHED_ROWS));
+        updateSourceColumnAtTxn(0, foreignNameTxn);
+        execute("CREATE TABLE pt (s SYMBOL INDEX, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute(symRowsInsert(firstDayRows));
+        drainWalQueue();
+        attachFromSource(0, "2024-01-01");
+        execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+        drainWalQueue();
+        Assert.assertEquals(2, getPartitionCount("pt"));
+        Assert.assertEquals(foreignNameTxn, getColumnNameTxn("pt", 1, "s"));
+    }
+
+    private static int getPartitionCount(String tableName) {
+        try (TableReader reader = getReader(tableName)) {
+            return reader.getPartitionCount();
+        }
+    }
+
+    // inserts the rows into table tableName: every column of symbolColumnNames takes the row's symbol, valueColumnName its v
+    private static String symbolRowsInsert(String tableName, String[] symbolColumnNames, String valueColumnName, SymRow... rows) {
+        final StringSink sql = new StringSink();
+        sql.put("INSERT INTO ").put(tableName).put(" (");
+        for (String columnName : symbolColumnNames) {
+            sql.put(columnName).put(", ");
+        }
+        sql.put(valueColumnName).put(", ts) VALUES ");
+        for (int i = 0; i < rows.length; i++) {
+            final SymRow row = rows[i];
+            final String symbol = row.s == null ? "NULL" : "'" + row.s + "'";
+            sql.put(i > 0 ? ", (" : "(");
+            for (int c = 0; c < symbolColumnNames.length; c++) {
+                sql.put(symbol).put(", ");
+            }
+            sql.put(row.v).put(", '").put(row.timestampText(false)).put("')");
+        }
+        return sql.toString();
+    }
+
+    /**
+     * A cursor of every STALE_INDEX_QUERIES query over table pt, opened now. The caller frees both lists.
+     */
+    private static void openStaleIndexCursors(ObjList<RecordCursorFactory> factories, ObjList<RecordCursor> cursors) throws SqlException {
+        for (String sql : STALE_INDEX_QUERIES) {
+            final RecordCursorFactory factory = select(sql);
+            factories.add(factory);
+            cursors.add(factory.getCursor(sqlExecutionContext));
+        }
+    }
+
+    /**
+     * The cursors openStaleIndexCursors() opened return the model rows of {@code rowSets}, the snapshot they were
+     * opened at, and go back to the top, so the next call reads them again.
+     */
+    private void assertStaleIndexCursors(String context, ObjList<RecordCursorFactory> factories, ObjList<RecordCursor> cursors, SymRow[]... rowSets) {
+        for (int q = 0, n = cursors.size(); q < n; q++) {
+            final RecordCursor cursor = cursors.getQuick(q);
+            assertStaleCursor(context + ", stale " + STALE_INDEX_QUERIES[q], expectedStaleIndexQueryResult(q, false, rowSets), factories.getQuick(q), cursor);
+            cursor.toTop();
+        }
+    }
+
+    /**
+     * Runs ColumnPurgeJob, then O3PartitionPurgeJob until its queue is empty. A version that a reader or a save
+     * point still holds stays.
+     */
+    private static void runPurgeJobs() throws SqlException {
+        try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
+            purgeJob.run();
+        }
+        try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1)) {
+            //noinspection StatementWithEmptyBody
+            while (purgeJob.run()) {
+            }
+        }
+    }
+
+    // the directory of partition day of table tableName under name txn partitionNameTxn
+    private static String partitionDir(String tableName, String day, long partitionNameTxn) {
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(engine.verifyTableName(tableName)).concat(day).put('.').put(partitionNameTxn);
+            return path.toString();
+        }
+    }
+
+    private static void assertNotSuspended(String context) {
+        Assert.assertFalse(context, engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("pt")));
+    }
+
+    // the query on column s with s renamed to newColumnName
+    private static String renameSymbolColumn(String sql, String newColumnName) {
+        return SYMBOL_COLUMN_S.matcher(sql).replaceAll(newColumnName);
     }
 
     /**
@@ -4123,16 +6181,33 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
      * version {@code foreignNameTxn} there, and the previous version stays on disk beside it.
      */
     private static void updateSourceColumnAtTxn(int partitionIndex, long foreignNameTxn) throws SqlException {
+        updateSourceColumnsAtTxn(partitionIndex, foreignNameTxn, "s");
+    }
+
+    /**
+     * Moves table src to txn {@code foreignNameTxn} with commits into partition 2024-01-09, then updates the columns
+     * {@code columnNames} of partition {@code partitionIndex} under a pinned reader: they take column version
+     * {@code foreignNameTxn} there, and the previous version stays on disk beside it.
+     */
+    private static void updateSourceColumnsAtTxn(int partitionIndex, long foreignNameTxn, String... columnNames) throws SqlException {
         while (getTableTxn("src") < foreignNameTxn) {
             execute("INSERT INTO src (ts) VALUES ('2024-01-09T00:00:00.000000Z')");
         }
         Assert.assertEquals(foreignNameTxn, getTableTxn("src"));
-        final String day;
-        try (TableReader reader = getReader("src")) {
-            day = Micros.toString(reader.getPartitionTimestampByIndex(partitionIndex)).substring(0, 10);
-            execute("UPDATE src SET s = s WHERE ts IN '" + day + "'");
+        final StringSink sql = new StringSink();
+        sql.put("UPDATE src SET ");
+        for (int i = 0; i < columnNames.length; i++) {
+            sql.put(i > 0 ? ", " : "").put(columnNames[i]).put(" = ").put(columnNames[i]);
         }
-        Assert.assertEquals(foreignNameTxn, getColumnNameTxn("src", partitionIndex, "s"));
+        try (TableReader reader = getReader("src")) {
+            final long partitionTimestamp = ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType())
+                    .toMicros(reader.getPartitionTimestampByIndex(partitionIndex));
+            sql.put(" WHERE ts IN '").put(Micros.toString(partitionTimestamp).substring(0, 10)).put('\'');
+            execute(sql);
+        }
+        for (String columnName : columnNames) {
+            Assert.assertEquals(columnName, foreignNameTxn, getColumnNameTxn("src", partitionIndex, columnName));
+        }
     }
 
     private static void assertStaleCursor(String context, String expected, RecordCursorFactory factory, RecordCursor cursor) {
@@ -5137,6 +7212,65 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             final String lastSegment = path.substring(path.lastIndexOf(Files.SEPARATOR) + 1);
             if ((lastSegment.equals(fileName) || lastSegment.startsWith(fileName + '.')) && failingFileNameRef.compareAndSet(fileName, null)) {
                 fileFailures.incrementAndGet();
+                return true;
+            }
+            return false;
+        }
+    }
+
+    /**
+     * Fails, once when armed, a step of a move of a partition to a new directory version, each picked by the end of
+     * a path: reports a file missing, fails to link a file, or fails to create or remove a directory.
+     */
+    private static class PartitionMoveFailingFacade extends TestFilesFacadeImpl {
+        final AtomicReference<String> failingHardLinkFileName = new AtomicReference<>();
+        final AtomicReference<String> failingMkdirsDir = new AtomicReference<>();
+        final AtomicReference<String> failingRmdirDir = new AtomicReference<>();
+        final AtomicReference<String> missingFileName = new AtomicReference<>();
+        private final AtomicInteger failures = new AtomicInteger();
+
+        @Override
+        public boolean exists(LPSZ path) {
+            return !isFailing(missingFileName, path) && super.exists(path);
+        }
+
+        @Override
+        public int hardLink(LPSZ src, LPSZ hardLink) {
+            return isFailing(failingHardLinkFileName, src) ? -1 : super.hardLink(src, hardLink);
+        }
+
+        @Override
+        public int mkdirs(Path path, int mode) {
+            return isFailing(failingMkdirsDir, path) ? -1 : super.mkdirs(path, mode);
+        }
+
+        @Override
+        public boolean rmdir(Path name, boolean haltOnError) {
+            return !isFailing(failingRmdirDir, name) && super.rmdir(name, haltOnError);
+        }
+
+        // whether every armed fault fired once since the last call
+        boolean hasFired() {
+            final boolean isFired = failures.get() > 0
+                    && failingHardLinkFileName.get() == null
+                    && failingMkdirsDir.get() == null
+                    && failingRmdirDir.get() == null
+                    && missingFileName.get() == null;
+            failures.set(0);
+            return isFired;
+        }
+
+        private boolean isFailing(AtomicReference<String> armedPathEnd, Utf8Sequence path) {
+            final String pathEnd = armedPathEnd.get();
+            if (pathEnd == null) {
+                return false;
+            }
+            String text = Utf8s.stringFromUtf8Bytes(path);
+            if (!text.isEmpty() && text.charAt(text.length() - 1) == Files.SEPARATOR) {
+                text = text.substring(0, text.length() - 1);
+            }
+            if (text.endsWith(pathEnd) && armedPathEnd.compareAndSet(pathEnd, null)) {
+                failures.incrementAndGet();
                 return true;
             }
             return false;

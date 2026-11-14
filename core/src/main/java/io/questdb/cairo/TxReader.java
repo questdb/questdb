@@ -325,6 +325,26 @@ public class TxReader implements Closeable, Mutable {
         return DEFAULT_PARTITION_TIMESTAMP;
     }
 
+    /**
+     * Returns the index of the first attached partition of the logical partition containing
+     * {@code timestamp}, or -1. Unlike {@link #getPartitionIndex(long)}, finds a split whose
+     * parent a replace-range commit removed, e.g. '2024-02-24T12' without '2024-02-24'.
+     */
+    public int getLogicalPartitionFirstIndex(long timestamp) {
+        final long logicalTimestamp = getPartitionFloor(timestamp);
+        int index = findAttachedPartitionIndexByLoTimestamp(logicalTimestamp);
+        if (index > -1) {
+            return index;
+        }
+        // The insertion point is the first partition above the floor. It belongs to this
+        // logical partition only when it is a split whose parent is gone.
+        index = -index - 1;
+        if (index < getPartitionCount() && getPartitionFloor(getPartitionTimestampByIndex(index)) == logicalTimestamp) {
+            return index;
+        }
+        return -1;
+    }
+
     public long getLogicalPartitionTimestamp(long timestamp) {
         return getPartitionFloor(timestamp);
     }

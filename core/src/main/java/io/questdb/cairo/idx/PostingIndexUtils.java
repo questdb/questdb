@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.FindVisitor;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -1689,44 +1690,7 @@ public final class PostingIndexUtils {
             CharSequence columnName,
             long postingColumnNameTxn
     ) {
-        final boolean[] anyFailed = {false};
-        LPSZ pciFile = coverInfoFileName(path.trimTo(pathTrimTo), columnName, postingColumnNameTxn);
-        if (ff.exists(pciFile) && !ff.removeQuiet(pciFile) && ff.exists(pciFile)) {
-            anyFailed[0] = true;
-        }
-        // A .pc name writes instance NONE and instance 0 with the same host token 0. Both share a
-        // directory only after a change at table txn 0 in the default partition of a table that is not
-        // partitioned (DROP INDEX, ALTER COLUMN TYPE). Instance NONE committed no rows there and sealed
-        // no .pc file, so every .pc file of the token 0 belongs to instance 0. The change writes
-        // <columnName>.d.0 before it queues the purge of NONE, and only the purge of instance 0, which
-        // takes its .pc files too, removes it.
-        final boolean isCoverDataOfInstanceZero = postingColumnNameTxn == COLUMN_NAME_TXN_NONE
-                && ff.exists(TableUtils.dFile(path.trimTo(pathTrimTo), columnName, 0));
-        path.trimTo(pathTrimTo);
-        scanSealedFiles(ff, path, pathTrimTo, columnName, postingColumnNameTxn, new SealedFileVisitor() {
-            @Override
-            public void onCoverDataFile(int includeIdx, long coveredColumnNameTxn, long sealTxn) {
-                if (isCoverDataOfInstanceZero) {
-                    return;
-                }
-                LPSZ p = coverDataFileName(path.trimTo(pathTrimTo), columnName, includeIdx, postingColumnNameTxn, coveredColumnNameTxn, sealTxn);
-                if (!ff.removeQuiet(p) && ff.exists(p)) {
-                    anyFailed[0] = true;
-                }
-                path.trimTo(pathTrimTo);
-            }
-
-            @Override
-            public void onValueFile(long sealTxn) {
-                LPSZ p = valueFileName(path.trimTo(pathTrimTo), columnName, postingColumnNameTxn, sealTxn);
-                if (!ff.removeQuiet(p) && ff.exists(p)) {
-                    anyFailed[0] = true;
-                }
-                path.trimTo(pathTrimTo);
-            }
-        });
-        path.trimTo(pathTrimTo);
-        return anyFailed[0];
+        return new SealedFileRemover().remove(ff, path, pathTrimTo, columnName, postingColumnNameTxn);
     }
 
     /**
@@ -1745,14 +1709,7 @@ public final class PostingIndexUtils {
     ) {
         path.trimTo(pathTrimTo);
         StringSink fileName = Misc.getThreadLocalSink();
-        ff.iterateDir(path.$(), (pUtf8NameZ, type) -> {
-            if (type != Files.DT_FILE && type != Files.DT_LNK && type != Files.DT_UNKNOWN) {
-                return;
-            }
-            fileName.clear();
-            Utf8s.utf8ToUtf16Z(pUtf8NameZ, fileName);
-            parseSealedFileName(fileName, columnName, postingColumnNameTxn, visitor);
-        });
+        ff.iterateDir(path.$(), (pUtf8NameZ, type) -> parseSealedDirEntry(pUtf8NameZ, type, fileName, columnName, postingColumnNameTxn, visitor));
         path.trimTo(pathTrimTo);
     }
 
@@ -1986,6 +1943,22 @@ public final class PostingIndexUtils {
             }
         }
         return -1;
+    }
+
+    private static void parseSealedDirEntry(
+            long pUtf8NameZ,
+            int type,
+            StringSink fileName,
+            CharSequence columnName,
+            long postingColumnNameTxn,
+            SealedFileVisitor visitor
+    ) {
+        if (type != Files.DT_FILE && type != Files.DT_LNK && type != Files.DT_UNKNOWN) {
+            return;
+        }
+        fileName.clear();
+        Utf8s.utf8ToUtf16Z(pUtf8NameZ, fileName);
+        parseSealedFileName(fileName, columnName, postingColumnNameTxn, visitor);
     }
 
     /**
@@ -2323,6 +2296,90 @@ public final class PostingIndexUtils {
          * Called for each {@code .pv[.<postingColumnNameTxn>].<sealTxn>} file.
          */
         void onValueFile(long sealTxn);
+    }
+
+    /**
+     * Reusable, allocation-free form of {@link #removeAllSealedFiles}. Owners on
+     * zero-GC paths, such as the writer's synchronous purge, hold one instance
+     * and call {@link #remove} repeatedly. Not thread-safe; one instance per owner.
+     */
+    public static final class SealedFileRemover implements SealedFileVisitor {
+        private final FindVisitor dirEntryVisitor = this::onDirEntry;
+        private CharSequence columnName;
+        private FilesFacade ff;
+        private StringSink fileName;
+        private boolean isAnyFailed;
+        // the .pc files of the host token 0 belong to instance 0, see removeAllSealedFiles()
+        private boolean isCoverDataOfInstanceZero;
+        private Path path;
+        private int pathTrimTo;
+        private long postingColumnNameTxn;
+
+        @Override
+        public void onCoverDataFile(int includeIdx, long coveredColumnNameTxn, long sealTxn) {
+            if (isCoverDataOfInstanceZero) {
+                return;
+            }
+            LPSZ p = coverDataFileName(path.trimTo(pathTrimTo), columnName, includeIdx, postingColumnNameTxn, coveredColumnNameTxn, sealTxn);
+            if (!ff.removeQuiet(p) && ff.exists(p)) {
+                isAnyFailed = true;
+            }
+            path.trimTo(pathTrimTo);
+        }
+
+        @Override
+        public void onValueFile(long sealTxn) {
+            LPSZ p = valueFileName(path.trimTo(pathTrimTo), columnName, postingColumnNameTxn, sealTxn);
+            if (!ff.removeQuiet(p) && ff.exists(p)) {
+                isAnyFailed = true;
+            }
+            path.trimTo(pathTrimTo);
+        }
+
+        /**
+         * Same contract as {@link #removeAllSealedFiles}.
+         */
+        public boolean remove(
+                FilesFacade ff,
+                Path path,
+                int pathTrimTo,
+                CharSequence columnName,
+                long postingColumnNameTxn
+        ) {
+            this.ff = ff;
+            this.path = path;
+            this.pathTrimTo = pathTrimTo;
+            this.columnName = columnName;
+            this.postingColumnNameTxn = postingColumnNameTxn;
+            this.isAnyFailed = false;
+            try {
+                LPSZ pciFile = coverInfoFileName(path.trimTo(pathTrimTo), columnName, postingColumnNameTxn);
+                if (ff.exists(pciFile) && !ff.removeQuiet(pciFile) && ff.exists(pciFile)) {
+                    isAnyFailed = true;
+                }
+                // A .pc name writes instance NONE and instance 0 with the same host token 0. Both share a
+                // directory only after a change at table txn 0 in the default partition of a table that is not
+                // partitioned (DROP INDEX, ALTER COLUMN TYPE). Instance NONE committed no rows there and sealed
+                // no .pc file, so every .pc file of the token 0 belongs to instance 0. The change writes
+                // <columnName>.d.0 before it queues the purge of NONE, and only the purge of instance 0, which
+                // takes its .pc files too, removes it.
+                isCoverDataOfInstanceZero = postingColumnNameTxn == COLUMN_NAME_TXN_NONE
+                        && ff.exists(TableUtils.dFile(path.trimTo(pathTrimTo), columnName, 0));
+                fileName = Misc.getThreadLocalSink();
+                ff.iterateDir(path.trimTo(pathTrimTo).$(), dirEntryVisitor);
+                return isAnyFailed;
+            } finally {
+                path.trimTo(pathTrimTo);
+                this.ff = null;
+                this.path = null;
+                this.columnName = null;
+                this.fileName = null;
+            }
+        }
+
+        private void onDirEntry(long pUtf8NameZ, int type) {
+            parseSealedDirEntry(pUtf8NameZ, type, fileName, columnName, postingColumnNameTxn, this);
+        }
     }
 
     /**

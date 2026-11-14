@@ -2577,6 +2577,11 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
      * pre-commit txn could still map it), so it is routed to the scoreboard-gated
      * deferred purge instead. After the commit and a purge-job run, exactly one
      * value file must remain -- the case that leaked before the deferred purge.
+     * The in-place rebuild writes under a new column name txn, so the committed
+     * version's .pv is superseded as a whole and goes to the column purge. With no
+     * reader pinned it is gone by the time the O3 commit returns, except under
+     * ADAPTIVE: there a save point still names it, so the column purge job removes
+     * it once the durable epoch moves past it.
      */
     @Test
     public void testInPlaceParquetPostingResealSpillReclaimsValueFile() throws Exception {
@@ -2608,6 +2613,10 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             drainWalQueue();
             execute("ALTER TABLE t_pq_inplace CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
             drainWalQueue();
+            final long nameTxnBeforeO3;
+            try (TableReader reader = engine.getReader("t_pq_inplace")) {
+                nameTxnBeforeO3 = reader.getTxFile().getPartitionNameTxn(0);
+            }
             // O3 into the parquet partition; with the config above this updates in
             // place (isRewrite=false) and rebuilds the index over all 2000+ 'A'
             // rows, tripping the spill budget -> commitDense seals -> deferred purge.
@@ -2617,6 +2626,9 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                     ('2024-01-01T00:20:00.500000Z', 'A')
                     """);
             drainWalQueue();
+            try (TableReader reader = engine.getReader("t_pq_inplace")) {
+                Assert.assertEquals("the O3 must update the parquet partition in place", nameTxnBeforeO3, reader.getTxFile().getPartitionNameTxn(0));
+            }
 
             completeDurableEpoch("t_pq_inplace");
             // The update in place moved the index to a new version while the previous one was live. The column

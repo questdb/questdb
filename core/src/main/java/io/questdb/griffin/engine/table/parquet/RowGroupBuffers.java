@@ -172,9 +172,10 @@ public class RowGroupBuffers implements QuietCloseable, Reopenable {
      * the in-band 0. A column top need not be the leading rows of a chunk: CONVERT TO PARQUET of a
      * split or composite partition writes a row group from several folders, each with its own top,
      * which the {@code _pm} decoder records from the definition levels. The footer decoder, which
-     * serves CONVERT TO NATIVE, gives the leading rows of the column top that the file records, for
-     * a source type with a NULL as well, which a conversion to a type without a NULL keeps as the
-     * native column top. The memory stays valid until the next decode.
+     * serves CONVERT TO NATIVE, records them so as well for a decode to a type with a NULL, STRING
+     * and VARCHAR included, and otherwise gives the leading rows of the column top that the file
+     * records, for a source type with a NULL as well, which a conversion to a type without a NULL
+     * keeps as the native column top. The memory stays valid until the next decode.
      */
     public long getChunkTopRowsPtr(int columnIndex) {
         final long chunksPtr = Unsafe.getLong(ptr + CHUNKS_PTR_OFFSET);

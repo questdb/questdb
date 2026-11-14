@@ -278,7 +278,7 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
                 0.1 * rnd.nextDouble(),
                 rnd.nextDouble(),
                 0.0,
-                withParquet ? 0.0 : 0.01,       // replaceInsertProb, unsupported on parquet partitions
+                0.01,                           // replaceInsertProb, incl. replace over converted parquet partitions
                 0,
                 0.0,                            // queryProb
                 withParquet ? 0.05 : 0.0,       // setParquetEncodingProb

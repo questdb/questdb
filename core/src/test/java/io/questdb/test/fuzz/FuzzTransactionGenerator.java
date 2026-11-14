@@ -298,8 +298,7 @@ public class FuzzTransactionGenerator {
                 sequencerMetadata != null ? sequencerMetadata.getTimestampType() : ColumnType.TIMESTAMP_MICRO
         );
         final long oneDay = timestampDriver.fromDays(1);
-        // Replace range is widened on both sides to cover up to 2 partitions more
-        final long replaceRangePadding = timestampDriver.fromMicros((long) Math.exp(24));
+        final ReplaceWindowPicker replaceWindowPicker = new ReplaceWindowPicker(timestampDriver);
 
         long lastTimestamp = minTimestamp;
 
@@ -697,7 +696,7 @@ public class FuzzTransactionGenerator {
                         symbols,
                         probabilityOfSameTimestamp,
                         replaceInsert,
-                        replaceRangePadding
+                        replaceWindowPicker
                 );
                 rowCount -= blockRows;
                 // Drop and convert partition operations use lastTimestamp as their cutoff. An anchored block
@@ -1223,7 +1222,7 @@ public class FuzzTransactionGenerator {
             String[] symbols,
             double probabilityOfRowsSameTimestamp,
             boolean replaceInsert,
-            long replaceRangePadding
+            ReplaceWindowPicker replaceWindowPicker
     ) {
         FuzzTransaction transaction = new FuzzTransaction();
         long timestamp = startTs;
@@ -1252,23 +1251,28 @@ public class FuzzTransactionGenerator {
         transaction.waitBarrierVersion = waitBarrierVersion;
         transactionList.add(transaction);
 
+        int nextWaitBarrierVersion = waitBarrierVersion;
         if (replaceInsert) {
-            minTs = minTs - replaceRangePadding;
-            maxTs = maxTs + replaceRangePadding;
+            if (minTs > maxTs) {
+                // no rows: anchor the window on the block's range
+                minTs = startTs;
+                maxTs = Math.max(startTs, stopTs);
+            }
             if (!transaction.rollback) {
-                // Add up to 2 partition to the range from each side to make things more interesting
-                transaction.setReplaceRange(minTs, maxTs);
-                return waitBarrierVersion + 1;
+                replaceWindowPicker.pick(rnd, transaction, minTs, maxTs);
+                nextWaitBarrierVersion++;
             } else if (rnd.nextBoolean()) {
                 // Instead of rollback, insert empty replace range
                 transaction.operationList.clear();
                 transaction.rollback = false;
-                transaction.setReplaceRange(minTs, maxTs);
-                return waitBarrierVersion + 1;
+                replaceWindowPicker.pickWide(transaction, minTs, maxTs);
+                nextWaitBarrierVersion++;
             }
         }
-
-        return waitBarrierVersion;
+        if (!transaction.rollback) {
+            replaceWindowPicker.addCommittedRows(transaction);
+        }
+        return nextWaitBarrierVersion;
     }
 
     static RecordMetadata generateDropColumn(
@@ -1298,5 +1302,149 @@ public class FuzzTransactionGenerator {
 
         // nothing to drop, only timestamp column left
         return null;
+    }
+
+    /**
+     * Picks the range of a replace commit, in table timestamp units, one of:
+     * <ul>
+     * <li>a wide window, padded by about 7.4 hours on each side of the commit's rows;</li>
+     * <li>edges on, or one unit next to, the nearest committed rows: {@code lo} on a row,
+     * {@code hi - 1} on a row (replaced) or {@code hi} on a row (kept);</li>
+     * <li>a narrow window around the commit's rows;</li>
+     * <li>whole days, with or without the commit's rows;</li>
+     * <li>no rows: a pure delete, or a narrow window on or next to one committed row.</li>
+     * </ul>
+     * The non-wide shapes reach the edge cases, partition removal and the no-op path. Every
+     * window holds the rows the commit brings, as the WAL requires.
+     */
+    static final class ReplaceWindowPicker {
+        private static final int MAX_TIMESTAMPS = 100_000;
+        private final long day;
+        private final long padding;
+        // a sample of the timestamps committed so far
+        private final LongList timestamps = new LongList();
+        private boolean isSorted = true;
+        private int nextOverwrite;
+
+        ReplaceWindowPicker(TimestampDriver timestampDriver) {
+            day = timestampDriver.fromDays(1);
+            padding = timestampDriver.fromMicros((long) Math.exp(24));
+        }
+
+        void addCommittedRows(FuzzTransaction transaction) {
+            for (int i = 0, n = transaction.operationList.size(); i < n; i++) {
+                if (transaction.operationList.getQuick(i) instanceof FuzzInsertOperation insert) {
+                    if (timestamps.size() < MAX_TIMESTAMPS) {
+                        timestamps.add(insert.getTimestamp());
+                    } else {
+                        timestamps.setQuick(nextOverwrite, insert.getTimestamp());
+                        nextOverwrite = (nextOverwrite + 1) % MAX_TIMESTAMPS;
+                    }
+                    isSorted = false;
+                }
+            }
+        }
+
+        void pick(Rnd rnd, FuzzTransaction transaction, long minTs, long maxTs) {
+            final long lo;
+            final long hi;
+            boolean isDroppingRows = false;
+            switch (rnd.nextInt(10)) {
+                case 0, 1, 2, 3 -> {
+                    pickWide(transaction, minTs, maxTs);
+                    return;
+                }
+                case 4, 5 -> {
+                    lo = snapLo(rnd, minTs);
+                    hi = snapHi(rnd, maxTs);
+                }
+                case 6 -> {
+                    final long margin = padding / 1024 + 1;
+                    lo = minTs - rnd.nextLong(margin);
+                    hi = maxTs + 1 + rnd.nextLong(margin);
+                }
+                case 7 -> {
+                    lo = floorDay(minTs) - rnd.nextInt(2) * day;
+                    hi = floorDay(maxTs) + (1 + rnd.nextInt(2)) * day;
+                    isDroppingRows = rnd.nextBoolean();
+                }
+                case 8 -> {
+                    lo = snapLo(rnd, minTs);
+                    hi = snapHi(rnd, maxTs);
+                    isDroppingRows = true;
+                }
+                default -> {
+                    isDroppingRows = true;
+                    final long anchor = timestamps.size() > 0 ? timestamps.getQuick(rnd.nextInt(timestamps.size())) : minTs;
+                    if (rnd.nextInt(3) == 0) {
+                        // next to the row, not on it
+                        lo = anchor + 1;
+                        hi = lo + 1 + rnd.nextLong(padding / 1024 + 1);
+                    } else {
+                        lo = anchor - rnd.nextLong(3);
+                        hi = anchor + 1 + rnd.nextLong(3);
+                    }
+                }
+            }
+            if (isDroppingRows) {
+                transaction.operationList.clear();
+            }
+            transaction.setReplaceRange(lo, hi);
+        }
+
+        void pickWide(FuzzTransaction transaction, long minTs, long maxTs) {
+            transaction.setReplaceRange(minTs - padding, maxTs + padding);
+        }
+
+        private long floorDay(long ts) {
+            return ts - Math.floorMod(ts, day);
+        }
+
+        private void ensureSorted() {
+            if (!isSorted) {
+                timestamps.sort();
+                isSorted = true;
+            }
+        }
+
+        // hi (exclusive) on the committed row at or after maxTs (the row stays), one past it
+        // (the row is replaced) or two past it; always above maxTs
+        private long snapHi(Rnd rnd, long maxTs) {
+            ensureSorted();
+            int low = 0;
+            int high = timestamps.size();
+            while (low < high) {
+                final int mid = (low + high) >>> 1;
+                if (timestamps.getQuick(mid) < maxTs) {
+                    low = mid + 1;
+                } else {
+                    high = mid;
+                }
+            }
+            if (low == timestamps.size() || timestamps.getQuick(low) - maxTs > day) {
+                return maxTs + 1 + rnd.nextLong(3);
+            }
+            return Math.max(timestamps.getQuick(low) + rnd.nextLong(3), maxTs + 1);
+        }
+
+        // lo on the committed row at or before minTs, or one unit either side of it; never
+        // above minTs
+        private long snapLo(Rnd rnd, long minTs) {
+            ensureSorted();
+            int low = 0;
+            int high = timestamps.size();
+            while (low < high) {
+                final int mid = (low + high) >>> 1;
+                if (timestamps.getQuick(mid) <= minTs) {
+                    low = mid + 1;
+                } else {
+                    high = mid;
+                }
+            }
+            if (low == 0 || minTs - timestamps.getQuick(low - 1) > day) {
+                return minTs - rnd.nextLong(3);
+            }
+            return Math.min(timestamps.getQuick(low - 1) + rnd.nextLong(3) - 1, minTs);
+        }
     }
 }

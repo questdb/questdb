@@ -51,6 +51,24 @@ fn boundary_order_for_column(
     }
 }
 
+/// Where a row group in the footer written by [`ParquetFile::end`] came from.
+///
+/// The final row-group list mixes two index spaces: original groups carried
+/// over from the source footer, and groups written in this session. Callers
+/// that keep per-row-group side data (the `_pm` sidecar's bloom filters) must
+/// resolve it through the origin, never through the final position: after a
+/// split or a mid-file insert the final position matches neither.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RowGroupOrigin {
+    /// An original row group carried over with its data unchanged, at
+    /// `orig_idx` in the source footer. Its footer entry may still be
+    /// re-serialized (e.g. with its ColumnIndex stripped).
+    Existing { orig_idx: usize },
+    /// The `k`-th row group written in this session, in write order. `k`
+    /// indexes [`ParquetFile::bloom_bitsets`].
+    Written(usize),
+}
+
 /// Describes where a row group in the final list came from.
 enum RowGroupSource {
     /// Unchanged original row group — use cached raw bytes if available.
@@ -291,6 +309,27 @@ fn row_group_page_indexable(
     })
 }
 
+/// Removes the elements whose index `removed` marks, in one in-place pass,
+/// and keeps the rest in order; elements past the end of `removed` stay.
+/// `Vec::retain` visits every element once, in order, so the n-th visit
+/// takes the n-th mark.
+fn remove_marked<T>(values: &mut Vec<T>, removed: &[bool]) {
+    let mut marks = removed.iter();
+    values.retain(|_| {
+        #[cfg(test)]
+        REMOVE_MARKED_VISITS.set(REMOVE_MARKED_VISITS.get() + 1);
+        !marks.next().copied().unwrap_or(false)
+    });
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Test hook, absent outside this crate's unit tests: the retain-predicate
+    /// calls of `remove_marked` on this thread, one per element visited, so a
+    /// test can count the passes `ParquetFile::end` makes over its vectors.
+    static REMOVE_MARKED_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Writes the page index for `row_groups`, recording each column's index
 /// offset/length in place and advancing `offset`. Fresh groups derive it from
 /// `page_specs` (`boundary_order` from `sorting_columns`); copied groups (an
@@ -330,20 +369,19 @@ fn write_page_index<W: Write>(
     // emit none: a copied group whose source predates statistics, or a fresh group
     // with an unbounded-max page, would otherwise leave the output with a ColumnIndex
     // on some row groups but not others.
-    let emit_column_index = allow_column_index
-        && (0..row_groups.len()).all(|rg_idx| {
-            row_groups[rg_idx]
-                .columns
-                .iter()
-                .enumerate()
-                .all(|(column_idx, _)| match copied_for(rg_idx, column_idx) {
-                    Some(copied) => copied.column_index.is_some(),
-                    None => page_specs
-                        .get(rg_idx)
-                        .and_then(|columns| columns.get(column_idx))
-                        .is_some_and(|pages| pages_support_column_index(pages)),
-                })
-        });
+    let emit_column_index =
+        allow_column_index
+            && (0..row_groups.len()).all(|rg_idx| {
+                row_groups[rg_idx].columns.iter().enumerate().all(
+                    |(column_idx, _)| match copied_for(rg_idx, column_idx) {
+                        Some(copied) => copied.column_index.is_some(),
+                        None => page_specs
+                            .get(rg_idx)
+                            .and_then(|columns| columns.get(column_idx))
+                            .is_some_and(|pages| pages_support_column_index(pages)),
+                    },
+                )
+            });
 
     if emit_column_index {
         for (rg_idx, group) in row_groups.iter_mut().enumerate() {
@@ -666,6 +704,12 @@ pub struct ParquetFile<W: Write> {
     /// An outer `None` marks a wholly fresh group or an unindexable copied one.
     copied_page_index: Vec<Option<Vec<Option<CopiedColumnIndex>>>>,
     parquet_footer_offset: u64,
+    /// Origin of each final row group, parallel to the footer's row groups.
+    /// Empty until [`Self::end`] runs.
+    row_group_origins: Vec<RowGroupOrigin>,
+    /// Update mode: original row groups [`Self::remove`] dropped from the
+    /// footer, indexed by original ordinal. Empty until the first removal.
+    removed: Vec<bool>,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -697,6 +741,8 @@ impl<W: Write> ParquetFile<W> {
             is_insert: vec![],
             copied_page_index: vec![],
             parquet_footer_offset: 0,
+            row_group_origins: vec![],
+            removed: vec![],
         }
     }
 
@@ -723,6 +769,8 @@ impl<W: Write> ParquetFile<W> {
             is_insert: vec![],
             copied_page_index: vec![],
             parquet_footer_offset: 0,
+            row_group_origins: vec![],
+            removed: vec![],
         }
     }
 
@@ -752,6 +800,8 @@ impl<W: Write> ParquetFile<W> {
             is_insert: vec![],
             copied_page_index: vec![],
             parquet_footer_offset: 0,
+            row_group_origins: vec![],
+            removed: vec![],
         }
     }
 
@@ -883,6 +933,13 @@ impl<W: Write> ParquetFile<W> {
                         ))
                         .into());
                     }
+                    if self.removed.get(ordinal).copied().unwrap_or(false) {
+                        return Err(Error::InvalidParameter(format!(
+                            "Row group {} was removed and cannot be replaced",
+                            ordinal
+                        ))
+                        .into());
+                    }
                     ordinal
                 } else {
                     metadata.row_groups.len() + self.row_groups.len()
@@ -927,6 +984,63 @@ impl<W: Write> ParquetFile<W> {
         }
     }
 
+    /// Update mode only. Drops original row group `ordinal` from the footer
+    /// that [`Self::end`] writes. Its bytes stay in the file as dead space;
+    /// nothing below the original file size is touched. Indexed in ORIGINAL
+    /// space, like [`Self::replace`]; [`Self::insert`] positions are final
+    /// positions, which already exclude removed groups.
+    ///
+    /// Errors, never panics, on: a non-update mode, a negative or
+    /// out-of-range ordinal, an ordinal already removed, or an ordinal already
+    /// replaced in this session.
+    pub fn remove(&mut self, ordinal: i32) -> Result<()> {
+        let Mode::Update(metadata, _) = &self.mode else {
+            return Err(Error::InvalidParameter(
+                "Remove can only be called in update mode".to_string(),
+            ));
+        };
+        let num_row_groups = metadata.row_groups.len();
+        let index = usize::try_from(ordinal)
+            .ok()
+            .filter(|&i| i < num_row_groups)
+            .ok_or_else(|| {
+                Error::InvalidParameter(format!(
+                    "Row group ordinal to remove must be in [0, {}), got {}",
+                    num_row_groups, ordinal
+                ))
+            })?;
+        if self.removed.get(index).copied().unwrap_or(false) {
+            return Err(Error::InvalidParameter(format!(
+                "Row group {} is already removed",
+                index
+            )));
+        }
+        if self.is_replaced(index) {
+            return Err(Error::InvalidParameter(format!(
+                "Row group {} was replaced and cannot be removed",
+                index
+            )));
+        }
+        if self.removed.is_empty() {
+            self.removed = vec![false; num_row_groups];
+        }
+        self.removed[index] = true;
+        Ok(())
+    }
+
+    /// Whether original row group `index` was replaced in this session.
+    fn is_replaced(&self, index: usize) -> bool {
+        let Ok(ordinal) = i16::try_from(index) else {
+            // write_row_group rejects ordinals past i16::MAX, so no replacement
+            // can carry one.
+            return false;
+        };
+        self.row_groups
+            .iter()
+            .zip(&self.is_insert)
+            .any(|(group, is_insert)| !is_insert && group.ordinal == Some(ordinal))
+    }
+
     pub fn append<E>(
         &mut self,
         row_group: RowGroupIter<'_, E>,
@@ -963,8 +1077,16 @@ impl<W: Write> ParquetFile<W> {
         &self.row_groups
     }
 
+    /// Bloom bitsets of the row groups written in this session, in write
+    /// order. Index with [`RowGroupOrigin::Written`], not a final position.
     pub fn bloom_bitsets(&self) -> &[Vec<Option<Vec<u8>>>] {
         &self.bloom_bitsets
+    }
+
+    /// Origin of each row group in the final footer, parallel to
+    /// [`Self::row_groups`] once [`Self::end`] has run; empty before.
+    pub fn row_group_origins(&self) -> &[RowGroupOrigin] {
+        &self.row_group_origins
     }
 
     /// Write raw (pre-encoded) row group bytes and register the row group metadata.
@@ -1004,9 +1126,8 @@ impl<W: Write> ParquetFile<W> {
         self.row_groups.push(row_group);
         self.page_specs.push(vec![]);
         self.bloom_bitsets.push(bloom_bitsets);
-        self.copied_page_index.push(
-            copied_page_index.map(|columns| columns.into_iter().map(Some).collect()),
-        );
+        self.copied_page_index
+            .push(copied_page_index.map(|columns| columns.into_iter().map(Some).collect()));
         self.is_insert.push(false);
         Ok(())
     }
@@ -1088,6 +1209,9 @@ impl<W: Write> ParquetFile<W> {
                 self.parquet_footer_offset = self.offset;
                 let len = end_file(&mut self.writer, &metadata)?;
                 self.state = State::Finished;
+                self.row_group_origins = (0..metadata.row_groups.len())
+                    .map(RowGroupOrigin::Written)
+                    .collect();
                 self.metadata = Some(metadata);
                 Ok(self.offset + len)
             }
@@ -1155,23 +1279,42 @@ impl<W: Write> ParquetFile<W> {
                     false
                 };
 
+                // Origin of each entry in metadata.row_groups, kept in lockstep
+                // with it through the replacements, appends and insertions below.
+                // `k` is the write order, which indexes bloom_bitsets.
+                let mut origins: Vec<RowGroupOrigin> = (0..original_rg_count)
+                    .map(|orig_idx| RowGroupOrigin::Existing { orig_idx })
+                    .collect();
+
+                let removed = std::mem::take(&mut self.removed);
+
                 // Partition into replacements/appends and insertions.
                 let mut insertion_groups = Vec::new();
-                for (group, is_ins) in groups.into_iter().zip(is_insert_flags.iter()) {
+                for (k, (group, is_ins)) in
+                    groups.into_iter().zip(is_insert_flags.iter()).enumerate()
+                {
                     if *is_ins {
-                        insertion_groups.push(group);
+                        insertion_groups.push((k, group));
                         continue;
                     }
                     let ordinal = group
                         .ordinal
                         .ok_or_else(|| Error::oos("Row group ordinal is missing"))?;
                     let new_rows = group.num_rows;
+                    if removed.get(ordinal as usize).copied().unwrap_or(false) {
+                        return Err(Error::oos(format!(
+                            "Row group {} is both removed and replaced",
+                            ordinal
+                        )));
+                    }
                     if (ordinal as usize) < original_rg_count {
                         num_rows -= metadata.row_groups[ordinal as usize].num_rows;
                         metadata.row_groups[ordinal as usize] = group;
                         modified[ordinal as usize] = true;
+                        origins[ordinal as usize] = RowGroupOrigin::Written(k);
                     } else {
                         metadata.row_groups.push(group);
+                        origins.push(RowGroupOrigin::Written(k));
                     }
                     num_rows += new_rows;
                 }
@@ -1189,22 +1332,72 @@ impl<W: Write> ParquetFile<W> {
                     })
                     .collect();
 
+                // Phase 1b: removals, in original index space after the
+                // replacements and before the insertions. Insert positions are
+                // final positions that already exclude removed groups, so every
+                // removal must be applied before any insertion. Cached sources
+                // keep their original index, which is what the FooterCache is
+                // keyed by. remove() sized `removed` to the original count and
+                // rejected replaced groups; phase 1 rejected a replacement of a
+                // removed one.
+                debug_assert!(removed.len() <= original_rg_count);
+                for index in (0..removed.len()).rev() {
+                    if !removed[index] {
+                        continue;
+                    }
+                    debug_assert!(!modified[index]);
+                    // get(), not an index: a logic error must surface as an
+                    // Err, not a panic (a JNI abort).
+                    let row_group_num_rows = metadata
+                        .row_groups
+                        .get(index)
+                        .ok_or_else(|| {
+                            Error::oos(format!(
+                                "Row group removal index {} out of bounds for {} row groups",
+                                index,
+                                metadata.row_groups.len()
+                            ))
+                        })?
+                        .num_rows;
+                    num_rows = num_rows
+                        .checked_sub(row_group_num_rows)
+                        .filter(|&rows| rows >= 0)
+                        .ok_or_else(|| {
+                            Error::oos(format!(
+                                "Removing row group {} underflows the file row count {}",
+                                index, num_rows
+                            ))
+                        })?;
+                }
+                // One pass per lockstep vector: a Vec::remove per removed
+                // group would shift every later group each time.
+                if !removed.is_empty() {
+                    debug_assert_eq!(sources.len(), metadata.row_groups.len());
+                    debug_assert_eq!(origins.len(), metadata.row_groups.len());
+                    remove_marked(&mut metadata.row_groups, &removed);
+                    remove_marked(&mut sources, &removed);
+                    remove_marked(&mut origins, &removed);
+                }
+
                 // Phase 2: insertions in ascending ordinal order
+                // (stable sort: equal positions keep their write order)
                 let mut insertions: Vec<_> = insertion_groups
                     .into_iter()
-                    .map(|g| {
+                    .map(|(k, g)| {
                         let pos = g.ordinal.unwrap_or(0) as usize;
-                        (pos, g)
+                        (pos, k, g)
                     })
                     .collect();
-                insertions.sort_by_key(|(pos, _)| *pos);
+                insertions.sort_by_key(|(pos, _, _)| *pos);
 
-                for (pos, group) in insertions {
+                for (pos, k, group) in insertions {
                     let adjusted_pos = pos.min(metadata.row_groups.len());
                     num_rows += group.num_rows;
                     metadata.row_groups.insert(adjusted_pos, group);
                     sources.insert(adjusted_pos, RowGroupSource::Inserted);
+                    origins.insert(adjusted_pos, RowGroupOrigin::Written(k));
                 }
+                debug_assert_eq!(origins.len(), metadata.row_groups.len());
 
                 // Keep the ColumnIndex all-or-nothing across cached and new groups. A
                 // cached source group carries its ColumnIndex verbatim, but a newly
@@ -1255,6 +1448,7 @@ impl<W: Write> ParquetFile<W> {
                 self.parquet_footer_offset = self.offset;
                 let len = end_file_incremental(&mut self.writer, metadata, footer_cache, &sources)?;
                 self.state = State::Finished;
+                self.row_group_origins = origins;
                 self.metadata = Some(metadata.clone());
                 Ok(self.offset + len)
             }
@@ -1304,6 +1498,469 @@ mod tests {
         let result = read_metadata(&mut Cursor::new(a));
         assert!(result.is_ok());
 
+        Ok(())
+    }
+
+    // ---------------------------------------------------------------
+    // Update-mode remove(): zero-column row groups keep the footer small;
+    // `total_byte_size` is a per-group marker.
+    // ---------------------------------------------------------------
+
+    use crate::schema::types::ParquetType;
+    use parquet_format_safe::thrift::protocol::TCompactInputProtocol;
+
+    type UpdResult<T> = std::result::Result<T, Error>;
+
+    fn marker_rg(marker: i64, rows: i64, ordinal: i16) -> RowGroup {
+        RowGroup::new(
+            vec![],
+            marker,
+            rows,
+            None::<Vec<SortingColumn>>,
+            None,
+            None,
+            ordinal,
+        )
+    }
+
+    fn marker_metadata(markers: &[i64], rows: &[i64]) -> ThriftFileMetaData {
+        let schema = SchemaDescriptor::new("m".to_string(), Vec::<ParquetType>::new());
+        ThriftFileMetaData::new(
+            2,
+            schema.into_thrift(),
+            rows.iter().sum(),
+            markers
+                .iter()
+                .zip(rows)
+                .enumerate()
+                .map(|(i, (&m, &r))| marker_rg(m, r, i as i16))
+                .collect(),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+    }
+
+    fn serialize_footer(metadata: &ThriftFileMetaData) -> Vec<u8> {
+        let mut buf = Vec::new();
+        let mut prot = TCompactOutputProtocol::new(&mut buf);
+        metadata.write_to_out_protocol(&mut prot).unwrap();
+        buf
+    }
+
+    /// An updater over a zero-column source whose groups carry `markers` as
+    /// `total_byte_size` and `rows` as `num_rows`. The data region is `offset`
+    /// bytes of 0xAA, so end() output past it is only the page index + footer.
+    fn marker_updater(
+        markers: &[i64],
+        rows: &[i64],
+        cache: Option<FooterCache>,
+    ) -> ParquetFile<Cursor<Vec<u8>>> {
+        let offset = 64u64;
+        let mut cursor = Cursor::new(vec![0xAAu8; offset as usize]);
+        cursor.set_position(offset);
+        ParquetFile::new_updater(
+            cursor,
+            offset,
+            SchemaDescriptor::new("m".to_string(), Vec::<ParquetType>::new()),
+            WriteOptions {
+                write_statistics: false,
+                version: crate::write::Version::V2,
+                bloom_filter_fpp: 0.01,
+            },
+            None,
+            None,
+            marker_metadata(markers, rows),
+            cache,
+        )
+    }
+
+    /// Row group with no columns: only its ordinal / num_rows matter.
+    fn empty_group<'a>() -> RowGroupIter<'a, Error> {
+        crate::write::DynIter::new(std::iter::empty())
+    }
+
+    /// Reads back the footer end() wrote and returns (markers, num_rows).
+    fn read_back(file: ParquetFile<Cursor<Vec<u8>>>, end: u64) -> (Vec<i64>, i64, Vec<u8>) {
+        let footer_offset = file.parquet_footer_offset() as usize;
+        let bytes = file.into_inner().into_inner();
+        assert_eq!(bytes.len() as u64, end);
+        assert_eq!(&bytes[bytes.len() - 4..], b"PAR1");
+        let footer = &bytes[footer_offset..bytes.len() - 8];
+        let mut prot = TCompactInputProtocol::new(footer, usize::MAX);
+        let meta = ThriftFileMetaData::read_from_in_protocol(&mut prot).unwrap();
+        (
+            meta.row_groups
+                .iter()
+                .map(|rg| rg.total_byte_size)
+                .collect(),
+            meta.num_rows,
+            bytes,
+        )
+    }
+
+    /// Runs end() and returns its result with the number of elements that
+    /// `remove_marked` visited meanwhile, i.e. the length of each vector its
+    /// passes compacted, summed.
+    fn end_counting_remove_marked_visits(
+        file: &mut ParquetFile<Cursor<Vec<u8>>>,
+    ) -> UpdResult<(u64, usize)> {
+        // Drop counts left by earlier tests: libtest runs a test on its main
+        // thread, after others, when it cannot spawn a thread for it.
+        REMOVE_MARKED_VISITS.take();
+        let end = file.end(None)?;
+        Ok((end, REMOVE_MARKED_VISITS.take()))
+    }
+
+    #[test]
+    fn update_remove_middle_row_group() -> UpdResult<()> {
+        let mut file = marker_updater(&[10, 11, 12], &[5, 6, 7], None);
+        file.remove(1)?;
+        let end = file.end(None)?;
+        assert_eq!(
+            file.row_group_origins(),
+            &[
+                RowGroupOrigin::Existing { orig_idx: 0 },
+                RowGroupOrigin::Existing { orig_idx: 2 },
+            ]
+        );
+        let (markers, num_rows, bytes) = read_back(file, end);
+        assert_eq!(markers, vec![10, 12]);
+        assert_eq!(num_rows, 12);
+        // Nothing below the original size was written.
+        assert!(bytes[..64].iter().all(|&b| b == 0xAA));
+        Ok(())
+    }
+
+    #[test]
+    fn update_remove_first_and_last_row_groups() -> UpdResult<()> {
+        let mut file = marker_updater(&[10, 11, 12, 13], &[1, 2, 3, 4], None);
+        file.remove(3)?;
+        file.remove(0)?;
+        let end = file.end(None)?;
+        assert_eq!(
+            file.row_group_origins(),
+            &[
+                RowGroupOrigin::Existing { orig_idx: 1 },
+                RowGroupOrigin::Existing { orig_idx: 2 },
+            ]
+        );
+        let (markers, num_rows, _) = read_back(file, end);
+        assert_eq!(markers, vec![11, 12]);
+        assert_eq!(num_rows, 5);
+        Ok(())
+    }
+
+    #[test]
+    fn update_remove_then_insert_final_positions() -> UpdResult<()> {
+        // remove-rg-design.md 3.2 worked example over [A, B, C, D]:
+        // MERGE(A) -> replace(0) + insert(1); DROP(B) -> remove(1);
+        // COPY_O3 N -> insert(2); MERGE(C) -> replace(2); COPY(D).
+        let mut file = marker_updater(&[10, 11, 12, 13], &[1, 2, 3, 4], None);
+        file.write_raw_row_group(&[], marker_rg(20, 5, 0))?; // k=0: A1
+        file.insert(empty_group(), 1, &[])?; // k=1: A2
+        file.remove(1)?;
+        file.insert(empty_group(), 2, &[])?; // k=2: N
+        file.write_raw_row_group(&[], marker_rg(22, 7, 2))?; // k=3: C'
+        let end = file.end(None)?;
+        assert_eq!(
+            file.row_group_origins(),
+            &[
+                RowGroupOrigin::Written(0),
+                RowGroupOrigin::Written(1),
+                RowGroupOrigin::Written(2),
+                RowGroupOrigin::Written(3),
+                RowGroupOrigin::Existing { orig_idx: 3 },
+            ]
+        );
+        let (markers, num_rows, _) = read_back(file, end);
+        // Inserted zero-column groups have total_byte_size 0.
+        assert_eq!(markers, vec![20, 0, 0, 22, 13]);
+        // 10 - A(1) - B(2) - C(3) + A1(5) + C'(7) + inserts(0) = 16
+        assert_eq!(num_rows, 16);
+        Ok(())
+    }
+
+    #[test]
+    fn update_remove_with_append() -> UpdResult<()> {
+        let mut file = marker_updater(&[10, 11, 12], &[1, 2, 3], None);
+        file.remove(0)?;
+        file.append(empty_group(), &[])?; // k=0, ordinal None -> appended
+        let end = file.end(None)?;
+        assert_eq!(
+            file.row_group_origins(),
+            &[
+                RowGroupOrigin::Existing { orig_idx: 1 },
+                RowGroupOrigin::Existing { orig_idx: 2 },
+                RowGroupOrigin::Written(0),
+            ]
+        );
+        let (markers, num_rows, _) = read_back(file, end);
+        assert_eq!(markers, vec![11, 12, 0]);
+        assert_eq!(num_rows, 5);
+        Ok(())
+    }
+
+    #[test]
+    fn update_remove_all_but_insert() -> UpdResult<()> {
+        let mut file = marker_updater(&[10, 11], &[1, 2], None);
+        file.remove(0)?;
+        file.remove(1)?;
+        file.insert(empty_group(), 0, &[])?;
+        let end = file.end(None)?;
+        assert_eq!(file.row_group_origins(), &[RowGroupOrigin::Written(0)]);
+        let (markers, num_rows, _) = read_back(file, end);
+        assert_eq!(markers, vec![0]);
+        assert_eq!(num_rows, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn update_remove_preserves_cached_raw_bytes() -> UpdResult<()> {
+        // The cache holds different markers than the parsed metadata, so the
+        // output shows which one each surviving group was emitted from: a
+        // Cached source must still point at its ORIGINAL cache entry after
+        // the removal shifted it down.
+        let cache = FooterCache::from_footer_bytes(serialize_footer(&marker_metadata(
+            &[100, 101, 102, 103],
+            &[1, 2, 3, 4],
+        )))?;
+        let mut file = marker_updater(&[10, 11, 12, 13], &[1, 2, 3, 4], Some(cache));
+        file.remove(1)?;
+        file.write_raw_row_group(&[], marker_rg(22, 3, 2))?;
+        let end = file.end(None)?;
+        let (markers, num_rows, _) = read_back(file, end);
+        assert_eq!(markers, vec![100, 22, 103]);
+        assert_eq!(num_rows, 8);
+        Ok(())
+    }
+
+    #[test]
+    fn update_remove_rejects_invalid_calls() -> UpdResult<()> {
+        let mut file = marker_updater(&[10, 11, 12], &[1, 2, 3], None);
+        assert!(file.remove(-1).is_err());
+        assert!(file.remove(3).is_err());
+        assert!(file.remove(i32::MAX).is_err());
+        file.remove(1)?;
+        assert!(file.remove(1).is_err(), "double remove");
+        // replace-after-remove
+        let err = file.replace(empty_group(), Some(1), &[]).unwrap_err();
+        assert!(err.to_string().contains("removed"), "{err}");
+        // remove-after-replace
+        file.replace(empty_group(), Some(2), &[])?;
+        let err = file.remove(2).unwrap_err();
+        assert!(err.to_string().contains("replaced"), "{err}");
+        // an insert's position is not an original ordinal: remove(0) still
+        // works after an insert at final position 0.
+        file.insert(empty_group(), 0, &[])?;
+        file.remove(0)?;
+        let end = file.end(None)?;
+        let (markers, num_rows, _) = read_back(file, end);
+        assert_eq!(markers, vec![0, 0]);
+        assert_eq!(num_rows, 0);
+
+        let mut write_mode = ParquetFile::new(
+            Cursor::new(vec![]),
+            SchemaDescriptor::new("m".to_string(), Vec::<ParquetType>::new()),
+            WriteOptions {
+                write_statistics: false,
+                version: crate::write::Version::V2,
+                bloom_filter_fpp: 0.01,
+            },
+            None,
+        );
+        assert!(write_mode.remove(0).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn update_end_rejects_raw_replace_of_removed_group() -> UpdResult<()> {
+        // A raw row group carrying a removed ordinal bypasses replace()'s
+        // check; end() must still refuse the conflict.
+        let mut file = marker_updater(&[10, 11], &[1, 2], None);
+        file.remove(0)?;
+        file.write_raw_row_group(&[], marker_rg(20, 1, 0))?;
+        assert!(file.end(None).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn update_remove_rejects_row_count_underflow() -> UpdResult<()> {
+        let mut metadata = marker_metadata(&[10, 11], &[1, 2]);
+        metadata.num_rows = 1; // corrupt: less than the groups' sum
+        let offset = 64u64;
+        let mut cursor = Cursor::new(vec![0u8; offset as usize]);
+        cursor.set_position(offset);
+        let mut file = ParquetFile::new_updater(
+            cursor,
+            offset,
+            SchemaDescriptor::new("m".to_string(), Vec::<ParquetType>::new()),
+            WriteOptions {
+                write_statistics: false,
+                version: crate::write::Version::V2,
+                bloom_filter_fpp: 0.01,
+            },
+            None,
+            None,
+            metadata,
+            None,
+        );
+        file.remove(1)?;
+        let err = file.end(None).unwrap_err();
+        assert!(err.to_string().contains("underflows"), "{err}");
+        Ok(())
+    }
+
+    #[test]
+    fn update_remove_beyond_i16_ordinals() -> UpdResult<()> {
+        // Thrift ordinals are i16; a group past i16::MAX can still be removed.
+        let count = i16::MAX as usize + 2;
+        let markers: Vec<i64> = (0..count as i64).collect();
+        let rows = vec![1i64; count];
+        let mut file = marker_updater(&markers, &rows, None);
+        file.remove(count as i32 - 1)?;
+        file.end(None)?;
+        let meta = file.metadata().unwrap();
+        assert_eq!(meta.row_groups.len(), count - 1);
+        assert_eq!(meta.num_rows, count as i64 - 1);
+        Ok(())
+    }
+
+    #[test]
+    fn update_remove_head_half_of_max_row_groups() -> UpdResult<()> {
+        // The most row groups write_row_group lets a file have (i16 ordinals),
+        // the first half removed: every survivor moves to the head. The cache
+        // holds other markers than the parsed metadata, so the output shows
+        // that each survivor is emitted from its own original cache entry.
+        let count = i16::MAX as usize + 1;
+        let half = count / 2;
+        let markers: Vec<i64> = (0..count as i64).collect();
+        let cache_markers: Vec<i64> = (0..count as i64).map(|i| 100_000 + i).collect();
+        let rows = vec![1i64; count];
+        let cache = FooterCache::from_footer_bytes(serialize_footer(&marker_metadata(
+            &cache_markers,
+            &rows,
+        )))?;
+        let mut file = marker_updater(&markers, &rows, Some(cache));
+        for ordinal in 0..half {
+            file.remove(ordinal as i32)?;
+        }
+        let (end, visits) = end_counting_remove_marked_visits(&mut file)?;
+        // One pass over each lockstep vector (row groups, sources, origins),
+        // each visiting all 32,768 groups once: 3 x 32,768.
+        assert_eq!(visits, 98_304);
+        let expected_origins: Vec<RowGroupOrigin> = (half..count)
+            .map(|orig_idx| RowGroupOrigin::Existing { orig_idx })
+            .collect();
+        assert_eq!(file.row_group_origins(), expected_origins.as_slice());
+        let (markers, num_rows, _) = read_back(file, end);
+        let expected_markers: Vec<i64> = (half as i64..count as i64).map(|i| 100_000 + i).collect();
+        assert_eq!(markers, expected_markers);
+        assert_eq!(num_rows, half as i64);
+        Ok(())
+    }
+
+    #[test]
+    fn update_remove_scattered_groups_keeps_sources_aligned() -> UpdResult<()> {
+        // Removed groups at the head, in an adjacent run between survivors and
+        // at the tail, around a replaced group. The cache holds other markers
+        // than the parsed metadata: an unchanged survivor is emitted from its
+        // own original cache entry, the replaced group from its new metadata.
+        let cache = FooterCache::from_footer_bytes(serialize_footer(&marker_metadata(
+            &[100, 101, 102, 103, 104, 105, 106],
+            &[1, 2, 3, 4, 5, 6, 7],
+        )))?;
+        let mut file = marker_updater(
+            &[10, 11, 12, 13, 14, 15, 16],
+            &[1, 2, 3, 4, 5, 6, 7],
+            Some(cache),
+        );
+        file.remove(0)?;
+        file.remove(2)?;
+        file.remove(3)?;
+        file.remove(6)?;
+        file.write_raw_row_group(&[], marker_rg(24, 9, 4))?; // k=0 replaces group 4
+        let end = file.end(None)?;
+        assert_eq!(
+            file.row_group_origins(),
+            &[
+                RowGroupOrigin::Existing { orig_idx: 1 },
+                RowGroupOrigin::Written(0),
+                RowGroupOrigin::Existing { orig_idx: 5 },
+            ]
+        );
+        let (markers, num_rows, _) = read_back(file, end);
+        assert_eq!(markers, vec![101, 24, 105]);
+        // 28 - group 4 (5) + its replacement (9) - removed (1 + 3 + 4 + 7) = 17
+        assert_eq!(num_rows, 17);
+        Ok(())
+    }
+
+    #[test]
+    fn update_remove_nothing_keeps_every_row_group() -> UpdResult<()> {
+        // A replacement and an insertion, but no removal: every original
+        // group stays, in order, unchanged ones emitted from the cache.
+        let cache = FooterCache::from_footer_bytes(serialize_footer(&marker_metadata(
+            &[100, 101, 102],
+            &[1, 2, 3],
+        )))?;
+        let mut file = marker_updater(&[10, 11, 12], &[1, 2, 3], Some(cache));
+        file.write_raw_row_group(&[], marker_rg(21, 4, 1))?; // k=0 replaces group 1
+        file.insert(empty_group(), 0, &[])?; // k=1 at final position 0
+        let (end, visits) = end_counting_remove_marked_visits(&mut file)?;
+        // No compaction pass runs. The output cannot show that: a pass with
+        // no marks keeps every group.
+        assert_eq!(visits, 0);
+        assert_eq!(
+            file.row_group_origins(),
+            &[
+                RowGroupOrigin::Written(1),
+                RowGroupOrigin::Existing { orig_idx: 0 },
+                RowGroupOrigin::Written(0),
+                RowGroupOrigin::Existing { orig_idx: 2 },
+            ]
+        );
+        let (markers, num_rows, _) = read_back(file, end);
+        // Inserted zero-column groups have total_byte_size 0.
+        assert_eq!(markers, vec![0, 100, 21, 102]);
+        // 6 - group 1 (2) + its replacement (4) + the insert (0) = 8
+        assert_eq!(num_rows, 8);
+        Ok(())
+    }
+
+    #[test]
+    fn update_remove_only_row_group_leaves_no_row_groups() -> UpdResult<()> {
+        let mut file = marker_updater(&[10], &[5], None);
+        file.remove(0)?;
+        let end = file.end(None)?;
+        assert_eq!(file.row_group_origins(), &[] as &[RowGroupOrigin]);
+        let (markers, num_rows, _) = read_back(file, end);
+        assert_eq!(markers, Vec::<i64>::new());
+        assert_eq!(num_rows, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn row_group_origins_write_mode_is_identity() -> UpdResult<()> {
+        let mut file = ParquetFile::new(
+            Cursor::new(vec![]),
+            SchemaDescriptor::new("m".to_string(), Vec::<ParquetType>::new()),
+            WriteOptions {
+                write_statistics: false,
+                version: crate::write::Version::V2,
+                bloom_filter_fpp: 0.01,
+            },
+            None,
+        );
+        file.write(empty_group(), &[])?;
+        file.write(empty_group(), &[])?;
+        file.end(None)?;
+        assert_eq!(
+            file.row_group_origins(),
+            &[RowGroupOrigin::Written(0), RowGroupOrigin::Written(1)]
+        );
         Ok(())
     }
 

@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
@@ -34,6 +35,9 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.io.File;
+import java.util.Arrays;
 
 public class AlterTableRenameColumnTest extends AbstractCairoTest {
 
@@ -275,6 +279,32 @@ public class AlterTableRenameColumnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRenameIndexedColumnOfNonPartitionedTablePurgesOldFiles() throws Exception {
+        // RENAME COLUMN links the files of the column and of its index under the new name and the txn of the rename,
+        // and purges the old ones, which no reader holds, at commit
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE np (s SYMBOL INDEX, v INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO np VALUES ('a', 1, '2024-01-01T00:00:00.000000Z'), ('b', 2, '2024-01-01T01:00:00.000000Z'), ('a', 3, '2024-01-01T02:00:00.000000Z')");
+            engine.releaseInactive();
+            final long renameTxn;
+            try (TableReader reader = getReader("np")) {
+                renameTxn = reader.getTxn();
+            }
+            Assert.assertEquals("[s.d, s.k, s.v]", listDefaultPartitionFiles("s"));
+            execute("ALTER TABLE np RENAME COLUMN s TO s2");
+            Assert.assertEquals("[]", listDefaultPartitionFiles("s"));
+            Assert.assertEquals("[s2.d." + renameTxn + ", s2.k." + renameTxn + ", s2.v." + renameTxn + "]", listDefaultPartitionFiles("s2"));
+            assertQuery("SELECT s2, v, ts FROM np WHERE s2 = 'a'")
+                    .timestamp("ts")
+                    .returns("""
+                            s2\tv\tts
+                            a\t1\t2024-01-01T00:00:00.000000Z
+                            a\t3\t2024-01-01T02:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testRenameSymbolColumnReloadReader() throws Exception {
 
         FilesFacade ff = new FilesFacadeImpl();
@@ -508,6 +538,15 @@ public class AlterTableRenameColumnTest extends AbstractCairoTest {
 
             engine.clear();
         });
+    }
+
+    // the names of the files of column columnName in the partition directory of table np, which has no partitions, sorted
+    private static String listDefaultPartitionFiles(String columnName) {
+        final File dir = new File(configuration.getDbRoot() + File.separator + engine.verifyTableName("np").getDirName(), TableUtils.DEFAULT_PARTITION_NAME);
+        final String[] names = dir.list((d, name) -> name.startsWith(columnName + '.'));
+        Assert.assertNotNull(dir.toString(), names);
+        Arrays.sort(names);
+        return Arrays.toString(names);
     }
 
     private void createX() throws Exception {
