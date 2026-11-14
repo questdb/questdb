@@ -488,6 +488,36 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
     }
 
     @Test
+    public void testRestartPastACorruptNewestRootWhoseHealCannotWriteLogsItInTheViewsUnitOverANanosecondBase() throws Exception {
+        // The case above with the first allocation of a data segment refused, as a full disk
+        // refuses it: the heal cannot write the root it reconstructs, and logs the torn root 00:02
+        // in nanoseconds. The restore fails with it, and the restart rebuilds the view from the
+        // applied base, which still holds every row.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        final String day = "2026-01-01";
+        final LiveViewCheckpointDiskFullFault fault = new LiveViewCheckpointDiskFullFault();
+        assertMemoryLeak(fault, () -> {
+            createDepartureView(true);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                corruptNewestRootDataSegment(commitTwoRowsAboveTheNewestRoot(job, day, false));
+            }
+            fault.arm(LiveViewCheckpointDiskFullFault.OP_ALLOCATE, LiveViewCheckpointLayout.DATA_DIR_NAME, 1);
+            final LogCapture capture = restartAndRefreshCapturingLog();
+            fault.disarm();
+            Assert.assertNotNull("the heal must reach a data segment", fault.getFailedFile());
+            capture.assertLogged("live view checkpoint restore fell back past corrupt roots, reconstructing [view=lv, "
+                    + "predecessorMaxTs=2026-01-01T00:01:00.000000000Z, corruptCeilingMaxTs=2026-01-01T00:02:00.000000000Z]");
+            capture.assertLogged("could not reconstruct corrupt live view checkpoint roots [view=lv, "
+                    + "corruptCeilingMaxTs=2026-01-01T00:02:00.000000000Z, error=");
+            capture.assertNotLogged("reconstructed corrupt live view checkpoint roots");
+            assertRebuiltFromAppliedBase("lv");
+            assertViewRows(owedRootText(PAUSE_FIXTURE_ROWS, day, true), DEPARTURE_ROWS_QUERY);
+            assertViewMatchesRecompute(DEPARTURE_VIEW_SQL);
+        });
+    }
+
+    @Test
     public void testRestartLogsTheRootItRestoresAndTheFrontierInTheViewsUnit() throws Exception {
         assertRestartLogsTheRootItRestoresAndTheFrontier(false);
     }
@@ -5020,15 +5050,6 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
         return isNanos ? NanosTimestampDriver.floor(text) : MicrosTimestampDriver.floor(text);
     }
 
-    private static boolean isOnStack(String methodName) {
-        for (StackTraceElement frame : Thread.currentThread().getStackTrace()) {
-            if (methodName.equals(frame.getMethodName())) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     // The rows the single-departure shape leaves: a root per commit, the newest of which sealed
     // two rows under the newer one's timestamp, and that row upserted out of the filter.
     private static String singleDepartureRows(boolean isDayLost) {
@@ -5887,67 +5908,44 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
      * The owed-root fixture over the day the base keeps, on a base whose designated timestamp has
      * nanosecond precision when {@code isNanos}, with the restore of the root at 00:01, which the
      * resume of the late row 00:01:30 anchors on, failing its first open with {@code errno}. EMFILE
-     * is a fault a retry may get past: the turn fails, keeps the timeline, and the retry resumes
-     * from the same anchor and lands the owed root. A file that is gone is not: the resume retires
-     * the timeline and the view rebuilds from the applied base. Either way the line names the anchor
-     * in the view's own unit, the view ends with every row, and a restart restores it from the
-     * timeline.
+     * is a fault a retry may get past: the turn fails, keeps the timeline, and the gate of the turn
+     * after it restores the runtime in place from the newest root at or below the frontier 00:04,
+     * the third seal's root at 00:02, then replays the two rows above it out of the four base
+     * commits the view consumed. The retry then resumes from the same anchor and lands the owed
+     * root. A file that is gone is not a fault a retry gets past: the resume retires the timeline
+     * and the view rebuilds from the applied base. Either way the lines name the roots in the
+     * view's own unit, the view ends with every row, and a restart restores it from the timeline.
      */
     private void assertResumeWhoseAnchorRestoreFails(int errno, boolean isNanos) throws Exception {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
         final String day = "2026-01-01";
-        final AtomicInteger armedErrno = new AtomicInteger();
-        final AtomicInteger failedOpens = new AtomicInteger();
-        // The errno the next errno() read reports, set by the open that failed; 0 when none.
-        final AtomicInteger pendingErrno = new AtomicInteger();
-        final TestFilesFacadeImpl ff = new TestFilesFacadeImpl() {
-            @Override
-            public int errno() {
-                final int pending = pendingErrno.getAndSet(0);
-                return pending != 0 ? pending : super.errno();
-            }
-
-            @Override
-            public long openRO(LPSZ name) {
-                return isFailed(name) ? -1 : super.openRO(name);
-            }
-
-            @Override
-            public long openRW(LPSZ name, int opts) {
-                return isFailed(name) ? -1 : super.openRW(name, opts);
-            }
-
-            private boolean isFailed(LPSZ name) {
-                final int armed = armedErrno.get();
-                if (armed != 0
-                        && Utf8s.containsAscii(name, LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME)
-                        && isOnStack("restoreAnchorRoot")
-                        && armedErrno.compareAndSet(armed, 0)) {
-                    failedOpens.incrementAndGet();
-                    pendingErrno.set(armed);
-                    return true;
-                }
-                return false;
-            }
-        };
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
         final LogCapture capture = new LogCapture();
         try {
-            assertMemoryLeak(ff, () -> {
+            assertMemoryLeak(fault.facade(), () -> {
                 createDepartureView(isNanos);
                 try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                     driveSeedToCompletion(job, "lv");
                     final LiveViewInstance instance = commitTwoRowsAboveTheNewestRoot(job, day, false);
                     final long resetsBefore = instance.getCheckpointTimelineResets();
                     final long faultsBefore = instance.getRefreshFaultCount();
-                    armedErrno.set(errno);
+                    fault.armAnchorRestoreOpen(errno);
                     capture.start();
                     commitDeparture(job, "('" + day + "T00:01:30.000000Z', 'a', 1.0)");
                     capture.drain();
                     capture.stop();
-                    Assert.assertEquals("the restore of the anchor must reach its first open", 1, failedOpens.get());
+                    Assert.assertEquals("the restore of the anchor must reach its first open", 1, fault.getAnchorRestoreOpenFailures());
                     if (errno == ERRNO_EMFILE) {
                         capture.assertLogged(owedRootText("could not restore live view O3 resume anchor, retrying [view=lv, "
                                 + "anchorMaxTs=2026-01-01T00:01:00.000000Z, anchorCheckpointId=1, keyed=false, error=", day, isNanos));
+                        Assert.assertEquals(
+                                "the gate of the turn after the fault restores the runtime once",
+                                1,
+                                capture.countOccurrences(owedRootText("live view restored its runtime from the checkpoint timeline "
+                                        + "[view=lv, cause=mid-drain refresh failure, generation=3, checkpointId=2, "
+                                        + "boundary=2026-01-01T00:02:00.000000Z, frontier=2026-01-01T00:04:00.000000Z, baseSeqTxn=4, "
+                                        + "replayedRows=2]", day, isNanos))
+                        );
                         Assert.assertEquals("the fault fails the turn", faultsBefore + 1, instance.getRefreshFaultCount());
                         Assert.assertEquals("a fault a retry gets past keeps the timeline", resetsBefore, instance.getCheckpointTimelineResets());
                         Assert.assertEquals(

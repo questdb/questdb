@@ -1811,6 +1811,56 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testAKeyedResumeWhoseAnchorRootIsGoneLogsItInTheViewsUnitOverANanosecondBase() throws Exception {
+        // The case above over a base whose created_at has nanosecond precision, with the anchor
+        // root's timeline gone rather than out of descriptors, which no retry gets past. The
+        // key-scoped restore of the root at 01:40 fails, logs that root in nanoseconds, and the
+        // resume retires the timeline in the turn that met it. A later turn repairs the correction
+        // without a timeline, and the seals after it start the history a restart restores.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
+        final LogCapture capture = new LogCapture();
+        try {
+            assertMemoryLeak(fault.facade(), () -> {
+                createView(seedFourAccountsOverTwoDays(), true, 0, "TIMESTAMP_NS");
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    driveRefreshToQuiescence(job);
+                    openTheDayAboveARoot(job);
+                    final LiveViewInstance instance = viewInstance();
+                    final long resetsBefore = instance.getCheckpointTimelineResets();
+
+                    fault.armAnchorRestoreOpen(CairoException.ERRNO_FILE_DOES_NOT_EXIST);
+                    capture.start();
+                    commitAndRunOneTurn(row(4, 2, 35, "acct-1"), job);
+                    capture.drain();
+                    capture.stop();
+
+                    Assert.assertEquals("the anchor restore must have been failed once", 1, fault.getAnchorRestoreOpenFailures());
+                    Assert.assertEquals(
+                            "the resume must have followed the correction's keys",
+                            1,
+                            job.getStatsForTest().get(OPEN_SEGMENT_KEYED_RESUME_COUNT)
+                    );
+                    capture.assertLogged("could not restore live view O3 resume anchor by key [view=lv, "
+                            + "anchorMaxTs=2026-01-04T01:40:00.000000000Z, anchorCheckpointId=");
+                    Assert.assertEquals("a root that is gone retires the timeline", resetsBefore + 1, instance.getCheckpointTimelineResets());
+
+                    driveRefreshToQuiescence(job);
+                    assertViewMatchesRecompute();
+                }
+
+                restartAndCommitForwardRows(4, 12);
+                assertRestoredFromTimeline("lv");
+                assertViewMatchesRecompute();
+            });
+        } finally {
+            capture.stop();
+        }
+    }
+
+    @Test
     public void testAKeyedResumeWhoseAnchorRestoreFaultPersistsRebuildsOnceTheRetryBudgetRunsOut() throws Exception {
         // testAKeyedResumeWhoseAnchorRestoreFaultsOnceKeepsTheTimelineAndResumesByKeyAgain with a
         // fault that never clears: every key-scoped restore of the anchor root fails, on EACCES
@@ -2017,6 +2067,43 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                 assertViewMatchesRecompute();
             }
         });
+    }
+
+    @Test
+    public void testARepeatedPairAbandonsTheKeyedResumesSparsePublicationOverANanosecondBase() throws Exception {
+        // The case above over a base whose created_at has nanosecond precision. The resume replays
+        // acct-1's 9 rows above the root at 01:40 - both rows at 02:10 and one an hour from 03:10
+        // to 09:10 - and the repeated pair's instant, 02:10, is the first duplicate, which both
+        // lines print in nanoseconds.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
+        final LogCapture capture = new LogCapture();
+        try {
+            assertMemoryLeak(() -> {
+                createView(seedFourAccountsOverTwoDays(), true, 0, "TIMESTAMP_NS");
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    driveRefreshToQuiescence(job);
+                    openTheDayAboveARoot(job);
+
+                    capture.start();
+                    commit(row(4, 2, 10, "acct-1"), job);
+                    capture.drain();
+                    capture.stop();
+
+                    Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_RESUME_COUNT));
+                    Assert.assertEquals(1, job.getStatsForTest().get(SPARSE_PUBLICATION_FALLBACK_COUNT));
+                    capture.assertLogged("live view repair output uniqueness [view=lv, keyed=true, rows=9, duplicateRows=1, "
+                            + "maxGroupRows=2, firstDuplicateTs=2026-01-04T02:10:00.000000000Z, unique=false]");
+                    capture.assertLoggedRE(Pattern.quote("live view open segment resume abandoned its sparse publication [view=lv, "
+                            + "replayedRows=9, mergedRows=") + "\\d+" + Pattern.quote(", duplicateRows=1, "
+                            + "firstDuplicateTs=2026-01-04T02:10:00.000000000Z]"));
+                    assertViewMatchesRecompute();
+                }
+            });
+        } finally {
+            capture.stop();
+        }
     }
 
     @Test
@@ -3789,7 +3876,12 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
      * recompiles for.
      */
     private void createView(String seedRows, boolean isKeyIndexed, int symbolCapacity) throws Exception {
-        execute("CREATE TABLE tx (created_at TIMESTAMP, account_id SYMBOL"
+        createView(seedRows, isKeyIndexed, symbolCapacity, "TIMESTAMP");
+    }
+
+    // As above, over a base whose created_at is of timestampType.
+    private void createView(String seedRows, boolean isKeyIndexed, int symbolCapacity, String timestampType) throws Exception {
+        execute("CREATE TABLE tx (created_at " + timestampType + ", account_id SYMBOL"
                 + (symbolCapacity > 0 ? " CAPACITY " + symbolCapacity : "") + " NOCACHE"
                 + (isKeyIndexed ? " index capacity 4" : "") + ", "
                 + "amount double) timestamp(created_at) partition by hour wal");

@@ -375,8 +375,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // rule's capture.
     @Rule
     public final WalApplySuspensionRule walApplySuspensionRule = new WalApplySuspensionRule();
-    // The refresh jobs runDedupFuzz and runReplaceRangeFuzz ran, summed, so a batch can assert
-    // which repairs its departures reached.
+    // The refresh jobs runDedupFuzz, runReplaceRangeFuzz and runAnchoredFuzz ran, summed, so a batch
+    // can assert which repairs its departures or its late commits reached.
     private final LiveViewRouteCoverage coverage = new LiveViewRouteCoverage();
     // Copies the view's checkpoint directory to a crash image when a departure that drew a crash
     // reaches its frontier truncate's marker: see runUnderTheFrontierTruncateCrash. The tests whose
@@ -486,7 +486,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         }
         assertMemoryLeak(() -> {
             for (int v = 0; v < ANCHORED_VARIANT_COUNT; v++) {
-                runAnchoredFuzz(rnd, v, 120 + rnd.nextInt(180), rnd.nextBoolean(), rnd.nextBoolean(), false);
+                runAnchoredFuzz(rnd, v, 120 + rnd.nextInt(180), rnd.nextBoolean(), rnd.nextBoolean(), false, false);
             }
         });
     }
@@ -494,20 +494,32 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     @Test
     public void testFuzzAnchoredNanosBase() throws Exception {
         // testFuzzAnchored's arm over a TIMESTAMP_NS base. Only an anchored view repairs one
-        // segment at a time, so this is the arm whose segment repairs, keyed scans and parked
-        // segment loops log their timestamps over a nanosecond base, and each run checks that
-        // every live view line printed them in nanoseconds. The recompute oracle holds as over
-        // a microsecond base.
+        // segment at a time, so this is the arm whose segment repairs log their timestamps over a
+        // nanosecond base, and each run checks that every live view line printed them in
+        // nanoseconds. The recompute oracle holds as over a microsecond base. Every other variant
+        // indexes sym, the odd or the even ones by the run's draw, so its segment repairs weigh a
+        // keyed read, and a one-row index open price lets a segment as small as a fuzz run's price
+        // one. The batch asserts it repaired segments and weighed a keyed read of at least one. It
+        // does not assert a priced one: the walk counts a segment it cannot price as unpriced, and
+        // in some draws the indexed variants repair only such segments.
         final Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
         if (rnd.nextBoolean()) {
             setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1 + rnd.nextInt(8));
         }
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+        final int indexedVariantParity = rnd.nextInt(2);
         assertMemoryLeak(() -> {
             for (int v = 0; v < ANCHORED_VARIANT_COUNT; v++) {
-                runAnchoredFuzz(rnd, v, 120 + rnd.nextInt(180), rnd.nextBoolean(), rnd.nextBoolean(), true);
+                runAnchoredFuzz(rnd, v, 120 + rnd.nextInt(180), rnd.nextBoolean(), rnd.nextBoolean(), true, v % 2 == indexedVariantParity);
             }
         });
+        coverage.log(LOG, "anchored nanos");
+        coverage.assertReachedStat(LiveViewRefreshStats.SEGMENT_REPAIR_COUNT);
+        Assert.assertTrue(
+                "no indexed variant weighed a keyed read of a segment\n" + coverage.table(),
+                coverage.get(LiveViewRefreshStats.KEYED_SCAN_PRICED_COUNT) + coverage.get(LiveViewRefreshStats.KEYED_SCAN_UNPRICED_COUNT) > 0
+        );
     }
 
     @Test
@@ -4252,14 +4264,17 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // agree with the from-scratch recompute after quiescence. Over a TIMESTAMP_NS
     // base when isNanos: the generated timestamps go in as nanoseconds, the START
     // FROM boundary too, and every live view line the run logged must print its
-    // timestamps in nanoseconds, the segment repairs' included.
+    // timestamps in nanoseconds, the segment repairs' included. The base indexes sym
+    // when isSymIndexed, which is what gives a segment repair a keyed read to price.
+    // The run's refresh jobs add their counters to coverage.
     private void runAnchoredFuzz(
             Rnd rnd,
             int variant,
             int rowCount,
             boolean restart,
             boolean seed,
-            boolean isNanos
+            boolean isNanos,
+            boolean isSymIndexed
     ) throws Exception {
         // Pin the clock a day below the data, like runFuzz: START FROM NOW resolves the
         // CREATE-moment clock into the view's lower bound, and this harness wants that bound
@@ -4284,7 +4299,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         execute("DROP LIVE VIEW IF EXISTS lv");
         execute("DROP TABLE IF EXISTS base");
         execute("CREATE TABLE base (ts " + (isNanos ? "TIMESTAMP_NS" : "TIMESTAMP")
-                + ", sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                + ", sym SYMBOL" + (isSymIndexed ? " INDEX" : "") + ", i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
         // Ascending timestamps with ties across keys: every anchored variant partitions by sym,
         // and (ts, sym) stays unique, so ts is a total order within each partition. Random
@@ -4326,7 +4341,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 .$(", tiePct=").$(tiePct).$(", ties=").$(rows.getTieCount())
                 .$(", restart=").$(restart).$(", preCount=").$(preCount)
                 .$(", startMode=").$(startMode).$(", boundary=").$(boundary)
-                .$(", nanos=").$(isNanos)
+                .$(", nanos=").$(isNanos).$(", symIndexed=").$(isSymIndexed)
                 .$(", bucket=").$(bucket).$(", sql=").$(viewSql).$();
 
         final StringSink sink = new StringSink();
@@ -4368,6 +4383,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                         LiveViewInstance inst = engine.getLiveViewRegistry().getViewInstance("lv");
                         if (inst != null
                                 && inst.getStateReader().getSeedState() == LiveViewState.SEED_STATE_ACTIVE) {
+                            coverage.absorb(job);
                             job = Misc.free(job);
                             engine.getLiveViewRegistry().clear();
                             engine.buildViewGraphs();
@@ -4379,6 +4395,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
 
             driveRefreshToQuiescence(job);
         } finally {
+            coverage.absorb(job);
             Misc.free(job);
         }
 

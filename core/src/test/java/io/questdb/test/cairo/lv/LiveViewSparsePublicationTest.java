@@ -26,6 +26,7 @@ package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -51,6 +52,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.regex.Pattern;
 
 import static io.questdb.cairo.lv.LiveViewRefreshStats.*;
 
@@ -299,6 +301,47 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
                 assertViewMatchesRecompute();
             }
         });
+    }
+
+    @Test
+    public void testARepeatedPairLogsItsSegmentRepairAndItsDuplicateInTheViewsUnitOverANanosecondBase() throws Exception {
+        // The case above over a base whose created_at has nanosecond precision. The keyed repair of
+        // the closed day 2026-01-02 logs, in nanoseconds, the day's start as its segment and replay
+        // floor, the correction 00:30 as its output floor and the next day's start as its high
+        // bound. It replays acct-1's six rows of the day - the correction, the four seeded ones and
+        // the repeat - and the repeated pair's instant, 01:00:01, is the first duplicate.
+        armSparseRepair();
+        final LogCapture capture = new LogCapture();
+        try {
+            assertMemoryLeak(() -> {
+                createBase("tx", seedAccountsOverThreeDays() + ", " + repeatOfTheFirstRow(2, 1), "", "TIMESTAMP_NS");
+                createViewOverBase("100ms");
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    driveRefreshToQuiescence(job);
+                    commit(row(5, 1, 0, 0, "acct-1"), job);
+
+                    capture.start();
+                    commit(correction("acct-1"), job);
+                    capture.drain();
+                    capture.stop();
+
+                    Assert.assertEquals(1, job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_COUNT));
+                    Assert.assertEquals(1, job.getStatsForTest().get(SPARSE_PUBLICATION_FALLBACK_COUNT));
+                    capture.assertLogged("live view segment keyed scan priced [view=lv, segmentStart=2026-01-02T00:00:00.000000000Z, keys=1, ");
+                    capture.assertLogged("live view segment repair [view=lv, segmentStart=2026-01-02T00:00:00.000000000Z, queued=0, "
+                            + "repaired=0, replayLowTs=2026-01-02T00:00:00.000000000Z, outputLowTs=2026-01-02T00:30:00.000000000Z, "
+                            + "highTsExclusive=2026-01-03T00:00:00.000000000Z, commitSeqTxn=");
+                    capture.assertLogged("live view repair output uniqueness [view=lv, keyed=true, rows=6, duplicateRows=1, "
+                            + "maxGroupRows=2, firstDuplicateTs=2026-01-02T01:00:01.000000000Z, unique=false]");
+                    capture.assertLoggedRE(Pattern.quote("live view keyed repair abandoned its sparse publication [view=lv, "
+                            + "replayedRows=6, mergedRows=") + "\\d+" + Pattern.quote(", duplicateRows=1, "
+                            + "firstDuplicateTs=2026-01-02T01:00:01.000000000Z, unpairedSupersededRows="));
+                    assertViewMatchesRecompute();
+                }
+            });
+        } finally {
+            capture.stop();
+        }
     }
 
     @Test
@@ -726,6 +769,44 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
         // resume follows acct-1 alone.
         armSparseRepair();
         assertOpenDayResumeAfter(null);
+    }
+
+    @Test
+    public void testAKeyedResumeLogsItsFloorsInTheViewsUnitOverANanosecondBase() throws Exception {
+        // The control above over a base whose created_at has nanosecond precision. The resume
+        // restores the root at 01:40 and replays and publishes from one nanosecond above it. It
+        // replays acct-1's 9 rows there, 02:10 to 09:10 and the correction 02:35, so 8 supersede
+        // stored rows, and the other three accounts' 24 rows above the root stay where they are.
+        armSparseRepair();
+        final LogCapture capture = new LogCapture();
+        try {
+            assertOpenDayResumeAfter(null, "TIMESTAMP_NS", capture);
+            capture.assertLogged("live view open segment resumed by key [view=lv, keys=1, "
+                    + "replayLowTs=2026-01-04T01:40:00.000000001Z, anchorMaxTs=2026-01-04T01:40:00.000000000Z]");
+            capture.assertLogged("live view open segment resumed sparsely [view=lv, replayedRows=9, supersededRows=8, "
+                    + "rowsKept=24, outputLowTs=2026-01-04T01:40:00.000000001Z]");
+        } finally {
+            capture.stop();
+        }
+    }
+
+    @Test
+    public void testAKeyedResumeOverADroppedPartitionLogsItsFloorInTheViewsUnitOverANanosecondBase() throws Exception {
+        // testAKeyedResumeOverADroppedPartitionReplacesItsRange over a base whose created_at has
+        // nanosecond precision. The view holds 120 rows, 88 of them at or below the root at 01:40,
+        // and the base the same 88 below it, but 117 in all: the drop took hour 05's four rows and
+        // the correction added one. The count above the floor does not balance, and the line names
+        // the floor, one nanosecond above the root.
+        armSparseRepair();
+        final LogCapture capture = new LogCapture();
+        try {
+            assertOpenDayResumeAfter("ALTER TABLE tx DROP PARTITION LIST '2026-01-04T05'", "TIMESTAMP_NS", capture);
+            capture.assertLogged("live view open segment keyed replay declined, stored rows at or above its floor are not "
+                    + "the base rows it consumed [view=lv, outputLowTs=2026-01-04T01:40:00.000000001Z, storedRows=120, "
+                    + "storedRowsBelow=88, baseRows=117, baseRowsBelow=88, insertedRowDelta=1]");
+        } finally {
+            capture.stop();
+        }
     }
 
     @Test
@@ -1322,6 +1403,23 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
         armSparseRepair();
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
         assertStoredRowsOfTwoCorrectedKeysAtOneInstantPair(true);
+    }
+
+    @Test
+    public void testStoredRowsOfTwoCorrectedKeysAtOneInstantPairAcrossAParkOverANanosecondBase() throws Exception {
+        // The case above over a base whose created_at has nanosecond precision. The segment loop
+        // parks inside the only segment it queued, the closed day 2026-01-02, and its line names
+        // that day's start in nanoseconds.
+        armSparseRepair();
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
+        final LogCapture capture = new LogCapture();
+        try {
+            assertStoredRowsOfTwoCorrectedKeysAtOneInstantPair(true, "TIMESTAMP_NS", capture);
+            capture.assertLogged("live view segment loop parked with its repair [view=lv, "
+                    + "inFlightSegmentStart=2026-01-02T00:00:00.000000000Z, queued=0, repaired=0]");
+        } finally {
+            capture.stop();
+        }
     }
 
     @Test
@@ -2369,14 +2467,37 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
             int correctedRows,
             boolean isParked
     ) throws Exception {
+        assertCorrectionPublishesSparsely(seedRows, correction, correctedRows, isParked, "timestamp", null);
+    }
+
+    /**
+     * As above, over a base whose created_at is of {@code timestampType}, with the correction's
+     * repair logged to {@code capture} when it is not null.
+     */
+    private void assertCorrectionPublishesSparsely(
+            String seedRows,
+            String correction,
+            int correctedRows,
+            boolean isParked,
+            String timestampType,
+            @Nullable LogCapture capture
+    ) throws Exception {
         assertMemoryLeak(() -> {
-            createView(seedRows);
+            createBase("tx", seedRows, "", timestampType);
+            createViewOverBase("100ms");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveRefreshToQuiescence(job);
                 commit(row(5, 1, 0, 0, "acct-1"), job);
                 final long rowsBefore = count("select count() from lv");
 
+                if (capture != null) {
+                    capture.start();
+                }
                 commit(correction, job);
+                if (capture != null) {
+                    capture.drain();
+                    capture.stop();
+                }
 
                 Assert.assertEquals(1, job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_COUNT));
                 Assert.assertEquals(isParked, job.getStatsForTest().get(SEGMENT_YIELD_COUNT) > 0);
@@ -2424,14 +2545,19 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
      * timestamp, read off the published ladder and off the table it describes.
      */
     private void assertLadderCountsRowsAtOrBelowEachBoundary(String stage) throws Exception {
-        final LongList ladder = snapshotCheckpointLadder(engine.getLiveViewRegistry().getViewInstance("lv"));
+        final LiveViewInstance instance = instanceOf("lv");
+        final LongList ladder = snapshotCheckpointLadder(instance);
+        // A boundary is a timestamp of the view's own unit, nanoseconds over a nanosecond base.
+        final String cast = ColumnType.isTimestampNano(instance.getDefinition().getBaseTimestampType())
+                ? "::timestamp_ns"
+                : "::timestamp";
         Assert.assertTrue(stage + ": the view must have sealed a ladder to check", ladder.size() > 0);
         for (int i = 0, n = ladder.size() / 2; i < n; i++) {
             final long maxTimestamp = ladder.getQuick(i * 2);
             Assert.assertEquals(
                     stage + ": boundary " + i + " at " + maxTimestamp
                             + " must count the rows at or below it",
-                    count("select count() from lv where created_at <= " + maxTimestamp + "::timestamp"),
+                    count("select count() from lv where created_at <= " + maxTimestamp + cast),
                     ladder.getQuick(i * 2 + 1)
             );
         }
@@ -2480,8 +2606,21 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
      * @param removal the statement that takes hour 05 out of the base, or null for none
      */
     private void assertOpenDayResumeAfter(@Nullable String removal) throws Exception {
+        assertOpenDayResumeAfter(removal, "timestamp", null);
+    }
+
+    /**
+     * As above, over a base whose created_at is of {@code timestampType}, with the correction's
+     * repair logged to {@code capture} when it is not null.
+     */
+    private void assertOpenDayResumeAfter(
+            @Nullable String removal,
+            String timestampType,
+            @Nullable LogCapture capture
+    ) throws Exception {
         assertMemoryLeak(() -> {
-            createView(hoursOfFourAccounts(2, 0, 10) + ", " + hoursOfFourAccounts(3, 0, 10));
+            createBase("tx", hoursOfFourAccounts(2, 0, 10) + ", " + hoursOfFourAccounts(3, 0, 10), "", timestampType);
+            createViewOverBase("100ms");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveRefreshToQuiescence(job);
                 for (int hour = 0; hour < 10; hour++) {
@@ -2498,7 +2637,14 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
                     );
                 }
 
+                if (capture != null) {
+                    capture.start();
+                }
                 commit(row(4, 2, 35, 0, "acct-1"), job);
+                if (capture != null) {
+                    capture.drain();
+                    capture.stop();
+                }
 
                 if (removal != null) {
                     Assert.assertEquals(0, rowsAt("2026-01-04T05:10:00.000000Z", "acct-1"));
@@ -2602,11 +2748,23 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
     }
 
     private void assertStoredRowsOfTwoCorrectedKeysAtOneInstantPair(boolean isParked) throws Exception {
+        assertStoredRowsOfTwoCorrectedKeysAtOneInstantPair(isParked, "timestamp", null);
+    }
+
+    // As above, over a base whose created_at is of timestampType, with the correction's repair
+    // logged to capture when it is not null.
+    private void assertStoredRowsOfTwoCorrectedKeysAtOneInstantPair(
+            boolean isParked,
+            String timestampType,
+            @Nullable LogCapture capture
+    ) throws Exception {
         assertCorrectionPublishesSparsely(
                 seedWithALoneRowAtTen() + ", " + row(2, 10, 0, 0, "acct-2", 16.0),
                 row(2, 5, 0, 0, "acct-1", 100.0) + ", " + row(2, 6, 0, 0, "acct-2", 100.0),
                 2,
-                isParked
+                isParked,
+                timestampType,
+                capture
         );
     }
 

@@ -27,6 +27,7 @@ package io.questdb.test.cairo.lv;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
@@ -83,6 +84,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.regex.Pattern;
 
 import static io.questdb.cairo.lv.LiveViewRefreshStats.*;
 
@@ -5627,6 +5629,43 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
     }
 
     @Test
+    public void testALateCommitAfterARestartDoesNotResumeFromTheRootItsTieOutgrewOverANanosecondBase() throws Exception {
+        // The case above over a base whose created_at has nanosecond precision. The root at 09:00
+        // counts the one row its seal held, and the resume steps below it with a line that names
+        // it in nanoseconds.
+        assertMemoryLeak(() -> {
+            createBase("", "TIMESTAMP_NS");
+            createView();
+            insertAndRefresh(
+                    "('2026-01-01T09:00:00.000000Z', 'acct-1', 1.0)",
+                    "('2026-01-01T09:00:00.000000Z', 'acct-2', 2.0)",
+                    "('2026-01-01T09:20:00.000000Z', 'acct-2', 4.0)"
+            );
+            Assert.assertEquals("the default cadence seals one boundary", 1, countSealedBoundaries("lv"));
+            Assert.assertEquals(NanosTimestampDriver.floor("2026-01-01T09:00:00.000000Z"), instance("lv").getHeadCheckpointMaxTs());
+            restartAndAssertRestoredOverATie("""
+                    created_at\taccount_id\tcumulative_sum\tcumulative_count
+                    2026-01-01T09:00:00.000000000Z\tacct-1\t1.0\t1
+                    2026-01-01T09:00:00.000000000Z\tacct-2\t2.0\t1
+                    2026-01-01T09:20:00.000000000Z\tacct-2\t6.0\t2
+                    """, 2);
+
+            insertAndRefresh("('2026-01-01T09:10:00.000000Z', 'acct-2', 8.0)");
+            assertViewRows("""
+                    created_at\taccount_id\tcumulative_sum\tcumulative_count
+                    2026-01-01T09:00:00.000000000Z\tacct-1\t1.0\t1
+                    2026-01-01T09:00:00.000000000Z\tacct-2\t2.0\t1
+                    2026-01-01T09:10:00.000000000Z\tacct-2\t10.0\t2
+                    2026-01-01T09:20:00.000000000Z\tacct-2\t14.0\t3
+                    """);
+            capture.drain();
+            capture.assertLoggedRE(Pattern.quote("live view resume anchor no longer covers its timestamp group, re-anchoring below it "
+                    + "[view=lv, anchorMaxTs=2026-01-01T09:00:00.000000000Z, anchorCheckpointId=") + "\\d+"
+                    + Pattern.quote(", lvRowPosition=1]"));
+        });
+    }
+
+    @Test
     public void testARestartRestoresATieOnTheNewestRootAfterALateRowInAnAnchoredView() throws Exception {
         assertMemoryLeak(() -> assertRestartRestoresATieAfterALateRowBelowIt(false));
     }
@@ -8873,7 +8912,12 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
     }
 
     private void createBase(String dedupClause) throws Exception {
-        execute("CREATE TABLE tx (created_at TIMESTAMP, account_id SYMBOL, amount DOUBLE) "
+        createBase(dedupClause, "TIMESTAMP");
+    }
+
+    // As above, with created_at of timestampType.
+    private void createBase(String dedupClause, String timestampType) throws Exception {
+        execute("CREATE TABLE tx (created_at " + timestampType + ", account_id SYMBOL, amount DOUBLE) "
                 + "TIMESTAMP(created_at) PARTITION BY DAY WAL " + dedupClause);
     }
 

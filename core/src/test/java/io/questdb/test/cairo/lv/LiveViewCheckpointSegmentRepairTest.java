@@ -42,7 +42,9 @@ import io.questdb.griffin.SqlException;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.Path;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -749,6 +751,21 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testInOrderRowsCoalescedWithALateCommitAtTheNewestRootAreRepairedPerSegmentOverANanosecondBase() throws Exception {
+        // The case above over a base whose created_at has nanosecond precision. The first round's
+        // coalesced drain restores the runtime to the root its day-nine repair sealed at the
+        // frontier, the head row 2026-01-10T01:00, and logs that root in nanoseconds.
+        final LogCapture capture = new LogCapture();
+        try {
+            assertCoalescedBackfillRepairsPerSegment(INDEXED_KEY, "", true, "TIMESTAMP_NS", capture);
+            capture.assertLogged("live view restored its runtime to the root at the frontier ahead of a segment loop "
+                    + "[view=lv, boundary=2026-01-10T01:00:00.000000000Z, checkpointId=");
+        } finally {
+            capture.stop();
+        }
+    }
+
+    @Test
     public void testInOrderRowsCoalescedWithALateCommitAtTheNewestRootFallBackToTheUnionRangeWhenTheFrontierRootFaults() throws Exception {
         // The coalesced drain of testInOrderRowsCoalescedWithALateCommitAtTheNewestRootAreRepairedPerSegment,
         // with the restore of the root at the frontier failing once on EMFILE, a fault a retry may
@@ -756,40 +773,21 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
         // declines it and takes the union range, which replaces that runtime and does not need
         // the root at the frontier. The view matches its recompute once the refresh quiesces,
         // and again after a restart restores it from the timeline.
-        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
-        assertMemoryLeak(fault.facade(), () -> {
-            createBackfillView(INDEXED_KEY, "");
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                driveRefreshToQuiescence(job);
-                commit(row(10, 1, "acct-1"), job);
-                final long segmentRepairsBefore = job.getStatsForTest().get(SEGMENT_REPAIR_COUNT);
-                commitDuringTheNextTurn(job, row(10, 2, "acct-2"), row(8, 3, "acct-1"), true);
-                fault.armFrontierRootRestoreOpen(ERRNO_EMFILE);
-                execute("INSERT INTO tx VALUES " + row(9, 3, "acct-2"));
-                drainWalQueue();
-                driveRefreshToQuiescence(job);
-                Assert.assertEquals("the frontier root's restore must have been failed once", 1, fault.getAnchorRestoreOpenFailures());
-                // The day-nine commit repairs its own closed day, as in the case this one extends.
-                // The pass that drains the coalesced pair declines its loop, so the day-eight
-                // correction is repaired by the union range rather than per segment.
-                Assert.assertEquals(
-                        "the loop must decline and leave the coalesced change set to the union range",
-                        1,
-                        job.getStatsForTest().get(SEGMENT_REPAIR_COUNT) - segmentRepairsBefore
-                );
-                assertViewMatchesRecompute();
-            }
+        assertCoalescedBackfillFallsBackToTheUnionRangeWhenTheFrontierRootFaults("TIMESTAMP", null);
+    }
 
-            restartCycle();
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                drainJob(job);
-                assertRestoredFromTimeline("lv");
-                driveRefreshToQuiescence(job);
-                assertViewMatchesRecompute();
-                commit(row(10, 8, "acct-1") + ", " + row(10, 9, "acct-2"), job);
-                assertViewMatchesRecompute();
-            }
-        });
+    @Test
+    public void testInOrderRowsCoalescedWithALateCommitAtTheNewestRootFallBackToTheUnionRangeWhenTheFrontierRootFaultsOverANanosecondBase() throws Exception {
+        // The case above over a base whose created_at has nanosecond precision: the line the failed
+        // restore logs names the root at the frontier, the head row 2026-01-10T01:00, in nanoseconds.
+        final LogCapture capture = new LogCapture();
+        try {
+            assertCoalescedBackfillFallsBackToTheUnionRangeWhenTheFrontierRootFaults("TIMESTAMP_NS", capture);
+            capture.assertLogged("could not restore live view runtime to the root at the frontier, repairing the union range "
+                    + "[view=lv, boundary=2026-01-10T01:00:00.000000000Z, checkpointId=");
+        } finally {
+            capture.stop();
+        }
     }
 
     @Test
@@ -832,56 +830,22 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
         // The loop stops, the next turn applies the replacement and repairs the change set
         // again, and the view must get there without a rebuild from the applied base: the base
         // lost a day the view keeps, and the restatement guard refuses that rebuild.
-        assertMemoryLeak(() -> {
-            createBackfillView(INDEXED_KEY, "");
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                driveRefreshToQuiescence(job);
-                execute("ALTER TABLE tx DROP PARTITION WHERE created_at < '2026-01-03'");
-                drainWalQueue();
-                driveRefreshToQuiescence(job);
-                commit(row(10, 1, "acct-1"), job);
-                hooks(job).setSimulatePeerTurnBeforeRefreshLatch(() -> {
-                    try {
-                        execute("INSERT INTO tx VALUES " + row(10, 2, "acct-2"));
-                        execute("INSERT INTO tx VALUES " + row(8, 3, "acct-1"));
-                    } catch (SqlException e) {
-                        throw new RuntimeException(e);
-                    }
-                    // The turn after this one drains both commits together, and its repair's
-                    // replacement does not apply.
-                    hooks(job).setSimulatePeerTurnBeforeRefreshLatch(() -> {
-                        drainWalQueue();
-                        hooks(job).setSimulateRepairApplyFailure(true);
-                    });
-                });
-                execute("INSERT INTO tx VALUES " + row(9, 3, "acct-2"));
-                drainWalQueue();
-                boolean isReplacementPending = false;
-                for (int i = 0; i < REFRESH_TURNS_TO_PARK && !isReplacementPending; i++) {
-                    advanceClockToNextRefreshPass();
-                    job.run();
-                    isReplacementPending = viewInstance().getPendingReplacementLvSeqTxn() != Numbers.LONG_NULL;
-                }
-                Assert.assertTrue("the segment repair's replacement must stay unapplied", isReplacementPending);
-                hooks(job).setSimulateRepairApplyFailure(false);
-                driveRefreshToQuiescence(job);
-                Assert.assertFalse(
-                        "the view must recover without a rebuild the restatement guard refuses",
-                        viewInstance().isCheckpointRecoveryBlocked()
-                );
-                assertViewMatchesRecomputeFrom("2026-01-03T00:00:00.000000Z");
-                commit(row(10, 8, "acct-1") + ", " + row(10, 9, "acct-2"), job);
-                assertViewMatchesRecomputeFrom("2026-01-03T00:00:00.000000Z");
-            }
+        assertCoalescedBackfillRecoversAnUnappliedSegmentReplacementOverALossyBase("TIMESTAMP", null);
+    }
 
-            restartCycle();
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                drainJob(job);
-                assertRestoredFromTimeline("lv");
-                driveRefreshToQuiescence(job);
-                assertViewMatchesRecomputeFrom("2026-01-03T00:00:00.000000Z");
-            }
-        });
+    @Test
+    public void testInOrderRowsCoalescedWithALateCommitAtTheNewestRootRecoverAnUnappliedSegmentReplacementOverALossyBaseOverANanosecondBase() throws Exception {
+        // The case above over a base whose created_at has nanosecond precision. The loop's only
+        // closed segment is the coalesced late row's day, 2026-01-08, and the line it stops on
+        // names that day's start in nanoseconds, with nothing left queued behind it.
+        final LogCapture capture = new LogCapture();
+        try {
+            assertCoalescedBackfillRecoversAnUnappliedSegmentReplacementOverALossyBase("TIMESTAMP_NS", capture);
+            capture.assertLogged("live view segment repair stopped on an unapplied replacement [view=lv, "
+                    + "segmentStart=2026-01-08T00:00:00.000000000Z, queued=0]");
+        } finally {
+            capture.stop();
+        }
     }
 
     @Test
@@ -1875,6 +1839,129 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
     }
 
     /**
+     * The coalesced drain of {@link #assertCoalescedBackfillRepairsPerSegment}'s first round over a
+     * base whose created_at is of {@code timestampType}, with the restore of the root at the
+     * frontier failing once on EMFILE: the repair declines the segment loop and takes the union
+     * range. The coalesced pass is logged to {@code capture} when it is not null.
+     */
+    private void assertCoalescedBackfillFallsBackToTheUnionRangeWhenTheFrontierRootFaults(
+            String timestampType,
+            @Nullable LogCapture capture
+    ) throws Exception {
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
+        assertMemoryLeak(fault.facade(), () -> {
+            createBackfillView(INDEXED_KEY, "", timestampType);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                commit(row(10, 1, "acct-1"), job);
+                final long segmentRepairsBefore = job.getStatsForTest().get(SEGMENT_REPAIR_COUNT);
+                commitDuringTheNextTurn(job, row(10, 2, "acct-2"), row(8, 3, "acct-1"), true);
+                fault.armFrontierRootRestoreOpen(ERRNO_EMFILE);
+                execute("INSERT INTO tx VALUES " + row(9, 3, "acct-2"));
+                drainWalQueue();
+                if (capture != null) {
+                    capture.start();
+                }
+                driveRefreshToQuiescence(job);
+                if (capture != null) {
+                    capture.drain();
+                    capture.stop();
+                }
+                Assert.assertEquals("the frontier root's restore must have been failed once", 1, fault.getAnchorRestoreOpenFailures());
+                // The day-nine commit repairs its own closed day, as in the case this one extends.
+                // The pass that drains the coalesced pair declines its loop, so the day-eight
+                // correction is repaired by the union range rather than per segment.
+                Assert.assertEquals(
+                        "the loop must decline and leave the coalesced change set to the union range",
+                        1,
+                        job.getStatsForTest().get(SEGMENT_REPAIR_COUNT) - segmentRepairsBefore
+                );
+                assertViewMatchesRecompute();
+            }
+
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                assertRestoredFromTimeline("lv");
+                driveRefreshToQuiescence(job);
+                assertViewMatchesRecompute();
+                commit(row(10, 8, "acct-1") + ", " + row(10, 9, "acct-2"), job);
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    /**
+     * The coalesced drain of {@link #assertCoalescedBackfillRepairsPerSegment}'s first round over a
+     * base whose created_at is of {@code timestampType} and which lost the days below 2026-01-03,
+     * with the replacement the coalesced segment repair commits left unapplied: the loop stops, and
+     * the next turn applies the replacement and repairs the change set again without a rebuild.
+     * The turns up to the unapplied replacement are logged to {@code capture} when it is not null.
+     */
+    private void assertCoalescedBackfillRecoversAnUnappliedSegmentReplacementOverALossyBase(
+            String timestampType,
+            @Nullable LogCapture capture
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            createBackfillView(INDEXED_KEY, "", timestampType);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                execute("ALTER TABLE tx DROP PARTITION WHERE created_at < '2026-01-03'");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                commit(row(10, 1, "acct-1"), job);
+                hooks(job).setSimulatePeerTurnBeforeRefreshLatch(() -> {
+                    try {
+                        execute("INSERT INTO tx VALUES " + row(10, 2, "acct-2"));
+                        execute("INSERT INTO tx VALUES " + row(8, 3, "acct-1"));
+                    } catch (SqlException e) {
+                        throw new RuntimeException(e);
+                    }
+                    // The turn after this one drains both commits together, and its repair's
+                    // replacement does not apply.
+                    hooks(job).setSimulatePeerTurnBeforeRefreshLatch(() -> {
+                        drainWalQueue();
+                        hooks(job).setSimulateRepairApplyFailure(true);
+                    });
+                });
+                execute("INSERT INTO tx VALUES " + row(9, 3, "acct-2"));
+                drainWalQueue();
+                if (capture != null) {
+                    capture.start();
+                }
+                boolean isReplacementPending = false;
+                for (int i = 0; i < REFRESH_TURNS_TO_PARK && !isReplacementPending; i++) {
+                    advanceClockToNextRefreshPass();
+                    job.run();
+                    isReplacementPending = viewInstance().getPendingReplacementLvSeqTxn() != Numbers.LONG_NULL;
+                }
+                if (capture != null) {
+                    capture.drain();
+                    capture.stop();
+                }
+                Assert.assertTrue("the segment repair's replacement must stay unapplied", isReplacementPending);
+                hooks(job).setSimulateRepairApplyFailure(false);
+                driveRefreshToQuiescence(job);
+                Assert.assertFalse(
+                        "the view must recover without a rebuild the restatement guard refuses",
+                        viewInstance().isCheckpointRecoveryBlocked()
+                );
+                assertViewMatchesRecomputeFrom("2026-01-03T00:00:00.000000Z");
+                commit(row(10, 8, "acct-1") + ", " + row(10, 9, "acct-2"), job);
+                assertViewMatchesRecomputeFrom("2026-01-03T00:00:00.000000Z");
+            }
+
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                assertRestoredFromTimeline("lv");
+                driveRefreshToQuiescence(job);
+                assertViewMatchesRecomputeFrom("2026-01-03T00:00:00.000000Z");
+            }
+        });
+    }
+
+    /**
      * Seeds eight anchor days under a head row on the tenth, then runs three rounds of a
      * backfill interleaved with streaming, each walking two days further back. A round's first
      * late commit lands alone, and its per-segment repair seals a root at the runtime frontier.
@@ -1902,11 +1989,26 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
             String filter,
             boolean isAppliedBeforeTheNextPass
     ) throws Exception {
+        assertCoalescedBackfillRepairsPerSegment(keyColumnType, filter, isAppliedBeforeTheNextPass, "TIMESTAMP", null);
+    }
+
+    // As above, over a base whose created_at is of timestampType, with the three rounds logged to
+    // capture when it is not null.
+    private void assertCoalescedBackfillRepairsPerSegment(
+            String keyColumnType,
+            String filter,
+            boolean isAppliedBeforeTheNextPass,
+            String timestampType,
+            @Nullable LogCapture capture
+    ) throws Exception {
         assertMemoryLeak(() -> {
-            createBackfillView(keyColumnType, filter);
+            createBackfillView(keyColumnType, filter, timestampType);
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveRefreshToQuiescence(job);
                 commit(row(10, 1, "acct-1"), job);
+                if (capture != null) {
+                    capture.start();
+                }
                 for (int round = 0; round < 3; round++) {
                     final int lateDay = 9 - 2 * round;
                     final String inOrderRow = row(10, 2 + round, round % 2 == 0 ? "acct-2" : "acct-1");
@@ -1934,6 +2036,10 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
                             scanRows <= scanRowBound
                     );
                     assertViewMatchesRecompute();
+                }
+                if (capture != null) {
+                    capture.drain();
+                    capture.stop();
                 }
             }
 
@@ -2557,7 +2663,12 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
      * @param filter the view's WHERE clause, with a leading space, or empty
      */
     private void createBackfillView(String keyColumnType, String filter) throws Exception {
-        execute("CREATE TABLE tx (created_at TIMESTAMP, account_id " + keyColumnType + ", "
+        createBackfillView(keyColumnType, filter, "TIMESTAMP");
+    }
+
+    // As above, over a base whose created_at is of timestampType.
+    private void createBackfillView(String keyColumnType, String filter, String timestampType) throws Exception {
+        execute("CREATE TABLE tx (created_at " + timestampType + ", account_id " + keyColumnType + ", "
                 + "amount DOUBLE) TIMESTAMP(created_at) PARTITION BY HOUR WAL");
         execute("INSERT INTO tx VALUES " + seedTwoAccountsOverDays(2, 9));
         drainWalQueue();
