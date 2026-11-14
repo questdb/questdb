@@ -285,6 +285,28 @@ public class AsyncHashJoinLimitTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLimitHandOverSpendsTheAdvice() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // The optimiser advises the join's model the sub-query's LIMIT 9, which the join takes,
+            // spending the advice: no LIMIT can reach the join through it again.
+            final String nested = "SELECT * FROM (SELECT t.v, d1.w FROM t JOIN d1 ON t.k = d1.k LIMIT 9) LIMIT 1";
+            Assert.assertEquals(nested, "9", joinModelLimitAdvice(nested));
+            try (RecordCursorFactory factory = select(nested)) {
+                final AsyncHashJoinRecordCursorFactory join = find(factory);
+                Assert.assertNotNull(nested, join);
+                Assert.assertNull(nested, join.getLimitAdvice());
+                // The join holds LIMIT 9: its first row comes with the first three frames, those
+                // that nine rows need.
+                try (RecordCursor cursor = join.getCursor(sqlExecutionContext)) {
+                    Assert.assertTrue(nested, cursor.hasNext());
+                    Assert.assertEquals(nested, 3, join.getDispatchedFrameCount());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testLimitOverSeveralFrames() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
