@@ -31,9 +31,9 @@ import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.AbstractTest;
+import io.questdb.test.QueryAssertion;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Rule;
@@ -79,23 +79,29 @@ public class HttpMatViewDdlTest extends AbstractTest {
                     MatViewRefreshJob.finalizeAndUnlock(engine, engine.getMatViewStateStore(), viewToken, state, false);
                 }
                 Assert.assertEquals(viewSeqTxn, viewSeqTxn(engine, viewToken));
-                assertSql(engine, context, "SELECT view_status, base_table_name FROM materialized_views()", "view_status\tbase_table_name\nvalid\tbase\n");
+                assertQuery(engine, context, "SELECT view_status, base_table_name FROM materialized_views()")
+                        .noRandomAccess()
+                        .returns("view_status\tbase_table_name\nvalid\tbase\n");
 
                 // with the latch free, the base change goes through and leaves the view invalid until RESUME
                 client.assertExec(DDL_OK, baseChangeSql);
                 drainWalAndMatViewQueues(engine);
-                assertSql(engine, context, "SELECT view_status, invalidation_reason, base_table_name FROM materialized_views()",
-                        "view_status\tinvalidation_reason\tbase_table_name\ninvalid\tbase table changed\tbase2\n");
+                assertQuery(engine, context, "SELECT view_status, invalidation_reason, base_table_name FROM materialized_views()")
+                        .noRandomAccess()
+                        .returns("view_status\tinvalidation_reason\tbase_table_name\ninvalid\tbase table changed\tbase2\n");
                 client.assertExec(DDL_OK, "REFRESH MATERIALIZED VIEW mv RESUME SKIP BACKLOG");
                 drainWalAndMatViewQueues(engine);
                 engine.execute("INSERT INTO base2 VALUES ('b', 8.0, '2024-01-05T00:10:00.000000Z')", context);
                 drainWalAndMatViewQueues(engine);
-                assertSql(engine, context, "mv ORDER BY ts", """
-                        ts\tsym\tprice
-                        2024-01-01T00:00:00.000000Z\ta\t1.0
-                        2024-01-02T00:00:00.000000Z\ta\t2.0
-                        2024-01-05T00:00:00.000000Z\tb\t8.0
-                        """);
+                assertQuery(engine, context, "mv ORDER BY ts")
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tsym\tprice
+                                2024-01-01T00:00:00.000000Z\ta\t1.0
+                                2024-01-02T00:00:00.000000Z\ta\t2.0
+                                2024-01-05T00:00:00.000000Z\tb\t8.0
+                                """);
             }
         }));
     }
@@ -109,22 +115,29 @@ public class HttpMatViewDdlTest extends AbstractTest {
                 final String newSql = "SELECT ts, sym, sum(price) * 2 AS price FROM base SAMPLE BY 1h";
                 client.assertExec(DDL_OK, "ALTER MATERIALIZED VIEW mv AS (" + newSql + ")");
                 drainWalAndMatViewQueues(engine);
-                assertSql(engine, context, "SELECT view_status, view_sql FROM materialized_views()", "view_status\tview_sql\nvalid\t" + newSql + '\n');
+                assertQuery(engine, context, "SELECT view_status, view_sql FROM materialized_views()")
+                        .noRandomAccess()
+                        .returns("view_status\tview_sql\nvalid\t" + newSql + '\n');
                 engine.execute("INSERT INTO base VALUES ('a', 5.0, '2024-01-03T00:10:00.000000Z')", context);
                 drainWalAndMatViewQueues(engine);
-                assertSql(engine, context, "mv ORDER BY ts", """
-                        ts\tsym\tprice
-                        2024-01-01T00:00:00.000000Z\ta\t1.0
-                        2024-01-02T00:00:00.000000Z\ta\t2.0
-                        2024-01-03T00:00:00.000000Z\ta\t10.0
-                        """);
+                assertQuery(engine, context, "mv ORDER BY ts")
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tsym\tprice
+                                2024-01-01T00:00:00.000000Z\ta\t1.0
+                                2024-01-02T00:00:00.000000Z\ta\t2.0
+                                2024-01-03T00:00:00.000000Z\ta\t10.0
+                                """);
 
                 // the same-position rule refuses a SQL that puts another column at price's position
                 final long viewSeqTxn = viewSeqTxn(engine, viewToken);
                 final String refusedSql = "ALTER MATERIALIZED VIEW mv AS (SELECT ts, sym, sum(price) AS amount FROM base SAMPLE BY 1h)";
                 client.assertExec(expectedError(engine, context, refusedSql, "materialized view column does not match the query column at the same position"), refusedSql);
                 Assert.assertEquals(viewSeqTxn, viewSeqTxn(engine, viewToken));
-                assertSql(engine, context, "SELECT view_status, view_sql FROM materialized_views()", "view_status\tview_sql\nvalid\t" + newSql + '\n');
+                assertQuery(engine, context, "SELECT view_status, view_sql FROM materialized_views()")
+                        .noRandomAccess()
+                        .returns("view_status\tview_sql\nvalid\t" + newSql + '\n');
             }
         }));
     }
@@ -139,7 +152,9 @@ public class HttpMatViewDdlTest extends AbstractTest {
                 drainWalAndMatViewQueues(engine);
                 engine.execute("INSERT INTO base VALUES ('a', 3.0, '2024-01-03T00:10:00.000000Z')", context);
                 drainWalAndMatViewQueues(engine);
-                assertSql(engine, context, "SELECT view_status, invalidation_reason FROM materialized_views()", "view_status\tinvalidation_reason\ninvalid\ttest invalidation\n");
+                assertQuery(engine, context, "SELECT view_status, invalidation_reason FROM materialized_views()")
+                        .noRandomAccess()
+                        .returns("view_status\tinvalidation_reason\ninvalid\ttest invalidation\n");
 
                 // RESUME waits for the view's latch and refuses once the statement timeout expires. The statement is the
                 // connection's first: /exec reads the Statement-Timeout header of a pooled connection's first request
@@ -153,18 +168,25 @@ public class HttpMatViewDdlTest extends AbstractTest {
                     MatViewRefreshJob.finalizeAndUnlock(engine, engine.getMatViewStateStore(), viewToken, state, false);
                 }
                 Assert.assertEquals(viewSeqTxn, viewSeqTxn(engine, viewToken));
-                assertSql(engine, context, "SELECT view_status, invalidation_reason FROM materialized_views()", "view_status\tinvalidation_reason\ninvalid\ttest invalidation\n");
+                assertQuery(engine, context, "SELECT view_status, invalidation_reason FROM materialized_views()")
+                        .noRandomAccess()
+                        .returns("view_status\tinvalidation_reason\ninvalid\ttest invalidation\n");
 
                 // with the latch free, RESUME catches the view up on the row it missed
                 client.assertExec(DDL_OK, "REFRESH MATERIALIZED VIEW mv RESUME");
                 drainWalAndMatViewQueues(engine);
-                assertSql(engine, context, "SELECT view_status, invalidation_reason FROM materialized_views()", "view_status\tinvalidation_reason\nvalid\t\n");
-                assertSql(engine, context, "mv ORDER BY ts", """
-                        ts\tsym\tprice
-                        2024-01-01T00:00:00.000000Z\ta\t1.0
-                        2024-01-02T00:00:00.000000Z\ta\t2.0
-                        2024-01-03T00:00:00.000000Z\ta\t3.0
-                        """);
+                assertQuery(engine, context, "SELECT view_status, invalidation_reason FROM materialized_views()")
+                        .noRandomAccess()
+                        .returns("view_status\tinvalidation_reason\nvalid\t\n");
+                assertQuery(engine, context, "mv ORDER BY ts")
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tsym\tprice
+                                2024-01-01T00:00:00.000000Z\ta\t1.0
+                                2024-01-02T00:00:00.000000Z\ta\t2.0
+                                2024-01-03T00:00:00.000000Z\ta\t3.0
+                                """);
 
                 // a replaced base loses the backlog, which plain RESUME refuses and RESUME SKIP BACKLOG drops
                 engine.execute("DROP TABLE base", context);
@@ -177,21 +199,25 @@ public class HttpMatViewDdlTest extends AbstractTest {
                 Assert.assertEquals(invalidSeqTxn, viewSeqTxn(engine, viewToken));
                 client.assertExec(DDL_OK, "REFRESH MATERIALIZED VIEW mv RESUME SKIP BACKLOG");
                 drainWalAndMatViewQueues(engine);
-                assertSql(engine, context, "SELECT view_status, invalidation_reason FROM materialized_views()", "view_status\tinvalidation_reason\nvalid\t\n");
+                assertQuery(engine, context, "SELECT view_status, invalidation_reason FROM materialized_views()")
+                        .noRandomAccess()
+                        .returns("view_status\tinvalidation_reason\nvalid\t\n");
                 engine.execute("INSERT INTO base VALUES ('b', 5.0, '2024-01-05T00:10:00.000000Z')", context);
                 drainWalAndMatViewQueues(engine);
-                assertSql(engine, context, "mv WHERE ts >= '2024-01-04' ORDER BY ts", """
-                        ts\tsym\tprice
-                        2024-01-05T00:00:00.000000Z\tb\t5.0
-                        """);
+                assertQuery(engine, context, "mv WHERE ts >= '2024-01-04' ORDER BY ts")
+                        .timestamp("ts")
+                        .returns("""
+                                ts\tsym\tprice
+                                2024-01-05T00:00:00.000000Z\tb\t5.0
+                                """);
             }
         }));
     }
 
-    private static void assertSql(CairoEngine engine, SqlExecutionContext context, String sql, String expected) throws SqlException {
-        final StringSink sink = new StringSink();
-        TestUtils.printSql(engine, context, sql, sink);
-        TestUtils.assertEquals(expected, sink);
+    // The test server harness already wraps each test in assertMemoryLeak().
+    private static QueryAssertion assertQuery(CairoEngine engine, SqlExecutionContext context, String sql) {
+        return new QueryAssertion(engine, context, () -> {
+        }, sql).noLeakCheck();
     }
 
     // One base row a day for two days, and an IMMEDIATE view of hourly sums refreshed from them.
