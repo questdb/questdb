@@ -115,13 +115,27 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
         );
     }
 
-    private static long compute(long timestamp, TimeZoneRules timeZoneRules, int stride, TimestampDriver.TimestampAddMethod periodAddFunction) {
+    // returns NULL when the local time or the result does not fit the timestamp type
+    private static long compute(
+            TimestampDriver driver,
+            char period,
+            long timestamp,
+            TimeZoneRules timeZoneRules,
+            int stride,
+            TimestampDriver.TimestampAddMethod periodAddFunction
+    ) {
         if (timestamp == Numbers.LONG_NULL) {
             return Numbers.LONG_NULL;
         }
-        long offset = timeZoneRules.getOffset(timestamp);
-        long localTimestamp = periodAddFunction.add(timestamp + offset, stride);
-        return localTimestamp - timeZoneRules.getLocalOffset(localTimestamp);
+        final long utcLocalTimestamp = TimestampAddUtils.addFixedOrNull(timestamp, timeZoneRules.getOffset(timestamp));
+        if (utcLocalTimestamp == Numbers.LONG_NULL) {
+            return Numbers.LONG_NULL;
+        }
+        final long localTimestamp = TimestampAddUtils.addOrNull(driver, periodAddFunction, period, utcLocalTimestamp, stride);
+        if (localTimestamp == Numbers.LONG_NULL) {
+            return Numbers.LONG_NULL;
+        }
+        return TimestampAddUtils.addFixedOrNull(localTimestamp, -timeZoneRules.getLocalOffset(localTimestamp));
     }
 
     private static class TimestampAddConstConstVarConst extends TimestampFunction implements UnaryFunction, MonotonicTimestampFunction {
@@ -157,7 +171,7 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
 
         @Override
         public long getTimestamp(Record rec) {
-            return compute(timestampFunc.getTimestamp(rec), timeZoneRules, stride, periodAddFunction);
+            return compute(timestampDriver, period, timestampFunc.getTimestamp(rec), timeZoneRules, stride, periodAddFunction);
         }
 
         @Override
@@ -320,7 +334,7 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
             if (stride == Numbers.INT_NULL) {
                 throw CairoException.nonCritical().position(stridePosition).put("`null` is not a valid stride");
             }
-            return compute(timestamp, timeZoneRules, stride, periodAddFunc);
+            return compute(timestampDriver, period, timestamp, timeZoneRules, stride, periodAddFunc);
         }
 
         @Override
@@ -407,7 +421,7 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
             if (periodAddFunc == null) {
                 throw CairoException.nonCritical().position(periodPosition).put("invalid period [period=").put(period).put(']');
             }
-            return compute(timestamp, timeZoneRules, stride, periodAddFunc);
+            return compute(timestampDriver, period, timestamp, timeZoneRules, stride, periodAddFunc);
         }
 
         @Override
