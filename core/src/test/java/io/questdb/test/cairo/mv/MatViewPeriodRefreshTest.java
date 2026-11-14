@@ -142,12 +142,128 @@ public class MatViewPeriodRefreshTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAlterToSampleByIntervalAheadOfUtcStartsTimerAtPeriodStart() throws Exception {
+        // Europe/Berlin is at UTC+1 in January. The ALTER at 10:30Z, 11:30 local, starts the grid of the periods at 11:00
+        // local, and the period [10:00Z, 11:00Z) completes at 11:00Z.
+        testAlterToSampleByInterval("Europe/Berlin", "2022-01-02T11:00", "2022-01-02T10:00", "2022-01-02T11:00");
+    }
+
+    @Test
+    public void testAlterToSampleByIntervalBehindUtcStartsTimerAtPeriodStart() throws Exception {
+        // America/New_York is at UTC-5 in January. The ALTER at 10:30Z, 05:30 local, starts the grid of the periods at
+        // 05:00 local, and the period [10:00Z, 11:00Z) completes at 11:00Z.
+        testAlterToSampleByInterval("America/New_York", "2022-01-02T05:00", "2022-01-02T10:00", "2022-01-02T11:00");
+    }
+
+    @Test
+    public void testAlterToSampleByIntervalHalfHourAheadOfUtcStartsTimerAtPeriodStart() throws Exception {
+        // Asia/Kolkata is at UTC+05:30, so its hours start at half past the hour UTC. The ALTER at 10:30Z, 16:00 local,
+        // starts the grid of the periods at 16:00 local, and the period [10:30Z, 11:30Z) completes at 11:30Z.
+        testAlterToSampleByInterval("Asia/Kolkata", "2022-01-02T16:00", "2022-01-02T10:30", "2022-01-02T11:30");
+    }
+
+    @Test
+    public void testAlterToSampleByIntervalWithoutTimeZoneStartsTimerAtPeriodStart() throws Exception {
+        // Without a time zone, the ALTER at 10:30Z starts the grid of the periods at 10:00 UTC, and the period
+        // [10:00Z, 11:00Z) completes at 11:00Z.
+        testAlterToSampleByInterval(null, "2022-01-02T10:00", "2022-01-02T10:00", "2022-01-02T11:00");
+    }
+
+    @Test
     public void testAlteredViewRemovesBucketAfterRangeReplaceDeletesItsRows() throws Exception {
         // The ALTER keeps the refresh state of the view, which has refreshed a base txn but has never recorded
         // the end of a refreshed period, so its next incremental refresh records it.
         testRangeReplaceDeletesRowsOfBucketCrossingPeriodHi(
                 "create materialized view mv refresh immediate as " + viewSql("base", "4h"),
                 "alter materialized view mv set refresh immediate period (length 7h)"
+        );
+    }
+
+    @Test
+    public void testClockBehindTimerStartKeepsOpenPeriodOut() throws Exception {
+        assertMemoryLeak(() -> {
+            // Created at 10:30, the view starts the grid of its 1h periods at 10:00. The clock then steps back to
+            // 07:40, behind that start, where the period [07:00, 08:00) has not ended yet. The manual view has no
+            // period timer, so only its incremental refreshes add periods.
+            currentMicros = parseFloorPartialTimestamp("2022-01-02T10:30:00.000000Z");
+            createBaseTable("base");
+            execute("create materialized view mv refresh manual period (length 1h) as " + viewSql("base", "1h"));
+            drainWalAndMatViewQueues();
+            assertPeriodHi("mv", "2022-01-02T10:00:00.000000Z");
+
+            currentMicros = parseFloorPartialTimestamp("2022-01-02T07:40:00.000000Z");
+            execute("insert into base values (1, '2022-01-02T06:20'), (2, '2022-01-02T07:20')");
+            refreshIncremental();
+            // The refresh takes in the complete period [06:00, 07:00), and rewinds the recorded end to its end.
+            assertPeriodHi("mv", "2022-01-02T07:00:00.000000Z");
+            assertView(
+                    "mv",
+                    """
+                            min_v\tmax_v\tts
+                            1\t1\t2022-01-02T06:00:00.000000Z
+                            """
+            );
+
+            currentMicros = parseFloorPartialTimestamp("2022-01-02T08:00:00.000000Z");
+            refreshIncremental();
+            assertPeriodHi("mv", "2022-01-02T08:00:00.000000Z");
+            assertView(
+                    "mv",
+                    """
+                            min_v\tmax_v\tts
+                            1\t1\t2022-01-02T06:00:00.000000Z
+                            2\t2\t2022-01-02T07:00:00.000000Z
+                            """
+            );
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, viewSql("base", "1h"), "mv", LOG);
+        });
+    }
+
+    @Test
+    public void testDelayHoldsBackPeriodThatEndedBeforeAlter() throws Exception {
+        // The ALTER at 10:30 starts the grid of the periods at 10:00, but with the 45m delay the period [09:00, 10:00)
+        // completes only at 10:45.
+        testRowReachesViewAtPeriodEnd(
+                "period (length 1h)",
+                "2022-01-02T08:10",
+                "period (length 1h delay 45m)",
+                "2022-01-02T10:30",
+                "2022-01-02T10:30",
+                "2022-01-02T09:30",
+                "2022-01-02T09:00",
+                "2022-01-02T10:45",
+                "2022-01-02T10:00"
+        );
+    }
+
+    @Test
+    public void testDelayHoldsBackPeriodThatEndedBeforeCreate() throws Exception {
+        // Created at 10:30, the view starts the grid of its periods at 10:00, but with the 45m delay the period
+        // [09:00, 10:00) completes only at 10:45.
+        testRowReachesViewAtPeriodEnd(
+                "period (length 1h delay 45m)",
+                "2022-01-02T10:30",
+                "2022-01-02T10:30",
+                "2022-01-02T09:30",
+                "2022-01-02T09:00",
+                "2022-01-02T10:45",
+                "2022-01-02T10:00"
+        );
+    }
+
+    @Test
+    public void testDstEndAheadOfUtcKeepsOpenPeriodOutWhenTimerStartsInRepeatedHour() throws Exception {
+        // DST ends in Europe/Berlin on 2022-10-30 at 01:00Z (03:00 CEST -> 02:00 CET), and the clock passes 02:00-03:00
+        // local twice. Created at 00:50Z, 02:50 CEST, the view starts the grid of its periods at 02:45 local. At
+        // 01:10Z, 02:10 CET, the local clock is behind that start, and the period [01:00Z, 01:15Z) has not ended yet.
+        testRowReachesViewAtPeriodEnd(
+                "period (length 15m time zone 'Europe/Berlin')",
+                "2022-10-30T00:50",
+                "2022-10-30T01:10",
+                "2022-10-30T01:05",
+                "2022-10-30T01:00",
+                "2022-10-30T01:15",
+                "2022-10-30T01:15"
         );
     }
 
@@ -163,6 +279,97 @@ public class MatViewPeriodRefreshTest extends AbstractCairoTest {
                 "2022-10-30T00:00",
                 "2022-10-30T01:00",
                 "2022-10-30T01:00"
+        );
+    }
+
+    @Test
+    public void testDstEndBehindUtcKeepsOpenPeriodOutWhenAlterStartsTimerInRepeatedHour() throws Exception {
+        // Created at 03:30Z with 1h periods, the view moves to 30m periods at 05:45Z, 01:45 EDT, so the ALTER starts
+        // the grid of its periods at 01:30 local, as the CREATE in
+        // testDstEndBehindUtcKeepsOpenPeriodOutWhenTimerStartsInRepeatedHour() does.
+        testRowReachesViewAtPeriodEnd(
+                "period (length 1h time zone 'America/New_York')",
+                "2022-11-06T03:30",
+                "period (length 30m time zone 'America/New_York')",
+                "2022-11-06T05:45",
+                "2022-11-06T06:10",
+                "2022-11-06T06:05",
+                "2022-11-06T06:00",
+                "2022-11-06T06:30",
+                "2022-11-06T06:30"
+        );
+    }
+
+    @Test
+    public void testDstEndBehindUtcKeepsOpenPeriodOutWhenTimerStartsInRepeatedHour() throws Exception {
+        // DST ends in America/New_York on 2022-11-06 at 06:00Z (02:00 EDT -> 01:00 EST), and the clock passes
+        // 01:00-02:00 local twice. Created at 05:45Z, 01:45 EDT, the view starts the grid of its periods at 01:30
+        // local. At 06:10Z, 01:10 EST, the local clock is behind that start, and the period [06:00Z, 06:30Z) has not
+        // ended yet.
+        testRowReachesViewAtPeriodEnd(
+                "period (length 30m time zone 'America/New_York')",
+                "2022-11-06T05:45",
+                "2022-11-06T06:10",
+                "2022-11-06T06:05",
+                "2022-11-06T06:00",
+                "2022-11-06T06:30",
+                "2022-11-06T06:30"
+        );
+    }
+
+    @Test
+    public void testDstEndBehindUtcKeepsOpenPeriodOutWhenTimerStartsInRepeatedHourWithSampleByInterval() throws Exception {
+        assertMemoryLeak(() -> {
+            // PERIOD (SAMPLE BY INTERVAL) takes the length and the time zone of the SAMPLE BY clause. Created at
+            // 05:45Z, 01:45 EDT, the view starts the grid of its periods at 01:30 local, as in
+            // testDstEndBehindUtcKeepsOpenPeriodOutWhenTimerStartsInRepeatedHour().
+            final String query = viewSql("base", "30m align to calendar time zone 'America/New_York'");
+            currentMicros = parseFloorPartialTimestamp("2022-11-06T05:45:00.000000Z");
+            createBaseTable("base");
+            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+            execute("create materialized view mv refresh immediate period (sample by interval) as " + query);
+            drain(timerJob);
+            currentMicros = parseFloorPartialTimestamp("2022-11-06T06:00:00.000000Z");
+            drain(timerJob);
+
+            // At 06:10Z, 01:10 EST, the period [06:00Z, 06:30Z) has not ended yet.
+            currentMicros = parseFloorPartialTimestamp("2022-11-06T06:10:00.000000Z");
+            execute("insert into base values (1, '2022-11-06T06:05')");
+            drain(timerJob);
+            assertPeriodHi("mv", "2022-11-06T06:00:00.000000Z");
+            assertView("mv", "min_v\tmax_v\tts\n");
+
+            currentMicros = parseFloorPartialTimestamp("2022-11-06T06:30:00.000000Z") - 1;
+            drain(timerJob);
+            assertPeriodHi("mv", "2022-11-06T06:00:00.000000Z");
+            assertView("mv", "min_v\tmax_v\tts\n");
+
+            currentMicros = parseFloorPartialTimestamp("2022-11-06T06:30:00.000000Z");
+            drain(timerJob);
+            assertPeriodHi("mv", "2022-11-06T06:30:00.000000Z");
+            assertQuery("select count() from mv")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, query, "mv", LOG);
+        });
+    }
+
+    @Test
+    public void testDstEndBehindUtcKeepsStretchedPeriodOutWhenTimerStartsInRepeatedHour() throws Exception {
+        // The 45m grid points in local time are 00:45, 01:30 and 02:15 on 2022-11-06. Created at 05:45Z, 01:45 EDT, the
+        // view starts the grid of its periods at 01:30 local. The clock moves back at 06:00Z, 02:00 EDT, before it
+        // reaches 02:15, and reaches 01:30 again at 06:30Z, so the period that starts at 05:30Z lasts an hour. At
+        // 06:10Z, 01:10 EST, the local clock is behind the grid start, and that period has not ended yet.
+        testRowReachesViewAtPeriodEnd(
+                "period (length 45m time zone 'America/New_York')",
+                "2022-11-06T05:45",
+                "2022-11-06T06:10",
+                "2022-11-06T06:05",
+                "2022-11-06T05:30",
+                "2022-11-06T06:30",
+                "2022-11-06T06:30"
         );
     }
 
@@ -196,6 +403,24 @@ public class MatViewPeriodRefreshTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDstStartBehindUtcKeepsOpenPeriodOutWhenTimerStartsInSkippedHour() throws Exception {
+        // DST starts in America/New_York on 2022-03-13 at 07:00Z (02:00 EST -> 03:00 EDT). The 80m grid points in
+        // local time around it are 01:20, 02:40 and 04:00. The clock skips 02:40, so the period that would start there
+        // starts at the change and ends at 04:00 EDT, 08:00Z. Created at 07:10Z, 03:10 EDT, the view starts the grid of
+        // its periods at 02:40 local and creates its period timer in that period. At the EST offset, 02:40 local falls
+        // at 07:40Z, before the period ends.
+        testRowReachesViewAtPeriodEnd(
+                "period (length 80m time zone 'America/New_York')",
+                "2022-03-13T07:10",
+                "2022-03-13T07:30",
+                "2022-03-13T07:20",
+                "2022-03-13T07:00",
+                "2022-03-13T08:00",
+                "2022-03-13T08:00"
+        );
+    }
+
+    @Test
     public void testDstStartBehindUtcRefreshesRowAfterDelay() throws Exception {
         // DST starts in America/New_York on 2022-03-13 at 07:00Z (02:00 EST -> 03:00 EDT). The period [06:00Z, 07:00Z)
         // ends at the change, and the 30m delay completes it at 07:30Z.
@@ -207,6 +432,22 @@ public class MatViewPeriodRefreshTest extends AbstractCairoTest {
                 "2022-03-13T06:00",
                 "2022-03-13T07:30",
                 "2022-03-13T07:00"
+        );
+    }
+
+    @Test
+    public void testDstStartBehindUtcRefreshesRowAfterTimerCreatedPastChange() throws Exception {
+        // DST starts in America/New_York on 2022-03-13 at 07:00Z (02:00 EST -> 03:00 EDT). Created at 08:30Z, 04:30
+        // EDT, the view creates its period timer after the change, in the period [04:00, 06:00) local, [08:00Z,
+        // 10:00Z). At the EST offset, the start of that period falls at 09:00Z, before the period ends.
+        testRowReachesViewAtPeriodEnd(
+                "period (length 2h time zone 'America/New_York')",
+                "2022-03-13T08:30",
+                "2022-03-13T08:40",
+                "2022-03-13T08:20",
+                "2022-03-13T08:00",
+                "2022-03-13T10:00",
+                "2022-03-13T10:00"
         );
     }
 
@@ -348,6 +589,49 @@ public class MatViewPeriodRefreshTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPeriodTimerCreatedBehindItsStartFiresForCompletePeriod() throws Exception {
+        assertMemoryLeak(() -> {
+            // DST ends in America/New_York on 2022-11-06 at 06:00Z (02:00 EDT -> 01:00 EST), and the clock passes
+            // 01:00-02:00 local twice. Created at 05:45Z, 01:45 EDT, the view starts the grid of its periods at 01:30
+            // local.
+            currentMicros = parseFloorPartialTimestamp("2022-11-06T05:45:00.000000Z");
+            createBaseTable("base");
+            execute(
+                    "create materialized view mv refresh immediate period (length 30m time zone 'America/New_York') as " +
+                            viewSql("base", "1h")
+            );
+            drainWalAndMatViewQueues();
+            // The period [05:30Z, 06:00Z) has not ended yet, so the refresh trims the row.
+            execute("insert into base values (1, '2022-11-06T05:40')");
+            drainWalAndMatViewQueues();
+            assertPeriodHi("mv", "2022-11-06T05:30:00.000000Z");
+            assertView("mv", "min_v\tmax_v\tts\n");
+
+            // The timer job first runs at 06:10Z, 01:10 EST, as after a restart. It creates the period timer while the
+            // local clock is behind the grid start, and the timer fires at once for the period that ended at 06:00Z.
+            currentMicros = parseFloorPartialTimestamp("2022-11-06T06:10:00.000000Z");
+            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+            drain(timerJob);
+            assertPeriodHi("mv", "2022-11-06T06:00:00.000000Z");
+            final String withRow = """
+                    min_v\tmax_v\tts
+                    1\t1\t2022-11-06T05:00:00.000000Z
+                    """;
+            assertView("mv", withRow);
+
+            // The timer fires next at the end of the period [06:00Z, 06:30Z).
+            currentMicros = parseFloorPartialTimestamp("2022-11-06T06:30:00.000000Z") - 1;
+            drain(timerJob);
+            assertPeriodHi("mv", "2022-11-06T06:00:00.000000Z");
+            currentMicros = parseFloorPartialTimestamp("2022-11-06T06:30:00.000000Z");
+            drain(timerJob);
+            assertPeriodHi("mv", "2022-11-06T06:30:00.000000Z");
+            assertView("mv", withRow);
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, viewSql("base", "1h"), "mv", LOG);
+        });
+    }
+
+    @Test
     public void testTimeZoneViewRemovesBucketAfterRangeReplaceDeletesItsRows() throws Exception {
         assertMemoryLeak(() -> {
             // Europe/Berlin is at UTC+1 in January, so the 1d periods end at 23:00 UTC, and the 1h delay completes
@@ -416,6 +700,15 @@ public class MatViewPeriodRefreshTest extends AbstractCairoTest {
     private static void drain(MatViewTimerJob timerJob) {
         drainMatViewTimerQueue(timerJob);
         drainWalAndMatViewQueues();
+    }
+
+    // Moves the clock on hour by hour, so that the period timer fires, and then to the given time.
+    private static void moveClockTo(MatViewTimerJob timerJob, long micros) {
+        for (long hour = nextHour(currentMicros); hour < micros; hour += Micros.HOUR_MICROS) {
+            currentMicros = hour;
+            drain(timerJob);
+        }
+        currentMicros = micros;
     }
 
     private static long nextHour(long micros) {
@@ -499,6 +792,57 @@ public class MatViewPeriodRefreshTest extends AbstractCairoTest {
             assertPeriodHi("mv", rowPeriodHi);
             assertView("mv", expectedView);
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, viewSql("base", "1h"), "mv", LOG);
+        });
+    }
+
+    // At 08:30, creates the view "mv" over the empty table "base" with SAMPLE BY 1h in the given time zone, or in UTC
+    // when it is null, and at 10:30 alters it to PERIOD (SAMPLE BY INTERVAL), which takes that time zone and starts the
+    // grid of the periods at timerStart, local time. A row at 10:40, written at 10:45, lies in the period
+    // [periodLo, periodHi) and must stay out of the view until that period completes.
+    private void testAlterToSampleByInterval(
+            @Nullable String timeZone,
+            String timerStart,
+            String periodLo,
+            String periodHi
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            final String query = viewSql("base", timeZone != null ? "1h align to calendar time zone '" + timeZone + "'" : "1h");
+            final String empty = "min_v\tmax_v\tts\n";
+            currentMicros = parseFloorPartialTimestamp("2022-01-02T08:30:00.000000Z");
+            createBaseTable("base");
+            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+            execute("create materialized view mv refresh immediate as " + query);
+            drain(timerJob);
+
+            currentMicros = parseFloorPartialTimestamp("2022-01-02T10:30:00.000000Z");
+            execute("alter materialized view mv set refresh immediate period (sample by interval)");
+            // Applying the ALTER publishes the new definition, and the timer job then registers the period timer.
+            drainWalQueue();
+            drain(timerJob);
+            assertQuery("select timer_time_zone, timer_start, period_length, period_length_unit from materialized_views where view_name = 'mv'")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns(
+                            "timer_time_zone\ttimer_start\tperiod_length\tperiod_length_unit\n" +
+                                    (timeZone != null ? timeZone : "") + "\t" + timerStart + ":00.000000Z\t1\tHOUR\n"
+                    );
+
+            // The refresh of the row trims it at the end of the last complete period, and records that end.
+            currentMicros = parseFloorPartialTimestamp("2022-01-02T10:45:00.000000Z");
+            execute("insert into base values (1, '2022-01-02T10:40')");
+            drain(timerJob);
+            assertPeriodHi("mv", periodLo + ":00.000000Z");
+            assertView("mv", empty);
+
+            currentMicros = parseFloorPartialTimestamp(periodHi) - 1;
+            drain(timerJob);
+            assertView("mv", empty);
+
+            currentMicros = parseFloorPartialTimestamp(periodHi);
+            drain(timerJob);
+            assertPeriodHi("mv", periodHi + ":00.000000Z");
+            assertView("mv", empty + "1\t1\t" + periodLo + ":00.000000Z\n");
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, query, "mv", LOG);
         });
     }
 
@@ -592,13 +936,28 @@ public class MatViewPeriodRefreshTest extends AbstractCairoTest {
         });
     }
 
-    // Creates the view "mv" with the given period over the empty table "base" at createAt, and moves the clock on hour
-    // by hour, so that the period timer fires. At writeAt, writes a row at rowTs, which lies in the period that starts
-    // at periodLo. Checks that the row stays out of the view until that period completes at completeAt, and that the
-    // view then takes it in and records periodHi, the end of that period.
     private void testRowReachesViewAtPeriodEnd(
             String period,
             String createAt,
+            String writeAt,
+            String rowTs,
+            String periodLo,
+            String completeAt,
+            String periodHi
+    ) throws Exception {
+        testRowReachesViewAtPeriodEnd(period, createAt, null, null, writeAt, rowTs, periodLo, completeAt, periodHi);
+    }
+
+    // Creates the view "mv" with createPeriod over the empty table "base" at createAt, and moves the clock on hour by
+    // hour, so that the period timer fires. At alterAt, unless it is null, alters the period of the view to
+    // alterPeriod. At writeAt, writes a row at rowTs, which lies in the period that starts at periodLo. Checks that the
+    // row stays out of the view until that period completes at completeAt, and that the view then takes it in and
+    // records periodHi, the end of that period.
+    private void testRowReachesViewAtPeriodEnd(
+            String createPeriod,
+            String createAt,
+            @Nullable String alterPeriod,
+            @Nullable String alterAt,
             String writeAt,
             String rowTs,
             String periodLo,
@@ -611,15 +970,15 @@ public class MatViewPeriodRefreshTest extends AbstractCairoTest {
             currentMicros = parseFloorPartialTimestamp(createAt);
             createBaseTable("base");
             final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
-            execute("create materialized view mv refresh immediate " + period + " as " + query);
+            execute("create materialized view mv refresh immediate " + createPeriod + " as " + query);
             drain(timerJob);
-            final long writeAtUs = parseFloorPartialTimestamp(writeAt);
-            for (long hour = nextHour(currentMicros); hour < writeAtUs; hour += Micros.HOUR_MICROS) {
-                currentMicros = hour;
+            if (alterAt != null) {
+                moveClockTo(timerJob, parseFloorPartialTimestamp(alterAt));
+                execute("alter materialized view mv set refresh immediate " + alterPeriod);
                 drain(timerJob);
             }
-
-            currentMicros = writeAtUs;
+            final long writeAtUs = parseFloorPartialTimestamp(writeAt);
+            moveClockTo(timerJob, writeAtUs);
             execute("insert into base values (1, '" + rowTs + "')");
             drain(timerJob);
             assertPeriodHi("mv", periodLo + ":00.000000Z");
