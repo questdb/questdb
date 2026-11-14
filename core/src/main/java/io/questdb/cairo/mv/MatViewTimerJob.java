@@ -319,15 +319,16 @@ public class MatViewTimerJob extends SynchronizedJob {
                     } else if (!state.hasPendingInvalidationReason() && !state.isInvalid()) {
                         switch (timer.getType()) {
                             case Timer.INCREMENTAL_REFRESH_TYPE:
-                                // Check if the view has refreshed since the last timer expiration.
-                                // If not, don't schedule refresh to avoid unbounded growth of the queue.
+                                // Check if the refresh task the last firing enqueued has finished, whether or
+                                // not it refreshed anything. If not, don't schedule another one, to avoid
+                                // unbounded growth of the queue.
                                 final long refreshSeq = state.getRefreshSeq();
                                 if (timer.getKnownSeq() != refreshSeq) {
                                     matViewStateStore.enqueueIncrementalRefresh(viewToken);
                                     timer.setKnownSeq(refreshSeq);
                                     reportFiring(timer, viewToken);
                                 } else {
-                                    // The refresh the previous firing enqueued has not completed yet, so
+                                    // The refresh task the previous firing enqueued has not finished yet, so
                                     // this firing schedules nothing. Steady state for a view whose refreshes
                                     // cannot keep up with its timer, or whose refresh job is backed up.
                                     reportMissedFiring(timer, viewToken, "previous refresh has not completed");
@@ -624,7 +625,7 @@ public class MatViewTimerJob extends SynchronizedJob {
         private final TimestampSampler sampler;
         private final byte type;
         private final TimeZoneRules tzRules;
-        private long deadlineLocalUs; // used for sampler interaction only
+        private long deadlineLocalUs; // used for sampler interaction in incremental and update timers only
         private long deadlineUtcUs;
         // Holds refresh sequence number for "normal" timers
         // or caching sequence for refresh intervals update timers.
@@ -650,22 +651,18 @@ public class MatViewTimerJob extends SynchronizedJob {
             this.tzRules = tzRules;
             this.delayUs = delayUs;
             sampler.setStart(startUs);
-            final long nowLocalUs = toLocal(nowUs, tzRules);
             switch (type) {
-                case INCREMENTAL_REFRESH_TYPE:
-                case UPDATE_REFRESH_INTERVALS_TYPE:
+                case INCREMENTAL_REFRESH_TYPE, UPDATE_REFRESH_INTERVALS_TYPE -> {
                     // It's fine if the timer triggers immediately.
+                    final long nowLocalUs = toLocal(nowUs, tzRules);
                     deadlineLocalUs = nowLocalUs > startUs ? sampler.nextTimestamp(sampler.round(nowLocalUs - 1)) : startUs;
-                    break;
-                case PERIOD_REFRESH_TYPE:
-                    // Unlike with incremental timer views, we want to trigger the timer
-                    // for all complete periods, if they exist.
-                    deadlineLocalUs = nowLocalUs > startUs ? sampler.round(nowLocalUs) : startUs;
-                    break;
-                default:
-                    throw new IllegalStateException("unexpected timer type: " + type);
+                    deadlineUtcUs = toUtc(deadlineLocalUs, tzRules);
+                }
+                // Unlike with incremental timer views, we want to trigger the timer
+                // for all complete periods, if they exist.
+                case PERIOD_REFRESH_TYPE -> deadlineUtcUs = MatViewPeriods.periodStart(sampler, tzRules, nowUs);
+                default -> throw new IllegalStateException("unexpected timer type: " + type);
             }
-            deadlineUtcUs = toUtc(deadlineLocalUs, tzRules);
         }
 
         public long getDeadlineMicros() {
@@ -712,8 +709,12 @@ public class MatViewTimerJob extends SynchronizedJob {
         }
 
         private void nextDeadline() {
-            deadlineLocalUs = sampler.nextTimestamp(deadlineLocalUs);
-            deadlineUtcUs = toUtc(deadlineLocalUs, tzRules);
+            if (type == PERIOD_REFRESH_TYPE) {
+                deadlineUtcUs = MatViewPeriods.nextPeriodStart(sampler, tzRules, deadlineUtcUs);
+            } else {
+                deadlineLocalUs = sampler.nextTimestamp(deadlineLocalUs);
+                deadlineUtcUs = toUtc(deadlineLocalUs, tzRules);
+            }
         }
     }
 }

@@ -242,6 +242,11 @@ public class WorkerPool implements Closeable {
         freeOnExit.add(resource);
     }
 
+    @TestOnly
+    public int getAssignedJobCount() {
+        return assignedJobs.size();
+    }
+
     public int getFiberMaxLiveCount() {
         return fiberRuntime != null ? fiberRuntime.getMaxLiveFiberCount() : 0;
     }
@@ -259,6 +264,11 @@ public class WorkerPool implements Closeable {
             throw new IllegalStateException("worker pool does not host fibers [pool=" + poolName + ']');
         }
         return fiberRuntime;
+    }
+
+    @TestOnly
+    public int getFreeOnExitJobCount() {
+        return freeOnExit.size();
     }
 
     public String getPoolName() {
@@ -528,8 +538,8 @@ public class WorkerPool implements Closeable {
     public void updateWorkerMetrics() {
         final long nowNanos = System.nanoTime();
         WorkerMetrics workerMetrics = metrics.workerMetrics();
-        long min = workerMetrics.getMinElapsedMicros();
-        long max = workerMetrics.getMaxElapsedMicros();
+        long min = Long.MAX_VALUE;
+        long max = Long.MIN_VALUE;
         // Iterate the workers list under the monitor: the /metrics scrape calls this concurrently
         // with start()'s add-loop and halt()'s clear(). Without the guard a torn read returns a null
         // slot (NPE on getQuick(i).getJobStartNanos()) or a half-published pos/buffer.
@@ -542,7 +552,10 @@ public class WorkerPool implements Closeable {
                 }
             }
         }
-        workerMetrics.update(min, max);
+        // Pools without running workers, such as during startup, have no sample to report.
+        if (max != Long.MIN_VALUE) {
+            workerMetrics.update(min, max);
+        }
     }
 
     private static Throwable addCleanupFailure(@Nullable Throwable primary, Throwable failure) {

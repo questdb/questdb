@@ -25,6 +25,8 @@
 package io.questdb.cairo.idx;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
@@ -354,7 +356,10 @@ public final class PostingIndexUtils {
     private static final int EF_RANK_TRAILER_HEADER_SIZE = 16;
     private static final int EF_RANK_TRAILER_MAGIC = 0x32465245; // "EFR2" in little-endian bytes
     private static final int EF_RANK_TRAILER_VERSION = 2;
-    private static final long PARSE_FAIL = Long.MIN_VALUE;
+    /**
+     * Returned by {@link #sealedFileColumnNameTxn} for a name that is not a sealed posting file name.
+     */
+    public static final long PARSE_FAIL = Long.MIN_VALUE;
     /**
      * Tri-state sentinel returned by {@link #readSealTxnFromKeyFdTriState} to
      * mark a read-or-corruption failure. Distinct from {@link #V2_NO_HEAD},
@@ -422,7 +427,7 @@ public final class PostingIndexUtils {
             long sealTxn
     ) {
         path.concat(name).put(".pc").put(includeIdx);
-        path.put('.').put(postingColumnNameTxn == COLUMN_NAME_TXN_NONE ? 0 : postingColumnNameTxn);
+        path.put('.').put(coverFileHostTxn(postingColumnNameTxn));
         if (coveredColumnNameTxn > COLUMN_NAME_TXN_NONE) {
             path.put('.').put(coveredColumnNameTxn);
         }
@@ -431,12 +436,12 @@ public final class PostingIndexUtils {
     }
 
     /**
-     * The posting column name txn {@link #scanSealedFiles} reports for a cover data file of the given name txn. The
-     * file name writes no name txn as 0, so name txn 0 reads back as no name txn: compare a scanned cover data file
-     * against this, not against the column's name txn.
+     * The posting column name txn segment of a {@code .pc} file name. The segment is always present,
+     * so that the optional covered column name txn segment after it parses unambiguously, which
+     * makes {@code COLUMN_NAME_TXN_NONE} and txn 0 share the token 0.
      */
-    public static long coverFilePostingColumnNameTxn(long postingColumnNameTxn) {
-        return postingColumnNameTxn == 0 ? COLUMN_NAME_TXN_NONE : postingColumnNameTxn;
+    public static long coverFileHostTxn(long postingColumnNameTxn) {
+        return postingColumnNameTxn == COLUMN_NAME_TXN_NONE ? 0 : postingColumnNameTxn;
     }
 
     public static LPSZ coverInfoFileName(Path path, CharSequence name, long postingColumnNameTxn) {
@@ -1645,16 +1650,14 @@ public final class PostingIndexUtils {
             return -1;
         }
         final boolean[] hasPv = {false};
-        scanSealedFiles(ff, path, pathTrimTo, columnName, new SealedFileVisitor() {
+        scanSealedFiles(ff, path, pathTrimTo, columnName, postingColumnNameTxn, new SealedFileVisitor() {
             @Override
-            public void onCoverDataFile(int includeIdx, long filePostingColumnNameTxn, long coveredColumnNameTxn, long fileSealTxn) {
+            public void onCoverDataFile(int includeIdx, long coveredColumnNameTxn, long fileSealTxn) {
             }
 
             @Override
-            public void onValueFile(long filePostingColumnNameTxn, long fileSealTxn) {
-                if (filePostingColumnNameTxn == postingColumnNameTxn) {
-                    hasPv[0] = true;
-                }
+            public void onValueFile(long fileSealTxn) {
+                hasPv[0] = true;
             }
         });
         if (hasPv[0]) {
@@ -1671,7 +1674,9 @@ public final class PostingIndexUtils {
 
     /**
      * Removes the .pci file plus every sealed .pv.* and .pc&lt;N&gt;.*.* file that
-     * belongs to the given posting-column-name txn.
+     * belongs to the given posting-column-name txn. For {@code COLUMN_NAME_TXN_NONE} it keeps the
+     * {@code .pc} files when the directory holds {@code <columnName>.d.0}: they belong to instance 0,
+     * which shares their host token 0, see {@link #coverFileHostTxn(long)}.
      *
      * @return {@code true} when at least one file failed to remove and is
      * still on disk afterwards. The caller must treat this as "purge could
@@ -1685,47 +1690,68 @@ public final class PostingIndexUtils {
             CharSequence columnName,
             long postingColumnNameTxn
     ) {
-        final boolean[] anyFailed = {false};
-        final long coverFilePostingColumnNameTxn = coverFilePostingColumnNameTxn(postingColumnNameTxn);
-        LPSZ pciFile = coverInfoFileName(path.trimTo(pathTrimTo), columnName, postingColumnNameTxn);
-        if (ff.exists(pciFile) && !ff.removeQuiet(pciFile) && ff.exists(pciFile)) {
-            anyFailed[0] = true;
-        }
-        path.trimTo(pathTrimTo);
-        scanSealedFiles(ff, path, pathTrimTo, columnName, new SealedFileVisitor() {
-            @Override
-            public void onCoverDataFile(int includeIdx, long filePostingColumnNameTxn, long coveredColumnNameTxn, long sealTxn) {
-                if (filePostingColumnNameTxn != coverFilePostingColumnNameTxn) {
-                    return;
-                }
-                LPSZ p = coverDataFileName(path.trimTo(pathTrimTo), columnName, includeIdx, filePostingColumnNameTxn, coveredColumnNameTxn, sealTxn);
-                if (!ff.removeQuiet(p) && ff.exists(p)) {
-                    anyFailed[0] = true;
-                }
-                path.trimTo(pathTrimTo);
-            }
-
-            @Override
-            public void onValueFile(long fileColumnNameTxn, long sealTxn) {
-                if (fileColumnNameTxn != postingColumnNameTxn) {
-                    return;
-                }
-                LPSZ p = valueFileName(path.trimTo(pathTrimTo), columnName, fileColumnNameTxn, sealTxn);
-                if (!ff.removeQuiet(p) && ff.exists(p)) {
-                    anyFailed[0] = true;
-                }
-                path.trimTo(pathTrimTo);
-            }
-        });
-        path.trimTo(pathTrimTo);
-        return anyFailed[0];
+        return removeAllSealedFiles(ff, path, pathTrimTo, columnName, postingColumnNameTxn, new long[]{-1});
     }
 
+    /**
+     * Resets the posting index of one column instance in a partition directory to an empty chain, for an index that is
+     * not committed: ADD INDEX does it before it builds the index, and checkpoint restore for every chain the restored
+     * metadata does not commit. Nothing reads what an earlier attempt left in the directory, and a crash or a copy can
+     * leave its chain torn, so the chain is never opened: the key file and every sealed file of the instance go. The
+     * new chain starts past every sealTxn the old one counted or left a file for, so a seal purge queued for one of
+     * those files cannot reach a file of the new chain. One listing of the directory finds the sealed files and the
+     * highest sealTxn they carry.
+     *
+     * @return {@code false} when the directory holds no key file of the instance, so there was nothing to reset
+     */
+    public static boolean resetIndex(
+            FilesFacade ff,
+            Path path,
+            int pathTrimTo,
+            CharSequence columnName,
+            long postingColumnNameTxn,
+            MemoryMA keyMem
+    ) {
+        try {
+            if (!ff.exists(keyFileName(path.trimTo(pathTrimTo), columnName, postingColumnNameTxn))) {
+                return false;
+            }
+            // removeAllSealedFiles raises the key file's counter to the highest sealTxn of the files it visits.
+            final long[] lastSealTxn = {readKeyFileGenCounter(ff, path, pathTrimTo, columnName, postingColumnNameTxn)};
+            if (removeAllSealedFiles(ff, path, pathTrimTo, columnName, postingColumnNameTxn, lastSealTxn)) {
+                throw CairoException.critical(ff.errno()).put("could not remove posting index files [path=")
+                        .put(path.trimTo(pathTrimTo)).put(", column=").put(columnName).put(']');
+            }
+            // A new key file rather than a rewrite: an older partition version may share the old one through a hard link.
+            final LPSZ keyFile = keyFileName(path.trimTo(pathTrimTo), columnName, postingColumnNameTxn);
+            if (!ff.removeQuiet(keyFile) && ff.exists(keyFile)) {
+                throw CairoException.critical(ff.errno()).put("could not remove posting index key file [path=")
+                        .put(keyFile).put(']');
+            }
+            keyMem.smallFile(ff, keyFile, MemoryTag.MMAP_INDEX_WRITER);
+            try {
+                PostingIndexWriter.initKeyMemory(keyMem, lastSealTxn[0] + 1);
+            } finally {
+                keyMem.close();
+            }
+            return true;
+        } finally {
+            path.trimTo(pathTrimTo);
+        }
+    }
+
+    /**
+     * Reports to {@code visitor} every sealed {@code .pv} and {@code .pc} file of the posting column
+     * instance {@code columnName} with column name txn {@code postingColumnNameTxn} in the directory
+     * {@code path}, trimmed to {@code pathTrimTo}. Files of other instances of the same column name
+     * are not reported.
+     */
     public static void scanSealedFiles(
             FilesFacade ff,
             Path path,
             int pathTrimTo,
             CharSequence columnName,
+            long postingColumnNameTxn,
             SealedFileVisitor visitor
     ) {
         path.trimTo(pathTrimTo);
@@ -1736,9 +1762,63 @@ public final class PostingIndexUtils {
             }
             fileName.clear();
             Utf8s.utf8ToUtf16Z(pUtf8NameZ, fileName);
-            parseSealedFileName(fileName, columnName, visitor);
+            parseSealedFileName(fileName, columnName, postingColumnNameTxn, visitor);
         });
         path.trimTo(pathTrimTo);
+    }
+
+    /**
+     * The posting column name txn segment of a sealed posting file name, given the index {@code lo} of
+     * the first character after {@code <columnName>.}:
+     * <ul>
+     *   <li>{@code pv.<sealTxn>} gives {@code COLUMN_NAME_TXN_NONE}</li>
+     *   <li>{@code pv.<postingColumnNameTxn>.<sealTxn>} gives the posting column name txn</li>
+     *   <li>{@code pc<includeIdx>.<coverFileHostTxn>[.<coveredColumnNameTxn>].<sealTxn>} gives the
+     *   {@link #coverFileHostTxn(long)} token, 0 for both {@code COLUMN_NAME_TXN_NONE} and txn 0</li>
+     * </ul>
+     * Any other name, including {@code .pk} and {@code .pci}, gives {@link #PARSE_FAIL}.
+     */
+    public static long sealedFileColumnNameTxn(CharSequence fileName, int lo) {
+        final int fileLen = fileName.length();
+        if (lo + 2 >= fileLen || fileName.charAt(lo) != 'p') {
+            return PARSE_FAIL;
+        }
+        final char kind = fileName.charAt(lo + 1);
+        int pos = lo + 2;
+        if (kind == 'v') {
+            if (fileName.charAt(pos) != '.') {
+                return PARSE_FAIL;
+            }
+            pos++;
+            final int dot = nextDot(fileName, pos, fileLen);
+            if (dot < 0) {
+                return parseTxnSegment(fileName, pos, fileLen) == PARSE_FAIL ? PARSE_FAIL : COLUMN_NAME_TXN_NONE;
+            }
+            final long columnNameTxn = parseTxnSegment(fileName, pos, dot);
+            return parseTxnSegment(fileName, dot + 1, fileLen) == PARSE_FAIL ? PARSE_FAIL : columnNameTxn;
+        }
+        if (kind != 'c') {
+            return PARSE_FAIL;
+        }
+        final int includeIdxLo = pos;
+        while (pos < fileLen && fileName.charAt(pos) >= '0' && fileName.charAt(pos) <= '9') {
+            pos++;
+        }
+        if (pos == includeIdxLo || pos == fileLen || fileName.charAt(pos) != '.') {
+            return PARSE_FAIL;
+        }
+        pos++;
+        final int hostDot = nextDot(fileName, pos, fileLen);
+        if (hostDot < 0) {
+            return PARSE_FAIL;
+        }
+        final long hostTxn = parseTxnSegment(fileName, pos, hostDot);
+        final int secondDot = nextDot(fileName, hostDot + 1, fileLen);
+        final boolean isTailValid = secondDot < 0
+                ? parseTxnSegment(fileName, hostDot + 1, fileLen) != PARSE_FAIL
+                : parseTxnSegment(fileName, hostDot + 1, secondDot) != PARSE_FAIL
+                  && parseTxnSegment(fileName, secondDot + 1, fileLen) != PARSE_FAIL;
+        return isTailValid ? hostTxn : PARSE_FAIL;
     }
 
     /**
@@ -1921,17 +2001,25 @@ public final class PostingIndexUtils {
 
     /**
      * Parses a directory entry name and dispatches to the visitor if it matches
-     * a sealed-file pattern for {@code columnName}.
+     * a sealed-file pattern of the posting column instance {@code columnName},
+     * {@code postingColumnNameTxn}.
      * <p>
      * Recognised patterns (segment indices use 0-based dot splits):
      * <ul>
-     *   <li>{@code <columnName>.pv.<postingColumnNameTxn>.<sealTxn>} — value file</li>
-     *   <li>{@code <columnName>.pc<includeIdx>.<coveredColumnNameTxn>.<sealTxn>} — cover data file</li>
+     *   <li>{@code <columnName>.pv[.<postingColumnNameTxn>].<sealTxn>} — value file,
+     *   no txn segment for {@code COLUMN_NAME_TXN_NONE}</li>
+     *   <li>{@code <columnName>.pc<includeIdx>.<coverFileHostTxn>[.<coveredColumnNameTxn>].<sealTxn>}
+     *   — cover data file, see {@link #coverFileHostTxn(long)}</li>
      * </ul>
-     * Files that do not match (different column, .pk, .pci, partition data, etc.)
+     * Files that do not match (different column or instance, .pk, .pci, partition data, etc.)
      * are silently ignored.
      */
-    public static void parseSealedFileName(CharSequence fileName, CharSequence columnName, SealedFileVisitor visitor) {
+    private static void parseSealedFileName(
+            CharSequence fileName,
+            CharSequence columnName,
+            long postingColumnNameTxn,
+            SealedFileVisitor visitor
+    ) {
         int nameLen = columnName.length();
         int fileLen = fileName.length();
         if (fileLen < nameLen + 4) {
@@ -1989,10 +2077,10 @@ public final class PostingIndexUtils {
                 columnNameTxn = parseTxnSegment(fileName, pos, dot);
                 sealTxn = parseTxnSegment(fileName, dot + 1, fileLen);
             }
-            if (columnNameTxn == PARSE_FAIL || sealTxn == PARSE_FAIL) {
+            if (columnNameTxn != postingColumnNameTxn || sealTxn == PARSE_FAIL) {
                 return;
             }
-            visitor.onValueFile(columnNameTxn, sealTxn);
+            visitor.onValueFile(sealTxn);
             return;
         }
 
@@ -2000,11 +2088,9 @@ public final class PostingIndexUtils {
         if (hostDot < 0) {
             return;
         }
-        long rawHost = parseTxnSegment(fileName, pos, hostDot);
-        if (rawHost == PARSE_FAIL) {
+        if (parseTxnSegment(fileName, pos, hostDot) != coverFileHostTxn(postingColumnNameTxn)) {
             return;
         }
-        long postingColumnNameTxn = rawHost == 0 ? COLUMN_NAME_TXN_NONE : rawHost;
         long coveredColumnNameTxn;
         long sealTxn;
         int secondDot = nextDot(fileName, hostDot + 1, fileLen);
@@ -2018,7 +2104,7 @@ public final class PostingIndexUtils {
         if (coveredColumnNameTxn == PARSE_FAIL || sealTxn == PARSE_FAIL) {
             return;
         }
-        visitor.onCoverDataFile(includeIdx, postingColumnNameTxn, coveredColumnNameTxn, sealTxn);
+        visitor.onCoverDataFile(includeIdx, coveredColumnNameTxn, sealTxn);
     }
 
     private static long parseTxnSegment(CharSequence s, int from, int end) {
@@ -2030,6 +2116,89 @@ public final class PostingIndexUtils {
         } catch (NumericException e) {
             return PARSE_FAIL;
         }
+    }
+
+    /**
+     * The highest sealTxn that a stable header page of the instance's key file counted, or -1.
+     */
+    private static long readKeyFileGenCounter(
+            FilesFacade ff,
+            Path path,
+            int pathTrimTo,
+            CharSequence columnName,
+            long postingColumnNameTxn
+    ) {
+        long genCounter = -1;
+        final long fd = ff.openRO(keyFileName(path.trimTo(pathTrimTo), columnName, postingColumnNameTxn));
+        if (fd > -1) {
+            try {
+                for (long page = PAGE_A_OFFSET; page <= PAGE_B_OFFSET; page += PAGE_SIZE) {
+                    final long sequence = ff.readNonNegativeLong(fd, page + V2_HEADER_OFFSET_SEQUENCE_START);
+                    if (sequence > 0 && (sequence & 1L) == 0
+                            && sequence == ff.readNonNegativeLong(fd, page + V2_HEADER_OFFSET_SEQUENCE_END)) {
+                        genCounter = Math.max(genCounter, ff.readNonNegativeLong(fd, page + V2_HEADER_OFFSET_GEN_COUNTER));
+                    }
+                }
+            } finally {
+                ff.close(fd);
+            }
+        }
+        return genCounter;
+    }
+
+    /**
+     * {@link #removeAllSealedFiles(FilesFacade, Path, int, CharSequence, long)} that also raises
+     * {@code lastSealTxn[0]} to the highest sealTxn among the sealed files of the instance, the ones it keeps
+     * included, in the same listing.
+     */
+    private static boolean removeAllSealedFiles(
+            FilesFacade ff,
+            Path path,
+            int pathTrimTo,
+            CharSequence columnName,
+            long postingColumnNameTxn,
+            long[] lastSealTxn
+    ) {
+        final boolean[] anyFailed = {false};
+        LPSZ pciFile = coverInfoFileName(path.trimTo(pathTrimTo), columnName, postingColumnNameTxn);
+        if (ff.exists(pciFile) && !ff.removeQuiet(pciFile) && ff.exists(pciFile)) {
+            anyFailed[0] = true;
+        }
+        // A .pc name writes instance NONE and instance 0 with the same host token 0. Both share a
+        // directory only after a change at table txn 0 in the default partition of a table that is not
+        // partitioned (DROP INDEX, ALTER COLUMN TYPE). Instance NONE committed no rows there and sealed
+        // no .pc file, so every .pc file of the token 0 belongs to instance 0. The change writes
+        // <columnName>.d.0 before it queues the purge of NONE, and only the purge of instance 0, which
+        // takes its .pc files too, removes it.
+        final boolean isCoverDataOfInstanceZero = postingColumnNameTxn == COLUMN_NAME_TXN_NONE
+                && ff.exists(TableUtils.dFile(path.trimTo(pathTrimTo), columnName, 0));
+        path.trimTo(pathTrimTo);
+        scanSealedFiles(ff, path, pathTrimTo, columnName, postingColumnNameTxn, new SealedFileVisitor() {
+            @Override
+            public void onCoverDataFile(int includeIdx, long coveredColumnNameTxn, long sealTxn) {
+                lastSealTxn[0] = Math.max(lastSealTxn[0], sealTxn);
+                if (isCoverDataOfInstanceZero) {
+                    return;
+                }
+                LPSZ p = coverDataFileName(path.trimTo(pathTrimTo), columnName, includeIdx, postingColumnNameTxn, coveredColumnNameTxn, sealTxn);
+                if (!ff.removeQuiet(p) && ff.exists(p)) {
+                    anyFailed[0] = true;
+                }
+                path.trimTo(pathTrimTo);
+            }
+
+            @Override
+            public void onValueFile(long sealTxn) {
+                lastSealTxn[0] = Math.max(lastSealTxn[0], sealTxn);
+                LPSZ p = valueFileName(path.trimTo(pathTrimTo), columnName, postingColumnNameTxn, sealTxn);
+                if (!ff.removeQuiet(p) && ff.exists(p)) {
+                    anyFailed[0] = true;
+                }
+                path.trimTo(pathTrimTo);
+            }
+        });
+        path.trimTo(pathTrimTo);
+        return anyFailed[0];
     }
 
     private static int efFirstOrdinalForHigh(long srcAddr, long trailer, int bitsL, long high) {
@@ -2233,21 +2402,21 @@ public final class PostingIndexUtils {
     }
 
     /**
-     * Receives one callback per sealed file discovered by {@link #scanSealedFiles}.
-     * Implementations are typically used to enumerate orphan files for purge or
-     * crash recovery.
+     * Receives one callback per sealed file of the scanned posting column instance
+     * that {@link #scanSealedFiles} discovers. Implementations are typically used to
+     * enumerate orphan files for purge or crash recovery.
      */
     public interface SealedFileVisitor {
 
         /**
-         * Called for each {@code .pc<includeIdx>.<postingColumnNameTxn>.<coveredColumnNameTxn>.<sealTxn>} file.
+         * Called for each {@code .pc<includeIdx>.<postingColumnNameTxn>[.<coveredColumnNameTxn>].<sealTxn>} file.
          */
-        void onCoverDataFile(int includeIdx, long postingColumnNameTxn, long coveredColumnNameTxn, long sealTxn);
+        void onCoverDataFile(int includeIdx, long coveredColumnNameTxn, long sealTxn);
 
         /**
-         * Called for each {@code .pv.<postingColumnNameTxn>.<sealTxn>} file.
+         * Called for each {@code .pv[.<postingColumnNameTxn>].<sealTxn>} file.
          */
-        void onValueFile(long postingColumnNameTxn, long sealTxn);
+        void onValueFile(long sealTxn);
     }
 
     /**

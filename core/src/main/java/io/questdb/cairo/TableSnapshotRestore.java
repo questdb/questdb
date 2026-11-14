@@ -27,7 +27,10 @@ package io.questdb.cairo;
 import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexWriter;
+import io.questdb.cairo.idx.PostingIndexChainEntry;
+import io.questdb.cairo.idx.PostingIndexChainWriter;
 import io.questdb.cairo.idx.PostingIndexUtils;
+import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewState;
@@ -37,6 +40,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.seq.TableTransactionLogFile;
@@ -46,6 +50,7 @@ import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Chars;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -70,6 +75,7 @@ import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
+import java.text.Normalizer;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -86,6 +92,9 @@ import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
  * Used by both DatabaseCheckpointAgent and BackupRestoreAgent.
  */
 public class TableSnapshotRestore implements QuietCloseable {
+    private static final int POSTING_INDEX_OPEN_WRITER = 1;
+    private static final int POSTING_INDEX_REBUILD = 2;
+    private static final int POSTING_INDEX_UNCHANGED = 0;
     // Tests swap this logger via reflection through LogFactory.enableGuaranteedLogging().
     @SuppressWarnings("FieldMayBeFinal")
     private static Log LOG = LogFactory.getLog(TableSnapshotRestore.class);
@@ -462,12 +471,27 @@ public class TableSnapshotRestore implements QuietCloseable {
             // parquet partitions were already handled by prepareParquetPartitions.
             if (rebuildPartitionColumnIndexes) {
                 rebuildBitmapIndexes(tablePath, pathTableLen);
+            } else {
+                // A writer keeps changing a partition's POSTING .pk in place while the checkpoint is
+                // copied, so the copy can carry chain entries of commits newer than the checkpoint's
+                // _txn, whose value files it may not have. Drop them before any writer opens the index.
+                // Finish parquet validation first: a missing value file can require a rebuild using _pm.
+                finalizeParallelTasks();
+                dropUncommittedPostingIndexEntries(tablePath, pathTableLen);
             }
 
             // Drain all parallel tasks before going further: tableMetadata,
             // columnVersionReader and txWriter are reused across tables, so a
             // rebuild task from this table must not still be running when the
             // caller loads the next table into the same objects.
+            finalizeParallelTasks();
+            futures.clear();
+
+            // A copy can hold the posting files of an ADD INDEX that the restored metadata does not commit: one run
+            // after the checkpoint, which no restore replays, or one the copy caught while it wrote them. The commits
+            // after the restore can write other rows at the txn and row count such a build was made for, and the seal
+            // sizes a file before it writes it, so a torn build can look complete. ADD INDEX would reuse either.
+            resetUncommittedPostingIndexes(tablePath, pathTableLen);
             finalizeParallelTasks();
 
             if (tableMetadata.isWalEnabled() && txWriter.getLagRowCount() > 0) {
@@ -673,6 +697,11 @@ public class TableSnapshotRestore implements QuietCloseable {
      * from the parquet file alongside the symbol column, as
      * {@link ParquetPartitionIndexBuilder} does.
      */
+    private static LPSZ rebuildMarkerFileName(Path path, CharSequence columnName, long columnNameTxn) {
+        PostingIndexUtils.keyFileName(path, columnName, columnNameTxn);
+        return path.put(".rebuild").$();
+    }
+
     private static void rebuildParquetCoveringIndex(
             FilesFacade ff,
             CairoConfiguration configuration,
@@ -688,7 +717,6 @@ public class TableSnapshotRestore implements QuietCloseable {
             int parquetColumnIndex,
             long partitionTimestamp,
             long partitionNameTxn,
-            long partitionRowCount,
             long currentTableTxn
     ) {
         final int writerIndex = metadata.getWriterIndex(columnIndex);
@@ -716,18 +744,19 @@ public class TableSnapshotRestore implements QuietCloseable {
                     rowGroupBuffers,
                     decodeColumns,
                     coveredColumnAccumulator,
+                    new IntList(),
+                    new LongList(),
                     indexer,
                     metadata,
                     columnVersionReader,
                     columnIndex,
                     parquetColumnIndex,
                     columnTop,
-                    partitionTimestamp,
-                    partitionRowCount
+                    partitionTimestamp
             );
         } catch (CairoException e) {
             LOG.error().$("could not rebuild covering index for parquet partition [path=").$(path.trimTo(partitionPathLen))
-                    .$(", column=").$(columnName)
+                    .$(", column=").$safe(columnName)
                     .$(", errno=").$(e.getErrno())
                     .$(", msg=").$safe(e.getFlyweightMessage())
                     .I$();
@@ -798,6 +827,368 @@ public class TableSnapshotRestore implements QuietCloseable {
                     .$(", dst=").$(dstPath)
                     .I$();
         }
+    }
+
+    private void dropUncommittedPostingIndexEntries(Path tablePath, int pathTableLen) {
+        final int columnCount = tableMetadata.getColumnCount();
+        boolean hasPostingIndex = false;
+        for (int colIdx = 0; colIdx < columnCount; colIdx++) {
+            if (isPostingIndexedSymbol(colIdx)) {
+                hasPostingIndex = true;
+                break;
+            }
+        }
+        if (!hasPostingIndex) {
+            return;
+        }
+
+        final int partitionBy = tableMetadata.getPartitionBy();
+        final boolean isPartitioned = PartitionBy.isPartitioned(partitionBy);
+        // One default partition for non-partitioned tables, else every attached one.
+        final int partitionCount = isPartitioned ? txWriter.getPartitionCount() : 1;
+        if (partitionCount == 0) {
+            return;
+        }
+        final int timestampType = tableMetadata.getTimestampType();
+        final String tablePathStr = tablePath.trimTo(pathTableLen).toString();
+        final AtomicInteger cursor = new AtomicInteger(0);
+        final int workerCount = Math.min(threadCount, partitionCount);
+        for (int w = 0; w < workerCount; w++) {
+            futures.add(submitParallelTask(() -> dropUncommittedPostingIndexEntries(
+                    tablePathStr,
+                    partitionBy,
+                    timestampType,
+                    isPartitioned,
+                    partitionCount,
+                    cursor
+            )));
+        }
+    }
+
+    /**
+     * Worker body for {@link #dropUncommittedPostingIndexEntries(Path, int)}: pulls partition indexes
+     * from the shared {@code cursor} and opens every POSTING index of the partition with the recovery
+     * walk armed at the restored {@code _txn}. The walk drops entries tagged above that txn and unlinks
+     * their value files. A fast-lag commit can tag a post-checkpoint seal with the checkpoint txn itself,
+     * so the walk alone does not guarantee a checkpointed head. Rebuild the index from restored column
+     * data when the retained head names a missing or short value file, when the .pk is shorter than its
+     * chain region, and when the .pk of a column with rows in the partition is missing.
+     */
+    private void dropUncommittedPostingIndexEntries(
+            String tablePathStr,
+            int partitionBy,
+            int timestampType,
+            boolean isPartitioned,
+            int partitionCount,
+            AtomicInteger cursor
+    ) {
+        final long tableTxn = txWriter.getTxn();
+        final int columnCount = tableMetadata.getColumnCount();
+        final Path path = new Path();
+        final PostingIndexWriter writer = new PostingIndexWriter(configuration);
+        final MemoryCMR keyMem = Vm.getCMRInstance();
+        final PostingIndexChainWriter chain = new PostingIndexChainWriter();
+        final PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
+        try {
+            int i;
+            while (!abortParallelTasks.get() && (i = cursor.getAndIncrement()) < partitionCount) {
+                final long partitionTimestamp;
+                final long partitionNameTxn;
+                if (isPartitioned) {
+                    if (txWriter.isPartitionRemotelyServed(i)) {
+                        continue;
+                    }
+                    partitionTimestamp = txWriter.getPartitionTimestampByIndex(i);
+                    partitionNameTxn = txWriter.getPartitionNameTxn(i);
+                } else {
+                    partitionTimestamp = TxReader.DEFAULT_PARTITION_TIMESTAMP;
+                    partitionNameTxn = -1L;
+                }
+                path.of(tablePathStr);
+                TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+                final int partitionPathLen = path.size();
+                for (int colIdx = 0; colIdx < columnCount; colIdx++) {
+                    if (!isPostingIndexedSymbol(colIdx)) {
+                        continue;
+                    }
+                    final int writerIndex = tableMetadata.getWriterIndex(colIdx);
+                    final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, writerIndex);
+                    // -1 means the column is absent in this partition, see ColumnVersionReader.getColumnTop()
+                    if (columnTop < 0) {
+                        continue;
+                    }
+                    final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, writerIndex);
+                    final String columnName = tableMetadata.getColumnName(colIdx);
+                    // An earlier restore stopped inside this rebuild. The partial index may open cleanly and
+                    // miss rows, so rebuild it again; the marker check comes first as the .pk may be gone.
+                    if (ff.exists(rebuildMarkerFileName(path.trimTo(partitionPathLen), columnName, columnNameTxn))) {
+                        LOG.info().$("repeating interrupted posting index rebuild [path=").$(path.trimTo(partitionPathLen))
+                                .$(", column=").$safe(columnName)
+                                .$(", txn=").$(tableTxn)
+                                .I$();
+                        rebuildPostingIndexForPartition(path.trimTo(partitionPathLen), tablePathStr, partitionBy, timestampType,
+                                isPartitioned, i, colIdx, partitionTimestamp, partitionNameTxn, columnNameTxn);
+                        continue;
+                    }
+                    final int action;
+                    if (!ff.exists(PostingIndexUtils.keyFileName(path.trimTo(partitionPathLen), columnName, columnNameTxn))) {
+                        // A column with no rows in the partition may have no .pk, as TableWriter allows.
+                        // One with rows must have it: the copy lost it.
+                        final long partitionRowCount = isPartitioned ? txWriter.getPartitionSize(i) : txWriter.getTransientRowCount();
+                        if (columnTop >= partitionRowCount) {
+                            continue;
+                        }
+                        LOG.info().$("rebuilding restored posting index with missing key file [path=").$(path.trimTo(partitionPathLen))
+                                .$(", column=").$safe(columnName)
+                                .$(", txn=").$(tableTxn)
+                                .I$();
+                        action = POSTING_INDEX_REBUILD;
+                    } else {
+                        // Opening the writer costs far more than reading the head, and most indexes need nothing
+                        action = checkPostingIndex(path, partitionPathLen, columnName, columnNameTxn, tableTxn, keyMem, chain, head);
+                        if (action == POSTING_INDEX_REBUILD) {
+                            LOG.info().$("rebuilding restored posting index with short key file [path=").$(path.trimTo(partitionPathLen))
+                                    .$(", column=").$safe(columnName)
+                                    .$(", txn=").$(tableTxn)
+                                    .I$();
+                        }
+                    }
+                    if (action == POSTING_INDEX_UNCHANGED) {
+                        continue;
+                    }
+                    if (action == POSTING_INDEX_REBUILD) {
+                        rebuildPostingIndexForPartition(path.trimTo(partitionPathLen), tablePathStr, partitionBy, timestampType,
+                                isPartitioned, i, colIdx, partitionTimestamp, partitionNameTxn, columnNameTxn);
+                        continue;
+                    }
+                    try {
+                        writer.setCurrentTableTxn(tableTxn);
+                        writer.of(path.trimTo(partitionPathLen), columnName, columnNameTxn, partitionTimestamp, partitionNameTxn);
+                    } catch (CairoException e) {
+                        if (!e.isFileTooSmall()) {
+                            LOG.error().$("could not open posting index of restored partition [path=").$(path.trimTo(partitionPathLen))
+                                    .$(", column=").$safe(columnName)
+                                    .$(", txn=").$(tableTxn)
+                                    .$(", errno=").$(e.getErrno())
+                                    .$(", msg=").$safe(e.getFlyweightMessage())
+                                    .I$();
+                            throw e;
+                        }
+                        LOG.info().$("rebuilding restored posting index with missing or short value file [path=").$(path.trimTo(partitionPathLen))
+                                .$(", column=").$safe(columnName)
+                                .$(", txn=").$(tableTxn)
+                                .I$();
+                        // of() closes its mappings on failure. Rebuild only this column from the checkpoint data.
+                        rebuildPostingIndexForPartition(path.trimTo(partitionPathLen), tablePathStr, partitionBy, timestampType,
+                                isPartitioned, i, colIdx, partitionTimestamp, partitionNameTxn, columnNameTxn);
+                    } finally {
+                        writer.close();
+                    }
+                }
+            }
+        } finally {
+            Misc.free(writer);
+            Misc.free(keyMem);
+            path.close();
+            Path.clearThreadLocals();
+        }
+    }
+
+    /**
+     * Rebuilds one POSTING index of a partition under a marker file. The checkpoint holds no partition
+     * files, so a repeated restore cannot undo a rebuild that a crash or an error stopped halfway. The
+     * marker tells the repeated restore to rebuild again. {@code path} points at the partition directory.
+     */
+    private void rebuildPostingIndexForPartition(
+            Path path,
+            String tablePathStr,
+            int partitionBy,
+            int timestampType,
+            boolean isPartitioned,
+            int partitionIndex,
+            int colIdx,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            long columnNameTxn
+    ) {
+        final String columnName = tableMetadata.getColumnName(colIdx);
+        final int partitionPathLen = path.size();
+        final LPSZ markerFileName = rebuildMarkerFileName(path, columnName, columnNameTxn);
+        if (!ff.touch(markerFileName)) {
+            final int errno = ff.errno();
+            throw CairoException.critical(errno).put("could not create posting index rebuild marker [file=").put(markerFileName).put(']');
+        }
+        // The marker must be durable before the rebuild removes the index files
+        TableUtils.fsyncDirDurable(ff, path.trimTo(partitionPathLen).$());
+        rebuildPostingIndexForPartition0(path.trimTo(partitionPathLen), tablePathStr, partitionBy, timestampType,
+                isPartitioned, partitionIndex, colIdx, partitionTimestamp, partitionNameTxn, columnNameTxn);
+        // The seal synced the rebuilt files; make their names durable before the marker goes
+        path.of(tablePathStr);
+        TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+        TableUtils.fsyncDirDurable(ff, path.$());
+        removeFile(ff, rebuildMarkerFileName(path, columnName, columnNameTxn));
+    }
+
+    private void rebuildPostingIndexForPartition0(
+            Path path,
+            String tablePathStr,
+            int partitionBy,
+            int timestampType,
+            boolean isPartitioned,
+            int partitionIndex,
+            int colIdx,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            long columnNameTxn
+    ) {
+        final int tablePathLen = pathTableLen;
+        if (isPartitioned && txWriter.isPartitionParquet(partitionIndex)) {
+            // Decode INCLUDE columns from parquet too: a closed partition need not have native .d files.
+            final int partitionPathLen = path.size();
+            removeIndexFiles(ff, path, partitionPathLen, tableMetadata.getColumnName(colIdx),
+                    columnNameTxn, tableMetadata.getColumnIndexType(colIdx));
+            try (ParquetPartitionIndexBuilder builder = new ParquetPartitionIndexBuilder(configuration, ff)) {
+                builder.buildIndexes(path.trimTo(partitionPathLen), txWriter.getPartitionParquetFileSize(partitionIndex),
+                        tableMetadata, columnVersionReader, partitionTimestamp, txWriter.getPartitionSize(partitionIndex),
+                        txWriter.getTxn(), CommitMode.NOSYNC, colIdx);
+            }
+            return;
+        }
+        long partitionRowCount = isPartitioned
+                ? txWriter.getPartitionSize(partitionIndex)
+                : txWriter.getTransientRowCount();
+        if (isPartitioned && txWriter.isPartitionComposite(partitionIndex)) {
+            try (PartitionGeometry geometry = new PartitionGeometry().of(ff, txWriter, tablePathStr,
+                    timestampType, partitionBy, MemoryTag.NATIVE_TABLE_WRITER)) {
+                partitionRowCount = Math.max(partitionRowCount, geometry.getE(partitionIndex));
+            }
+        }
+        rebuildBitmapIndexForNativePartitionColumn(
+                path,
+                tablePathStr,
+                tablePathLen,
+                tableMetadata.getColumnName(colIdx),
+                columnNameTxn,
+                tableMetadata.getIndexBlockCapacity(colIdx),
+                tableMetadata.getColumnIndexType(colIdx),
+                partitionTimestamp,
+                partitionNameTxn,
+                partitionRowCount,
+                columnVersionReader.getColumnTop(partitionTimestamp, tableMetadata.getWriterIndex(colIdx)),
+                partitionBy,
+                timestampType
+        );
+    }
+
+    /**
+     * Reads the head of a POSTING index chain without opening a writer. Returns
+     * {@link #POSTING_INDEX_UNCHANGED} when the writer would change nothing: neither the head entry nor its
+     * last generation is newer than {@code tableTxn}, and the value file holds the head. Returns
+     * {@link #POSTING_INDEX_REBUILD} when the .pk is shorter than its chain region. Returns
+     * {@link #POSTING_INDEX_OPEN_WRITER} otherwise, and when the chain cannot be read, so the writer reports
+     * the problem.
+     */
+    private int checkPostingIndex(
+            Path path,
+            int partitionPathLen,
+            CharSequence columnName,
+            long columnNameTxn,
+            long tableTxn,
+            MemoryCMR keyMem,
+            PostingIndexChainWriter chain,
+            PostingIndexChainEntry.Snapshot head
+    ) {
+        try {
+            final LPSZ keyFile = PostingIndexUtils.keyFileName(path.trimTo(partitionPathLen), columnName, columnNameTxn);
+            final long keyFileSize = ff.length(keyFile);
+            if (keyFileSize < PostingIndexUtils.KEY_FILE_RESERVED) {
+                return POSTING_INDEX_OPEN_WRITER;
+            }
+            keyMem.of(ff, keyFile, ff.getPageSize(), keyFileSize, MemoryTag.MMAP_INDEX_READER);
+            // Validates the region and that the head lies inside it
+            final long regionLimit = chain.peekRegionLimit(keyMem);
+            // Check before openExisting() reads the head, which can lie past the mapping. Nothing writes the
+            // index during restore and a writer never leaves the file shorter than its region, so the copy
+            // lost the end of the chain.
+            if (regionLimit > keyFileSize) {
+                return POSTING_INDEX_REBUILD;
+            }
+            chain.resetState();
+            chain.openExisting(keyMem);
+            if (!chain.hasHead()) {
+                return POSTING_INDEX_UNCHANGED;
+            }
+            final long headOffset = chain.getHeadEntryOffset();
+            if (headOffset + PostingIndexUtils.V2_ENTRY_HEADER_SIZE > regionLimit) {
+                return POSTING_INDEX_OPEN_WRITER;
+            }
+            // Read the head as the writer's recovery walk does
+            final int coverCount = PostingIndexChainEntry.resolveEntryCoverCount(keyMem, headOffset, regionLimit);
+            PostingIndexChainEntry.read(keyMem, headOffset, coverCount, head);
+            if (head.txnAtSeal > tableTxn || head.genCount < 1) {
+                return POSTING_INDEX_OPEN_WRITER;
+            }
+            // A commit after the checkpoint can append a generation to the head without a new entry
+            final long lastGenTxnOffset = PostingIndexChainEntry.resolveGenDirOffset(headOffset, head.genCount - 1, head.coveringFormat, head.coverCount)
+                    + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL;
+            if (lastGenTxnOffset + Long.BYTES > regionLimit || keyMem.getLong(lastGenTxnOffset) > tableTxn) {
+                return POSTING_INDEX_OPEN_WRITER;
+            }
+            return head.valueMemSize > 0
+                    && head.valueMemSize > ff.length(PostingIndexUtils.valueFileName(path.trimTo(partitionPathLen), columnName, columnNameTxn, head.sealTxn))
+                    ? POSTING_INDEX_OPEN_WRITER
+                    : POSTING_INDEX_UNCHANGED;
+        } catch (CairoException e) {
+            return POSTING_INDEX_OPEN_WRITER;
+        } finally {
+            keyMem.close();
+            chain.resetState();
+            path.trimTo(partitionPathLen);
+        }
+    }
+
+    // The metadata index of the column that a listed file name belongs to, or -1. A file system can list a name in
+    // another Unicode normalization form than the one QuestDB created the file with, and open the file under either
+    // form: HFS+ lists an accented letter as the base letter and a combining mark, and a copy taken through HFS+ keeps
+    // that name on APFS. Such a name matches its column only once both are normalized.
+    private int getListedColumnIndex(CharSequence listedName) {
+        final int columnIndex = tableMetadata.getColumnIndexQuiet(listedName);
+        if (columnIndex > -1) {
+            return columnIndex;
+        }
+        final boolean isListedNameAscii = Chars.isAscii(listedName);
+        CharSequence composedListedName = null;
+        for (int i = 0, n = tableMetadata.getColumnCount(); i < n; i++) {
+            final String columnName = tableMetadata.getColumnName(i);
+            final boolean isColumnNameAscii = Chars.isAscii(columnName);
+            if (isListedNameAscii && isColumnNameAscii) {
+                // The lookup above compared these already, and normalization leaves ASCII as it is
+                continue;
+            }
+            if (composedListedName == null) {
+                composedListedName = isListedNameAscii ? listedName : Normalizer.normalize(listedName, Normalizer.Form.NFC);
+            }
+            final CharSequence composedColumnName = isColumnNameAscii ? columnName : Normalizer.normalize(columnName, Normalizer.Form.NFC);
+            if (Chars.equalsIgnoreCase(composedColumnName, composedListedName)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    // Whether the restored metadata commits the posting index of the column version a partition names.
+    private boolean isCommittedPostingIndex(CharSequence columnName, long columnNameTxn, long partitionTimestamp) {
+        final int columnIndex = getListedColumnIndex(columnName);
+        return columnIndex > -1
+                && IndexType.isPosting(tableMetadata.getColumnIndexType(columnIndex))
+                && columnVersionReader.getColumnNameTxn(partitionTimestamp, tableMetadata.getWriterIndex(columnIndex)) == columnNameTxn;
+    }
+
+    private boolean isPostingIndexedSymbol(int colIdx) {
+        // Deleted columns may still carry the indexed flag
+        return tableMetadata.isColumnIndexed(colIdx)
+                && ColumnType.isSymbol(tableMetadata.getColumnType(colIdx))
+                && IndexType.isPosting(tableMetadata.getColumnIndexType(colIdx));
     }
 
     /**
@@ -1187,7 +1578,7 @@ public class TableSnapshotRestore implements QuietCloseable {
             return;
         }
 
-        LOG.info().$("rebuilding bitmap index [path=").$(path).$(", column=").$(columnName).I$();
+        LOG.info().$("rebuilding bitmap index [path=").$(path).$(", column=").$safe(columnName).I$();
 
         // Fresh per-column indexer: index type is fixed at construction.
         try (SymbolColumnIndexer indexer = new SymbolColumnIndexer(configuration, indexType)) {
@@ -1221,7 +1612,7 @@ public class TableSnapshotRestore implements QuietCloseable {
                 }
             } catch (CairoException e) {
                 LOG.error().$("could not rebuild bitmap index [path=").$(path.trimTo(partitionPathLen))
-                        .$(", column=").$(columnName)
+                        .$(", column=").$safe(columnName)
                         .$(", errno=").$(e.getErrno())
                         .$(", msg=").$safe(e.getFlyweightMessage())
                         .I$();
@@ -1231,7 +1622,7 @@ public class TableSnapshotRestore implements QuietCloseable {
             }
 
             LOG.info().$("rebuilt bitmap index [path=").$(path.trimTo(partitionPathLen))
-                    .$(", column=").$(columnName)
+                    .$(", column=").$safe(columnName)
                     .$(", rowCount=").$(partitionRowCount - columnTop)
                     .I$();
         }
@@ -1522,7 +1913,7 @@ public class TableSnapshotRestore implements QuietCloseable {
                 final int indexKeyBlockCapacity = tableMetadata.getIndexBlockCapacity(i);
                 final long columnNameTxn = columnVersionReader.getSymbolTableNameTxn(writerIndex);
 
-                LOG.info().$("rebuilding symbol files [table=").$(tablePathStr)
+                LOG.info().$("rebuilding symbol files [table=").$safe(tablePathStr)
                         .$(", column=").$safe(columnName)
                         .$(", count=").$(cleanSymbolCount)
                         .I$();
@@ -1587,6 +1978,86 @@ public class TableSnapshotRestore implements QuietCloseable {
             } finally {
                 partitionCleanPath.trimTo(pathTableLen);
             }
+        }
+    }
+
+    /**
+     * Resets every posting index in the restored partitions that the restored metadata does not commit, see
+     * {@link PostingIndexUtils#resetIndex}: that of a column the metadata does not index with POSTING, or does not hold,
+     * and that of a column version the restored _cv does not name for the partition. A read-only partition, one
+     * attached from a soft link, keeps its files: no commit writes it, so a chain there indexes the rows it holds, and
+     * its directory can sit on a volume the restore must not write, such as read-only cold storage. Finding the chains
+     * takes a listing of every other partition directory, so the restore workers share the partitions out;
+     * {@link #finalizeParallelTasks} awaits them.
+     */
+    private void resetUncommittedPostingIndexes(Path tablePath, int pathTableLen) {
+        final int partitionBy = tableMetadata.getPartitionBy();
+        final boolean isPartitioned = PartitionBy.isPartitioned(partitionBy);
+        final int timestampType = tableMetadata.getTimestampType();
+        // One default partition for non-partitioned tables, else every attached one.
+        final int partitionCount = isPartitioned ? txWriter.getPartitionCount() : 1;
+        final String tablePathStr = tablePath.trimTo(pathTableLen).toString();
+        final AtomicInteger cursor = new AtomicInteger();
+        for (int w = 0, n = Math.min(threadCount, partitionCount); w < n; w++) {
+            futures.add(submitParallelTask(() -> resetUncommittedPostingIndexesOfPartitions(
+                    tablePathStr,
+                    partitionBy,
+                    timestampType,
+                    isPartitioned,
+                    partitionCount,
+                    cursor
+            )));
+        }
+    }
+
+    // A restore worker of resetUncommittedPostingIndexes: resets the posting indexes the restored metadata does not
+    // commit in the partitions the shared cursor hands out.
+    private void resetUncommittedPostingIndexesOfPartitions(
+            String tablePathStr,
+            int partitionBy,
+            int timestampType,
+            boolean isPartitioned,
+            int partitionCount,
+            AtomicInteger cursor
+    ) {
+        final PostingKeyFileCollector keyFiles = new PostingKeyFileCollector();
+        final Path path = new Path();
+        final MemoryCMARW keyMem = Vm.getCMARWInstance();
+        try {
+            path.of(tablePathStr);
+            final int tablePathLen = path.size();
+            int partitionIndex;
+            while (!abortParallelTasks.get() && (partitionIndex = cursor.getAndIncrement()) < partitionCount) {
+                if (isPartitioned && txWriter.isPartitionReadOnly(partitionIndex)) {
+                    continue;
+                }
+                final long partitionTimestamp = isPartitioned
+                        ? txWriter.getPartitionTimestampByIndex(partitionIndex)
+                        : TxReader.DEFAULT_PARTITION_TIMESTAMP;
+                final long partitionNameTxn = isPartitioned
+                        ? txWriter.getPartitionNameTxn(partitionIndex)
+                        : txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp);
+                TableUtils.setPathForNativePartition(path.trimTo(tablePathLen), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+                final int partitionDirLen = path.size();
+                // Collect first: the reset removes files of the directory it would otherwise list.
+                keyFiles.clear();
+                ff.iterateDir(path.$(), keyFiles);
+                for (int i = 0, n = keyFiles.columnNames.size(); i < n; i++) {
+                    final String columnName = keyFiles.columnNames.getQuick(i);
+                    final long columnNameTxn = keyFiles.columnNameTxns.getQuick(i);
+                    if (!isCommittedPostingIndex(columnName, columnNameTxn, partitionTimestamp)
+                            && PostingIndexUtils.resetIndex(ff, path, partitionDirLen, columnName, columnNameTxn, keyMem)) {
+                        LOG.info().$("reset uncommitted posting index [path=").$(path)
+                                .$(", column=").$safe(columnName)
+                                .$(", columnNameTxn=").$(columnNameTxn)
+                                .I$();
+                    }
+                }
+            }
+        } finally {
+            Misc.free(keyMem);
+            Misc.free(path);
+            Path.clearThreadLocals();
         }
     }
 
@@ -1744,7 +2215,7 @@ public class TableSnapshotRestore implements QuietCloseable {
             mem.smallFile(ff, keyFileName, MemoryTag.MMAP_INDEX_WRITER);
             IndexFactory.initKeyMemory(indexType, mem, indexBlockCapacity);
         } catch (CairoException e) {
-            LOG.error().$("could not create index key file [path=").$(path).$(", column=").$(columnName).$(", errno=").$(e.getErrno()).I$();
+            LOG.error().$("could not create index key file [path=").$(path).$(", column=").$safe(columnName).$(", errno=").$(e.getErrno()).I$();
             throw e;
         }
 
@@ -1753,7 +2224,7 @@ public class TableSnapshotRestore implements QuietCloseable {
         LPSZ valueFileName = IndexFactory.valueFileName(indexType, path.trimTo(partitionPathLen), columnName, columnNameTxn, 0L);
         if (!ff.touch(valueFileName)) {
             int errno = ff.errno();
-            LOG.error().$("could not create index value file [path=").$(path).$(", column=").$(columnName).$(", errno=").$(errno).I$();
+            LOG.error().$("could not create index value file [path=").$(path).$(", column=").$safe(columnName).$(", errno=").$(errno).I$();
             throw CairoException.critical(errno).put("could not create index value file [path=").put(path).put(']');
         }
     }
@@ -1808,7 +2279,7 @@ public class TableSnapshotRestore implements QuietCloseable {
         }
 
         LOG.info().$("rebuilding bitmap indexes for parquet partition [path=").$(path.trimTo(partitionPathLen))
-                .$(", columns=").$(columnNamesSink)
+                .$(", columns=").$safe(columnNamesSink)
                 .I$();
 
         // Second pass: create index files, open writers, build parquetColumns list.
@@ -1842,7 +2313,7 @@ public class TableSnapshotRestore implements QuietCloseable {
                     indexWriter.of(path.trimTo(partitionPathLen), columnName, columnNameTxn, partitionTimestamp, partitionNameTxn);
                 } catch (CairoException e) {
                     LOG.error().$("could not open index writer [path=").$(path.trimTo(partitionPathLen))
-                            .$(", column=").$(columnName)
+                            .$(", column=").$safe(columnName)
                             .$(", errno=").$(e.getErrno())
                             .I$();
                     Misc.free(indexWriter);
@@ -1872,9 +2343,14 @@ public class TableSnapshotRestore implements QuietCloseable {
                 columnTops.add(columnVersionReader.getColumnTop(partitionTimestamp, writerIndex));
             }
 
-            long rowCount = 0;
-            for (int rowGroupIndex = 0; rowGroupIndex < rowGroupCount; rowGroupIndex++) {
+            // Index values grow per key: add row groups in index row order. An index row map implies zero tops.
+            final IntList rowGroupOrder = new IntList(rowGroupCount);
+            final LongList rowGroupIndexRowLos = new LongList(rowGroupCount);
+            parquetMetadata.collectRowGroupsInIndexRowOrder(rowGroupOrder, rowGroupIndexRowLos);
+            for (int g = 0; g < rowGroupCount; g++) {
+                final int rowGroupIndex = rowGroupOrder.getQuick(g);
                 final long rowGroupSize = parquetMetadata.getRowGroupSize(rowGroupIndex);
+                final long rowCount = rowGroupIndexRowLos.getQuick(rowGroupIndex);
 
                 // Check if any column needs data from this row group
                 boolean needsDecode = false;
@@ -1886,7 +2362,6 @@ public class TableSnapshotRestore implements QuietCloseable {
                 }
 
                 if (!needsDecode) {
-                    rowCount += rowGroupSize;
                     continue;
                 }
 
@@ -1924,8 +2399,6 @@ public class TableSnapshotRestore implements QuietCloseable {
                         }
                     }
                 }
-
-                rowCount += rowGroupSize;
             }
 
             // Finalize each writer. POSTING calls seal() to produce sealed
@@ -1940,7 +2413,7 @@ public class TableSnapshotRestore implements QuietCloseable {
                     w.setNextTxnAtSeal(currentTableTxn);
                     w.seal();
                 } else {
-                    w.setMaxValue(partitionRowCount - 1);
+                    w.setMaxValue(parquetMetadata.getIndexRowCount() - 1);
                     w.commit();
                 }
             }
@@ -1976,7 +2449,6 @@ public class TableSnapshotRestore implements QuietCloseable {
                     parquetColumnIndex,
                     partitionTimestamp,
                     partitionNameTxn,
-                    partitionRowCount,
                     currentTableTxn
             );
             indexedColumnCount++;
@@ -2008,6 +2480,57 @@ public class TableSnapshotRestore implements QuietCloseable {
     private static class ParallelTaskException extends RuntimeException {
         ParallelTaskException(String message) {
             super(message, null, false, false);
+        }
+    }
+
+    /**
+     * Collects the posting key files of a listed partition directory: {@code <column>.pk}, or
+     * {@code <column>.pk.<column name txn>}, see {@link PostingIndexUtils#keyFileName}. A column name holds no '.', see
+     * {@link TableUtils#isValidColumnName}. Each restore worker owns one.
+     */
+    private static class PostingKeyFileCollector implements FindVisitor {
+        private final StringSink columnNameSink = new StringSink();
+        private final LongList columnNameTxns = new LongList();
+        private final ObjList<String> columnNames = new ObjList<>();
+        private final Utf8StringSink fileNameSink = new Utf8StringSink();
+
+        @Override
+        public void onFind(long pUtf8NameZ, int type) {
+            if (type != Files.DT_FILE && type != Files.DT_LNK && type != Files.DT_UNKNOWN) {
+                return;
+            }
+            fileNameSink.clear();
+            Utf8s.utf8ZCopy(pUtf8NameZ, fileNameSink);
+            final int nameEnd = Utf8s.indexOfAscii(fileNameSink, '.');
+            final int suffixEnd = nameEnd + 3;
+            final int size = fileNameSink.size();
+            if (nameEnd < 1 || size < suffixEnd || fileNameSink.byteAt(nameEnd + 1) != 'p' || fileNameSink.byteAt(nameEnd + 2) != 'k') {
+                return;
+            }
+            long columnNameTxn = TableUtils.COLUMN_NAME_TXN_NONE;
+            if (size > suffixEnd) {
+                if (fileNameSink.byteAt(suffixEnd) != '.') {
+                    return;
+                }
+                try {
+                    columnNameTxn = Numbers.parseLong(fileNameSink, suffixEnd + 1, size);
+                } catch (NumericException e) {
+                    return;
+                }
+                if (columnNameTxn < 0) {
+                    return;
+                }
+            }
+            columnNameSink.clear();
+            if (Utf8s.utf8ToUtf16(fileNameSink, 0, nameEnd, columnNameSink)) {
+                columnNames.add(columnNameSink.toString());
+                columnNameTxns.add(columnNameTxn);
+            }
+        }
+
+        void clear() {
+            columnNames.clear();
+            columnNameTxns.clear();
         }
     }
 }

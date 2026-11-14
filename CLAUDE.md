@@ -325,26 +325,34 @@ qdbr toolchain; the script prints the command when it is missing.
   the type they revert.
   - Good: `chore(build): speed up builds by recompiling only changed files`
   - Avoid: `chore(build): add incremental compilation to core`
-- PR bodies are short bullets, not prose:
+- PR bodies are short: bullets for the problem or feature, then the approach:
   - One bullet per net effect, at most 15 words. State what users gain or no
     longer suffer (for a technical type, developers), not what changed in the
     code. Put `Fixes #NNN` on the bullet for that issue.
     - Good: `IPv4 filters with < or > no longer return wrong rows. Fixes #NNN`
     - Avoid: `Use unsigned comparison for IPv4 in the JIT backend`
+  - After the bullets, the approach: one to three sentences per fix or
+    feature, naming the root cause or the design and how the change
+    addresses it.
+    - Good: `The JIT compared IPv4 values as signed integers; it now compares
+      them as unsigned.`
   - Measure effects against the base branch: fixing a bug the PR itself
     introduced is not an effect. When new commits land, rewrite the bullets
-    from the branch's net effects; never append to the body.
+    and the approach from the branch's net effects; never append to the body.
   - Give each regression, tradeoff and breaking change its own bullet, as
     plainly as the gains, and each slowdown its measured size, such as
     `up to 3x slower`. Don't sell: no superlatives, no bold numbers. Known
     bugs the PR ships with are the exception (below).
   - A change made for speed, or one on a data path, adds its JMH results as a
     table: case, before, after, with the slower cases included.
-  - Link tandem PRs on one line.
+  - Link tandem PRs on one line, by PR number.
+  - Leave out what goes stale as the branch moves: commit hashes, a tandem
+    PR's head and submodule pointers included, and counts of tests, files,
+    lines or commits. The review records the revisions it reviewed.
   - Nothing else: no test plan, coverage numbers, fuzz seeds, file walkthrough,
-    design narrative or investigation output (probe results, "fails without
-    the fix" evidence, lists of covered shapes or configs, "Not changed"
-    lists). The code and its tests carry those.
+    design narrative beyond the approach, or investigation output (probe
+    results, "fails without the fix" evidence, lists of covered shapes or
+    configs, "Not changed" lists). The code and its tests carry those.
 - **A PR may ship with known bugs whose risk is low.** `review-pr` rates each
   bug a change introduces by what a user who hits it loses and how likely
   users are to hit it (`.pi/agents/risk-assessor.md`); only Critical and High
@@ -505,11 +513,12 @@ cargo test --lib  # Run unit tests
 
 All four must pass with zero errors and zero warnings.
 
-Java tests load the committed `libquestdbr` binary, or a dev build that an
-earlier run left in `core/target/classes/io/questdb/rust/`, not your current
-Rust source. To run them against changed Rust code, build the library with the
-`build-rust-library` profile, e.g.
-`mvn -f core/pom.xml test -P build-rust-library -Dtest=FooTest`.
+The repository commits no `libquestdbr` binary. Every Maven build of core
+compiles it from the current Rust source into
+`core/target/classes/io/questdb/bin/<platform>/`, where Java tests load it, so
+`mvn -f core/pom.xml test -Dtest=FooTest` runs them against your Rust changes.
+With `-DskipNative`, Maven skips that build, and the tests load whatever an
+earlier build left there.
 
 After writing or modifying tests, check coverage with
 `python3 ci/diff_coverage.py --lang rust` (see "Measuring coverage locally"; add

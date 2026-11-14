@@ -35,6 +35,7 @@ import io.questdb.cairo.idx.IndexFwdNullReader;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.PartitionFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
@@ -670,6 +671,11 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
             estimateRanges.clear();
             if (tableReader.getTxFile().isPartitionComposite(frame.getPartitionIndex())) {
                 tableReader.getGeometry().collectPieceFileRanges(frame.getPartitionIndex(), rowLo, rowHiExclusive, estimateRanges);
+            } else if (frame.getPartitionFormat() == PartitionFormat.PARQUET
+                    && frame.getParquetMetaDecoder() != null
+                    && frame.getParquetMetaDecoder().metadata().hasIndexRowMap()) {
+                // An in-place O3 update moved row groups to other index rows.
+                frame.getParquetMetaDecoder().metadata().collectIndexRowRanges(rowLo, rowHiExclusive, estimateRanges);
             } else {
                 estimateRanges.add(rowLo, rowHiExclusive);
             }

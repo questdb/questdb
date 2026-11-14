@@ -52,6 +52,7 @@ import org.junit.Test;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 
@@ -131,6 +132,16 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                     }
             );
         });
+    }
+
+    @Test
+    public void testCheckpointRestoreKeepsReadOnlyPartition() throws Exception {
+        assertCheckpointRestoreKeepsReadOnlyPartition(false);
+    }
+
+    @Test
+    public void testCheckpointRestoreKeepsReadOnlyPartitionOfWalTable() throws Exception {
+        assertCheckpointRestoreKeepsReadOnlyPartition(true);
     }
 
     @Test
@@ -377,6 +388,43 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                                     .returns(replaceTimestampSuffix1("l\ti\ts\tts\n", timestampTypeName));
                         } catch (Exception ex) {
                             Assert.fail(ex.getMessage());
+                        }
+                        return null;
+                    }
+            );
+        });
+    }
+
+    @Test
+    public void testForceReindexSkipsSoftLinkedPartition() throws Exception {
+        Assume.assumeFalse(Os.isWindows());
+        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+            final String tableName = testName.getMethodName();
+            attachPartitionFromSoftLink(tableName, "SNOW", true, tableToken -> {
+                        try {
+                            // the soft-linked partition is parquet, the active one stays native
+                            try (TableReader reader = engine.getReader(tableToken)) {
+                                Assert.assertTrue(reader.getTxFile().isPartitionParquet(0));
+                                Assert.assertFalse(reader.getTxFile().isPartitionParquet(1));
+                            }
+                            final long[] before = partitionNameTxns(tableToken);
+                            execute("ALTER TABLE " + tableName + " FORCE REINDEX PARQUET PARTITION LIST '" + readOnlyPartitionName + "'");
+                            Assert.assertArrayEquals(before, partitionNameTxns(tableToken));
+
+                            // the soft-linked partition keeps its directory, and so does the native one
+                            execute("ALTER TABLE " + tableName + " FORCE REINDEX PARQUET");
+                            Assert.assertArrayEquals(before, partitionNameTxns(tableToken));
+                            path.of(configuration.getDbRoot()).concat(tableToken).concat(readOnlyPartitionName);
+                            TestUtils.txnPartitionConditionally(path, (int) before[0]);
+                            Assert.assertTrue(ff.isSoftLink(path.$()));
+
+                            assertQuery("SELECT count() FROM " + tableName + " WHERE s = 'CPSW'")
+                                    .noLeakCheck()
+                                    .noRandomAccess()
+                                    .expectSize()
+                                    .returns("count\n1640\n");
+                        } catch (Exception ex) {
+                            throw new RuntimeException(ex);
                         }
                         return null;
                     }
@@ -1323,6 +1371,17 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
         }
     }
 
+    private static long[] partitionNameTxns(TableToken tableToken) {
+        engine.releaseAllReaders();
+        try (TableReader reader = engine.getReader(tableToken)) {
+            final long[] nameTxns = new long[reader.getPartitionCount()];
+            for (int i = 0; i < nameTxns.length; i++) {
+                nameTxns[i] = reader.getPartitionNameTxnByIndex(i);
+            }
+            return nameTxns;
+        }
+    }
+
     private static void runO3PartitionPurgeJob() {
         engine.releaseAllReaders();
         engine.releaseAllWriters();
@@ -1331,6 +1390,68 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                 Os.pause();
             }
         }
+    }
+
+    // DROP COLUMN purges no read-only partition, so the posting chain of a dropped column stays in one for good. The
+    // restore resets the chains the restored metadata does not commit, but leaves a read-only partition as it is: its
+    // soft link can lead to cold storage that QuestDB must not write.
+    private void assertCheckpointRestoreKeepsReadOnlyPartition(boolean isWal) throws Exception {
+        Assume.assumeFalse(Os.isWindows());
+        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+            final String tableName = testName.getMethodName();
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, "00000000-0000-0000-0000-000000000000");
+            execute("CREATE TABLE " + tableName + " (l LONG, s SYMBOL INDEX TYPE POSTING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY "
+                    + (isWal ? "WAL" : "BYPASS WAL"));
+            execute("""
+                    INSERT INTO %s VALUES
+                    (1, 'a', '2022-10-17T01:00'), (2, 'b', '2022-10-17T02:00'),
+                    (3, 'a', '2022-10-18T01:00'), (4, 'b', '2022-10-18T02:00')
+                    """.formatted(tableName));
+            drainWalQueue();
+            final TableToken tableToken = engine.verifyTableName(tableName);
+            execute("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + readOnlyPartitionName + "'");
+            drainWalQueue();
+            copyToDifferentLocationAndMakeAttachableViaSoftLink(tableToken, readOnlyPartitionName, "COLD");
+            final File coldPartition = new File(other.toString());
+            execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + readOnlyPartitionName + "'");
+            drainWalQueue();
+            execute("ALTER TABLE " + tableName + " DROP COLUMN s");
+            drainWalQueue();
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            final String[] coldFiles = coldPartition.list();
+            Assert.assertNotNull(coldFiles);
+            Arrays.sort(coldFiles);
+            TestUtils.assertContains(Arrays.toString(coldFiles), "s.pk, s.pv.0");
+            final byte[] keyFile = java.nio.file.Files.readAllBytes(new File(coldPartition, "s.pk").toPath());
+
+            execute("CHECKPOINT CREATE");
+            try {
+                engine.clear();
+                setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, "123e4567-e89b-12d3-a456-426614174004");
+                engine.checkpointRecover();
+                drainWalQueue();
+
+                final String[] restoredColdFiles = coldPartition.list();
+                Assert.assertNotNull(restoredColdFiles);
+                Arrays.sort(restoredColdFiles);
+                Assert.assertEquals(Arrays.toString(coldFiles), Arrays.toString(restoredColdFiles));
+                Assert.assertArrayEquals(keyFile, java.nio.file.Files.readAllBytes(new File(coldPartition, "s.pk").toPath()));
+                assertQuery("SELECT l, ts FROM " + tableName)
+                        .noLeakCheck()
+                        .expectSize()
+                        .timestamp("ts")
+                        .returns("""
+                                l\tts
+                                1\t2022-10-17T01:00:00.000000Z
+                                2\t2022-10-17T02:00:00.000000Z
+                                3\t2022-10-18T01:00:00.000000Z
+                                4\t2022-10-18T02:00:00.000000Z
+                                """);
+            } finally {
+                engine.checkpointRelease();
+            }
+        });
     }
 
     private void assertUpdateFailsBecausePartitionIsReadOnly(String updateSql, String tableName, String partitionName) {
@@ -1346,8 +1467,15 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
     }
 
     private void attachPartitionFromSoftLink(String tableName, String otherLocation, Function<TableToken, Void> test) throws Exception {
+        attachPartitionFromSoftLink(tableName, otherLocation, false, test);
+    }
+
+    private void attachPartitionFromSoftLink(String tableName, String otherLocation, boolean isParquet, Function<TableToken, Void> test) throws Exception {
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
             TableToken tableToken = createPopulateTable(tableName, 2);
+            if (isParquet) {
+                execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET LIST '2022-10-17', '2022-10-18'");
+            }
             assertQuery("SELECT min(ts), max(ts), count() FROM " + tableName)
                     .noLeakCheck()
                     .noRandomAccess()
@@ -1360,9 +1488,16 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             copyToDifferentLocationAndMakeAttachableViaSoftLink(tableToken, readOnlyPartitionName, otherLocation);
             execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + readOnlyPartitionName + "'", sqlExecutionContext);
 
-            // verify that the link has been renamed to what we expect
+            // verify that the link has been renamed to what we expect, the parquet conversion took name txns of its own
+            final long nameTxn;
+            try (TableReader reader = engine.getReader(tableToken)) {
+                nameTxn = reader.getTxFile().getPartitionNameTxn(0);
+            }
+            if (!isParquet) {
+                Assert.assertEquals(2, nameTxn);
+            }
             path.of(configuration.getDbRoot()).concat(tableToken).concat(readOnlyPartitionName);
-            TestUtils.txnPartitionConditionally(path, 2);
+            TestUtils.txnPartitionConditionally(path, (int) nameTxn);
             Assert.assertTrue(Files.exists(path.$()));
 
             // verify RO flag

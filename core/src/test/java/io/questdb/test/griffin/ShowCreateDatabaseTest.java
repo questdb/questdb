@@ -41,6 +41,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.SqlExecutionRequirements;
 import io.questdb.griffin.engine.table.ShowCreateDatabaseRecordCursorFactory;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.QueryModelWrapper;
@@ -48,6 +49,8 @@ import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.CountingSqlExecutionCircuitBreaker;
+import io.questdb.test.tools.LogCapture;
+import io.questdb.test.tools.TableFunctionTestUtils;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -702,6 +705,126 @@ public class ShowCreateDatabaseTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMatViewNamesViewOnlyInUnusedCteWhileViewReadsMatViewDumpReplays() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, true);
+            // a_mv names z_view only in a CTE it never reads, and z_view reads a_mv. Replaying a_mv
+            // needs only t, since nothing resolves an unused CTE, while replaying z_view needs a_mv,
+            // so a_mv must come first even though the parser expanded z_view inside a_mv's text
+            execute("create table t (ts timestamp, s symbol, x long) timestamp(ts) partition by day wal");
+            execute("create view z_view as (select ts, s, x from t)");
+            execute("create materialized view a_mv as (" +
+                    "with u as (select ts, s, x from z_view) select ts, count() c from t sample by 1d" +
+                    ") partition by day");
+            drainWalQueue();
+            execute("create or replace view z_view as (select ts, c from a_mv)");
+            drainWalQueue();
+
+            assertDumpReplays("CREATE MATERIALIZED VIEW 'a_mv'", "CREATE VIEW 'z_view'");
+        });
+    }
+
+    @Test
+    public void testMatViewReadsViewThroughDeepLateralDumpLogsOnce() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, true);
+            // each LATERAL join over a sub-query shares that sub-query between the join and the
+            // decorrelated outer reference, so the model graph reaches z_view by 3^6 routes
+            execute("create table t (ts timestamp, s symbol, x long) timestamp(ts) partition by day wal");
+            execute("create view z_view as (select ts, s, x from t)");
+            execute("create materialized view a_mv with base t as (select o.ts, count() c from ("
+                    + lateralNest(6, "select ts, x from z_view") + ") o sample by 1d) partition by day");
+            drainWalQueue();
+
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            try {
+                final ObjList<String> dump = dumpDatabase("SHOW CREATE DATABASE EXCLUDE (VIEWS)");
+                Assert.assertEquals(2, dump.size());
+                TestUtils.assertContains(dump.getQuick(0), "CREATE TABLE 't'");
+                TestUtils.assertContains(dump.getQuick(1), "CREATE MATERIALIZED VIEW 'a_mv'");
+                capture.drain();
+                capture.assertOnlyOnce("object depends on an object excluded from the database dump[^\\n]*a_mv[^\\n]*z_view");
+            } finally {
+                capture.stop();
+            }
+            assertDumpReplays("CREATE VIEW 'z_view'", "CREATE MATERIALIZED VIEW 'a_mv'");
+        });
+    }
+
+    @Test
+    public void testMatViewReadsViewThroughSubQueryShapesDumpReplays() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, true);
+            // a_mv reads z_view, which sorts after it, only from a sub-query in its WHERE clause
+            final String[] predicates = {
+                    "s in (select s from z_view)",
+                    "x > (select max(x) from z_view)",
+                    "s in (select s from t union all select s from z_view)",
+                    "s in (select a.s from t a join z_view b on a.s = b.s)",
+                    "x > (select max(o.x) from (" + lateralNest(2, "select ts, x from z_view") + ") o)",
+            };
+            for (String predicate : predicates) {
+                execute("create table t (ts timestamp, s symbol, x long) timestamp(ts) partition by day wal");
+                execute("create view z_view as (select ts, s, x from t)");
+                execute("create materialized view a_mv as (select ts, count() c from t where " + predicate + " sample by 1d) partition by day");
+                drainWalQueue();
+                assertDumpReplays("CREATE VIEW 'z_view'", "CREATE MATERIALIZED VIEW 'a_mv'");
+                execute("drop materialized view a_mv");
+                execute("drop view z_view");
+                execute("drop table t");
+                drainWalQueue();
+            }
+        });
+    }
+
+    @Test
+    public void testMatViewReadsViewThroughDeepSubQueryDumpReplays() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, true);
+            // a_mv reads z_view, which sorts after it, only through a scalar sub-query nested 16 deep
+            createMatViewReadingViewThroughDeepSubQuery();
+            assertDumpReplays("CREATE VIEW 'z_view'", "CREATE MATERIALIZED VIEW 'a_mv'");
+        });
+    }
+
+    @Test
+    public void testMatViewReadsViewThroughDeepSubQueryExcludedFromDumpLogsOnce() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, true);
+            createMatViewReadingViewThroughDeepSubQuery();
+
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            try {
+                final ObjList<String> dump = dumpDatabase("SHOW CREATE DATABASE EXCLUDE (VIEWS)");
+                Assert.assertEquals(2, dump.size());
+                TestUtils.assertContains(dump.getQuick(0), "CREATE TABLE 't'");
+                TestUtils.assertContains(dump.getQuick(1), "CREATE MATERIALIZED VIEW 'a_mv'");
+                capture.drain();
+                capture.assertOnlyOnce("object depends on an object excluded from the database dump[^\\n]*a_mv[^\\n]*z_view");
+            } finally {
+                capture.stop();
+            }
+        });
+    }
+
+    @Test
+    public void testMatViewReadsViewThroughSelectListSubQueryDumpReplays() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, true);
+            // a_mv reads z_view, which sorts after it, only from a scalar sub-query in its select list
+            execute("create table t (ts timestamp, s symbol, x long) timestamp(ts) partition by day wal");
+            execute("create view z_view as (select ts, s, x from t)");
+            execute("create materialized view a_mv as (" +
+                    "select ts, (select max(x) from z_view) = null m, count() c from t sample by 1d" +
+                    ") partition by day");
+            drainWalQueue();
+            assertDumpReplays("CREATE VIEW 'z_view'", "CREATE MATERIALIZED VIEW 'a_mv'");
+        });
+    }
+
+    @Test
     public void testViewOnMatViewDependencyOrdering() throws Exception {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, true);
@@ -732,6 +855,64 @@ public class ShowCreateDatabaseTest extends AbstractCairoTest {
             Assert.assertEquals(before.size(), after.size());
             for (int i = 0, n = before.size(); i < n; i++) {
                 Assert.assertEquals("statement " + i + " differs", before.getQuick(i), after.getQuick(i));
+            }
+        });
+    }
+
+    @Test
+    public void testViewPivotOverDumpKeepsDependencyOrder() throws Exception {
+        // A view's PIVOT IN subquery runs while CREATE VIEW, ALTER VIEW, COMPILE VIEW and the view compiler
+        // job derive the view's columns, and there it may not use an administrative function. The dump it
+        // reads compiles a_mv's SQL to order a_mv after z_src, which a_mv reads and which calls one. That
+        // compile only walks a_mv's plan, so the restriction must not fail it: the dump would order a_mv by
+        // its base table only, and the view would store its columns in an order that its reads do not return.
+        assertMemoryLeak(() -> {
+            final String functionName = "admin_cursor";
+            final ObjList<TableFunctionTestUtils.CloseCountingRecordCursorFactory> factories = new ObjList<>();
+            TableFunctionTestUtils.register(
+                    engine,
+                    functionName,
+                    SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT,
+                    factories
+            );
+            try {
+                execute("CREATE TABLE trades (ts TIMESTAMP, k SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("CREATE VIEW z_src AS (SELECT ts, k, v FROM trades)");
+                execute("CREATE MATERIALIZED VIEW a_mv AS (SELECT ts, count() c FROM z_src SAMPLE BY 1h) PARTITION BY DAY");
+                drainWalAndMatViewQueues();
+                execute("ALTER VIEW z_src AS (SELECT trades.ts, trades.k, trades.v FROM trades CROSS JOIN " + functionName + "())");
+                execute("CREATE TABLE data (cat VARCHAR, val INT)");
+                execute("INSERT INTO data VALUES ('tb', 1), ('vw', 2), ('mv', 3)");
+                drainWalAndViewQueues();
+
+                // the dump emits trades, then z_src, then a_mv, whatever its view compile restricts
+                final String viewSql = """
+                        SELECT * FROM data PIVOT (SUM(val) FOR cat IN (
+                            SELECT CASE
+                                WHEN ddl LIKE 'CREATE MATERIALIZED VIEW%' THEN 'mv'
+                                WHEN ddl LIKE 'CREATE VIEW%' THEN 'vw'
+                                ELSE 'tb'
+                            END
+                            FROM (SHOW CREATE DATABASE INCLUDE (SCHEMA))
+                        ))""";
+                execute("CREATE VIEW pv AS (" + viewSql + ")");
+                assertPivotViewColumnOrder();
+
+                execute("ALTER VIEW pv AS (" + viewSql + ")");
+                assertPivotViewColumnOrder();
+
+                execute("COMPILE VIEW pv");
+                drainViewQueue();
+                assertQuery("SELECT view_status, invalidation_reason FROM views() WHERE view_name = 'pv'")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("""
+                                view_status\tinvalidation_reason
+                                valid\t
+                                """);
+                assertPivotViewColumnOrder();
+            } finally {
+                TableFunctionTestUtils.unregister(engine, functionName);
             }
         });
     }
@@ -1033,6 +1214,60 @@ public class ShowCreateDatabaseTest extends AbstractCairoTest {
         });
     }
 
+    // checks that the first DDL precedes the second in the dump, then drops every object in reverse
+    // dump order, replays the dump and checks that a re-dump matches it statement for statement
+    private static void assertDumpReplays(String earlierDdl, String laterDdl) throws Exception {
+        final ObjList<String> before = dumpDatabase();
+        Assert.assertEquals(3, before.size());
+        final String dump = before.toString();
+        final int earlierIdx = dump.indexOf(earlierDdl);
+        final int laterIdx = dump.indexOf(laterDdl);
+        Assert.assertTrue(dump, earlierIdx >= 0 && laterIdx >= 0);
+        Assert.assertTrue(dump, earlierIdx < laterIdx);
+
+        for (int i = before.size() - 1; i >= 0; i--) {
+            final String ddl = before.getQuick(i);
+            final String name = ddl.substring(ddl.indexOf('\'') + 1, ddl.indexOf('\'', ddl.indexOf('\'') + 1));
+            if (ddl.startsWith("CREATE MATERIALIZED VIEW")) {
+                execute("drop materialized view " + name);
+            } else if (ddl.startsWith("CREATE VIEW")) {
+                execute("drop view " + name);
+            } else {
+                execute("drop table " + name);
+            }
+        }
+        drainWalQueue();
+        for (int i = 0, n = before.size(); i < n; i++) {
+            execute(before.getQuick(i));
+        }
+        drainWalQueue();
+
+        final ObjList<String> after = dumpDatabase();
+        Assert.assertEquals(before.size(), after.size());
+        for (int i = 0, n = before.size(); i < n; i++) {
+            Assert.assertEquals("statement " + i + " differs", before.getQuick(i), after.getQuick(i));
+        }
+    }
+
+    private static void createMatViewReadingViewThroughDeepSubQuery() throws SqlException {
+        execute("create table t (ts timestamp, s symbol, x long) timestamp(ts) partition by day wal");
+        execute("create view z_view as (select ts, s, x from t)");
+        String q = "SELECT max(x) x FROM z_view";
+        for (int i = 0; i < 16; i++) {
+            q = "SELECT max(x) x FROM t WHERE x > (" + q + ")";
+        }
+        execute("create materialized view a_mv as (select ts, count() c from t where x > (" + q + ") sample by 1d) partition by day");
+        drainWalQueue();
+    }
+
+    private static String lateralNest(int depth, String innermost) {
+        String q = innermost;
+        for (int i = 0; i < depth; i++) {
+            q = "select o.ts, o.x from (" + q + ") o join lateral (select count() c from t where t.ts <= o.ts) l on true";
+        }
+        return q;
+    }
+
     private static String inventory() throws Exception {
         sink.clear();
         printSql("SELECT table_name, table_type FROM tables() ORDER BY table_name, table_type");
@@ -1100,6 +1335,27 @@ public class ShowCreateDatabaseTest extends AbstractCairoTest {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("ddl", ColumnType.VARCHAR));
         return metadata;
+    }
+
+    // the columns pv stores, in the order a read of pv returns them
+    private void assertPivotViewColumnOrder() throws Exception {
+        assertQuery("SELECT \"column\", type FROM (SHOW COLUMNS FROM pv)")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("""
+                        column\ttype
+                        tb\tLONG
+                        vw\tLONG
+                        mv\tLONG
+                        """);
+        assertQuery("SELECT * FROM pv")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        tb\tvw\tmv
+                        1\t2\t3
+                        """);
     }
 
     @FunctionalInterface
