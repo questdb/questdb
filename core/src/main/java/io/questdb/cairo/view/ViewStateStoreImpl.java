@@ -68,6 +68,8 @@ public class ViewStateStoreImpl implements ViewStateStore {
     // generally not expecting too many view compile notifications, but if table schema changes
     // are very frequent, then the number of notifications can be high too
     private final Queue<ViewCompilerTask> taskQueue = ConcurrentQueue.createConcurrentQueue(ViewCompilerTask::new);
+    // see setCompileBusyRetryAddCallback()
+    private volatile Runnable compileBusyRetryAddCallback;
     // the number of the view compile run that started last, under compileRunLock
     private long lastCompileRunNumber;
     // The earliest due time of the pending busy retries, or Long.MAX_VALUE when none is ever due.
@@ -217,6 +219,10 @@ public class ViewStateStoreImpl implements ViewStateStore {
                 pendingCompileBusyRetryUpdateTimestamps.setQuick(index, Math.max(pendingCompileBusyRetryUpdateTimestamps.getQuick(index), updateTimestamp));
                 return pendingCompileBusyRetryDueTimestamps.getQuick(index);
             }
+            final Runnable addCallback = compileBusyRetryAddCallback;
+            if (addCallback != null) {
+                addCallback.run();
+            }
             // A retry whose due time does not fit a long is never due. The setting is read at
             // each schedule, which only a lock failure makes.
             final long delayMillis = engine.getConfiguration().getViewCompileBusyRetryTimeout();
@@ -229,6 +235,17 @@ public class ViewStateStoreImpl implements ViewStateStore {
             nextCompileBusyRetryDueMicros = Math.min(nextCompileBusyRetryDueMicros, dueMicros);
             return dueMicros;
         }
+    }
+
+    /**
+     * Sets a callback that {@link #scheduleCompileBusyRetry} runs under the lock of the pending
+     * busy retries, after it found no pending busy retry of the view and before it adds one.
+     *
+     * @param callback the callback to invoke, or null to clear
+     */
+    @TestOnly
+    public void setCompileBusyRetryAddCallback(Runnable callback) {
+        this.compileBusyRetryAddCallback = callback;
     }
 
     @Override

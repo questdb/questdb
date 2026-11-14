@@ -60,6 +60,7 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -67,6 +68,9 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.Assert.assertEquals;
 
 public class ViewCompilerJobTest extends AbstractViewTest {
+    // how holdOnBusyRetryAddPath() ends when the other drain waits for the lock of the pending busy
+    // retries
+    private static final String OTHER_DRAIN_WAITED_FOR_LOCK = "other drain waited for the lock";
     private static final String PIVOT_RACE_SQL = """
             SELECT * FROM data
             PIVOT (
@@ -459,8 +463,10 @@ public class ViewCompilerJobTest extends AbstractViewTest {
     @Test
     public void testConcurrentDrainsMeetingLockLeaveOnePendingBusyRetryPerView() throws Exception {
         // Two drains compile 100 requests for v at once, and every compile meets the lock of t's
-        // readers. Whichever drain schedules first, each view ends with one busy retry with the
-        // newest update timestamp of the requests, and keeps its state.
+        // readers. The first drain to add a busy retry stays on the add path until the other drain
+        // waits for the lock of the pending busy retries, so the other drain looks the view up only
+        // after the retry is there. Each view ends with one busy retry with the newest update
+        // timestamp of the requests, and keeps its state.
         assertMemoryLeak(() -> {
             createTableWithRowsAndViews();
             final int requestCount = 100;
@@ -469,12 +475,15 @@ public class ViewCompilerJobTest extends AbstractViewTest {
                 setCurrentMicros(ALTER_MICROS + i);
                 engine.enqueueCompileView(viewToken);
             }
+            final ViewStateStoreImpl stateStore = (ViewStateStoreImpl) engine.getViewStateStore();
+            final AtomicInteger addPathEntryCount = new AtomicInteger();
+            final AtomicReference<String> addPathHoldOutcome = new AtomicReference<>();
             try (ReadersLockOfT ignore = new ReadersLockOfT()) {
                 final CyclicBarrier start = new CyclicBarrier(2);
                 final AtomicReference<Throwable> drainError = new AtomicReference<>();
                 final ObjList<Thread> drains = new ObjList<>();
                 for (int i = 0; i < 2; i++) {
-                    final Thread drain = new Thread(() -> {
+                    drains.add(new Thread(() -> {
                         try (ViewCompilerJob job = new ViewCompilerJob(0, engine)) {
                             start.await();
                             job.run();
@@ -483,17 +492,31 @@ public class ViewCompilerJobTest extends AbstractViewTest {
                         } finally {
                             Path.clearThreadLocals();
                         }
-                    }, "view-compile-drain-" + i);
-                    drains.add(drain);
-                    drain.start();
+                    }, "view-compile-drain-" + i));
                 }
-                for (int i = 0, n = drains.size(); i < n; i++) {
-                    drains.getQuick(i).join();
+                stateStore.setCompileBusyRetryAddCallback(() -> {
+                    if (addPathEntryCount.incrementAndGet() == 1) {
+                        final Thread otherDrain = Thread.currentThread() == drains.getQuick(0) ? drains.getQuick(1) : drains.getQuick(0);
+                        addPathHoldOutcome.set(holdOnBusyRetryAddPath(otherDrain, addPathEntryCount));
+                    }
+                });
+                try {
+                    for (int i = 0, n = drains.size(); i < n; i++) {
+                        drains.getQuick(i).start();
+                    }
+                    for (int i = 0, n = drains.size(); i < n; i++) {
+                        drains.getQuick(i).join();
+                    }
+                } finally {
+                    stateStore.setCompileBusyRetryAddCallback(null);
                 }
                 if (drainError.get() != null) {
                     throw new AssertionError("view compile drain failed", drainError.get());
                 }
             }
+            Assert.assertEquals(OTHER_DRAIN_WAITED_FOR_LOCK, addPathHoldOutcome.get());
+            // one busy retry added per view, which every other schedule of the view merged into
+            Assert.assertEquals(2, addPathEntryCount.get());
             assertViewStatus("v", "valid", "", "2025-06-19T10:00:00.000000Z");
             assertViewStatus("v_dep", "valid", "", "2025-06-19T10:00:00.000000Z");
             final long newestRequestMicros = ALTER_MICROS + requestCount - 1;
@@ -1288,6 +1311,41 @@ public class ViewCompilerJobTest extends AbstractViewTest {
         final int borrows = readerBorrowsOfT.get();
         drainViewQueue();
         return readerBorrowsOfT.get() - borrows;
+    }
+
+    // Holds the drain that reached the add path of ViewStateStoreImpl.scheduleCompileBusyRetry()
+    // first, under the store's lock, until the other drain waits for that lock in the method.
+    // Returns how the hold ended: the other drain waited for the lock, a second drain reached the
+    // add path, the other drain ended, or 30 seconds passed.
+    private static String holdOnBusyRetryAddPath(Thread otherDrain, AtomicInteger addPathEntryCount) {
+        final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+        while (true) {
+            if (addPathEntryCount.get() > 1) {
+                return "second drain on the add path";
+            }
+            if (isWaitingForBusyRetryLock(otherDrain)) {
+                return OTHER_DRAIN_WAITED_FOR_LOCK;
+            }
+            if (otherDrain.getState() == Thread.State.TERMINATED) {
+                return "other drain ended";
+            }
+            if (System.nanoTime() > deadline) {
+                return "other drain did not wait for the lock in 30 s";
+            }
+            Os.pause();
+        }
+    }
+
+    // the thread waits to enter the lock of the pending busy retries in
+    // ViewStateStoreImpl.scheduleCompileBusyRetry()
+    private static boolean isWaitingForBusyRetryLock(Thread thread) {
+        if (thread.getState() != Thread.State.BLOCKED) {
+            return false;
+        }
+        final StackTraceElement[] frames = thread.getStackTrace();
+        return frames.length > 0
+                && ViewStateStoreImpl.class.getName().equals(frames[0].getClassName())
+                && "scheduleCompileBusyRetry".equals(frames[0].getMethodName());
     }
 
     // a name of the views of testManyViewsMeetingLockLeaveOnePendingBusyRetryEach(), which sort as
