@@ -38,7 +38,9 @@ import static io.questdb.cairo.SecurityContext.AUTH_TYPE_NONE;
 import static java.net.HttpURLConnection.HTTP_UNAUTHORIZED;
 
 public class RejectProcessorImpl implements RejectProcessor {
-    private static final Log LOG = LogFactory.getLog(RejectProcessorImpl.class);
+    // Tests swap this logger via reflection through LogFactory.enableGuaranteedLogging().
+    @SuppressWarnings("FieldMayBeFinal")
+    private static Log LOG = LogFactory.getLog(RejectProcessorImpl.class);
     protected final HttpConnectionContext httpConnectionContext;
     private final Utf8StringSink rejectMessage = new Utf8StringSink();
     protected byte authenticationType = AUTH_TYPE_NONE;
