@@ -26,8 +26,11 @@ package io.questdb.test.cairo;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.idx.BitmapIndexWriter;
 import io.questdb.cairo.idx.IndexFactory;
+import io.questdb.cairo.idx.IndexFwdNullReader;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.idx.IndexWriter;
 import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.std.str.Path;
@@ -144,6 +147,48 @@ public class IndexFactoryTest extends AbstractCairoTest {
         } catch (CairoException e) {
             Assert.assertTrue(e.getMessage().contains("unsupported index type"));
         }
+    }
+
+    @Test
+    public void testIsReaderOfType() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, b SYMBOL INDEX TYPE BITMAP, p SYMBOL INDEX TYPE POSTING) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00', 'x', 'x')");
+            try (TableReader reader = newOffPoolReader(configuration, "t")) {
+                reader.openPartition(0);
+                final int b = reader.getMetadata().getColumnIndex("b");
+                final int p = reader.getMetadata().getColumnIndex("p");
+                final IndexReader[] bitmapReaders = {
+                        reader.getIndexReader(0, b, IndexReader.DIR_BACKWARD),
+                        reader.getIndexReader(0, b, IndexReader.DIR_FORWARD)
+                };
+                final IndexReader[] postingReaders = {
+                        reader.getIndexReader(0, p, IndexReader.DIR_BACKWARD),
+                        reader.getIndexReader(0, p, IndexReader.DIR_FORWARD)
+                };
+                final IndexReader nullReader = new IndexFwdNullReader(0, 0);
+                for (IndexReader bitmap : bitmapReaders) {
+                    Assert.assertTrue(IndexFactory.isReaderOfType(IndexType.BITMAP, bitmap));
+                    Assert.assertFalse(IndexFactory.isReaderOfType(IndexType.POSTING, bitmap));
+                    Assert.assertFalse(IndexFactory.isReaderOfType(IndexType.POSTING_DELTA, bitmap));
+                    Assert.assertFalse(IndexFactory.isReaderOfType(IndexType.POSTING_EF, bitmap));
+                    Assert.assertFalse(IndexFactory.isReaderOfType(IndexType.NONE, bitmap));
+                    Assert.assertFalse(IndexFactory.isReaderOfType((byte) 99, bitmap));
+                }
+                for (IndexReader posting : postingReaders) {
+                    Assert.assertFalse(IndexFactory.isReaderOfType(IndexType.BITMAP, posting));
+                    Assert.assertTrue(IndexFactory.isReaderOfType(IndexType.POSTING, posting));
+                    Assert.assertTrue(IndexFactory.isReaderOfType(IndexType.POSTING_DELTA, posting));
+                    Assert.assertTrue(IndexFactory.isReaderOfType(IndexType.POSTING_EF, posting));
+                    Assert.assertFalse(IndexFactory.isReaderOfType(IndexType.NONE, posting));
+                    Assert.assertFalse(IndexFactory.isReaderOfType((byte) 99, posting));
+                }
+                // a stand-in for a column the partition lacks is neither kind
+                Assert.assertFalse(IndexFactory.isReaderOfType(IndexType.BITMAP, nullReader));
+                Assert.assertFalse(IndexFactory.isReaderOfType(IndexType.POSTING, nullReader));
+            }
+        });
     }
 
     @Test

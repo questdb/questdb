@@ -27,14 +27,19 @@ package io.questdb.test.cairo;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RowCursor;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.tools.TestUtils;
@@ -53,6 +58,84 @@ public class TableReaderReloadTest extends AbstractCairoTest {
     @Test
     public void testReloadAfterDropPostingIndexedColumnBeforeBitmapIndexedColumn() throws Exception {
         testReloadAfterDropIndexedColumnBeforeIndexedColumn("POSTING", "BITMAP");
+    }
+
+    @Test
+    public void testReloadFreesIndexReadersOfReplacedColumnInClosedPartition() throws Exception {
+        // A new index type makes the column a new instance in the same slot: the old readers can't serve it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, a SYMBOL INDEX TYPE POSTING) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t VALUES ('2024-01-01T12:00:00', 'x'), ('2024-01-02T12:00:00', 'x')");
+            try (TableReader reader = newOffPoolReader(configuration, "t")) {
+                final int a = reader.getMetadata().getColumnIndex("a");
+                reader.openPartition(0);
+                final IndexReader bwd = reader.getIndexReader(0, a, IndexReader.DIR_BACKWARD);
+                final IndexReader fwd = reader.getIndexReader(0, a, IndexReader.DIR_FORWARD);
+                reader.closePartitionByIndex(0);
+
+                // ADD INDEX compiles against a pooled reader, which shares the scoreboard id of this off-pool
+                // reader: release the txn as the pool does when a query returns its reader
+                reader.goPassive();
+                execute("ALTER TABLE t ALTER COLUMN a DROP INDEX");
+                execute("ALTER TABLE t ALTER COLUMN a ADD INDEX TYPE BITMAP");
+                reader.goActive();
+
+                Assert.assertEquals(a, reader.getMetadata().getColumnIndex("a"));
+                Assert.assertNull(reader.getIndexReaderIfExists(0, a, IndexReader.DIR_BACKWARD));
+                Assert.assertNull(reader.getIndexReaderIfExists(0, a, IndexReader.DIR_FORWARD));
+
+                reader.openPartition(0);
+                Assert.assertNotSame(bwd, reader.getIndexReader(0, a, IndexReader.DIR_BACKWARD));
+                Assert.assertNotSame(fwd, reader.getIndexReader(0, a, IndexReader.DIR_FORWARD));
+                Assert.assertEquals("0", indexRowIds(reader, 0, a, IndexReader.DIR_BACKWARD));
+                Assert.assertEquals("0", indexRowIds(reader, 0, a, IndexReader.DIR_FORWARD));
+            }
+        });
+    }
+
+    @Test
+    public void testReloadMovesIndexReadersWithTheirColumnsInClosedPartition() throws Exception {
+        // closePartitionByIndex() leaves the partition's index readers in their slots for reuse
+        testReloadMovesIndexReadersWithTheirColumns(false);
+    }
+
+    @Test
+    public void testReloadMovesIndexReadersWithTheirColumnsInRewrittenPartition() throws Exception {
+        // the reload that sees the column move also finds the partition rewritten, and closes it
+        testReloadMovesIndexReadersWithTheirColumns(true);
+    }
+
+    @Test
+    public void testReloadReplacesStandInIndexReaderOncePartitionHasColumn() throws Exception {
+        // b comes after the data, so the first partition lacks it and its index lookups go through stand-in readers
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, a SYMBOL INDEX TYPE POSTING) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t VALUES ('2024-01-01T12:00:00', 'x'), ('2024-01-02T12:00:00', 'x')");
+            execute("ALTER TABLE t ADD COLUMN b SYMBOL INDEX TYPE BITMAP");
+            try (TableReader reader = newOffPoolReader(configuration, "t")) {
+                final int b = reader.getMetadata().getColumnIndex("b");
+                reader.openPartition(0);
+                final IndexReader standInBwd = reader.getIndexReader(0, b, IndexReader.DIR_BACKWARD);
+                final IndexReader standInFwd = reader.getIndexReader(0, b, IndexReader.DIR_FORWARD);
+                // every row of the partition reads NULL in b, through the same stand-ins on each lookup
+                Assert.assertEquals("0", indexRowIds(reader, 0, b, IndexReader.DIR_BACKWARD, null));
+                Assert.assertEquals("0", indexRowIds(reader, 0, b, IndexReader.DIR_FORWARD, null));
+                Assert.assertSame(standInBwd, reader.getIndexReader(0, b, IndexReader.DIR_BACKWARD));
+                Assert.assertSame(standInFwd, reader.getIndexReader(0, b, IndexReader.DIR_FORWARD));
+
+                // the row before the partition's only row rewrites the partition, which has b from then on
+                execute("INSERT INTO t VALUES ('2024-01-01T06:00:00', 'y', 'x')");
+                Assert.assertTrue(reader.reload());
+                reader.openPartition(0);
+
+                Assert.assertNotSame(standInBwd, reader.getIndexReader(0, b, IndexReader.DIR_BACKWARD));
+                Assert.assertNotSame(standInFwd, reader.getIndexReader(0, b, IndexReader.DIR_FORWARD));
+                Assert.assertEquals("0", indexRowIds(reader, 0, b, IndexReader.DIR_BACKWARD));
+                Assert.assertEquals("0", indexRowIds(reader, 0, b, IndexReader.DIR_FORWARD));
+                Assert.assertEquals("1", indexRowIds(reader, 0, b, IndexReader.DIR_BACKWARD, null));
+                Assert.assertEquals("1", indexRowIds(reader, 0, b, IndexReader.DIR_FORWARD, null));
+            }
+        });
     }
 
     @Test
@@ -113,6 +196,30 @@ public class TableReaderReloadTest extends AbstractCairoTest {
     @Test
     public void testTruncateInsertReloadYear() {
         testTruncateInsertReload(PartitionBy.YEAR, 365 * 50000000000L, false);
+    }
+
+    private static String indexRowIds(TableReader reader, int partitionIndex, int columnIndex, int direction) {
+        return indexRowIds(reader, partitionIndex, columnIndex, direction, "x");
+    }
+
+    // the row ids of the partition that the column's index finds for the symbol, null for NULL
+    private static String indexRowIds(TableReader reader, int partitionIndex, int columnIndex, int direction, String symbol) {
+        final int key = TableUtils.toIndexKey(reader.getSymbolMapReader(columnIndex).keyOf(symbol));
+        final StringSink rowIds = new StringSink();
+        // bounded by the partition's last row: a stand-in reader answers NULL with every row id up to the bound
+        final long maxRowId = reader.getPartitionRowCount(partitionIndex) - 1;
+        final RowCursor cursor = reader.getIndexReader(partitionIndex, columnIndex, direction).getCursor(key, 0, maxRowId);
+        try {
+            while (cursor.hasNext()) {
+                if (rowIds.length() > 0) {
+                    rowIds.put(' ');
+                }
+                rowIds.put(cursor.next());
+            }
+        } finally {
+            Misc.free(cursor);
+        }
+        return rowIds.toString();
     }
 
     private void assertIndexScans(String column) throws Exception {
@@ -234,6 +341,54 @@ public class TableReaderReloadTest extends AbstractCairoTest {
                 assertOpenPartitionCount(reader);
             }
         }
+    }
+
+    private void testReloadMovesIndexReadersWithTheirColumns(boolean isRewritten) throws Exception {
+        // Dropping c moves a and b one slot left, b into a's slot, and both stay the same column instances: their
+        // readers in the partition the reader has closed follow them and serve them again once it reopens.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, c INT, a SYMBOL INDEX TYPE POSTING, b SYMBOL INDEX TYPE BITMAP) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t VALUES ('2024-01-01T12:00:00', 1, 'x', 'x'), ('2024-01-02T12:00:00', 2, 'x', 'x')");
+            try (TableReader reader = newOffPoolReader(configuration, "t")) {
+                final int a = reader.getMetadata().getColumnIndex("a");
+                final int b = reader.getMetadata().getColumnIndex("b");
+                reader.openPartition(0);
+                final IndexReader aBwd = reader.getIndexReader(0, a, IndexReader.DIR_BACKWARD);
+                final IndexReader aFwd = reader.getIndexReader(0, a, IndexReader.DIR_FORWARD);
+                final IndexReader bBwd = reader.getIndexReader(0, b, IndexReader.DIR_BACKWARD);
+                final IndexReader bFwd = reader.getIndexReader(0, b, IndexReader.DIR_FORWARD);
+                final String expectedRowIds;
+                if (isRewritten) {
+                    // the row before 'x' merges into a new version of the partition, which shifts 'x' to row 1
+                    execute("INSERT INTO t VALUES ('2024-01-01T06:00:00', 3, 'y', 'y')");
+                    expectedRowIds = "1";
+                } else {
+                    reader.closePartitionByIndex(0);
+                    expectedRowIds = "0";
+                }
+
+                execute("ALTER TABLE t DROP COLUMN c");
+                Assert.assertTrue(reader.reload());
+
+                Assert.assertEquals(a - 1, reader.getMetadata().getColumnIndex("a"));
+                Assert.assertEquals(b - 1, reader.getMetadata().getColumnIndex("b"));
+                Assert.assertSame(aBwd, reader.getIndexReaderIfExists(0, a - 1, IndexReader.DIR_BACKWARD));
+                Assert.assertSame(aFwd, reader.getIndexReaderIfExists(0, a - 1, IndexReader.DIR_FORWARD));
+                Assert.assertSame(bBwd, reader.getIndexReaderIfExists(0, b - 1, IndexReader.DIR_BACKWARD));
+                Assert.assertSame(bFwd, reader.getIndexReaderIfExists(0, b - 1, IndexReader.DIR_FORWARD));
+
+                reader.openPartition(0);
+                Assert.assertSame(aBwd, reader.getIndexReader(0, a - 1, IndexReader.DIR_BACKWARD));
+                Assert.assertSame(aFwd, reader.getIndexReader(0, a - 1, IndexReader.DIR_FORWARD));
+                Assert.assertSame(bBwd, reader.getIndexReader(0, b - 1, IndexReader.DIR_BACKWARD));
+                Assert.assertSame(bFwd, reader.getIndexReader(0, b - 1, IndexReader.DIR_FORWARD));
+                Assert.assertEquals(expectedRowIds, indexRowIds(reader, 0, a - 1, IndexReader.DIR_BACKWARD));
+                Assert.assertEquals(expectedRowIds, indexRowIds(reader, 0, a - 1, IndexReader.DIR_FORWARD));
+                Assert.assertEquals(expectedRowIds, indexRowIds(reader, 0, b - 1, IndexReader.DIR_BACKWARD));
+                Assert.assertEquals(expectedRowIds, indexRowIds(reader, 0, b - 1, IndexReader.DIR_FORWARD));
+            }
+        });
     }
 
     private void testTruncateInsertReload(int partitionBy, long increment, boolean keepSymbolTables) {

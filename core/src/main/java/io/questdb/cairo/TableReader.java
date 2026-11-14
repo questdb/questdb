@@ -80,6 +80,9 @@ public class TableReader implements Closeable, SymbolTableSource {
     // than contention. A power of 2. Far longer than any commit's publish window, yet still a short wait.
     private static final int TORN_DIAGNOSIS_WINDOW = 1 << 16;
     private final BitSet activeColumns = new BitSet();
+    // the columns whose slot a metadata transition fills with another column's objects or a new column, see
+    // reshuffleClosedPartitionColumns()
+    private final IntList changedColumnSlots = new IntList();
     private final MillisecondClock clock;
     private final ColumnVersionReader columnVersionReader;
     private final CairoConfiguration configuration;
@@ -408,6 +411,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             indexReader = null;
         }
         if (indexReader != null) {
+            assert isReaderOfIndexType(indexReader, metadata.getColumnIndexType(columnIndex)) : indexReader;
             // Single choke point for refreshing the scoreboard pin on cached
             // readers. TableReader.txn advances through several paths
             // (goActive / reload / ...); setting it here covers all of them.
@@ -895,6 +899,12 @@ public class TableReader implements Closeable, SymbolTableSource {
             }
         }
         return true;
+    }
+
+    // whether a reader cached in a column's slot can serve the column: a stand-in null reader serves either kind of
+    // index, see getIndexReader()
+    private static boolean isReaderOfIndexType(IndexReader reader, byte indexType) {
+        return isStandInNullReader(reader) || IndexFactory.isReaderOfType(indexType, reader);
     }
 
     private boolean acquireTxn() {
@@ -2165,6 +2175,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 if (metadata.isColumnIndexed(columnIndex)) {
                     IndexReader indexReader = indexReaders.getQuick(primaryIndex);
                     if (indexReader != null) {
+                        assert isReaderOfIndexType(indexReader, metadata.getColumnIndexType(columnIndex)) : indexReader;
                         indexReader.of(configuration, path.trimTo(plen), name, columnTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp);
                     }
                 } else {
@@ -2364,6 +2375,29 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
+    /**
+     * Moves the column slots of a partition that is closed, or that reshuffleColumns() just closed because the
+     * transaction rewrote it, the way it moves an open partition's, without opening any file. The slots keep the
+     * closed column memory and index readers that the partition reuses when it opens again: reloadColumnAt() and
+     * getIndexReader() reopen whatever reader sits in a column's slot for that column. A reader left behind in its
+     * old slot would serve the column that moves there, and could be of another index type, which of() cannot
+     * turn it into.
+     */
+    private void reshuffleClosedPartitionColumns(int base, TableReaderMetadataTransitionIndex transitionIndex) {
+        // ascending, like the open partition's loop: a column only moves left, from a slot not yet filled
+        for (int k = 0, n = changedColumnSlots.size(); k < n; k++) {
+            final int columnIndex = changedColumnSlots.getQuick(k);
+            final int copyFrom = transitionIndex.getCopyFromIndex(columnIndex);
+            if (copyFrom > -1) {
+                // the same column instance from another slot, its readers with it
+                copyColumns(base, copyFrom, columns, columnTops, indexes, base, columnIndex);
+            } else {
+                // a new column instance: the slot's readers belong to the column that held it before
+                freeIndexReaders(base, columnIndex);
+            }
+        }
+    }
+
     private void reshuffleColumns(TableReaderMetadataTransitionIndex transitionIndex) {
         final int columnCount = metadata.getColumnCount();
 
@@ -2386,12 +2420,21 @@ public class TableReader implements Closeable, SymbolTableSource {
     private void reshuffleColumns(int columnCount, TableReaderMetadataTransitionIndex transitionIndex) {
         LOG.debug().$("reshuffling columns file list [table=").$(tableToken).I$();
         int iterateCount = Math.max(columnCount, this.columnCount);
+        // A closed partition has no files to reopen, so it visits only the slots the transition changes
+        changedColumnSlots.clear();
+        for (int i = 0; i < columnCount; i++) {
+            if (transitionIndex.getCopyFromIndex(i) != i) {
+                changedColumnSlots.add(i);
+            }
+        }
 
         for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
             int base = getColumnBase(partitionIndex);
             try {
                 long partitionRowCount = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE);
-                if (partitionRowCount > -1 && (partitionRowCount = closeRewrittenPartitionFiles(partitionIndex, base)) > -1) {
+                if (partitionRowCount < 0 || (partitionRowCount = closeRewrittenPartitionFiles(partitionIndex, base)) < 0) {
+                    reshuffleClosedPartitionColumns(base, transitionIndex);
+                } else {
                     for (int i = 0; i < iterateCount; i++) {
                         final int copyFrom = transitionIndex.getCopyFromIndex(i);
 
