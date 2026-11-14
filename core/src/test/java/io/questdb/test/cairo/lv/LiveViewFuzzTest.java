@@ -459,12 +459,16 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // view's frontier, which leaves the repair marker live: see failTheOwedSealOfALateRow. Of
     // those, the ones the head-miss rebuild repaired through its end-of-table splice. Then, by the
     // restart after each: refused over the day the run dropped, restored from the root a later
-    // seal landed at the frontier, and met with no timeline, which the failure streak retired.
+    // seal landed at the frontier, and met after the failure streak retired the timeline, which
+    // the retire removed or a lock on _timeline kept. Of the refused ones, those whose retire
+    // removed the timeline and its marker, so the restatement guard refused a rebuild over an
+    // absent timeline.
     private int owedSealEpisodes;
     private int headMissOwedSealEpisodes;
     private int blockedOwedSealEpisodes;
     private int restoredOwedSealEpisodes;
     private int retiredOwedSealEpisodes;
+    private int blockedTimelineAbsentOwedSealEpisodes;
     // Owed-seal episodes whose failures paused the seal, and of those, the ones whose clean commit
     // came inside the pause with the marker live, and the ones whose clean commit came after it
     // and landed, on either route and on the resume route: see failTheOwedSealOfALateRow.
@@ -1165,14 +1169,18 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // and every other one does: at least one commits late rows ahead of its in-order rows,
         // and at least one commits its in-order rows straight after the departure.
         // A truncating one crashes between its frontier truncate's marker and the truncate's
-        // publication, and the restart from what the crash left never restores. The retire at the
-        // fourth failure, and the one after a filtered sparse departure's failed frontier seal,
-        // meet a lock on _timeline: each keeps the timeline and its live marker, and the restart
-        // rebuilds over the marker.
+        // publication, and the restart from what the crash left never restores. The first retire
+        // at the fourth failure, and the one after a filtered sparse departure's failed frontier
+        // seal, meet a lock on _timeline: each keeps the timeline and its live marker, and the
+        // restart rebuilds over the marker. The last batch draws a lock for its first such retire
+        // and none for its second, which removes the timeline and its marker: the restatement
+        // guard refuses the restart's rebuild over the day the run dropped, as a rebuild over an
+        // absent timeline.
         final long[][] seeds = {
                 {2277450534470274333L, 984054158561696L},
                 {8920866532787660373L, 984089867478109L},
-                {1611528458713692810L, 984110371927461L}
+                {1611528458713692810L, 984110371927461L},
+                {99928471246783L, 1794659701302L}
         };
         for (long[] seed : seeds) {
             setCurrentMicros(-1);
@@ -1193,6 +1201,10 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         logFrontierTruncateCrashes();
         Assert.assertTrue("no crash interrupted a sparse departure's frontier truncate", headMissFrontierTruncateCrashes > 0);
         assertReachedAKeptTimelineRetire();
+        Assert.assertTrue(
+                "no retire after the pause removed the timeline ahead of a rebuild the guard refused",
+                blockedTimelineAbsentOwedSealEpisodes > 0
+        );
     }
 
     @Test
@@ -3269,6 +3281,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 .$(", blocked=").$(blockedOwedSealEpisodes)
                 .$(", restored=").$(restoredOwedSealEpisodes)
                 .$(", retired=").$(retiredOwedSealEpisodes)
+                .$(", blockedTimelineAbsent=").$(blockedTimelineAbsentOwedSealEpisodes)
                 .$(", paused=").$(pausedOwedSealEpisodes)
                 .$(", markerLiveInsideThePause=").$(markerLiveInsideThePauseOwedSealEpisodes)
                 .$(", restoredAfterThePause=").$(restoredAfterThePauseOwedSealEpisodes)
@@ -3369,6 +3382,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         );
         TestUtils.assertSqlCursors(engine, sqlExecutionContext, shadowOracleOrderedSql, viewOrderedSql, LOG, true);
         blockedOwedSealEpisodes++;
+        if (owedSealOutcome == OWED_SEAL_RETIRED) {
+            blockedTimelineAbsentOwedSealEpisodes++;
+        }
         settleTheSecondRepairsCommitFault();
         return restoreTheDroppedDayAndRestart(job, droppedDayTs, oracleOrderedSql, viewOrderedSql);
     }
