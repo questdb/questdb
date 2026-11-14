@@ -1833,6 +1833,25 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPositionalAlterRefusesRenamedLastColumn() throws Exception {
+        // The check reaches the last view column: a query column the view lacks there replaces it, though every column
+        // before it keeps its name and place. The view keeps computing its minimum, not the refused SQL's average.
+        assertMemoryLeak(() -> {
+            createLongNameBase("base");
+            execute("CREATE MATERIALIZED VIEW pv AS (SELECT ts, " + L65 + ", max(price) AS mx, min(price) AS mn FROM base SAMPLE BY 1h) PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+            final String renamedLast = "ALTER MATERIALIZED VIEW pv AS (SELECT ts, " + L65 + ", max(price) AS mx, avg(price) AS av FROM base SAMPLE BY 1h)";
+            assertPositionalAlterRefused("pv", renamedLast, "avg(price)", "mn", "av");
+            insertSecondHour("base");
+            assertViewStatus("pv", "valid", "");
+            assertMinMaxRows("pv", """
+                    2024-01-01T00:00:00.000000Z\t9.0\t1.0
+                    2024-01-01T01:00:00.000000Z\t6.0\t2.0
+                    """);
+        });
+    }
+
+    @Test
     public void testPositionalAlterUnderServerDefaultAliasRules() throws Exception {
         // Under the default alias rules an unaliased reference to a 65-character column takes its first 64 characters
         // as its name, which the view's column has; the moved and the renamed column are refused as under the legacy
