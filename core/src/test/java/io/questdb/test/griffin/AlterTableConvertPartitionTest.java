@@ -301,6 +301,26 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConvertAllPartitionsKeywordPlural() throws Exception {
+        // CONVERT PARTITIONS (plural) should be accepted as a synonym for CONVERT PARTITION (#6494)
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            final String tableName = "testConvertAllPartitionsKeywordPlural";
+            createTable(
+                    tableName,
+                    "INSERT INTO " + tableName + " VALUES(1, '2024-06-10T00:00:00.000000Z')",
+                    "INSERT INTO " + tableName + " VALUES(2, '2024-06-11T00:00:00.000000Z')",
+                    "INSERT INTO " + tableName + " VALUES(3, '2024-06-12T00:00:00.000000Z')"
+            );
+
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITIONS TO PARQUET WHERE timestamp > 0");
+
+            assertPartitionExists(tableName, "2024-06-10.5");
+            assertPartitionExists(tableName, "2024-06-11.3");
+            // last partition is not converted
+        });
+    }
+
+    @Test
     public void testConvertAllNullDeltaDataPageRoundTrips() throws Exception {
         // Regression for the all-null DELTA_BINARY_PACKED page bug (questdb#7212).
         // The bug needs a real, delta-encoded data page that is entirely null,
