@@ -49,11 +49,22 @@ import org.junit.Test;
  *     <li>a SET EXPIRE of each policy shape, one that reads two columns, and one over a column the view lacks, which
  *     the statement refuses;</li>
  *     <li>a view DROP COLUMN of a column the EXPIRE ROWS policy reads, which the statement refuses, and one of a
- *     column the policy does not read while the view has a policy.</li>
+ *     column the policy does not read while the view has a policy;</li>
+ *     <li>for a period view, the period timer's firings, which complete the days in order; gap days, which the
+ *     initial rows and every later row keep off until their period ends; and the sequence that finds a period refresh
+ *     with nothing to recompute while the view's cache holds a range that no WAL scan finds again: an UPDATE of a
+ *     complete day with a base partition, or an ATTACH of a complete day, then the firing over a day without a base
+ *     partition, before an incremental refresh recomputes the range. An EVERY view refreshes incrementally at a refresh
+ *     job run, which stands for its EVERY firing, and at the view check after every sixth operation, and a FULL, a
+ *     TRUNCATE and a base replacement drop the range too. A view without a period draws no firing.</li>
  * </ul>
- * The generator draws without an engine; the seed is fixed, so a failure reproduces.
+ * The rounds start with the initial rows the generator draws, as the fuzz test's do. The generator draws without an
+ * engine; the seed is fixed, so a failure reproduces.
  */
 public class MatViewFuzzOpGeneratorCoverageTest {
+    // MatViewFuzzTest checks the view after every sixth operation, and the check catches a period view up with an
+    // incremental refresh
+    private static final int CHECK_STEPS = 6;
     private static final int DAY_COUNT = 6;
     private static final int ROUNDS = 500;
     private static final int STEPS_PER_ROUND = 60;
@@ -80,8 +91,12 @@ public class MatViewFuzzOpGeneratorCoverageTest {
         final int[] policyShapes = new int[5];
         final MatViewFuzzOpGenerator.Op op = new MatViewFuzzOpGenerator.Op();
         for (int round = 0; round < ROUNDS; round++) {
-            final MatViewFuzzOpGenerator generator = new MatViewFuzzOpGenerator(DAY_COUNT);
+            final MatViewFuzzOpGenerator generator = new MatViewFuzzOpGenerator(DAY_COUNT, false);
             generator.initView(rnd);
+            for (int day = 0; day < DAY_COUNT; day++) {
+                Assert.assertTrue("initial rows in every day of a view without a period", generator.initRows(rnd, day, op).rowTs.size() > 0);
+                Assert.assertTrue(generator.isBaseDay(day));
+            }
             final boolean[] isDetached = new boolean[DAY_COUNT];
             final boolean[] isDropped = new boolean[DAY_COUNT];
             for (int step = 0; step < STEPS_PER_ROUND; step++) {
@@ -213,22 +228,7 @@ public class MatViewFuzzOpGeneratorCoverageTest {
             }
         }
 
-        final int total = ROUNDS * STEPS_PER_ROUND;
-        int totalWeight = 0;
-        for (MatViewFuzzOpGenerator.Kind kind : MatViewFuzzOpGenerator.Kind.values()) {
-            totalWeight += MatViewFuzzOpGenerator.weight(kind);
-        }
-        for (MatViewFuzzOpGenerator.Kind kind : MatViewFuzzOpGenerator.Kind.values()) {
-            if (kind == MatViewFuzzOpGenerator.Kind.BASE_ATTACH_PARTITION) {
-                // an ATTACH needs a partition that a DETACH of the round left detached, and falls back to INSERT
-                // without one
-                continue;
-            }
-            // at least a quarter of the share the kind's weight asks for: a kind whose parameters the state cannot give,
-            // such as a DETACH with no partition before the newest, falls back to INSERT, which must not starve it
-            final long expected = (long) total * MatViewFuzzOpGenerator.weight(kind) / totalWeight;
-            Assert.assertTrue(kind + " drawn " + kindCounts[kind.ordinal()] + " times, expected about " + expected, kindCounts[kind.ordinal()] > expected / 4);
-        }
+        assertKindShares(kindCounts, false);
         final int detachCount = kindCounts[MatViewFuzzOpGenerator.Kind.BASE_DETACH_PARTITION.ordinal()];
         assertShare("ATTACH of a partition the round detached, of " + detachCount + " DETACH", attachAfterDetach, detachCount / 4);
         assertShare("ALTER ... AS refused by the same-position rule", alterRefused, 100);
@@ -250,6 +250,82 @@ public class MatViewFuzzOpGeneratorCoverageTest {
         assertShare("SET EXPIRE of a KEEP N HIGHEST or LOWEST policy", policyShapes[4], 100);
         assertShare("view DROP COLUMN refused by the EXPIRE ROWS policy", dropColumnRefused, 100);
         assertShare("view DROP COLUMN of a column the EXPIRE ROWS policy does not read", dropColumnBesidePolicy, 100);
+
+        // rounds of a period view
+        final int[] periodKindCounts = new int[MatViewFuzzOpGenerator.Kind.values().length];
+        int gapDayCount = 0;
+        int gapDayFirings = 0;
+        int lateRowsIntoGapDay = 0;
+        int updatesOfCompleteDay = 0;
+        int periodRefreshOverEmptyDayWithQueuedRange = 0;
+        for (int round = 0; round < ROUNDS; round++) {
+            final MatViewFuzzOpGenerator generator = new MatViewFuzzOpGenerator(DAY_COUNT, true);
+            generator.initView(rnd);
+            for (int day = 0; day < DAY_COUNT; day++) {
+                final int rowCount = generator.initRows(rnd, day, op).rowTs.size();
+                Assert.assertFalse("the first day is never a gap day", day == 0 && generator.isGapDay(day));
+                Assert.assertEquals("initial rows in every day but the gap days", !generator.isGapDay(day), rowCount > 0);
+                Assert.assertEquals(!generator.isGapDay(day), generator.isBaseDay(day));
+                if (generator.isGapDay(day)) {
+                    gapDayCount++;
+                }
+            }
+            // the range of an UPDATE or ATTACH of a complete day waits in the view's cache: no incremental refresh,
+            // FULL, TRUNCATE or base replacement came since
+            boolean isRangeQueued = false;
+            for (int step = 0; step < STEPS_PER_ROUND; step++) {
+                final int completeDays = generator.getCompleteDays();
+                generator.next(rnd, op);
+                periodKindCounts[op.kind.ordinal()]++;
+                for (int i = 0, n = op.rowTs.size(); i < n; i++) {
+                    final int day = (int) (op.rowTs.getQuick(i) / Micros.DAY_MICROS);
+                    Assert.assertFalse("a row on a gap day whose period has not ended", generator.isGapDay(day) && day >= completeDays);
+                    if (generator.isGapDay(day) && op.kind == MatViewFuzzOpGenerator.Kind.INSERT) {
+                        lateRowsIntoGapDay++;
+                    }
+                }
+                switch (op.kind) {
+                    case BASE_UPDATE -> {
+                        if (op.day < completeDays) {
+                            updatesOfCompleteDay++;
+                            isRangeQueued |= generator.isBaseDay(op.day);
+                        }
+                    }
+                    case BASE_ATTACH_PARTITION -> isRangeQueued |= op.day < completeDays;
+                    // the EVERY firing, a rebuild, the TRUNCATE cut and a new base
+                    case RUN_REFRESH_JOB, VIEW_FULL, BASE_TRUNCATE, BASE_REPLACE, BASE_REPLACE_FULL_RESTART,
+                         BASE_REPLACE_RESUME_RESTART -> isRangeQueued = false;
+                    case VIEW_PERIOD_REFRESH -> {
+                        Assert.assertEquals("a firing must complete the next day", completeDays, op.day);
+                        Assert.assertEquals(completeDays + 1, generator.getCompleteDays());
+                        if (generator.isGapDay(op.day)) {
+                            Assert.assertFalse("a gap day holds no base partition when its period ends", generator.isBaseDay(op.day));
+                            gapDayFirings++;
+                        }
+                        if (isRangeQueued && !generator.isBaseDay(op.day)) {
+                            periodRefreshOverEmptyDayWithQueuedRange++;
+                        }
+                    }
+                    default -> {
+                    }
+                }
+                if (step % CHECK_STEPS == CHECK_STEPS - 1) {
+                    // the view check
+                    isRangeQueued = false;
+                }
+                Assert.assertTrue(generator.getCompleteDays() <= DAY_COUNT);
+            }
+        }
+        assertKindShares(periodKindCounts, true);
+        assertShare("gap day", gapDayCount, ROUNDS);
+        assertShare("period timer firing over a gap day", gapDayFirings, ROUNDS);
+        assertShare("late row into a gap day whose period ended", lateRowsIntoGapDay, 200);
+        assertShare("UPDATE of a complete day", updatesOfCompleteDay, 500);
+        assertShare(
+                "period timer firing over a day without a base partition while the range of an UPDATE or ATTACH of a complete day is queued",
+                periodRefreshOverEmptyDayWithQueuedRange,
+                50
+        );
     }
 
     @Test
@@ -268,6 +344,32 @@ public class MatViewFuzzOpGeneratorCoverageTest {
         Assert.assertFalse(MatViewFuzzOpGenerator.isRefusedBySamePositionRule(view, new ObjList<>("cnt", "ts", "sym", "price")));
         // the SQL stops producing qty, but the view has the column at that position
         Assert.assertFalse(MatViewFuzzOpGenerator.isRefusedBySamePositionRule(view, new ObjList<>("ts", "sym", "qty", "cnt")));
+    }
+
+    // Asserts that every kind a view of the round's kind has is drawn at least a quarter of the share its weight asks
+    // for, and that a kind it does not have is never drawn.
+    private static void assertKindShares(int[] kindCounts, boolean isPeriodView) {
+        final int total = ROUNDS * STEPS_PER_ROUND;
+        int totalWeight = 0;
+        for (MatViewFuzzOpGenerator.Kind kind : MatViewFuzzOpGenerator.Kind.values()) {
+            totalWeight += MatViewFuzzOpGenerator.weight(kind, isPeriodView);
+        }
+        for (MatViewFuzzOpGenerator.Kind kind : MatViewFuzzOpGenerator.Kind.values()) {
+            final int weight = MatViewFuzzOpGenerator.weight(kind, isPeriodView);
+            if (weight == 0) {
+                Assert.assertEquals(kind + " drawn for a view that does not have it", 0, kindCounts[kind.ordinal()]);
+                continue;
+            }
+            if (kind == MatViewFuzzOpGenerator.Kind.BASE_ATTACH_PARTITION) {
+                // an ATTACH needs a partition that a DETACH of the round left detached, and falls back to INSERT
+                // without one
+                continue;
+            }
+            // at least a quarter of the share the kind's weight asks for: a kind whose parameters the state cannot give,
+            // such as a DETACH with no partition before the newest, falls back to INSERT, which must not starve it
+            final long expected = (long) total * weight / totalWeight;
+            Assert.assertTrue(kind + " drawn " + kindCounts[kind.ordinal()] + " times, expected about " + expected, kindCounts[kind.ordinal()] > expected / 4);
+        }
     }
 
     private static void assertShare(String shape, int count, int min) {

@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.mv;
 
 import io.questdb.PropertyKey;
+import io.questdb.TelemetryJob;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
@@ -578,6 +579,39 @@ public class MatViewPartitionClipTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPeriodRefreshOverEmptyPeriodKeepsFinishTimeForRefreshIntervalsUpdate() throws Exception {
+        // The period timer's refresh of 2024-01-02, a day the base holds no partition of, finishes at 2024-01-03T00:00
+        // in memory as in the view's state file. The refresh intervals update after a base INSERT at 00:10 writes a
+        // view state event with the finish time it finds in memory, so materialized_views() goes on to report the
+        // period refresh's finish time, and the view as valid rather than as refreshing since 2024-01-03T00:00.
+        assertMemoryLeak(() -> {
+            createPeriodTimerViewWithUpdatedDay();
+            runPeriodRefresh("2024-01-03T00:00:00");
+            assertRefreshPosition(1, "2024-01-03T00:00:00");
+
+            currentMicros = parseFloorPartialTimestamp("2024-01-03T00:10:00.000000Z");
+            execute("INSERT INTO base VALUES ('c', 3.0, '2024-01-03T00:10:00.000000Z')");
+            drainWalQueue();
+            engine.getMatViewStateStore().enqueueUpdateRefreshIntervals(engine.verifyTableName("price_1h"));
+            drainWalAndMatViewQueues();
+            // the update scanned the INSERT, base txn 3, and wrote its view state event
+            assertCache(
+                    3,
+                    ts("2024-01-01T00:00:00"), ts("2024-01-02T00:00:00") - 1,
+                    ts("2024-01-03T00:10:00"), ts("2024-01-03T00:10:00")
+            );
+            Assert.assertEquals(parseFloorPartialTimestamp("2024-01-03T00:00:00.000000Z"), getViewState().getLastRefreshFinishTimestampUs());
+            assertQuery("SELECT last_refresh_start_timestamp, last_refresh_finish_timestamp, view_status FROM materialized_views() WHERE view_name = 'price_1h'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            last_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_status
+                            2024-01-03T00:00:00.000000Z\t2024-01-03T00:00:00.000000Z\tvalid
+                            """);
+        });
+    }
+
+    @Test
     public void testPeriodRefreshOverEmptyPeriodKeepsQueuedUpdateRange() throws Exception {
         // A TIMER period view has refreshed its periods up to 2024-01-02, and a base UPDATE of 2024-01-01 after the
         // view's last EVERY firing queues the day's range in the view's cache. The period timer's refresh of
@@ -600,6 +634,37 @@ public class MatViewPartitionClipTest extends AbstractCairoTest {
             assertCache(-1);
             assertViewCaughtUp("price_1h");
             assertViewValid();
+        });
+    }
+
+    @Test
+    public void testPeriodRefreshOverEmptyPeriodRecordsRangeRefreshTelemetry() throws Exception {
+        // The period timer's refresh of 2024-01-02, a day the base holds no partition of, enqueued at the end of the
+        // period and run five seconds later, records a refresh success event with the base txn of a range refresh,
+        // -1, and the five seconds from the timer's firing to the commit of the period as its latency.
+        assertMemoryLeak(() -> {
+            try (TelemetryJob telemetryJob = new TelemetryJob(engine)) {
+                createPeriodTimerView();
+                telemetryJob.runSerially();
+
+                currentMicros = parseFloorPartialTimestamp("2024-01-03T00:00:00.000000Z");
+                engine.getMatViewStateStore().enqueueRangeRefresh(engine.verifyTableName("price_1h"), Numbers.LONG_NULL, ts("2024-01-03T00:00:00") - 1);
+                currentMicros = parseFloorPartialTimestamp("2024-01-03T00:00:05.000000Z");
+                drainWalAndMatViewQueues();
+                assertRefreshPosition(1, "2024-01-03T00:00:00");
+                // the telemetry job stamps the events it writes with its clock
+                telemetryJob.runSerially();
+
+                // 204 is the refresh success event
+                assertQuery("SELECT created, event, base_table_txn, invalidation_reason, latency FROM sys.telemetry_mat_view WHERE view_table_id = "
+                        + engine.verifyTableName("price_1h").getTableId() + " AND created >= '2024-01-03'")
+                        .noLeakCheck()
+                        .timestamp("created")
+                        .returns("""
+                                created\tevent\tbase_table_txn\tinvalidation_reason\tlatency
+                                2024-01-03T00:00:05.000000Z\t204\t-1\t\t5000.0
+                                """);
+            }
         });
     }
 

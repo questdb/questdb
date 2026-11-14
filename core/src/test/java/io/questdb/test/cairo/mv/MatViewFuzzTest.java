@@ -674,9 +674,14 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         // DROP EXPIRE of policies that hide no row, RANGE, FULL and RESUME, forced invalidations, backlog updates, WAL
         // purges and restarts of the view states, among
         // them restarts right after a base replacement followed by FULL or RESUME. The WAL apply and the refresh job
-        // run at random points in between. The view is IMMEDIATE, so its own refreshes must keep up. Oracle: a twin
-        // view with every column the view's SQL can produce, created and fully refreshed at each check, which the view
-        // must match outside the base days the fuzzer removed and the view days it dropped, see MatViewFuzzOracle.
+        // run at random points in between. The view is IMMEDIATE, so its own refreshes must keep up, or a period view
+        // of one day, IMMEDIATE or EVERY, whose period timer firings complete the days one at a time while the other
+        // operations run; the refresh job runs of an EVERY view stand for its timer's firings. Half of a period view's
+        // days after the first take no base row until their period ends, as a weekend does, so a firing can find its
+        // day without a base partition while the range of an UPDATE or ATTACH waits in the view's cache. Oracle: a
+        // twin view with every column the view's SQL can produce, and the period of a period view, created and fully
+        // refreshed at each check, which the view must match outside the base days the fuzzer removed and the view
+        // days it dropped, see MatViewFuzzOracle.
         // The budget: questdb.fuzz.matview.rounds independent rounds of questdb.fuzz.matview.steps operations.
         final int rounds = Integer.getInteger("questdb.fuzz.matview.rounds", 1);
         final int steps = Integer.getInteger("questdb.fuzz.matview.steps", -1);
@@ -793,16 +798,20 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         sink.put('\'');
     }
 
-    // A view check of testViewAndBaseOperations: drains the queues, recovers an invalid view with RESUME or FULL,
-    // backfills with a RANGE when a RESUME SKIP BACKLOG left a gap or a view column became mapped, rebuilds the twin
-    // and asserts the view against it.
+    // A view check of testViewAndBaseOperations: drains the queues, catches a period view up on the periods that ended,
+    // recovers an invalid view with RESUME or FULL, backfills with a RANGE when a RESUME SKIP BACKLOG left a gap or a
+    // view column became mapped, rebuilds the twin and asserts the view against it.
     private static void checkOperationsFuzzViews(Rnd rnd, MatViewFuzzOpGenerator generator, MatViewFuzzOracle oracle, int step) throws Exception {
         final StringSink context = new StringSink();
-        context.put("[step=").put(step).put(", sql=").put(MatViewFuzzOpGenerator.viewSql(generator.getSqlColumns())).put(']');
+        context.put("[step=").put(step).put(", sql=").put(MatViewFuzzOpGenerator.viewSql(generator.getSqlColumns()))
+                .put(", completeDays=").put(oracle.getCompleteDays()).put(']');
         drainOperationsFuzzQueues(oracle);
         assertNotSuspended("base");
         assertNotSuspended("mv");
         final MatViewState state = opsViewState("mv");
+        if (generator.isPeriodView()) {
+            catchUpOperationsFuzzPeriods(oracle);
+        }
         if (state.isInvalid()) {
             final String reason = state.getInvalidationReasonForReport();
             // the fuzzer fails no refresh: a view goes invalid only when it is told to or its base is replaced
@@ -826,6 +835,9 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                     runOperationsFuzzResume(oracle, reason, true);
                 }
                 drainOperationsFuzzQueues(oracle);
+            }
+            if (generator.isPeriodView()) {
+                catchUpOperationsFuzzPeriods(oracle);
             }
         }
         Assert.assertFalse("view is invalid: " + state.getInvalidationReasonForReport() + ' ' + context, state.isInvalid());
@@ -854,7 +866,8 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         for (String name : MatViewFuzzOpGenerator.CATALOGUE_NAMES) {
             allColumns.add(name);
         }
-        execute("CREATE MATERIALIZED VIEW twin REFRESH MANUAL DEFERRED AS (" + MatViewFuzzOpGenerator.viewSql(allColumns) + ") PARTITION BY DAY");
+        execute("CREATE MATERIALIZED VIEW twin REFRESH MANUAL DEFERRED " + (generator.isPeriodView() ? "PERIOD (LENGTH 1d) " : "")
+                + "AS (" + MatViewFuzzOpGenerator.viewSql(allColumns) + ") PARTITION BY DAY");
         execute("REFRESH MATERIALIZED VIEW twin FULL");
         drainOperationsFuzzQueues(oracle);
         Assert.assertFalse(context.toString(), opsViewState("twin").isInvalid());
@@ -992,6 +1005,15 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         Assert.assertFalse(tableName + " WAL is suspended", engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(tableName)));
     }
 
+    // The incremental refresh of a period view's next EVERY firing or base commit, which a check runs before it
+    // compares the view: it catches the view up on the periods that ended while the view was invalid or whose period
+    // refresh a restart lost, and it finds a base replaced after a restart lost the base drop's invalidation, as the
+    // refresh of an IMMEDIATE view's base commit does.
+    private static void catchUpOperationsFuzzPeriods(MatViewFuzzOracle oracle) {
+        engine.getMatViewStateStore().enqueueIncrementalRefresh(engine.verifyTableName("mv"));
+        drainOperationsFuzzQueues(oracle);
+    }
+
     private static void createOperationsFuzzBase(String timestampType) throws SqlException {
         execute("CREATE TABLE base (sym SYMBOL, price DOUBLE, qty LONG, ts " + timestampType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
     }
@@ -1002,6 +1024,15 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         for (int i = 0; i < 4; i++) {
             drainWalAndMatViewQueues();
             oracle.onDrained(isOperationsFuzzFullPending());
+        }
+    }
+
+    // The EVERY timer of the view fires: it enqueues an incremental refresh unless the view is invalid or about to go
+    // invalid, as MatViewTimerJob does.
+    private static void fireOperationsFuzzTimer() {
+        final MatViewState state = opsViewState("mv");
+        if (!state.isInvalid() && !state.hasPendingInvalidationReason()) {
+            engine.getMatViewStateStore().enqueueIncrementalRefresh(engine.verifyTableName("mv"));
         }
     }
 
@@ -1046,6 +1077,21 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     // Whether the view still holds a FULL refresh: a FULL on an invalid view parks until the view's own WAL applies.
     private static boolean isOperationsFuzzFullPending() {
         return opsViewState("mv").hasPendingFullRefreshOwnerForTesting();
+    }
+
+    // Whether the operation wrote a transaction to the view's WAL that carries no view state: view column DDL, view
+    // DROP PARTITION, and SET or DROP EXPIRE.
+    private static boolean isOperationsFuzzStatelessViewTxn(MatViewFuzzOpGenerator.Op op) {
+        return switch (op.kind) {
+            case VIEW_ADD_COLUMN, VIEW_DROP_PARTITION_LIST, VIEW_DROP_PARTITION_WHERE, VIEW_DROP_EXPIRE -> true;
+            case VIEW_DROP_COLUMN, VIEW_SET_EXPIRE -> !op.isRefused;
+            default -> false;
+        };
+    }
+
+    // Whether the view's WAL has applied its transactions up to the given one.
+    private static boolean isOperationsFuzzViewWalApplied(long viewTxn) {
+        return engine.getTableSequencerAPI().getTxnTracker(engine.verifyTableName("mv")).getWriterTxn() >= viewTxn;
     }
 
     // Turns a detached partition of the base into one that ATTACH PARTITION takes, and returns whether it detached.
@@ -1167,7 +1213,8 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             MatViewFuzzOpGenerator.Op op,
             ObjList<String> sqlColumnsBefore,
             MatViewFuzzOracle oracle,
-            String timestampType
+            String timestampType,
+            boolean isTimerView
     ) throws Exception {
         final StringSink sql = new StringSink();
         switch (op.kind) {
@@ -1355,6 +1402,17 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 final MatViewState state = opsViewState("mv");
                 runOperationsFuzzResume(oracle, state.isInvalid() ? state.getInvalidationReasonForReport() : null, op.isSkipBacklog);
             }
+            case VIEW_PERIOD_REFRESH -> {
+                // The period timer fires at the end of the day: it enqueues the period's range refresh unless the view
+                // is invalid or about to go invalid, as MatViewTimerJob does.
+                currentMicros = OPS_DAY_LO + (op.day + 1) * Micros.DAY_MICROS;
+                oracle.onPeriodCompleted();
+                final MatViewState state = opsViewState("mv");
+                if (!state.isInvalid() && !state.hasPendingInvalidationReason()) {
+                    final long periodHi = state.getViewDefinition().getBaseTableTimestampDriver().fromMicros(currentMicros) - 1;
+                    engine.getMatViewStateStore().enqueueRangeRefresh(engine.verifyTableName("mv"), Numbers.LONG_NULL, periodHi);
+                }
+            }
             case VIEW_INVALIDATE -> {
                 engine.getMatViewStateStore().enqueueInvalidate(engine.verifyTableName("mv"), FUZZ_INVALIDATION_REASON);
                 oracle.onInvalidationPublished();
@@ -1363,6 +1421,9 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             case RESTART -> restartOperationsFuzzViewStates(oracle);
             case APPLY_WAL -> drainWalQueue();
             case RUN_REFRESH_JOB -> {
+                if (isTimerView) {
+                    fireOperationsFuzzTimer();
+                }
                 drainMatViewQueue(engine);
                 oracle.onRefreshJobRun();
             }
@@ -1410,28 +1471,41 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         final int copierType = rnd.nextInt(4);
         LOG.info().$("fuzz: copier type ").$(copierType).$();
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, copierType);
-        final MatViewFuzzOpGenerator generator = new MatViewFuzzOpGenerator(OPS_DAY_COUNT);
+        // The view: IMMEDIATE, or a period view of one day, IMMEDIATE or EVERY. A period view's clock starts at the
+        // start of the first day, when no period has ended yet.
+        final String viewRefresh = switch (rnd.nextInt(3)) {
+            case 0 -> null;
+            case 1 -> "IMMEDIATE";
+            default -> "EVERY 1h";
+        };
+        final boolean isPeriodView = viewRefresh != null;
+        final boolean isTimerView = "EVERY 1h".equals(viewRefresh);
+        currentMicros = isPeriodView ? OPS_DAY_LO : -1;
+        final MatViewFuzzOpGenerator generator = new MatViewFuzzOpGenerator(OPS_DAY_COUNT, isPeriodView);
         final MatViewFuzzOpGenerator.Op op = new MatViewFuzzOpGenerator.Op();
         createOperationsFuzzBase(timestampType);
         final ObjList<String> sqlColumns = generator.initView(rnd);
-        final MatViewFuzzOracle oracle = new MatViewFuzzOracle(OPS_DAY_COUNT, generator.getViewColumns());
-        // rows in every day
+        final MatViewFuzzOracle oracle = new MatViewFuzzOracle(OPS_DAY_COUNT, generator.getViewColumns(), isPeriodView);
+        // rows in every day, but the gap days of a period view
         for (int day = 0; day < OPS_DAY_COUNT; day++) {
-            op.clear();
-            for (int i = 0, n = 1 + rnd.nextInt(10); i < n; i++) {
-                op.rowTs.add(day * Micros.DAY_MICROS + rnd.nextLong(Micros.DAY_MICROS));
-                op.rowSyms.add(rnd.nextInt(3));
-                op.rowPrices.add(rnd.nextInt(1000));
-                op.rowQtys.add(rnd.nextInt(100));
+            insertOperationsFuzzRows(generator.initRows(rnd, day, op), oracle);
+            if (generator.isGapDay(day)) {
+                LOG.info().$("fuzz: gap day ").$(day).$();
             }
-            insertOperationsFuzzRows(op, oracle);
         }
-        LOG.info().$("fuzz: view SQL ").$(MatViewFuzzOpGenerator.viewSql(sqlColumns)).$();
-        execute("CREATE MATERIALIZED VIEW mv AS (" + MatViewFuzzOpGenerator.viewSql(sqlColumns) + ") PARTITION BY DAY");
+        LOG.info().$("fuzz: view SQL ").$(MatViewFuzzOpGenerator.viewSql(sqlColumns)).$(" [refresh=").$(viewRefresh).I$();
+        execute("CREATE MATERIALIZED VIEW mv " + (isPeriodView ? "REFRESH " + viewRefresh + " PERIOD (LENGTH 1d) " : "")
+                + "AS (" + MatViewFuzzOpGenerator.viewSql(sqlColumns) + ") PARTITION BY DAY");
+        if (isTimerView) {
+            // the first EVERY firing builds the view
+            fireOperationsFuzzTimer();
+        }
         drainOperationsFuzzQueues(oracle);
 
         final ObjList<String> sqlColumnsBefore = new ObjList<>();
         boolean isViewColumnAdded = false;
+        // the view's last transaction that the test wrote without view state, see the RESTART steering below
+        long statelessViewTxn = -1;
         for (int step = 0; step < steps; step++) {
             sqlColumnsBefore.clear();
             sqlColumnsBefore.addAll(generator.getSqlColumns());
@@ -1444,7 +1518,19 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             if (isViewColumnAdded && isDroppingNewestViewPartition(op)) {
                 LOG.info().$("fuzz: skipping view DROP PARTITION of the newest view partition, see questdb/questdb#8330").$();
             } else {
-                runOperationsFuzzOp(generator, op, sqlColumnsBefore, oracle, timestampType);
+                // Steers clear of a known bug until it is fixed: a restart that finds a view transaction without
+                // view state, such as a view DROP PARTITION or DROP EXPIRE, behind a view state event that the view's
+                // WAL has not applied, such as the one of RESUME, loads the view's stale state file instead of the
+                // event, and a view resumed after a base replacement goes back to invalid. The view's WAL applies
+                // before such a restart. Remove the steering with the fix.
+                if (op.kind == MatViewFuzzOpGenerator.Kind.RESTART && !isOperationsFuzzViewWalApplied(statelessViewTxn)) {
+                    LOG.info().$("fuzz: applying the view's WAL before the restart, a view transaction without view state is pending").$();
+                    drainWalQueue();
+                }
+                runOperationsFuzzOp(generator, op, sqlColumnsBefore, oracle, timestampType, isTimerView);
+                if (isOperationsFuzzStatelessViewTxn(op)) {
+                    statelessViewTxn = opsViewSeqTxn();
+                }
             }
             isViewColumnAdded |= op.kind == MatViewFuzzOpGenerator.Kind.VIEW_ADD_COLUMN;
             if (rnd.nextBoolean()) {

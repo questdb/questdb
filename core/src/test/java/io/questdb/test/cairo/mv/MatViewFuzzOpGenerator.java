@@ -34,7 +34,13 @@ import io.questdb.std.datetime.microtime.Micros;
  * Generates the operations of {@link MatViewFuzzTest#testViewAndBaseOperations()}: ingestion into the base table,
  * base partition operations, TRUNCATE, UPDATE, TTL and replacement, view column DDL, view DROP PARTITION,
  * {@code ALTER MATERIALIZED VIEW ... AS}, the view's EXPIRE ROWS policy, the REFRESH statements, forced invalidations,
- * restarts of the view states and the job runs that interleave them.
+ * restarts of the view states and the job runs that interleave them. For a period view of one day, it also draws the
+ * period timer's firings, which complete the days one at a time from the first.
+ * <p>
+ * It draws the round's initial rows, one to ten in each day. In a period view's round, half of the days after the
+ * first are gap days, as a weekend is: the base takes no row there until the day's period ends, so the period timer's
+ * firing finds the day without a base partition. Most UPDATEs of such a round correct a day whose period ended, so
+ * the range they queue in the view's cache can meet the firing over a gap day.
  * <p>
  * The generator keeps the part of the test's state that it draws from: the view's columns in their order, the
  * columns the view's SQL produces, the base days it believes hold a partition and the detached partitions that can be
@@ -67,11 +73,16 @@ public final class MatViewFuzzOpGenerator {
     private final boolean[] attachableDays;
     private final boolean[] baseDays;
     private final int dayCount;
+    // the days of a period view's round that take no row until their period ends
+    private final boolean[] gapDays;
+    private final boolean isPeriodView;
     // the columns the view's last accepted SET EXPIRE reads, none without a policy
     private final ObjList<String> policyColumns = new ObjList<>();
     private final ObjList<String> sqlColumns = new ObjList<>();
     private final ObjList<String> viewColumnTypes = new ObjList<>();
     private final ObjList<String> viewColumns = new ObjList<>();
+    // the days, from the first, whose period ended: the clock of a period view is at the end of the last of them
+    private int completeDays;
     // the view's EXPIRE ROWS policy as materialized_views().expire_clause shows it, null without one
     private String expireClause;
     // the test ran a view ADD or DROP COLUMN and has not applied the view's WAL since, as far as it has told
@@ -80,12 +91,14 @@ public final class MatViewFuzzOpGenerator {
     private boolean isPolicyChangePending;
     private int totalWeight;
 
-    public MatViewFuzzOpGenerator(int dayCount) {
+    public MatViewFuzzOpGenerator(int dayCount, boolean isPeriodView) {
         this.dayCount = dayCount;
+        this.isPeriodView = isPeriodView;
         this.attachableDays = new boolean[dayCount];
         this.baseDays = new boolean[dayCount];
+        this.gapDays = new boolean[dayCount];
         for (Kind kind : Kind.values()) {
-            totalWeight += weight(kind);
+            totalWeight += weight(kind, isPeriodView);
         }
     }
 
@@ -135,8 +148,14 @@ public final class MatViewFuzzOpGenerator {
     }
 
     // How often each operation comes up: ingestion most, the operations that reset most of the oracle's checks least.
-    public static int weight(Kind kind) {
+    // A period view's round draws the period timer's firings, and more UPDATEs, so that the range of an UPDATE often
+    // waits in the view's cache when a firing comes.
+    public static int weight(Kind kind, boolean isPeriodView) {
         return switch (kind) {
+            // the period timer's firing, which only a period view has; once every day is complete, it falls back to
+            // INSERT
+            case VIEW_PERIOD_REFRESH -> isPeriodView ? 10 : 0;
+            case BASE_UPDATE -> isPeriodView ? 6 : 4;
             case INSERT -> 30;
             // an ATTACH needs a detached partition, and falls back to INSERT without one
             case BASE_ATTACH_PARTITION -> 8;
@@ -144,10 +163,15 @@ public final class MatViewFuzzOpGenerator {
                  VIEW_RANGE, VIEW_RESUME -> 3;
             case BASE_DROP_PARTITION_WHERE, VIEW_DROP_PARTITION_WHERE, VIEW_FULL, BACKLOG_UPDATE, PURGE_WAL -> 2;
             case BASE_TRUNCATE, BASE_SET_TTL, BASE_REPLACE, BASE_REPLACE_FULL_RESTART, BASE_REPLACE_RESUME_RESTART -> 1;
-            case BASE_UPDATE, VIEW_ADD_COLUMN, VIEW_INVALIDATE, RESTART, APPLY_WAL, RUN_REFRESH_JOB, VIEW_SET_EXPIRE -> 4;
+            case VIEW_ADD_COLUMN, VIEW_INVALIDATE, RESTART, APPLY_WAL, RUN_REFRESH_JOB, VIEW_SET_EXPIRE -> 4;
             case VIEW_DROP_EXPIRE -> 2;
             case VIEW_ALTER_AS -> 5;
         };
+    }
+
+    // The days, from the first, whose period ended.
+    public int getCompleteDays() {
+        return completeDays;
     }
 
     public String getExpireClause() {
@@ -170,6 +194,25 @@ public final class MatViewFuzzOpGenerator {
         return viewColumns;
     }
 
+    // The round's initial rows of the day, which the test inserts before it creates the view: one to ten rows, and
+    // none on a gap day of a period view's round.
+    public Op initRows(Rnd rnd, int day, Op op) {
+        op.clear();
+        op.kind = Kind.INSERT;
+        if (isPeriodView && day > 0 && rnd.nextBoolean()) {
+            gapDays[day] = true;
+            return op;
+        }
+        for (int i = 0, n = 1 + rnd.nextInt(10); i < n; i++) {
+            op.rowTs.add(day * Micros.DAY_MICROS + rnd.nextLong(Micros.DAY_MICROS));
+            op.rowSyms.add(rnd.nextInt(3));
+            op.rowPrices.add(rnd.nextInt(1000));
+            op.rowQtys.add(rnd.nextInt(100));
+        }
+        apply(op);
+        return op;
+    }
+
     // The view's first SQL: ts, sym and one to all catalogue columns. The view's columns are the SQL's.
     public ObjList<String> initView(Rnd rnd) {
         sqlColumns.clear();
@@ -190,10 +233,24 @@ public final class MatViewFuzzOpGenerator {
         return attachableDays[day];
     }
 
+    // Whether the generator believes that the base holds a partition of the day.
+    public boolean isBaseDay(int day) {
+        return baseDays[day];
+    }
+
     // Whether the view's WAL may hold a view ADD or DROP COLUMN, which the read probe of a KEEP or window SET EXPIRE
     // does not see: it compiles against the view's applied columns.
     public boolean isColumnChangePending() {
         return isColumnChangePending;
+    }
+
+    // Whether the day is a gap day of a period view's round, which takes no row until its period ends.
+    public boolean isGapDay(int day) {
+        return gapDays[day];
+    }
+
+    public boolean isPeriodView() {
+        return isPeriodView;
     }
 
     // Whether the view's WAL may hold a SET or DROP EXPIRE, which a view DROP COLUMN does not see: it checks the policy
@@ -208,7 +265,7 @@ public final class MatViewFuzzOpGenerator {
         int pick = rnd.nextInt(totalWeight);
         Kind kind = Kind.INSERT;
         for (Kind k : Kind.values()) {
-            pick -= weight(k);
+            pick -= weight(k, isPeriodView);
             if (pick < 0) {
                 kind = k;
                 break;
@@ -228,8 +285,13 @@ public final class MatViewFuzzOpGenerator {
                         op.rowTs.setQuick(i, (ts + (1 + rnd.nextInt(dayCount - 1)) * Micros.DAY_MICROS) % (dayCount * Micros.DAY_MICROS));
                     }
                 }
+                keepOffOpenGapDays(op);
             }
-            case BASE_DROP_PARTITION_LIST, BASE_UPDATE, VIEW_DROP_PARTITION_LIST -> op.day = rnd.nextInt(dayCount);
+            case BASE_DROP_PARTITION_LIST, VIEW_DROP_PARTITION_LIST -> op.day = rnd.nextInt(dayCount);
+            // in a period view's round, mostly a correction of a day whose period ended, which the view holds
+            case BASE_UPDATE -> op.day = isPeriodView && completeDays > 0 && rnd.nextInt(4) > 0
+                    ? rnd.nextInt(completeDays)
+                    : rnd.nextInt(dayCount);
             case BASE_DROP_PARTITION_WHERE, VIEW_DROP_PARTITION_WHERE -> op.day = 1 + rnd.nextInt(dayCount);
             case BASE_DETACH_PARTITION -> {
                 // the newest partition does not detach, so pick one with a newer one after it
@@ -264,9 +326,11 @@ public final class MatViewFuzzOpGenerator {
                 }
             }
             case BASE_SET_TTL -> op.day = 1 + rnd.nextInt(dayCount - 1);
-            case BASE_REPLACE, BASE_REPLACE_FULL_RESTART, BASE_REPLACE_RESUME_RESTART ->
+            case BASE_REPLACE, BASE_REPLACE_FULL_RESTART, BASE_REPLACE_RESUME_RESTART -> {
                 // the new base has rows in a random set of days
-                    generateRows(rnd, op, 1 + rnd.nextInt(3 * dayCount), rnd.nextInt(dayCount));
+                generateRows(rnd, op, 1 + rnd.nextInt(3 * dayCount), rnd.nextInt(dayCount));
+                keepOffOpenGapDays(op);
+            }
             case VIEW_ADD_COLUMN -> {
                 final ObjList<String> candidates = new ObjList<>();
                 for (String name : CATALOGUE_NAMES) {
@@ -325,6 +389,13 @@ public final class MatViewFuzzOpGenerator {
                 op.dayHi = op.day + 1 + rnd.nextInt(dayCount - op.day);
             }
             case VIEW_RESUME -> op.isSkipBacklog = rnd.nextInt(3) == 0;
+            case VIEW_PERIOD_REFRESH -> {
+                // the day whose period ends
+                if (completeDays == dayCount) {
+                    return insteadInsert(rnd, op);
+                }
+                op.day = completeDays;
+            }
             default -> {
                 // no parameters
             }
@@ -442,6 +513,7 @@ public final class MatViewFuzzOpGenerator {
                     sqlColumns.addAll(op.sqlColumns);
                 }
             }
+            case VIEW_PERIOD_REFRESH -> completeDays++;
             default -> {
                 // nothing the generator draws from changes
             }
@@ -527,8 +599,21 @@ public final class MatViewFuzzOpGenerator {
         op.clear();
         op.kind = Kind.INSERT;
         generateRows(rnd, op, 1 + rnd.nextInt(5), -1);
+        keepOffOpenGapDays(op);
         apply(op);
         return op;
+    }
+
+    // Moves each row on a gap day whose period has not ended to the same time of the closest earlier day that is not
+    // one. The first day is never a gap day.
+    private void keepOffOpenGapDays(Op op) {
+        for (int i = 0, n = op.rowTs.size(); i < n; i++) {
+            long ts = op.rowTs.getQuick(i);
+            for (int day = (int) (ts / Micros.DAY_MICROS); gapDays[day] && day >= completeDays; day--) {
+                ts -= Micros.DAY_MICROS;
+            }
+            op.rowTs.setQuick(i, ts);
+        }
     }
 
     // A comparison of a view column with a value below every value the column holds; NULL compares false.
@@ -574,6 +659,9 @@ public final class MatViewFuzzOpGenerator {
         VIEW_RANGE,
         VIEW_FULL,
         VIEW_RESUME,
+        // the period timer's firing at the end of the next day, which moves a period view's clock there and enqueues
+        // the period's range refresh
+        VIEW_PERIOD_REFRESH,
         // a forced invalidation, which stands for a failed refresh
         VIEW_INVALIDATE,
         // the refresh intervals update that the timer job enqueues for an invalid view's backlog

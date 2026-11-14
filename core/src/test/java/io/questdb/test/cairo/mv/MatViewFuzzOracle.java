@@ -50,6 +50,9 @@ import java.util.TreeMap;
  *     until a RANGE refresh recomputes them.</li>
  *     <li>Every other bucket of the twin, the base's buckets, must be in the view with the same values in the view's
  *     columns that its SQL produces.</li>
+ *     <li>A period view and its twin hold the days whose period ended, which the clock completes one at a time from
+ *     the first. The view can also hold buckets of the other days, which a RANGE refresh recomputes, so the oracle
+ *     compares the complete days only.</li>
  * </ul>
  * A RANGE refresh over every day, which the test runs after a RESUME SKIP BACKLOG and after a view column becomes
  * mapped, recomputes the days the base holds; a completed FULL refresh rebuilds the view and resets the oracle.
@@ -67,6 +70,8 @@ final class MatViewFuzzOracle {
     private final boolean[] isViewDropped;
     private int baseEpoch;
     private int baseEpochAtLastValid;
+    // the days, from the first, that the oracle compares: the complete periods of a period view, every day otherwise
+    private int completeDays;
     private boolean isFullPending;
     private boolean isGapAccepted;
     private boolean isInvalidationPending;
@@ -74,8 +79,9 @@ final class MatViewFuzzOracle {
     private int nextColumnId;
     private int ttlDays;
 
-    MatViewFuzzOracle(int dayCount, ObjList<String> viewColumns) {
+    MatViewFuzzOracle(int dayCount, ObjList<String> viewColumns, boolean isPeriodView) {
         this.dayCount = dayCount;
+        this.completeDays = isPeriodView ? 0 : dayCount;
         this.isPendingRange = new boolean[dayCount];
         this.isRangeLost = new boolean[dayCount];
         this.isSuspect = new boolean[dayCount];
@@ -101,7 +107,7 @@ final class MatViewFuzzOracle {
         for (Map.Entry<String, Row> e : twinRows.entrySet()) {
             final Row twinRow = e.getValue();
             final int day = twinRow.day;
-            if (isRangeLost[day]) {
+            if (day >= completeDays || isRangeLost[day]) {
                 continue;
             }
             final Row viewRow = viewRows.get(e.getKey());
@@ -126,6 +132,9 @@ final class MatViewFuzzOracle {
         }
         for (Map.Entry<String, Row> e : viewRows.entrySet()) {
             final Row viewRow = e.getValue();
+            if (viewRow.day >= completeDays) {
+                continue;
+            }
             for (int i = 0, n = columnNames.size(); i < n; i++) {
                 final String name = columnNames.getQuick(i);
                 if (!MatViewFuzzOpGenerator.isCatalogueName(name) && !name.equals(MatViewFuzzOpGenerator.TS) && !name.equals(MatViewFuzzOpGenerator.SYM)) {
@@ -163,6 +172,10 @@ final class MatViewFuzzOracle {
 
     int getBaseEpoch() {
         return baseEpoch;
+    }
+
+    int getCompleteDays() {
+        return completeDays;
     }
 
     boolean isBacklogExpectedTracked(String invalidationReason) {
@@ -214,7 +227,8 @@ final class MatViewFuzzOracle {
         frozenRows.clear();
         for (int d = 0; d < dayCount; d++) {
             isTouched[d] = false;
-            if (isSuspect[d] && !baseDays[d]) {
+            // the twin of a period view tells the base's days among the complete ones only
+            if (d < completeDays && isSuspect[d] && !baseDays[d]) {
                 final TreeMap<String, HashMap<Integer, String>> rows = new TreeMap<>();
                 collectDay(viewRows, d, rows);
                 frozenRows.put(d, rows);
@@ -274,6 +288,11 @@ final class MatViewFuzzOracle {
 
     void onInvalidationPublished() {
         isInvalidationPending = true;
+    }
+
+    // The period of the next day ended.
+    void onPeriodCompleted() {
+        completeDays++;
     }
 
     // The refresh job ran: a range task it ran while an invalidation was pending dropped its range.
