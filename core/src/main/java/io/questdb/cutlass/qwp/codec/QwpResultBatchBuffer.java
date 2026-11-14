@@ -26,6 +26,7 @@ package io.questdb.cutlass.qwp.codec;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
@@ -38,7 +39,9 @@ import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpGorillaEncoder;
 import io.questdb.cutlass.qwp.protocol.QwpVarint;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.griffin.engine.table.AsyncFilterAtom;
 import io.questdb.std.Decimals;
+import io.questdb.std.Files;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
@@ -594,6 +597,55 @@ public class QwpResultBatchBuffer implements QuietCloseable {
     }
 
     /**
+     * Reads one byte of every OS page that holds rows [{@code lo}, {@code hi})
+     * of a NATIVE page frame, column by column, each column in ascending address
+     * order, and returns the number of pages read. A var-size column reads its
+     * aux vector and then its data vector; a column top reads nothing.
+     * <p>
+     * A descending page-frame stream calls this ahead of the rows it copies last
+     * to first. Kernel readahead follows a page fault upwards only, and only
+     * upwards on the partitions QWP scans, which TableReader maps with
+     * MADV_SEQUENTIAL: copying column data that is not in the page cache
+     * downwards faults it in one page at a time. Reading the pages upwards first
+     * brings them in at readahead size, so the copy finds them cached.
+     */
+    public long touchPageFrameRows(PageFrame frame, long lo, long hi) {
+        assert frame.getFormat() == PartitionFormat.NATIVE : "parquet frames are decoded into memory";
+        if (lo >= hi) {
+            return 0;
+        }
+        long pages = 0;
+        for (int ci = 0; ci < columnCount; ci++) {
+            final int columnType = qdbTypesArr[ci];
+            if (ColumnType.isVarSize(columnType)) {
+                final long auxAddress = frame.getAuxPageAddress(ci);
+                if (auxAddress == 0) {
+                    continue;
+                }
+                final ColumnTypeDriver driver = ColumnType.getDriver(columnType);
+                pages += touchPages(auxAddress + driver.getAuxVectorOffset(lo), auxAddress + driver.getAuxVectorOffset(hi));
+                // The data vector is mapped from its start: the aux entries hold the
+                // offsets of the rows' data. A frame whose values are all inlined has none.
+                final long dataAddress = frame.getPageAddress(ci);
+                if (dataAddress != 0) {
+                    pages += touchPages(
+                            dataAddress + driver.getDataVectorOffset(auxAddress, lo),
+                            dataAddress + driver.getDataVectorSizeAt(auxAddress, hi - 1)
+                    );
+                }
+            } else {
+                final long address = frame.getPageAddress(ci);
+                if (address != 0) {
+                    final int sizeShift = ColumnType.pow2SizeOf(columnType);
+                    assert sizeShift > -1 : "fixed-size column without a size [type=" + columnType + ']';
+                    pages += touchPages(address + (lo << sizeShift), address + (hi << sizeShift));
+                }
+            }
+        }
+        return pages;
+    }
+
+    /**
      * Serialises an array into {@code scratch.arrayHeapAddr} without allocating a {@code byte[]}.
      * Format: {@code [nDims u8] [dim lengths: nDims x i32 LE] [values: product(dims) x 8 bytes LE]}.
      * Throws if the element-count product overflows; the buffer state is unchanged in that case.
@@ -821,6 +873,25 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         if (precisionBits <= 15) return record.getGeoShort(col);
         if (precisionBits <= 31) return record.getGeoInt(col);
         return record.getGeoLong(col);
+    }
+
+    // Reads one byte of every OS page in [lo, hi), from the page that holds lo
+    // upwards, and returns the number of pages read.
+    private static long touchPages(long lo, long hi) {
+        if (lo >= hi) {
+            return 0;
+        }
+        final long pageSize = Files.PAGE_SIZE;
+        long sum = Unsafe.getByte(lo);
+        long pages = 1;
+        for (long p = (lo | (pageSize - 1)) + 1; p < hi; p += pageSize) {
+            sum += Unsafe.getByte(p);
+            pages++;
+        }
+        // The loads exist only to fault the pages in; the black hole keeps the
+        // JIT from dropping them, as it does for the async filter's pre-touch.
+        AsyncFilterAtom.PRE_TOUCH_BLACK_HOLE.add(sum);
+        return pages;
     }
 
     /**

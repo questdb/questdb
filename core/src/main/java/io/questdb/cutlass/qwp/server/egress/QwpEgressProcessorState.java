@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -72,6 +73,11 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware {
 
+    /**
+     * Rows a descending page-frame stream reads ahead at a time, see
+     * {@link #appendPageFrameSlice}. At 8 bytes a row, 512 KiB of each column.
+     */
+    public static final long PAGE_FRAME_PREFETCH_ROWS = 65_536;
     private static final Log LOG = LogFactory.getLog(QwpEgressProcessorState.class);
     // Test-only default overrides for the CACHE_RESET soft caps. Set these
     // before opening a connection so every new {@link QwpEgressProcessorState}
@@ -288,6 +294,12 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     private RecordCursorFactory streamingFactory;
     private PageFrameCursor streamingPageFrameCursor;
     private int streamingPageFrameIndex;
+    // A descending stream has read ahead the column pages of the current frame's
+    // rows from this one up, see appendPageFrameSlice.
+    private long streamingPageFramePrefetchLo;
+    // Pages and rows a descending stream has read ahead since the query started.
+    private long streamingPageFramePrefetchedPages;
+    private long streamingPageFramePrefetchedRows;
     private long streamingPageFrameRow;
     private long streamingPageFrameRowHi;
     private boolean streamingFactoryCacheable;
@@ -340,6 +352,17 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     }
 
     /**
+     * Returns the first row of the next read-ahead chunk of a descending
+     * page-frame stream: {@link #PAGE_FRAME_PREFETCH_ROWS} rows below
+     * {@code prefetchedLo}, the lowest row read ahead so far, but no higher than
+     * {@code sliceLo}, the lowest row of the slice about to be copied, and no
+     * lower than the frame's first row. Exposed for unit tests.
+     */
+    public static long pageFramePrefetchLo(long prefetchedLo, long sliceLo) {
+        return Math.max(0, Math.min(sliceLo, prefetchedLo - PAGE_FRAME_PREFETCH_ROWS));
+    }
+
+    /**
      * Adds the time one compilation of the current query took. A query that
      * recompiles after a stale plan pays for every compilation.
      */
@@ -381,12 +404,10 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      * frame if it still has unconsumed rows, or pulls the next frame from the
      * cursor and returns it. Returns {@code null} when the cursor is drained.
      * <p>
-     * After a non-null return, callers may read {@link #getStreamingPageFrameRow}
+     * After a non-null return, callers append the frame's rows with
+     * {@link #appendPageFrameSlice}, or read {@link #getStreamingPageFrameRow}
      * / {@link #getStreamingPageFrameRowHi} for the unconsumed-row range and
      * call {@link #consumePageFrameRows} after emitting rows from that slice.
-     * <p>
-     * Used by the columnar emit path in
-     * {@link io.questdb.cutlass.qwp.codec.QwpResultBatchBuffer#appendPageFrame}.
      */
     public PageFrame advanceToPageFrame() {
         // Skip zero-row frames (iteratively, to keep the stack bounded).
@@ -401,9 +422,47 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
             streamingCurrentPageFrame = frame;
             streamingPageFrameRow = 0;
             streamingPageFrameRowHi = frame.getPartitionHi() - frame.getPartitionLo();
+            streamingPageFramePrefetchLo = streamingPageFrameRowHi;
             streamingPageFrameIndex++;
         }
         return streamingCurrentPageFrame;
+    }
+
+    /**
+     * Appends the next slice of the current page frame, at most {@code maxRows}
+     * rows, to the batch buffer and consumes it. Call after
+     * {@link #advanceToPageFrame} returns the frame.
+     * <p>
+     * An ascending stream takes the slice from the bottom of the frame's
+     * unconsumed rows. A descending one takes it from the top and appends it
+     * last row first. Before it copies rows of a NATIVE frame that are not read
+     * ahead yet, it reads ahead the column pages of the next
+     * {@link #PAGE_FRAME_PREFETCH_ROWS} rows below those, in ascending address
+     * order, see {@link QwpResultBatchBuffer#touchPageFrameRows}: copying column
+     * data that is not in the page cache downwards would fault it in one page at
+     * a time.
+     *
+     * @return rows appended
+     */
+    public int appendPageFrameSlice(int maxRows) {
+        final long lo = streamingPageFrameRow;
+        final long hi = streamingPageFrameRowHi;
+        final int sliceRows = (int) Math.min(maxRows, hi - lo);
+        final PageFrame frame = streamingCurrentPageFrame;
+        if (isStreamingPageFrameDescending) {
+            final long sliceLo = hi - sliceRows;
+            if (sliceLo < streamingPageFramePrefetchLo && frame.getFormat() == PartitionFormat.NATIVE) {
+                final long prefetchLo = pageFramePrefetchLo(streamingPageFramePrefetchLo, sliceLo);
+                streamingPageFramePrefetchedPages += batchBuffer.touchPageFrameRows(frame, prefetchLo, streamingPageFramePrefetchLo);
+                streamingPageFramePrefetchedRows += streamingPageFramePrefetchLo - prefetchLo;
+                streamingPageFramePrefetchLo = prefetchLo;
+            }
+            batchBuffer.appendPageFrame(frame, pageFrameMemoryRecord, sliceLo, hi, true);
+        } else {
+            batchBuffer.appendPageFrame(frame, pageFrameMemoryRecord, lo, lo + sliceRows, false);
+        }
+        consumePageFrameRows(sliceRows);
+        return sliceRows;
     }
 
     /**
@@ -550,6 +609,9 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         this.streamingRowsEmitted = 0;
         this.streamingFactoryCacheable = compiledQueryType == CompiledQuery.SELECT && queryCacheable;
         this.streamingPageFrameIndex = 0;
+        this.streamingPageFramePrefetchLo = 0;
+        this.streamingPageFramePrefetchedPages = 0;
+        this.streamingPageFramePrefetchedRows = 0;
         this.streamingPageFrameRow = 0;
         this.streamingPageFrameRowHi = 0;
         this.isStreamingPageFrameDescending = isDescending;
@@ -661,30 +723,31 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     /**
      * Counts the rows of the whole result set for
      * {@link QwpEgressMsgKind#QUERY_FLAG_COUNT_ROWS} once the stream has taken
-     * its last row from the cursor, and times the count. A drained cursor
-     * yielded every row, so the count is what was skipped plus what was
-     * streamed. A row window that ended first leaves rows in the cursor: the
-     * cursor's size when it knows it, otherwise what was skipped and streamed
-     * plus the rows {@code calculateSize} counts from the current position.
-     * The row window is only open on the {@link RecordCursor} path, see
+     * its last row from the cursor. A drained cursor yielded every row, so the
+     * count is what was skipped plus what was streamed, and nothing is left to
+     * count: the count time stays 0, as on /exec. A row window that ended first
+     * leaves rows in the cursor, and this times their count: the cursor's size
+     * when it knows it, otherwise what was skipped and streamed plus the rows
+     * {@code calculateSize} counts from the current position. The row window is
+     * only open on the {@link RecordCursor} path, see
      * {@code QwpEgressUpgradeProcessor.handleQueryRequest}.
      */
     public void computeQueryRowCount(boolean isCursorDrained, SqlExecutionCircuitBreaker circuitBreaker) {
-        final long startNanos = nanosecondClock.getTicks();
-        long rowCount = rowWindowSkipped + rowWindowAppended;
-        if (!isCursorDrained) {
-            final RecordCursor cursor = streamingCursor;
-            assert cursor != null : "row window ended on the page-frame path";
-            final long size = cursor.size();
-            if (size > -1) {
-                rowCount = size;
-            } else {
-                rowCounter.clear();
-                cursor.calculateSize(circuitBreaker, rowCounter);
-                rowCount += rowCounter.get();
-            }
+        if (isCursorDrained) {
+            queryRowCount = rowWindowSkipped + rowWindowAppended;
+            return;
         }
-        queryRowCount = rowCount;
+        final long startNanos = nanosecondClock.getTicks();
+        final RecordCursor cursor = streamingCursor;
+        assert cursor != null : "row window ended on the page-frame path";
+        final long size = cursor.size();
+        if (size > -1) {
+            queryRowCount = size;
+        } else {
+            rowCounter.clear();
+            cursor.calculateSize(circuitBreaker, rowCounter);
+            queryRowCount = rowWindowSkipped + rowWindowAppended + rowCounter.get();
+        }
         queryCountNanos = nanosecondClock.getTicks() - startNanos;
     }
 
@@ -808,6 +871,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         streamingCreditSuspended = false;
         streamingFactoryCacheable = false;
         streamingPageFrameIndex = 0;
+        streamingPageFramePrefetchLo = 0;
         streamingPageFrameRow = 0;
         streamingPageFrameRowHi = 0;
         streamingSqlText = null;
@@ -949,6 +1013,24 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         return pageFrameMemoryRecord;
     }
 
+    /**
+     * OS pages a descending page-frame stream read ahead since the query
+     * started, see {@link #appendPageFrameSlice}.
+     */
+    @TestOnly
+    public long getStreamingPageFramePrefetchedPages() {
+        return streamingPageFramePrefetchedPages;
+    }
+
+    /**
+     * Rows whose column pages a descending page-frame stream read ahead since
+     * the query started, see {@link #appendPageFrameSlice}.
+     */
+    @TestOnly
+    public long getStreamingPageFramePrefetchedRows() {
+        return streamingPageFramePrefetchedRows;
+    }
+
     public long getStreamingPageFrameRow() {
         return streamingPageFrameRow;
     }
@@ -1074,14 +1156,6 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      */
     public boolean isStreamingPageFrame() {
         return streamingPageFrameCursor != null;
-    }
-
-    /**
-     * True when the page-frame stream emits its rows in descending order, see
-     * {@link #consumePageFrameRows}.
-     */
-    public boolean isStreamingPageFrameDescending() {
-        return isStreamingPageFrameDescending;
     }
 
     public boolean isWsHandshakeSent() {

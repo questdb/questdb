@@ -586,6 +586,75 @@ public class QwpEgressQueryDetailsWireTest extends AbstractQwpQueryDetailsTest {
     }
 
     @Test
+    public void testResultEndFollowsABatchThatFillsTheSendBuffer() throws Exception {
+        // RESULT_END goes out in one send with the last batch when the send
+        // buffer holds both, the longest RESULT_END the request's trailers can
+        // make included, and in a send of its own when it does not. The length
+        // of the one value moves the batch across that line, a byte at a time,
+        // with and without the trailers. The send fragmentation parks every
+        // send, so the stream also resumes after the batch it sent alone, then
+        // finds no more rows and sends RESULT_END; a socket buffer that takes the
+        // whole batch lets the send complete instead.
+        // the smallest send buffer the handshake takes, rounded up
+        final String sendBufferSize = "163840";
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain ignored = startFragmented(
+                    PropertyKey.HTTP_SEND_BUFFER_SIZE.getEnvVarName(), sendBufferSize,
+                    PropertyKey.HTTP_FROZEN_CLOCK.getEnvVarName(), "true"
+            )) {
+                assertResultEndFollowsABatchThatFillsTheSendBuffer(Integer.parseInt(sendBufferSize));
+            }
+            try (TestServerMain ignored = startWithEnvVariables(
+                    PropertyKey.HTTP_SEND_BUFFER_SIZE.getEnvVarName(), sendBufferSize,
+                    PropertyKey.HTTP_NET_CONNECTION_SNDBUF.getEnvVarName(), "4194304",
+                    PropertyKey.HTTP_FROZEN_CLOCK.getEnvVarName(), "true"
+            )) {
+                assertResultEndFollowsABatchThatFillsTheSendBuffer(Integer.parseInt(sendBufferSize));
+            }
+        });
+    }
+
+    @Test
+    public void testSkipAbortedByQueryTimeout() throws Exception {
+        // Skipping to the start of a row window reads the skipped rows of a result
+        // whose filter hides where they end, under the query's circuit breaker. A
+        // skip that outlasts query.timeout ends the query with QUERY_ERROR before
+        // a batch goes out, frees the cursor and its factory, and leaves the
+        // connection usable.
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain ignored = startFragmented(
+                    PropertyKey.QUERY_TIMEOUT.getEnvVarName(), "500ms",
+                    PropertyKey.HTTP_FROZEN_CLOCK.getEnvVarName(), "false"
+            );
+                 WireConnection conn = new WireConnection("")) {
+                final String sql = "SELECT x FROM long_sequence(1_000_000_000_000) WHERE x % 2 = 0";
+                for (int positioned = 0; positioned < 2; positioned++) {
+                    final long flags = WINDOW | (positioned == 1 ? QwpEgressMsgKind.QUERY_FLAG_ERROR_POSITION : 0);
+                    Response r = conn.query(1 + positioned, sql, flags, 4_000_000_000L, 10);
+                    Assert.assertEquals("no batch goes out", 0, r.batches);
+                    QueryError error = r.queryError();
+                    Assert.assertEquals(QwpConstants.STATUS_LIMIT_EXCEEDED, error.status);
+                    if (positioned == 1) {
+                        // the position /exec reports for a timeout
+                        TestUtils.assertContains(error.message, "timeout, query aborted");
+                        Assert.assertFalse(error.message, error.message.startsWith("["));
+                        Assert.assertEquals(0, error.readPosition());
+                    } else {
+                        Assert.assertTrue(error.message, error.message.startsWith("[-1] timeout, query aborted"));
+                    }
+                    error.assertEnd();
+                }
+
+                Response next = conn.query(3, "SELECT x FROM long_sequence(5)", WINDOW | QwpEgressMsgKind.QUERY_FLAG_COUNT_ROWS, 1, 2);
+                assertSequence(next.longs, 2, 2);
+                ResultEnd end = next.resultEnd();
+                Assert.assertEquals(5, end.readRowCount());
+                end.assertEnd();
+            }
+        });
+    }
+
+    @Test
     public void testStatsFrozenClock() throws Exception {
         // A frozen HTTP clock makes every duration exactly 0, so the frame bytes
         // are fully known: the block is present on each terminator that carries
@@ -824,7 +893,8 @@ public class QwpEgressQueryDetailsWireTest extends AbstractQwpQueryDetailsTest {
     public void testWindowOnParquetPartitions() throws Exception {
         // The row window hands max_rows to skipRows() as the bound on the rows
         // read after the skip, which a parquet frame uses to decode only those.
-        // A requested count lifts the bound.
+        // A requested count lifts the bound when the cursor does not know its
+        // size, as under the filter below, and counts the rest by reading it.
         TestUtils.assertMemoryLeak(() -> {
             try (TestServerMain serverMain = startFragmented();
                  WireConnection conn = new WireConnection(maxBatchRows(32));
@@ -1041,6 +1111,48 @@ public class QwpEgressQueryDetailsWireTest extends AbstractQwpQueryDetailsTest {
         }
     }
 
+    /**
+     * Sends queries whose last and only batch takes, with its WebSocket header,
+     * from 4 bytes less to 4 bytes more than the send buffer leaves beside the
+     * longest RESULT_END the request can get, with and without the trailers, and
+     * asserts that every one ends with that RESULT_END.
+     */
+    private static void assertResultEndFollowsABatchThatFillsTheSendBuffer(int sendBufferSize) throws Exception {
+        try (WireConnection conn = new WireConnection("")) {
+            // the bytes of the batch besides the value: headers, prelude, schema,
+            // lengths, the same for every value longer than 64 KiB
+            final int calibrationLength = 100_000;
+            conn.send(QwpWireTestFixtures.buildQueryRequest(1, valueOfLength(calibrationLength), 0, 0, 0, 0));
+            final Response calibration = new Response();
+            final int overhead = conn.readBatch(calibration, 1) - calibrationLength;
+            conn.readResponse(1, calibration);
+            calibration.resultEnd().assertEnd();
+
+            long requestId = 2;
+            for (int withTrailers = 0; withTrailers < 2; withTrailers++) {
+                final long flags = withTrailers == 1
+                        ? QwpEgressMsgKind.QUERY_FLAG_COUNT_ROWS | QwpEgressMsgKind.QUERY_FLAG_STATS
+                        : 0;
+                final int resultEndMaxBytes = QwpEgressUpgradeProcessor.resultEndWorstCase(withTrailers == 1, withTrailers == 1);
+                // the batch frame takes a 10-byte WebSocket header and its QWP bytes
+                for (int frameSize = sendBufferSize - resultEndMaxBytes - 4; frameSize <= sendBufferSize - resultEndMaxBytes + 4; frameSize++) {
+                    final int length = frameSize - 10 - overhead;
+                    final Response r = conn.query(requestId++, valueOfLength(length), flags, 0, 0);
+                    final String msg = "frame=" + frameSize + ", trailers=" + (withTrailers == 1);
+                    Assert.assertEquals(msg, 1, r.batches);
+                    Assert.assertEquals(msg, length, r.strings.getQuick(0).length());
+                    final ResultEnd end = r.resultEnd();
+                    Assert.assertEquals(msg, 1, end.totalRows);
+                    if (withTrailers == 1) {
+                        Assert.assertEquals(msg, 1, end.readRowCount());
+                        end.readStats().assertFrozen(false);
+                    }
+                    end.assertEnd();
+                }
+            }
+        }
+    }
+
     private static void assertSequence(LongList actual, long first, long count) {
         Assert.assertEquals(count, actual.size());
         for (int i = 0; i < count; i++) {
@@ -1079,6 +1191,14 @@ public class QwpEgressQueryDetailsWireTest extends AbstractQwpQueryDetailsTest {
 
     private static String maxBatchRows(int rows) {
         return "X-QWP-Max-Batch-Rows: " + rows + "\r\n";
+    }
+
+    /**
+     * A query of one row and one VARCHAR column, whose value is {@code length}
+     * ASCII chars.
+     */
+    private static String valueOfLength(int length) {
+        return "SELECT lpad('x', " + length + ", 'x')::VARCHAR v FROM long_sequence(1)";
     }
 
     /**

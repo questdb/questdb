@@ -158,8 +158,10 @@ public final class QwpEgressMsgKind {
      * client_wait_ns:varint, stats_flags:u8}, following {@code row_count} when
      * {@link #QUERY_FLAG_COUNT_ROWS} is set too. {@code execute_ns} runs from the
      * arrival of the request to the terminator and includes the other three
-     * durations. {@code client_wait_ns} is the time the query waited for the
-     * client to read a result or grant credit. See {@link #STATS_FLAG_JIT_COMPILED}.
+     * durations. {@code count_ns} is the time {@link #QUERY_FLAG_COUNT_ROWS}
+     * took to count the rows past the row window, 0 when the stream read every
+     * row. {@code client_wait_ns} is the time the query waited for the client to
+     * read a result or grant credit. See {@link #STATS_FLAG_JIT_COMPILED}.
      */
     public static final int QUERY_FLAG_STATS = 0x08;
     /**

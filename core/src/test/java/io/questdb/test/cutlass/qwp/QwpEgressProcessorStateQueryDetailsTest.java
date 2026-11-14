@@ -27,9 +27,14 @@ package io.questdb.test.cutlass.qwp;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cutlass.qwp.codec.QwpEgressFrameWriter;
 import io.questdb.cutlass.qwp.codec.QwpEgressMsgKind;
+import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.server.egress.QwpEgressProcessorState;
+import io.questdb.cutlass.qwp.server.egress.QwpEgressUpgradeProcessor;
 import io.questdb.griffin.CompiledQuery;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -190,6 +195,78 @@ public class QwpEgressProcessorStateQueryDetailsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testResultEndFitsItsReservation() throws Exception {
+        assertMemoryLeak(() -> {
+            // The space streamResults keeps for RESULT_END behind the last batch, from
+            // the spec: WebSocket header (at most 10) + QWP header (12) + msg_kind (1)
+            // + request_id (8) + final_seq and total_rows varints (at most 10 each),
+            // plus a row_count varint (10) and the statistics block of four varints
+            // and a flags byte (41) when the request asks for them.
+            Assert.assertEquals(51, QwpEgressUpgradeProcessor.resultEndWorstCase(false, false));
+            Assert.assertEquals(61, QwpEgressUpgradeProcessor.resultEndWorstCase(true, false));
+            Assert.assertEquals(92, QwpEgressUpgradeProcessor.resultEndWorstCase(false, true));
+            Assert.assertEquals(102, QwpEgressUpgradeProcessor.resultEndWorstCase(true, true));
+
+            // The longest RESULT_END the writer composes, every value at the widest a
+            // long takes (9 varint bytes), fits the reservation.
+            final int bufSize = 256;
+            final long buf = Unsafe.malloc(bufSize, MemoryTag.NATIVE_DEFAULT);
+            try {
+                for (int details = 0; details < 4; details++) {
+                    final boolean isRowCountRequested = (details & 1) != 0;
+                    final boolean isStatsRequested = (details & 2) != 0;
+                    try (QwpEgressProcessorState state = new QwpEgressProcessorState(configuration, clock)) {
+                        clock.ticks = 0;
+                        clock.step = 0;
+                        state.beginQuery();
+                        state.setQueryDetails(
+                                (isRowCountRequested ? QwpEgressMsgKind.QUERY_FLAG_COUNT_ROWS : 0)
+                                        | (isStatsRequested ? QwpEgressMsgKind.QUERY_FLAG_STATS : 0)
+                                        | QwpEgressMsgKind.QUERY_FLAG_MAX_ROWS,
+                                1
+                        );
+                        state.addQueryCompileNanos(Long.MAX_VALUE);
+                        state.parkSqlExecutionOwner();
+                        clock.ticks = Long.MAX_VALUE;
+                        state.resumeSqlExecutionOwner();
+                        state.beginStreaming(1, null, new CountingCursor(Long.MAX_VALUE, 0), 1, 0, null, CompiledQuery.SELECT, false);
+                        clock.ticks = 0;
+                        clock.step = Long.MAX_VALUE;
+                        state.computeQueryRowCount(false, null);
+                        clock.step = 0;
+                        clock.ticks = Long.MAX_VALUE;
+                        state.endStreaming();
+                        Assert.assertEquals(Long.MAX_VALUE, state.getQueryRowCount());
+                        Assert.assertEquals(Long.MAX_VALUE, state.getQueryCompileNanos());
+                        Assert.assertEquals(Long.MAX_VALUE, state.getQueryElapsedNanos());
+                        Assert.assertEquals(Long.MAX_VALUE, state.getQueryCountNanos());
+                        Assert.assertEquals(Long.MAX_VALUE, state.getQueryClientWaitNanos());
+
+                        final long qwpStart = buf + QwpEgressFrameWriter.WS_HEADER_RESERVATION;
+                        final long bodyStart = QwpEgressFrameWriter.writeMessageHeader(qwpStart, QwpConstants.VERSION, (byte) 0, 0, 0);
+                        final long bodyEnd = QwpEgressUpgradeProcessor.writeResultEndBody(
+                                bodyStart, state, Long.MAX_VALUE, Long.MAX_VALUE, Long.MAX_VALUE
+                        );
+                        final String msg = "rowCount=" + isRowCountRequested + ", stats=" + isStatsRequested;
+                        Assert.assertEquals(
+                                msg,
+                                QwpEgressFrameWriter.WS_HEADER_RESERVATION + QwpConstants.HEADER_SIZE + 1 + 8 + 9 + 9
+                                        + (isRowCountRequested ? 9 : 0) + (isStatsRequested ? 4 * 9 + 1 : 0),
+                                bodyEnd - buf
+                        );
+                        Assert.assertTrue(
+                                msg,
+                                bodyEnd - buf <= QwpEgressUpgradeProcessor.resultEndWorstCase(isRowCountRequested, isStatsRequested)
+                        );
+                    }
+                }
+            } finally {
+                Unsafe.free(buf, bufSize, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
     public void testRowCountOfDrainedCursorIsSkippedPlusStreamed() {
         try (QwpEgressProcessorState state = new QwpEgressProcessorState(configuration, clock)) {
             state.beginQuery();
@@ -203,7 +280,8 @@ public class QwpEgressProcessorStateQueryDetailsTest extends AbstractCairoTest {
             // the drained cursor is not consulted: there is none on state
             state.computeQueryRowCount(true, null);
             Assert.assertEquals(3 + 16_384 + 5, state.getQueryRowCount());
-            Assert.assertEquals(9, state.getQueryCountNanos());
+            // nothing was left to count, so no count time, as on /exec
+            Assert.assertEquals(0, state.getQueryCountNanos());
             Assert.assertFalse(state.isRowCountPending());
         }
     }
@@ -229,10 +307,14 @@ public class QwpEgressProcessorStateQueryDetailsTest extends AbstractCairoTest {
             state.onRowWindowRowsSkipped(1);
             state.onRowWindowRowsAppended(2);
             Assert.assertEquals(0, state.getRowWindowRemaining());
+            clock.ticks = 1_000;
+            clock.step = 40;
             state.computeQueryRowCount(false, null);
             // a cursor that knows its size is not read to the end
             Assert.assertEquals(1_000, state.getQueryRowCount());
             Assert.assertEquals(0, cursor.hasNextCalls);
+            // asking the cursor for its size counts the rows past the window
+            Assert.assertEquals(40, state.getQueryCountNanos());
             state.endStreaming();
             Assert.assertTrue(cursor.isClosed);
             Assert.assertEquals("the count outlives the cursor", 1_000, state.getQueryRowCount());

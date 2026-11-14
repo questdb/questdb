@@ -164,6 +164,9 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
     private static final Log LOG = LogFactory.getLog(QwpEgressUpgradeProcessor.class);
     private static final LocalValue<QwpEgressProcessorState> LV = new LocalValue<>();
     private static final NoOpAssociativeCache<RecordCursorFactory> NO_OP_SELECT_CACHE = new NoOpAssociativeCache<>();
+    // Most rows streamResults appends from a page frame between two checks of
+    // the batch's SYMBOL dictionary size.
+    private static final int PAGE_FRAME_SLICE_ROWS = 1024;
     // Carries the byte count of a 4xx upgrade rejection staged in the raw
     // response buffer by onHeadersReady, to be flushed by onRequestComplete
     // (which is allowed to propagate PeerIsSlowToReadException to the
@@ -422,6 +425,59 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         return factory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD
                 ? PartitionFrameCursorFactory.ORDER_DESC
                 : PartitionFrameCursorFactory.ORDER_ASC;
+    }
+
+    /**
+     * Returns the worst-case number of bytes a {@code RESULT_END} frame takes in
+     * the send buffer: the WebSocket header reservation, the QWP message header,
+     * msg_kind, request_id, the final_seq and total_rows varints, and the
+     * row_count varint and the statistics block the request asked for, every
+     * varint at its longest. Exposed for unit tests.
+     */
+    public static int resultEndWorstCase(boolean isRowCountRequested, boolean isStatsRequested) {
+        return QwpEgressFrameWriter.WS_HEADER_RESERVATION + QwpConstants.HEADER_SIZE + 1 + 8
+                + 2 * QwpVarint.MAX_VARINT_BYTES
+                + (isRowCountRequested ? QwpVarint.MAX_VARINT_BYTES : 0)
+                + (isStatsRequested ? QwpEgressFrameWriter.QUERY_STATS_MAX_BYTES : 0);
+    }
+
+    /**
+     * Returns the bound on the rows a row window reads from the cursor after
+     * skipping to its start, which {@code RecordCursor.skipRows} takes as
+     * {@code maxRowsAfterSkip}: {@code maxRows}, or no bound when the request
+     * asked for the row count and the cursor does not know its size,
+     * {@code cursorSize} -1. Such a count reads the rest of the cursor with
+     * {@code calculateSize}, and the bound would cut it short. A cursor that
+     * knows its size reports it whatever its position, and keeps the bound, so
+     * a page-frame scan decodes only the window's rows. Exposed for unit tests.
+     */
+    public static long rowWindowReadBound(long maxRows, boolean isRowCountRequested, long cursorSize) {
+        return isRowCountRequested && cursorSize < 0 ? RecordCursor.UNBOUNDED_ROW_COUNT : maxRows;
+    }
+
+    /**
+     * Writes a RESULT_END body followed by the trailers the request asked for:
+     * {@code row_count} under {@link QwpEgressMsgKind#QUERY_FLAG_COUNT_ROWS},
+     * then the statistics block under {@link QwpEgressMsgKind#QUERY_FLAG_STATS}.
+     * The frame, its WebSocket header reservation included, takes at most
+     * {@link #resultEndWorstCase} bytes. Exposed for unit tests.
+     *
+     * @return address just past the body
+     */
+    public static long writeResultEndBody(
+            long bodyStart,
+            QwpEgressProcessorState state,
+            long requestId,
+            long finalSeq,
+            long totalRows
+    ) {
+        long p = QwpEgressFrameWriter.writeResultEnd(bodyStart, requestId, finalSeq, totalRows);
+        if (state.isRowCountRequested()) {
+            // streamResults counts the rows before it ends the stream.
+            assert state.getQueryRowCount() > -1 : "RESULT_END before the row count";
+            p = QwpVarint.encode(p, state.getQueryRowCount());
+        }
+        return writeQueryStatsIfRequested(p, state);
     }
 
     /**
@@ -972,29 +1028,6 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 Math.max(0, state.getQueryClientWaitNanos()),
                 state.isQueryJitCompiled()
         );
-    }
-
-    /**
-     * Writes a RESULT_END body followed by the trailers the request asked for:
-     * {@code row_count} under {@link QwpEgressMsgKind#QUERY_FLAG_COUNT_ROWS},
-     * then the statistics block under {@link QwpEgressMsgKind#QUERY_FLAG_STATS}.
-     *
-     * @return address just past the body
-     */
-    private static long writeResultEndBody(
-            long bodyStart,
-            QwpEgressProcessorState state,
-            long requestId,
-            long finalSeq,
-            long totalRows
-    ) {
-        long p = QwpEgressFrameWriter.writeResultEnd(bodyStart, requestId, finalSeq, totalRows);
-        if (state.isRowCountRequested()) {
-            // streamResults counts the rows before it ends the stream.
-            assert state.getQueryRowCount() > -1 : "RESULT_END before the row count";
-            p = QwpVarint.encode(p, state.getQueryRowCount());
-        }
-        return writeQueryStatsIfRequested(p, state);
     }
 
     /**
@@ -2062,8 +2095,9 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
      * <p>
      * Falls back to two sends when the batch is too large to fit both frames
      * in the send buffer. The worst-case RESULT_END footprint is small
-     * (~41 bytes incl. reservation) so the fallback only triggers for batches
-     * that already fill the buffer to within tens of bytes of capacity.
+     * (51 bytes, 102 with the trailers a request can ask for, see
+     * {@link #resultEndWorstCase}) so the fallback only triggers for batches
+     * that already fill the buffer to within that many bytes of capacity.
      * <p>
      * Metric bookkeeping for the RESULT_BATCH portion happens internally,
      * right before the send call, so it survives a
@@ -2138,11 +2172,8 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         // varint (<= 10) = 51 bytes, plus the row_count varint and the
         // statistics block when the request asked for them. Checking upfront
         // avoids a half-built second frame that we'd have to rewind.
-        final int resultEndWorstCase = QwpEgressFrameWriter.WS_HEADER_RESERVATION
-                + QwpConstants.HEADER_SIZE + 1 + 8 + 10 + 10
-                + (state.isRowCountRequested() ? QwpVarint.MAX_VARINT_BYTES : 0)
-                + (state.isStatsRequested() ? QwpEgressFrameWriter.QUERY_STATS_MAX_BYTES : 0);
-        if (frame1Size + resultEndWorstCase > bufSize) {
+        final int resultEndMaxBytes = resultEndWorstCase(state.isRowCountRequested(), state.isStatsRequested());
+        if (frame1Size + resultEndMaxBytes > bufSize) {
             // Batch fills the buffer: cannot coalesce. Fall back to two sends,
             // matching the pre-coalesce shape.
             if (qwp1Start - ws1HeaderSize != bufAddr) {
@@ -2155,7 +2186,14 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             // the counters must always advance.
             batchBuffer.advanceStartRow(rowsThisBatch);
             metrics.markBatchSent(qwp1Size, rowsThisBatch);
+            // A send that parks leaves the stream active: resumeSend re-enters
+            // streamResults, which finds no more rows and ends the stream with
+            // RESULT_END. Until then the stream keeps its factory and cursor, so
+            // the factory goes back into the compile cache only now: the no-op
+            // cache frees what it gets, and another query could take a cached
+            // factory and reopen its cursor under the parked stream.
             rawSocket.send(frame1Size);
+            cacheStreamingFactoryIfAvailable(state);
             state.endStreaming();
             sendResultEnd(context, state, requestId, batchSeq, totalRows);
             return;
@@ -2174,6 +2212,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         long body2Start = QwpEgressFrameWriter.writeMessageHeader(
                 qwp2Start, state.getNegotiatedVersion(), (byte) 0, 0, 0 /* payload len patched */);
         long body2End = writeResultEndBody(body2Start, state, requestId, batchSeq, totalRows);
+        assert body2End - bufAddr <= frame1Size + resultEndMaxBytes : "RESULT_END outgrew its reservation";
         int qwp2Size = (int) (body2End - qwp2Start);
         QwpEgressFrameWriter.patchPayloadLength(qwp2Start, qwp2Size - QwpConstants.HEADER_SIZE);
         int ws2HeaderSize = WebSocketFrameWriter.headerSize(qwp2Size, false);
@@ -2186,6 +2225,9 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         // Release cursor/factory BEFORE the kernel gets the bytes. Otherwise the
         // client can observe RESULT_END and issue a DROP TABLE while we still
         // hold the TableReader. See the matching notes on the two-send paths.
+        // The factory goes back into the compile cache for the next query with
+        // this SQL text.
+        cacheStreamingFactoryIfAvailable(state);
         state.endStreaming();
         batchBuffer.advanceStartRow(rowsThisBatch);
         metrics.markBatchSent(qwp1Size, rowsThisBatch);
@@ -2214,11 +2256,10 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
     /**
      * Positions a freshly opened cursor at the start of the row window: skips
      * {@code skipRows} rows and records how many the result set had to skip.
-     * {@code maxRows} goes along as the bound on the rows read after the skip,
-     * which lets a page-frame scan decode only that many, the way
-     * {@code LIMIT lo, hi} does. A requested row count reads past the window,
-     * so it lifts the bound. Like {@code LIMIT}, this runs even without a skip
-     * when the bound is finite.
+     * The bound {@link #rowWindowReadBound} returns goes along as the rows
+     * read after the skip, which lets a page-frame scan decode only that many,
+     * the way {@code LIMIT lo, hi} does. Like {@code LIMIT}, this runs even
+     * without a skip when the bound is finite.
      */
     private void skipRowWindowStart(
             QwpEgressProcessorState state,
@@ -2226,7 +2267,12 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             long skipRows,
             long maxRows
     ) {
-        final long maxRowsAfterSkip = state.isRowCountRequested() ? RecordCursor.UNBOUNDED_ROW_COUNT : maxRows;
+        final boolean isRowCountRequested = state.isRowCountRequested();
+        final long maxRowsAfterSkip = rowWindowReadBound(
+                maxRows,
+                isRowCountRequested,
+                isRowCountRequested ? cursor.size() : -1
+        );
         if (skipRows == 0 && maxRowsAfterSkip == RecordCursor.UNBOUNDED_ROW_COUNT) {
             return;
         }
@@ -2351,20 +2397,9 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             if (isPageFrame) {
                 // A descending stream takes each slice from the top of the frame's
                 // unconsumed rows and appends it last row first.
-                final boolean isDescending = state.isStreamingPageFrameDescending();
                 PageFrame frame = null;
                 while (rowsToAdd > 0 && (frame = state.advanceToPageFrame()) != null) {
-                    long lo = state.getStreamingPageFrameRow();
-                    long hi = state.getStreamingPageFrameRowHi();
-                    int sliceRows = (int) Math.min(Math.min(rowsToAdd, hi - lo), 1024L);
-                    if (isDescending) {
-                        lo = hi - sliceRows;
-                    } else {
-                        hi = lo + sliceRows;
-                    }
-                    batchBuffer.appendPageFrame(frame, state.getStreamingPageFrameMemoryRecord(), lo, hi, isDescending);
-                    state.consumePageFrameRows(sliceRows);
-                    rowsToAdd -= sliceRows;
+                    rowsToAdd -= state.appendPageFrameSlice(Math.min(rowsToAdd, PAGE_FRAME_SLICE_ROWS));
                     if (batchBuffer.currentBatchDeltaWireBytes() > dictBudgetWireBytes) {
                         dictCapHit = true;
                         break;
@@ -2473,11 +2508,8 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 // Partial-emit iterations cannot take this shortcut because
                 // the suffix still has to ship in a later iteration.
                 long totalRows = state.getStreamingRowsEmitted();
-                // Cache the factory for the next query with this SQL text. Must
-                // happen before sendResultBatchAndEnd because that method calls
-                // state.endStreaming() internally; after it runs, state no longer
-                // has the factory reference.
-                cacheStreamingFactoryIfAvailable(state);
+                // sendResultBatchAndEnd puts the factory back into the compile
+                // cache when it ends the stream.
                 sendResultBatchAndEnd(context, state, requestId, currentSeq,
                         batchBuffer, isFirstBatch, totalRows, rowsToShip);
                 return;
