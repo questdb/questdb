@@ -612,9 +612,15 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
                 LOG.info().$("LV route fuzz second keyed repairs inside the owed window [commitFaults=")
                         .$(secondKeyedRepairCommitFaults)
                         .$(", stops=").$(secondKeyedRepairCommitStops).I$();
+                // Both shapes of secondKeyedRepairCommitFaultEpisode, counted rather than drawn over
+                // the two episodes the batch's first two runs give it.
                 Assert.assertTrue(
-                        "no second keyed repair inside the owed window met a replacement commit fault",
-                        secondKeyedRepairCommitFaults + secondKeyedRepairCommitStops > 0
+                        "no second keyed repair inside the owed window failed its replacement commit in the process",
+                        secondKeyedRepairCommitFaults > 0
+                );
+                Assert.assertTrue(
+                        "no second keyed repair inside the owed window stopped the process at its replacement commit",
+                        secondKeyedRepairCommitStops > 0
                 );
             }
             case STEER_SPARSE_FALLBACK -> {
@@ -1445,11 +1451,11 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
      * the seal hook sets, so its marker stays live over B's re-versioned root, below the frontier.
      * A second late row of the first key above it takes the keyed resume again: its marker
      * replaces the live one, records no seqTxn, and its replacement commit fails from the
-     * role-switch mint seam. Every other such episode stops the process at that commit, and the
-     * restart, which finds the live marker, rebuilds from the applied base. The others fail the
-     * commit in process, where the keyed replay ran beside the primary runtime, so no recovery
-     * runs and the retry repairs the row under its own live marker. The run's base lost nothing,
-     * so the view matches the oracle either way.
+     * role-switch mint seam. Every other such episode of the batch, from its second, counted rather
+     * than drawn, stops the process at that commit, and the restart, which finds the live marker,
+     * rebuilds from the applied base. The others fail the commit in process, where the keyed replay
+     * ran beside the primary runtime, so no recovery runs and the retry repairs the row under its
+     * own live marker. The run's base lost nothing, so the view matches the oracle either way.
      */
     private void secondKeyedRepairCommitFaultEpisode(String oracleSql, String orderBy, int symCount) throws Exception {
         final LiveViewInstance instance = viewInstance();
@@ -1799,7 +1805,10 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
             isOpenSegmentKeyedReplayForced = steer == STEER_KEYED_OPEN_SEGMENT
                     || isKeyedRunGuaranteed
                     || rnd.nextInt(4) != 0;
-            if (isKeyedRunGuaranteed) {
+            // A guaranteed fault run takes a variant the keyed routes serve, and so do the keyed
+            // arm's first two runs, which gives every batch of it the two episodes of
+            // secondKeyedRepairCommitFaultEpisode that take both of its shapes.
+            if (isKeyedRunGuaranteed || (steer == STEER_KEYED_OPEN_SEGMENT && run < 2)) {
                 variant = rnd.nextInt(GROUPED_VARIANT_COUNT);
             }
         }

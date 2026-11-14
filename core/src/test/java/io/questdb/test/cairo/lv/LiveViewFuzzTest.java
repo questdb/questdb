@@ -466,12 +466,14 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // batch, from the first, counted rather than drawn, so a pinned-seed batch of another test
     // draws what it drew before, ends on a second late row whose replacement commit fails inside
     // the window the failed closing seal left open: see failTheSecondRepairsCommit. Then those
-    // episodes, the ones of them that failed the commit in the process, and the ones whose
-    // in-place rebuild the restatement guard refused over the day the run dropped.
+    // episodes, the ones of them that failed the commit in the process, the ones that stopped the
+    // process at it, and the ones whose in-place rebuild the restatement guard refused over the
+    // day the run dropped.
     private boolean isSecondRepairCommitFaultArm;
     private int secondRepairCommitFaultCandidates;
     private int secondRepairCommitFaultEpisodes;
     private int secondRepairCommitFaultsInPlace;
+    private int secondRepairCommitStops;
     private int secondRepairRebuildsRefusedInPlace;
     // The marker failTheSecondRepairsCommit logged ahead of its fault, which the check after the
     // restart that follows it reads the capture from; null outside such an episode.
@@ -3186,16 +3188,22 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     }
 
     // Every other owed-seal episode of the arm, from the first, ends on failTheSecondRepairsCommit,
-    // so every batch of it fails the replacement commit of a second late row inside the window.
-    // Whether in the process, over a day the run dropped, and on which route, turns on the draws,
-    // so those are logged.
+    // so every batch of it, whose three RANGE-frame runs end on an owed-seal episode each, fails
+    // the replacement commit of a second late row inside the window twice, counted rather than
+    // drawn: once in the process and once by stopping the process. Whether over a day the run
+    // dropped, and on which route, turns on the draws, so those are logged.
     private void assertReachedASecondRepairCommitFault() {
         LOG.info().$("LV fuzz second repair commit faults [episodes=").$(secondRepairCommitFaultEpisodes)
                 .$(", inPlace=").$(secondRepairCommitFaultsInPlace)
+                .$(", stops=").$(secondRepairCommitStops)
                 .$(", refusedInPlace=").$(secondRepairRebuildsRefusedInPlace).I$();
         Assert.assertTrue(
-                "no second late row inside the owed window failed its replacement commit",
-                secondRepairCommitFaultEpisodes > 0
+                "no second late row inside the owed window failed its replacement commit in the process",
+                secondRepairCommitFaultsInPlace > 0
+        );
+        Assert.assertTrue(
+                "no second late row inside the owed window stopped the process at its replacement commit",
+                secondRepairCommitStops > 0
         );
     }
 
@@ -3667,14 +3675,14 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
      * splice's generation. A second late row inside that window, placed for the route the first
      * took, goes to the base alone, and its repair writes its marker over the live one, so the
      * marker records no seqTxn. Its replacement commit fails from the role-switch mint seam: in the
-     * process with a critical error, or, as the episode draws, by stopping the process there, which
-     * the caller's restart then comes back from. In the process, the fault meets the in-place
-     * recovery, unless a head-miss rebuild that converged below the frontier kept the primary
-     * runtime and retries. A recovery that meets the marker rebuilds from the applied base, which
-     * the restatement guard refuses over the day the run dropped, {@code droppedDayTs}: the view
-     * stops with the rows {@code base_shadow} keeps, the second late row unconsumed. Otherwise the
-     * view consumes the row and matches the recompute, over {@code base_shadow} when the base lost
-     * a day. Nothing may stand the guard down: see
+     * process with a critical error on the batch's first such episode and every other one from it,
+     * and on the others by stopping the process there, which the caller's restart then comes back
+     * from. In the process, the fault meets the in-place recovery, unless a head-miss rebuild that
+     * converged below the frontier kept the primary runtime and retries. A recovery that meets the
+     * marker rebuilds from the applied base, which the restatement guard refuses over the day the
+     * run dropped, {@code droppedDayTs}: the view stops with the rows {@code base_shadow} keeps, the
+     * second late row unconsumed. Otherwise the view consumes the row and matches the recompute,
+     * over {@code base_shadow} when the base lost a day. Nothing may stand the guard down: see
      * {@link #assertTheRestartAfterTheOwedSealEpisode}, which also gives {@code base_shadow} the
      * row once the view holds it.
      *
@@ -3696,7 +3704,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             String shadowOracleOrderedSql,
             String viewOrderedSql
     ) throws Exception {
-        final boolean isInPlace = episodeRnd.nextBoolean();
+        // Counted rather than drawn: see assertReachedASecondRepairCommitFault.
+        final boolean isInPlace = secondRepairCommitFaultEpisodes % 2 == 0;
         long lateTs;
         if (isHeadMissShaped) {
             lateTs = batchB[0] - 1 - episodeRnd.nextLong(Micros.SECOND_MICROS);
@@ -3748,6 +3757,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         secondRepairCommitFaultEpisodes++;
         if (!isInPlace) {
             Assert.assertEquals("the replacement never commits", lvSeqTxnBefore, engine.getTableSequencerAPI().lastTxn(instance.getLiveViewToken()));
+            secondRepairCommitStops++;
             return OWED_SEAL_MARKER_LIVE;
         }
         secondRepairCommitFaultsInPlace++;
