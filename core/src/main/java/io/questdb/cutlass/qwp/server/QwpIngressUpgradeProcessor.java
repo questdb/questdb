@@ -29,6 +29,7 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.wal.DurabilityTier;
 import io.questdb.cairo.wal.DurableAckRegistry;
 import io.questdb.cutlass.http.HttpConnectionContext;
+import io.questdb.cutlass.http.HttpConstants;
 import io.questdb.cutlass.http.HttpException;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpRawSocket;
@@ -379,7 +380,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
     @Override
     public boolean isBrowserCredentialAccepted(HttpConnectionContext context) {
         final HttpRequestHeader requestHeader = context.getRequestHeader();
-        return httpConfiguration.getQwpBrowserAllowedOrigins().isAllowed(requestHeader.getHeader(QwpIngressHttpProcessor.HEADER_ORIGIN))
+        return httpConfiguration.getQwpBrowserAllowedOrigins().isAllowed(requestHeader.getHeader(HttpConstants.HEADER_ORIGIN))
                 && selectBrowserWebSocketProtocol(requestHeader.getHeader(QwpIngressHttpProcessor.HEADER_SEC_WEBSOCKET_PROTOCOL)) != null;
     }
 

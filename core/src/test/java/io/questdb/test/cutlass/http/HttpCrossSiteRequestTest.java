@@ -38,12 +38,11 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.net.Socket;
-import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 
 import static io.questdb.cutlass.http.HttpConstants.SESSION_COOKIE_NAME;
 import static io.questdb.test.cutlass.http.HttpUtils.*;
+import static io.questdb.test.cutlass.qwp.QwpWireTestFixtures.statusLine;
 
 /**
  * A web page can make the browser send requests to any QuestDB the browser
@@ -678,17 +677,6 @@ public class HttpCrossSiteRequestTest extends AbstractBootstrapTest {
         } catch (Throwable th) {
             Misc.free(serverMain, th);
             throw th;
-        }
-    }
-
-    // sends the request on a connection of its own and returns the status line of the response
-    private static String statusLine(int port, String request) throws Exception {
-        try (Socket socket = new Socket("localhost", port)) {
-            socket.setSoTimeout(5_000);
-            socket.getOutputStream().write(request.getBytes(StandardCharsets.US_ASCII));
-            final String response = QwpWireTestFixtures.readHttpHeaders(socket.getInputStream());
-            final int statusLineEnd = response.indexOf("\r\n");
-            return statusLineEnd < 0 ? response : response.substring(0, statusLineEnd);
         }
     }
 

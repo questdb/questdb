@@ -63,8 +63,6 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
     // credential subprotocol.
     public static final String ERROR_CROSS_ORIGIN_NOT_ALLOWED = "Origin is not same-origin with Host on QWP WebSocket";
     public static final Utf8String HEADER_CONNECTION = new Utf8String("Connection");
-    public static final Utf8String HEADER_HOST = new Utf8String("Host");
-    public static final Utf8String HEADER_ORIGIN = new Utf8String("Origin");
     public static final Utf8String HEADER_SEC_WEBSOCKET_KEY = new Utf8String("Sec-WebSocket-Key");
     public static final Utf8String HEADER_SEC_WEBSOCKET_PROTOCOL = new Utf8String("Sec-WebSocket-Protocol");
     public static final Utf8String HEADER_SEC_WEBSOCKET_VERSION = new Utf8String("Sec-WebSocket-Version");
@@ -324,8 +322,8 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
      * not cross-origin.
      */
     public static boolean isCrossOrigin(HttpRequestHeader header, boolean secureConnection) {
-        final Utf8Sequence origin = header.getHeader(HEADER_ORIGIN);
-        return origin != null && !isSameOrigin(origin, header.getHeader(HEADER_HOST), secureConnection);
+        final Utf8Sequence origin = header.getHeader(HttpConstants.HEADER_ORIGIN);
+        return origin != null && !isSameOrigin(origin, header.getHeader(HttpConstants.HEADER_HOST), secureConnection);
     }
 
     /**
@@ -595,7 +593,7 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
         // cross-origin upgrade only with the credential subprotocol (or not at
         // all when authentication is disabled), never with a cookie, a session
         // or an Authorization header.
-        if (isCrossOrigin(header, secureConnection) && !allowedOrigins.isAllowed(header.getHeader(HEADER_ORIGIN))) {
+        if (isCrossOrigin(header, secureConnection) && !allowedOrigins.isAllowed(header.getHeader(HttpConstants.HEADER_ORIGIN))) {
             return ERROR_CROSS_ORIGIN_NOT_ALLOWED;
         }
 

@@ -116,6 +116,7 @@ import static io.questdb.test.cutlass.qwp.QwpWireTestFixtures.assertQwpBrowserUp
 import static io.questdb.test.cutlass.qwp.QwpWireTestFixtures.browserCredentialOffer;
 import static io.questdb.test.cutlass.qwp.QwpWireTestFixtures.browserCredentialProtocol;
 import static io.questdb.test.cutlass.qwp.QwpWireTestFixtures.browserCredentialUpgrade;
+import static io.questdb.test.cutlass.qwp.QwpWireTestFixtures.statusLine;
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 import static org.junit.Assert.assertFalse;
 
@@ -1668,18 +1669,15 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 for (String origin : new String[]{"https://app.example.com", "https://other.example.com"}) {
                     for (String credentials : new String[]{cookie, basicAuthorization}) {
                         for (boolean isSameOrigin : new boolean[]{true, false}) {
-                            try (Socket socket = new Socket("localhost", port)) {
-                                socket.setSoTimeout(5_000);
-                                String request = "GET /exec?query=select%201 HTTP/1.1\r\n"
-                                        + "Host: localhost:" + port + "\r\n"
-                                        + "Origin: " + origin + "\r\n"
-                                        + (isSameOrigin ? "Sec-Fetch-Site: same-origin\r\n" : "")
-                                        + credentials
-                                        + "Connection: close\r\n\r\n";
-                                socket.getOutputStream().write(request.getBytes(StandardCharsets.US_ASCII));
-                                String response = QwpWireTestFixtures.readHttpHeaders(socket.getInputStream());
-                                Assert.assertTrue(response, response.startsWith(isSameOrigin ? "HTTP/1.1 200" : "HTTP/1.1 403"));
-                            }
+                            final String headers = "Host: localhost:" + port + "\r\n"
+                                    + "Origin: " + origin + "\r\n"
+                                    + (isSameOrigin ? "Sec-Fetch-Site: same-origin\r\n" : "")
+                                    + credentials;
+                            Assert.assertEquals(
+                                    headers,
+                                    isSameOrigin ? "HTTP/1.1 200 OK" : "HTTP/1.1 403 Forbidden",
+                                    execStatusLine(port, headers)
+                            );
                         }
                     }
                 }
@@ -2421,14 +2419,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
 
     // returns the status line of a GET of select 1 that carries the given headers
     private static String execStatusLine(int port, String headers) throws Exception {
-        try (Socket socket = new Socket("localhost", port)) {
-            socket.setSoTimeout(5_000);
-            String request = "GET /exec?query=select%201 HTTP/1.1\r\n" + headers + "Connection: close\r\n\r\n";
-            socket.getOutputStream().write(request.getBytes(StandardCharsets.US_ASCII));
-            String response = QwpWireTestFixtures.readHttpHeaders(socket.getInputStream());
-            int statusLineEnd = response.indexOf("\r\n");
-            return statusLineEnd < 0 ? response : response.substring(0, statusLineEnd);
-        }
+        return statusLine(port, "GET /exec?query=select%201 HTTP/1.1\r\n" + headers + "Connection: close\r\n\r\n");
     }
 
     private static Connection getConnection(String user, String pass) throws SQLException {
