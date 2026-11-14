@@ -24,7 +24,7 @@
 
 package io.questdb.test.cutlass.qwp;
 
-import io.questdb.cutlass.qwp.server.QwpBrowserAllowedOrigins;
+import io.questdb.cutlass.http.BrowserAllowedOrigins;
 import io.questdb.cutlass.qwp.server.QwpBrowserAuthorization;
 import io.questdb.cutlass.qwp.server.QwpIngressHttpProcessor;
 import io.questdb.std.str.DirectUtf8Sink;
@@ -73,7 +73,7 @@ public class QwpBrowserOriginTest {
                 "http://10.0.0.255", "https://[::1]:8443", "https://[2001:db8::1]", "http://[::ffff:7f00:1]:3000",
                 "http://[2001:db8:0:1:1:1:1:1]", "http://[2001:db8::1:0:0:1]", "http://[1::]"
         }) {
-            QwpBrowserAllowedOrigins allowed = QwpBrowserAllowedOrigins.parse(value);
+            BrowserAllowedOrigins allowed = BrowserAllowedOrigins.parse(value);
             Assert.assertTrue(value, allowed.isAllowed(new Utf8String(value)));
         }
     }
@@ -112,14 +112,14 @@ public class QwpBrowserOriginTest {
                 "https://app..example.com", "https://.app.example.com", "https://[::1", "https://[::1]x"
         }) {
             try {
-                QwpBrowserAllowedOrigins.parse(value);
+                BrowserAllowedOrigins.parse(value);
                 Assert.fail("accepted invalid browser origin config: " + value);
             } catch (IllegalArgumentException expected) {
                 // A bad entry must fail the entire configuration, not silently widen the policy.
             }
         }
-        Assert.assertSame(QwpBrowserAllowedOrigins.EMPTY, QwpBrowserAllowedOrigins.parse(""));
-        Assert.assertSame(QwpBrowserAllowedOrigins.EMPTY, QwpBrowserAllowedOrigins.parse("  "));
+        Assert.assertSame(BrowserAllowedOrigins.EMPTY, BrowserAllowedOrigins.parse(""));
+        Assert.assertSame(BrowserAllowedOrigins.EMPTY, BrowserAllowedOrigins.parse("  "));
     }
 
     @Test
@@ -290,7 +290,7 @@ public class QwpBrowserOriginTest {
 
     private static void assertRejectedWith(String value, String expectedReason) {
         try {
-            QwpBrowserAllowedOrigins.parse(value);
+            BrowserAllowedOrigins.parse(value);
             Assert.fail("accepted invalid browser origin config: " + value);
         } catch (IllegalArgumentException e) {
             Assert.assertTrue(e.getMessage(), e.getMessage().contains(expectedReason));

@@ -40,6 +40,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cutlass.SelectCacheKey;
 import io.questdb.cutlass.http.HttpConnectionContext;
+import io.questdb.cutlass.http.HttpConstants;
 import io.questdb.cutlass.http.HttpException;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpRawSocket;
@@ -430,13 +431,20 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
     @Override
     public boolean isBrowserCredentialAccepted(HttpConnectionContext context) {
         final HttpRequestHeader requestHeader = context.getRequestHeader();
-        return httpConfiguration.getQwpBrowserAllowedOrigins().isAllowed(requestHeader.getHeader(QwpIngressHttpProcessor.HEADER_ORIGIN))
+        return httpConfiguration.getQwpBrowserAllowedOrigins().isAllowed(requestHeader.getHeader(HttpConstants.HEADER_ORIGIN))
                 && selectBrowserWebSocketProtocol(requestHeader.getHeader(QwpIngressHttpProcessor.HEADER_SEC_WEBSOCKET_PROTOCOL)) != null;
     }
 
     @Override
     public boolean isCrossOriginBrowserUpgrade(HttpConnectionContext context) {
         return QwpIngressHttpProcessor.isCrossOrigin(context.getRequestHeader(), isSecureConnection(context));
+    }
+
+    @Override
+    public boolean isCrossSiteRequestAccepted() {
+        // validateHandshake() admits browser origins by the QWP policy, which
+        // includes the origins listed in qwp.browser.allowed.origins
+        return true;
     }
 
     @Override

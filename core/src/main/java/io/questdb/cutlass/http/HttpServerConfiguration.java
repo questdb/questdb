@@ -31,6 +31,22 @@ import io.questdb.std.ObjHashSet;
 
 public interface HttpServerConfiguration extends IODispatcherConfiguration, WorkerPoolConfiguration {
 
+    /**
+     * The host names this server serves when it runs without authentication;
+     * custom configurations serve the ones public DNS cannot point at it.
+     */
+    default HttpAllowedHosts getAllowedHosts() {
+        return HttpAllowedHosts.DEFAULT;
+    }
+
+    /**
+     * The browser origins whose cross-site requests this server serves, on every
+     * endpoint that rejects cross-site requests; custom configurations serve none.
+     */
+    default BrowserAllowedOrigins getBrowserAllowedOrigins() {
+        return BrowserAllowedOrigins.EMPTY;
+    }
+
     default ObjHashSet<String> getContextPathLifecycle() {
         return new ObjHashSet<>() {{
             add("/lifecycle");

@@ -129,6 +129,21 @@ public interface HttpRequestProcessor {
         return false;
     }
 
+    /**
+     * Returns true when this endpoint serves requests that a browser sends on
+     * behalf of another site. For every other endpoint, the connection rejects
+     * such a request, even one with valid credentials: a request whose
+     * Sec-Fetch-Site header is neither same-origin nor none, or, when it has no
+     * Sec-Fetch-Site, whose Origin is not the origin of its Host, unless the
+     * configuration lists its Origin among the browser origins it allows,
+     * {@link HttpServerConfiguration#getBrowserAllowedOrigins()}. Static content
+     * accepts these requests, because links and embedded assets on other sites
+     * reach it, and so do endpoints that apply their own Origin policy.
+     */
+    default boolean isCrossSiteRequestAccepted() {
+        return false;
+    }
+
     default void onConnectionClosed(HttpConnectionContext context) {
     }
 

@@ -56,9 +56,12 @@ public final class HttpConstants {
     public static final Utf8String HEADER_CONTENT_LENGTH = new Utf8String("Content-Length");
     public static final Utf8String HEADER_CONTENT_TYPE = new Utf8String("Content-Type");
     public static final Utf8String HEADER_COOKIE = new Utf8String("Cookie");
+    public static final Utf8String HEADER_HOST = new Utf8String("Host");
     public static final Utf8String HEADER_IF_NONE_MATCH = new Utf8String("If-None-Match");
     public static final Utf8String HEADER_IF_RANGE = new Utf8String("If-Range");
+    public static final Utf8String HEADER_ORIGIN = new Utf8String("Origin");
     public static final Utf8String HEADER_RANGE = new Utf8String("Range");
+    public static final Utf8String HEADER_SEC_FETCH_SITE = new Utf8String("Sec-Fetch-Site");
     public static final Utf8String HEADER_SET_COOKIE = new Utf8String("Set-Cookie");
     public static final Utf8String HEADER_STATEMENT_TIMEOUT = new Utf8String("Statement-Timeout");
     public static final Utf8String HEADER_TRANSFER_ENCODING = new Utf8String("Transfer-Encoding");
