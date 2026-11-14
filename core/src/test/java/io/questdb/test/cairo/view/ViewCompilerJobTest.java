@@ -38,6 +38,7 @@ import io.questdb.cairo.view.ViewCompilerJob;
 import io.questdb.cairo.view.ViewCompilerTask;
 import io.questdb.cairo.view.ViewState;
 import io.questdb.cairo.view.ViewStateStore;
+import io.questdb.cairo.view.ViewStateStoreImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Chars;
@@ -1017,6 +1018,28 @@ public class ViewCompilerJobTest extends AbstractViewTest {
             assertViewStatus("v", "valid", "", "2025-06-19T11:30:00.000000Z");
             assertViewColumns("v", "a:INT");
             assertPendingCompileBusyRetries("");
+        });
+    }
+
+    @Test
+    public void testViewCompileRunNumberIsNeverZero() throws Exception {
+        // The store looks up 0 for a thread that runs no view compile run, and a DDL takes a holder
+        // of its table on such a thread for a query. The first run of a new store, such as the
+        // startup pass of a server, gets a number other than 0, and the store forgets it once the
+        // run ends.
+        assertMemoryLeak(() -> {
+            final ViewStateStore stateStore = new ViewStateStoreImpl(engine);
+            final long testThread = Thread.currentThread().threadId();
+            Assert.assertEquals(0, stateStore.getCompileRunOfThread(testThread));
+            stateStore.startCompileRun();
+            final long firstRun;
+            try {
+                firstRun = stateStore.getCompileRunOfThread(testThread);
+            } finally {
+                stateStore.finishCompileRun();
+            }
+            Assert.assertNotEquals(0, firstRun);
+            Assert.assertEquals(0, stateStore.getCompileRunOfThread(testThread));
         });
     }
 
