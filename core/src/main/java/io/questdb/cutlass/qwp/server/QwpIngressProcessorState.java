@@ -27,7 +27,6 @@ package io.questdb.cutlass.qwp.server;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitFailedException;
-import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -2160,8 +2159,8 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     private boolean commitBatchEntries(int n) {
         // The configured mode, the one WalWriter commits by; not the resolved mode, which maps ADAPTIVE to
         // NOSYNC on a replica. NOSYNC and ASYNC have no pre-sequencing sync worth moving out of the lock.
-        final int commitMode = engine.getConfiguration().getCommitMode();
-        final boolean isPreparePhaseEnabled = commitMode == CommitMode.SYNC || commitMode == CommitMode.ADAPTIVE;
+        // The WAL writers decide their commit grade, and every one answers the same.
+        final boolean isPreparePhaseEnabled = commitBatchEntries.getQuick(0).writer.isCommitSyncing();
         if (isPreparePhaseEnabled) {
             preparePhaseCount++;
             for (int i = 0; i < n; i++) {

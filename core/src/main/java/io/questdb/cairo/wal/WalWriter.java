@@ -656,6 +656,16 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     /**
+     * Whether a commit of this writer waits for its WAL file syncs, under the SYNC and ADAPTIVE commit modes: the
+     * commit that {@link #prepareCommit()} splits, so that sequencing does none of this writer's file IO. Every WAL
+     * writer answers the same, see {@link #walCommitMode()}.
+     */
+    public boolean isCommitSyncing() {
+        final int commitMode = walCommitMode();
+        return commitMode == CommitMode.SYNC || commitMode == CommitMode.ADAPTIVE;
+    }
+
+    /**
      * True between {@code beginColumnarWrite} and its {@code endColumnarWrite} or
      * {@code cancelColumnarWrite}; also true after a cancel that failed to rewind.
      */
