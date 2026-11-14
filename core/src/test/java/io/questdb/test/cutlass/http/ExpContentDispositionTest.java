@@ -35,6 +35,7 @@ import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.ConcurrentLinkedQueue;
 
 import static io.questdb.cutlass.http.HttpConstants.HEADER_CONTENT_DISPOSITION;
 import static io.questdb.test.cutlass.http.SendAndReceiveRequestBuilder.RequestHeaders;
@@ -237,6 +238,29 @@ public class ExpContentDispositionTest extends AbstractTest {
             executor.execute(csvRequest("a%22b"), csvResponse("a\\\"b.csv"));
             executor.execute(NO_FILE_NAME_REQUEST, csvResponse(DEFAULT_FILE_NAME));
         }));
+    }
+
+    @Test
+    public void testRejectedFileNameDoesNotRunQuery() throws Exception {
+        getSimpleTester().run((engine, _) -> {
+            // /exp registers its query in the QueryRegistry when it opens the cursor
+            final ConcurrentLinkedQueue<String> registeredQueries = new ConcurrentLinkedQueue<>();
+            engine.getQueryRegistry().setListener((query, _, _) -> registeredQueries.add(query.toString()));
+            try {
+                new SendAndReceiveRequestBuilder().executeMany(executor -> {
+                    executor.execute(csvRequest("a%0D%0Ab"), CONTROL_CHAR_RESPONSE);
+                    executor.execute(parquetRequest("a%0D%0Ab"), CONTROL_CHAR_RESPONSE);
+                    executor.execute(csvRequest("a%FF"), BAD_UTF8_RESPONSE);
+                    executor.execute(parquetRequest("a%FF"), BAD_UTF8_RESPONSE);
+                    // the server handles the requests of a connection in order, so this one runs after
+                    // it is done with the rejected ones, and its query is the one the registry must see
+                    executor.execute(csvRequest("report"), csvResponse("report.csv"));
+                });
+            } finally {
+                engine.getQueryRegistry().setListener(null);
+            }
+            TestUtils.assertEquals("[select 1 x]", registeredQueries.toString());
+        });
     }
 
     private static void assertCsvFileNames(String... urlParamAndHeaderFileName) throws Exception {

@@ -489,8 +489,8 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
     /**
      * Writes the text as the content of an RFC 9110 quoted-string. A backslash escapes each double
      * quote and backslash, so neither can end the string early and leave the rest of the text, and
-     * the file extension after it, outside the quotes. The caller rejects text with control
-     * characters, since CR and LF would end the header line.
+     * the file extension after it, outside the quotes. The text must not hold control characters,
+     * since CR and LF would end the header line; parseUrl() rejects file names that hold them.
      */
     private static void putQuotedStringContent(Utf8Sink sink, CharSequence text) {
         final int n = text.length();
