@@ -195,7 +195,8 @@ public class ViewFuzzTest extends AbstractFuzzTest {
             case 0 -> "WITH unused AS (" + unused + ") SELECT * FROM (" + query + ")";
             case 1 -> "WITH unused AS (" + unused + "), used AS (" + query + ") SELECT * FROM used";
             case 2 -> "WITH used AS (WITH unused AS (" + unused + ") SELECT * FROM (" + query + ")) SELECT * FROM used";
-            case 3 -> "WITH unused AS (" + unused + ") SELECT * FROM (WITH unused AS (" + query + ") SELECT * FROM unused)";
+            case 3 ->
+                    "WITH unused AS (" + unused + ") SELECT * FROM (WITH unused AS (" + query + ") SELECT * FROM unused)";
             case 4 -> "WITH c AS (" + unused + "), unused AS (SELECT * FROM c) SELECT * FROM (" + query + ")";
             default -> "WITH used AS (" + query + ") SELECT * FROM used UNION ALL SELECT * FROM used";
         };
