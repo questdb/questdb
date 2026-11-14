@@ -192,8 +192,9 @@ public class CreateTableColumnModel implements Mutable {
         this.indexValueBlockSize = indexValueBlockSize;
     }
 
-    public void setIsDedupKey() {
-        dedupKeyFlag = true;
+    public void setIsDedupKey(int dedupColumnPos) {
+        this.dedupKeyFlag = true;
+        this.dedupColumnPos = dedupColumnPos;
     }
 
     public void setParquetBloomFilter(boolean parquetBloomFilter) {
