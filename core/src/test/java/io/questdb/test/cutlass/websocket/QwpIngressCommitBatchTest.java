@@ -120,9 +120,8 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     private static final long FUZZ_PINNED_SEED1 = 8_483_050L;
     private static final int FUZZ_PING = 11;
     private static final int FUZZ_PLAIN = 0;
-    // Seeds of testCommitBatchFuzzGeneratesPrepareFaults' fault Rnd.
-    private static final long FUZZ_PREPARE_FAULT_SEED0 = 12_345L;
-    private static final long FUZZ_PREPARE_FAULT_SEED1 = 67_890L;
+    // Iterations of testCommitBatchFuzzPrepareFaultsFire*, whose frames come from the FUZZ_SHAPES seeds.
+    private static final int FUZZ_PREPARE_FAULT_ITERATIONS = 32;
     private static final int FUZZ_ROWLESS_DEFERRED = 10;
     private static final int FUZZ_SCHEMA_MISMATCH = 6;
     // Seeds of testCommitBatchFuzzGeneratesRewindShapes.
@@ -417,28 +416,23 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     }
 
     /**
-     * From fixed seeds of the fault Rnd, the fuzz draws prepare faults, transient and persistent, on iterations
-     * with a commit batch of more than one table, under a mode that prepares.
+     * Under ADAPTIVE, prepare faults scripted into the fuzz iterations of fixed seeds fail commit prepares in
+     * multi-table batches, transient and persistent ones: a fault trigger that no longer matches the prepare's
+     * flush fails this test instead of leaving the fuzz without prepare faults.
      */
     @Test
-    public void testCommitBatchFuzzGeneratesPrepareFaults() {
-        final Rnd rnd = new Rnd(FUZZ_SHAPES_SEED0, FUZZ_SHAPES_SEED1);
-        final Rnd faultRnd = new Rnd(FUZZ_PREPARE_FAULT_SEED0, FUZZ_PREPARE_FAULT_SEED1);
-        int transientFaults = 0;
-        int persistentFaults = 0;
-        for (int iteration = 0; iteration < 60; iteration++) {
-            final FuzzIteration it = generateCommitBatchFuzzIteration(rnd, iteration);
-            drawPrepareFault(faultRnd, it);
-            if (it.prepareFaultTable > -1 && it.hasPlainFrameOfOtherTableThan(it.prepareFaultTable)) {
-                if (it.isPrepareFaultTransient) {
-                    transientFaults++;
-                } else {
-                    persistentFaults++;
-                }
-            }
-        }
-        Assert.assertTrue("a transient prepare fault in a multi-table batch", transientFaults > 0);
-        Assert.assertTrue("a persistent prepare fault in a multi-table batch", persistentFaults > 0);
+    public void testCommitBatchFuzzPrepareFaultsFireAdaptive() throws Exception {
+        assertCommitBatchFuzzPrepareFaultsFire(CommitMode.ADAPTIVE);
+    }
+
+    /**
+     * Under SYNC, prepare faults scripted into the fuzz iterations of fixed seeds fail commit prepares in
+     * multi-table batches, transient and persistent ones: a fault trigger that no longer matches the prepare's
+     * flush fails this test instead of leaving the fuzz without prepare faults.
+     */
+    @Test
+    public void testCommitBatchFuzzPrepareFaultsFireSync() throws Exception {
+        assertCommitBatchFuzzPrepareFaultsFire(CommitMode.SYNC);
     }
 
     /**
@@ -5534,13 +5528,15 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     // Draws the iteration's prepare fault from faultRnd. A prepare fault is a commit fault, which the
     // generator keeps out of an iteration whose only faults are data errors, checked for I3 and I4, and away
     // from deferred groups, whose commitAll commits the group's tables one by one, see
-    // generateCommitBatchFuzzIteration(). Draws the same values either way, so a seed draws the same faults.
-    private static void drawPrepareFault(Rnd faultRnd, FuzzIteration it) {
+    // generateCommitBatchFuzzIteration(). Only a mode that prepares, SYNC or ADAPTIVE, flushes the column file
+    // that the fault fails, so no other mode gets one. Draws the same values either way, so a seed draws the same
+    // faults.
+    private static void drawPrepareFault(Rnd faultRnd, FuzzIteration it, boolean isPreparingMode) {
         final boolean isFaulty = faultRnd.nextInt(3) == 0;
         final int table = faultRnd.nextInt(it.tables.length);
         final long fromCall = 1 + faultRnd.nextInt(3);
         final boolean isTransient = faultRnd.nextBoolean();
-        if (isFaulty && !it.isDataErrorsOnly && !it.frameKinds.contains(FUZZ_DEFERRED)) {
+        if (isPreparingMode && isFaulty && !it.isDataErrorsOnly && !it.frameKinds.contains(FUZZ_DEFERRED)) {
             it.prepareFaultTable = table;
             it.prepareFaultFromCall = fromCall;
             it.isPrepareFaultTransient = isTransient;
@@ -5568,12 +5564,71 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
             final ObjList<FuzzIteration> iterations = new ObjList<>();
             // A local run raises the budget, see CLAUDE.md's fuzzing rule.
             final int budget = Integer.getInteger("questdb.fuzz.qwp.batch.iterations", iterationCount);
+            final boolean isPreparingMode = commitMode == CommitMode.SYNC || commitMode == CommitMode.ADAPTIVE;
             for (int iteration = 0; iteration < budget; iteration++) {
                 final FuzzIteration it = generateCommitBatchFuzzIteration(rnd, iteration);
-                drawPrepareFault(faultRnd, it);
+                drawPrepareFault(faultRnd, it, isPreparingMode);
                 iterations.add(it);
             }
             runCommitBatchFuzz(iterations, commitMode, groupWindowUs);
+            int drawn = 0;
+            int fired = 0;
+            int firedInPrepare = 0;
+            for (int i = 0, n = iterations.size(); i < n; i++) {
+                final FuzzIteration it = iterations.getQuick(i);
+                drawn += it.prepareFaultTable > -1 ? 1 : 0;
+                fired += it.prepareFaultsFired;
+                firedInPrepare += it.prepareFaultsFiredInPrepare;
+            }
+            LOG.info().$("commit batch fuzz prepare faults [commitMode=").$(commitMode)
+                    .$(", groupWindowUs=").$(groupWindowUs)
+                    .$(", iterations=").$(iterations.size())
+                    .$(", drawn=").$(drawn)
+                    .$(", fired=").$(fired)
+                    .$(", firedInPrepare=").$(firedInPrepare)
+                    .I$();
+        });
+    }
+
+    // Scripts a prepare fault at the first flush into every iteration that a drawn one could reach, on a table that
+    // shares a batch with another, transient and persistent in turn, and checks that both kinds fail a prepare.
+    private void assertCommitBatchFuzzPrepareFaultsFire(int commitMode) throws Exception {
+        assertMemoryLeak(() -> {
+            final Rnd rnd = new Rnd(FUZZ_SHAPES_SEED0, FUZZ_SHAPES_SEED1);
+            final ObjList<FuzzIteration> iterations = new ObjList<>();
+            boolean isTransient = true;
+            for (int iteration = 0; iteration < FUZZ_PREPARE_FAULT_ITERATIONS; iteration++) {
+                final FuzzIteration it = generateCommitBatchFuzzIteration(rnd, iteration);
+                if (!it.isDataErrorsOnly && !it.frameKinds.contains(FUZZ_DEFERRED)) {
+                    for (int t = 0; t < it.tables.length; t++) {
+                        if (it.hasPlainFrameOfOtherTableThan(t)) {
+                            it.prepareFaultTable = t;
+                            it.prepareFaultFromCall = 1;
+                            it.isPrepareFaultTransient = isTransient;
+                            isTransient = !isTransient;
+                            break;
+                        }
+                    }
+                }
+                iterations.add(it);
+            }
+            // No group window: the group flush runs at each commit, not on the clock, so every run fires the same
+            // faults.
+            runCommitBatchFuzz(iterations, commitMode, 0);
+            int transientFaults = 0;
+            int persistentFaults = 0;
+            for (int i = 0, n = iterations.size(); i < n; i++) {
+                final FuzzIteration it = iterations.getQuick(i);
+                if (it.prepareFaultsFiredInPrepare > 0) {
+                    if (it.isPrepareFaultTransient) {
+                        transientFaults++;
+                    } else {
+                        persistentFaults++;
+                    }
+                }
+            }
+            Assert.assertTrue("a transient fault fails a prepare in a multi-table batch", transientFaults > 0);
+            Assert.assertTrue("a persistent fault fails a prepare in a multi-table batch", persistentFaults > 0);
         });
     }
 
@@ -5642,7 +5697,6 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
             txnBefore[t] = lastTxn(hookEngine, tables[t]);
         }
         final int lastSeq = it.frameValues.size() - 1;
-        final boolean isCommitFaulty = it.isCommitFaulty();
 
         final HttpFullFatServerConfiguration customConfig = httpConfigWithMaxUncommittedRows(it.cap);
         final ObjList<byte[]> sent = new ObjList<>();
@@ -5655,6 +5709,8 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
             // a role-change CLOSE tells the dispatcher to drop the fd
         }
         drainWalQueue(hookEngine);
+        // Read after the ingest: a drawn prepare fault makes the iteration commit-faulty only once it fired.
+        final boolean isCommitFaulty = it.isCommitFaulty();
 
         final String context = it.toString();
         final ObjList<LongList> frameValues = it.frameValues;
@@ -6125,8 +6181,10 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     }
 
     /**
-     * Fails the commit prepares of the current fuzz iteration's prepare-fault table, as the iteration scripts: at
-     * the flush of the table's WAL column file v.d, which a commit makes and a writer's open does not.
+     * Fails the commits of the current fuzz iteration's prepare-fault table, as the iteration scripts: at the flush
+     * of the table's WAL column file v.d, which a commit makes and a writer's open does not. A commit prepare
+     * flushes it, and so does a commit outside the prepare phase; the facade counts the faults it throws, and those
+     * it throws inside WalWriter.prepareCommit().
      */
     private static final class PrepareFaultFacade extends TestFilesFacadeImpl {
         private final AtomicReference<FuzzIteration> current;
@@ -6210,8 +6268,19 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
             }
             final long call = ++it.prepareCalls;
             if (it.isPrepareFaultTransient ? call == it.prepareFaultFromCall : call >= it.prepareFaultFromCall) {
+                it.prepareFaultsFired++;
+                if (isInPrepareCommit()) {
+                    it.prepareFaultsFiredInPrepare++;
+                }
                 throw CairoException.critical(0).put("fuzz: prepare fails");
             }
+        }
+
+        // Runs only when a fault fires: walks the stack once per fault.
+        private static boolean isInPrepareCommit() {
+            return StackWalker.getInstance().walk(frames -> frames.anyMatch(
+                    frame -> frame.getClassName().equals(WalWriter.class.getName()) && frame.getMethodName().equals("prepareCommit")
+            ));
         }
     }
 
@@ -6332,8 +6401,12 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         int iteration;
         long prepareCalls;
         long prepareFaultFromCall;
-        // The index of the table whose prepares fail, or -1. Drawn from the fault Rnd, see drawPrepareFault().
+        // The index of the table whose prepares fail, or -1. Drawn from the fault Rnd, see drawPrepareFault(), or
+        // scripted, see assertCommitBatchFuzzPrepareFaultsFire().
         int prepareFaultTable = -1;
+        // The faults PrepareFaultFacade threw, and those of them inside WalWriter.prepareCommit().
+        int prepareFaultsFired;
+        int prepareFaultsFiredInPrepare;
         long readOnlyCalls;
         long readOnlyFromCall;
         int refusedInsertCall;
@@ -6352,6 +6425,7 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                     + ", writerFaultFrom=" + writerFaultFromCall + ", writerFaultTransient=" + isWriterFaultTransient
                     + ", writerFaultUnexpected=" + isWriterFaultUnexpected + ", prepareFaultTable=" + prepareFaultTable
                     + ", prepareFaultFrom=" + prepareFaultFromCall + ", prepareFaultTransient=" + isPrepareFaultTransient
+                    + ", prepareFaultsFired=" + prepareFaultsFired + ", prepareFaultsFiredInPrepare=" + prepareFaultsFiredInPrepare
                     + ", kinds=" + kinds;
         }
 
@@ -6501,8 +6575,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
             return false;
         }
 
+        // A drawn prepare fault counts once it fired: a fault that never fired leaves the iteration fault-free.
         boolean isCommitFaulty() {
-            return refusedInsertCall > 0 || readOnlyFromCall > 0 || prepareFaultTable > -1;
+            return refusedInsertCall > 0 || readOnlyFromCall > 0 || prepareFaultsFired > 0;
         }
 
         // The number of frames before the first bad frame, or of all frames.
