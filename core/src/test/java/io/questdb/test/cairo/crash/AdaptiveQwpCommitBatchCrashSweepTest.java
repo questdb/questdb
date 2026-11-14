@@ -35,6 +35,8 @@ import io.questdb.test.cutlass.websocket.QwpIngressTestConnection;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.Arrays;
+
 /**
  * Sweeps a power loss across every durability op of two QWP commit batches of three tables, the second a group
  * window after the first, under ADAPTIVE with and without a group window. Each batch prepares its tables outside
@@ -43,10 +45,14 @@ import org.junit.Test;
  * sweep then sees as propagated.
  * <p>
  * The oracle, for each table: each of its transactions is all or nothing, they survive as a prefix in commit order,
- * and no row survives that the sequencer did not record.
+ * and recovery applies exactly the transactions the sequencer recorded, with the table not suspended: a sequencer
+ * record that outlives its WAL rows fails it. Across the sweep, a later crash point never recovers fewer rows, the
+ * first loses rows and the last recovers every row.
  */
 public class AdaptiveQwpCommitBatchCrashSweepTest extends AbstractAdaptiveCrashSweepTest {
     private static final String[] TABLES = {"swa", "swb", "swc"};
+    // Two transactions of two rows per table.
+    private static final int ALL_ROWS = TABLES.length * 4;
     private static final long T0 = 1_000_000_000L;
     private static final long WINDOW_US = 50_000L;
 
@@ -77,9 +83,21 @@ public class AdaptiveQwpCommitBatchCrashSweepTest extends AbstractAdaptiveCrashS
             Assert.assertEquals(CommitMode.ADAPTIVE, engine.getConfiguration().getCommitMode());
             Assert.assertEquals(groupWindowUs, engine.getConfiguration().getAdaptiveCommitGroupWindowUs());
             final SweepResult r = forEachAdaptiveCrashPoint(new CommitBatchWorkload());
+            final int[] recoveredByK = r.recoveredByK();
             LOG.info().$("[qwp commit batch sweep] W=").$(groupWindowUs).$(", N=").$(r.n)
-                    .$(", sweptPoints=").$(r.sweptPoints).$();
+                    .$(", sweptPoints=").$(r.sweptPoints)
+                    .$(", recoveredByK=").$(Arrays.toString(recoveredByK)).$();
             Assert.assertFalse("the workload is small", r.truncated);
+            Assert.assertEquals("the sweep covers every crash point", 1, r.firstSweptK);
+            Assert.assertEquals("the sweep covers every crash point", r.sweptPoints, r.lastSweptK);
+            for (int k = r.firstSweptK + 1; k <= r.lastSweptK; k++) {
+                Assert.assertTrue("a later crash point recovers no fewer rows [k=" + k + ", recoveredByK="
+                        + Arrays.toString(recoveredByK) + ']', recoveredByK[k] >= recoveredByK[k - 1]);
+            }
+            Assert.assertTrue("the first crash point loses rows [recoveredByK=" + Arrays.toString(recoveredByK) + ']',
+                    recoveredByK[r.firstSweptK] < ALL_ROWS);
+            Assert.assertEquals("the last crash point recovers every row [recoveredByK=" + Arrays.toString(recoveredByK) + ']',
+                    ALL_ROWS, recoveredByK[r.lastSweptK]);
         });
     }
 
@@ -112,8 +130,11 @@ public class AdaptiveQwpCommitBatchCrashSweepTest extends AbstractAdaptiveCrashS
                 final long lastTxn = engine.getTableSequencerAPI().lastTxn(engine.verifyTableName(tables[t]));
                 final String context = "k=" + k + " of " + n + ", table=" + tables[t] + ", values=" + values + ", lastTxn=" + lastTxn
                         + ", op=" + phaseDurabilityOp(k);
+                Assert.assertFalse("the table is not suspended after recovery [" + context + ']',
+                        engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(tables[t])));
                 Assert.assertEquals("a transaction is all or nothing [" + context + ']', 0, values.size() % 2);
-                Assert.assertTrue("no row the sequencer did not record [" + context + ']', values.size() / 2 <= lastTxn);
+                // A sequencer record without its rows means the record became durable before the WAL data.
+                Assert.assertEquals("exactly the transactions the sequencer recorded [" + context + ']', 2 * lastTxn, values.size());
                 // the transactions survive as a prefix: first batch's two rows, then the second's
                 final long[] expected = {1 + t, 4 + t, 11 + t, 14 + t};
                 Assert.assertTrue("at most both transactions [" + context + ']', values.size() <= expected.length);
