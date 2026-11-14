@@ -40,7 +40,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * either, and reports no timeout, as a network breaker without a query timeout does, so the checks
  * that it records reached it rather than a copy.
  */
-final class ChainLengthIndexPassBreaker extends AtomicBooleanCircuitBreaker {
+class ChainLengthIndexPassBreaker extends AtomicBooleanCircuitBreaker {
     private static final String HEAP = "io.questdb.griffin.engine.join.HashJoinRowHeap";
     private static final StackWalker STACK_WALKER = StackWalker.getInstance();
     private final boolean isCancelling;
@@ -98,7 +98,8 @@ final class ChainLengthIndexPassBreaker extends AtomicBooleanCircuitBreaker {
         super.statefulThrowExceptionIfTrippedTimeThrottled();
     }
 
-    private static boolean isInsidePass() {
+    // True when the check runs inside the pass.
+    static boolean isInsidePass() {
         return STACK_WALKER.walk(frames -> frames.anyMatch(frame -> frame.getClassName().equals(HEAP)
                 && frame.getMethodName().equals("indexChainLengths")));
     }

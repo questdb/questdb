@@ -186,6 +186,74 @@ public class AsyncHashJoinCountTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCancellationAfterChainLengthIndexPassInCountOnlyTasks() throws Exception {
+        // A window of three frames for the reads, which a count from the top dispatches its count-only
+        // tasks past.
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 3);
+        assertMemoryLeak(() -> {
+            createTables();
+            sqlExecutionContext.changePageFrameSizes(4, 4);
+            // From the top, the count indexes d1's chain lengths, the count-only tasks of t's frames read
+            // each key's chain length off the index, and the consumer checks the breaker after each frame
+            // it collects: a cancellation there, after the pass, stops the count. Each of t's ten hourly
+            // partitions of six rows makes one frame, a frame of four rows taking in the short tail.
+            final String sql = "SELECT t.v, d1.w FROM t LEFT JOIN d1 ON t.k = d1.k";
+            // The rows of t's first frame.
+            final long firstFrameRows = ordinaryRowCount(sql + " WHERE t.v <= 6");
+            for (boolean isCopy : new boolean[]{false, true}) {
+                // The factories that compile from here on run the stages' hidden copies from their first
+                // task, or, as on a JVM that cannot define hidden classes, the shared template.
+                if (isCopy) {
+                    AsyncHashJoinRecordCursorFactory.setStepperWarmUpRowsForTesting(0);
+                } else {
+                    AsyncHashJoinRecordCursorFactory.setStepperCopiesEnabledForTesting(false);
+                }
+                try {
+                    assertCancelledAfterIndexPass(sql, 0, 1, firstFrameRows, join -> {
+                        Assert.assertEquals(sql, isCopy, join.getStepperClass(0).isHidden());
+                        // The owner ran the count-only task of every frame before it collected the first
+                        // one, whose rows the count added before its check met the cancellation.
+                        Assert.assertEquals(sql, 10, join.getProbeFrameCount());
+                        Assert.assertEquals(sql, 1, join.getCountOnlyFrameCount());
+                        Assert.assertEquals(sql, 0, join.getCountedTupleFrameCount());
+                        final AsyncHashJoinAtom atom = join.getAtom();
+                        Assert.assertEquals(sql, isCopy ? 0 : 10, atom.getStepperRunCount(AsyncHashJoinAtom.STEPPER_RUN_COUNT_TASK, false));
+                        Assert.assertEquals(sql, isCopy ? 10 : 0, atom.getStepperRunCount(AsyncHashJoinAtom.STEPPER_RUN_COUNT_TASK, true));
+                    });
+                } finally {
+                    AsyncHashJoinRecordCursorFactory.setStepperCopiesEnabledForTesting(true);
+                    AsyncHashJoinRecordCursorFactory.setStepperWarmUpRowsForTesting(AsyncHashJoinAtom.STEPPER_WARM_UP_ROWS);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCancellationAfterChainLengthIndexPassInTupleFrameCount() throws Exception {
+        // A window of three frames: after the first row, the count meets the frame that the cursor
+        // holds and the two after it, whose tasks the first row dispatched to join them into tuples.
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 3);
+        assertMemoryLeak(() -> {
+            createTables();
+            sqlExecutionContext.changePageFrameSizes(4, 4);
+            // The count indexes m's and d2's chain lengths, reads the length of each chain that the
+            // current tuple and the tuples of the frames it collects carry off the index, and checks the
+            // breaker after each frame it collects: a cancellation there, after the pass, stops the
+            // count. Each of t's ten hourly partitions of six rows makes one frame.
+            final String sql = "SELECT t.v, m.w, d2.w2 FROM t JOIN m ON t.k = m.k JOIN d2 ON t.lk = d2.lk";
+            // The rows of t's first two frames, less the one read.
+            final long countedRows = ordinaryRowCount(sql + " WHERE t.v <= 12") - 1;
+            assertCancelledAfterIndexPass(sql, 1, 2, countedRows, join -> {
+                // The count added the rest of the frame that the cursor held and the rows of the next
+                // frame, whose task joined it into tuples, before its check met the cancellation.
+                Assert.assertEquals(sql, 10, join.getProbeFrameCount());
+                Assert.assertEquals(sql, 2, join.getCountedTupleFrameCount());
+                Assert.assertEquals(sql, 0, join.getCountOnlyFrameCount());
+            });
+        });
+    }
+
+    @Test
     public void testCancellationInsideChainLengthIndexPass() throws Exception {
         // After the first row, the count indexes the chain lengths of the deferred stages' builds
         // before it counts the chains that the tuples left to the consumer, and checks the breaker
@@ -907,6 +975,53 @@ public class AsyncHashJoinCountTest extends AbstractCairoTest {
         }
     }
 
+    // Cancels a count that follows the given number of rows at the first breaker check after the pass
+    // that indexes the chain lengths of the deferred stages' builds, one check per build: the count
+    // fails with the given rows counted and every pass complete, releases what the execution held, and
+    // the factory reads its rows again. The check, given the join, runs once the count failed.
+    private static void assertCancelledAfterIndexPass(
+            String sql,
+            int prefix,
+            int indexedStageCount,
+            long countedRows,
+            Consumer<AsyncHashJoinRecordCursorFactory> afterCancellation
+    ) throws SqlException {
+        final String expected = ordinary(sql, sqlExecutionContext);
+        final AfterIndexPassBreaker breaker = new AfterIndexPassBreaker();
+        try (RecordCursorFactory factory = select(sql)) {
+            final AsyncHashJoinRecordCursorFactory join = find(factory);
+            Assert.assertNotNull(sql, join);
+            final long passes = chainLengthIndexCount(join);
+            final SqlExecutionCircuitBreaker previous = sqlExecutionContext.getCircuitBreaker();
+            ((SqlExecutionContextImpl) sqlExecutionContext).with(breaker);
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                for (int i = 0; i < prefix; i++) {
+                    Assert.assertTrue(sql, cursor.hasNext());
+                }
+                final RecordCursor.Counter counter = new RecordCursor.Counter();
+                try {
+                    cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
+                    Assert.fail("expected cancellation after the pass: " + sql);
+                } catch (CairoException e) {
+                    Assert.assertTrue(sql + ": " + e.getMessage(), e.isCancellation());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "cancelled by user");
+                }
+                // Every pass checked the breaker once, and the first check after them met the
+                // cancellation.
+                Assert.assertEquals(sql, indexedStageCount, breaker.getPassCheckCount());
+                Assert.assertEquals(sql, 1, breaker.getCheckCountAfterPass());
+                Assert.assertEquals(sql, countedRows, counter.get());
+                afterCancellation.accept(join);
+            } finally {
+                ((SqlExecutionContextImpl) sqlExecutionContext).with(previous);
+            }
+            // The passes completed before the cancellation.
+            Assert.assertEquals(sql, passes + indexedStageCount, chainLengthIndexCount(join));
+            assertReleased(join);
+            Assert.assertEquals(sql, expected, result(factory, sqlExecutionContext));
+        }
+    }
+
     // Cancels a count that follows the given number of rows at the first breaker check of the pass
     // that indexes the chain lengths of the deferred stages' builds: the count fails before any
     // count-only task runs, releases what the execution held, and the factory reads its rows again.
@@ -1266,5 +1381,35 @@ public class AsyncHashJoinCountTest extends AbstractCairoTest {
             CursorPrinter.println(cursor.getRecord(), metadata, sink, true);
         }
         return sink.toString();
+    }
+
+    /**
+     * Cancels the query at the first check that it gets once the pass that indexes the chain lengths
+     * of the deferred stages' builds returned, and records the pass's checks as its parent does. The
+     * frames' tasks check copies of it, which see the cancellation, so the first check that it gets
+     * after the pass is the one that the consumer makes after the first frame it fetches for the count.
+     */
+    private static final class AfterIndexPassBreaker extends ChainLengthIndexPassBreaker {
+        private int checkCountAfterPass;
+
+        private AfterIndexPassBreaker() {
+            super(engine, false, null);
+        }
+
+        @Override
+        public void statefulThrowExceptionIfTrippedTimeThrottled() {
+            if (getPassCheckCount() > 0 && !isInsidePass()) {
+                checkCountAfterPass++;
+                if (checkCountAfterPass == 1) {
+                    cancel();
+                }
+            }
+            super.statefulThrowExceptionIfTrippedTimeThrottled();
+        }
+
+        // The checks that the breaker got after the pass, the first of which cancelled the query.
+        int getCheckCountAfterPass() {
+            return checkCountAfterPass;
+        }
     }
 }
