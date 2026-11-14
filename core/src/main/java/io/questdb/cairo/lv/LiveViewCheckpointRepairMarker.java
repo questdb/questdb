@@ -68,7 +68,9 @@ import org.jetbrains.annotations.NotNull;
  *   {@link Numbers#LONG_NULL} means not recorded, and the generation rule decides
  *   alone. A marker written after the replacement commit, which the frontier truncate
  *   that follows a published splice writes, records {@code LONG_NULL}: no seqTxn read
- *   then can prove the repair moved nothing.</li>
+ *   then can prove the repair moved nothing. So does a marker a repair writes ahead of
+ *   its commit over a live one: the generation it names was not restorable before it,
+ *   so proving that nothing moved would not make it restorable.</li>
  * </ul>
  * A torn or unreadable marker (reachable only when the marker write itself crashed,
  * before any truncate) reads as {@link Numbers#LONG_NULL} and forces the conservative
@@ -221,7 +223,8 @@ public final class LiveViewCheckpointRepairMarker {
      * @param lvSeqTxn       the last seqTxn the live view's own WAL has committed,
      *                       when the repair's replacement must be the next commit,
      *                       or {@link Numbers#LONG_NULL} when the replacement has
-     *                       already committed
+     *                       already committed or a live marker stood over the
+     *                       generation
      */
     public static void write(
             @NotNull CairoConfiguration configuration,

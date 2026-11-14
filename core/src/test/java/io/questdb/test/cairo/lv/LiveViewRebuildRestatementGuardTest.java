@@ -1419,21 +1419,39 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
     }
 
     @Test
-    public void testACrashInsideAWindowsMarkerRewriteRestoresOverTheDayTheBaseLost() throws Exception {
+    public void testACrashInsideAWindowsMarkerRewriteOverALiveMarkerKeepsTheRowsOfTheDayTheBaseLost() throws Exception {
         // Windows MoveFileW refuses an existing destination, so a rewrite of the fixed-name marker
         // unlinks the previous record and then renames the staged one into the gap. A crash in
         // that gap leaves only _repairing.tmp, holding the complete new record: the shape a crash
         // ahead of a first rename leaves, and the record a POSIX rename would have published in
-        // place of the previous one atomically. The previous record here reads as live on its
-        // own, and it is gone either way, so the new record decides, as it does on POSIX once
-        // the rename lands.
+        // place of the previous one atomically. A repair clears a previous record that reads as
+        // stale before it writes its own, so a rewrite meets one only when it reads as live, as
+        // the one here does: a repair whose replacement committed leaves it. The new record keeps
+        // that verdict and records no seqTxn, so each restart that finds it alone rebuilds from
+        // the applied base, which the restatement guard refuses over the day the base lost: the
+        // view stops with every row it held, the correction unconsumed.
         final ReplacementCommitFault fault = new ReplacementCommitFault(true);
         assertMemoryLeak(fault, () -> {
             seedSixRows("");
             dropPartitionAndRefresh("2026-01-01");
+            final long generation = newestGeneration(instance("lv"));
             writeRepairMarker(instance("lv"));
-            failReplacementCommitAndRestart(fault, true, true);
+            final long processedBefore = failReplacementCommit(fault, true, true);
             Assert.assertEquals("the rewrite must take the Windows unlink", 1, fault.getRefusedMarkerRenames());
+            for (int restart = 0; restart < 2; restart++) {
+                restart();
+                final LiveViewInstance instance = instance("lv");
+                assertRebuildBlocked(instance, "prefix preservation repair marker present");
+                Assert.assertEquals("the correction stays unconsumed", processedBefore, instance.getLastProcessedSeqTxn());
+                assertViewRows(ALL_ROWS);
+                try (Path dir = checkpointsDir(instance)) {
+                    // The staged record is the new one: it names the generation the previous
+                    // record named, and records no seqTxn where the previous one recorded one.
+                    Assert.assertEquals(generation, LiveViewCheckpointRepairMarker.readBaseGeneration(engine.getConfiguration(), dir));
+                    Assert.assertEquals(Numbers.LONG_NULL, LiveViewCheckpointRepairMarker.readLvSeqTxn(engine.getConfiguration(), dir));
+                }
+                shutdown();
+            }
         });
     }
 
@@ -5525,6 +5543,42 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
             boolean isCrash,
             boolean isCrashAheadOfMarkerRename
     ) throws Exception {
+        final long processedBefore = failReplacementCommit(fault, isCrash, isCrashAheadOfMarkerRename);
+        restart();
+        assertRestoredFromTimeline("lv");
+        final LiveViewInstance restored = instance("lv");
+        Assert.assertFalse("the view must keep refreshing", restored.isCheckpointRecoveryBlocked());
+        Assert.assertEquals("the correction must be consumed", processedBefore + 1, restored.getLastProcessedSeqTxn());
+        assertViewRows(CORRECTED_DAY_THREE_ROWS);
+        assertNoRefreshFaults("lv");
+        try (Path dir = checkpointsDir(restored)) {
+            Assert.assertFalse(
+                    "a stale marker must be gone once the view restored past it",
+                    LiveViewCheckpointRepairMarker.exists(engine.getConfiguration().getFilesFacade(), dir)
+            );
+        }
+
+        shutdown();
+        restart();
+        assertRestoredFromTimeline("lv");
+        Assert.assertFalse(instance("lv").isCheckpointRecoveryBlocked());
+        assertViewRows(CORRECTED_DAY_THREE_ROWS);
+        assertNoRefreshFaults("lv");
+    }
+
+    /**
+     * The part of {@link #failReplacementCommitAndRestart(ReplacementCommitFault, boolean, boolean)}
+     * ahead of the restart: the late day-three row, the replacement commit fault inside the
+     * marker's window, and, after a crash, the crash image back in place of the view's checkpoint
+     * directory. Leaves the process stopped.
+     *
+     * @return the seqTxn the view had processed ahead of the late row
+     */
+    private long failReplacementCommit(
+            ReplacementCommitFault fault,
+            boolean isCrash,
+            boolean isCrashAheadOfMarkerRename
+    ) throws Exception {
         final LiveViewInstance instance = instance("lv");
         final TableToken lvToken = instance.getLiveViewToken();
         final long processedBefore = instance.getLastProcessedSeqTxn();
@@ -5603,32 +5657,12 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
             }
         }
 
-        restart();
-        assertRestoredFromTimeline("lv");
-        final LiveViewInstance restored = instance("lv");
-        Assert.assertFalse("the view must keep refreshing", restored.isCheckpointRecoveryBlocked());
-        Assert.assertEquals("the correction must be consumed", processedBefore + 1, restored.getLastProcessedSeqTxn());
-        assertViewRows(CORRECTED_DAY_THREE_ROWS);
-        assertNoRefreshFaults("lv");
-        try (Path dir = checkpointsDir(restored)) {
-            Assert.assertFalse(
-                    "a stale marker must be gone once the view restored past it",
-                    LiveViewCheckpointRepairMarker.exists(engine.getConfiguration().getFilesFacade(), dir)
-            );
-        }
-
-        shutdown();
-        restart();
-        assertRestoredFromTimeline("lv");
-        Assert.assertFalse(instance("lv").isCheckpointRecoveryBlocked());
-        assertViewRows(CORRECTED_DAY_THREE_ROWS);
-        assertNoRefreshFaults("lv");
-
         // The window the cases exercise: the marker was durable, and neither the timeline nor the
         // view's sequencer had moved past where the marker found them.
         Assert.assertTrue("the fault must land after the marker is durable", isMarkerOnDiskAtFault[0]);
         Assert.assertEquals("nothing may publish ahead of the commit", generationBefore, generationAtFault[0]);
         Assert.assertEquals("the fault must land ahead of the commit", lvSeqTxnBefore, lvSeqTxnAtFault[0]);
+        return processedBefore;
     }
 
     /**

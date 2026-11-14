@@ -26,6 +26,7 @@ package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.FullPartitionFrameCursorFactory;
@@ -3098,6 +3099,116 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                 assertNoRefreshFaults("lv");
             }
             assertRestartsBlockedByTheRepairMarker(SIXTEEN_ACCOUNT_HISTORY_FLOOR);
+        });
+    }
+
+    @Test
+    public void testAKeyedSecondRepairThatStopsBeforeItsCommitInsideTheOwedWindowBlocksTheRestart() throws Exception {
+        // The keyed resume's closing seal fails, so its splice's marker stays live over a generation
+        // that owes the frontier 10:48 a root. A second keyed late row's resume writes its own
+        // marker over that one, naming the same generation, and the process stops ahead of its
+        // replacement commit, as a crash there stops it. That marker records no seqTxn, so each
+        // restart rebuilds from the applied base instead of restoring a generation that holds no
+        // root at the frontier, and the restatement guard refuses the rebuild over the hours the
+        // base lost: the view stops with every row it held. The second late row goes to the base
+        // alone, so the shadow holds exactly the rows the view keeps.
+        final LiveViewCheckpointDiskFullFault fault = new LiveViewCheckpointDiskFullFault();
+        final LogCapture capture = new LogCapture();
+        capture.start();
+        try {
+            assertMemoryLeak(fault, () -> {
+                createSixteenAccountView();
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    final LiveViewInstance instance = commitTheKeyedOwedRootFixture(job);
+                    final long generationBefore = publishedCheckpointGeneration(instance);
+                    failTheKeyedOwedSeal(job, () -> fault.arm(LiveViewCheckpointDiskFullFault.OP_MMAP, LiveViewCheckpointLayout.DATA_DIR_NAME, 1));
+                    fault.disarm();
+                    assertRepairMarkerLive(instance, generationBefore);
+                    final long lvSeqTxnBefore = engine.getTableSequencerAPI().lastTxn(instance.getLiveViewToken());
+                    final LiveViewReplacementCommitWitness witness = new LiveViewReplacementCommitWitness(
+                            engine,
+                            instance,
+                            generationBefore + 1,
+                            LiveViewReplacementCommitWitness.FAIL_CANCELLATION
+                    );
+                    execute("insert into tx values " + row(4, 3, 35, "acct-1"));
+                    drainWalQueue();
+                    CairoEngine.setRoleSwitchMintObserver(witness::onMint);
+                    try {
+                        for (int pass = 0; pass < REFRESH_QUIESCENCE_PASSES && !witness.hasFailed(); pass++) {
+                            setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                            drainWalQueue();
+                            job.processNotificationsForTest();
+                        }
+                    } finally {
+                        CairoEngine.setRoleSwitchMintObserver(null);
+                    }
+                    Assert.assertTrue("the second keyed resume reaches its replacement commit", witness.hasFailed());
+                    Assert.assertEquals(1, witness.size());
+                    Assert.assertEquals("over the live marker, its own records no seqTxn", Numbers.LONG_NULL, witness.getRecordedLvSeqTxn(0));
+                    Assert.assertEquals("the replacement never commits", lvSeqTxnBefore, engine.getTableSequencerAPI().lastTxn(instance.getLiveViewToken()));
+                    Assert.assertEquals("the splice never publishes", generationBefore + 1, publishedCheckpointGeneration(instance));
+                    assertRepairMarkerNames(instance, generationBefore + 1);
+                }
+                assertRestartsBlockedByTheRepairMarker(SIXTEEN_ACCOUNT_HISTORY_FLOOR);
+                capture.drain();
+                capture.assertNotLogged("live view rebuild from the applied base runs without the restatement guard");
+            });
+        } finally {
+            capture.stop();
+        }
+    }
+
+    @Test
+    public void testAKeyedSecondRepairWhoseCommitFailsRetriesUnderItsOwnLiveMarker() throws Exception {
+        // The keyed resume replays beside the primary runtime, so when the second keyed late row's
+        // replacement commit fails, no recovery runs and the retry repairs the row on the next turn.
+        // Each attempt writes its marker over a live one, the kept marker and then its own, so
+        // neither records a seqTxn. The retry's splice publishes and the view keeps refreshing with
+        // every row, the second late row among them.
+        final LiveViewCheckpointDiskFullFault fault = new LiveViewCheckpointDiskFullFault();
+        assertMemoryLeak(fault, () -> {
+            createSixteenAccountView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = commitTheKeyedOwedRootFixture(job);
+                final long generationBefore = publishedCheckpointGeneration(instance);
+                failTheKeyedOwedSeal(job, () -> fault.arm(LiveViewCheckpointDiskFullFault.OP_MMAP, LiveViewCheckpointLayout.DATA_DIR_NAME, 1));
+                fault.disarm();
+                assertRepairMarkerLive(instance, generationBefore);
+                final long keyedResumesBefore = instance.getO3OpenSegmentKeyedResumeCount();
+                final long runtimeRestoresBefore = instance.getCheckpointRuntimeRestores();
+                final LiveViewReplacementCommitWitness witness = new LiveViewReplacementCommitWitness(
+                        engine,
+                        instance,
+                        generationBefore + 1,
+                        LiveViewReplacementCommitWitness.FAIL_CRITICAL
+                );
+                CairoEngine.setRoleSwitchMintObserver(witness::onMint);
+                try {
+                    commitToBothBases(row(4, 3, 35, "acct-1"), job);
+                } finally {
+                    CairoEngine.setRoleSwitchMintObserver(null);
+                }
+                Assert.assertEquals("the faulted commit and its retry", 2, witness.size());
+                Assert.assertEquals("over the kept marker, no seqTxn", Numbers.LONG_NULL, witness.getRecordedLvSeqTxn(0));
+                Assert.assertEquals("over its own live marker, none either", Numbers.LONG_NULL, witness.getRecordedLvSeqTxn(1));
+                Assert.assertEquals("both attempts replay by key", keyedResumesBefore + 2, instance.getO3OpenSegmentKeyedResumeCount());
+                Assert.assertEquals(1, instance.getRefreshFaultCount());
+                Assert.assertEquals("the keyed resume keeps the primary runtime", runtimeRestoresBefore, instance.getCheckpointRuntimeRestores());
+                Assert.assertFalse(instance.isCheckpointRecoveryBlocked());
+                Assert.assertEquals("the retry's splice and its closing seal", generationBefore + 3, publishedCheckpointGeneration(instance));
+                Assert.assertEquals("the closing seal lands the owed root", ts("2026-01-04T10:48:00.000000Z"), instance.getHeadCheckpointMaxTs());
+                assertNoRepairMarker(instance);
+                assertViewMatchesShadowRecompute();
+            }
+            for (int restart = 0; restart < 2; restart++) {
+                restartCycle();
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    driveRefreshToQuiescence(job);
+                }
+                assertRestoredFromTimeline("lv");
+                assertViewMatchesShadowRecompute();
+            }
         });
     }
 

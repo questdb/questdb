@@ -1959,13 +1959,35 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * generation runs more than one past the base generation it records, and a restart
      * then clears it. Until then it reads as live - a splice that sealed no head of its
      * own leaves the generation exactly one past - and sends a restart to the rebuild from
-     * the applied base, which the restatement guard may refuse.
+     * the applied base, which the restatement guard may refuse. The next repair's marker
+     * reads it the same way (see {@link #readPreCommitRepairMarkerLvSeqTxn}): it clears a
+     * stale leftover, and over a live one records no seqTxn, so a fault ahead of that
+     * repair's commit rebuilds as a restart would.
      */
     private void clearCheckpointRepairMarker(LiveViewInstance instance) {
         path.of(engine.getConfiguration().getDbRoot())
                 .concat(instance.getLiveViewToken())
                 .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
         LiveViewCheckpointRepairMarker.clear(engine.getConfiguration().getFilesFacade(), path);
+    }
+
+    /**
+     * The seqTxn a repair's marker records when the repair writes it ahead of its replacement
+     * commit. Normally the view's last committed seqTxn: a recovery that finds the generation the
+     * marker names still current, and the view's WAL still ending there, reads the marker as stale
+     * and restores that generation. That proof holds only for a generation that was restorable
+     * before the marker. A live marker already on disk says the current generation is not - a
+     * splice whose closing seal has not landed the root its frontier is owed keeps its marker live
+     * across turns - and the marker written here replaces it, naming that same generation. Over a
+     * live marker this records none, so the new marker reads as live until a publication two past
+     * the generation it names, or a retire, as the one it replaces did. A stale marker is a
+     * leftover, which the read clears.
+     */
+    private long readPreCommitRepairMarkerLvSeqTxn(LiveViewInstance instance, Path checkpointsDir) {
+        // While the process runs the view's table never applies past its sequencer, so the
+        // sequencer's last txn stands for the applied seqTxn the restart compares.
+        final long lvSeqTxn = engine.getTableSequencerAPI().lastTxn(instance.getLiveViewToken());
+        return isRepairMarkerLive(instance, checkpointsDir, lvSeqTxn) ? Numbers.LONG_NULL : lvSeqTxn;
     }
 
     /**
@@ -1987,7 +2009,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * root already sat at the frontier) reads as live, which costs one conservative
      * rebuild and no correctness. The marker also records the view's last committed
      * seqTxn, so one a crash or a failed commit left ahead of the replacement - under
-     * its own generation, with nothing committed past that seqTxn - reads as stale too.
+     * its own generation, with nothing committed past that seqTxn - reads as stale too,
+     * unless it replaced a live marker, over which it records none (see
+     * {@link #readPreCommitRepairMarkerLvSeqTxn}).
      * <p>
      * Both splicing executors call this immediately before their replacement commit,
      * never ahead of the replay: until that commit nothing durable has moved under the
@@ -2013,6 +2037,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 historyEpoch = superblock.historyEpoch;
                 baseGeneration = superblock.generation;
             }
+            final long lvSeqTxn = readPreCommitRepairMarkerLvSeqTxn(instance, path);
             LiveViewCheckpointRepairMarker.write(
                     engine.getConfiguration(),
                     path,
@@ -2020,13 +2045,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     historyEpoch,
                     baseGeneration,
                     floorTs,
-                    engine.getTableSequencerAPI().lastTxn(instance.getLiveViewToken())
+                    lvSeqTxn
             );
             return true;
         } catch (Throwable t) {
             // The marker is what makes the splice safe to publish, so a repair that
-            // cannot write one must not splice unprotected. The caller reads the false,
-            // drops its capture and retires the timeline ahead of its commit.
+            // cannot write one, or cannot read the one it would replace, must not splice
+            // unprotected. The caller reads the false, drops its capture and retires the
+            // timeline ahead of its commit.
             final TimestampDriver driver = ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType());
             LOG.error().$("could not write the live view checkpoint repair marker [view=")
                     .$(instance.getDefinition().getViewName())
@@ -4359,6 +4385,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * leaves the untouched timeline, which a restart restores from, and so does one
      * between the marker and the truncate: the marker records the generation and the
      * view seqTxn it found, and a restart that finds neither moved reads it as stale.
+     * A live marker that already stood over that generation is the exception, since no
+     * restart restores that generation either: the marker that replaces it records no
+     * seqTxn (see {@link #readPreCommitRepairMarkerLvSeqTxn}).
      * <p>
      * A repair whose published splice kept roots above the view's new frontier runs it
      * after its replacement commit, to truncate those roots away, and so does a repair that
@@ -4425,7 +4454,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
             final long lvSeqTxn = isReplacementCommitted
                     ? Numbers.LONG_NULL
-                    : engine.getTableSequencerAPI().lastTxn(instance.getLiveViewToken());
+                    : readPreCommitRepairMarkerLvSeqTxn(instance, path);
             if (checkpointTimelineStoreWriter == null) {
                 checkpointTimelineStoreWriter = new LiveViewCheckpointTimelineStoreWriter(
                         engine.getConfiguration(),
@@ -8946,7 +8975,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     // landed before the throw. The recoveries that read the marker can: it
                     // records the view's seqTxn, and a view whose WAL still ends there, over a
                     // table that applied nothing past it, reads it as stale unless the truncate
-                    // published.
+                    // published. A marker that replaced a live one records none, and keeps
+                    // reading as live: the generation it names was not restorable before it.
                     //
                     // The timeline is deliberately NOT retired here. Retiring would delete
                     // every historical root and leave that replan with no anchor below the
@@ -14530,9 +14560,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * show that nothing moved. The frontier truncate of a published splice records none on
      * purpose: it runs after its repair's replacement commit, over the splice's generation,
      * which no longer describes the output on disk (see
-     * {@link #truncateOrRetireTimelineOnO3}).
+     * {@link #truncateOrRetireTimelineOnO3}). So does a repair's marker written ahead of its
+     * commit over a live one, which keeps that one's verdict (see
+     * {@link #readPreCommitRepairMarkerLvSeqTxn}).
      *
-     * @param durableLvSeqTxn the seqTxn the view's table has applied
+     * @param durableLvSeqTxn the seqTxn the view's table has applied; a repair reading the
+     *                        marker it is about to replace passes the view sequencer's last
+     *                        txn, which the table never runs past while the process lives
      */
     private boolean isRepairMarkerLive(LiveViewInstance instance, Path checkpointsDir, long durableLvSeqTxn) {
         if (!LiveViewCheckpointRepairMarker.exists(engine.getConfiguration().getFilesFacade(), checkpointsDir)) {
