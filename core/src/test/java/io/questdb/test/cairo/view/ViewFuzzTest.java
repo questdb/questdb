@@ -39,6 +39,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.cairo.fuzz.AbstractFuzzTest;
@@ -52,6 +53,9 @@ import java.util.TreeMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ViewFuzzTest extends AbstractFuzzTest {
+    // a PIVOT over tp (k SYMBOL, x INT), whose compile fails while tp is empty
+    private static final String TP_PIVOT_SQL = "SELECT * FROM tp PIVOT (sum(x) FOR k IN (SELECT DISTINCT k FROM tp ORDER BY k))";
+    private static final String VP_STATUS_SQL = "SELECT view_status, invalidation_reason, view_status_update_time FROM views() WHERE view_name = 'vp'";
     private static final String[] timestampTypes = new String[]{"timestamp", "timestamp_ns"};
 
     @Test
@@ -85,6 +89,146 @@ public class ViewFuzzTest extends AbstractFuzzTest {
         final String view3Name = testName.getMethodName() + "_v3";
         final String view4Name = testName.getMethodName() + "_v4";
         testViewFuzz(selectGenerator, rnd, tableName, view1Name, view2Name, view3Name, view4Name);
+    }
+
+    @Test
+    public void testNonWalDdlWithConcurrentViewCompiles() throws Exception {
+        // An ALTER of a non-WAL table queues the recompile of the views over it, and a TRUNCATE,
+        // RENAME or DROP of the table follows at once while view compile workers run. Every DDL
+        // succeeds: it waits for a compile run that holds the table instead of failing as busy.
+        // A compile that meets the lock of a DDL leaves the views alone and retries once the busy
+        // retry timeout passed, so every view ends valid, with the columns of its SQL. TRUNCATE
+        // queues no compile of its own, so the PIVOT view over tp, which nothing ALTERs, keeps the
+        // status of its CREATE through the TRUNCATEs of tp. One session runs all DDLs;
+        // ViewOverNonWalTableTest pins what a DDL does when another session changes its table
+        // while it waits.
+        assertMemoryLeak(() -> {
+            final Rnd rnd = fuzzer.generateRandom(LOG);
+            node1.setProperty(PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, Long.MAX_VALUE);
+            // a busy retry at the next compile run, or at the server default
+            final long busyRetryTimeoutMillis = rnd.nextBoolean() ? 0 : 1_000;
+            LOG.info().$("view compile busy retry timeout [millis=").$(busyRetryTimeoutMillis).I$();
+            node1.setProperty(PropertyKey.CAIRO_VIEW_COMPILE_BUSY_RETRY_TIMEOUT, busyRetryTimeoutMillis);
+            final int tableCount = 1 + rnd.nextInt(3);
+            final boolean[] isPartitioned = new boolean[tableCount];
+            final ObjList<String> viewNames = new ObjList<>();
+            final ObjList<String> viewSqls = new ObjList<>();
+            for (int i = 0; i < tableCount; i++) {
+                isPartitioned[i] = rnd.nextBoolean();
+                createNonWalTable("t" + i, isPartitioned[i]);
+            }
+            for (int i = 0; i < tableCount; i++) {
+                final String tableName = "t" + i;
+                for (int j = 0, n = 1 + rnd.nextInt(4); j < n; j++) {
+                    final String viewSql = switch (j) {
+                        case 0 -> "SELECT * FROM " + tableName;
+                        case 1 -> "SELECT a FROM " + tableName + " WHERE a > 1";
+                        // a view over a view
+                        case 2 -> "SELECT * FROM " + tableName + "_v0";
+                        default -> isPartitioned[i]
+                                ? "SELECT name, numRows FROM table_partitions('" + tableName + "')"
+                                : "SELECT a, count() c FROM " + tableName + " ORDER BY a";
+                    };
+                    createViewAndCompile(tableName + "_v" + j, viewSql, viewNames, viewSqls);
+                }
+            }
+            if (tableCount > 1) {
+                createViewAndCompile("join_v", "SELECT x.a, y.a a2 FROM t0 x JOIN t1 y ON x.a = y.a", viewNames, viewSqls);
+            }
+            execute("CREATE TABLE tp (k SYMBOL, x INT)");
+            insertPivotRows();
+            createViewAndCompile("vp", TP_PIVOT_SQL, viewNames, viewSqls);
+            drainViewQueue();
+            final StringSink vpCreateStatus = new StringSink();
+            printSql(VP_STATUS_SQL, vpCreateStatus);
+
+            final AtomicBoolean stop = new AtomicBoolean();
+            final ObjList<Thread> viewCompilerJobs = new ObjList<>();
+            // TRUNCATE, RENAME, DROP, TRUNCATE KEEP SYMBOL MAPS and, with two tables or more,
+            // TRUNCATE of two tables
+            final int ddlShapeCount = tableCount > 1 ? 5 : 4;
+            final int[] ddlCounts = new int[ddlShapeCount];
+            final int ddlOffset = rnd.nextInt(ddlShapeCount);
+            // TRUNCATE of tp alone, and as the second table of a TRUNCATE of two tables
+            final int[] tpTruncateCounts = new int[2];
+            int addedColumnCount = 0;
+            try {
+                for (int i = 0, n = 1 + rnd.nextInt(4); i < n; i++) {
+                    // short naps, so that a worker often compiles while the DDL locks the table
+                    viewCompilerJobs.add(startViewCompilerJob(i, stop, rnd, 3));
+                }
+                for (int i = 0, n = 20 + rnd.nextInt(20); i < n; i++) {
+                    final int tableIndex = rnd.nextInt(tableCount);
+                    final String tableName = "t" + tableIndex;
+                    execute("ALTER TABLE " + tableName + " ADD COLUMN c" + addedColumnCount++ + " INT");
+                    // the first iterations run each DDL once
+                    final int ddl = i < ddlShapeCount ? (i + ddlOffset) % ddlShapeCount : rnd.nextInt(ddlShapeCount);
+                    ddlCounts[ddl]++;
+                    switch (ddl) {
+                        case 0 -> execute("TRUNCATE TABLE " + tableName);
+                        case 1 -> {
+                            execute("RENAME TABLE " + tableName + " TO " + tableName + "_tmp");
+                            execute("RENAME TABLE " + tableName + "_tmp TO " + tableName);
+                        }
+                        case 2 -> {
+                            execute("DROP TABLE " + tableName);
+                            createNonWalTable(tableName, isPartitioned[tableIndex]);
+                        }
+                        case 3 -> execute("TRUNCATE TABLE " + tableName + " KEEP SYMBOL MAPS");
+                        default -> {
+                            final int otherTableIndex = (tableIndex + 1 + rnd.nextInt(tableCount - 1)) % tableCount;
+                            execute("TRUNCATE TABLE " + tableName + ", t" + otherTableIndex);
+                        }
+                    }
+                    insertRows(tableName, isPartitioned[tableIndex]);
+                    // the first iterations truncate tp in each way, then tp is truncated at random
+                    final int tpTruncate = i < 2 ? i : rnd.nextInt(3);
+                    if (tpTruncate < 2) {
+                        if (tpTruncate == 0) {
+                            execute("TRUNCATE TABLE tp");
+                        } else {
+                            execute("TRUNCATE TABLE " + tableName + ", tp");
+                            insertRows(tableName, isPartitioned[tableIndex]);
+                        }
+                        tpTruncateCounts[tpTruncate]++;
+                        insertPivotRows();
+                    }
+                }
+            } finally {
+                stopAndJoinJobs(stop, viewCompilerJobs);
+            }
+            for (int ddl = 0; ddl < ddlShapeCount; ddl++) {
+                Assert.assertTrue("DDL " + ddl + " did not run", ddlCounts[ddl] > 0);
+            }
+            for (int tpTruncate = 0; tpTruncate < 2; tpTruncate++) {
+                Assert.assertTrue("TRUNCATE " + tpTruncate + " of tp did not run", tpTruncateCounts[tpTruncate] > 0);
+            }
+
+            try {
+                // the busy retries of the compiles that met a lock are due, and the compiles that
+                // they and the DDLs queued leave every view valid, with the columns of its SQL
+                setCurrentMicros(MicrosecondClockImpl.INSTANCE.getTicks() + busyRetryTimeoutMillis * 1_000 + 1);
+                drainViewQueue();
+                AbstractViewTest.assertPendingCompileBusyRetries("");
+                // nothing compiled vp since its CREATE
+                assertQuery(VP_STATUS_SQL)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize(false)
+                        .returns(vpCreateStatus);
+                assertViewsValidAndMatchSql(viewNames, viewSqls);
+
+                // one more compile of each view, with no DDL running, keeps them so
+                for (int i = 0, n = viewNames.size(); i < n; i++) {
+                    engine.enqueueCompileView(engine.verifyTableName(viewNames.getQuick(i)));
+                }
+                drainViewQueue();
+                assertViewsValidAndMatchSql(viewNames, viewSqls);
+            } finally {
+                // the other tests of the class run on the real clock
+                setCurrentMicros(-1);
+            }
+        });
     }
 
     @Test
@@ -152,8 +296,58 @@ public class ViewFuzzTest extends AbstractFuzzTest {
         }
     }
 
+    private static void createNonWalTable(String tableName, boolean isPartitioned) throws SqlException {
+        if (isPartitioned) {
+            execute("CREATE TABLE " + tableName + " (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+        } else {
+            execute("CREATE TABLE " + tableName + " (a INT)");
+        }
+        insertRows(tableName, isPartitioned);
+        Assert.assertFalse(engine.verifyTableName(tableName).isWal());
+    }
+
     private static void createView(String viewName, String viewSql) throws SqlException {
         execute("create view " + viewName + " as (" + viewSql + ")");
+    }
+
+    private static void createViewAndCompile(String viewName, String viewSql, ObjList<String> viewNames, ObjList<String> viewSqls) throws SqlException {
+        createView(viewName, viewSql);
+        // compile the view before a view over it is created
+        drainViewQueue();
+        viewNames.add(viewName);
+        viewSqls.add(viewSql);
+    }
+
+    private static void insertPivotRows() throws SqlException {
+        execute("INSERT INTO tp VALUES ('a', 1), ('b', 2)");
+    }
+
+    private static void insertRows(String tableName, boolean isPartitioned) throws SqlException {
+        if (isPartitioned) {
+            execute("INSERT INTO " + tableName + " (a, ts) VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-02T00:00:00.000000Z')");
+        } else {
+            execute("INSERT INTO " + tableName + " (a) VALUES (1), (2)");
+        }
+    }
+
+    private void assertViewsValidAndMatchSql(ObjList<String> viewNames, ObjList<String> viewSqls) throws Exception {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            for (int i = 0, n = viewNames.size(); i < n; i++) {
+                final String viewName = viewNames.getQuick(i);
+                assertQuery("SELECT view_status FROM views() WHERE view_name = '" + viewName + "'")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("""
+                                view_status
+                                valid
+                                """);
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, viewSqls.getQuick(i), viewName, LOG);
+                // A query of the view expands its SQL, so the rows match even when the last
+                // compile of the view went missing, such as a lost busy retry; the catalogue
+                // keeps the columns of the compile before it.
+                AbstractViewTest.assertViewColumnsOfQuery(viewName, viewSqls.getQuick(i));
+            }
+        }
     }
 
     private ObjList<FuzzTransaction> createTransactionsAndView(
@@ -182,7 +376,7 @@ public class ViewFuzzTest extends AbstractFuzzTest {
 
         try {
             for (int i = 0; i < viewCompilerJobCount; i++) {
-                viewCompilerJobs.add(startViewCompilerJob(i, stop, rnd));
+                viewCompilerJobs.add(startViewCompilerJob(i, stop, rnd, 50));
             }
 
             for (int i = 0; i < tableCount; i++) {
@@ -266,7 +460,7 @@ public class ViewFuzzTest extends AbstractFuzzTest {
         );
     }
 
-    private Thread startViewCompilerJob(int workerId, AtomicBoolean stop, Rnd outsideRnd) {
+    private Thread startViewCompilerJob(int workerId, AtomicBoolean stop, Rnd outsideRnd, int maxNapMillis) {
         final Rnd rnd = new Rnd(outsideRnd.nextLong(), outsideRnd.nextLong());
         final Thread th = new Thread(
                 () -> {
@@ -274,7 +468,7 @@ public class ViewFuzzTest extends AbstractFuzzTest {
                         try (ViewCompilerJob job = new ViewCompilerJob(workerId, engine, 0)) {
                             while (!stop.get()) {
                                 job.run();
-                                Os.sleep(rnd.nextInt(50));
+                                Os.sleep(rnd.nextInt(maxNapMillis));
                             }
 
                             // Run one final time before stopping
@@ -327,7 +521,7 @@ public class ViewFuzzTest extends AbstractFuzzTest {
             ObjList<Thread> viewCompilerJobs = new ObjList<>();
 
             try {
-                viewCompilerJobs.add(startViewCompilerJob(0, stop, rnd));
+                viewCompilerJobs.add(startViewCompilerJob(0, stop, rnd, 50));
 
                 setFuzzParams(rnd);
 

@@ -62,6 +62,14 @@ public class SymbolColumn extends SymbolFunction implements ColumnFunction {
         return rec.getInt(columnIndex);
     }
 
+    /**
+     * The symbol table that {@link #init} took from its source for this column, which resolves the keys
+     * {@link #getInt} returns, or null before init().
+     */
+    public @Nullable SymbolTable getSourceSymbolTable() {
+        return symbolTable;
+    }
+
     @Override
     public @Nullable StaticSymbolTable getStaticSymbolTable() {
         if (symbolTable instanceof StaticSymbolTable) {

@@ -58,7 +58,9 @@ public enum ParquetExportMode {
     TABLE_READER,
     /**
      * Fallback: query is materialized into a temp table first, then exported
-     * partition-by-partition. Used for computed BINARY columns or re-partitioning.
+     * partition-by-partition. Used for re-partitioning, for a BINARY column that
+     * the cursor path cannot write, and for a plan that reads a lazily
+     * type-converted column but cannot stream its timestamp.
      */
     TEMP_TABLE;
 
@@ -78,10 +80,14 @@ public enum ParquetExportMode {
         // A lazily type-converted parquet column is decoded in its pre-conversion source layout;
         // the conversion to the current type happens only in the row-wise Record accessors. The
         // zero-copy export paths (DIRECT_PAGE_FRAME / PAGE_FRAME_BACKED) ship the raw page buffer
-        // straight to the encoder configured for the target type, which misreads it. Materialize
-        // through a temp table so the conversion is applied before encoding.
+        // straight to the encoder configured for the target type, which misreads it. CURSOR_BASED
+        // reads every value through the converting accessors. It writes the plan's timestamp as
+        // the file's designated timestamp, never NULL, in the order the plan reports, which only a
+        // table's designated timestamp read through a scan, filter, projection, LIMIT or a sort on
+        // it is known to keep. Other plans, and plans with a BINARY column, which the cursor path
+        // cannot write, materialize through a temp table.
         if (factory.hasParquetConvertedColumns(executionContext)) {
-            return TEMP_TABLE;
+            return !hasBinaryColumn(factory.getMetadata()) && hasStreamableTimestamp(factory) ? CURSOR_BASED : TEMP_TABLE;
         }
         RecordCursorFactory unwrapped = unwrapFactory(factory);
         // A metadata-only page-frame producer (the covering-index single-key scan) emits
@@ -106,13 +112,25 @@ public enum ParquetExportMode {
             }
             return isDescending ? CURSOR_BASED : PAGE_FRAME_BACKED;
         }
-        RecordMetadata meta = factory.getMetadata();
-        for (int i = 0, n = meta.getColumnCount(); i < n; i++) {
-            if (ColumnType.tagOf(meta.getColumnType(i)) == ColumnType.BINARY) {
-                return TEMP_TABLE;
-            }
+        return hasBinaryColumn(factory.getMetadata()) ? TEMP_TABLE : CURSOR_BASED;
+    }
+
+    /**
+     * Determines the export mode of a plan that an export compiled again after its plan went stale. Both COPY and
+     * HTTP export read the page frames of a recompiled plan ascending, so a plan that scans backward streams its
+     * cursor instead, or goes through a temp table when it has a BINARY column, which the cursor path cannot write.
+     *
+     * @param factory          the recompiled query's record cursor factory
+     * @param executionContext the SQL execution context, used to detect lazily type-converted
+     *                         parquet columns.
+     */
+    public static ParquetExportMode determineRecompiledExportMode(RecordCursorFactory factory, SqlExecutionContext executionContext) {
+        final ParquetExportMode mode = determineExportMode(factory, false, executionContext);
+        if ((mode == DIRECT_PAGE_FRAME || mode == PAGE_FRAME_BACKED)
+                && factory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD) {
+            return hasBinaryColumn(factory.getMetadata()) ? TEMP_TABLE : CURSOR_BASED;
         }
-        return CURSOR_BASED;
+        return mode;
     }
 
     /**
@@ -139,9 +157,35 @@ public enum ParquetExportMode {
     }
 
     /**
+     * Returns true when a CURSOR_BASED export can write the plan's timestamp as the file's designated timestamp: the
+     * plan has none, or its timestamp is a table's designated timestamp in the forward or backward order the plan
+     * reports, see {@link RecordCursorFactory#hasTableScanTimestamp()}. The plan reports its direction only once it
+     * answered true, so the question commits no join to its sides.
+     */
+    public static boolean hasStreamableTimestamp(RecordCursorFactory factory) {
+        if (factory.getMetadata().getTimestampIndex() < 0) {
+            return true;
+        }
+        if (!factory.hasTableScanTimestamp()) {
+            return false;
+        }
+        final int direction = factory.getScanDirection();
+        return direction == RecordCursorFactory.SCAN_DIRECTION_FORWARD || direction == RecordCursorFactory.SCAN_DIRECTION_BACKWARD;
+    }
+
+    /**
      * Unwraps a QueryProgress wrapper to access the underlying factory.
      */
     public static RecordCursorFactory unwrapFactory(RecordCursorFactory factory) {
         return factory instanceof QueryProgress qp ? qp.getBaseFactory() : factory;
+    }
+
+    private static boolean hasBinaryColumn(RecordMetadata metadata) {
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (ColumnType.tagOf(metadata.getColumnType(i)) == ColumnType.BINARY) {
+                return true;
+            }
+        }
+        return false;
     }
 }

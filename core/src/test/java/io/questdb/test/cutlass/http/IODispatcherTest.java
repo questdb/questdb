@@ -136,9 +136,11 @@ import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestRecord;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
+import io.questdb.test.cairo.view.ViewCompileParker;
 import io.questdb.test.cutlass.NetUtils;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestMicroClock;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -623,6 +625,91 @@ public class IODispatcherTest extends AbstractTest {
             testHttpClient.assertGet("{" + "\"query\":\"select simulate_crash('A') from long_sequence(5)\"," + "\"columns\":[{\"name\":\"simulate_crash\",\"type\":\"BOOLEAN\"}]," + "\"timestamp\":-1," + "\"dataset\":[[]]," + "\"count\":1," + "\"error\":\"simulated authorization exception\", " + "\"errorPos\":0" + "}", "select simulate_crash('A') from long_sequence(5)");
             Assert.assertEquals(0, engine.getMetrics().healthMetrics().unhandledErrorsCount());
         });
+    }
+
+    @Test
+    public void testExecDdlAfterTableChangedDuringViewCompileWait() throws Exception {
+        // A query holds t's reader and a view compile run over another table runs, so DROP and
+        // RENAME of t wait for the run. During the wait another session replaces t with a new
+        // table, or drops it. The DDL must not act on the new table. /exec runs RENAME again on
+        // a busy table, which then renames the new table; it answers DROP of a busy table with an
+        // error. A table that is gone fails both, except DROP TABLE IF EXISTS.
+        getSimpleTester()
+                .withAlterTableStartWaitTimeout(Long.MAX_VALUE)
+                .run((engine, sqlExecutionContext) -> {
+                    // loads the view state store and its compile queue, as the server does at startup
+                    engine.load();
+                    final LogCapture capture = new LogCapture();
+                    capture.start();
+                    try {
+                        engine.execute("CREATE TABLE t2 (a INT)", sqlExecutionContext);
+                        engine.execute("CREATE VIEW v2 AS (SELECT * FROM t2)", sqlExecutionContext);
+                        drainViewQueue(engine);
+
+                        final String busyError = "\\{\"query\":\"DROP TABLE( IF EXISTS)? t\",\"error\":\"could not lock 't' \\[reason='busyReader'\\]\",\"position\":\\d+\\}";
+                        assertExecDdlAfterTableChangedDuringViewCompileWait(engine, sqlExecutionContext, capture, 0, "DROP TABLE t", true, "400", busyError);
+                        assertTableHolds42(engine, sqlExecutionContext, "t");
+                        engine.execute("DROP TABLE t", sqlExecutionContext);
+                        assertExecDdlAfterTableChangedDuringViewCompileWait(engine, sqlExecutionContext, capture, 1, "DROP TABLE IF EXISTS t", true, "400", busyError);
+                        assertTableHolds42(engine, sqlExecutionContext, "t");
+                        engine.execute("DROP TABLE t", sqlExecutionContext);
+                        assertExecDdlAfterTableChangedDuringViewCompileWait(engine, sqlExecutionContext, capture, 2, "RENAME TABLE t TO u", true, "200", "\\{\"ddl\":\"OK\"\\}");
+                        Assert.assertNull(engine.getTableTokenIfExists("t"));
+                        assertTableHolds42(engine, sqlExecutionContext, "u");
+                        engine.execute("DROP TABLE u", sqlExecutionContext);
+
+                        final String doesNotExistError = "\\{\"query\":\"(DROP|RENAME) TABLE t( TO u)?\",\"error\":\"table does not exist \\[table=t\\]\",\"position\":\\d+\\}";
+                        assertExecDdlAfterTableChangedDuringViewCompileWait(engine, sqlExecutionContext, capture, 3, "DROP TABLE t", false, "400", doesNotExistError);
+                        assertExecDdlAfterTableChangedDuringViewCompileWait(engine, sqlExecutionContext, capture, 4, "DROP TABLE IF EXISTS t", false, "200", "\\{\"ddl\":\"OK\"\\}");
+                        assertExecDdlAfterTableChangedDuringViewCompileWait(engine, sqlExecutionContext, capture, 5, "RENAME TABLE t TO u", false, "400", doesNotExistError);
+                        Assert.assertNull(engine.getTableTokenIfExists("t"));
+                        Assert.assertNull(engine.getTableTokenIfExists("u"));
+                    } finally {
+                        capture.stop();
+                    }
+                });
+    }
+
+    @Test
+    public void testExecDdlRightAfterAlterWaitsForViewCompile() throws Exception {
+        // ALTER of a non-WAL table queues the recompile of the view over it, and DROP, RENAME and
+        // TRUNCATE of the table run while the recompile holds the table's reader. Each waits for
+        // the recompile instead of failing as busy.
+        getSimpleTester()
+                .withAlterTableStartWaitTimeout(Long.MAX_VALUE)
+                .run((engine, sqlExecutionContext) -> {
+                    // loads the view state store and its compile queue, as the server does at startup
+                    engine.load();
+                    final LogCapture capture = new LogCapture();
+                    capture.start();
+                    try {
+                        createTableAndViewThenAddColumn(engine, sqlExecutionContext);
+                        executeWhileViewCompileHolds(engine, capture, "TRUNCATE TABLE t");
+                        testHttpClient.assertGet(
+                                "/exec",
+                                "{\"query\":\"SELECT count() FROM t\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"timestamp\":-1,\"dataset\":[[0]],\"count\":1}",
+                                "SELECT count() FROM t"
+                        );
+
+                        engine.execute("ALTER TABLE t ADD COLUMN c INT", sqlExecutionContext);
+                        executeWhileViewCompileHolds(engine, capture, "DROP TABLE t");
+                        Assert.assertNull(engine.getTableTokenIfExists("t"));
+                        engine.execute("DROP VIEW v", sqlExecutionContext);
+
+                        // /exec runs a busy RENAME again until it succeeds, so it goes last: a
+                        // RENAME that does not wait would keep the run parked
+                        createTableAndViewThenAddColumn(engine, sqlExecutionContext);
+                        executeWhileViewCompileHolds(engine, capture, "RENAME TABLE t TO u");
+                        Assert.assertNull(engine.getTableTokenIfExists("t"));
+                        testHttpClient.assertGet(
+                                "/exec",
+                                "{\"query\":\"SELECT * FROM u\",\"columns\":[{\"name\":\"a\",\"type\":\"INT\"},{\"name\":\"b\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1,null],[2,null]],\"count\":2}",
+                                "SELECT * FROM u"
+                        );
+                    } finally {
+                        capture.stop();
+                    }
+                });
     }
 
     @Test
@@ -7818,8 +7905,43 @@ public class IODispatcherTest extends AbstractTest {
         }
     }
 
+    // Creates t with the rows 1 and 2 and runs the DDL of t while a query holds t's reader and a
+    // view compile run holds t2's reader, so that the DDL waits for the run. Once the DDL logs that
+    // it waits, the query ends, another session drops t and, when asked, creates a new t with row
+    // 42, and the run ends.
+    private static void assertExecDdlAfterTableChangedDuringViewCompileWait(
+            CairoEngine engine,
+            SqlExecutionContext sqlExecutionContext,
+            LogCapture capture,
+            int scenario,
+            String ddl,
+            boolean isRecreated,
+            String expectedStatus,
+            String expectedResponseRegex
+    ) throws Exception {
+        ViewCompileParker.executeWhileQueryAndViewCompileHold(
+                engine,
+                sqlExecutionContext,
+                capture,
+                scenario,
+                () -> testHttpClient.assertGetRegexp("/exec", expectedResponseRegex, ddl, null, null, null, null, expectedStatus),
+                () -> ViewCompileParker.dropTableAsAnotherSession(engine, "t", isRecreated)
+        );
+    }
+
     private static HttpServer createHttpServer(ServerConfiguration serverConfiguration, CairoEngine cairoEngine, WorkerPool workerPool) {
         return Services.INSTANCE.createHttpServer(serverConfiguration, cairoEngine, workerPool, workerPool.getWorkerCount());
+    }
+
+    // creates the non-WAL table t with rows 1 and 2 and the view v over it, then adds a column to
+    // t, which queues the recompile of v
+    private static void createTableAndViewThenAddColumn(CairoEngine engine, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        engine.execute("CREATE TABLE t (a INT)", sqlExecutionContext);
+        engine.execute("INSERT INTO t VALUES (1), (2)", sqlExecutionContext);
+        Assert.assertFalse(engine.verifyTableName("t").isWal());
+        engine.execute("CREATE VIEW v AS (SELECT * FROM t)", sqlExecutionContext);
+        drainViewQueue(engine);
+        engine.execute("ALTER TABLE t ADD COLUMN b INT", sqlExecutionContext);
     }
 
     private static void createTableX(CairoEngine engine, int n) {
@@ -7839,6 +7961,17 @@ public class IODispatcherTest extends AbstractTest {
             }
             writer.commit();
         }
+    }
+
+    // Runs the DDL over /exec while the view compile run that an ALTER of t queued holds t's
+    // reader. The run ends once the DDL logs that it waits for it.
+    private static void executeWhileViewCompileHolds(CairoEngine engine, LogCapture capture, String ddl) throws Exception {
+        ViewCompileParker.ofQueueDrain(engine, "t", PoolListener.SRC_READER).executeWhileHolding(
+                capture,
+                "t",
+                () -> testHttpClient.assertGet("/exec", "{\"ddl\":\"OK\"}", ddl),
+                null
+        );
     }
 
     private static String rangeRequest(String range, String ifRange) {
@@ -8007,6 +8140,15 @@ public class IODispatcherTest extends AbstractTest {
             StringSink sink = new StringSink();
             TestUtils.assertCursor(expectedData, cursor, reader.getMetadata(), false, sink);
         }
+    }
+
+    private void assertTableHolds42(CairoEngine engine, SqlExecutionContext sqlExecutionContext, String tableName) throws Exception {
+        assertQuery(tableName)
+                .withEngine(engine)
+                .withContext(sqlExecutionContext)
+                .noLeakCheck()
+                .expectSize()
+                .returns("a\n42\n");
     }
 
     private void assertTelemetryEventAndOrigin() {

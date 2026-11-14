@@ -8050,7 +8050,8 @@ public class SqlOptimiser implements Mutable {
             try (TableReader reader = executionContext.getReader(tableToken)) {
                 enumerateColumns(model, reader.getMetadata());
             } catch (EntryLockedException e) {
-                throw SqlException.position(tableNamePosition).put("table is locked: ").put(tableToken.getTableName());
+                // Keep the SQL error contract while letting the view compiler identify a table lock.
+                throw SqlException.position(tableNamePosition).put("table is locked: ").put(tableToken.getTableName()).setTableLocked(true);
             } catch (CairoException e) {
                 if (e.isOutOfMemory() || e.isTableDoesNotExist()) {
                     throw e;

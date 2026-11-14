@@ -4936,4 +4936,193 @@ mod tests {
             }
         }
     }
+
+    /// Writes a Symbol column with dense chunk dictionaries the way the streaming export
+    /// writer does: each frame of keys is pushed into a FrameAccumulator, which writes a row
+    /// group whenever one is full, and the rest at the end.
+    fn write_dense_symbol_frames(
+        frames: &[Vec<i32>],
+        chars: &[u8],
+        offsets: &[u64],
+        row_group_size: usize,
+    ) -> Bytes {
+        let symbol_type = ColumnTypeTag::Symbol.into_type().code();
+        let mut template = Column::from_raw_data(
+            0,
+            "sym",
+            symbol_type,
+            0,
+            0,
+            null(),
+            0,
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+            0,
+        )
+        .expect("template column");
+        template.dense_symbol_dictionary = true;
+        let template = Partition { table: "t".to_string(), columns: vec![template] };
+        let (parquet_schema, additional_data) =
+            schema::to_parquet_schema(&template, false, -1, SeqTxn::UNSET).expect("schema");
+        let encodings = schema::to_encodings(&template);
+        let compressions = schema::to_compressions(&template);
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        {
+            let mut chunked_writer = ParquetWriter::new(&mut buf)
+                .with_row_group_size(Some(row_group_size))
+                .chunked_with_compressions(parquet_schema, encodings, compressions)
+                .expect("chunked writer");
+            let mut frame_accumulator =
+                crate::parquet_write::frames::FrameAccumulator::new(row_group_size);
+            for keys in frames {
+                let mut column = Column::from_raw_data(
+                    0,
+                    "sym",
+                    symbol_type,
+                    0,
+                    keys.len(),
+                    keys.as_ptr() as *const u8,
+                    keys.len() * size_of::<i32>(),
+                    chars.as_ptr(),
+                    chars.len(),
+                    offsets.as_ptr(),
+                    offsets.len(),
+                    false,
+                    false,
+                    0,
+                )
+                .expect("frame column");
+                column.dense_symbol_dictionary = true;
+                frame_accumulator.push(
+                    Partition { table: String::new(), columns: vec![column] },
+                    (),
+                );
+                while frame_accumulator.has_full_row_group() {
+                    frame_accumulator
+                        .write_row_group(&mut chunked_writer)
+                        .expect("row group");
+                }
+            }
+            frame_accumulator
+                .write_remaining(&mut chunked_writer)
+                .expect("remaining rows");
+            chunked_writer.finish(additional_data).expect("finish");
+        }
+        buf.into_inner().into()
+    }
+
+    /// Random symbol maps, keys with ~10% NULL, frame splits and row group sizes, written
+    /// with dense chunk dictionaries and read back with arrow-rs, an independent reader:
+    /// every row reads back as the map's symbol for its key, and every row group's
+    /// dictionary page holds exactly the distinct symbols of its rows. The seed is printed.
+    #[test]
+    fn symbol_dense_dictionary_random_round_trip() {
+        use parquet::column::page::Page;
+        use parquet::file::reader::{FileReader, SerializedFileReader};
+        use rand::rngs::StdRng;
+        use rand::{RngExt, SeedableRng};
+        use std::collections::HashSet;
+
+        // Raise both for a long local run, MAX_ROW_COUNT past 100_000, the default
+        // cairo.parquet.export.row.group.size: row groups of that size fill the dense
+        // dictionary's key map to export scale, and with up to 200_000 symbols keys repeat.
+        const ITERATIONS: usize = 8;
+        const MAX_ROW_COUNT: usize = 5_000;
+        let seed: u64 = rand::rng().random();
+        println!("symbol_dense_dictionary_random_round_trip seed: {seed}");
+        let mut rng = StdRng::seed_from_u64(seed);
+        for _ in 0..ITERATIONS {
+            let symbol_count: usize = rng.random_range(1..=200_000);
+            let names: Vec<String> = (0..symbol_count).map(|k| format!("sym{k}")).collect();
+            let (chars, offsets) = serialize_as_symbols(names.iter().map(String::as_str).collect());
+            let row_count: usize = rng.random_range(1..=MAX_ROW_COUNT);
+            let keys: Vec<i32> = (0..row_count)
+                .map(|_| {
+                    if rng.random_range(0..10) == 0 {
+                        i32::MIN
+                    } else {
+                        rng.random_range(0..symbol_count) as i32
+                    }
+                })
+                .collect();
+            let mut frames = Vec::new();
+            let mut frame_start = 0;
+            while frame_start < row_count {
+                let frame_rows = rng.random_range(1..=row_count - frame_start);
+                frames.push(keys[frame_start..frame_start + frame_rows].to_vec());
+                frame_start += frame_rows;
+            }
+            let row_group_size: usize = rng.random_range(1..=row_count + 10);
+            let bytes = write_dense_symbol_frames(&frames, &chars, &offsets, row_group_size);
+
+            let expected: Vec<Option<&str>> = keys
+                .iter()
+                .map(|&key| {
+                    if key < 0 {
+                        None
+                    } else {
+                        Some(names[key as usize].as_str())
+                    }
+                })
+                .collect();
+            let parquet_reader = ParquetRecordBatchReaderBuilder::try_new(bytes.clone())
+                .expect("reader")
+                .with_batch_size(8192)
+                .build()
+                .expect("builder");
+            let mut actual: Vec<Option<String>> = Vec::with_capacity(row_count);
+            for batch in parquet_reader {
+                let batch = batch.expect("batch");
+                let symbols = batch
+                    .column(0)
+                    .as_any()
+                    .downcast_ref::<arrow::array::StringArray>()
+                    .expect("string array");
+                actual.extend(symbols.iter().map(|value| value.map(str::to_string)));
+            }
+            assert_eq!(
+                actual.iter().map(Option::as_deref).collect::<Vec<_>>(),
+                expected,
+                "seed {seed}"
+            );
+
+            let file_reader = SerializedFileReader::new(bytes).expect("file reader");
+            let row_group_count = file_reader.metadata().num_row_groups();
+            assert_eq!(
+                row_group_count,
+                row_count.div_ceil(row_group_size),
+                "seed {seed}"
+            );
+            for row_group_index in 0..row_group_count {
+                let row_lo = row_group_index * row_group_size;
+                let row_hi = (row_lo + row_group_size).min(row_count);
+                let distinct_keys: HashSet<i32> = keys[row_lo..row_hi]
+                    .iter()
+                    .copied()
+                    .filter(|&key| key >= 0)
+                    .collect();
+                let mut page_reader = file_reader
+                    .get_row_group(row_group_index)
+                    .expect("row group reader")
+                    .get_column_page_reader(0)
+                    .expect("page reader");
+                match page_reader
+                    .get_next_page()
+                    .expect("page")
+                    .expect("first page")
+                {
+                    Page::DictionaryPage { num_values, .. } => assert_eq!(
+                        num_values as usize,
+                        distinct_keys.len(),
+                        "row group {row_group_index}, seed {seed}"
+                    ),
+                    _ => panic!("expected a dictionary page first, seed {seed}"),
+                }
+            }
+        }
+    }
 }

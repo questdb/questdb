@@ -47,7 +47,11 @@ import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.PriorityMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.columns.ColumnFunction;
+import io.questdb.griffin.engine.functions.columns.SymbolColumn;
+import io.questdb.griffin.engine.functions.memoization.MemoizerFunction;
+import io.questdb.griffin.engine.groupby.MapSymbolColumn;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.std.BoolList;
 import io.questdb.std.Decimal128;
@@ -61,6 +65,8 @@ import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
+import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
 
@@ -70,7 +76,9 @@ import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
  * Computed columns (expressions) are evaluated row-by-row and written to allocated buffers.
  * <p>
  * Also supports cursor-based mode (no page frame backing) where all columns are materialized
- * from a RecordCursor.
+ * from a RecordCursor. A SYMBOL column whose cursor passes a table column's symbol keys through
+ * stays SYMBOL there: its buffer collects the keys, which the encoder resolves through the
+ * table's symbol map. Every other SYMBOL column is written as STRING.
  */
 public class HybridColumnMaterializer implements Mutable, QuietCloseable {
     private static final long DEFAULT_PAGE_SIZE = 1024 * 1024L;
@@ -94,6 +102,60 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
         }
         columnData.add(0L);
         columnData.add(0L);
+    }
+
+    // The layout of a pass-through SYMBOL column, with the keys from the materialization buffer
+    private static void addSymbolColumnData(DirectLongList columnData, MemoryCARWImpl keyBuf, SymbolMapReader symbolMap) {
+        columnData.add(0L); // no col top
+        columnData.add(keyBuf.addressOf(0));
+        columnData.add(keyBuf.getAppendOffset());
+        final MemoryR symbolValuesMem = symbolMap.getSymbolValuesColumn();
+        final MemoryR symbolOffsetsMem = symbolMap.getSymbolOffsetsColumn();
+        columnData.add(symbolValuesMem.addressOf(0));
+        columnData.add(symbolValuesMem.size());
+        columnData.add(symbolOffsetsMem.addressOf(HEADER_SIZE));
+        columnData.add(symbolMap.getSymbolCount());
+    }
+
+    /**
+     * Returns the table's symbol map that resolves the keys the cursor returns for a SYMBOL column, when the column
+     * passes a table column's keys through: the cursor's symbol table for the column is the table's map, or reaches
+     * it only through column references. Returns null for every other column, such as a SYMBOL that a function
+     * computes, an aggregate, a cast to SYMBOL or a UNION of SYMBOL columns, and for a map without memory.
+     */
+    private static @Nullable SymbolMapReader findTableSymbolMap(RecordMetadata metadata, RecordCursor cursor, int columnIndex) {
+        if (!ColumnType.isSymbol(metadata.getColumnType(columnIndex)) || !metadata.isSymbolTableStatic(columnIndex)) {
+            return null;
+        }
+        SymbolTable symbolTable;
+        try {
+            symbolTable = cursor.getSymbolTable(columnIndex);
+        } catch (UnsupportedOperationException e) {
+            // a cursor that serves no symbol tables
+            return null;
+        }
+        while (true) {
+            if (symbolTable instanceof SymbolMapReader symbolMapReader) {
+                return symbolMapReader.getSymbolValuesColumn() != null && symbolMapReader.getSymbolOffsetsColumn() != null
+                        ? symbolMapReader
+                        : null;
+            }
+            if (!(symbolTable instanceof SymbolFunction symbolFunction) || !symbolFunction.isSymbolTableStatic()) {
+                return null;
+            }
+            if (symbolFunction instanceof MemoizerFunction memoizerFunction) {
+                final Function arg = memoizerFunction.getArg();
+                // a memoizer reports a static symbol table only for a SymbolFunction argument
+                assert arg instanceof SymbolTable;
+                symbolTable = (SymbolTable) arg;
+            } else if (symbolFunction instanceof SymbolColumn symbolColumn) {
+                symbolTable = symbolColumn.getSourceSymbolTable();
+            } else if (symbolFunction instanceof MapSymbolColumn mapSymbolColumn) {
+                symbolTable = mapSymbolColumn.getSourceSymbolTable();
+            } else {
+                return null;
+            }
+        }
     }
 
     private static boolean isTypePreservingParquetPassThrough(int sourceColumnType, int outputColumnType) {
@@ -128,8 +190,11 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
     private final BoolList computedIsSymbolToString = new BoolList();
     // Pre-computed per-column: adjustedMetadata.getColumnType(computedColumnIndices[k])
     private final IntList computedOutputTypes = new IntList();
-    // Pre-computed per-column: original column type before SYMBOL→STRING conversion (cursor path)
+    // Pre-computed per-column: the type writeColumnValue() reads the column as (cursor path)
     private final IntList computedSourceTypes = new IntList();
+    // Per output col, cursor path only: the table symbol map of a SYMBOL column that the export keeps as SYMBOL, or
+    // null for every other column
+    private final ObjList<SymbolMapReader> cursorSymbolMaps = new ObjList<>();
     // Per computed col: data memory
     private final ObjList<MemoryCARWImpl> dataBuffers = new ObjList<>();
     private final Decimal128 decimal128A = new Decimal128();
@@ -173,10 +238,15 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
 
         columnData.clear();
         for (int k = 0; k < computedCount; k++) {
-            int bufIdx = computedBufferIdx.getQuick(computedColumnIndices.getQuick(k));
+            final int columnIndex = computedColumnIndices.getQuick(k);
+            int bufIdx = computedBufferIdx.getQuick(columnIndex);
             MemoryCARWImpl dataBuf = dataBuffers.getQuick(bufIdx);
-            MemoryCARWImpl auxBuf = auxBuffers.getQuick(bufIdx);
-            addColumnData(columnData, dataBuf, auxBuf, computedOutputTypes.getQuick(k));
+            final SymbolMapReader symbolMap = cursorSymbolMaps.getQuick(columnIndex);
+            if (symbolMap != null) {
+                addSymbolColumnData(columnData, dataBuf, symbolMap);
+            } else {
+                addColumnData(columnData, dataBuf, auxBuffers.getQuick(bufIdx), computedOutputTypes.getQuick(k));
+            }
         }
         return rowCount;
     }
@@ -272,6 +342,7 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
         computedIsSymbolToString.clear();
         computedOutputTypes.clear();
         computedSourceTypes.clear();
+        cursorSymbolMaps.clear();
         functions = null;
         functionRecord = null;
         adjustedMetadata.clear();
@@ -292,6 +363,15 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
 
     public IntList getBaseColumnMap() {
         return baseColumnMap;
+    }
+
+    /**
+     * Returns the table symbol map through which the encoder resolves the keys of a SYMBOL column that a
+     * cursor-based set-up keeps as SYMBOL, or null for every other column.
+     */
+    @TestOnly
+    public @Nullable SymbolMapReader getCursorSymbolMap(int columnIndex) {
+        return cursorSymbolMaps.getQuiet(columnIndex);
     }
 
     /**
@@ -317,8 +397,12 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
      * (no page frame backing). This is the fallback path used when the cursor-mode
      * factory is not a {@link io.questdb.griffin.engine.table.VirtualRecordCursorFactory}
      * (e.g. join factories, aggregation factories).
+     *
+     * @param metadata the metadata of the cursor's records
+     * @param cursor   the cursor the export reads; its symbol tables show which SYMBOL columns
+     *                 pass a table's symbol keys through, and it must stay open until the export ends
      */
-    public void setUp(RecordMetadata metadata) {
+    public void setUp(RecordMetadata metadata, RecordCursor cursor) {
         this.outputColumnCount = metadata.getColumnCount();
         this.baseColumnMap.setPos(outputColumnCount);
         this.computedBufferIdx.setPos(outputColumnCount);
@@ -326,15 +410,21 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
 
         adjustedMetadata.clear();
         computedCount = 0;
+        cursorSymbolMaps.setAll(outputColumnCount, null);
 
         for (int i = 0; i < outputColumnCount; i++) {
             int columnType = metadata.getColumnType(i);
-            int parquetEncodingConfig = 0;
-            if (columnType == toExportColumnType(columnType)) {
-                parquetEncodingConfig = metadata.getColumnMetadata(i).getParquetEncodingConfig();
-            }
             baseColumnMap.setQuick(i, -1); // all computed in full mode
-            addComputedColumn(metadata, i, columnType, parquetEncodingConfig);
+            final SymbolMapReader symbolMap = findTableSymbolMap(metadata, cursor, i);
+            if (symbolMap != null) {
+                addTableSymbolColumn(metadata, i, metadata.getColumnMetadata(i).getParquetEncodingConfig(), symbolMap);
+            } else {
+                int parquetEncodingConfig = 0;
+                if (columnType == toExportColumnType(columnType)) {
+                    parquetEncodingConfig = metadata.getColumnMetadata(i).getParquetEncodingConfig();
+                }
+                addComputedColumn(metadata, i, columnType, parquetEncodingConfig);
+            }
         }
 
         buildComputedColumnIndices();
@@ -349,8 +439,12 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
      * Sets up for cursor-based export of a virtual factory: all columns are materialized
      * from a RecordCursor, but true pass-through columns can still inherit parquet encoding
      * overrides when the exported type is unchanged.
+     *
+     * @param vf     the virtual factory of the export
+     * @param cursor the factory's cursor that the export reads; its symbol tables show which SYMBOL
+     *               columns pass a table's symbol keys through, and it must stay open until the export ends
      */
-    public void setUpCursorBacked(VirtualRecordCursorFactory vf) {
+    public void setUpCursorBacked(VirtualRecordCursorFactory vf, RecordCursor cursor) {
         PriorityMetadata priorityMetadata = vf.getPriorityMetadata();
         ObjList<Function> vfFunctions = vf.getFunctions();
         RecordMetadata outputMeta = vf.getMetadata();
@@ -362,23 +456,30 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
 
         adjustedMetadata.clear();
         computedCount = 0;
+        cursorSymbolMaps.setAll(outputColumnCount, null);
 
         for (int i = 0; i < outputColumnCount; i++) {
             int columnType = outputMeta.getColumnType(i);
+            final SymbolMapReader symbolMap = findTableSymbolMap(outputMeta, cursor, i);
             int parquetEncodingConfig = 0;
             ColumnFunction cf = ColumnFunction.unwrap(vfFunctions.getQuick(i));
             if (cf != null) {
                 int baseColIdx = priorityMetadata.getBaseColumnIndex(cf.getColumnIndex());
                 if (baseColIdx >= 0) {
                     int sourceColumnType = baseMeta.getColumnType(baseColIdx);
-                    if (isTypePreservingParquetPassThrough(sourceColumnType, columnType)) {
+                    // A kept column references a base SYMBOL column and stays SYMBOL, so its type is preserved too.
+                    if (symbolMap != null || isTypePreservingParquetPassThrough(sourceColumnType, columnType)) {
                         parquetEncodingConfig = baseMeta.getColumnMetadata(baseColIdx).getParquetEncodingConfig();
                     }
                 }
             }
 
             baseColumnMap.setQuick(i, -1); // all columns are materialized in cursor mode
-            addComputedColumn(outputMeta, i, columnType, parquetEncodingConfig);
+            if (symbolMap != null) {
+                addTableSymbolColumn(outputMeta, i, parquetEncodingConfig, symbolMap);
+            } else {
+                addComputedColumn(outputMeta, i, columnType, parquetEncodingConfig);
+            }
         }
 
         buildComputedColumnIndices();
@@ -409,6 +510,7 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
         this.computedBufferIdx.setPos(outputColumnCount);
         this.adjustedMetadata.clear();
         this.computedCount = 0;
+        cursorSymbolMaps.clear();
 
         for (int i = 0; i < outputColumnCount; i++) {
             ColumnFunction cf = ColumnFunction.unwrap(functions.getQuick(i));
@@ -505,6 +607,27 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
         TableColumnMetadata adjustedColumn = new TableColumnMetadata(metadata.getColumnName(i), adjustedType);
         adjustedColumn.setParquetEncodingConfig(parquetEncodingConfig);
         adjustedMetadata.add(adjustedColumn);
+    }
+
+    // Keeps a SYMBOL column as SYMBOL: its buffer collects the keys, which the encoder resolves
+    // through the table's symbol map, as for a pass-through SYMBOL column.
+    private void addTableSymbolColumn(RecordMetadata metadata, int i, int parquetEncodingConfig, SymbolMapReader symbolMap) {
+        computedBufferIdx.setQuick(i, computedCount);
+        allocateBuffer(ColumnType.SYMBOL);
+        // writeColumnValue() reads the keys with getInt()
+        computedSourceTypes.add(ColumnType.INT);
+        computedCount++;
+        final TableColumnMetadata column = new TableColumnMetadata(
+                metadata.getColumnName(i),
+                ColumnType.SYMBOL,
+                IndexType.NONE,
+                0,
+                true,
+                null
+        );
+        column.setParquetEncodingConfig(parquetEncodingConfig);
+        adjustedMetadata.add(column);
+        cursorSymbolMaps.setQuick(i, symbolMap);
     }
 
     private void allocateBuffer(int columnType) {
@@ -624,7 +747,7 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
             case ColumnType.VARCHAR, ColumnType.VARCHAR_SLICE ->
                     VarcharTypeDriver.appendValue(auxBuf, dataBuf, record.getVarcharA(col));
             case ColumnType.SYMBOL -> {
-                // Symbols get converted to STRING in adjusted metadata
+                // A SYMBOL column that the export does not keep is written as STRING
                 CharSequence sym = record.getSymA(col);
                 StringTypeDriver.appendValue(auxBuf, dataBuf, sym);
             }

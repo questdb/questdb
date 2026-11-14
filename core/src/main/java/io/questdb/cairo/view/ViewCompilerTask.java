@@ -29,17 +29,21 @@ import io.questdb.mp.ValueHolder;
 import io.questdb.std.Numbers;
 
 public class ViewCompilerTask implements ValueHolder<ViewCompilerTask> {
+    // the task repeats the compile of the view tableToken alone, see ViewStateStore#scheduleCompileBusyRetry
+    public boolean isBusyRetry;
     public TableToken tableToken;
     public long updateTimestamp = Numbers.LONG_NULL;
 
     @Override
     public void clear() {
+        isBusyRetry = false;
         tableToken = null;
         updateTimestamp = Numbers.LONG_NULL;
     }
 
     @Override
     public void copyTo(ViewCompilerTask target) {
+        target.isBusyRetry = isBusyRetry;
         target.tableToken = tableToken;
         target.updateTimestamp = updateTimestamp;
     }

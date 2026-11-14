@@ -127,6 +127,20 @@ public class StaleViewCheckFactory implements RecordCursorFactory {
     }
 
     @Override
+    public boolean hasParquetConvertedColumns(SqlExecutionContext executionContext) {
+        // Must delegate to the immediate base: the default asks getBaseFactory(), which skips
+        // this wrapper's own base. A Parquet export would then miss a column whose type changed
+        // after its Parquet partition was written, and hand the encoder the old layout.
+        return base.hasParquetConvertedColumns(executionContext);
+    }
+
+    @Override
+    public boolean hasTableScanTimestamp() {
+        // Must delegate to the immediate base, see hasParquetConvertedColumns().
+        return base.hasTableScanTimestamp();
+    }
+
+    @Override
     public boolean implementsLimit() {
         return base.implementsLimit();
     }
@@ -170,6 +184,12 @@ public class StaleViewCheckFactory implements RecordCursorFactory {
     @Override
     public boolean usesCompiledFilter() {
         return base.usesCompiledFilter();
+    }
+
+    @Override
+    public boolean usesExternalDataSource() {
+        // Must delegate to the immediate base, see hasParquetConvertedColumns().
+        return base.usesExternalDataSource();
     }
 
     private void verifyViews() {

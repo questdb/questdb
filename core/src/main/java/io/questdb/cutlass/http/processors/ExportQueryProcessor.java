@@ -205,8 +205,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 try {
                     boolean runQuery = true;
                     boolean isParquet = state.getExportModel().isParquetFormat();
-                    final int order = state.recordCursorFactory.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
-                    state.descending = order == ORDER_DESC;
+                    state.descending = state.recordCursorFactory.getScanDirection() == SCAN_DIRECTION_BACKWARD;
                     if (isParquet) {
                         state.parquetExportMode = ParquetExportMode.determineExportMode(state.recordCursorFactory, state.descending, sqlExecutionContext);
                     }
@@ -215,7 +214,10 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                             if (isParquet) {
                                 switch (state.parquetExportMode) {
                                     case DIRECT_PAGE_FRAME ->
-                                            state.pageFrameCursor = state.recordCursorFactory.getPageFrameCursor(sqlExecutionContext, order);
+                                            state.pageFrameCursor = state.recordCursorFactory.getPageFrameCursor(
+                                                    sqlExecutionContext,
+                                                    state.descending ? ORDER_DESC : ORDER_ASC
+                                            );
                                     case PAGE_FRAME_BACKED -> {
                                         // Safe cast: determineExportMode() only returns PAGE_FRAME_BACKED
                                         // when unwrapped instanceof VirtualRecordCursorFactory.
@@ -262,7 +264,10 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                                 state.recordCursorFactory = cc.getRecordCursorFactory();
                             }
                             if (isParquet) {
-                                state.parquetExportMode = ParquetExportMode.determineExportMode(state.recordCursorFactory, state.descending, sqlExecutionContext);
+                                // The recompiled plan's page frames are read ascending, and a plan that scans backward
+                                // streams its cursor instead.
+                                state.parquetExportMode = ParquetExportMode.determineRecompiledExportMode(state.recordCursorFactory, sqlExecutionContext);
+                                state.descending = false;
                             }
                         }
                     }
@@ -275,11 +280,14 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         state.pageFrameCursor.setScanProfile(ReaderScanProfile.SEQUENTIAL_EVICT);
                         state.materializer.setUpPageFrameBacked(vf, state.pageFrameCursor, sqlExecutionContext);
                     } else if (isParquet && state.parquetExportMode == ParquetExportMode.CURSOR_BASED) {
+                        // The cursor writer marks the designated timestamp in the order of the plan it streams, which
+                        // can be a recompiled one.
+                        state.descending = state.recordCursorFactory.getScanDirection() == SCAN_DIRECTION_BACKWARD;
                         RecordCursorFactory unwrapped = ParquetExportMode.unwrapFactory(state.recordCursorFactory);
                         if (unwrapped instanceof VirtualRecordCursorFactory vf) {
-                            state.materializer.setUpCursorBacked(vf);
+                            state.materializer.setUpCursorBacked(vf, state.cursor);
                         } else {
-                            state.materializer.setUp(state.recordCursorFactory.getMetadata());
+                            state.materializer.setUp(state.recordCursorFactory.getMetadata(), state.cursor);
                         }
                     }
                     state.metadata = state.recordCursorFactory.getMetadata();
