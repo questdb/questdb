@@ -50,6 +50,7 @@ import io.questdb.cutlass.http.HttpKeywords;
 import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
+import io.questdb.cutlass.http.HttpResponseHeader;
 import io.questdb.cutlass.http.LocalValue;
 import io.questdb.cutlass.parquet.HTTPSerialParquetExporter;
 import io.questdb.cutlass.parquet.HybridColumnMaterializer;
@@ -85,6 +86,7 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 
@@ -384,6 +386,18 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         }
     }
 
+    private static boolean hasControlChar(CharSequence text) {
+        for (int i = 0, n = text.length(); i < n; i++) {
+            final char c = text.charAt(i);
+            // CTL of RFC 5234. A header field may carry none of them but HTAB,
+            // and no file name needs that.
+            if (c < 0x20 || c == 0x7F) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static boolean isExpUrl(Utf8Sequence tok) {
         if (tok.size() != 4) {
             return false;
@@ -469,6 +483,28 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         if (!Interval.NULL.equals(interval)) {
             interval.toSink(response.putQuote(), intervalType);
             response.putQuote();
+        }
+    }
+
+    /**
+     * Writes the text as the content of an RFC 9110 quoted-string. A backslash escapes each double
+     * quote and backslash, so neither can end the string early and leave the rest of the text, and
+     * the file extension after it, outside the quotes. The caller rejects text with control
+     * characters, since CR and LF would end the header line.
+     */
+    private static void putQuotedStringContent(Utf8Sink sink, CharSequence text) {
+        final int n = text.length();
+        int i = 0;
+        while (i < n) {
+            final char c = text.charAt(i++);
+            if (c < 128) {
+                if (c == '"' || c == '\\') {
+                    sink.putAscii('\\');
+                }
+                sink.putAscii(c);
+            } else {
+                i = Utf8s.encodeUtf16Char(sink, text, n, i, c);
+            }
         }
     }
 
@@ -1118,7 +1154,18 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         DirectUtf8Sequence fileName = request.getUrlParam(URL_PARAM_FILENAME);
         state.fileName.clear();
         if (fileName != null && fileName.size() > 0) {
-            state.fileName.put(fileName);
+            if (!Utf8s.utf8ToUtf16(fileName.lo(), fileName.hi(), state.fileName)) {
+                info(state).$("Bad UTF8 encoding in filename").$();
+                sendException(response, 0, "Bad UTF8 encoding in filename", state);
+                return false;
+            }
+            // header() copies the file name into the Content-Disposition header, where CR or LF
+            // would end the header line and let the URL add headers of its own to the response.
+            if (hasControlChar(state.fileName)) {
+                info(state).$("control character in filename").$();
+                sendException(response, 0, "filename must not contain control characters", state);
+                return false;
+            }
         }
 
         DirectUtf8Sequence delimiter = request.getUrlParam(URL_PARAM_DELIMITER);
@@ -1390,12 +1437,15 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         String contentType = isParquet ? CONTENT_TYPE_PARQUET : CONTENT_TYPE_CSV;
         String fileExtension = isParquet ? FILE_EXTENSION_PARQUET : FILE_EXTENSION_CSV;
         response.status(statusCode, contentType);
+        final HttpResponseHeader headers = response.headers();
         if (!state.fileName.isEmpty()) {
-            response.headers().putAscii("Content-Disposition: attachment; filename=\"").put(state.fileName).putAscii(fileExtension).putAscii("\"").putEOL();
+            headers.putAscii("Content-Disposition: attachment; filename=\"");
+            putQuotedStringContent(headers, state.fileName);
+            headers.putAscii(fileExtension).putAscii('"').putEOL();
         } else {
-            response.headers().putAscii("Content-Disposition: attachment; filename=\"questdb-query-").put(clock.getTicks()).putAscii(fileExtension).putAscii("\"").putEOL();
+            headers.putAscii("Content-Disposition: attachment; filename=\"questdb-query-").put(clock.getTicks()).putAscii(fileExtension).putAscii("\"").putEOL();
         }
-        response.headers().setKeepAlive(configuration.getKeepAliveHeader());
+        headers.setKeepAlive(configuration.getKeepAliveHeader());
         response.sendHeader();
     }
 
