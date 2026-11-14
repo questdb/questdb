@@ -2458,8 +2458,8 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                     final boolean isWal = start == 0 || (start != 1 && rnd.nextBoolean());
                     final String startName = (isIndexAddedWhileDetached ? "ATTACHED_INDEX_ADDED_WHILE_DETACHED"
                             : isDropAddIndexStart ? "ATTACHED_DROP_ADD_INDEX"
-                            : isRenameStart ? "ATTACHED_RENAME"
-                            : isAttached ? "ATTACHED" : shape.name())
+                              : isRenameStart ? "ATTACHED_RENAME"
+                                : isAttached ? "ATTACHED" : shape.name())
                             + (isWal ? " WAL" : " BYPASS WAL");
                     execute("DROP TABLE IF EXISTS pt");
                     execute("DROP TABLE IF EXISTS tw");
