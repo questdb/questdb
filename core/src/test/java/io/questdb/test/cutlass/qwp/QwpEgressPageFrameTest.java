@@ -27,13 +27,19 @@ package io.questdb.test.cutlass.qwp;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatch;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
+import io.questdb.client.std.Decimal256;
 import io.questdb.client.std.bytes.DirectByteSequence;
 import io.questdb.client.std.str.DirectUtf8Sequence;
+import io.questdb.cutlass.qwp.protocol.QwpConstants;
+import io.questdb.std.LongList;
+import io.questdb.std.ObjList;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+
+import java.util.Arrays;
 
 /**
  * Exercises the {@code PageFrameCursor} fast path that kicks in when
@@ -66,6 +72,191 @@ public class QwpEgressPageFrameTest extends AbstractQwpBootstrapTest {
         super.setUp();
         TestUtils.unchecked(() -> createDummyConfiguration());
         dbPath.parent().$();
+    }
+
+    /**
+     * Renders one cell of any column type the server streams, fixed-width values
+     * by their raw bits, so that the rows of two streams compare exactly.
+     */
+    private static void appendCell(StringBuilder sink, QwpColumnBatch batch, int col, int row, Decimal256 decimal256) {
+        if (batch.isNull(col, row)) {
+            sink.append("null");
+            return;
+        }
+        final byte wireType = batch.getColumnWireType(col);
+        switch (wireType) {
+            case QwpConstants.TYPE_BOOLEAN -> sink.append(batch.getBoolValue(col, row));
+            case QwpConstants.TYPE_BYTE -> sink.append(batch.getByteValue(col, row));
+            case QwpConstants.TYPE_SHORT -> sink.append(batch.getShortValue(col, row));
+            case QwpConstants.TYPE_CHAR -> sink.append((int) batch.getCharValue(col, row));
+            case QwpConstants.TYPE_INT, QwpConstants.TYPE_IPV4 -> sink.append(batch.getIntValue(col, row));
+            case QwpConstants.TYPE_LONG, QwpConstants.TYPE_DATE, QwpConstants.TYPE_TIMESTAMP,
+                 QwpConstants.TYPE_TIMESTAMP_NANOS, QwpConstants.TYPE_DECIMAL64 ->
+                    sink.append(batch.getLongValue(col, row));
+            case QwpConstants.TYPE_FLOAT -> sink.append(Float.floatToRawIntBits(batch.getFloatValue(col, row)));
+            case QwpConstants.TYPE_DOUBLE -> sink.append(Double.doubleToRawLongBits(batch.getDoubleValue(col, row)));
+            case QwpConstants.TYPE_SYMBOL, QwpConstants.TYPE_VARCHAR -> sink.append(batch.getString(col, row));
+            case QwpConstants.TYPE_BINARY -> sink.append(Arrays.toString(batch.getBinary(col, row)));
+            case QwpConstants.TYPE_UUID ->
+                    sink.append(batch.getUuidHi(col, row)).append('/').append(batch.getUuidLo(col, row));
+            case QwpConstants.TYPE_LONG256 -> {
+                for (int word = 0; word < 4; word++) {
+                    sink.append(batch.getLong256Word(col, row, word)).append('/');
+                }
+            }
+            case QwpConstants.TYPE_DECIMAL128 ->
+                    sink.append(batch.getDecimal128High(col, row)).append('/').append(batch.getDecimal128Low(col, row));
+            case QwpConstants.TYPE_DECIMAL256 -> {
+                Assert.assertTrue(batch.getDecimal256(col, row, decimal256));
+                sink.append(decimal256);
+            }
+            case QwpConstants.TYPE_GEOHASH -> sink.append(batch.getGeohashValue(col, row));
+            case QwpConstants.TYPE_DOUBLE_ARRAY -> sink.append(Arrays.toString(batch.getDoubleArrayElements(col, row)));
+            default -> Assert.fail("unexpected wire type 0x" + Integer.toHexString(wireType & 0xFF)
+                    + " of column " + batch.getColumnName(col));
+        }
+    }
+
+    private static void assertRows(String sql, ObjList<String> expected, ObjList<String> actual) {
+        Assert.assertEquals(sql, expected.size(), actual.size());
+        for (int i = 0, n = expected.size(); i < n; i++) {
+            Assert.assertEquals(sql + " at row " + i, expected.getQuick(i), actual.getQuick(i));
+        }
+    }
+
+    private static long[] collectLongColumn(QwpQueryClient client, String sql) {
+        final LongList values = new LongList();
+        client.execute(sql, new QwpColumnBatchHandler() {
+            @Override
+            public void onBatch(QwpColumnBatch batch) {
+                for (int r = 0; r < batch.getRowCount(); r++) {
+                    values.add(batch.getLongValue(0, r));
+                }
+            }
+
+            @Override
+            public void onEnd(long totalRows) {
+                Assert.assertEquals(values.size(), totalRows);
+            }
+
+            @Override
+            public void onError(byte status, String message) {
+                Assert.fail("egress error: " + message);
+            }
+        });
+        final long[] result = new long[values.size()];
+        for (int i = 0; i < result.length; i++) {
+            result[i] = values.getQuick(i);
+        }
+        return result;
+    }
+
+    /**
+     * Streams {@code sql} and renders each row, its cells joined, into one string.
+     */
+    private static ObjList<String> collectRows(QwpQueryClient client, String sql) {
+        final ObjList<String> rows = new ObjList<>();
+        final StringBuilder sink = new StringBuilder();
+        final Decimal256 decimal256 = new Decimal256();
+        client.execute(sql, new QwpColumnBatchHandler() {
+            @Override
+            public void onBatch(QwpColumnBatch batch) {
+                for (int r = 0, n = batch.getRowCount(); r < n; r++) {
+                    sink.setLength(0);
+                    for (int c = 0, columnCount = batch.getColumnCount(); c < columnCount; c++) {
+                        appendCell(sink, batch, c, r, decimal256);
+                        sink.append('|');
+                    }
+                    rows.add(sink.toString());
+                }
+            }
+
+            @Override
+            public void onEnd(long totalRows) {
+                Assert.assertEquals(sql, rows.size(), totalRows);
+            }
+
+            @Override
+            public void onError(byte status, String message) {
+                Assert.fail(sql + ": " + message);
+            }
+        });
+        return rows;
+    }
+
+    /**
+     * Creates {@code bwd_types}: three DAY partitions of {@code rowsPerPartition}
+     * rows each, with a column of every type the page-frame path copies, NULLs
+     * and the extreme values of each, and seven columns added after the first
+     * partition was written, so that partition reads them as column tops. The
+     * first partition is then converted to parquet.
+     */
+    private static void createAllTypesTable(TestServerMain serverMain, int rowsPerPartition, boolean isWal) {
+        serverMain.execute("""
+                CREATE TABLE bwd_types (
+                    ts TIMESTAMP, l LONG, i INT, sh SHORT, b BYTE, c CHAR, bo BOOLEAN, d DOUBLE, f FLOAT,
+                    dt DATE, tn TIMESTAMP_NS, ip IPv4, sy SYMBOL, v VARCHAR, s STRING, bin BINARY, u UUID,
+                    l256 LONG256, g4 GEOHASH(4b), g40 GEOHASH(40b), d2 DECIMAL(2, 1), d4 DECIMAL(4, 2),
+                    d9 DECIMAL(9, 3), d18 DECIMAL(18, 4), d38 DECIMAL(38, 5), d76 DECIMAL(76, 6), arr DOUBLE[]
+                ) TIMESTAMP(ts) PARTITION BY DAY
+                """ + (isWal ? " WAL" : " BYPASS WAL"));
+        // y numbers the rows 1, 2, 3, ... across the partitions, one second apart
+        final String values = """
+                (86_400_000_000L * ((y - 1) / %d) + (y - 1) * 1_000_000L)::TIMESTAMP,
+                CASE WHEN y %% 7 = 0 THEN NULL WHEN y %% 11 = 0 THEN 9_223_372_036_854_775_807L
+                    WHEN y %% 13 = 0 THEN -9_223_372_036_854_775_807L ELSE y * 3 END,
+                CASE WHEN y %% 7 = 1 THEN NULL WHEN y %% 11 = 1 THEN 2_147_483_647
+                    WHEN y %% 13 = 1 THEN -2_147_483_647 ELSE (y * 5)::INT END,
+                CASE WHEN y %% 17 = 0 THEN 32_767 WHEN y %% 19 = 0 THEN -32_768 ELSE y %% 1_000 - 500 END::SHORT,
+                CASE WHEN y %% 17 = 1 THEN 127 WHEN y %% 19 = 1 THEN -128 ELSE y %% 200 - 100 END::BYTE,
+                CASE WHEN y %% 23 = 0 THEN CAST(NULL AS CHAR) WHEN y %% 2 = 0 THEN 'a'::CHAR ELSE '\u20AC'::CHAR END,
+                y %% 3 = 0,
+                CASE WHEN y %% 7 = 2 THEN NULL WHEN y %% 11 = 2 THEN -0.0 WHEN y %% 13 = 2 THEN 1.7976931348623157E308
+                    WHEN y %% 17 = 2 THEN 4.9E-324 ELSE y * 1.25 END,
+                CASE WHEN y %% 7 = 3 THEN NULL WHEN y %% 11 = 3 THEN -0.0 ELSE y * 0.5 END::FLOAT,
+                CASE WHEN y %% 7 = 4 THEN NULL ELSE (y * 86_400_000L)::DATE END,
+                CASE WHEN y %% 7 = 5 THEN NULL ELSE (y * 1_000_000_007L)::TIMESTAMP_NS END,
+                CASE WHEN y %% 7 = 6 THEN NULL WHEN y %% 11 = 6 THEN '255.255.255.255'
+                    ELSE '10.0.' || (y %% 256) || '.' || (y %% 200 + 1) END::IPv4,
+                CASE WHEN y %% 9 = 0 THEN NULL ELSE 'sym_' || (y %% 17) END,
+                CASE WHEN y %% 9 = 1 THEN NULL WHEN y %% 9 = 2 THEN '' ELSE 'v_\u00E9\u20AC\uD83D\uDE00_' || y END,
+                CASE WHEN y %% 9 = 3 THEN NULL ELSE 's_' || y END,
+                CASE WHEN y %% 9 = 4 THEN NULL ELSE rnd_bin(1, 16, 0) END,
+                CASE WHEN y %% 9 = 5 THEN NULL ELSE rnd_uuid4() END,
+                CASE WHEN y %% 9 = 6 THEN NULL ELSE rnd_long256() END,
+                CASE WHEN y %% 9 = 7 THEN NULL ELSE rnd_geohash(4) END,
+                CASE WHEN y %% 9 = 8 THEN NULL ELSE rnd_geohash(40) END,
+                CASE WHEN y %% 10 = 0 THEN NULL ELSE CAST(y %% 9 AS DECIMAL(2, 1)) END,
+                CASE WHEN y %% 10 = 1 THEN NULL ELSE CAST(y %% 99 AS DECIMAL(4, 2)) END,
+                CASE WHEN y %% 10 = 2 THEN NULL ELSE CAST(y * 7 AS DECIMAL(9, 3)) END,
+                CASE WHEN y %% 10 = 3 THEN NULL ELSE CAST(y * 1_000 AS DECIMAL(18, 4)) END,
+                CASE WHEN y %% 10 = 4 THEN NULL ELSE CAST(y AS DECIMAL(38, 5)) END,
+                CASE WHEN y %% 10 = 5 THEN NULL ELSE CAST(y AS DECIMAL(76, 6)) END,
+                CASE WHEN y %% 10 = 6 THEN NULL ELSE ARRAY[y * 1.0, y * 2.0] END
+                """.formatted(rowsPerPartition);
+        serverMain.execute("INSERT INTO bwd_types SELECT " + values
+                + " FROM (SELECT x y FROM long_sequence(" + rowsPerPartition + "))");
+        serverMain.execute("ALTER TABLE bwd_types ADD COLUMN late_l LONG");
+        serverMain.execute("ALTER TABLE bwd_types ADD COLUMN late_d DOUBLE");
+        serverMain.execute("ALTER TABLE bwd_types ADD COLUMN late_sh SHORT");
+        serverMain.execute("ALTER TABLE bwd_types ADD COLUMN late_b BYTE");
+        serverMain.execute("ALTER TABLE bwd_types ADD COLUMN late_bo BOOLEAN");
+        serverMain.execute("ALTER TABLE bwd_types ADD COLUMN late_sy SYMBOL");
+        serverMain.execute("ALTER TABLE bwd_types ADD COLUMN late_v VARCHAR");
+        serverMain.execute("INSERT INTO bwd_types SELECT " + values + """
+                ,
+                CASE WHEN y % 5 = 0 THEN NULL ELSE y * 11 END,
+                CASE WHEN y % 5 = 1 THEN NULL ELSE y * 0.25 END,
+                (y % 1_000)::SHORT,
+                (y % 100)::BYTE,
+                y % 2 = 0,
+                CASE WHEN y % 5 = 2 THEN NULL ELSE 'late_' || (y % 5) END,
+                CASE WHEN y % 5 = 3 THEN NULL ELSE 'lv_' || y END
+                """ + " FROM (SELECT x + " + rowsPerPartition + " y FROM long_sequence(" + 2 * rowsPerPartition + "))");
+        serverMain.awaitTable("bwd_types");
+        serverMain.execute("ALTER TABLE bwd_types CONVERT PARTITION TO PARQUET WHERE ts < '1970-01-02'");
+        serverMain.awaitTable("bwd_types");
+        serverMain.assertSql("SELECT count() FROM table_partitions('bwd_types') WHERE isParquet", "count\n1\n");
     }
 
     /**
@@ -206,6 +397,93 @@ public class QwpEgressPageFrameTest extends AbstractQwpBootstrapTest {
                 Assert.assertEquals("VARCHAR length sum", expectedNoteLen, noteLenSum[0]);
                 Assert.assertEquals("STRING length sum", expectedStrLen, strLenSum[0]);
                 Assert.assertEquals("SYMBOL length sum", expectedSymLen, symLenSum[0]);
+            }
+        });
+    }
+
+    /**
+     * A backward scan copies each page frame's rows last first, column by column.
+     * Every column type, NULLs and extreme values, column tops and a parquet
+     * partition must come back exactly as the RecordCursor path streams them,
+     * which the {@code LIMIT} variant of each query takes, and as the forward
+     * scan's rows in reverse. Frames of 128 rows, split across batches of 100
+     * rows and across a credit-limited stream.
+     */
+    @Test
+    public void testBackwardScanAllTypesMatchesRecordCursor() throws Exception {
+        assertBackwardScanMatchesRecordCursor(500, true, SMALL_PAGE_FRAME_ENV);
+    }
+
+    @Test
+    public void testBackwardScanEmptyAndSingleRowTables() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startFragmented(SMALL_PAGE_FRAME_ENV)) {
+                serverMain.execute("CREATE TABLE bwd_empty(x LONG, v VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("CREATE TABLE bwd_one(x LONG, v VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("INSERT INTO bwd_one VALUES (42, 'only', 7::TIMESTAMP)");
+                serverMain.awaitTable("bwd_empty");
+                serverMain.awaitTable("bwd_one");
+                try (QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+                    client.connect();
+                    Assert.assertEquals(0, collectRows(client, "SELECT * FROM bwd_empty ORDER BY ts DESC").size());
+                    final ObjList<String> one = collectRows(client, "SELECT * FROM bwd_one ORDER BY ts DESC");
+                    Assert.assertEquals(1, one.size());
+                    Assert.assertEquals("42|only|7|", one.getQuick(0));
+                }
+            }
+        });
+    }
+
+    /**
+     * With the default frame size each 1_500-row partition is one frame, which a
+     * backward scan takes in slices of at most 1_024 rows from its top. The table
+     * is written without WAL. The send chunk floor keeps the megabytes this test
+     * streams from parking every few hundred bytes; the small-frame variant keeps
+     * the fine fragmentation.
+     */
+    @Test
+    public void testBackwardScanSlicesLargeFrames() throws Exception {
+        sendChunk = Math.max(sendChunk, 1_024);
+        assertBackwardScanMatchesRecordCursor(1_500, false);
+    }
+
+    /**
+     * A backward scan ({@code ORDER BY ts DESC}) hands out its page frames last
+     * first, but each frame's rows are still stored ascending. The page-frame
+     * path used to copy every frame in storage order, so a three-partition table
+     * came back with each partition's rows ascending. It now copies each frame's
+     * rows last first. The {@code LIMIT} variant, which has no page frames, is
+     * the oracle.
+     */
+    @Test
+    public void testBackwardScanStreamsRowsInDescendingOrder() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startFragmented(SMALL_PAGE_FRAME_ENV)) {
+                serverMain.execute("CREATE TABLE bwd(x LONG, v VARCHAR, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY HOUR WAL");
+                // 3 hourly partitions of 500 rows, 4 page frames each: x = 1..1500,
+                // ts = (x - 1) * 7.2s
+                serverMain.execute("INSERT INTO bwd SELECT x, 'v' || x, ((x - 1) * 7_200_000)::TIMESTAMP FROM long_sequence(1_500)");
+                serverMain.awaitTable("bwd");
+
+                try (QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+                    client.connect();
+                    final long[] descending = collectLongColumn(client, "SELECT x, v FROM bwd ORDER BY ts DESC");
+                    Assert.assertArrayEquals(
+                            collectLongColumn(client, "SELECT x, v FROM bwd ORDER BY ts DESC LIMIT 2_000"),
+                            descending
+                    );
+                    Assert.assertEquals(1_500, descending.length);
+                    for (int i = 0; i < descending.length; i++) {
+                        Assert.assertEquals(1_500 - i, descending[i]);
+                    }
+                    // the forward scan keeps the page-frame path and its order
+                    final long[] ascending = collectLongColumn(client, "SELECT x, v FROM bwd");
+                    Assert.assertEquals(1_500, ascending.length);
+                    for (int i = 0; i < ascending.length; i++) {
+                        Assert.assertEquals(i + 1, ascending[i]);
+                    }
+                }
             }
         });
     }
@@ -633,6 +911,7 @@ public class QwpEgressPageFrameTest extends AbstractQwpBootstrapTest {
 
     @Test
     public void testVarcharMultipleFramesSinglePartition() throws Exception {
+
         // This is the exact failure mode that slipped through the initial
         // PageFrameCursor integration: VARCHAR values read with a partition-
         // local row index against a page address that the cursor already
@@ -691,4 +970,53 @@ public class QwpEgressPageFrameTest extends AbstractQwpBootstrapTest {
         });
     }
 
+    /**
+     * Streams backward scans of {@code bwd_types}, see {@link #createAllTypesTable},
+     * and checks each against the RecordCursor path, which the {@code LIMIT}
+     * variant of the query takes, and the full scan against the forward scan in
+     * reverse. Each runs over a connection with the default batch size, one with
+     * 100-row batches, and one that also waits for credit every few KB.
+     */
+    private void assertBackwardScanMatchesRecordCursor(int rowsPerPartition, boolean isWal, String... env) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startFragmented(env)) {
+                createAllTypesTable(serverMain, rowsPerPartition, isWal);
+                final String[] queries = {
+                        "SELECT * FROM bwd_types ORDER BY ts DESC",
+                        // a projection that reorders the columns
+                        "SELECT late_sy, l, v, ts, sh, late_bo, d4, c FROM bwd_types ORDER BY ts DESC",
+                        // an interval scan over the middle, native partition
+                        "SELECT * FROM bwd_types WHERE ts IN '1970-01-02' ORDER BY ts DESC",
+                };
+                final int[] rowCounts = {3 * rowsPerPartition, 3 * rowsPerPartition, rowsPerPartition};
+                final String url = "ws::addr=127.0.0.1:" + HTTP_PORT + ";";
+                for (int connection = 0; connection < 3; connection++) {
+                    final QwpQueryClient client = switch (connection) {
+                        case 0 -> QwpQueryClient.fromConfig(url);
+                        case 1 -> QwpQueryClient.fromConfig(url + "max_batch_rows=100;");
+                        default -> QwpQueryClient.fromConfig(url + "max_batch_rows=100;").withInitialCredit(4 * 1024);
+                    };
+                    try (client) {
+                        client.connect();
+                        ObjList<String> fullScan = null;
+                        for (int q = 0; q < queries.length; q++) {
+                            final String sql = queries[q];
+                            final ObjList<String> backward = collectRows(client, sql);
+                            Assert.assertEquals(sql, rowCounts[q], backward.size());
+                            assertRows(sql, collectRows(client, sql + " LIMIT 1_000_000"), backward);
+                            if (q == 0) {
+                                fullScan = backward;
+                            }
+                        }
+                        final ObjList<String> forward = collectRows(client, "SELECT * FROM bwd_types");
+                        final ObjList<String> reversed = new ObjList<>(forward.size());
+                        for (int i = forward.size() - 1; i > -1; i--) {
+                            reversed.add(forward.getQuick(i));
+                        }
+                        assertRows("the forward scan in reverse", reversed, fullScan);
+                    }
+                }
+            }
+        });
+    }
 }

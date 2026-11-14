@@ -27,7 +27,11 @@ package io.questdb.test.cutlass.qwp;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatch;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
+import io.questdb.client.cutlass.qwp.client.QwpQueryDetails;
+import io.questdb.client.cutlass.qwp.client.QwpQueryOptions;
 import io.questdb.client.std.str.DirectUtf8Sequence;
+import io.questdb.cutlass.qwp.codec.QwpEgressMsgKind;
+import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Rnd;
@@ -51,7 +55,9 @@ import org.junit.Test;
  *       before the query runs.</li>
  *   <li>Inserts those values as literal rows (single multi-row {@code INSERT VALUES}).</li>
  *   <li>Picks a random query shape -- full scan, projection reorder, id-range
- *       filter, or reverse-order limit.</li>
+ *       filter, or reverse-order limit -- and random per-query options: a row
+ *       window, the row count of the whole result, execution statistics and
+ *       the error position.</li>
  *   <li>Streams the results over QWP and asserts per-row-per-cell that the
  *       observed hash matches the stored expected hash. Null cells are checked
  *       against a parallel null map.</li>
@@ -160,7 +166,7 @@ public class QwpEgressFuzzTest extends AbstractQwpBootstrapTest {
     @Test
     public void testSelectAlterSequenceFuzz() throws Exception {
         // Fuzz sequences of SELECT / ALTER TABLE ADD COLUMN against the same
-        // table, mixing five SELECT shapes in random order with occasional
+        // table, mixing eight SELECT shapes in random order with occasional
         // schema evolutions. Each operation draws from:
         // <ul>
         //   <li>plain scan (PageFrameCursor)</li>
@@ -168,8 +174,11 @@ public class QwpEgressFuzzTest extends AbstractQwpBootstrapTest {
         //   <li>interval predicate on designated ts (PageFrameCursor +
         //       partition skip)</li>
         //   <li>projection reorder (PageFrameCursor)</li>
+        //   <li>backward scan of every column, the added ones read as
+        //       column tops (descending PageFrameCursor)</li>
         //   <li>GROUP BY (RecordCursor path -- factory does NOT support
         //       PageFrameCursor)</li>
+        //   <li>a column that does not exist, which must fail at its position</li>
         //   <li>ALTER TABLE ADD COLUMN (stamps new tableId, invalidates the
         //       server's compile cache; next SELECT with the same SQL text
         //       must detect stale factory and recompile)</li>
@@ -258,11 +267,11 @@ public class QwpEgressFuzzTest extends AbstractQwpBootstrapTest {
                             } else {
                                 // Neither add nor drop possible (cap hit and nothing to drop).
                                 // Fall through to SELECT so the op isn't wasted.
-                                int shape = random.nextInt(6);
+                                int shape = random.nextInt(8);
                                 runSelectShape(client, shape, rowCount, spacingMicros, liveAdded);
                             }
                         } else {
-                            int shape = random.nextInt(6);
+                            int shape = random.nextInt(8);
                             runSelectShape(client, shape, rowCount, spacingMicros, liveAdded);
                         }
                     }
@@ -287,12 +296,14 @@ public class QwpEgressFuzzTest extends AbstractQwpBootstrapTest {
     }
 
     /**
-     * Runs one of six SELECT shapes against the stable {@code fz_seq} table and
+     * Runs one of eight SELECT shapes against the stable {@code fz_seq} table and
      * asserts BOTH the row count AND the per-cell data correctness. Shapes
      * span both cursor paths: PageFrameCursor (plain / predicate / interval /
-     * projection / star) and RecordCursor (GROUP BY). Filter thresholds and
+     * projection / star / backward star) and RecordCursor (GROUP BY). Filter thresholds and
      * projection sets are randomised per call so repeat invocations of the
-     * same shape don't trivially hit the same cached factory every time.
+     * same shape don't trivially hit the same cached factory every time. The
+     * shapes with an ordered result run with random per-query options, see
+     * {@link #assertRows}; shape 7 fails, and checks the error position.
      * <p>
      * Shape 5 uses {@code SELECT *}, which is deliberately unaffected by ADD /
      * DROP COLUMN: the stable SQL text keeps hitting the cache, but each
@@ -472,6 +483,75 @@ public class QwpEgressFuzzTest extends AbstractQwpBootstrapTest {
                 });
                 return;
             }
+            case 6: {
+                // Shape 5 as a backward scan: the page frames come last first
+                // and each one's rows stream last first, the extra columns read
+                // as column tops. globalRow N -> id = totalRows - N.
+                int expectedExtras = liveAdded.size();
+                assertRows(client, "SELECT * FROM fz_seq ORDER BY ts DESC", totalRows, (batch, startRow) -> {
+                    Assert.assertEquals("shape 6 column count",
+                            4 + expectedExtras, batch.getColumnCount());
+                    int n = batch.getRowCount();
+                    for (int r = 0; r < n; r++) {
+                        long id = totalRows - (startRow + r);
+                        verifyBaseColumn(batch, 0, r, "id", id, spacingMicros, "shape 6");
+                        verifyBaseColumn(batch, 1, r, "v", id, spacingMicros, "shape 6");
+                        verifyBaseColumn(batch, 2, r, "cat", id, spacingMicros, "shape 6");
+                        verifyBaseColumn(batch, 3, r, "ts", id, spacingMicros, "shape 6");
+                        for (int c = 4; c < 4 + expectedExtras; c++) {
+                            Assert.assertTrue("shape 6 extra col " + c + " @ row " + (startRow + r)
+                                    + " must be NULL", batch.isNull(c, r));
+                        }
+                    }
+                    return startRow + n;
+                });
+                return;
+            }
+            case 7: {
+                // A column that does not exist, behind text of a random length, some
+                // of it multi-byte: the query fails at the column, and the error
+                // position is its offset into the SQL text in chars, as on /exec.
+                final String missing = "nope_" + random.nextInt(1_000);
+                final String sql = "SELECT " + (random.nextBoolean() ? "'é€\uD83D\uDE00' s, " : "")
+                        + "id, " + missing + " FROM fz_seq";
+                final int position = sql.indexOf(missing);
+                final boolean isPositioned = random.nextBoolean();
+                final byte[] status = {0};
+                final String[] message = {null};
+                final int[] reported = {Integer.MIN_VALUE};
+                client.execute(sql, new QwpColumnBatchHandler() {
+                    @Override
+                    public void onBatch(QwpColumnBatch batch) {
+                        Assert.fail("shape 7 must not stream rows [" + sql + ']');
+                    }
+
+                    @Override
+                    public void onEnd(long totalRows) {
+                        Assert.fail("shape 7 must fail [" + sql + ']');
+                    }
+
+                    @Override
+                    public void onError(byte status, String message) {
+                        Assert.fail("the client must report the position [" + sql + ']');
+                    }
+
+                    @Override
+                    public void onError(long requestId, byte s, String m, int p) {
+                        status[0] = s;
+                        message[0] = m;
+                        reported[0] = p;
+                    }
+                }, new QwpQueryOptions().errorPosition(isPositioned));
+                Assert.assertEquals(sql, QwpConstants.STATUS_PARSE_ERROR, status[0]);
+                if (isPositioned) {
+                    Assert.assertEquals(sql, "Invalid column: " + missing, message[0]);
+                    Assert.assertEquals(sql, position, reported[0]);
+                } else {
+                    Assert.assertEquals(sql, "[" + position + "] Invalid column: " + missing, message[0]);
+                    Assert.assertEquals(sql, QwpEgressMsgKind.NO_ERROR_POSITION, reported[0]);
+                }
+                return;
+            }
             default:
                 throw new IllegalStateException("unknown shape: " + shape);
         }
@@ -499,14 +579,29 @@ public class QwpEgressFuzzTest extends AbstractQwpBootstrapTest {
     }
 
     /**
-     * Drives {@code client.execute(sql)} and dispatches every batch to the
-     * supplied verifier. The verifier returns the running total of rows
-     * checked so far; we assert that total against {@code expected} after
-     * RESULT_END. Per-cell assertions live inside the verifier; this helper
-     * only handles transport, error mapping, and the final row-count check.
+     * Rows a row window of {@code options} streams from a result of
+     * {@code resultRows} rows.
      */
-    private static void assertRows(QwpQueryClient client, String sql, long expected, BatchVerifier verifier) {
-        final long[] seen = {0};
+    private static long windowRows(QwpQueryOptions options, long resultRows) {
+        return Math.max(0, Math.min(options.getMaxRows(), resultRows - options.getSkipRows()));
+    }
+
+    /**
+     * Drives {@code client.execute(sql)} with random per-query options, see
+     * {@link #randomQueryOptions}, and dispatches every batch to the supplied
+     * verifier. The verifier receives the row's position in the whole ordered
+     * result, past the rows the window skipped, and returns the running
+     * position; we assert the rows the window streamed against
+     * {@code expected} after RESULT_END, and the row count and statistics the
+     * options asked for. Per-cell assertions live inside the verifier; this
+     * helper only handles transport, error mapping, and the final checks.
+     */
+    private void assertRows(QwpQueryClient client, String sql, long expected, BatchVerifier verifier) {
+        final QwpQueryOptions options = randomQueryOptions(expected);
+        final String msg = "[" + sql + ", " + options + ']';
+        final long skipped = Math.min(options.getSkipRows(), expected);
+        final long[] seen = {skipped};
+        final long[] streamed = {-1};
         client.execute(sql, new QwpColumnBatchHandler() {
             @Override
             public void onBatch(QwpColumnBatch batch) {
@@ -515,14 +610,71 @@ public class QwpEgressFuzzTest extends AbstractQwpBootstrapTest {
 
             @Override
             public void onEnd(long totalRows) {
+                Assert.fail("the client must report the details " + msg);
+            }
+
+            @Override
+            public void onEnd(long requestId, long totalRows, QwpQueryDetails reported) {
+                streamed[0] = totalRows;
+                assertDetails(msg, options, expected, reported);
             }
 
             @Override
             public void onError(byte status, String message) {
-                Assert.fail("query failed [" + sql + "]: " + message);
+                Assert.fail("query failed " + msg + ": " + message);
             }
-        });
-        Assert.assertEquals("row count [" + sql + "]", expected, seen[0]);
+        }, options);
+        Assert.assertEquals("row count " + msg, windowRows(options, expected), seen[0] - skipped);
+        Assert.assertEquals("total_rows " + msg, windowRows(options, expected), streamed[0]);
+    }
+
+    /**
+     * Asserts the details a query reported against the {@code options} it ran
+     * with: the row count of the whole result, {@code resultRows}, and the
+     * statistics, each when asked for.
+     */
+    private static void assertDetails(String msg, QwpQueryOptions options, long resultRows, QwpQueryDetails details) {
+        Assert.assertEquals("row count requested " + msg, options.isRowCountRequested(), details.hasRowCount());
+        if (options.isRowCountRequested()) {
+            Assert.assertEquals("row count " + msg, resultRows, details.getRowCount());
+        }
+        Assert.assertEquals("stats requested " + msg, options.isStatsRequested(), details.hasStats());
+        if (options.isStatsRequested()) {
+            Assert.assertTrue("compile_ns " + msg, details.getCompileNanos() >= 0);
+            Assert.assertTrue("execute_ns " + msg, details.getExecuteNanos() >= 0);
+            Assert.assertTrue("count_ns " + msg, details.getCountNanos() >= 0);
+            Assert.assertTrue("client_wait_ns " + msg, details.getClientWaitNanos() >= 0);
+        }
+    }
+
+    /**
+     * Per-query options for a query whose result has {@code resultRows} rows in
+     * a known order: half of the time a row window -- a skip inside, at or past
+     * the end of the result, and a max of 0, inside the result or past its end
+     * -- and each of the row count, the statistics and the error position a
+     * third of the time. The error position must leave a query that succeeds
+     * alone.
+     */
+    private QwpQueryOptions randomQueryOptions(long resultRows) {
+        final QwpQueryOptions options = new QwpQueryOptions();
+        if (random.nextBoolean()) {
+            switch (random.nextInt(4)) {
+                case 0 -> options.skipRows(random.nextInt((int) resultRows + 1));
+                case 1 -> options.skipRows(resultRows + random.nextInt(3));
+                default -> {
+                }
+            }
+            switch (random.nextInt(4)) {
+                case 0 -> options.maxRows(0);
+                case 1 -> options.maxRows(1 + random.nextInt((int) resultRows + 1));
+                case 2 -> options.maxRows(resultRows + random.nextInt(1_000));
+                default -> {
+                }
+            }
+        }
+        return options.countRows(random.nextInt(3) == 0)
+                .stats(random.nextInt(3) == 0)
+                .errorPosition(random.nextInt(3) == 0);
     }
 
     /**
@@ -645,6 +797,15 @@ public class QwpEgressFuzzTest extends AbstractQwpBootstrapTest {
         return choices[rnd.nextInt(choices.length)];
     }
 
+    private static String projectionCols(int[] map) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < map.length; i++) {
+            if (i > 0) sb.append(", ");
+            sb.append('c').append(map[i]);
+        }
+        return sb.toString();
+    }
+
     private static String randomAsciiString(Rnd rnd, int len) {
         StringBuilder sb = new StringBuilder(len);
         for (int i = 0; i < len; i++) {
@@ -702,32 +863,17 @@ public class QwpEgressFuzzTest extends AbstractQwpBootstrapTest {
     }
 
     private QueryPlan planQuery(String table, int colCount, int rowCount, int caseIdx) {
-        // 4 shapes rotate deterministically to guarantee every shape gets exercised
+        // 6 shapes rotate deterministically to guarantee every shape gets exercised
         // across iterations, regardless of random seed.
-        int shape = Math.floorMod(caseIdx, 4);
+        int shape = Math.floorMod(caseIdx, 6);
         if (rowCount < 4) shape = 0; // small cases: just scan everything
 
         switch (shape) {
             case 1: {
                 // Projection subset in a scrambled order.
-                int pickCount = 1 + random.nextInt(colCount);
-                int[] map = new int[pickCount];
-                boolean[] used = new boolean[colCount];
-                for (int i = 0; i < pickCount; i++) {
-                    int pick;
-                    do {
-                        pick = random.nextInt(colCount);
-                    } while (used[pick]);
-                    used[pick] = true;
-                    map[i] = pick;
-                }
-                StringBuilder sql = new StringBuilder("SELECT ");
-                for (int i = 0; i < pickCount; i++) {
-                    if (i > 0) sql.append(", ");
-                    sql.append('c').append(map[i]);
-                }
-                sql.append(" FROM ").append(table).append(" ORDER BY id");
-                return new QueryPlan(sql.toString(), map, 1, rowCount, false);
+                int[] map = randomProjection(colCount);
+                String sql = "SELECT " + projectionCols(map) + " FROM " + table + " ORDER BY id";
+                return new QueryPlan(sql, map, 1, rowCount, false);
             }
             case 2: {
                 // id-range filter -- tests null-bitmap handling when the server's
@@ -748,12 +894,44 @@ public class QwpEgressFuzzTest extends AbstractQwpBootstrapTest {
                         + " ORDER BY id DESC LIMIT " + k;
                 return new QueryPlan(sql, map, rowCount - k + 1, rowCount, true);
             }
+            case 4: {
+                // Backward scan: descending page frames, each copied last row
+                // first. ts grows with id, so the rows come back by id descending.
+                int[] map = identity(colCount);
+                String sql = "SELECT " + allDataCols(colCount) + " FROM " + table + " ORDER BY ts DESC";
+                return new QueryPlan(sql, map, 1, rowCount, true);
+            }
+            case 5: {
+                // Backward scan of a projection subset in a scrambled order.
+                int[] map = randomProjection(colCount);
+                String sql = "SELECT " + projectionCols(map) + " FROM " + table + " ORDER BY ts DESC";
+                return new QueryPlan(sql, map, 1, rowCount, true);
+            }
             default: {
                 int[] map = identity(colCount);
                 String sql = "SELECT " + allDataCols(colCount) + " FROM " + table + " ORDER BY id";
                 return new QueryPlan(sql, map, 1, rowCount, false);
             }
         }
+    }
+
+    /**
+     * Picks a non-empty subset of the {@code colCount} data columns in a
+     * scrambled order.
+     */
+    private int[] randomProjection(int colCount) {
+        int pickCount = 1 + random.nextInt(colCount);
+        int[] map = new int[pickCount];
+        boolean[] used = new boolean[colCount];
+        for (int i = 0; i < pickCount; i++) {
+            int pick;
+            do {
+                pick = random.nextInt(colCount);
+            } while (used[pick]);
+            used[pick] = true;
+            map[i] = pick;
+        }
+        return map;
     }
 
     private void runOneCase(TestServerMain server, QwpQueryClient client, String table, int colCount) {
@@ -806,8 +984,10 @@ public class QwpEgressFuzzTest extends AbstractQwpBootstrapTest {
         int caseSalt = table.hashCode(); // stable-ish salt so shape rotates per table
         QueryPlan plan = planQuery(table, colCount, rowCount, caseSalt);
 
-        // Run query + verify per row-per col.
-        AssertionState state = new AssertionState(plan, cols, expected, expectedNull);
+        // Run query + verify per row-per col, through a random row window and
+        // with random details requested.
+        final QwpQueryOptions options = randomQueryOptions(plan.lastRow - plan.firstRow + 1);
+        AssertionState state = new AssertionState(plan, cols, expected, expectedNull, options);
         client.execute(plan.sql, new QwpColumnBatchHandler() {
             @Override
             public void onBatch(QwpColumnBatch batch) {
@@ -816,14 +996,19 @@ public class QwpEgressFuzzTest extends AbstractQwpBootstrapTest {
 
             @Override
             public void onEnd(long totalRows) {
-                state.end(totalRows);
+                Assert.fail("the client must report the details [" + table + "]");
+            }
+
+            @Override
+            public void onEnd(long requestId, long totalRows, QwpQueryDetails details) {
+                state.end(totalRows, details);
             }
 
             @Override
             public void onError(byte status, String message) {
                 Assert.fail("egress error [" + table + "]: " + message);
             }
-        });
+        }, options);
 
         server.execute("DROP TABLE " + table);
     }
@@ -859,23 +1044,33 @@ public class QwpEgressFuzzTest extends AbstractQwpBootstrapTest {
         final ColumnGenerator[] cols;
         final long[][] expected;
         final boolean[][] expectedNull;
+        final QwpQueryOptions options;
         final QueryPlan plan;
+        final int resultRows;
+        // rows of the result the row window skips, and then streams
+        final int skippedRows;
+        final int windowRows;
         int observedLogicalRows = 0;
 
         AssertionState(QueryPlan plan, ColumnGenerator[] cols,
-                       long[][] expected, boolean[][] expectedNull) {
+                       long[][] expected, boolean[][] expectedNull, QwpQueryOptions options) {
             this.plan = plan;
             this.cols = cols;
             this.expected = expected;
             this.expectedNull = expectedNull;
+            this.options = options;
+            this.resultRows = plan.lastRow - plan.firstRow + 1;
+            this.skippedRows = (int) Math.min(options.getSkipRows(), resultRows);
+            this.windowRows = (int) windowRows(options, resultRows);
         }
 
-        void end(long totalRows) {
-            int expectedRows = plan.lastRow - plan.firstRow + 1;
-            Assert.assertEquals("row count (onEnd) for " + plan.sql,
-                    expectedRows, totalRows);
-            Assert.assertEquals("row count (observed) for " + plan.sql,
-                    expectedRows, observedLogicalRows);
+        void end(long totalRows, QwpQueryDetails details) {
+            final String msg = plan.sql + " " + options;
+            Assert.assertEquals("row count (onEnd) for " + msg,
+                    windowRows, totalRows);
+            Assert.assertEquals("row count (observed) for " + msg,
+                    windowRows, observedLogicalRows);
+            assertDetails(msg, options, resultRows, details);
         }
 
         void observe(QwpColumnBatch batch) {
@@ -883,8 +1078,8 @@ public class QwpEgressFuzzTest extends AbstractQwpBootstrapTest {
             int resultColCount = plan.colMap.length;
             for (int r = 0; r < n; r++) {
                 int logicalRow = plan.descending
-                        ? plan.lastRow - observedLogicalRows
-                        : plan.firstRow + observedLogicalRows;
+                        ? plan.lastRow - skippedRows - observedLogicalRows
+                        : plan.firstRow + skippedRows + observedLogicalRows;
                 int rowIdx = logicalRow - 1;
                 for (int rc = 0; rc < resultColCount; rc++) {
                     int origCol = plan.colMap[rc];
