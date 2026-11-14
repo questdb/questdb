@@ -31,6 +31,7 @@ import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.griffin.engine.table.AsyncHashJoinRecordCursorFactory;
@@ -38,6 +39,7 @@ import io.questdb.griffin.engine.table.HashJoinBuildStage;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPoolMode;
+import io.questdb.std.Rows;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.sql.async.SlotGatedWorkStealingStrategy;
 import io.questdb.test.mp.TestWorkerPool;
@@ -61,8 +63,10 @@ import static io.questdb.test.griffin.ParallelHashJoinTestUtils.*;
  * run on threads and on fibers. Two small builds run at once: each task of the round holds its
  * thread until the other task runs too, which only threads that build the stages at once let pass.
  * count(*) and negative {@code LIMIT}s count on count-only tasks that the workers run, and a count that
- * follows some rows meets the tuple-carrying tasks that the workers ran before it. Every result
- * compares with the ordinary plan, and every slot is back after each query, a failed one included.
+ * follows some rows meets the tuple-carrying tasks that the workers ran before it. The pass that
+ * indexes the builds' chain lengths for a count runs on the owner, with the owner's breaker, also
+ * while a worker still joins a frame over the same builds. Every result compares with the ordinary
+ * plan, and every slot is back after each query, a failed one included.
  */
 public class AsyncHashJoinConcurrentBuildsWorkersTest extends AbstractCairoTest {
     private static final Log LOG = LogFactory.getLog(AsyncHashJoinConcurrentBuildsWorkersTest.class);
@@ -104,6 +108,26 @@ public class AsyncHashJoinConcurrentBuildsWorkersTest extends AbstractCairoTest 
     @Test
     public void testCountsOnThreadWorkers() throws Exception {
         assertCounts(WorkerPoolMode.LEGACY);
+    }
+
+    @Test
+    public void testIndexPassChecksTheOwnersBreakerOnFiberWorkers() throws Exception {
+        assertIndexPassBreaker(WorkerPoolMode.FIBER_HOST);
+    }
+
+    @Test
+    public void testIndexPassChecksTheOwnersBreakerOnThreadWorkers() throws Exception {
+        assertIndexPassBreaker(WorkerPoolMode.LEGACY);
+    }
+
+    @Test
+    public void testIndexPassRunsBesideATupleTaskOnFiberWorkers() throws Exception {
+        assertIndexPassBesideTupleTask(WorkerPoolMode.FIBER_HOST);
+    }
+
+    @Test
+    public void testIndexPassRunsBesideATupleTaskOnThreadWorkers() throws Exception {
+        assertIndexPassBesideTupleTask(WorkerPoolMode.LEGACY);
     }
 
     private static void assertConcurrentBuilds(WorkerPoolMode mode) throws Exception {
@@ -247,6 +271,130 @@ public class AsyncHashJoinConcurrentBuildsWorkersTest extends AbstractCairoTest 
                         Assert.assertEquals(sql, rowCount, again);
                     }
                     Assert.assertEquals(sql, expectedRows, result(factory, context));
+                    assertSlotsBack(join);
+                }
+            }
+        });
+    }
+
+    // A count that follows a row indexes the chain lengths of d's duplicate keys while a worker still
+    // joins a frame whose task the cursor dispatched for the rows: the probe filter holds that task
+    // until the pass makes its first check, and the task then walks the chains whose links the pass
+    // reads. The owner waits for the workers rather than run the tasks itself, so that a worker runs
+    // the held task. The count, and the rows read again after toTop(), equal the ordinary plan's.
+    private static void assertIndexPassBesideTupleTask(WorkerPoolMode mode) throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 4);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_SPIN_TIMEOUT, TimeUnit.SECONDS.toNanos(30));
+        execute(mode, (db, context) -> {
+            final String sql = "SELECT t.k, t.v, d.w FROM (SELECT * FROM t WHERE test_latched_counter()) t LEFT JOIN d ON t.k = d.k";
+            final String expected = ordinary(sql, context);
+            final long rowCount = ordinaryRowCount(db, context, sql);
+            final Thread owner = Thread.currentThread();
+            final AtomicBoolean isArmed = new AtomicBoolean();
+            final AtomicBoolean isHeld = new AtomicBoolean();
+            final AtomicBoolean isTimedOut = new AtomicBoolean();
+            final CountDownLatch held = new CountDownLatch(1);
+            final CountDownLatch released = new CountDownLatch(1);
+            TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
+                @Override
+                public boolean onGet(Record rec, int count) {
+                    // A worker's probe filter over a frame after the first, which the first window holds.
+                    if (isArmed.get() && Thread.currentThread() != owner && Rows.toPartitionIndex(rec.getRowId()) > 0
+                            && isHeld.compareAndSet(false, true)) {
+                        held.countDown();
+                        try {
+                            if (!released.await(30, TimeUnit.SECONDS)) {
+                                isTimedOut.set(true);
+                            }
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            throw new AssertionError(e);
+                        }
+                    }
+                    return true;
+                }
+            });
+            context.setParallelHashJoinEnabled(true);
+            try (RecordCursorFactory factory = db.select(sql, context)) {
+                final AsyncHashJoinRecordCursorFactory join = find(factory);
+                Assert.assertNotNull(join);
+                final ChainLengthIndexPassBreaker breaker = new ChainLengthIndexPassBreaker(db, false, released::countDown);
+                final SqlExecutionCircuitBreaker previous = context.getCircuitBreaker();
+                context.with(breaker);
+                isArmed.set(true);
+                try (RecordCursor cursor = factory.getCursor(context)) {
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertTrue("no worker held a frame's task", held.await(30, TimeUnit.SECONDS));
+                    final RecordCursor.Counter counter = new RecordCursor.Counter();
+                    cursor.calculateSize(breaker, counter);
+                    Assert.assertEquals(rowCount - 1, counter.get());
+                    // The count met the tuples of the frames of the first window, the held one among them.
+                    Assert.assertTrue(join.getCountedTupleFrameCount() > 0);
+                    cursor.toTop();
+                    long again = 0;
+                    while (cursor.hasNext()) {
+                        again++;
+                    }
+                    Assert.assertEquals(rowCount, again);
+                } finally {
+                    isArmed.set(false);
+                    released.countDown();
+                    context.with(previous);
+                }
+                Assert.assertFalse("the pass did not release the held task", isTimedOut.get());
+                Assert.assertEquals(1, breaker.getPassCheckCount());
+                Assert.assertTrue(breaker.isPassOnlyOn(owner));
+                assertSlotsBack(join);
+                Assert.assertEquals(expected, result(factory, context));
+            }
+        });
+    }
+
+    // d and d2 repeat their keys, so their stages hand their chains on, and both are small, so the
+    // workers build them at once, in a round of concurrent builds, each task with a copy of the
+    // context's breaker, which is not thread safe. A count indexes their chain lengths on the owner,
+    // and the pass checks the context's breaker itself, once per stage here, from the top, when the
+    // workers then run the count-only tasks that read the index, and after rows whose tuples the
+    // workers wrote.
+    private static void assertIndexPassBreaker(WorkerPoolMode mode) throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 4);
+        execute(mode, (db, context) -> {
+            final String sql = "SELECT t.k, t.v, d.w, d2.w2 FROM t JOIN d ON t.k = d.k JOIN d2 ON t.l = d2.l";
+            final long rowCount = ordinaryRowCount(db, context, sql);
+            context.setParallelHashJoinEnabled(true);
+            try (RecordCursorFactory factory = db.select(sql, context)) {
+                final AsyncHashJoinRecordCursorFactory join = find(factory);
+                Assert.assertNotNull(join);
+                for (int prefix : new int[]{0, 1_000}) {
+                    final ChainLengthIndexPassBreaker breaker = new ChainLengthIndexPassBreaker(db, false, null);
+                    final long rounds = join.getBuildRoundAtom().getConcurrentBuildRoundCount();
+                    // From the top, the owner waits until a worker took a probe slot: the count-only
+                    // tasks run there.
+                    final CountDownLatch probeSlot = new CountDownLatch(1);
+                    if (prefix == 0) {
+                        join.getAtom().getPerWorkerLocks().setTestAcquireLatch(probeSlot);
+                    }
+                    final SqlExecutionCircuitBreaker previous = context.getCircuitBreaker();
+                    context.with(breaker);
+                    try (RecordCursor cursor = factory.getCursor(context)) {
+                        for (int i = 0; i < prefix; i++) {
+                            Assert.assertTrue(cursor.hasNext());
+                        }
+                        final RecordCursor.Counter counter = new RecordCursor.Counter();
+                        cursor.calculateSize(breaker, counter);
+                        Assert.assertEquals(sql + ", after " + prefix + " rows", rowCount - prefix, counter.get());
+                        Assert.assertTrue(join.getCountOnlyFrameCount() > 0);
+                    } finally {
+                        context.with(previous);
+                        join.getAtom().getPerWorkerLocks().setTestAcquireLatch(null);
+                    }
+                    if (prefix == 0) {
+                        Assert.assertEquals(0, probeSlot.getCount());
+                    }
+                    Assert.assertEquals(rounds + 1, join.getBuildRoundAtom().getConcurrentBuildRoundCount());
+                    Assert.assertEquals(2, breaker.getPassCheckCount());
+                    Assert.assertTrue(breaker.isPassOnlyOn(Thread.currentThread()));
                     assertSlotsBack(join);
                 }
             }

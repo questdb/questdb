@@ -112,7 +112,14 @@ import java.util.concurrent.locks.LockSupport;
  *       reads it for a LEFT join's ON residual, which keeps the ordinary plan with the operator on:
  *       the probe tasks would read it. {@code SMALL_SINGLE} and {@code SMALL_STAR} join the
  *       first {@code probeRows} rows of the fact table with the small dimensions: one and two
- *       joins.</li>
+ *       joins. {@code COUNT_FANOUT_50} and {@code COUNT_FANOUT_1000} count, through the cursor's
+ *       {@code calculateSize()}, the rows of the fact table joined with a dimension of a thousand keys
+ *       of 50 and of 1,000 rows each, {@code COUNT_TINY_PROBE} those of the fact table's first
+ *       2,500 rows, an interval scan, joined with a dimension of {@code largeDimRows} rows of two
+ *       rows per key, and {@code COUNT_FANOUT_2_LARGE} those of the whole fact table joined with that
+ *       dimension. Each count runs from the top, and, with the suffix {@code _AFTER_PAGE}, after the
+ *       first 1,001 rows, as an HTTP request with {@code count=true} and a page of 1,000 rows does.
+ *       </li>
  *   <li>{@code workers}: the size of the query worker pool, and the context's worker count.</li>
  *   <li>{@code factRows}, {@code largeDimRows}: table sizes. The fact table holds a million rows
  *       per hourly partition.</li>
@@ -162,14 +169,17 @@ import java.util.concurrent.locks.LockSupport;
         "--enable-native-access=ALL-UNNAMED"
 })
 public class ParallelHashJoinBenchmark {
-    private static final String DATA_VERSION = "v1";
+    // The rows that a count after a page reads first, as an HTTP request for a page of 1,000 rows
+    // reads one row past it.
+    private static final long COUNT_PAGE_ROWS = 1_001;
+    private static final String DATA_VERSION = "v2";
     private static final int LIMIT_PROBE_EXECUTIONS = 20;
     private static final String OPERATOR_NODE = "Hash Join workers:";
     private static final String POOL_NAME = "hashjoinbench";
     private static final String STAR_JOINS = " JOIN d1 ON f.k1 = d1.k JOIN d2 ON f.k2 = d2.k JOIN d3 ON f.k3 = d3.k";
     private static final String STAR_LEFT_JOINS = " LEFT JOIN d1 ON f.k1 = d1.k LEFT JOIN d2 ON f.k2 = d2.k LEFT JOIN d3 ON f.k3 = d3.k";
     private static final String STAR_SELECT = "SELECT f.id, f.v, d1.w w1, d2.w w2, d3.w w3 FROM ";
-    private static final String[] TABLES = {"ready", "fact", "fact_pq", "fact_mixed", "d1", "d2", "d3", "d3_pq", "dup"};
+    private static final String[] TABLES = {"ready", "fact", "fact_pq", "fact_mixed", "d1", "d2", "d3", "d3_pq", "dup", "dup2", "dup50", "dup1000"};
 
     @Param({"10000000"})
     public long factRows;
@@ -215,7 +225,9 @@ public class ParallelHashJoinBenchmark {
             "BUILD_ONLY_RESIDUAL", "BUILD_ONLY_RESIDUAL_REGEX",
             "SWAP_STACK_100K", "SWAP_STACK_LARGE",
             "PARQUET_VAR_BUILD_1", "PARQUET_VAR_BUILD_2", "PARQUET_VAR_BUILD_4", "PARQUET_VAR_RESIDUAL",
-            "SMALL_SINGLE", "SMALL_STAR"
+            "SMALL_SINGLE", "SMALL_STAR",
+            "COUNT_FANOUT_50", "COUNT_FANOUT_50_AFTER_PAGE", "COUNT_FANOUT_1000", "COUNT_FANOUT_1000_AFTER_PAGE",
+            "COUNT_TINY_PROBE", "COUNT_TINY_PROBE_AFTER_PAGE", "COUNT_FANOUT_2_LARGE", "COUNT_FANOUT_2_LARGE_AFTER_PAGE"
     })
     public String shape;
 
@@ -244,11 +256,11 @@ public class ParallelHashJoinBenchmark {
                     RecordCursorFactory fresh = engine.select(text, ctx);
                     RecordCursor cursor = fresh.getCursor(ctx)
             ) {
-                return consume(cursor, types);
+                return isCountShape() ? count(cursor) : consume(cursor, types);
             }
         }
         try (RecordCursor cursor = factory.getCursor(ctx)) {
-            return consume(cursor, types);
+            return isCountShape() ? count(cursor) : consume(cursor, types);
         }
     }
 
@@ -323,16 +335,34 @@ public class ParallelHashJoinBenchmark {
         return null;
     }
 
-    private String smallProbeBound() {
+    // The timestamp of the fact table's row after its first rows: timestamps step by 3,600 micros.
+    private static String probeBound(long rows) {
         final StringSink sink = new StringSink();
         sink.put('\'');
-        MicrosFormatUtils.appendDateTimeUSec(sink, probeRows * 3_600);
+        MicrosFormatUtils.appendDateTimeUSec(sink, rows * 3_600);
         sink.put('\'');
         return sink.toString();
     }
 
+    private String smallProbeBound() {
+        return probeBound(probeRows);
+    }
+
     private static String starSql(String fact, String joins) {
         return STAR_SELECT + fact + " f" + joins;
+    }
+
+    // The rows of a COUNT_ shape: the rows read first, if any, and the count of the rest that the
+    // cursor's calculateSize() returns.
+    private long count(RecordCursor cursor) {
+        final long pageRows = shape.endsWith("_AFTER_PAGE") ? COUNT_PAGE_ROWS : 0;
+        long rows = 0;
+        while (rows < pageRows && cursor.hasNext()) {
+            rows++;
+        }
+        final RecordCursor.Counter counter = new RecordCursor.Counter();
+        cursor.calculateSize(ctx.getCircuitBreaker(), counter);
+        return rows + counter.get();
     }
 
     private void createDimension(String name, long rows) throws SqlException {
@@ -361,6 +391,12 @@ public class ParallelHashJoinBenchmark {
         engine.execute("CREATE TABLE dup AS (" +
                 "SELECT (x - 1)::INT k, (x * 7 % 1_000) / 1000.0 w FROM long_sequence(1_000) " +
                 "UNION ALL SELECT ((x - 1) % 250)::INT k, (x * 13 % 997) / 997.0 w FROM long_sequence(1_750))", ctx);
+        // Two rows per key over half as many keys as rows, which k3 meets for about two fifths of the
+        // fact rows; and 50 and 1,000 rows of each of k1's thousand keys.
+        engine.execute("CREATE TABLE dup2 AS (SELECT ((x - 1) % " + (largeDimRows / 2) + ")::INT k, (x * 7 % 1_000) / 1000.0 w " +
+                "FROM long_sequence(" + largeDimRows + "))", ctx);
+        engine.execute("CREATE TABLE dup50 AS (SELECT ((x - 1) % 1_000)::INT k, (x * 7 % 1_000) / 1000.0 w FROM long_sequence(50_000))", ctx);
+        engine.execute("CREATE TABLE dup1000 AS (SELECT ((x - 1) % 1_000)::INT k, (x * 7 % 1_000) / 1000.0 w FROM long_sequence(1_000_000))", ctx);
         // The active partition cannot convert, so each Parquet table gets one more row, in a later
         // partition, whose keys match no dimension.
         engine.execute("CREATE TABLE fact_pq AS (SELECT * FROM fact) TIMESTAMP(ts) PARTITION BY HOUR", ctx);
@@ -401,6 +437,11 @@ public class ParallelHashJoinBenchmark {
         }
         ctx = Misc.free(ctx);
         engine = Misc.free(engine);
+    }
+
+    // True for a shape that counts the join's rows through the cursor rather than reads them.
+    private boolean isCountShape() {
+        return shape.startsWith("COUNT_") && !"COUNT_STAR".equals(shape);
     }
 
     private void open() throws Exception {
@@ -484,7 +525,8 @@ public class ParallelHashJoinBenchmark {
         if ((isOperator && !"PARQUET_VAR_RESIDUAL".equals(shape)) != planText.contains(OPERATOR_NODE)) {
             throw new IllegalStateException("routing drift: plan=" + plan + " shape=" + shape + '\n' + planText);
         }
-        if ((shape.startsWith("SMALL_") || shape.startsWith("PARQUET_VAR_")) && !planText.contains("Interval forward scan")) {
+        if ((shape.startsWith("SMALL_") || shape.startsWith("PARQUET_VAR_") || shape.startsWith("COUNT_TINY_PROBE"))
+                && !planText.contains("Interval forward scan")) {
             throw new IllegalStateException("the probe is not an interval scan: shape=" + shape + '\n' + planText);
         }
         final RecordMetadata metadata = factory.getMetadata();
@@ -525,10 +567,16 @@ public class ParallelHashJoinBenchmark {
             final PeakSampler sampler = new PeakSampler(tracker);
             sampler.start();
             try {
-                final Record record = cursor.getRecord();
-                while (cursor.hasNext()) {
-                    checksum = checksum * 31 + consumeRow(record, types);
-                    rows++;
+                if (isCountShape()) {
+                    // A count reads no row past the page, so the rows are its result.
+                    rows = count(cursor);
+                    checksum = rows;
+                } else {
+                    final Record record = cursor.getRecord();
+                    while (cursor.hasNext()) {
+                        checksum = checksum * 31 + consumeRow(record, types);
+                        rows++;
+                    }
                 }
             } finally {
                 peak = sampler.finish();
@@ -651,6 +699,15 @@ public class ParallelHashJoinBenchmark {
             case "SMALL_SINGLE" -> "SELECT f.id, f.v, d1.w FROM fact f JOIN d1 ON f.k1 = d1.k WHERE f.ts < " + smallProbeBound();
             case "SMALL_STAR" -> "SELECT f.id, f.v, d1.w w1, d2.w w2 FROM fact f JOIN d1 ON f.k1 = d1.k JOIN d2 ON f.k2 = d2.k WHERE f.ts < "
                     + smallProbeBound();
+            // The fact rows meet 50 and 1,000 rows of their key: 500 million and 10 billion rows.
+            case "COUNT_FANOUT_50", "COUNT_FANOUT_50_AFTER_PAGE" -> "SELECT f.id, x.w FROM fact f JOIN dup50 x ON f.k1 = x.k";
+            case "COUNT_FANOUT_1000", "COUNT_FANOUT_1000_AFTER_PAGE" -> "SELECT f.id, x.w FROM fact f JOIN dup1000 x ON f.k1 = x.k";
+            // The fact table's first 2,500 rows, an interval scan, over the large dimension of two rows
+            // per key, which the count indexes whole for a few short chains: about 2,000 joined rows,
+            // which a page leaves about a thousand of to count.
+            case "COUNT_TINY_PROBE", "COUNT_TINY_PROBE_AFTER_PAGE" -> "SELECT f.id, x.w FROM fact f JOIN dup2 x ON f.k3 = x.k WHERE f.ts < "
+                    + probeBound(2_500);
+            case "COUNT_FANOUT_2_LARGE", "COUNT_FANOUT_2_LARGE_AFTER_PAGE" -> "SELECT f.id, x.w FROM fact f JOIN dup2 x ON f.k3 = x.k";
             default -> throw new IllegalArgumentException("unknown shape: " + shape);
         };
     }

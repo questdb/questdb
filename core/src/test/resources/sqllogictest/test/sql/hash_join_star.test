@@ -143,6 +143,16 @@ LEFT JOIN stores st ON s.store = st.store
 ----
 15
 
+# The INNER star of two dimensions that repeat keys, customer 2 and product 12, counted: sales rows 1
+# to 8 meet 1, 2, 1, 0, 0, 1, 2 and 1 pairs
+query I nosort
+SELECT count(*)
+FROM sales s
+JOIN customers c ON s.cust = c.cust
+JOIN products p ON s.prod = p.prod
+----
+8
+
 # INNER, then LEFT
 query ITT nosort
 SELECT s.id, c.cname, p.pname

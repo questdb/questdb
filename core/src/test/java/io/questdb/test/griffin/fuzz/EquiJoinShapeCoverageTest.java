@@ -201,6 +201,13 @@ public class EquiJoinShapeCoverageTest {
         final String corpus = corpus();
         // The join types the operator runs, each over the four shared keys and their pairs.
         assertCorpusMatches(corpus, "an INNER join", Pattern.compile("[a-z0-9_)] l JOIN "));
+        // An INNER join that runs no filter over its pairs, neither an ON residual nor a WHERE clause
+        // past the join: its stage hands its chains on, whose lengths a count reads.
+        assertCorpusMatches(
+                corpus,
+                "an INNER join without a pair filter",
+                Pattern.compile("^SELECT [^\\n]*[a-z0-9_)] l JOIN [^\\n]* ON [lr]\\.\\w+ = [lr]\\.\\w+(?: AND [lr]\\.\\w+ = [lr]\\.\\w+)*(?: ORDER BY [^\\n()]*)?(?: LIMIT -?\\d+)?$", Pattern.MULTILINE)
+        );
         assertCorpusMatches(corpus, "a LEFT join", Pattern.compile(" l LEFT JOIN "));
         assertCorpusMatches(corpus, "an INT key", Pattern.compile("ON (?:l\\.k = r\\.k|r\\.k = l\\.k)"));
         assertCorpusMatches(corpus, "a SYMBOL key", Pattern.compile("ON (?:l\\.sym = r\\.sym|r\\.sym = l\\.sym)"));

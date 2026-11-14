@@ -61,6 +61,9 @@ public class PGAsyncHashJoinLimitTest extends BasePGTest {
             "SELECT f.ts, f.k, f.v, d.w FROM f LEFT JOIN d ON f.k = d.k AND d.w > ? LIMIT ?",
             "SELECT f.k, f.v, d.w, e.w FROM f JOIN d ON f.k = d.k LEFT JOIN d e ON f.k = e.k AND e.w > f.v + ? LIMIT ?",
             "SELECT f.ts, f.k, f.v, d.w FROM f JOIN d ON f.k = d.k WHERE d.w > ? ORDER BY ts DESC LIMIT ?",
+            // d repeats its keys, and the WHERE reads d alone, so the build filters d and the stage hands
+            // its chains on: a negative LIMIT counts them.
+            "SELECT f.k, f.v, d.w FROM f JOIN d ON f.k = d.k WHERE d.w > ? LIMIT ?",
     };
     // One JDBC placeholder and a literal $1 that reuses it, which pgjdbc leaves to the server.
     private static final String[] UNTYPED_QUERIES = {

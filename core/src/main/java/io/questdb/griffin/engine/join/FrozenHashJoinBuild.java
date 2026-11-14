@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.std.QuietCloseable;
 
@@ -74,6 +75,26 @@ public interface FrozenHashJoinBuild {
      * Allocated native bytes, including unused capacity.
      */
     long getSizeInBytes();
+
+    /**
+     * True once {@link #indexChainLengths(SqlExecutionCircuitBreaker)} indexed the chain lengths of
+     * this execution's build.
+     */
+    boolean hasChainLengthIndex();
+
+    /**
+     * Indexes the length of every chain of rows beside the links, for a count of the joined pairs
+     * that the same execution may read afterwards: a probe then reads the matches that a walk from
+     * any link would visit through {@link Probe#chainLength(long)}, rather than walk them, while its
+     * lookups and {@link Probe#next()} walk the chains as before. The pass runs over the build's rows
+     * once, takes 4 bytes a row, which the execution's tracker charges, and checks the breaker that
+     * it is given once per MiB of rows: the caller's, rather than the one that the build was opened
+     * with, which belongs to the thread that built it. The owner calls it at most once per execution,
+     * after the build froze and before it publishes the build to the probes that read the index, and
+     * never after {@link #countKeyRows()}, which leaves no chain to index. A failure leaves the build
+     * as it was, without the index, for its owner to close.
+     */
+    void indexChainLengths(SqlExecutionCircuitBreaker circuitBreaker);
 
     /**
      * A build whose probes look up a single INT key.
@@ -128,6 +149,17 @@ public interface FrozenHashJoinBuild {
      * {@link #reopen()} brings a closed probe back for the next execution.
      */
     interface Probe extends SymbolTableSource, QuietCloseable {
+        /**
+         * The matches that a walk from this link visits: the {@link #next()} calls that
+         * {@link #ofChain(long)} with the link allows until {@link #hasNext()} turns false, 0 for a
+         * link of 0. Right after a lookup, {@code chainLength(chainHead())} is the key's row count,
+         * 0 on a miss, and after some {@link #next()} calls, the matches left. Only a build that
+         * indexed its chain lengths answers it, see
+         * {@link FrozenHashJoinBuild#indexChainLengths(SqlExecutionCircuitBreaker)}, with one read
+         * however long the chain. Positions neither the duplicate iterator nor the payload.
+         */
+        long chainLength(long link);
+
         /**
          * The link at which the duplicate iterator stands, the one that the next {@link #next()}
          * follows, and 0 once the iterator is exhausted. Right after a lookup this is the lookup's

@@ -117,7 +117,9 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
  * does, but count the frame's joined rows instead of writing tuples, and leave the ring alone; see
  * {@link #probeFrame}. A frame whose tuples a count meets before it read them all also counts the
  * rest of the frame, which its task left to a continuation, on the owner's slot, see
- * {@link #countFrameRest}.
+ * {@link #countFrameRest}. Before its first task, the owner indexes the chain lengths of the builds
+ * whose stages hand their chains on, see {@link #indexChainLengths}, so that a count adds the rows
+ * of a key's chain with one read, however long the chain.
  * <p>
  * A Parquet probe frame is decoded late, as {@code Async Filter} decodes its frames: the task first
  * decodes the columns that it reads itself, those of the probe filter, the stages' keys and their
@@ -797,6 +799,28 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
 
     Slot getSlot(int slotId) {
         return slots.getQuick(slotId + 1);
+    }
+
+    /**
+     * Indexes the chain lengths of the builds of the execution's stages that hand their chains on,
+     * see {@link HashJoinStageStepper}, and whose builds repeat a key, for a count of the join's
+     * rows: the count's tasks and the consumer then read a chain's length rather than walk the
+     * chain; see {@link FrozenHashJoinBuild#indexChainLengths(SqlExecutionCircuitBreaker)}. The
+     * other stages' counts walk no chain: a stage whose stepper walks its key's matches runs its
+     * filters over each pair, as the serial join does, and a build of one row per key has no chain.
+     * A stage indexes its build once per execution, so a count after {@code toTop()} finds the index.
+     * The owner calls it in a count, once the builds are done and before it dispatches the count's
+     * first task, with its execution's breaker, which the passes check.
+     */
+    void indexChainLengths(SqlExecutionCircuitBreaker circuitBreaker) {
+        for (int k = 0, n = executionStages.size(); k < n; k++) {
+            // The stepper of the execution's orientation, as getProbeFrameRowCap() picks it.
+            final HashJoinStageStepper stageStepper = k == 0 ? stepper : specs.getQuick(k).getStepper();
+            final HashJoinBuildStage stage = executionStages.getQuick(k);
+            if (!stageStepper.isEnumerated && !stage.isBuildUnique()) {
+                stage.indexChainLengths(circuitBreaker);
+            }
+        }
     }
 
     /**

@@ -79,6 +79,17 @@ abstract class AbstractHashJoinProbe implements FrozenHashJoinBuild.Probe {
         return next;
     }
 
+    /**
+     * Reads the length off the build's chain length index, see
+     * {@link HashJoinRowHeap#indexChainLengths}, which an unindexed heap has no block for: a read
+     * there would fault the JVM, so the read asserts the index along with the snapshot.
+     */
+    @Override
+    public final long chainLength(long link) {
+        assert isCurrent() && rowHeap.hasChainLengthIndex();
+        return link != 0 ? rowHeap.getChainLength(link) : 0;
+    }
+
     @Override
     public void close() {
         if (payload != null) {

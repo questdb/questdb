@@ -193,6 +193,9 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
     private final ObjList<Function> workerBuildOnFilters;
     // The builds the stage ran, over all its executions; see getBuildCount().
     private long buildCount;
+    // The passes that indexed the chain lengths of the stage's builds, over all its executions; see
+    // getChainLengthIndexCount().
+    private long chainLengthIndexCount;
     // Read by the tasks of a parallel build's key row count: the consecutive partitions each counts.
     private int countTaskPartitionCount;
     // The frozen build of the open cursor, whichever of the two builds produced it.
@@ -669,6 +672,17 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
      */
     public SymbolTableSource getBuildSymbols() {
         return buildFrames.getSymbolTableSource();
+    }
+
+    /**
+     * The passes that indexed the chain lengths of the stage's builds since it was constructed, at
+     * most one per execution, for a count of a parallel hash join's rows; see
+     * {@link #indexChainLengths(SqlExecutionCircuitBreaker)}. A test reads it before and after
+     * executions, to count the passes of each.
+     */
+    @TestOnly
+    public long getChainLengthIndexCount() {
+        return chainLengthIndexCount;
     }
 
     /**
@@ -1666,6 +1680,20 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
      */
     Slot getSlot(int slotId) {
         return slots.getQuick(slotId + 1);
+    }
+
+    /**
+     * Indexes the chain lengths of the open cursor's build for a count of a parallel hash join's
+     * rows, unless a count of the same execution indexed them before; see
+     * {@link FrozenHashJoinBuild#indexChainLengths(SqlExecutionCircuitBreaker)}. The owner calls it
+     * after the build and before it dispatches the count's first task, which publishes the index to
+     * the workers, with the breaker of its own execution, which the pass checks.
+     */
+    void indexChainLengths(SqlExecutionCircuitBreaker circuitBreaker) {
+        if (!frozen.hasChainLengthIndex()) {
+            frozen.indexChainLengths(circuitBreaker);
+            chainLengthIndexCount++;
+        }
     }
 
     /**

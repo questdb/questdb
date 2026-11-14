@@ -60,8 +60,14 @@ import java.io.Closeable;
  * its owner turns the frozen links into chain lengths before any probe runs; see
  * {@link #countChains()}. A parallel build of more than one partition may count ranges of its
  * partitions apart, on the workers; see {@link #getChainCountTaskCount(HashJoinPartitions)}.
+ * <p>
+ * A count of a join's rows that the same execution may read afterwards keeps the links, and needs
+ * the length of a chain from wherever a walk of it would start: the owner indexes every row's chain
+ * length beside the links, in a block of its own; see {@link #indexChainLengths}.
  */
 final class HashJoinRowHeap implements Closeable {
+    // Bytes of a row's chain length in the chain length index.
+    private static final int CHAIN_LENGTH_SIZE = Integer.BYTES;
     // A parallel count over frame regions takes no more tasks than leave each one runs of this many
     // rows on average; see getChainCountTaskCount().
     private static final int FRAME_REGION_MIN_RUN_ROWS = 256;
@@ -73,14 +79,23 @@ final class HashJoinRowHeap implements Closeable {
     // A task of a parallel count checks the breaker once per this many rows, as a partition task of
     // the build does; a power of two.
     private static final int ROWS_PER_CHECK = 64 * 1024;
+    // The chain length of every row, in heap order; see indexChainLengths().
+    private final HashJoinBuffer chainLengthIndex = new HashJoinBuffer(CompressedOffsets.MAX_ALIGNED8_HEAP_SIZE / LINK_SIZE * CHAIN_LENGTH_SIZE);
+    // Shifts a row's byte offset to the byte offset of its chain length in the index.
+    private final int chainLengthShift;
     private final boolean hasRowId;
     private final long initialCapacity;
     private final HashJoinBuffer rows = new HashJoinBuffer(CompressedOffsets.MAX_ALIGNED8_HEAP_SIZE);
     private final int rowSize;
     private SqlExecutionCircuitBreaker circuitBreaker;
     private long generation;
+    // True once indexChainLengths() indexed this execution's chain lengths.
+    private boolean hasChainLengthIndex;
     // True once countChains() replaced this execution's links with chain lengths.
     private boolean hasChainLengths;
+    // The execution's tracker, which charges the rows and the chain length index.
+    @Nullable
+    private MemoryTracker memoryTracker;
     private long nextHandleBase;
     private long rowBytes;
 
@@ -94,6 +109,7 @@ final class HashJoinRowHeap implements Closeable {
         this.initialCapacity = initialCapacity;
         this.hasRowId = hasPayload;
         this.rowSize = getRowSize(hasPayload);
+        this.chainLengthShift = Integer.numberOfTrailingZeros(rowSize) - Integer.numberOfTrailingZeros(CHAIN_LENGTH_SIZE);
     }
 
     /**
@@ -139,10 +155,13 @@ final class HashJoinRowHeap implements Closeable {
     @Override
     public void close() {
         rows.close();
+        chainLengthIndex.close();
         rowBytes = 0;
         hasChainLengths = false;
+        hasChainLengthIndex = false;
         generation++;
         circuitBreaker = null;
+        memoryTracker = null;
     }
 
     /**
@@ -263,6 +282,14 @@ final class HashJoinRowHeap implements Closeable {
         return taskCount;
     }
 
+    /**
+     * The rows that a walk from this link visits: the link's row and every row that its chain
+     * reaches after it. Reads the index that {@link #indexChainLengths} built; the link is not 0.
+     */
+    long getChainLength(long link) {
+        return Integer.toUnsignedLong(Unsafe.getInt(chainLengthIndex.address + ((link - LINK_SIZE) >>> chainLengthShift)));
+    }
+
     long getGeneration() {
         return generation;
     }
@@ -291,6 +318,13 @@ final class HashJoinRowHeap implements Closeable {
     }
 
     /**
+     * True once {@link #indexChainLengths} indexed this execution's chain lengths.
+     */
+    boolean hasChainLengthIndex() {
+        return hasChainLengthIndex;
+    }
+
+    /**
      * True once {@link #countChains()} replaced this execution's links with chain lengths.
      */
     boolean hasChainLengths() {
@@ -302,6 +336,40 @@ final class HashJoinRowHeap implements Closeable {
      */
     boolean hasRowId() {
         return hasRowId;
+    }
+
+    /**
+     * Indexes the length of every chain beside the links: for every row, the rows that a walk from
+     * it visits, the row itself and every row that its link reaches, 4 bytes a row in a block that
+     * the execution's tracker charges. A probe then reads the matches that a walk from any link would
+     * visit, see {@link #getChainLength(long)}, rather than walk them, and the links stay as they
+     * are, so that the execution may walk its chains afterwards. Every build links a row to the row
+     * of its key that it wrote last, which lies at a lower offset, so one pass in heap order finds
+     * each link's target indexed already. A heap holds at most 2^32 - 2 rows, so a length fits the
+     * 4 bytes, read unsigned.
+     * <p>
+     * The owner runs the pass on the frozen heap at most once per execution, before any probe reads
+     * the index, and the pass checks the breaker that it is given once per MiB of rows: the heap's
+     * own breaker is the one of the thread that opened the build. The pass allocates the block once
+     * per execution, also when a failure stopped an earlier pass, which leaves it for the next one,
+     * and {@link #close()} frees it. Fails on a heap whose links {@link #countChains()} replaced.
+     */
+    void indexChainLengths(SqlExecutionCircuitBreaker circuitBreaker) {
+        if (hasChainLengths) {
+            throw new IllegalStateException("hash join build rows are already counted");
+        }
+        assert !hasChainLengthIndex;
+        if (chainLengthIndex.address == 0) {
+            // The block neither clears nor grows, so it checks no breaker.
+            chainLengthIndex.of(memoryTracker, circuitBreaker);
+            chainLengthIndex.allocate(getRowCount() * CHAIN_LENGTH_SIZE, false);
+        }
+        final long limit = rowBytes;
+        for (long chunkLo = 0; chunkLo < limit; chunkLo += HashJoinBuffer.COPY_CHUNK_SIZE) {
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+            indexChainLengths(chunkLo, Math.min(limit, chunkLo + HashJoinBuffer.COPY_CHUNK_SIZE));
+        }
+        hasChainLengthIndex = true;
     }
 
     /**
@@ -317,9 +385,13 @@ final class HashJoinRowHeap implements Closeable {
     }
 
     /**
-     * Binds the execution that charges and cancels this heap's allocations.
+     * Binds the execution that charges this heap's allocations, and the breaker that cancels its
+     * build, which belongs to the thread that opens the build. A step on the frozen heap that may run
+     * on another thread, such as {@link #indexChainLengths}, checks the breaker that its caller
+     * passes.
      */
     void of(@Nullable MemoryTracker memoryTracker, SqlExecutionCircuitBreaker circuitBreaker) {
+        this.memoryTracker = memoryTracker;
         this.circuitBreaker = circuitBreaker;
         rows.of(memoryTracker, circuitBreaker);
     }
@@ -415,5 +487,20 @@ final class HashJoinRowHeap implements Closeable {
             counted += runRows;
         }
         return counted;
+    }
+
+    // Writes the chain length of every row between these byte offsets, in heap order: one for a row
+    // that ends its chain, otherwise one more than the length of the row that its link reaches, which
+    // lies lower and which the caller has indexed.
+    private void indexChainLengths(long lo, long hi) {
+        final long base = rows.address;
+        final long index = chainLengthIndex.address;
+        final int rowSize = this.rowSize;
+        final int shift = chainLengthShift;
+        for (long offset = lo; offset < hi; offset += rowSize) {
+            final long link = Unsafe.getLong(base + offset);
+            assert link == 0 || link - LINK_SIZE < offset;
+            Unsafe.putInt(index + (offset >>> shift), link == 0 ? 1 : Unsafe.getInt(index + ((link - LINK_SIZE) >>> shift)) + 1);
+        }
     }
 }

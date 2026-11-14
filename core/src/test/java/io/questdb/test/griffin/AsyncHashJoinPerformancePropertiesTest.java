@@ -25,10 +25,14 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.table.AsyncHashJoinGroupByAtom;
 import io.questdb.griffin.engine.table.AsyncHashJoinGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHashJoinRecordCursorFactory;
@@ -40,6 +44,8 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.concurrent.atomic.AtomicLong;
+
 import static io.questdb.test.griffin.ParallelHashJoinTestUtils.*;
 
 /**
@@ -49,7 +55,9 @@ import static io.questdb.test.griffin.ParallelHashJoinTestUtils.*;
  * and the consumer that reads their tuples, over one stage and over stacks, swapped stacks, the
  * odometer of several stages' chains, native var-size and Parquet payloads, Parquet probes and a
  * moving ring window; and so does a count of the rows. And an execution builds each stage once, in a known
- * number of rounds of tasks, however often its cursor goes back to the top or counts its rows.
+ * number of rounds of tasks, however often its cursor goes back to the top or counts its rows, and
+ * indexes the chain lengths of a stage that hands its chains on once, for its counts, whose breaker
+ * checks then follow the frames and the MiB of the indexed rows rather than the chains' links.
  */
 public class AsyncHashJoinPerformancePropertiesTest extends AbstractCairoTest {
 
@@ -74,18 +82,33 @@ public class AsyncHashJoinPerformancePropertiesTest extends AbstractCairoTest {
             setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_PARALLEL_MIN_PROBE_RATIO, "1000000");
             setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MIN_PROBE_RATIO, "1000000");
             final String left = "SELECT t.k, t.v, d.w FROM t LEFT JOIN d ON t.k = d.k";
-            // On the owner: one build and no round per execution.
+            // On the owner: one build and no round per execution, and one pass that indexes the chain
+            // lengths of d's duplicate keys, however often the execution counts.
             setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, Long.MAX_VALUE);
-            assertCounts(left, 1, 0);
+            assertCounts(left, 1, 0, 1);
             // In rounds: one build of two rounds, one that sorts the frames' rows into partitions and
             // one that fills the partitions.
             setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 0);
-            assertCounts(left, 1, 2);
+            assertCounts(left, 1, 2, 1);
             // And one more round when the build copies its payload.
             setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_PARALLEL_MIN_PROBE_RATIO, "0");
-            assertCounts(left, 1, 3);
-            // The swapped orientation builds the left input, once per execution too.
-            assertCounts("SELECT d.w, t.v FROM d JOIN t ON d.k = t.k", 1, 3);
+            assertCounts(left, 1, 3, 1);
+            // The swapped orientation builds the left input, once per execution too, and indexes its
+            // chains, which its lone stage hands on.
+            assertCounts("SELECT d.w, t.v FROM d JOIN t ON d.k = t.k", 1, 3, 1);
+            // A build of one row per key has no chain, and a stage that walks its matches to run its
+            // residual reads no chain length: their counts index nothing.
+            assertCounts("SELECT t.k, t.v, u.w FROM t LEFT JOIN u ON t.k = u.k", 1, 3, 0);
+            assertCounts("SELECT t.k, t.v, d.w FROM t LEFT JOIN d ON t.k = d.k AND d.w > t.v % 100", 1, 3, 0);
+            // An execution that only reads its rows indexes nothing either.
+            try (RecordCursorFactory factory = select(left)) {
+                final AsyncHashJoinRecordCursorFactory join = find(factory);
+                Assert.assertNotNull(join);
+                final HashJoinBuildStage stage = join.getAtom().getStage(0);
+                final long passes = stage.getChainLengthIndexCount();
+                Assert.assertEquals(ordinary(left, sqlExecutionContext), result(factory, sqlExecutionContext));
+                Assert.assertEquals(passes, stage.getChainLengthIndexCount());
+            }
             // An INNER join over an empty build builds once, and dispatches no probe task.
             execute("CREATE TABLE e (k INT, w LONG)");
             try (RecordCursorFactory factory = select("SELECT t.k, e.w FROM t JOIN e ON t.k = e.k WHERE t.ts IN '2024-01-01'")) {
@@ -123,6 +146,63 @@ public class AsyncHashJoinPerformancePropertiesTest extends AbstractCairoTest {
                 }
                 Assert.assertEquals(builds + 1, stage.getBuildCount());
                 Assert.assertEquals(rounds + 3, stage.getRoundCount());
+            }
+        });
+    }
+
+    @Test
+    public void testCountReadsChainLengthsWithoutWalkingChains() throws Exception {
+        // Each of f's 100_000 rows meets the 1_000_000 rows of key 1 in d: 10^11 joined rows. A
+        // count reads each probe row's chain length from the index that one pass over d's rows
+        // builds, rather than walking the key's chain, so its breaker checks follow the frames, not
+        // the links: one per frame, at most a few more, and one per MiB of d's rows in the pass.
+        // A breaker check every so many walked links, or one per chain that the consumer walks, would
+        // pass the caps, and the breaker then cancels the count.
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 2);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE f AS (SELECT 1 k, x v FROM long_sequence(100_000))");
+            execute("CREATE TABLE d AS (SELECT 1 k, x w FROM long_sequence(1_000_000))");
+            execute("INSERT INTO d SELECT (x + 1)::INT, x FROM long_sequence(4)");
+            sqlExecutionContext.changePageFrameSizes(1_000, 1_000);
+            // A LEFT join keeps its inputs: an INNER join would hash f, the smaller one.
+            final String sql = "SELECT f.v, d.w FROM f LEFT JOIN d ON f.k = d.k";
+            final int frameCount = 100;
+            // d's 1_000_004 rows of 16 bytes fill 16 MiB of the build's heap, but for a part.
+            final int passCheckCount = 16;
+            try (RecordCursorFactory factory = select(sql)) {
+                final AsyncHashJoinRecordCursorFactory join = find(factory);
+                Assert.assertNotNull(join);
+                for (int prefix = 0; prefix < 2; prefix++) {
+                    final CountCheckBreaker breaker = new CountCheckBreaker(frameCount + 16, frameCount + passCheckCount + 16);
+                    final SqlExecutionCircuitBreaker previous = sqlExecutionContext.getCircuitBreaker();
+                    ((SqlExecutionContextImpl) sqlExecutionContext).with(breaker);
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        for (int i = 0; i < prefix; i++) {
+                            Assert.assertTrue(cursor.hasNext());
+                        }
+                        breaker.isArmed = true;
+                        final RecordCursor.Counter counter = new RecordCursor.Counter();
+                        try {
+                            cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
+                        } catch (CairoException e) {
+                            throw new AssertionError("the count after " + prefix + " rows failed with " + breaker.stateChecks
+                                    + " state checks and " + breaker.throttledChecks + " time-throttled checks: " + e.getFlyweightMessage(), e);
+                        }
+                        breaker.isArmed = false;
+                        Assert.assertEquals(100_000_000_000L - prefix, counter.get());
+                        Assert.assertFalse(join.getAtom().isSwapped());
+                        Assert.assertEquals(frameCount, join.getProbeFrameCount());
+                    } finally {
+                        ((SqlExecutionContextImpl) sqlExecutionContext).with(previous);
+                    }
+                    // One pass per execution.
+                    Assert.assertEquals(prefix + 1, join.getAtom().getStage(0).getChainLengthIndexCount());
+                    final String checks = "after " + prefix + " rows: " + breaker.stateChecks + " state checks, " + breaker.throttledChecks
+                            + " time-throttled checks, " + breaker.passChecks + " of them in the pass";
+                    Assert.assertTrue(checks, breaker.stateChecks.get() <= frameCount + 16);
+                    Assert.assertTrue(checks, breaker.throttledChecks.get() <= frameCount + passCheckCount + 16);
+                    Assert.assertEquals(checks, passCheckCount, breaker.passChecks.get());
+                }
             }
         });
     }
@@ -341,6 +421,8 @@ public class AsyncHashJoinPerformancePropertiesTest extends AbstractCairoTest {
                     "SELECT t.v, d.w, e.w ew FROM t LEFT JOIN d ON t.k = d.k LEFT JOIN d e ON t.l = e.l",
                     "SELECT t.k, t.v, d.w FROM t LEFT JOIN d ON t.k = d.k AND d.w > t.v % 100",
                     "SELECT d.w, t.v, u.w uw FROM d JOIN t ON d.k = t.k LEFT JOIN u ON d.k = u.k",
+                    // An INNER stage of duplicate keys, whose chains the count's pass indexes.
+                    "SELECT t.v, d.w FROM t JOIN d ON t.k = d.k",
             }) {
                 try (
                         RecordCursorFactory factory = select(sql);
@@ -467,7 +549,7 @@ public class AsyncHashJoinPerformancePropertiesTest extends AbstractCairoTest {
         }
     }
 
-    private static void assertCounts(String sql, int buildsPerExecution, int roundsPerExecution) throws Exception {
+    private static void assertCounts(String sql, int buildsPerExecution, int roundsPerExecution, int passesPerExecution) throws Exception {
         try (RecordCursorFactory factory = select(sql)) {
             final AsyncHashJoinRecordCursorFactory join = find(factory);
             Assert.assertNotNull(sql, join);
@@ -475,11 +557,13 @@ public class AsyncHashJoinPerformancePropertiesTest extends AbstractCairoTest {
                 final HashJoinBuildStage stage;
                 final long builds;
                 final long rounds;
+                final long passes;
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     // The execution's first stage, as its orientation picks it.
                     stage = join.getAtom().getStage(0);
                     builds = stage.getBuildCount();
                     rounds = stage.getRoundCount();
+                    passes = stage.getChainLengthIndexCount();
                     long count = 0;
                     while (cursor.hasNext()) {
                         count++;
@@ -500,6 +584,7 @@ public class AsyncHashJoinPerformancePropertiesTest extends AbstractCairoTest {
                 }
                 Assert.assertEquals(sql, builds + buildsPerExecution, stage.getBuildCount());
                 Assert.assertEquals(sql, rounds + roundsPerExecution, stage.getRoundCount());
+                Assert.assertEquals(sql, passes + passesPerExecution, stage.getChainLengthIndexCount());
             }
         }
     }
@@ -520,6 +605,58 @@ public class AsyncHashJoinPerformancePropertiesTest extends AbstractCairoTest {
                 )
                 """);
         execute("CREATE TABLE u AS (SELECT x::INT k, x w FROM long_sequence(1_900))");
+    }
+
+    /**
+     * Counts, once armed, the breaker checks of a count of a parallel hash join's rows outside its
+     * build: the state checks, which the frames' tasks make before each frame and the steppers every so
+     * many walked pairs, and the time-throttled checks, which the consumer makes, those of the pass
+     * that indexes the chain lengths among them. Cancels the count once either passes its cap, so
+     * that a count that checks the breaker per walked link, or per chain, fails fast. A breaker of a
+     * class of its own is thread safe, so the tasks consult it directly rather than through a copy.
+     */
+    private static class CountCheckBreaker extends AtomicBooleanCircuitBreaker {
+        private static final String CURSOR = "io.questdb.griffin.engine.table.AsyncHashJoinRecordCursor";
+        private static final String HEAP = "io.questdb.griffin.engine.join.HashJoinRowHeap";
+        private static final StackWalker STACK_WALKER = StackWalker.getInstance();
+        private final AtomicLong passChecks = new AtomicLong();
+        private final AtomicLong stateChecks = new AtomicLong();
+        private final long stateCheckCap;
+        private final long throttledCheckCap;
+        private final AtomicLong throttledChecks = new AtomicLong();
+        private volatile boolean isArmed;
+
+        private CountCheckBreaker(long stateCheckCap, long throttledCheckCap) {
+            super(engine);
+            this.stateCheckCap = stateCheckCap;
+            this.throttledCheckCap = throttledCheckCap;
+        }
+
+        @Override
+        public int getState() {
+            if (isArmed && !isOnStack(CURSOR, "build") && stateChecks.incrementAndGet() > stateCheckCap) {
+                cancel();
+            }
+            return super.getState();
+        }
+
+        @Override
+        public void statefulThrowExceptionIfTrippedTimeThrottled() {
+            if (isArmed && !isOnStack(CURSOR, "build")) {
+                if (isOnStack(HEAP, "indexChainLengths")) {
+                    passChecks.incrementAndGet();
+                }
+                if (throttledChecks.incrementAndGet() > throttledCheckCap) {
+                    cancel();
+                }
+            }
+            super.statefulThrowExceptionIfTrippedTimeThrottled();
+        }
+
+        private static boolean isOnStack(String className, String methodName) {
+            return STACK_WALKER.walk(frames -> frames.anyMatch(frame -> frame.getClassName().equals(className)
+                    && frame.getMethodName().equals(methodName)));
+        }
     }
 
     // Reads every column of the row through the getter of its type, as a client would, and returns a

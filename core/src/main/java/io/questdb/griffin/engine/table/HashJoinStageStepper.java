@@ -73,10 +73,11 @@ import org.jetbrains.annotations.TestOnly;
  * walks the stages as a frame's tuples do, but appends no tuple: each tuple that would come out of
  * the last stage adds the rows it stands for to the slot's pair count instead, one, or, for a tuple
  * with chains that the stages after the last enumerated one would hand to the consumer, the product
- * of those chains' lengths. A deferred stage walks its key's chain to count it, which leaves every
- * link of the build as it is, so that the same execution can join the frames again afterwards. A
- * count fails rather than wrap once its rows pass {@code Long.MAX_VALUE}; see
- * {@link #addRowCounts(long, long)}.
+ * of those chains' lengths. A deferred stage reads its key's chain length off the index that its
+ * build took for the count, see {@link AsyncHashJoinAtom#indexChainLengths}, rather than walk the
+ * chain, and leaves every link of the build as it is, so that the same execution can join the
+ * frames again afterwards. A count fails rather than wrap once its rows pass {@code Long.MAX_VALUE};
+ * see {@link #addRowCounts(long, long)}.
  */
 abstract class HashJoinStageStepper {
     // The key reads an INT column of the key source.

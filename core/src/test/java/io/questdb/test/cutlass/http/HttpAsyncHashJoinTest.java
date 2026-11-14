@@ -82,6 +82,10 @@ public class HttpAsyncHashJoinTest extends AbstractTest {
             {"SELECT f.k, f.v, d1.w, d2.w2 FROM f LEFT JOIN d1 ON f.k = d1.k JOIN d2 ON f.l = d2.l LIMIT -50", "limit=1,10&count=true"},
             // A post-filtered star in descending order.
             {"SELECT f.k, f.v, d1.w, d3.s3 FROM f LEFT JOIN d1 ON f.k = d1.k LEFT JOIN d3 ON f.sym = d3.sym WHERE d1.w > f.v % 7 OR d1.w IS NULL ORDER BY f.ts DESC", "limit=2,8&count=true"},
+            // A many-to-many INNER join over d1's ten rows per key, counted after a page, as the web
+            // console asks, and under a window function, whose cursor hands the count to the join.
+            {"SELECT f.v, d1.w FROM f JOIN d1 ON f.k = d1.k", "limit=0,1000&count=true"},
+            {"SELECT f.v, d1.w, row_number() OVER () rn FROM f JOIN d1 ON f.k = d1.k", "limit=1,10&count=true"},
     };
     private static final String STAR = PAGED_REQUESTS[0][0];
 

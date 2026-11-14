@@ -43,6 +43,7 @@ import io.questdb.griffin.engine.table.AsyncHashJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.HashJoinBuildStage;
 import io.questdb.mp.WorkerPoolMode;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Rows;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
@@ -68,7 +69,8 @@ import static io.questdb.test.griffin.ParallelHashJoinTestUtils.*;
  * everything it held and that the same factory, and the tables, still work: cancellation inside
  * each round of a parallel build, inside a probe task and inside a continuation chunk; per-query
  * memory limit breaches in the build, the symbol key translator, the payload copy, a probe task,
- * a continuation and the consumer's Parquet output reader; failing file operations on the build
+ * a continuation, the consumer's Parquet output reader and the pass that indexes the builds' chain
+ * lengths for a count that follows some rows; failing file operations on the build
  * input's, the probe input's and a later stage's build input's native and Parquet frames; and a
  * later stage's table dropped and created again under a cached stacked factory.
  */
@@ -477,6 +479,87 @@ public class AsyncHashJoinFailureTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMemoryLimitInIndexPassOfCountAfterRows() throws Exception {
+        // A count that follows some rows, as a page of an HTTP request with count=true does, holds the
+        // builds and the frames whose tuples it dispatched for the rows, and then indexes the chain
+        // lengths of the builds whose stages hand their chains on, 4 bytes a build row. A per-query
+        // memory limit one byte short of what the indexes take fails the count inside the pass, and
+        // the failure releases everything. A count from the top opens no ring entry, so it may fit
+        // under a limit that the rows do not.
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 2);
+        // A ring budget below a quarter of the limit below, which leaves the ring the same budget, and
+        // the same window, as it has without a limit.
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TUPLE_RING_MAX_SIZE, 512);
+        assertMemoryLeak(() -> {
+            createTables();
+            // m and d2 repeat their keys: 8 and 15 rows.
+            execute("CREATE TABLE m AS (SELECT CASE WHEN x <= 3 THEN 1 WHEN x = 4 THEN 2 WHEN x <= 6 THEN 3 ELSE x - 3 END::INT k, x w FROM long_sequence(8))");
+            execute("CREATE TABLE d2 AS (SELECT 1 + x % 5 lk, x * 10 w2 FROM long_sequence(15))");
+            sqlExecutionContext.changePageFrameSizes(4, 4);
+            final String sql = "SELECT t.v, m.w, d2.w2 FROM t JOIN m ON t.k = m.k JOIN d2 ON t.lk = d2.lk";
+            final String expected = ordinary(sql, sqlExecutionContext);
+            final long rowCount = ordinaryRowCount(sql);
+            final int prefix = 3;
+            final long indexBytes = (8 + 15) * Integer.BYTES;
+            try (RecordCursorFactory factory = select(sql)) {
+                final AsyncHashJoinRecordCursorFactory join = find(factory);
+                Assert.assertNotNull(join);
+                // Without a limit: the memory that the execution holds once it read the rows, and the
+                // window of frames that it dispatched for them.
+                final long used;
+                final int dispatchLimit;
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    for (int i = 0; i < prefix; i++) {
+                        Assert.assertTrue(cursor.hasNext());
+                    }
+                    final MemoryTracker tracker = sqlExecutionContext.getMemoryTracker();
+                    Assert.assertNotNull(tracker);
+                    used = tracker.getUsed();
+                    dispatchLimit = join.getAtom().getRing().getDispatchLimit();
+                    final RecordCursor.Counter counter = new RecordCursor.Counter();
+                    cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
+                    Assert.assertEquals(rowCount - prefix, counter.get());
+                }
+                Assert.assertEquals(2, dispatchLimit);
+                final MemoryTracker tracker;
+                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, used + indexBytes - 1);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    for (int i = 0; i < prefix; i++) {
+                        Assert.assertTrue(cursor.hasNext());
+                    }
+                    tracker = sqlExecutionContext.getMemoryTracker();
+                    Assert.assertNotNull(tracker);
+                    // The rows took the same memory, and the same window, under the limit.
+                    Assert.assertEquals(used, tracker.getUsed());
+                    Assert.assertEquals(dispatchLimit, join.getAtom().getRing().getDispatchLimit());
+                    try {
+                        cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), new RecordCursor.Counter());
+                        Assert.fail("expected the count to breach the limit inside the pass");
+                    } catch (CairoException e) {
+                        Assert.assertTrue(e.getMessage(), e.isOutOfMemory());
+                        TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                        Assert.assertTrue(isThrownIn(e, "io.questdb.griffin.engine.join.HashJoinRowHeap", "indexChainLengths"));
+                    }
+                } finally {
+                    setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
+                }
+                assertReleased(join);
+                Assert.assertEquals(0, tracker.getUsed());
+                // The same factory counts the rows, and reads them, without the limit.
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    for (int i = 0; i < prefix; i++) {
+                        Assert.assertTrue(cursor.hasNext());
+                    }
+                    final RecordCursor.Counter counter = new RecordCursor.Counter();
+                    cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
+                    Assert.assertEquals(rowCount - prefix, counter.get());
+                }
+                Assert.assertEquals(expected, result(factory, sqlExecutionContext));
+            }
+        });
+    }
+
+    @Test
     public void testMemoryLimitInParquetOutputReader() throws Exception {
         // Row groups of 20 rows, whose VARCHAR payload, of 250 characters a row, the consumer's output
         // reader decodes, with the whole Parquet decode budget, as it returns the rows; the payload
@@ -729,6 +812,31 @@ public class AsyncHashJoinFailureTest extends AbstractCairoTest {
 
     private static boolean isOnStack(String className, String methodName) {
         return STACK_WALKER.walk(frames -> frames.anyMatch(frame -> frame.getClassName().equals(className) && frame.getMethodName().equals(methodName)));
+    }
+
+    // The rows of the query's ordinary plan.
+    private static long ordinaryRowCount(String sql) throws SqlException {
+        sqlExecutionContext.setParallelHashJoinEnabled(false);
+        try (RecordCursorFactory factory = select(sql); RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            Assert.assertNull(find(factory));
+            long count = 0;
+            while (cursor.hasNext()) {
+                count++;
+            }
+            return count;
+        } finally {
+            sqlExecutionContext.setParallelHashJoinEnabled(true);
+        }
+    }
+
+    // True when the method was on the stack where the exception was thrown.
+    private static boolean isThrownIn(Throwable e, String className, String methodName) {
+        for (StackTraceElement frame : e.getStackTrace()) {
+            if (frame.getClassName().equals(className) && frame.getMethodName().equals(methodName)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     // The phase of a parallel hash join's execution that threw the exception, by its stack.

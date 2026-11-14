@@ -243,6 +243,42 @@ public class HashJoinChainHeadTest extends AbstractCairoTest {
         });
     }
 
+    // t holds 600 rows over six daily partitions, the first two of them Parquet. Its INT key k holds
+    // 56 keys of one row, 1_000 plus x for every tenth x from 1 but the four that are multiples of 13
+    // (91, 221, 351 and 481), seven keys of many rows, 0 to 5 and NULL, which repeat within frames,
+    // across frames, partitions and formats; s holds k's key as text, and v numbers the rows from one.
+    static void createTables() throws SqlException {
+        execute("CREATE TABLE t (k INT, s VARCHAR, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO t
+                SELECT CASE WHEN x % 13 = 0 THEN NULL WHEN x % 10 = 1 THEN (1_000 + x)::INT ELSE (x % 6)::INT END,
+                       CASE WHEN x % 13 = 0 THEN NULL WHEN x % 10 = 1 THEN 'one' || x ELSE 'many' || (x % 6) END,
+                       x, timestamp_sequence('2020-01-01', 864_000_000L)
+                FROM long_sequence(600)
+                """);
+        execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts < '2020-01-03'");
+    }
+
+    static IntList ints(int... values) {
+        final IntList list = new IntList();
+        for (int value : values) {
+            list.add(value);
+        }
+        return list;
+    }
+
+    static String label(int key) {
+        return key == Numbers.INT_NULL ? "null" : Integer.toString(key);
+    }
+
+    static String label(Utf8Sequence key) {
+        return key == null ? "null" : key.toString();
+    }
+
+    static RecordSink probeSink(BytecodeAssembler asm, RecordCursorFactory probeFactory, ListColumnFilter probeKey) {
+        return RecordSinkFactory.getInstance(configuration, asm, probeFactory.getMetadata(), probeKey, null);
+    }
+
     /**
      * Looks every key up through probe a, and checks right after each lookup that the probe's chain
      * head is 0 for a miss and otherwise restarts the key's chain, on a and on b, from the head and
@@ -369,45 +405,9 @@ public class HashJoinChainHeadTest extends AbstractCairoTest {
         }
     }
 
-    // t holds 600 rows over six daily partitions, the first two of them Parquet. Its INT key k holds
-    // 56 keys of one row, 1_000 plus x for every tenth x from 1 but the four that are multiples of 13
-    // (91, 221, 351 and 481), seven keys of many rows, 0 to 5 and NULL, which repeat within frames,
-    // across frames, partitions and formats; s holds k's key as text, and v numbers the rows from one.
-    private static void createTables() throws SqlException {
-        execute("CREATE TABLE t (k INT, s VARCHAR, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-        execute("""
-                INSERT INTO t
-                SELECT CASE WHEN x % 13 = 0 THEN NULL WHEN x % 10 = 1 THEN (1_000 + x)::INT ELSE (x % 6)::INT END,
-                       CASE WHEN x % 13 = 0 THEN NULL WHEN x % 10 = 1 THEN 'one' || x ELSE 'many' || (x % 6) END,
-                       x, timestamp_sequence('2020-01-01', 864_000_000L)
-                FROM long_sequence(600)
-                """);
-        execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts < '2020-01-03'");
-    }
-
-    private static IntList ints(int... values) {
-        final IntList list = new IntList();
-        for (int value : values) {
-            list.add(value);
-        }
-        return list;
-    }
-
     // The row with this v holds a key of its own: every tenth row from the first, but for a NULL key.
     private static boolean isSingle(long v) {
         return v % 10 == 1 && v % 13 != 0;
-    }
-
-    private static String label(int key) {
-        return key == Numbers.INT_NULL ? "null" : Integer.toString(key);
-    }
-
-    private static String label(Utf8Sequence key) {
-        return key == null ? "null" : key.toString();
-    }
-
-    private static RecordSink probeSink(BytecodeAssembler asm, RecordCursorFactory probeFactory, ListColumnFilter probeKey) {
-        return RecordSinkFactory.getInstance(configuration, asm, probeFactory.getMetadata(), probeKey, null);
     }
 
     @FunctionalInterface

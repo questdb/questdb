@@ -88,13 +88,13 @@ import io.questdb.std.Os;
  * <p>
  * {@link #calculateSize} counts the rows still to come without reading them: it dispatches
  * count-only tasks, which count each frame's joined rows on the workers, see
- * {@link AsyncHashJoinAtom#probeFrame}, and walks the chains that a tuple leaves to the consumer only
- * to count their links, which leaves the builds as they are, so that {@code toTop()} reads the rows
- * again. A count that follows some rows first counts what the tuple-carrying tasks dispatched before
- * it left: the current tuple's chains' combinations after the current one, the current frame's
- * tuples not yet read, the tuples of every such task it collects, chains included, and the rows that
- * each of those frames left to a continuation, which it counts on the owner's slot rather than
- * joins.
+ * {@link AsyncHashJoinAtom#probeFrame}, and reads the length of each chain that a tuple leaves to the
+ * consumer off an index that the builds take first, see {@link AsyncHashJoinAtom#indexChainLengths},
+ * which leaves their links as they are, so that {@code toTop()} reads the rows again. A count that
+ * follows some rows first counts what the tuple-carrying tasks dispatched before it left: the
+ * current tuple's chains' combinations after the current one, the current frame's tuples not yet
+ * read, the tuples of every such task it collects, chains included, and the rows that each of those
+ * frames left to a continuation, which it counts on the owner's slot rather than joins.
  */
 class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
     // The chain heads of the current tuple's stages that left their chains to the consumer, in
@@ -160,13 +160,20 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
     /**
      * Counts the rows that {@link #hasNext()} would still return, without reading them, and leaves
      * the cursor at its end, so that {@code toTop()} reads every row again. The builds run first if no
-     * row was read yet, and stay as they are. The count checks the execution's breaker, as
-     * {@link #hasNext()} does, whichever breaker the caller passes.
+     * row was read yet, and stay as they are. While rows are left to count, the builds whose stages
+     * hand their chains on index their chain lengths, once per execution, before the count dispatches
+     * its first task. The count checks the execution's breaker, as {@link #hasNext()} does,
+     * whichever breaker the caller passes.
      */
     @Override
     public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
         if (!isBuilt) {
             build();
+        }
+        // Rows are left to count: those of the frame that the cursor holds, which the current tuple's
+        // chains imply, or of frames not yet collected.
+        if (cursor > -1 || frameIndex < frameLimit) {
+            atom.indexChainLengths(this.circuitBreaker);
         }
         if (chainStageCount > 0) {
             addRows(counter, countRemainingChainMatches());
@@ -379,37 +386,27 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
         return false;
     }
 
-    // The links of a chain that a tuple left to the consumer: the rows of its key. Walks the chain
-    // with the stage's output probe, which changes no link.
+    // The rows of a chain that a tuple left to the consumer: the rows of its key, which the stage's
+    // output probe reads off the build's chain length index.
     private long countChain(int stage, long head) {
-        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
-        final FrozenHashJoinBuild.Probe probe = outputProbes.getQuick(stage);
-        probe.ofChain(head);
-        long length = 0;
-        while (probe.hasNext()) {
-            probe.next();
-            length++;
-        }
-        return length;
+        return outputProbes.getQuick(stage).chainLength(head);
     }
 
     /**
      * The combinations of the current tuple's chains that come after the current one,
      * odometer-style, see {@link #nextChainMatch()}: for each chain, the matches after its current
-     * one, times the combinations of the chains after it. Walks the chains no further than to count
-     * them, and walks none of them from then on. Fails rather than wrap once the combinations pass
-     * what a LONG holds; a chain at its last match adds none, however many the chains after it have.
+     * one, times the combinations of the chains after it. Reads the chains' lengths off the builds'
+     * index, and walks none of the chains from then on. Fails rather than wrap once the combinations
+     * pass what a LONG holds; a chain at its last match adds none, however many the chains after it
+     * have.
      */
     private long countRemainingChainMatches() {
         long remaining = 0;
         long laterCombinations = 1;
         for (int i = chainStageCount - 1; i > -1; i--) {
             final FrozenHashJoinBuild.Probe probe = outputProbes.getQuick(chainStages[i]);
-            long laterMatches = 0;
-            while (probe.hasNext()) {
-                probe.next();
-                laterMatches++;
-            }
+            // The matches that a walk from where the probe stands would visit.
+            final long laterMatches = probe.chainLength(probe.chainHead());
             if (laterMatches > 0) {
                 remaining = HashJoinStageStepper.addRowCounts(
                         remaining,

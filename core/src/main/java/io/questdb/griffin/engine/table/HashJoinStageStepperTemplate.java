@@ -125,7 +125,7 @@ final class HashJoinStageStepperTemplate extends HashJoinStageStepper {
                 if (!probe.hasNext()) {
                     entry = s.reader.locator();
                 } else if (slot.isCountOnly) {
-                    return emitChain(slot, stage, probe);
+                    return emitChain(slot, stage, probe.chainLength(head));
                 } else {
                     entry = -head;
                 }
@@ -155,19 +155,10 @@ final class HashJoinStageStepperTemplate extends HashJoinStageStepper {
         return next.step(slot, stage + 1);
     }
 
-    // In a count, hands the probe row on with the rest of the key's chain counted, after the first
-    // match that the probe already took: each tuple that comes out of the later stages stands for as
-    // many more rows. Walks the chain, which leaves its links as they are. Returns false when the
-    // execution was cancelled.
-    private boolean emitChain(AsyncHashJoinAtom.Slot slot, int stage, FrozenHashJoinBuild.Probe probe) {
-        long chainLength = 1;
-        while (probe.hasNext()) {
-            if (isInterrupted(slot)) {
-                return false;
-            }
-            probe.next();
-            chainLength++;
-        }
+    // In a count, hands the probe row on with the key's chain counted, its length read off the
+    // build's index: each tuple that comes out of the later stages stands for as many more rows.
+    // Returns false when the execution was cancelled.
+    private boolean emitChain(AsyncHashJoinAtom.Slot slot, int stage, long chainLength) {
         final long pairMultiplier = slot.pairMultiplier;
         // A product that overflows fails the count only if a tuple comes out of the later stages.
         slot.pairMultiplier = HashJoinStageStepper.multiplyRowCounts(pairMultiplier, chainLength);

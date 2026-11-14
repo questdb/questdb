@@ -645,7 +645,10 @@ public final class MapHashJoinBuild implements Closeable {
     }
 
     /**
-     * Reopens a closed skeleton for a fresh execution.
+     * Reopens a closed skeleton for a fresh execution. The tracker charges every allocation of the
+     * execution, and the breaker cancels the build, on the thread that opens it; a step on the frozen
+     * build that may run on another thread, such as
+     * {@link FrozenHashJoinBuild#indexChainLengths(SqlExecutionCircuitBreaker)}, checks its caller's.
      */
     public void open(@Nullable MemoryTracker memoryTracker, SqlExecutionCircuitBreaker circuitBreaker) {
         if (isOpen) {
@@ -1114,6 +1117,20 @@ public final class MapHashJoinBuild implements Closeable {
         @Override
         public long getSizeInBytes() {
             return size;
+        }
+
+        @Override
+        public boolean hasChainLengthIndex() {
+            return heap.hasChainLengthIndex();
+        }
+
+        @Override
+        public void indexChainLengths(SqlExecutionCircuitBreaker circuitBreaker) {
+            if (frozen != this) {
+                throw new IllegalStateException("hash join build has expired");
+            }
+            // A failure leaves the links as they are, and the build to its owner to close.
+            heap.indexChainLengths(circuitBreaker);
         }
 
         void ofHeap(HashJoinPayloadSource payloads, long keysCount) {
