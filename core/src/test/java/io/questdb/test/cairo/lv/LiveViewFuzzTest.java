@@ -335,15 +335,24 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // test's capture after it starts at its own episode.
     private static final AtomicLong SECOND_REPAIR_EPISODE_SEQ = new AtomicLong();
     // What the restart after failTheOwedSealOfALateRow meets: the repair marker still live over
-    // the splice, a root at the frontier that reads it as stale, or no timeline, which a streak of
-    // failed seals retired.
+    // the splice, a root at the frontier that reads it as stale, no timeline, which a streak of
+    // failed seals retired, or the timeline and its live marker, which that retire kept under a
+    // lock on _timeline.
     private static final int OWED_SEAL_MARKER_LIVE = 0;
     private static final int OWED_SEAL_RESTORABLE = 1;
     private static final int OWED_SEAL_RETIRED = 2;
+    private static final int OWED_SEAL_RETIRED_TIMELINE_KEPT = 3;
     // Salt the owed-seal episode's random sequence apart from the run's, which drawing it leaves
     // where it was, so a pinned-seed batch draws what it drew before the episode existed.
     private static final long OWED_SEAL_EPISODE_SALT0 = 0x5DEECE66DL;
     private static final long OWED_SEAL_EPISODE_SALT1 = 0x2545F4914F6CDD1DL;
+    // Salt the draw of a lock on _timeline for a retire apart from the episode's sequence, for the
+    // same reason.
+    private static final long KEPT_TIMELINE_RETIRE_SALT0 = 0x3243F6A8885A308DL;
+    private static final long KEPT_TIMELINE_RETIRE_SALT1 = 0x13198A2E03707344L;
+    // What a restart logs when a live repair marker sends it to the rebuild from the applied base.
+    private static final String MARKER_REBUILD = "live view restart rebuilding from applied base [view=lv, "
+            + "cause=prefix preservation repair marker present";
     // Salt the draw of a crash at a departure's frontier truncate apart from the run's sequence,
     // for the same reason.
     private static final long FRONTIER_TRUNCATE_CRASH_SALT0 = 0x94D049BB133111EBL;
@@ -386,9 +395,10 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // can assert which repairs its departures or its late commits reached.
     private final LiveViewRouteCoverage coverage = new LiveViewRouteCoverage();
     // Copies the view's checkpoint directory to a crash image when a departure that drew a crash
-    // reaches its frontier truncate's marker: see runUnderTheFrontierTruncateCrash. The tests whose
-    // runs end on departures install it.
-    private final FrontierTruncateCrash frontierTruncateCrash = new FrontierTruncateCrash();
+    // reaches its frontier truncate's marker: see runUnderTheFrontierTruncateCrash. Locks the
+    // view's _timeline for a retire an episode drew the lock for: see failTheOwedSealOfALateRow and
+    // departOverSparseRootsFailingTheFrontierSeal. The tests whose runs end on departures install it.
+    private final CheckpointFaults checkpointFaults = new CheckpointFaults();
     // The second late row failTheSecondRepairsCommit committed to the base alone, which base_shadow
     // takes once the restart after the episode has been checked against it; empty outside such an
     // episode.
@@ -490,6 +500,15 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     private int headMissFrontierTruncateCrashes;
     private int rebuiltFrontierTruncateCrashes;
     private int blockedFrontierTruncateCrashes;
+    // Retires that met a lock on _timeline and kept the timeline with its live repair marker: the
+    // one at the fourth failure in a row of an owed-seal episode, and the one that answers the
+    // failed frontier seal of a filtered sparse departure. See failTheOwedSealOfALateRow and
+    // departOverSparseRootsFailingTheFrontierSeal. The restart after each must rebuild over the
+    // marker, and restartRebuildsOverTheMarkerBefore holds the count of such rebuilds the test's
+    // capture showed ahead of it.
+    private int owedSealKeptTimelineRetires;
+    private int sparseFrontierSealKeptTimelineRetires;
+    private int restartRebuildsOverTheMarkerBefore;
 
     @Test
     public void testFuzzAnchored() throws Exception {
@@ -721,7 +740,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
         isSecondRepairCommitFaultArm = true;
         final int firstSparseDepartureShape = rnd.nextInt(SPARSE_DEPARTURE_SHAPES);
-        assertMemoryLeak(frontierTruncateCrash, () -> {
+        assertMemoryLeak(checkpointFaults, () -> {
             for (int i = 0, rangeFrameRuns = 0; i < DEDUP_VARIANTS.length; i++) {
                 final int variant = DEDUP_VARIANTS[i];
                 final int sparseDepartureShape = isRangeFrameVariant(variant)
@@ -743,6 +762,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         assertReachedAnOwedSealEpisode();
         assertReachedASecondRepairCommitFault();
         assertReachedAResumeFrontierTruncateCrash();
+        logKeptTimelineRetires();
     }
 
     @Test
@@ -1081,7 +1101,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final Rnd rnd = TestUtils.generateRandom(LOG);
         isChainPriceArm = true;
         try {
-            assertMemoryLeak(frontierTruncateCrash, () -> {
+            assertMemoryLeak(checkpointFaults, () -> {
                 for (int variant : CHAIN_PRICE_UNANCHORED_VARIANTS) {
                     runDedupFuzz(rnd, variant, 120 + rnd.nextInt(160), true, true, rnd.nextBoolean(), true, null, -1);
                 }
@@ -1129,6 +1149,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         assertReachedAnOwedSealEpisode();
         assertReachedASecondRepairCommitFault();
         assertReachedAResumeFrontierTruncateCrash();
+        logKeptTimelineRetires();
     }
 
     @Test
@@ -1144,7 +1165,10 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // and every other one does: at least one commits late rows ahead of its in-order rows,
         // and at least one commits its in-order rows straight after the departure.
         // A truncating one crashes between its frontier truncate's marker and the truncate's
-        // publication, and the restart from what the crash left never restores.
+        // publication, and the restart from what the crash left never restores. The retire at the
+        // fourth failure, and the one after a filtered sparse departure's failed frontier seal,
+        // meet a lock on _timeline: each keeps the timeline and its live marker, and the restart
+        // rebuilds over the marker.
         final long[][] seeds = {
                 {2277450534470274333L, 984054158561696L},
                 {8920866532787660373L, 984089867478109L},
@@ -1168,6 +1192,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         Assert.assertTrue("no departure's in-order rows moved its head with no late row ahead of them", inOrderOnlyHeadAdvances > 0);
         logFrontierTruncateCrashes();
         Assert.assertTrue("no crash interrupted a sparse departure's frontier truncate", headMissFrontierTruncateCrashes > 0);
+        assertReachedAKeptTimelineRetire();
     }
 
     @Test
@@ -1724,6 +1749,12 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         return new Rnd(rnd.getSeed0() ^ OWED_SEAL_EPISODE_SALT0, rnd.getSeed1() ^ OWED_SEAL_EPISODE_SALT1);
     }
 
+    // The sequence an episode draws a lock on _timeline for a retire from, drawn from the episode's
+    // without advancing it.
+    private static Rnd keptTimelineRetireRnd(Rnd rnd) {
+        return new Rnd(rnd.getSeed0() ^ KEPT_TIMELINE_RETIRE_SALT0, rnd.getSeed1() ^ KEPT_TIMELINE_RETIRE_SALT1);
+    }
+
     // The sequence a departure draws a crash at its frontier truncate from, drawn from the run's
     // without advancing it.
     private static Rnd frontierTruncateCrashRnd(Rnd rnd) {
@@ -2150,6 +2181,16 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         Assert.assertTrue("no crash interrupted a departure's frontier truncate", resumeFrontierTruncateCrashes > 0);
     }
 
+    // A retire that met a lock on _timeline on each arm that draws one: the test's first owed-seal
+    // episode whose fault outlasts the pause, and its first filtered sparse departure whose frontier
+    // seal fails, each lock theirs. See failTheOwedSealOfALateRow and
+    // departOverSparseRootsFailingTheFrontierSeal.
+    private void assertReachedAKeptTimelineRetire() {
+        logKeptTimelineRetires();
+        Assert.assertTrue("no retire after the pause met a lock on _timeline", owedSealKeptTimelineRetires > 0);
+        Assert.assertTrue("no retire after a failed frontier seal met a lock on _timeline", sparseFrontierSealKeptTimelineRetires > 0);
+    }
+
     // Both ends of a departure above a rowless anchor, which every batch's departNewestRows runs
     // after every departure no crash struck, in turn: see departNewestRowsAboveARowlessAnchor.
     private void assertReachedEveryRowlessAnchorOutcome() {
@@ -2158,6 +2199,11 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 .$(", frontierSeals=").$(rowlessAnchorFrontierSeals).I$();
         Assert.assertTrue("no departure above a rowless anchor published the root at the frontier", rowlessAnchorWatermarks > 0);
         Assert.assertTrue("no departure above a rowless anchor sealed the frontier", rowlessAnchorFrontierSeals > 0);
+    }
+
+    private void logKeptTimelineRetires() {
+        LOG.info().$("LV fuzz retires that kept a locked timeline [owedSeal=").$(owedSealKeptTimelineRetires)
+                .$(", sparseFrontierSeal=").$(sparseFrontierSealKeptTimelineRetires).I$();
     }
 
     private void logFrontierTruncateCrashes() {
@@ -2339,7 +2385,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                     setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, maxChainedBoundaries);
                 }
             }
-            if (frontierTruncateCrash.hasCrashed()) {
+            if (checkpointFaults.hasCrashed()) {
                 Assert.assertEquals(
                         "the crash interrupts the resume's frontier truncate",
                         truncatesBefore + 1,
@@ -2362,7 +2408,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             }
         }
         // The restart after a crash comes back from the crash image, which no later root reaches.
-        if (isRowlessAnchorEpisodeAllowed && !frontierTruncateCrash.hasCrashed()) {
+        if (isRowlessAnchorEpisodeAllowed && !checkpointFaults.hasCrashed()) {
             departNewestRowsAboveARowlessAnchor(rowlessAnchorEpisodeRnd(rnd), job, baseToken, usedTs, symCount, withWhere);
         }
         return true;
@@ -2609,12 +2655,14 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
      * A second {@link #SPARSE_DEPARTURE_FRONTIER_SEAL} departure after the first one's episode,
      * whose closing seal fails once: the rebuild derives the frontier's state, the seal of it
      * fails, and with no root a restart could restore at the frontier the rebuild retires the
-     * timeline. The stretch without rows after it has no head to stand on, so its first cycle
-     * asks for a root at the newest timestamp the view has seen, above its newest row, which the
-     * seal declines. The restart after it finds no timeline and rebuilds from the applied base,
-     * which the restatement guard refuses while the base lacks {@code droppedDayTs}'s day, the
-     * one the run dropped, until that day goes back. Its draws come from a sequence salted apart
-     * from the run's. Returns the job the view refreshes on from there.
+     * timeline. Over a filtered view that retire may meet a lock on {@code _timeline}, which keeps
+     * the timeline and the live marker beside it. The stretch without rows after it has no head to
+     * stand on, so its first cycle asks for a root at the newest timestamp the view has seen,
+     * above its newest row, which the seal declines. The restart after it finds no timeline, or
+     * the live marker, and rebuilds from the applied base, which the restatement guard refuses
+     * while the base lacks {@code droppedDayTs}'s day, the one the run dropped, until that day goes
+     * back. Its draws come from a sequence salted apart from the run's. Returns the job the view
+     * refreshes on from there.
      *
      * @param isKeptPrefixSealed whether the departure derives the frontier's state by a restore of
      *                           a root inside the frontier's frame: see departNewestRowsOverSparseRoots
@@ -2632,6 +2680,12 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             String viewOrderedSql
     ) throws Exception {
         final Rnd episodeRnd = new Rnd(rnd.getSeed0() ^ FRONTIER_SEAL_FAILURE_SALT0, rnd.getSeed1() ^ FRONTIER_SEAL_FAILURE_SALT1);
+        // Over a filtered view, whose stretch below commits rows the filter drops and so reads no
+        // timeline, the retire that answers the failed seal meets a lock on _timeline: the test's
+        // first such retire does, and one in two after it, drawn from a sequence salted apart from
+        // the episode's.
+        final boolean isTimelineLockedForTheRetire = withWhere
+                && (sparseFrontierSealKeptTimelineRetires == 0 || keptTimelineRetireRnd(episodeRnd).nextBoolean());
         Assert.assertFalse(
                 departNewestRowsOverSparseRoots(
                         episodeRnd,
@@ -2643,9 +2697,13 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                         frameMinutes,
                         SPARSE_DEPARTURE_FRONTIER_SEAL,
                         isKeptPrefixSealed,
-                        true
+                        true,
+                        isTimelineLockedForTheRetire
                 )
         );
+        if (isTimelineLockedForTheRetire) {
+            restartRebuildsOverTheMarkerBefore = countRestartRebuildsOverTheMarker();
+        }
         final long declinesBefore = job.getStatsForTest().get(LiveViewRefreshStats.SEAL_ABOVE_DURABLE_FRONTIER_DECLINE_COUNT);
         commitRowlessStretch(job, usedTs, withWhere, false, false);
         Assert.assertTrue(
@@ -2659,11 +2717,24 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         engine.buildViewGraphs();
         final LiveViewRefreshJob restartedJob = new LiveViewRefreshJob(0, engine, 1);
         driveRefreshToQuiescence(restartedJob);
+        if (isTimelineLockedForTheRetire) {
+            Assert.assertEquals(
+                    "the restart rebuilds over the marker the retire kept",
+                    restartRebuildsOverTheMarkerBefore + 1,
+                    countRestartRebuildsOverTheMarker()
+            );
+        }
         if (droppedDayTs != Numbers.LONG_NULL
                 && queryTimestamp("SELECT max(ts) FROM base WHERE ts >= " + droppedDayTs + " AND ts < " + (droppedDayTs + Micros.DAY_MICROS)) == Numbers.LONG_NULL) {
             final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
             Assert.assertEquals("rebuild_blocked", LiveViewCheckpointRecoveryPhase.routeName(instance.getCheckpointRestoreRoute()));
+            TestUtils.assertContains(
+                    instance.getCheckpointRecoveryReason(),
+                    "would drop rows it retains [cause="
+                            + (isTimelineLockedForTheRetire ? "prefix preservation repair marker present" : "timeline is absent")
+                            + "]: "
+            );
             return restoreTheDroppedDayAndRestart(restartedJob, droppedDayTs, oracleOrderedSql, viewOrderedSql);
         }
         assertRebuiltFromAppliedBase("lv");
@@ -2708,6 +2779,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
      *                             {@link #SPARSE_DEPARTURE_FRONTIER_SEAL}
      * @param isFrontierSealFailed whether the frontier seal of {@link #SPARSE_DEPARTURE_FRONTIER_SEAL}
      *                             fails
+     * @param isTimelineLockedForTheRetire whether the retire that answers the failed frontier seal
+     *                                     meets a lock on {@code _timeline}, which keeps the
+     *                                     timeline and its live marker
      * @return true when the rebuild emitted no row and re-stamped the head on the root at the new
      * frontier: {@link #SPARSE_DEPARTURE_KEEP}, and {@link #SPARSE_DEPARTURE_TRUNCATE} keeping no
      * departed row
@@ -2722,9 +2796,11 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             int frameMinutes,
             int shape,
             boolean isKeptPrefixSealed,
-            boolean isFrontierSealFailed
+            boolean isFrontierSealFailed,
+            boolean isTimelineLockedForTheRetire
     ) throws Exception {
         assert !isFrontierSealFailed || shape == SPARSE_DEPARTURE_FRONTIER_SEAL;
+        assert !isTimelineLockedForTheRetire || isFrontierSealFailed;
         assert !isKeptPrefixSealed || shape == SPARSE_DEPARTURE_FRONTIER_SEAL;
         final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
         Assert.assertNotNull(instance);
@@ -2852,10 +2928,14 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final long resetsBefore = instance.getCheckpointTimelineResets();
         final long sealFailuresBefore = instance.getCheckpointSealFailures();
         if (isFrontierSealFailed) {
-            // After the frontier truncate, ahead of the seal: the seal's publication fails.
-            hooks(job).setSimulateHeadMissHeadSealStart(
-                    () -> job.setCheckpointTimelineTestFailureStage(LiveViewCheckpointTimelineStoreWriter.TEST_FAIL_AFTER_METADATA_PUBLISH)
-            );
+            // After the frontier truncate, ahead of the seal: the seal's publication fails, and the
+            // lock, when drawn, holds _timeline for the retire that answers it.
+            hooks(job).setSimulateHeadMissHeadSealStart(() -> {
+                job.setCheckpointTimelineTestFailureStage(LiveViewCheckpointTimelineStoreWriter.TEST_FAIL_AFTER_METADATA_PUBLISH);
+                if (isTimelineLockedForTheRetire) {
+                    checkpointFaults.lockTheTimeline();
+                }
+            });
         }
         runUnderTheFrontierTruncateCrash(isCrashDrawn, () -> {
             if (isUpsert) {
@@ -2880,13 +2960,18 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             driveRefreshToQuiescence(job);
         });
         if (isCrashDrawn) {
-            Assert.assertTrue("the crash must interrupt the frontier truncate", frontierTruncateCrash.hasCrashed());
+            Assert.assertTrue("the crash must interrupt the frontier truncate", checkpointFaults.hasCrashed());
             headMissFrontierTruncateCrashes++;
         }
         Assert.assertEquals("the head-miss rebuild repairs the departure", headMissRepairsBefore + 1, countHeadMissRepairs(job));
         if (isFrontierSealFailed) {
             hooks(job).setSimulateHeadMissHeadSealStart(null);
             job.setCheckpointTimelineTestFailureStage(0);
+            Assert.assertEquals(
+                    "the retire that answers the failed seal meets the lock once",
+                    isTimelineLockedForTheRetire ? 1 : 0,
+                    checkpointFaults.unlockTheTimeline()
+            );
         }
         Assert.assertEquals(
                 "the splice truncates at the frontier",
@@ -2922,12 +3007,21 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         Assert.assertEquals("the view's new frontier", frontierTs, queryTimestamp("SELECT max(ts) FROM lv"));
         if (isFrontierSealFailed) {
             // The seal's failure counts, and the frontier holds no root a restart could restore, so
-            // the rebuild retires the timeline, which takes its repair marker with it.
+            // the rebuild retires the timeline, which takes its repair marker with it unless a lock
+            // keeps _timeline.
             Assert.assertEquals("the seal fails", sealFailuresBefore + 1, instance.getCheckpointSealFailures());
             Assert.assertEquals("the timeline retires", resetsBefore + 1, instance.getCheckpointTimelineResets());
-            Assert.assertFalse("the retired timeline is gone", hasCheckpointTimeline(instance));
-            try (Path dir = checkpointsDirOf(instance)) {
-                Assert.assertFalse("the retire takes the marker with it", LiveViewCheckpointRepairMarker.exists(configuration.getFilesFacade(), dir));
+            if (isTimelineLockedForTheRetire) {
+                // The lock keeps the generation, the splice's or the truncate's, and the retire the
+                // marker beside it, which names the generation one below it: a live marker.
+                Assert.assertTrue("the locked timeline stays", hasCheckpointTimeline(instance));
+                assertRepairMarker(instance, publishedCheckpointGeneration(instance) - 1, false);
+                sparseFrontierSealKeptTimelineRetires++;
+            } else {
+                Assert.assertFalse("the retired timeline is gone", hasCheckpointTimeline(instance));
+                try (Path dir = checkpointsDirOf(instance)) {
+                    Assert.assertFalse("the retire takes the marker with it", LiveViewCheckpointRepairMarker.exists(configuration.getFilesFacade(), dir));
+                }
             }
             Assert.assertEquals("no head stands", Numbers.LONG_NULL, instance.getHeadCheckpointMaxTs());
         } else {
@@ -3247,8 +3341,15 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             settleTheSecondRepairsCommitFault();
             return job;
         }
-        if (owedSealOutcome == OWED_SEAL_RETIRED) {
+        if (owedSealOutcome == OWED_SEAL_RETIRED || owedSealOutcome == OWED_SEAL_RETIRED_TIMELINE_KEPT) {
             retiredOwedSealEpisodes++;
+        }
+        if (owedSealOutcome == OWED_SEAL_RETIRED_TIMELINE_KEPT) {
+            Assert.assertEquals(
+                    "the restart rebuilds over the marker the retire kept",
+                    restartRebuildsOverTheMarkerBefore + 1,
+                    countRestartRebuildsOverTheMarker()
+            );
         }
         if (droppedDayTs == Numbers.LONG_NULL) {
             assertRebuiltFromAppliedBase("lv");
@@ -3263,7 +3364,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         TestUtils.assertContains(
                 instance.getCheckpointRecoveryReason(),
                 "would drop rows it retains [cause="
-                        + (owedSealOutcome == OWED_SEAL_MARKER_LIVE ? "prefix preservation repair marker present" : "timeline is absent")
+                        + (owedSealOutcome == OWED_SEAL_RETIRED ? "timeline is absent" : "prefix preservation repair marker present")
                         + "]: "
         );
         TestUtils.assertSqlCursors(engine, sqlExecutionContext, shadowOracleOrderedSql, viewOrderedSql, LOG, true);
@@ -3293,6 +3394,14 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             drainWalQueue();
             secondRepairShadowValues.clear();
         }
+    }
+
+    // The restarts the test's capture shows rebuilding over a live repair marker, read once the
+    // logging worker has delivered what it holds.
+    private int countRestartRebuildsOverTheMarker() {
+        final LogCapture capture = walApplySuspensionRule.getCapture();
+        capture.drain(LogCapture.STOP_DRAIN_TIMEOUT_MS);
+        return capture.countOccurrences(MARKER_REBUILD);
     }
 
     private Path checkpointsDirOf(LiveViewInstance instance) {
@@ -3362,7 +3471,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     }
 
     /**
-     * Runs {@code commit}, and when {@code isCrashDrawn}, with {@link #frontierTruncateCrash}
+     * Runs {@code commit}, and when {@code isCrashDrawn}, with {@link #checkpointFaults}
      * armed: the second repair marker rename the commit's turn makes, the marker a frontier
      * truncate writes after its splice's, copies the view's checkpoint directory to the crash
      * image, as a crash ahead of the truncate's publication would leave it. The turn then runs on
@@ -3376,11 +3485,11 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
         Assert.assertNotNull(instance);
         try (Path checkpoints = checkpointsDirOf(instance).slash(); Path crashImage = frontierTruncateCrashImageDir()) {
-            frontierTruncateCrash.arm(() -> TestUtils.copyDirectory(checkpoints, crashImage, configuration.getMkDirMode()));
+            checkpointFaults.armTheCrash(() -> TestUtils.copyDirectory(checkpoints, crashImage, configuration.getMkDirMode()));
             try {
                 commit.run();
             } finally {
-                frontierTruncateCrash.disarm();
+                checkpointFaults.disarmTheCrash();
             }
         }
     }
@@ -3452,7 +3561,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
      * @param frameMinutes the width of the view's RANGE frame, in minutes
      * @return what the restart after the episode meets: {@link #OWED_SEAL_RETIRED} when the k
      * commits made four failures in a row, which retired the timeline and armed a cooldown the
-     * clean commit's seal waits on; {@link #OWED_SEAL_RESTORABLE} when the clean commit's seal
+     * clean commit's seal waits on, and {@link #OWED_SEAL_RETIRED_TIMELINE_KEPT} when that retire
+     * met a lock on {@code _timeline}, which the episode draws, and kept the timeline with the live
+     * marker beside it; {@link #OWED_SEAL_RESTORABLE} when the clean commit's seal
      * landed, which on the resume route, whose head parked on B's root, only the end of the pause
      * makes due inside the cadence, and on the head-miss route, which cleared the head, every
      * commit outside the pause does; and {@link #OWED_SEAL_MARKER_LIVE} otherwise
@@ -3471,6 +3582,11 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     ) throws Exception {
         final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
         Assert.assertNotNull(instance);
+        // Whether the retire at the fourth failure in a row, when k makes one, meets a lock on
+        // _timeline: the test's first such retire does, and one in two after it, drawn from a
+        // sequence salted apart from the episode's.
+        final boolean isTimelineLockedForTheRetire = owedSealKeptTimelineRetires == 0
+                || keptTimelineRetireRnd(episodeRnd).nextBoolean();
         // Drawn ahead of everything else the episode draws, so it does not follow from k.
         final boolean isPausePassedWhenPaused = episodeRnd.nextBoolean();
         final long floorTs = Math.max(
@@ -3583,9 +3699,13 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 );
             }
             for (int i = 0; i < k; i++) {
+                final boolean isRetireLocked = i == 2 && isTimelineLockedForTheRetire;
                 if (i == 2) {
                     // Past the pause, so the fourth failure in a row is attempted.
                     setCurrentMicros(currentMicros + Micros.MINUTE_MICROS + Micros.SECOND_MICROS);
+                }
+                if (isRetireLocked) {
+                    checkpointFaults.lockTheTimeline();
                 }
                 if (isResumed) {
                     // On the resume route, whose head parked on B's root seals nothing inside the
@@ -3615,6 +3735,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 } else {
                     rowTs = commitAKeptRowToTheBaseAndItsShadow(episodeRnd, job, usedTs, symCount, rowTs);
                 }
+                if (isRetireLocked) {
+                    Assert.assertEquals("the retire at the fourth failure meets the lock once", 1, checkpointFaults.unlockTheTimeline());
+                }
                 Assert.assertEquals("each commit fails its seal", sealFailuresBefore + 2 + i, instance.getCheckpointSealFailures());
                 if (i < 2) {
                     Assert.assertEquals("three failures in a row retire nothing", resetsBefore, instance.getCheckpointTimelineResets());
@@ -3622,6 +3745,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             }
         } finally {
             job.setCheckpointTimelineTestFailureStage(0);
+            checkpointFaults.unlockTheTimeline();
         }
         if (k >= 2) {
             pausedOwedSealEpisodes++;
@@ -3635,6 +3759,15 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         if (k == 3) {
             Assert.assertEquals("the fourth failure in a row retires the timeline", resetsBefore + 1, instance.getCheckpointTimelineResets());
             Assert.assertEquals("and its cooldown holds the clean commit's seal", Numbers.LONG_NULL, instance.getHeadCheckpointMaxTs());
+            if (isTimelineLockedForTheRetire) {
+                // The retire keeps the generation the lock held, and the live marker beside it,
+                // which no seal has read as stale since: the restart rebuilds over the marker.
+                Assert.assertTrue("the locked timeline stays", hasCheckpointTimeline(instance));
+                assertRepairMarker(instance, lastMarkerBaseGeneration, false);
+                owedSealKeptTimelineRetires++;
+                restartRebuildsOverTheMarkerBefore = countRestartRebuildsOverTheMarker();
+                return OWED_SEAL_RETIRED_TIMELINE_KEPT;
+            }
             Assert.assertFalse(hasCheckpointTimeline(instance));
             try (Path dir = checkpointsDirOf(instance)) {
                 Assert.assertFalse("the retire takes the marker", LiveViewCheckpointRepairMarker.exists(configuration.getFilesFacade(), dir));
@@ -5685,11 +5818,12 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                             n,
                             sparseDepartureShape,
                             sparseDepartureShape == SPARSE_DEPARTURE_FRONTIER_SEAL && isFrontierRootRestored,
+                            false,
                             false
                     );
                     // A crash the truncating departure drew left the image the restart below
                     // comes back from.
-                    final boolean isCrashed = frontierTruncateCrash.consumeCrash();
+                    final boolean isCrashed = checkpointFaults.consumeCrash();
                     commitRowlessStretch(job, null, withWhere, isHeadRestamped, anchor == null);
                     copyTheBaseToItsShadow(true);
                     final long viewMinTs = queryTimestamp("SELECT min(ts) FROM lv");
@@ -5778,7 +5912,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 // emits no row included. The default knobs keep the chain, and only they crash the
                 // departure.
                 // A crash the departure drew left the image the restart below comes back from.
-                final boolean isCrashed = frontierTruncateCrash.consumeCrash();
+                final boolean isCrashed = checkpointFaults.consumeCrash();
                 commitRowlessStretch(job, null, withWhere, false, anchor == null);
                 long droppedDayTs = Numbers.LONG_NULL;
                 if (isCrashed) {
@@ -7518,7 +7652,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     private void runReplaceRangeFuzzVariants(Rnd rnd, boolean isSparseDepartureDrawn) throws Exception {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
         final int firstSparseDepartureShape = isSparseDepartureDrawn ? rnd.nextInt(SPARSE_DEPARTURE_SHAPES) : -1;
-        assertMemoryLeak(frontierTruncateCrash, () -> {
+        assertMemoryLeak(checkpointFaults, () -> {
             for (int i = 0, rangeFrameRuns = 0; i < FIXED_WIDTH_VARIANTS.length; i++) {
                 final int variant = FIXED_WIDTH_VARIANTS[i];
                 final int sparseDepartureShape = isSparseDepartureDrawn && isRangeFrameVariant(variant)
@@ -7536,7 +7670,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     private void runRangeFrameReplaceRangeFuzz(Rnd rnd) throws Exception {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
         final int firstSparseDepartureShape = rnd.nextInt(SPARSE_DEPARTURE_SHAPES);
-        assertMemoryLeak(frontierTruncateCrash, () -> {
+        assertMemoryLeak(checkpointFaults, () -> {
             for (int i = 0, rangeFrameRuns = 0; i < FIXED_WIDTH_VARIANTS.length; i++) {
                 final int variant = FIXED_WIDTH_VARIANTS[i];
                 if (isRangeFrameVariant(variant)) {
@@ -7720,11 +7854,12 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                             n,
                             sparseDepartureShape,
                             sparseDepartureShape == SPARSE_DEPARTURE_FRONTIER_SEAL && isFrontierRootRestored,
+                            false,
                             false
                     );
                     // A crash the truncating departure drew left the image the restart below
                     // comes back from.
-                    final boolean isCrashed = frontierTruncateCrash.consumeCrash();
+                    final boolean isCrashed = checkpointFaults.consumeCrash();
                     commitRowlessStretch(job, usedTs, withWhere, isHeadRestamped, true);
                     copyTheBaseToItsShadow(false);
                     final long viewMinTs = queryTimestamp("SELECT min(ts) FROM lv");
@@ -7813,7 +7948,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 }
             } else if (departNewestRows(rnd, job, baseToken, usedTs, symCount, withWhere, true, true, true)) {
                 // A crash the departure drew left the image the restart below comes back from.
-                final boolean isCrashed = frontierTruncateCrash.consumeCrash();
+                final boolean isCrashed = checkpointFaults.consumeCrash();
                 commitRowlessStretch(job, usedTs, withWhere, false, true);
                 if (isCrashed) {
                     copyTheBaseToItsShadow(false);
@@ -8158,14 +8293,38 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     }
 
     /**
-     * Once armed, runs an action right after the second repair marker rename lands: the marker a
-     * frontier truncate writes after its splice's, ahead of its publication. A crash taken there
-     * stays recorded until the caller consumes it.
+     * The checkpoint faults the runs that end on departures draw. Once the crash is armed, runs an
+     * action right after the second repair marker rename lands: the marker a frontier truncate
+     * writes after its splice's, ahead of its publication. A crash taken there stays recorded until
+     * the caller consumes it. While the timeline is locked, refuses the unlink of {@code _timeline}
+     * and every directory removal under the checkpoint directory, as a lock on the file refuses
+     * them, so a retire keeps the generation, and the repair marker the retire keeps beside it.
      */
-    private static final class FrontierTruncateCrash extends TestFilesFacadeImpl {
+    private static final class CheckpointFaults extends TestFilesFacadeImpl {
         private final AtomicInteger markerRenames = new AtomicInteger();
+        private final AtomicInteger refusedTimelineUnlinks = new AtomicInteger();
         private volatile boolean hasCrashed;
+        private volatile boolean isTimelineLocked;
         private volatile Runnable onCrash;
+
+        @Override
+        public boolean removeQuiet(LPSZ name) {
+            if (isTimelineLocked
+                    && Utf8s.containsAscii(name, LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME)
+                    && Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.TIMELINE_FILE_NAME)) {
+                refusedTimelineUnlinks.incrementAndGet();
+                return false;
+            }
+            return super.removeQuiet(name);
+        }
+
+        @Override
+        public boolean rmdir(Path name, boolean haltOnError) {
+            if (isTimelineLocked && Utf8s.containsAscii(name, LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME)) {
+                return false;
+            }
+            return super.rmdir(name, haltOnError);
+        }
 
         @Override
         public int rename(LPSZ from, LPSZ to) {
@@ -8182,7 +8341,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             return result;
         }
 
-        void arm(Runnable onCrash) {
+        void armTheCrash(Runnable onCrash) {
             markerRenames.set(0);
             hasCrashed = false;
             this.onCrash = onCrash;
@@ -8195,12 +8354,23 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             return wasCrashed;
         }
 
-        void disarm() {
+        void disarmTheCrash() {
             onCrash = null;
         }
 
         boolean hasCrashed() {
             return hasCrashed;
+        }
+
+        void lockTheTimeline() {
+            refusedTimelineUnlinks.set(0);
+            isTimelineLocked = true;
+        }
+
+        // Lifts the lock and returns the unlinks of _timeline it refused since it was set.
+        int unlockTheTimeline() {
+            isTimelineLocked = false;
+            return refusedTimelineUnlinks.getAndSet(0);
         }
     }
 }
