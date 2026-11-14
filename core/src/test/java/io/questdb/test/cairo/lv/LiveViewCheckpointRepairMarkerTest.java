@@ -254,6 +254,54 @@ public class LiveViewCheckpointRepairMarkerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFirstWriteWhoseRenameFailsKeepsTheStagedRecord() throws Exception {
+        // With no record under the final name, the staged record a failed rename leaves is the only
+        // one on disk: the complete record the rename would have published. write() keeps it, so it
+        // counts as the marker until the caller's retire removes it with the timeline, and a crash
+        // before that retire still finds it.
+        final AtomicBoolean rejectRename = new AtomicBoolean();
+        assertMemoryLeak(new TestFilesFacadeImpl() {
+            @Override
+            public int errno() {
+                return rejectRename.get() ? CairoException.ERRNO_EACCES_LINUX : super.errno();
+            }
+
+            @Override
+            public int rename(LPSZ from, LPSZ to) {
+                return rejectRename.get() ? Files.FILES_RENAME_ERR_OTHER : super.rename(from, to);
+            }
+        }, () -> {
+            final FilesFacade ff = configuration.getFilesFacade();
+            try (Path dir = new Path(); Path path = new Path()) {
+                checkpointsDir(dir);
+                rejectRename.set(true);
+                try {
+                    LiveViewCheckpointRepairMarker.write(configuration, dir, 11, 2, 20, 1_700_000_000L, LV_SEQ_TXN);
+                    Assert.fail("expected the marker publication to fail");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not publish live view checkpoint repair marker");
+                    Assert.assertEquals(CairoException.ERRNO_EACCES_LINUX, e.getErrno());
+                }
+                rejectRename.set(false);
+
+                LiveViewCheckpointLayout.repairingMarkerPath(path, dir);
+                Assert.assertFalse("nothing is published", ff.exists(path.$()));
+                path.put(LiveViewCheckpointLayout.TMP_SUFFIX);
+                Assert.assertTrue("the staged record stays", ff.exists(path.$()));
+                Assert.assertTrue(LiveViewCheckpointRepairMarker.exists(ff, dir));
+                Assert.assertEquals(20, LiveViewCheckpointRepairMarker.readBaseGeneration(configuration, dir));
+                Assert.assertEquals(LV_SEQ_TXN, LiveViewCheckpointRepairMarker.readLvSeqTxn(configuration, dir));
+
+                // With the fault gone the next write publishes over it.
+                LiveViewCheckpointRepairMarker.write(configuration, dir, 11, 2, 21, 1_700_000_000L, LV_SEQ_TXN + 1);
+                Assert.assertFalse("the rename consumes the staged record", ff.exists(path.$()));
+                Assert.assertEquals(21, LiveViewCheckpointRepairMarker.readBaseGeneration(configuration, dir));
+                Assert.assertEquals(LV_SEQ_TXN + 1, LiveViewCheckpointRepairMarker.readLvSeqTxn(configuration, dir));
+            }
+        });
+    }
+
+    @Test
     public void testMissingMarkerReadsNull() throws Exception {
         assertMemoryLeak(() -> {
             try (Path dir = new Path()) {
@@ -265,13 +313,14 @@ public class LiveViewCheckpointRepairMarkerTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRewriteFailureAfterUnlinkLeavesNoMarker() throws Exception {
-        // The Windows rewrite unlinks the previous record before retrying the
-        // rename, so a retry that then fails leaves neither the record nor the
-        // staged sibling: write() removes the .tmp and throws. That empty state is
-        // safe because the throw aborts the repair before any truncate, so there
-        // is nothing for a restart to guard. The caller reports the second
-        // rename's error, not the collision that triggered the retry.
+    public void testRewriteFailureAfterUnlinkKeepsTheStagedRecord() throws Exception {
+        // The Windows rewrite unlinks the previous record before retrying the rename, so a retry
+        // that then fails leaves no record under the final name. The record it unlinked can be a
+        // live marker - one a splice keeps until its frontier root lands, or the splice's under its
+        // frontier truncate - and its caller's retire may keep the timeline it guards. So write()
+        // keeps the staged record, the complete one the rename would have published, and the reads
+        // fall back to it. The caller reports the second rename's error: not the collision that
+        // triggered the retry, nor what the probe for the final name leaves in errno.
         final AtomicBoolean failRetryRename = new AtomicBoolean();
         assertMemoryLeak(new TestFilesFacadeImpl() {
             private int injectedErrno;
@@ -279,6 +328,16 @@ public class LiveViewCheckpointRepairMarkerTest extends AbstractCairoTest {
             @Override
             public int errno() {
                 return injectedErrno != 0 ? injectedErrno : super.errno();
+            }
+
+            @Override
+            public boolean exists(LPSZ path) {
+                final boolean exists = super.exists(path);
+                if (!exists) {
+                    // What the stat of a missing name leaves in errno.
+                    injectedErrno = CairoException.ERRNO_FILE_DOES_NOT_EXIST;
+                }
+                return exists;
             }
 
             @Override
@@ -295,14 +354,14 @@ public class LiveViewCheckpointRepairMarkerTest extends AbstractCairoTest {
                 return super.rename(from, to);
             }
         }, () -> {
-            try (Path dir = new Path()) {
+            try (Path dir = new Path(); Path path = new Path()) {
                 checkpointsDir(dir);
                 LiveViewCheckpointRepairMarker.write(configuration, dir, 11, 2, 8, 1_700_000_000L, LV_SEQ_TXN);
                 Assert.assertEquals(8, LiveViewCheckpointRepairMarker.readBaseGeneration(configuration, dir));
 
                 failRetryRename.set(true);
                 try {
-                    LiveViewCheckpointRepairMarker.write(configuration, dir, 11, 2, 20, 1_700_000_000L, LV_SEQ_TXN);
+                    LiveViewCheckpointRepairMarker.write(configuration, dir, 11, 2, 20, 1_700_000_000L, LV_SEQ_TXN + 1);
                     Assert.fail("expected the marker publication to fail");
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "could not publish live view checkpoint repair marker");
@@ -310,12 +369,20 @@ public class LiveViewCheckpointRepairMarkerTest extends AbstractCairoTest {
                 }
                 failRetryRename.set(false);
 
-                Assert.assertFalse(LiveViewCheckpointRepairMarker.exists(configuration.getFilesFacade(), dir));
-                Assert.assertEquals(Numbers.LONG_NULL, LiveViewCheckpointRepairMarker.readBaseGeneration(configuration, dir));
+                final FilesFacade ff = configuration.getFilesFacade();
+                LiveViewCheckpointLayout.repairingMarkerPath(path, dir);
+                Assert.assertFalse("the rewrite unlinked the previous record", ff.exists(path.$()));
+                path.put(LiveViewCheckpointLayout.TMP_SUFFIX);
+                Assert.assertTrue("the staged record stays", ff.exists(path.$()));
+                Assert.assertTrue(LiveViewCheckpointRepairMarker.exists(ff, dir));
+                Assert.assertEquals(20, LiveViewCheckpointRepairMarker.readBaseGeneration(configuration, dir));
+                Assert.assertEquals(LV_SEQ_TXN + 1, LiveViewCheckpointRepairMarker.readLvSeqTxn(configuration, dir));
 
                 // With the fault gone the next repair publishes normally.
-                LiveViewCheckpointRepairMarker.write(configuration, dir, 11, 2, 20, 1_700_000_000L, LV_SEQ_TXN);
-                Assert.assertEquals(20, LiveViewCheckpointRepairMarker.readBaseGeneration(configuration, dir));
+                LiveViewCheckpointRepairMarker.write(configuration, dir, 11, 2, 21, 1_700_000_000L, LV_SEQ_TXN + 2);
+                Assert.assertFalse("the rename consumes the staged record", ff.exists(path.$()));
+                Assert.assertEquals(21, LiveViewCheckpointRepairMarker.readBaseGeneration(configuration, dir));
+                Assert.assertEquals(LV_SEQ_TXN + 2, LiveViewCheckpointRepairMarker.readLvSeqTxn(configuration, dir));
             }
         });
     }

@@ -98,7 +98,9 @@ import org.jetbrains.annotations.NotNull;
  * record does. Rewriting is atomic on POSIX; on Windows it briefly unlinks the previous
  * record first, so a crash in that window leaves only the complete staged record (see
  * {@link LiveViewCheckpointLayout#publishOverwrite}). {@link #exists} counts a staged
- * record as a marker and the reads fall back to it when no final name exists.
+ * record as a marker and the reads fall back to it when no final name exists. A
+ * publication that fails with no final record left keeps the staged one for the same
+ * reason: the record the rewrite unlinked may have been a live marker.
  * <p>
  * This type is stateless; every method is static.
  */
@@ -168,8 +170,10 @@ public final class LiveViewCheckpointRepairMarker {
      * torn record reports {@link Numbers#LONG_NULL} for both fields. With no
      * generation to test nothing proves the timeline unmoved, so the restart
      * reads it as live and rebuilds. That rebuild retires the timeline, which
-     * removes both names, but the restatement guard may refuse it, and a refused
-     * rebuild leaves the torn record in place for the next restart to meet again.
+     * removes both names once it removes {@code _timeline}, but the restatement
+     * guard may refuse it, and a refused rebuild, or a retire that cannot remove
+     * {@code _timeline}, leaves the torn record in place for the next restart to
+     * meet again.
      * A final record that fails its checks reads as torn too; the reads never
      * fall back from it to a staged one, since the final name is the record that
      * took effect.
@@ -216,7 +220,9 @@ public final class LiveViewCheckpointRepairMarker {
      * Durably writes the marker, staged through {@code _repairing.tmp} and
      * renamed into place. Must be ordered before the truncate or splice
      * publication it guards, and before the repair's replacement commit when
-     * that has not landed yet.
+     * that has not landed yet. A rename that fails keeps the staged record when
+     * no final record is left, so it counts as the marker until the caller's
+     * retire removes it with the timeline.
      *
      * @param baseGeneration the timeline generation the repair started from
      * @param floorTimestamp the truncate floor {@code R} (diagnostic)
@@ -266,8 +272,16 @@ public final class LiveViewCheckpointRepairMarker {
             // A second repair rewrites the fixed-name marker, so the destination
             // can already exist.
             if (LiveViewCheckpointLayout.publishOverwrite(ff, tmpPath.$(), finalPath.$()) != Files.FILES_RENAME_OK) {
-                ff.removeQuiet(tmpPath.$());
-                throw CairoException.critical(ff.errno())
+                // Read ahead of the probe below, which can overwrite it.
+                final int errno = ff.errno();
+                // The staged record goes only while a final record still decides. With
+                // none - a first write, or a Windows rewrite that unlinked the previous
+                // record, which can be a live marker - it is the complete record the
+                // rename would have published, and the only marker left on disk.
+                if (ff.exists(finalPath.$())) {
+                    ff.removeQuiet(tmpPath.$());
+                }
+                throw CairoException.critical(errno)
                         .put("could not publish live view checkpoint repair marker");
             }
         }

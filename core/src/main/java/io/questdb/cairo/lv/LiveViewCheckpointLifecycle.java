@@ -395,6 +395,9 @@ public final class LiveViewCheckpointLifecycle {
      * Retires the timeline-owned files. When {@code pinOwner} is supplied, a
      * live generation pin defers retirement and the caller retries after release.
      * The caller must serialize the zero-pin check with new pin acquisition.
+     * <p>
+     * The repair marker goes only with {@code _timeline}: beside a {@code _timeline}
+     * the retire could not remove, it stays, together with its staged sibling.
      */
     public static boolean retireTimeline(
             @NotNull CairoConfiguration configuration,
@@ -415,24 +418,29 @@ public final class LiveViewCheckpointLifecycle {
             // Remove the publication point first. With pin acquisition excluded,
             // no new reader can discover the roots whose directories follow.
             LiveViewCheckpointLayout.timelinePath(path, checkpointsDir);
-            if (ff.exists(path.$()) && !ff.removeQuiet(path.$())) {
+            final boolean isTimelineRemoved = !ff.exists(path.$()) || ff.removeQuiet(path.$());
+            if (!isTimelineRemoved) {
                 success = false;
                 logRemoveFailure(ff, path);
             }
             // The prefix-preservation repair marker is void once the timeline it
-            // guarded is gone: a stale marker left behind would force every restart
-            // to rebuild against the fresh timeline this retire precedes. The
-            // staged sibling counts as a marker too, so it has to go with it.
-            LiveViewCheckpointLayout.repairingMarkerPath(path, checkpointsDir);
-            if (ff.exists(path.$()) && !ff.removeQuiet(path.$())) {
-                success = false;
-                logRemoveFailure(ff, path);
-            }
-            LiveViewCheckpointLayout.repairingMarkerPath(path, checkpointsDir);
-            path.put(LiveViewCheckpointLayout.TMP_SUFFIX);
-            if (ff.exists(path.$()) && !ff.removeQuiet(path.$())) {
-                success = false;
-                logRemoveFailure(ff, path);
+            // guarded is gone, and only then: a stale marker left behind would force
+            // every restart to rebuild against the fresh timeline this retire
+            // precedes, but beside a _timeline the unlink left, the marker is what
+            // keeps a restore off the generation it guards. The staged sibling counts
+            // as a marker too, so it stays or goes with it.
+            if (isTimelineRemoved) {
+                LiveViewCheckpointLayout.repairingMarkerPath(path, checkpointsDir);
+                if (ff.exists(path.$()) && !ff.removeQuiet(path.$())) {
+                    success = false;
+                    logRemoveFailure(ff, path);
+                }
+                LiveViewCheckpointLayout.repairingMarkerPath(path, checkpointsDir);
+                path.put(LiveViewCheckpointLayout.TMP_SUFFIX);
+                if (ff.exists(path.$()) && !ff.removeQuiet(path.$())) {
+                    success = false;
+                    logRemoveFailure(ff, path);
+                }
             }
             LiveViewCheckpointLayout.retirementQueuePath(path, checkpointsDir);
             if (ff.exists(path.$()) && !ff.removeQuiet(path.$())) {

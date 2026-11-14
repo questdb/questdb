@@ -4309,8 +4309,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * retires here too, ahead of that commit.
      * <p>
      * Failure is logged and swallowed: the replay owns correctness of the durable
-     * output, and a timeline left behind is re-reconciled (and re-retired) on the
-     * next seal or restart rather than blocking the refresh.
+     * output, so a retire that fails does not block the refresh. The next seal appends
+     * to a timeline the retire left behind, and a restart restores it, unless a repair
+     * marker stands beside it: the retire keeps the marker while {@code _timeline}
+     * survives, so a restart rebuilds rather than restore the generation the marker
+     * held off, until a seal two generations past the one the marker names lands.
      */
     private void retireCheckpointTimeline(LiveViewInstance instance) {
         try (Path checkpointsDir = new Path()) {
@@ -4491,14 +4494,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     instance.recordCheckpointTimelineWalPurgeFloor(result.getWalPurgeFloor());
                     instance.recordCheckpointTimelineStats(result.getStats());
                     head.of(result.getGeneration(), result.getHeadMaxTimestamp(), result.getHeadCheckpointId());
-                } else {
-                    // No prefix survived after all - drop the marker before retiring.
-                    LiveViewCheckpointRepairMarker.clear(engine.getConfiguration().getFilesFacade(), path);
                 }
             } finally {
                 roleLock.unlock();
             }
             if (!preserved) {
+                // No prefix survived after all. The retire takes the marker with the timeline,
+                // and keeps it beside a timeline it cannot remove.
                 retireCheckpointTimeline(instance);
             }
             return preserved;

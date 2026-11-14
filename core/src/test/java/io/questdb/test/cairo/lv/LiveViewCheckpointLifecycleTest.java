@@ -33,6 +33,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointLifecycle;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaSegmentWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
 import io.questdb.cairo.lv.LiveViewCheckpointPageRef;
+import io.questdb.cairo.lv.LiveViewCheckpointRepairMarker;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairState;
 import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectory;
 import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectoryWriter;
@@ -49,9 +50,11 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Zip;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -67,6 +70,9 @@ public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
     private static final LongList EMPTY_SEGMENT_IDS = new LongList();
     private static final long LIFECYCLE_IDENTITY = 101;
     private static final String LV_DIR = "lv_checkpoint_lifecycle";
+    // The generation and view seqTxn the repair marker of writeRetireFixture names.
+    private static final long MARKER_GENERATION = 1;
+    private static final long MARKER_LV_SEQ_TXN = 17;
 
     @Test
     public void testADamagedMagicNibbleInOneSlotFallsBackToTheOther() throws Exception {
@@ -563,6 +569,117 @@ public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRetireKeepsTheRepairMarkerBesideATimelineItCannotRemove() throws Exception {
+        // A _timeline the retire cannot unlink is a generation a restart can still restore, and the
+        // repair marker beside it is what holds that restore off. The retire removes everything else
+        // and keeps the marker and its staged sibling. The retire that removes _timeline takes both.
+        final RetireRemovalFault ff = new RetireRemovalFault();
+        assertMemoryLeak(ff, () -> {
+            ensureDirs();
+            publish(1, 1, 7, 0, 5);
+            writeRetireFixture();
+            ff.refuseUnlinkOf(LiveViewCheckpointLayout.TIMELINE_FILE_NAME);
+            try (Path dir = checkpointsDir()) {
+                Assert.assertFalse(LiveViewCheckpointLifecycle.retireTimeline(configuration, dir, null, true));
+            }
+            Assert.assertTrue(timelineExists());
+            Assert.assertTrue("the marker stays", isRepairMarkerFilePresent(false));
+            Assert.assertTrue("and its staged sibling", isRepairMarkerFilePresent(true));
+            assertRepairMarkerReads(MARKER_GENERATION, MARKER_LV_SEQ_TXN);
+            assertRetireRemovedAllButTheTimelineAndTheMarker();
+
+            ff.refuseUnlinkOf(null);
+            try (Path dir = checkpointsDir()) {
+                Assert.assertTrue(LiveViewCheckpointLifecycle.retireTimeline(configuration, dir, null, true));
+            }
+            Assert.assertFalse(timelineExists());
+            Assert.assertFalse(isRepairMarkerFilePresent(false));
+            Assert.assertFalse(isRepairMarkerFilePresent(true));
+            assertRepairMarkerReads(Numbers.LONG_NULL, Numbers.LONG_NULL);
+        });
+    }
+
+    @Test
+    public void testRetireRemovesTheRepairMarkerOnceTheTimelineIsGone() throws Exception {
+        // The segment trees a retire cannot remove hold no generation a restart could restore
+        // without _timeline, so once _timeline is gone the marker has nothing left to guard.
+        final RetireRemovalFault ff = new RetireRemovalFault();
+        assertMemoryLeak(ff, () -> {
+            ensureDirs();
+            publish(1, 1, 7, 0, 5);
+            writeRetireFixture();
+            ff.refuseTreeRemovals(true);
+            try (Path dir = checkpointsDir()) {
+                Assert.assertFalse(LiveViewCheckpointLifecycle.retireTimeline(configuration, dir, null, true));
+            }
+            Assert.assertFalse(timelineExists());
+            Assert.assertFalse(isRepairMarkerFilePresent(false));
+            Assert.assertFalse(isRepairMarkerFilePresent(true));
+            Assert.assertFalse(isRetirementQueuePresent(false));
+            Assert.assertFalse(isRetirementQueuePresent(true));
+            Assert.assertTrue(metaDirExists());
+            Assert.assertTrue(dataDirExists());
+            Assert.assertTrue(repairDirExists());
+        });
+    }
+
+    @Test
+    public void testRetireThatCannotRemoveTheMarkerLeavesItWithoutTheTimeline() throws Exception {
+        // _timeline goes first, so a marker name the retire cannot unlink - the published record or
+        // its staged sibling - stays behind with no generation to guard, and the other name goes.
+        final RetireRemovalFault ff = new RetireRemovalFault();
+        assertMemoryLeak(ff, () -> {
+            for (boolean isStagedRefused : new boolean[]{false, true}) {
+                ensureDirs();
+                publish(1, 1, 7, 0, 5);
+                writeRetireFixture();
+                ff.refuseUnlinkOf(isStagedRefused
+                        ? LiveViewCheckpointLayout.REPAIRING_MARKER_FILE_NAME + LiveViewCheckpointLayout.TMP_SUFFIX
+                        : LiveViewCheckpointLayout.REPAIRING_MARKER_FILE_NAME);
+                try (Path dir = checkpointsDir()) {
+                    Assert.assertFalse(LiveViewCheckpointLifecycle.retireTimeline(configuration, dir, null, true));
+                }
+                Assert.assertFalse(timelineExists());
+                Assert.assertEquals("only the refused name stays", !isStagedRefused, isRepairMarkerFilePresent(false));
+                Assert.assertEquals("only the refused name stays", isStagedRefused, isRepairMarkerFilePresent(true));
+                if (isStagedRefused) {
+                    // The empty staged sibling is the only record left, and names no generation.
+                    assertRepairMarkerReads(Numbers.LONG_NULL, Numbers.LONG_NULL);
+                } else {
+                    assertRepairMarkerReads(MARKER_GENERATION, MARKER_LV_SEQ_TXN);
+                }
+                assertRetireRemovedAllButTheTimelineAndTheMarker();
+
+                // With the fault gone a retire removes what is left.
+                ff.refuseUnlinkOf(null);
+                try (Path dir = checkpointsDir()) {
+                    Assert.assertTrue(LiveViewCheckpointLifecycle.retireTimeline(configuration, dir, null, true));
+                }
+                Assert.assertFalse(isRepairMarkerFilePresent(false));
+                Assert.assertFalse(isRepairMarkerFilePresent(true));
+            }
+        });
+    }
+
+    @Test
+    public void testRetireWithoutATimelineRemovesALeftoverMarker() throws Exception {
+        // No _timeline at all, as an earlier retire that removed it and crashed before the marker
+        // leaves the directory: the marker guards nothing, and the retire removes it.
+        assertMemoryLeak(() -> {
+            ensureDirs();
+            writeRetireFixture();
+            Assert.assertFalse(timelineExists());
+            try (Path dir = checkpointsDir()) {
+                Assert.assertTrue(LiveViewCheckpointLifecycle.retireTimeline(configuration, dir, null, true));
+            }
+            Assert.assertFalse(isRepairMarkerFilePresent(false));
+            Assert.assertFalse(isRepairMarkerFilePresent(true));
+            assertRepairMarkerReads(Numbers.LONG_NULL, Numbers.LONG_NULL);
+            assertRetireRemovedAllButTheTimelineAndTheMarker();
+        });
+    }
+
+    @Test
     public void testSupersededTimelineVersionRefusesASealOverIt() throws Exception {
         assertMemoryLeak(() -> {
             ensureDirs();
@@ -819,6 +936,23 @@ public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
         }
     }
 
+    // The repair marker reads baseGeneration and lvSeqTxn, LONG_NULL in both when none is on disk.
+    private void assertRepairMarkerReads(long baseGeneration, long lvSeqTxn) {
+        try (Path dir = checkpointsDir()) {
+            Assert.assertEquals(baseGeneration, LiveViewCheckpointRepairMarker.readBaseGeneration(configuration, dir));
+            Assert.assertEquals(lvSeqTxn, LiveViewCheckpointRepairMarker.readLvSeqTxn(configuration, dir));
+        }
+    }
+
+    // The retire removed the retirement work set, both names, and the meta, data and repair trees.
+    private void assertRetireRemovedAllButTheTimelineAndTheMarker() {
+        Assert.assertFalse(isRetirementQueuePresent(false));
+        Assert.assertFalse(isRetirementQueuePresent(true));
+        Assert.assertFalse(metaDirExists());
+        Assert.assertFalse(dataDirExists());
+        Assert.assertFalse(repairDirExists());
+    }
+
     /**
      * Stamps the magic and layout version a later build writes into {@code slot}.
      * The magic's trailing nibble tracks the version, so a build one version on
@@ -1030,6 +1164,22 @@ public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
         writer.endPage(out);
     }
 
+    private boolean isRepairMarkerFilePresent(boolean isStaged) {
+        try (Path dir = checkpointsDir(); Path path = new Path()) {
+            LiveViewCheckpointLayout.repairingMarkerPath(path, dir);
+            if (isStaged) {
+                path.put(LiveViewCheckpointLayout.TMP_SUFFIX);
+            }
+            return configuration.getFilesFacade().exists(path.$());
+        }
+    }
+
+    private boolean repairDirExists() {
+        try (Path dir = checkpointsDir(); Path path = new Path()) {
+            return configuration.getFilesFacade().exists(LiveViewCheckpointLayout.repairDirPath(path, dir).$());
+        }
+    }
+
     private boolean repairDescriptorExists(long repairId) {
         try (Path dir = checkpointsDir(); Path path = new Path()) {
             LiveViewCheckpointLayout.repairDescriptorPath(path, dir, repairId);
@@ -1121,6 +1271,27 @@ public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
         }
     }
 
+    /**
+     * Everything a retire removes beside the timeline: a repair marker naming
+     * {@link #MARKER_GENERATION} and {@link #MARKER_LV_SEQ_TXN} beside an empty staged sibling, what
+     * a crash inside a rewrite's staged write leaves, the retirement work set under both names, and
+     * a repair descriptor.
+     */
+    private void writeRetireFixture() {
+        try (Path dir = checkpointsDir(); Path path = new Path()) {
+            LiveViewCheckpointRepairMarker.write(configuration, dir, 7, 0, MARKER_GENERATION, 1_000, MARKER_LV_SEQ_TXN);
+            touchTopLevel(LiveViewCheckpointLayout.REPAIRING_MARKER_FILE_NAME + LiveViewCheckpointLayout.TMP_SUFFIX);
+            touchTopLevel(LiveViewCheckpointLayout.RETIREMENT_QUEUE_FILE_NAME);
+            touchTopLevel(LiveViewCheckpointLayout.RETIREMENT_QUEUE_TMP_FILE_NAME);
+            final FilesFacade ff = configuration.getFilesFacade();
+            Assert.assertEquals(0, ff.mkdirs(LiveViewCheckpointLayout.repairDirPath(path, dir).slash(), configuration.getMkDirMode()));
+            Assert.assertTrue(ff.touch(LiveViewCheckpointLayout.repairDescriptorPath(path, dir, 3).$()));
+        }
+        Assert.assertTrue(isRepairMarkerFilePresent(false));
+        Assert.assertTrue(isRepairMarkerFilePresent(true));
+        assertRepairMarkerReads(MARKER_GENERATION, MARKER_LV_SEQ_TXN);
+    }
+
     private void withTimelineMemory(TimelineMutation mutation) {
         try (Path dir = checkpointsDir(); Path path = new Path(); MemoryCMARW mem = Vm.getCMARWInstance()) {
             mem.smallFile(
@@ -1135,5 +1306,38 @@ public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
     @FunctionalInterface
     private interface TimelineMutation {
         void apply(MemoryCMARW mem);
+    }
+
+    // Refuses the unlink of the checkpoint file whose name ends with the refused name, and, when
+    // set, every directory removal under the checkpoint directory: a file lock or a permission
+    // fault a retire has to work around.
+    private static final class RetireRemovalFault extends TestFilesFacadeImpl {
+        private volatile boolean isRefusingTreeRemovals;
+        private volatile String refusedUnlinkName;
+
+        @Override
+        public boolean removeQuiet(LPSZ name) {
+            final String refused = refusedUnlinkName;
+            if (refused != null && Utf8s.containsAscii(name, LV_DIR) && Utf8s.endsWithAscii(name, refused)) {
+                return false;
+            }
+            return super.removeQuiet(name);
+        }
+
+        @Override
+        public boolean rmdir(Path name, boolean haltOnError) {
+            if (isRefusingTreeRemovals && Utf8s.containsAscii(name, LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME)) {
+                return false;
+            }
+            return super.rmdir(name, haltOnError);
+        }
+
+        void refuseTreeRemovals(boolean isRefusing) {
+            isRefusingTreeRemovals = isRefusing;
+        }
+
+        void refuseUnlinkOf(@Nullable String name) {
+            refusedUnlinkName = name;
+        }
     }
 }
