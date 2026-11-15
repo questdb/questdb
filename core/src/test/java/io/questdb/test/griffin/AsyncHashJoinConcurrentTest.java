@@ -66,6 +66,9 @@ import static io.questdb.test.griffin.ParallelHashJoinTestUtils.*;
  */
 public class AsyncHashJoinConcurrentTest extends AbstractCairoTest {
     private static final Log LOG = LogFactory.getLog(AsyncHashJoinConcurrentTest.class);
+    // A LEFT join whose ON residual reads d alone, which the build runs over d's rows: the stage hands
+    // d's chains on, one tuple per probe row, so no frame continues past a cap of one tuple.
+    private static final String PUSHED = "SELECT t.k, t.v, d.w, d.s FROM t LEFT JOIN d ON t.k = d.k AND d.w % 3 = 0";
     private static final String ATOM = AsyncHashJoinAtom.class.getName();
     private static final String STAGE = HashJoinBuildStage.class.getName();
     private static final StackWalker STACK_WALKER = StackWalker.getInstance();
@@ -143,6 +146,7 @@ public class AsyncHashJoinConcurrentTest extends AbstractCairoTest {
                     "SELECT d.w, t.v FROM d JOIN t ON d.k = t.k",
                     "SELECT t.k, t.v, d.w FROM t LEFT JOIN d ON t.k = d.k ORDER BY t.ts DESC LIMIT 300",
                     "SELECT t.k, t.v, d.w FROM (SELECT * FROM t WHERE v % 3 = 0) t LEFT JOIN (SELECT * FROM d WHERE w % 2 = 0) d ON t.k = d.k LIMIT -50",
+                    PUSHED,
             };
             final ObjList<String> expected = new ObjList<>();
             try (SqlExecutionContextImpl context = newContext(db)) {
@@ -173,6 +177,10 @@ public class AsyncHashJoinConcurrentTest extends AbstractCairoTest {
                                 if (join != null) {
                                     Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
                                     Assert.assertEquals(0, join.getBuildRoundAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                                }
+                                if (queries[q].equals(PUSHED)) {
+                                    Assert.assertNotNull(join);
+                                    Assert.assertEquals(PUSHED, 0, join.getAtom().getContinuationCount());
                                 }
                                 operatorRuns.incrementAndGet();
                             }

@@ -223,6 +223,41 @@ ORDER BY s.id, c.cname, p.pname
 7 Cid cheese
 8 Dan NULL
 
+# A LEFT join's ON condition over the joined table alone, which keeps one of customer 2's two rows
+# and drops customer 4's only row
+query IT nosort
+SELECT s.id, c.cname
+FROM sales s
+LEFT JOIN customers c ON s.cust = c.cust AND c.region <> 'US'
+ORDER BY s.id, c.cname
+----
+1 Ann
+2 Bea
+3 Cid
+4 NULL
+5 Bea
+6 Ann
+7 Cid
+8 NULL
+
+# One that keeps both of customer 2's rows and drops customer 3's only row
+query IT nosort
+SELECT s.id, c.cname
+FROM sales s
+LEFT JOIN customers c ON s.cust = c.cust AND c.region <> 'APAC'
+ORDER BY s.id, c.cname
+----
+1 Ann
+2 Bea
+2 Bob
+3 NULL
+4 NULL
+5 Bea
+5 Bob
+6 Ann
+7 NULL
+8 Dan
+
 # A LEFT join's ON residual that reads an earlier join's columns
 query ITT nosort
 SELECT s.id, c.cname, st.city
@@ -484,6 +519,39 @@ LIMIT -3
 7 Cid Berlin
 8 Dan Boston
 8 Dan Austin
+
+# A LEFT join's ON condition over the joined table alone, which the build runs over the customers'
+# rows: the rows come in the sales order, each sale's customers that pass it newest first, and the
+# sales whose customers all fail it read NULLs.
+query IT nosort
+SELECT s.id, c.cname
+FROM sales s
+LEFT JOIN customers c ON s.cust = c.cust AND c.region <> 'US'
+----
+1 Ann
+2 Bea
+3 Cid
+4 NULL
+5 Bea
+6 Ann
+7 Cid
+8 NULL
+
+query IT nosort
+SELECT s.id, c.cname
+FROM sales s
+LEFT JOIN customers c ON s.cust = c.cust AND c.region <> 'APAC'
+----
+1 Ann
+2 Bea
+2 Bob
+3 NULL
+4 NULL
+5 Bea
+5 Bob
+6 Ann
+7 NULL
+8 Dan
 
 statement ok
 CREATE TABLE nf (id INT, k INT, ts TIMESTAMP) TIMESTAMP(ts)

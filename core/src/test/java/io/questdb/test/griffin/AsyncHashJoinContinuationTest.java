@@ -68,20 +68,28 @@ import static io.questdb.test.griffin.ParallelHashJoinTestUtils.*;
  * The cap on the tuples that a parallel hash join's probe task writes: a task stops at a probe row's
  * boundary once its frame's tuples reach {@code max(cairo.sql.parallel.hash.join.task.output.max.rows,
  * the frame's rows)}, and the consumer joins the rest of the frame in chunks of the same cap on the
- * owner's slot. Only a stage that walks its matches on the workers, one with an ON residual or a
- * post-join filter, can reach the cap: a stage without them writes at most one tuple per probe row.
- * The rows and their order match the ordinary plan across chunks, scan directions and probe filters,
- * and a cancellation before a chunk or inside one ends the query with the cancellation, leaks
- * nothing, and leaves the factory to run again.
+ * owner's slot. Only a stage that walks its matches on the workers, one whose pairs run an ON
+ * residual or a post-join filter, can reach the cap: a stage without them writes at most one tuple
+ * per probe row, and so does a LEFT join's stage whose build ran its whole ON residual over the
+ * build's rows. The rows and their order match the ordinary plan across chunks, scan directions
+ * and probe filters, and a cancellation before a chunk or inside one ends the query with the
+ * cancellation, leaks nothing, and leaves the factory to run again.
  */
 public class AsyncHashJoinContinuationTest extends AbstractCairoTest {
-    // Each probe row of t meets up to six rows of d, under a residual or a post-join filter.
-    private static final String[] QUERIES = {
+    // LEFT joins whose ON residual reads d alone, which the build runs over d's rows: the stage hands
+    // d's chains to the consumer, one tuple per probe row, which never outgrows the cap.
+    private static final String[] PUSHED = {
             "SELECT t.k, t.v, d.w, d.s FROM t LEFT JOIN d ON t.k = d.k AND d.w % 2 = 0",
+            "SELECT t.k, t.v, d.w, d.s FROM t LEFT JOIN d ON t.sym = d.s AND d.w % 2 = 1",
+    };
+    // Each probe row of t meets up to six rows of d, under a residual or a post-join filter that the
+    // pairs run.
+    private static final String[] QUERIES = {
+            "SELECT t.k, t.v, d.w, d.s FROM t LEFT JOIN d ON t.k = d.k AND d.w % 2 = t.v % 2",
             "SELECT t.k, t.v, d.w, d.s FROM t LEFT JOIN d ON t.k = d.k AND d.w > t.v",
             "SELECT t.k, t.v, d.w, d.s FROM t LEFT JOIN d ON t.k = d.k WHERE d.w IS NULL OR d.w % 3 <> 0",
             "SELECT t.k, t.v, d.w, d.s FROM t JOIN d ON t.k = d.k WHERE t.v > 1 AND d.w + t.v > 20",
-            "SELECT t.k, t.v, d.w, d.s FROM t LEFT JOIN d ON t.sym = d.s AND d.w % 2 = 1",
+            "SELECT t.k, t.v, d.w, d.s FROM t LEFT JOIN d ON t.sym = d.s AND d.w % 2 <> t.v % 2",
             "SELECT t.k, t.v, d.w, d.s FROM t LEFT JOIN d ON t.k = d.k AND t.sym = d.s WHERE d.w IS NULL OR d.w < t.v",
     };
 
@@ -109,6 +117,11 @@ public class AsyncHashJoinContinuationTest extends AbstractCairoTest {
                     final String backward = sql + " ORDER BY t.ts DESC";
                     TestUtils.assertContains(assertParallelHashJoin(backward, sqlExecutionContext), "Frame backward scan on: t");
                     Assert.assertTrue(backward, continuations(backward) > 0);
+                }
+                for (String sql : PUSHED) {
+                    final String backward = sql + " ORDER BY t.ts DESC";
+                    TestUtils.assertContains(assertParallelHashJoin(backward, sqlExecutionContext), "Frame backward scan on: t");
+                    Assert.assertEquals(backward, 0, continuations(backward));
                 }
             }
         });
@@ -228,6 +241,10 @@ public class AsyncHashJoinContinuationTest extends AbstractCairoTest {
                             Assert.assertTrue(label, continuations > 0);
                         }
                     }
+                    for (String sql : PUSHED) {
+                        assertParallelHashJoin(sql, sqlExecutionContext);
+                        Assert.assertEquals(sql + ", cap " + cap + ", frame rows " + frameRows, 0, continuations(sql));
+                    }
                 }
             }
         });
@@ -272,7 +289,7 @@ public class AsyncHashJoinContinuationTest extends AbstractCairoTest {
             execute("CREATE TABLE d AS (SELECT CASE WHEN x <= 50 THEN 7 ELSE (x % 3)::INT END k, x w FROM long_sequence(56))");
             sqlExecutionContext.changePageFrameSizes(4, 4);
             setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 1);
-            final String sql = "SELECT t.k, t.v, d.w FROM t LEFT JOIN d ON t.k = d.k AND d.w > 0";
+            final String sql = "SELECT t.k, t.v, d.w FROM t LEFT JOIN d ON t.k = d.k AND d.w > t.v - 1_000";
             assertParallelHashJoin(sql, sqlExecutionContext);
             try (RecordCursorFactory factory = select(sql)) {
                 final HashJoinTupleRing ring = find(factory).getAtom().getRing();
@@ -284,6 +301,19 @@ public class AsyncHashJoinContinuationTest extends AbstractCairoTest {
                     Assert.assertTrue(ring.getAllocatedBytes() >= 50L * ring.getTupleStride() * Long.BYTES);
                 }
                 Assert.assertEquals(0, ring.getAllocatedBytes());
+            }
+            // A residual of d alone, which the build runs over d's rows, leaves the pairs no filter:
+            // the stage hands the hot key's chain to the consumer, so the first frame's task writes
+            // one tuple for each of the frame's four rows and joins the whole frame.
+            final String pushed = "SELECT t.k, t.v, d.w FROM t LEFT JOIN d ON t.k = d.k AND d.w > 0";
+            assertParallelHashJoin(pushed, sqlExecutionContext);
+            try (RecordCursorFactory factory = select(pushed)) {
+                final HashJoinTupleRing ring = find(factory).getAtom().getRing();
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(4, ring.getTuples(0).size() / ring.getTupleStride());
+                    Assert.assertEquals(-1, ring.getResumePosition(0));
+                }
             }
         });
     }
@@ -380,13 +410,21 @@ public class AsyncHashJoinContinuationTest extends AbstractCairoTest {
                 for (String sql : new String[]{
                         // A continuation walks the rows that the probe filter kept, in both scan
                         // directions.
-                        "SELECT t.k, t.v, d.w FROM t LEFT JOIN d ON t.k = d.k AND d.w % 2 = 0 WHERE t.v % 3 <> 0",
-                        "SELECT t.k, t.v, d.w FROM t LEFT JOIN d ON t.k = d.k AND d.w % 2 = 0 WHERE t.v % 3 <> 0 ORDER BY t.ts DESC",
+                        "SELECT t.k, t.v, d.w FROM t LEFT JOIN d ON t.k = d.k AND d.w % 2 = t.v % 2 WHERE t.v % 3 <> 0",
+                        "SELECT t.k, t.v, d.w FROM t LEFT JOIN d ON t.k = d.k AND d.w % 2 = t.v % 2 WHERE t.v % 3 <> 0 ORDER BY t.ts DESC",
                         "SELECT t.k, t.v, d.w FROM t JOIN d ON t.k = d.k WHERE t.str ~ 'str[12]' AND d.w > t.v",
                         "SELECT t.k, t.v, d.w FROM t JOIN d ON t.k = d.k WHERE t.str ~ 'str[12]' AND d.w > t.v ORDER BY t.ts DESC",
                 }) {
                     TestUtils.assertContains(assertParallelHashJoin(sql, sqlExecutionContext), "filter: ");
                     Assert.assertTrue(sql, continuations(sql) > 0);
+                }
+                // A stage whose build ran its whole residual writes one tuple per kept row.
+                for (String sql : new String[]{
+                        "SELECT t.k, t.v, d.w FROM t LEFT JOIN d ON t.k = d.k AND d.w % 2 = 0 WHERE t.v % 3 <> 0",
+                        "SELECT t.k, t.v, d.w FROM t LEFT JOIN d ON t.k = d.k AND d.w % 2 = 0 WHERE t.v % 3 <> 0 ORDER BY t.ts DESC",
+                }) {
+                    TestUtils.assertContains(assertParallelHashJoin(sql, sqlExecutionContext), "filter: ");
+                    Assert.assertEquals(sql, 0, continuations(sql));
                 }
             }
         });

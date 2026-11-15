@@ -51,20 +51,24 @@ import org.jetbrains.annotations.TestOnly;
  * itself, so a key's duplicates cost the worker one lookup however many there are; see
  * {@link #toChainHead(long)}. An INNER join's miss drops the probe row.
  * <p>
- * A stage whose pairs run a filter, an ON residual or a post-join filter, is enumerated instead: the
- * stepper walks the key's matches itself, runs the filters over each pair of the probe row and a
- * match, and hands on each pair that passes them, with the match's locator. A LEFT join's probe row
- * whose pairs all fail the residual, or that has no match, goes on once with {@link #NO_MATCH}, if it
- * passes the post-join filter. Its pairs then come in chain order, the order the serial join returns
- * them in, and the consumer walks no chain. Since a filter may read the columns of every stage before
- * its own, every stage before the last enumerated one is enumerated too, with its payload reader on
- * the current match, and only the stages after it hand their chains to the consumer, which expands
- * them in the same nesting order. So is the first stage of an execution that swaps the first join's
- * inputs whenever later stages follow it: the later stages' keys read the left input's columns,
- * which such an execution holds in the first stage's payload, so the first stage's payload reader
- * must sit on each of its matches in turn while the later stages look them up; see
- * {@link #ofKeyColumn(int)}. The stepper checks the circuit breaker every so many pairs, see
- * {@link AsyncHashJoinAtom.Slot#isInterrupted()}, and unwinds once the execution is cancelled.
+ * A stage whose pairs run a filter in the open cursor's execution, an ON residual or a post-join
+ * filter, is enumerated instead: the stepper walks the key's matches itself, runs the filters over
+ * each pair of the probe row and a match, and hands on each pair that passes them, with the match's
+ * locator. A LEFT join's probe row whose pairs all fail the residual, or that has no match, goes on
+ * once with {@link #NO_MATCH}, if it passes the post-join filter. Its pairs then come in chain order,
+ * the order the serial join returns them in, and the consumer walks no chain. Since a filter may read
+ * the columns of every stage before its own, every stage before the last enumerated one is
+ * enumerated too, with its payload reader on the current match, and only the stages after it hand
+ * their chains to the consumer, which expands them in the same nesting order. So is the first stage
+ * of an execution that swaps the first join's inputs whenever later stages follow it: the later
+ * stages' keys read the left input's columns, which such an execution holds in the first stage's
+ * payload, so the first stage's payload reader must sit on each of its matches in turn while the
+ * later stages look them up; see {@link #ofKeyColumn(int)}. Each execution decides which stages
+ * walk their matches, see {@link #ofEnumerated(boolean)}, since its builds decide what the pairs run:
+ * a LEFT join whose build ran its whole ON residual over the build's rows runs none over its pairs,
+ * see {@link HashJoinStageSpec#hasPairFilter(boolean)}. The stepper checks the circuit breaker every
+ * so many pairs, see {@link AsyncHashJoinAtom.Slot#isInterrupted()}, and unwinds once the execution
+ * is cancelled.
  * <p>
  * The loops over a frame's rows stop at a probe row's boundary once the tuples reach their cap, so
  * that the consumer continues the frame from there; see {@link AsyncHashJoinRecordCursor}.
@@ -104,7 +108,9 @@ abstract class HashJoinStageStepper {
     );
     // Set by tests alone; see AsyncHashJoinRecordCursorFactory.setStepperCopiesEnabledForTesting().
     private static volatile boolean isCopiesEnabled = true;
-    // True when the stage's pairs run a filter, so that the stepper walks the key's matches itself.
+    // True when the stepper walks the key's matches itself in the open cursor's execution: the
+    // stage's pairs, or those of a later stage, run a filter, or the stage is the first one of a
+    // swapped execution, whose later stages read their keys off its matches; see ofEnumerated().
     boolean isEnumerated;
     // True for a LEFT join, whose probe rows survive a miss.
     boolean isOuter;
@@ -172,18 +178,27 @@ abstract class HashJoinStageStepper {
     }
 
     /**
-     * Binds the stepper to its stage in an operator: what the lookup reads, whether a miss survives,
-     * whether the stepper walks the key's matches itself and which stepper the matches go on to.
+     * Binds the stepper to its stage in an operator: what the lookup reads, whether a miss survives
+     * and which stepper the matches go on to. Whether the stepper walks the key's matches itself is
+     * each execution's to decide; see {@link #ofEnumerated(boolean)}.
      *
      * @param next the next stage's stepper, null for the last stage
      */
-    final void of(int keyKind, int keyColumn, boolean isOuter, boolean isEnumerated, @Nullable HashJoinStageStepper next) {
+    final void of(int keyKind, int keyColumn, boolean isOuter, @Nullable HashJoinStageStepper next) {
         assert next == null || next != this;
         this.keyKind = keyKind;
         this.keyColumn = keyColumn;
         this.isOuter = isOuter;
-        this.isEnumerated = isEnumerated;
         this.next = next;
+    }
+
+    /**
+     * Decides whether the stepper walks the key's matches itself in the open cursor's execution,
+     * which the execution's builds tell: they decide which filters the stages' pairs run. The owner
+     * calls it before it dispatches the execution's first task, which publishes it to the workers.
+     */
+    final void ofEnumerated(boolean isEnumerated) {
+        this.isEnumerated = isEnumerated;
     }
 
     /**

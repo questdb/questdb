@@ -72,11 +72,15 @@ public class AsyncHashJoinCountTest extends AbstractCairoTest {
     private static final String ATOM = AsyncHashJoinAtom.class.getName();
     // The error of a count whose rows do not fit in a LONG.
     private static final String OVERFLOW = "hash join row count overflow";
+    // A LEFT join whose ON residual reads d1 alone, which the build runs over d1's rows: the pairs run
+    // no filter, and the stage hands its chains to the consumer, as a stage without a residual does.
+    private static final String PUSHED = "SELECT t.v, d1.w FROM t LEFT JOIN d1 ON t.k = d1.k AND d1.w % 2 = 0";
     // Single stages and stacks, each with its rows' shape: unique matches and LEFT misses, which the
     // tuples carry as locators; duplicate keys, NULL keys among them, whose chains the tuples leave
     // to the consumer; residuals and post-join filters, which the workers run per pair, and whose
-    // fan-out overflows a task's cap; a JIT compiled probe filter, also over a backward scan of a
-    // build whose keys hold one row or several, and under a residual; a backward probe scan; the swapped
+    // fan-out overflows a task's cap; a residual that the build runs whole, whose chains the tuples
+    // leave to the consumer; a JIT compiled probe filter, also over a backward scan of a build whose
+    // keys hold one row or several, and under a residual; a backward probe scan; the swapped
     // orientation, which hashes d1 and probes t; two deferred stages, which the consumer walks
     // odometer-style; an enumerated stage ahead of deferred ones; a swapped stack, whose later stage
     // reads its key off the first stage's matches; and an INNER join over an empty build.
@@ -84,6 +88,7 @@ public class AsyncHashJoinCountTest extends AbstractCairoTest {
             "SELECT t.v, u1.w FROM t LEFT JOIN u1 ON t.k = u1.k",
             "SELECT t.v, d1.w FROM t LEFT JOIN d1 ON t.k = d1.k",
             "SELECT t.v, d1.w FROM t LEFT JOIN d1 ON t.k = d1.k AND d1.w > t.v % 9",
+            PUSHED,
             "SELECT t.v, d1.w FROM t JOIN d1 ON t.k = d1.k WHERE d1.w + t.v % 5 > 6",
             "SELECT t.v, d1.w FROM t JOIN d1 ON t.k = d1.k WHERE t.v > 7",
             "SELECT t.v, m.w FROM t LEFT JOIN m ON t.k = m.k WHERE t.v > 5 ORDER BY t.ts DESC",
@@ -133,8 +138,9 @@ public class AsyncHashJoinCountTest extends AbstractCairoTest {
                 Assert.assertTrue(sql, counts[0] > 0);
                 Assert.assertTrue(sql, counts[1] > 0);
                 // Every shape that walks its pairs on the workers, with more pairs than rows, leaves
-                // continuations, which some counts met before they were joined.
-                final boolean isEnumerated = sql.contains("%") || sql.contains("d2.w2 > t.v") || sql.contains("d3 ON d1.s");
+                // continuations, which some counts met before they were joined; a stage whose build
+                // ran its whole residual walks none.
+                final boolean isEnumerated = !sql.equals(PUSHED) && (sql.contains("%") || sql.contains("d2.w2 > t.v") || sql.contains("d3 ON d1.s"));
                 Assert.assertEquals(sql, isEnumerated, counts[2] > 0);
             }
         });
@@ -269,6 +275,10 @@ public class AsyncHashJoinCountTest extends AbstractCairoTest {
             }) {
                 assertCancelledInsideIndexPass(sql, 1);
             }
+            // A stage whose build ran its whole ON residual hands its chains on, so a count indexes
+            // the chain lengths of d1's rows that the residual kept, from the top and after a row.
+            assertCancelledInsideIndexPass(PUSHED, 0);
+            assertCancelledInsideIndexPass(PUSHED, 1);
         });
     }
 
@@ -379,6 +389,10 @@ public class AsyncHashJoinCountTest extends AbstractCairoTest {
             assertCountIndexes("SELECT t.v, u1.w, d3.w3 FROM t LEFT JOIN u1 ON t.k = u1.k LEFT JOIN d3 ON t.sym = d3.s", 0, null);
             assertCountIndexes("SELECT t.v, d22.w FROM t JOIN d22 ON t.k = d22.k", 1, null);
             assertCountIndexes("SELECT t.v, dn.w FROM t JOIN dn ON t.k = dn.k", 1, null);
+            // The rows of d1 that a residual which the build runs whole keeps repeat keys 0, 4 and
+            // NULL; a residual that keeps one row per key leaves nothing to index.
+            assertCountIndexes(PUSHED, 1, null);
+            assertCountIndexes("SELECT t.v, d1.w FROM t LEFT JOIN d1 ON t.k = d1.k AND d1.w > 15", 0, null);
             // The server's default page frame sizes.
             sqlExecutionContext.restoreToDefaultPageFrameSizes();
             assertCountIndexes("SELECT t.v, m.w, d2.w2 FROM t JOIN m ON t.k = m.k JOIN d2 ON t.lk = d2.lk", 2, null);
@@ -593,8 +607,9 @@ public class AsyncHashJoinCountTest extends AbstractCairoTest {
                         }
                     }
                     // The fused GROUP BY takes count(*) over one join without a residual or a post-join
-                    // filter, while it is on.
-                    Assert.assertEquals(count, isFusedGroupBy && isSingleJoin(sql) && !sql.contains("%"), isFused);
+                    // filter, or with a residual of the build alone, which it runs on the build, while
+                    // it is on.
+                    Assert.assertEquals(count, isFusedGroupBy && isSingleJoin(sql) && (!sql.contains("%") || sql.equals(PUSHED)), isFused);
                     if (!isFused) {
                         assertCountStar(sql);
                     }

@@ -50,9 +50,13 @@ import org.jetbrains.annotations.Nullable;
  * the joined row and run on the workers, for each pair of a probe row and one of its matches, with
  * a copy of their own on every worker when they are not thread safe. A probe row of a LEFT join
  * whose pairs all fail the residual yields one row with NULL build columns, as the serial join's,
- * and the post-join filter runs over that row too. A stage with either filter walks its matches on
- * the workers, and so does every stage before it, whose columns the filters may read; see
- * {@link HashJoinStageStepper}. The filters of a later join of a stack compiled against that join's
+ * and the post-join filter runs over that row too. A stage whose pairs run either filter in an
+ * execution walks its matches on the workers, and so does every stage before it, whose columns the
+ * filters may read; see {@link HashJoinStageStepper} and {@link #hasPairFilter(boolean)}. An
+ * execution whose build ran a LEFT join's whole residual over the build's rows, see
+ * {@link BuildOnFilter}, leaves the stage's pairs no residual, so that the stage hands its chains on,
+ * as a stage without a residual does, unless a filter of its own or of a later stage reads its
+ * matches. The filters of a later join of a stack compiled against that join's
  * metadata, whose leading columns are those of the stages before it, as the operator's joined row
  * lists them.
  * <p>
@@ -331,11 +335,20 @@ public final class HashJoinStageSpec implements Plannable, QuietCloseable {
     }
 
     /**
-     * True when the stage's pairs run a filter on the workers, an ON residual or a post-join filter,
-     * so that the workers walk the stage's matches rather than leaving them to the consumer.
+     * True when the stage's pairs run a filter on the workers in an execution, so that the workers
+     * walk the stage's matches rather than leaving them to the consumer: the post-join filter, or the
+     * ON residual, or, in an execution whose build ran {@link #getBuildOnFilter()} over its rows, the
+     * rest of the residual, which is null when those conjuncts make up the whole residual.
+     *
+     * @param isBuildOnFilterApplied true when the execution's build ran the build ON filter over its
+     *                               rows; see {@link HashJoinBuildStage#isBuildOnFilterApplied()}
      */
-    public boolean hasPairFilter() {
-        return onFilter != null || postFilter != null;
+    public boolean hasPairFilter(boolean isBuildOnFilterApplied) {
+        assert !isBuildOnFilterApplied || buildOnFilter != null;
+        if (postFilter != null) {
+            return true;
+        }
+        return isBuildOnFilterApplied ? buildOnFilter.remainder != null : onFilter != null;
     }
 
     public boolean hasPostFilter() {
@@ -553,6 +566,12 @@ public final class HashJoinStageSpec implements Plannable, QuietCloseable {
      * whole residual, which throws for exactly the pairs whose serial join throws. A row that the
      * conjuncts dropped before failed one of them, without a throw, so its pairs fail the whole
      * residual too.
+     * <p>
+     * An execution whose build ran conjuncts that make up the whole residual leaves the pairs no
+     * residual: a pair passes it exactly when its build row did, and the build kept those rows alone,
+     * in its scan's order. The stage then hands its chains on, as a stage without a residual does,
+     * unless its post-join filter or a later stage's filter reads its matches, and any other execution
+     * of the same factory walks them; see {@link HashJoinStageSpec#hasPairFilter(boolean)}.
      * <p>
      * The conjuncts run over every build row, where the serial join runs them over the pairs alone,
      * at most one per probe row for a build of unique keys, so a conjunct that can cost far more on a

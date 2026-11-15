@@ -103,7 +103,10 @@ import java.util.concurrent.locks.LockSupport;
  *       the star, {@code STACK4_RESIDUAL} is a worker-bound stack of four LEFT joins with
  *       residuals, and {@code BUILD_ONLY_RESIDUAL} and {@code BUILD_ONLY_RESIDUAL_REGEX} are LEFT
  *       joins of the large dimension under a selective ON residual that reads the dimension alone,
- *       a comparison and a regular expression over a VARCHAR column. {@code SWAP_STACK_*} start
+ *       a comparison and a regular expression over a VARCHAR column. {@code FANOUT_50_BUILD_ONLY_RESIDUAL}
+ *       and {@code FANOUT_50_BUILD_ONLY_RESIDUAL_ALL} are LEFT joins of a dimension of a thousand keys
+ *       of 50 rows each under an ON residual that reads the dimension alone, which keeps every row of
+ *       a tenth of the keys, and of every key. {@code SWAP_STACK_*} start
  *       with a dimension joined with the fact table, which the join swaps to build the dimension,
  *       and look a second dimension up by a key of the first one, which the workers read from its
  *       build rows. {@code PARQUET_VAR_BUILD_*} join the first {@code probeRows} rows of the fact
@@ -229,6 +232,7 @@ public class ParallelHashJoinBenchmark {
             "COUNT_STAR",
             "STACK4_RESIDUAL",
             "BUILD_ONLY_RESIDUAL", "BUILD_ONLY_RESIDUAL_REGEX",
+            "FANOUT_50_BUILD_ONLY_RESIDUAL", "FANOUT_50_BUILD_ONLY_RESIDUAL_ALL",
             "SWAP_STACK_100K", "SWAP_STACK_LARGE",
             "PARQUET_VAR_BUILD_1", "PARQUET_VAR_BUILD_2", "PARQUET_VAR_BUILD_4", "PARQUET_VAR_RESIDUAL",
             "SMALL_SINGLE", "SMALL_STAR",
@@ -697,6 +701,10 @@ public class ParallelHashJoinBenchmark {
             // ON residuals of the large dimension alone that keep a sixteenth and a tenth of its rows.
             case "BUILD_ONLY_RESIDUAL" -> "SELECT f.id, f.v, x.w FROM fact f LEFT JOIN d3 x ON f.k3 = x.k AND x.s = 'c3'";
             case "BUILD_ONLY_RESIDUAL_REGEX" -> "SELECT f.id, f.v, x.w FROM fact f LEFT JOIN d3 x ON f.k3 = x.k AND x.name ~ '7$'";
+            // dup50's w is the same for each key's 50 rows: an ON residual over it keeps every row of a
+            // tenth of the keys, about 5.9 rows per fact row, or of every key, 50 rows per fact row.
+            case "FANOUT_50_BUILD_ONLY_RESIDUAL" -> "SELECT f.id, f.v, x.w FROM fact f LEFT JOIN dup50 x ON f.k1 = x.k AND x.w < 0.1";
+            case "FANOUT_50_BUILD_ONLY_RESIDUAL_ALL" -> "SELECT f.id, f.v, x.w FROM fact f LEFT JOIN dup50 x ON f.k1 = x.k AND x.w >= 0";
             // The dimension is the smaller input, so the first join builds it and probes the fact
             // table; the second join's key, a column of the dimension, comes from its build rows.
             case "SWAP_STACK_100K" -> "SELECT f.id, d2.w w2, d1.w w1 FROM d2 JOIN fact f ON d2.k = f.k2 JOIN d1 ON d2.kl = d1.kl";

@@ -173,6 +173,11 @@ public class EquiJoinStarShapeCoverageTest extends AbstractCairoTest {
         assertCorpusHas(corpus, "a later LEFT join's residual over the left input and its own", q -> q.hasLaterResidualOverOwnAnd(true, "l"));
         assertCorpusHas(corpus, "a later LEFT join's residual over an earlier join's input and its own", q -> q.hasLaterResidualOverOwnAnd(true, "r"));
         assertCorpusHas(corpus, "a later INNER join's residual over an earlier join's input and its own", q -> q.hasLaterResidualOverOwnAnd(false, "r"));
+        // A LEFT join's residual over its own input alone, which the join's build runs whole: on a
+        // later join, and on a join that no later residual or post-join filter follows, whose stage
+        // then hands its chains to the consumer.
+        assertCorpusHas(corpus, "a later LEFT join's residual over its own input alone", q -> q.hasLaterJoin(j -> j.isLeftJoin && j.residual() != null && aliases(j.residual()).equals(Set.of(j.alias))));
+        assertCorpusHas(corpus, "a LEFT join's residual over its own input alone with no later residual or post-join filter", Query::hasLastResidualOverOwnInput);
         // Post-join filters of later joins: a WHERE conjunct over a later join's input and another
         // input, or over a later LEFT join's input alone, and the misses of a later LEFT join.
         assertCorpusHas(corpus, "a post-join filter over a later join and the left input", q -> q.hasLaterPostFilter("l"));
@@ -646,6 +651,19 @@ public class EquiJoinStarShapeCoverageTest extends AbstractCairoTest {
                     if (join.isLeftJoin && aliases.contains(join.alias)) {
                         return true;
                     }
+                }
+            }
+            return false;
+        }
+
+        // True when the last join with a residual is a LEFT join whose residual reads its own input
+        // alone, and no WHERE conjunct filters joined rows.
+        boolean hasLastResidualOverOwnInput() {
+            for (int i = joins.size() - 1; i > -1; i--) {
+                final Join join = joins.getQuick(i);
+                final String residual = join.residual();
+                if (residual != null) {
+                    return join.isLeftJoin && aliases(residual).equals(Set.of(join.alias)) && !hasPostFilter();
                 }
             }
             return false;

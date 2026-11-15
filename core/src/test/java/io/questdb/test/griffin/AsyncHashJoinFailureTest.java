@@ -68,7 +68,9 @@ import static io.questdb.test.griffin.ParallelHashJoinTestUtils.*;
 /**
  * The parallel hash join's failure paths, each followed by a check that the failure released
  * everything it held and that the same factory, and the tables, still work: cancellation inside
- * each round of a parallel build, inside a probe task and inside a continuation chunk; a small
+ * each round of a parallel build, inside a probe task and inside a continuation chunk, and inside
+ * the build of an execution between one that walks a stage's matches and one that hands the stage's
+ * chains on, which leaves the next execution to decide afresh; a small
  * build's filter that runs interpreted and fails in the first round of the build's rounds; per-query
  * memory limit breaches in the build, the symbol key translator, the payload copy, a probe task,
  * a continuation, the consumer's Parquet output reader and the pass that indexes the builds' chain
@@ -165,6 +167,55 @@ public class AsyncHashJoinFailureTest extends AbstractCairoTest {
                         Assert.assertTrue(round, roundBreaker.getChecks() > 0);
                         assertReused(factory, join, sql, expected);
                     }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCancellationInsideBuildBetweenWalkingAndDeferringExecutions() throws Exception {
+        // Every build runs in rounds, of many partitions, and a cap of one tuple, which a task lifts to
+        // its frame's rows, leaves the rest of a frame with more pairs than rows to a continuation.
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 0);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_ROWS_PER_PARTITION, 16);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createTables();
+            sqlExecutionContext.changePageFrameSizes(32, 32);
+            // test_latched_counter() reads no column, so it leads the residual's conjuncts of the build
+            // alone. An execution whose build meets a failure of it gives the conjuncts up and walks d's
+            // matches under the whole residual, past the cap; any other one keeps d's rows of
+            // w % 3 = 0, which repeat each key, and hands their chains on, one tuple per probe row.
+            final String sql = "SELECT t.v, d.w FROM t LEFT JOIN d ON t.k = d.k AND test_latched_counter() AND d.w % 3 = 0";
+            final AtomicBoolean isFailing = new AtomicBoolean();
+            TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
+                @Override
+                public boolean onGet(Record rec, int count) {
+                    if (isFailing.get() && isOnStack(STAGE, "applyAbandonableBuildOnFilter")) {
+                        throw CairoException.nonCritical().put("test value failure");
+                    }
+                    return true;
+                }
+            });
+            final String expected = ordinary(sql, sqlExecutionContext);
+            try (RecordCursorFactory factory = select(sql)) {
+                final AsyncHashJoinRecordCursorFactory join = find(factory);
+                Assert.assertNotNull(join);
+                TestUtils.assertContains(plan(factory, sqlExecutionContext), "buildOnFilter: (test_latched_counter() and w%3=0)");
+                // Before each execution, one that the breaker cancels inside its build's second round,
+                // after the first ran the conjuncts: it decides nothing, and the next execution decides
+                // afresh, after an execution that walked or one that handed its chains on.
+                for (boolean isWalking : new boolean[]{true, false, true}) {
+                    final MethodCheckCircuitBreaker breaker = new MethodCheckCircuitBreaker(engine, STAGE, "buildPartition", 1);
+                    assertCancelled(factory, breaker, sql);
+                    Assert.assertTrue(breaker.getChecks() > 0);
+                    isFailing.set(isWalking);
+                    try {
+                        assertReused(factory, join, sql, expected);
+                    } finally {
+                        isFailing.set(false);
+                    }
+                    Assert.assertEquals(sql, isWalking, join.getAtom().getContinuationCount() > 0);
                 }
             }
         });

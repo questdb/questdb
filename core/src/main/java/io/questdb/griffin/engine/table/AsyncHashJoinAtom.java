@@ -96,13 +96,15 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
  * and so on, every later stage's key read off the probe row too, or, in a swapped execution, off the
  * first stage's current match, which holds the left input's row, and the last stage appends the row
  * and every stage's entry to the frame's ring entry, which the consumer reads in frame order. A stage
- * with an ON residual or a post-join filter runs them over each pair on the slot's flat joined
- * record, with the slot's copies of the filters, and the workers walk the matches of every stage up
- * to the last such stage, whose filters may read them; the stages after it hand their chains to the
- * consumer. The leading conjuncts of a LEFT join's ON residual that read the build alone may filter
- * the build's rows instead, see {@link HashJoinStageSpec.BuildOnFilter}: an execution whose build
- * ran them runs the rest of the residual over the pairs, and any other one the whole residual. The
- * task stops at a probe row's boundary once the frame's tuples reach the task's cap,
+ * whose pairs run an ON residual or a post-join filter runs them over each pair on the slot's flat
+ * joined record, with the slot's copies of the filters, and the workers walk the matches of every
+ * stage up to the last such stage, whose filters may read them; the stages after it hand their chains
+ * to the consumer. The leading conjuncts of a LEFT join's ON residual that read the build alone may
+ * filter the build's rows instead, see {@link HashJoinStageSpec.BuildOnFilter}: an execution whose
+ * build ran them runs the rest of the residual over the pairs, none when they make up the whole
+ * residual, and any other one the whole residual, so each execution decides, once its builds are
+ * done, which stages walk their matches; see {@link #build}. The task stops at a probe row's
+ * boundary once the frame's tuples reach the task's cap,
  * {@code max(cairo.sql.parallel.hash.join.task.output.max.rows, the frame's rows)}, and records in the
  * ring where the frame's continuation resumes: the consumer, once it has read those tuples, joins the
  * rest of the frame in chunks of the same cap on the owner's slot, see {@link #continueFrame}. One
@@ -270,16 +272,6 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
         this.ring = new HashJoinTupleRing(configuration, stageCount);
         this.scanBySource = new int[stageCount + 1];
         final int probeColumnCount = leftInput.getMetadata().getColumnCount();
-        // The stages up to the last one whose pairs run a filter walk their matches on the workers:
-        // a filter reads the joined row, the columns of every stage before its own included, so those
-        // stages' payload readers must sit on the current match. The stages after it hand their
-        // chains to the consumer.
-        int lastEnumeratedStage = -1;
-        for (int k = 0; k < stageCount; k++) {
-            if (spec.getStage(k).hasPairFilter()) {
-                lastEnumeratedStage = k;
-            }
-        }
         // A swapped execution's later stages read the left input's columns from the first stage's
         // payload, which holds them in the order the left input as compiled lists them.
         final int leftPayloadColumnCount = leftInput.getColumnMap().size();
@@ -308,11 +300,11 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
             scanBySource[k + 1] = k + 1;
             stageSpec.setPayloadCopyable(stage.isPayloadCopyable());
             // Each stage's matches go on to the next stage's stepper, the hidden copies' to the next
-            // copy and the shared template's to the next stage's instance of it.
-            final boolean isEnumerated = k <= lastEnumeratedStage;
+            // copy and the shared template's to the next stage's instance of it. Which steppers walk
+            // their matches, each execution decides; see ofEnumeration().
             final HashJoinStageSpec nextSpec = k + 1 < stageCount ? spec.getStage(k + 1) : null;
-            ofStepper(stageSpec.getStepper(), keyLayout, stageSpec.isOuter(), isEnumerated, nextSpec != null ? nextSpec.getStepper() : null);
-            ofStepper(stageSpec.getTemplateStepper(), keyLayout, stageSpec.isOuter(), isEnumerated, nextSpec != null ? nextSpec.getTemplateStepper() : null);
+            ofStepper(stageSpec.getStepper(), keyLayout, stageSpec.isOuter(), nextSpec != null ? nextSpec.getStepper() : null);
+            ofStepper(stageSpec.getTemplateStepper(), keyLayout, stageSpec.isOuter(), nextSpec != null ? nextSpec.getTemplateStepper() : null);
         }
         final HashJoinStageSpec firstSpec = specs.getQuick(0);
         final HashJoinKeyLayout swapKeyLayout = firstSpec.getSwapKeyLayout();
@@ -332,13 +324,9 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
             final HashJoinStageStepper swapStepper = firstSpec.getSwapStepper();
             final HashJoinStageStepper swapTemplateStepper = firstSpec.getSwapTemplateStepper();
             assert swapStepper != null && swapTemplateStepper != null && !firstSpec.isOuter();
-            // Swapped, the later stages read their keys from the first stage's payload reader, which
-            // only a walk of the first stage's matches positions on each of them, so the workers walk
-            // them when any later stage follows, whether or not a filter reads them.
-            final boolean isEnumerated = lastEnumeratedStage > -1 || stageCount > 1;
             final HashJoinStageSpec secondSpec = stageCount > 1 ? spec.getStage(1) : null;
-            ofStepper(swapStepper, swapKeyLayout, false, isEnumerated, secondSpec != null ? secondSpec.getStepper() : null);
-            ofStepper(swapTemplateStepper, swapKeyLayout, false, isEnumerated, secondSpec != null ? secondSpec.getTemplateStepper() : null);
+            ofStepper(swapStepper, swapKeyLayout, false, secondSpec != null ? secondSpec.getStepper() : null);
+            ofStepper(swapTemplateStepper, swapKeyLayout, false, secondSpec != null ? secondSpec.getTemplateStepper() : null);
         } else {
             swapStage = null;
         }
@@ -659,6 +647,13 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
      * {@link HashJoinBuildRoundAtom#buildConcurrently}, and a lone one on the owner. The large builds
      * then run one at a time, in stage order, each through rounds of its own, which already spread one
      * build over the workers.
+     * <p>
+     * Once every stage built, each binds its slots to the filters that its pairs run in the
+     * execution, which its build decided: the rest of a LEFT join's ON residual after the conjuncts
+     * that the build ran over its rows, if it ran them, and the whole residual otherwise. Then the
+     * execution's steppers learn which stages walk their matches, those up to the last one whose
+     * pairs run a filter, before {@link #getProbeFrameRowCap()}, {@link #indexChainLengths} and the
+     * tasks read it.
      *
      * @param buildRounds the task-only sequence that runs the rounds of the builds
      */
@@ -707,20 +702,25 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
             }
         }
         boolean hasRows = true;
+        // The last stage whose pairs run a filter in the execution, -1 for none.
+        int lastFilteredStage = -1;
         for (int k = 0; k < stageCount; k++) {
             final HashJoinBuildStage stage = executionStages.getQuick(k);
             final HashJoinStageSpec stageSpec = specs.getQuick(k);
+            // A build that ran the leading conjuncts of the ON residual over its rows leaves the pairs
+            // the rest of the residual; any other build, the whole residual. A swapped execution's
+            // first stage is an INNER join's, which has no residual.
+            final boolean isApplied = stage.isBuildOnFilterApplied();
             if (stageSpec.getBuildOnFilter() != null) {
-                // A build that ran the leading conjuncts of the ON residual over its rows leaves the
-                // pairs the rest of the residual; any other build, the whole residual. A swapped
-                // execution's first stage is an INNER join's, which has no residual.
-                final boolean isApplied = stage.isBuildOnFilterApplied();
                 for (int i = -1; i < workerCount; i++) {
                     getSlot(i).getStageProbe(k).ofFilters(
                             isApplied ? stageSpec.getRemainingOnFilter(i) : stageSpec.getOnFilter(i),
                             stageSpec.getPostFilter(i)
                     );
                 }
+            }
+            if (stageSpec.hasPairFilter(isApplied)) {
+                lastFilteredStage = k;
             }
             stage.bindSymbolKeyTranslation(circuitBreaker);
             stage.bindProbes();
@@ -732,6 +732,7 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
             }
             hasRows &= specs.getQuick(k).isOuter() || stage.getFrozenBuild().getRowCount() > 0;
         }
+        ofEnumeration(lastFilteredStage);
         return hasRows;
     }
 
@@ -774,9 +775,10 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
      * The most rows of a probe frame whose tuples fit a task's cap,
      * {@code cairo.sql.parallel.hash.join.task.output.max.rows}, at the fan-out that the execution's
      * builds lead one to expect: the cap divided by the product of the rows per key of each build
-     * whose matches the workers walk, and no fewer than {@code cairo.sql.page.frame.min.rows}. A
-     * probe row that meets a key yields as many pairs as the key has rows, while the stages that
-     * hand their chains to the consumer write one entry per probe row, so their builds do not count.
+     * whose matches the workers walk in the execution, and no fewer than
+     * {@code cairo.sql.page.frame.min.rows}. A probe row that meets a key yields as many pairs as the
+     * key has rows, while the stages that hand their chains to the consumer write one entry per probe
+     * row, so their builds do not count.
      * Returns {@code Long.MAX_VALUE} when no such build has more rows than keys. The owner calls it
      * once the builds are done, before the probe scan cuts its frames, so that a frame of duplicate
      * matches leaves no rest to a serial continuation.
@@ -805,9 +807,9 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
     }
 
     /**
-     * Indexes the chain lengths of the builds of the execution's stages that hand their chains on,
-     * see {@link HashJoinStageStepper}, and whose builds repeat a key, for a count of the join's
-     * rows: the count's tasks and the consumer then read a chain's length rather than walk the
+     * Indexes the chain lengths of the builds of the stages that hand their chains on in the
+     * execution, see {@link HashJoinStageStepper}, and whose builds repeat a key, for a count of the
+     * join's rows: the count's tasks and the consumer then read a chain's length rather than walk the
      * chain; see {@link FrozenHashJoinBuild#indexChainLengths(SqlExecutionCircuitBreaker)}. The
      * other stages' counts walk no chain: a stage whose stepper walks its key's matches runs its
      * filters over each pair, as the serial join does, and a build of one row per key has no chain.
@@ -1000,13 +1002,12 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
             HashJoinStageStepper stepper,
             HashJoinKeyLayout keyLayout,
             boolean isOuter,
-            boolean isEnumerated,
             @Nullable HashJoinStageStepper next
     ) {
         final int keyKind = keyLayout.isKeyStaged()
                 ? HashJoinStageStepper.KEY_STAGED
                 : keyLayout.isSymbolKey() ? HashJoinStageStepper.KEY_SYMBOL : HashJoinStageStepper.KEY_INT;
-        stepper.of(keyKind, keyLayout.isKeyStaged() ? -1 : keyLayout.getProbeKeyColumn(), isOuter, isEnumerated, next);
+        stepper.of(keyKind, keyLayout.isKeyStaged() ? -1 : keyLayout.getProbeKeyColumn(), isOuter, next);
     }
 
     // Tells the owner's filter and its worker copies, if any, that the cursor closed.
@@ -1257,6 +1258,27 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
         }
         slot.joinedRowCount += position - from;
         return tuples.size() / ring.getTupleStride();
+    }
+
+    // Decides which stages' steppers walk their matches in the execution, the hidden copies and the
+    // shared template's instances alike, in the execution's orientation: every stage up to the last
+    // one whose pairs run a filter, since a filter reads the joined row, the columns of every stage
+    // before its own included, so those stages' payload readers must sit on the current match; the
+    // stages after it hand their chains to the consumer. Swapped, the later stages read their keys
+    // from the first stage's payload reader, which only a walk of the first stage's matches positions
+    // on each of them, so the workers walk them when any later stage follows, whether or not a filter
+    // reads them.
+    private void ofEnumeration(int lastFilteredStage) {
+        final int stageCount = specs.size();
+        final boolean isFirstEnumerated = lastFilteredStage > -1 || (isSwapped && stageCount > 1);
+        stepper.ofEnumerated(isFirstEnumerated);
+        templateStepper.ofEnumerated(isFirstEnumerated);
+        for (int k = 1; k < stageCount; k++) {
+            final HashJoinStageSpec stageSpec = specs.getQuick(k);
+            final boolean isEnumerated = k <= lastFilteredStage;
+            stageSpec.getStepper().ofEnumerated(isEnumerated);
+            stageSpec.getTemplateStepper().ofEnumerated(isEnumerated);
+        }
     }
 
     // Points the probe side at the orientation: the probe input's scan order and filter, the first

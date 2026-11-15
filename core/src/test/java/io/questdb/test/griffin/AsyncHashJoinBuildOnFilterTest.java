@@ -37,6 +37,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestThrowingFilterFunctionFactory;
+import io.questdb.griffin.engine.table.AsyncHashJoinAtom;
 import io.questdb.griffin.engine.table.AsyncHashJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.HashJoinBuildStage;
 import io.questdb.griffin.engine.table.MultiHashJoinRecord;
@@ -46,11 +47,13 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.test.griffin.ParallelHashJoinTestUtils.*;
@@ -63,8 +66,11 @@ import static io.questdb.test.griffin.ParallelHashJoinTestUtils.*;
  * and reads a variable-size value), runs over the build's rows only in an execution whose build table
  * holds no more rows than its probe table; any other execution runs the whole residual over the pairs.
  * A build whose conjuncts throw on a row gives them up for the execution, since the serial join may
- * never run them over that row. Every query compares with the ordinary plan, in order, and the build's
- * row count with the rows of the build table that pass the pushed conjuncts, counted by a plain query.
+ * never run them over that row. An execution whose build ran the whole residual leaves the pairs no
+ * filter, so its stage hands its chains to the consumer, as a stage without a residual does, while
+ * any other execution of the same factory walks the matches on the workers. Every query compares with
+ * the ordinary plan, in order, and the build's row count with the rows of the build table that pass
+ * the pushed conjuncts, counted by a plain query.
  */
 public class AsyncHashJoinBuildOnFilterTest extends AbstractCairoTest {
     private static final String PUSHDOWN_RULE = "buildOnFilterPushdown: when the build table holds no more rows than the probe table";
@@ -80,6 +86,7 @@ public class AsyncHashJoinBuildOnFilterTest extends AbstractCairoTest {
             {"NOT (d.w >= 10 AND d.s = 's1')", "NOT (d.w >= 10 AND d.s = 's1')", false},
             // Functions over fixed-size columns, and over SYMBOL columns, whose value they compare.
             {"d.w % 3 = 0", "d.w % 3 = 0", false},
+            {"(d.w * 10)::DECIMAL(5,0) > 0::DECIMAL(5,0)", "(d.w * 10)::DECIMAL(5,0) > 0::DECIMAL(5,0)", false},
             {"d.w IN (3, 5, 7, 11)", "d.w IN (3, 5, 7, 11)", false},
             {"abs(d.w - 20) > 5", "abs(d.w - 20) > 5", false},
             {"coalesce(d.w, d.k, 0) > 10", "coalesce(d.w, d.k, 0) > 10", false},
@@ -312,11 +319,17 @@ public class AsyncHashJoinBuildOnFilterTest extends AbstractCairoTest {
             createTables();
             sqlExecutionContext.changePageFrameSizes(3, 3);
             setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_ROWS_PER_PARTITION, 4);
+            // A cap of one tuple, which a task lifts to its frame's three rows.
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 1);
             // Two small LEFT stages build at once, in one round with a task per stage, and with the
             // property at zero every stage builds in rounds of its own, each with its pushdown, one
             // of them not thread safe.
             final String sql = "SELECT t.k, t.v, d.w, u.w uw FROM t LEFT JOIN d ON t.k = d.k AND d.w % 3 = 0 AND d.w > t.v"
                     + " LEFT JOIN u ON t.k = u.k AND u.vch ~ 'v[1-4]'";
+            // Both stages' builds run their whole residuals, which keep rows that repeat keys, so both
+            // stages hand their chains on, one tuple per probe row, however the builds run.
+            final String handedOn = "SELECT t.k, t.v, d.w, d2.w w2 FROM t LEFT JOIN d ON t.k = d.k AND d.w % 3 = 0"
+                    + " LEFT JOIN d d2 ON t.sym = d2.s AND d2.vch ~ 'v[1-4]'";
             for (long minRows : new long[]{Long.MAX_VALUE, 0}) {
                 setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, minRows);
                 final String plan = assertParallelHashJoin(sql, sqlExecutionContext);
@@ -333,6 +346,21 @@ public class AsyncHashJoinBuildOnFilterTest extends AbstractCairoTest {
                         Assert.assertEquals(minRows == 0, join.getAtom().getStage(0).isBuiltInRounds());
                         Assert.assertEquals(minRows == 0, join.getAtom().getStage(1).isBuiltInRounds());
                     }
+                }
+                assertParallelHashJoin(handedOn, sqlExecutionContext);
+                try (RecordCursorFactory factory = select(handedOn)) {
+                    final AsyncHashJoinRecordCursorFactory join = find(factory);
+                    final long concurrentRounds = join.getBuildRoundAtom().getConcurrentBuildRoundCount();
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        Assert.assertTrue(cursor.hasNext());
+                        for (int k = 0; k < 2; k++) {
+                            Assert.assertTrue(join.getAtom().getStage(k).isBuildOnFilterApplied());
+                            Assert.assertEquals(minRows == 0, join.getAtom().getStage(k).isBuiltInRounds());
+                        }
+                    }
+                    Assert.assertEquals(minRows == Long.MAX_VALUE ? 1 : 0, join.getBuildRoundAtom().getConcurrentBuildRoundCount() - concurrentRounds);
+                    Assert.assertEquals(ordinary(handedOn, sqlExecutionContext), result(factory, sqlExecutionContext));
+                    Assert.assertEquals(0, join.getAtom().getContinuationCount());
                 }
             }
         });
@@ -413,6 +441,8 @@ public class AsyncHashJoinBuildOnFilterTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTables();
             sqlExecutionContext.changePageFrameSizes(3, 3);
+            // A cap of one tuple, which a task lifts to its frame's three rows.
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 1);
             // d's first partitions in Parquet, the rest native, and then every partition but the last,
             // which is active, in Parquet: the pushed conjuncts read the build's rows from both.
             for (String converted : new String[]{"dts < '2023-12-31T03'", "dts < '2023-12-31T06'"}) {
@@ -427,6 +457,14 @@ public class AsyncHashJoinBuildOnFilterTest extends AbstractCairoTest {
                     assertOrdinaryPlan("SELECT t.k, t.v, d.* FROM t t LEFT JOIN d d ON t.k = d.k AND d.vch ~ 'v[12]' AND d.str IS NOT NULL", sqlExecutionContext);
                     assertPushdown("t", "d", "t.k = d.k", "d.w::VARCHAR ~ '[12]' AND d.w > 1", "d.w::VARCHAR ~ '[12]' AND d.w > 1", true, 0);
                     assertPushdown("t", "(SELECT * FROM d WHERE w > 2)", "t.sym = d.s", "d.s <> 's3' AND d.w < t.v", "d.s <> 's3'", false, 0);
+                    // The build runs a residual of d alone whole over the rows of both kinds of
+                    // partitions, and the stage hands the chains of the rows it kept on.
+                    for (String residual : new String[]{"d.w % 3 = 0", "d.w::VARCHAR ~ '[12]' AND d.w > 1"}) {
+                        assertChainsHandedOn(
+                                "SELECT t.k, t.v, d.* FROM t LEFT JOIN d ON t.k = d.k AND " + residual,
+                                "SELECT count() FROM (SELECT k, count() c FROM d WHERE " + residual.replace("d.", "") + ") WHERE c > 1"
+                        );
+                    }
                 }
             }
         });
@@ -519,6 +557,110 @@ public class AsyncHashJoinBuildOnFilterTest extends AbstractCairoTest {
                 TestUtils.assertContains(plan(factory, sqlExecutionContext), "filter: d.w%3=0");
             } finally {
                 sqlExecutionContext.setParallelHashJoinEnabled(true);
+            }
+        });
+    }
+
+    @Test
+    public void testPushdownDecidesTheWalkPerExecution() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // A cap of one tuple, which a task lifts to its frame's three rows.
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 1);
+            sqlExecutionContext.changePageFrameSizes(3, 3);
+
+            // The size rule: b holds no more rows than p, then more, then, after p grew, fewer again.
+            // One factory hands b's chains on while its build runs the regex, which keeps rows that
+            // repeat each key, and walks b's matches under the whole residual otherwise.
+            execute("CREATE TABLE p AS (SELECT (x % 3)::INT k, x v, timestamp_sequence('2024-01-01', 600_000_000) ts FROM long_sequence(30)) TIMESTAMP(ts) PARTITION BY HOUR");
+            execute("CREATE TABLE b AS (SELECT (x % 3)::INT k, x w, ('v' || x)::VARCHAR vch FROM long_sequence(12))");
+            final String sized = "SELECT p.k, p.v, b.w FROM p LEFT JOIN b ON p.k = b.k AND b.vch ~ '[1-6]$'";
+            final String sizedKeys = "SELECT count() FROM (SELECT k, count() c FROM b WHERE vch ~ '[1-6]$') WHERE c > 1";
+            try (RecordCursorFactory factory = select(sized)) {
+                TestUtils.assertContains(plan(factory, sqlExecutionContext), PUSHDOWN_RULE);
+                final long[] buildInserts = {0, 30, 0};
+                final long[] probeInserts = {0, 0, 40};
+                long bRows = 12;
+                long pRows = 30;
+                for (int i = 0; i < buildInserts.length; i++) {
+                    if (buildInserts[i] > 0) {
+                        execute("INSERT INTO b SELECT (x % 3)::INT, x + " + bRows + ", ('v' || (x + " + bRows + "))::VARCHAR FROM long_sequence(" + buildInserts[i] + ")");
+                        bRows += buildInserts[i];
+                    }
+                    if (probeInserts[i] > 0) {
+                        execute("INSERT INTO p SELECT (x % 3)::INT, x + " + pRows + ", timestamp_sequence('2024-01-02', 600_000_000) FROM long_sequence(" + probeInserts[i] + ")");
+                        pRows += probeInserts[i];
+                    }
+                    final boolean isApplied = bRows <= pRows;
+                    assertExecution(factory, sized, isApplied, isApplied, sizedKeys);
+                }
+            }
+
+            // test_latched_counter() reads no column, so it leads the residual's conjuncts of the build
+            // alone. An execution whose build meets a failure of it gives the conjuncts up and walks
+            // d's matches under the whole residual; the next one runs them over d's rows and hands d's
+            // chains on, and so on, whichever stepper the tasks run: the shared template's instance,
+            // here also in the stage's own place, as on a JVM without hidden classes, or the stage's
+            // hidden copy, from the first task.
+            final String latched = "SELECT t.k, t.v, d.w FROM t LEFT JOIN d ON t.k = d.k AND test_latched_counter() AND d.w % 3 = 0";
+            final String latchedKeys = "SELECT count() FROM (SELECT k, count() c FROM d WHERE w % 3 = 0) WHERE c > 1";
+            final AtomicBoolean isFailing = new AtomicBoolean();
+            TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
+                @Override
+                public boolean onGet(Record rec, int count) {
+                    if (isFailing.get() && isOnStack("applyAbandonableBuildOnFilter")) {
+                        throw CairoException.nonCritical().put("test value failure");
+                    }
+                    return true;
+                }
+            });
+            for (boolean isCopy : new boolean[]{false, true}) {
+                if (isCopy) {
+                    AsyncHashJoinRecordCursorFactory.setStepperWarmUpRowsForTesting(0);
+                } else {
+                    AsyncHashJoinRecordCursorFactory.setStepperCopiesEnabledForTesting(false);
+                }
+                try (RecordCursorFactory factory = select(latched)) {
+                    final AsyncHashJoinRecordCursorFactory join = find(factory);
+                    Assert.assertEquals(isCopy, join.getStepperClass(0).isHidden());
+                    for (boolean isWalking : new boolean[]{true, false, true, false}) {
+                        isFailing.set(isWalking);
+                        assertExecution(factory, latched, !isWalking, !isWalking, latchedKeys);
+                        // The count's tasks ran the stepper under test.
+                        Assert.assertTrue(latched, join.getAtom().getStepperRunCount(AsyncHashJoinAtom.STEPPER_RUN_COUNT_TASK, isCopy) > 0);
+                        Assert.assertEquals(latched, 0, join.getAtom().getStepperRunCount(AsyncHashJoinAtom.STEPPER_RUN_COUNT_TASK, !isCopy));
+                    }
+                } finally {
+                    isFailing.set(false);
+                    AsyncHashJoinRecordCursorFactory.setStepperCopiesEnabledForTesting(true);
+                    AsyncHashJoinRecordCursorFactory.setStepperWarmUpRowsForTesting(AsyncHashJoinAtom.STEPPER_WARM_UP_ROWS);
+                }
+            }
+
+            // A build table truncated and filled again: the empty build leaves every probe row one
+            // row of NULLs and no chain to index, and the stage hands its chains on either way.
+            execute("CREATE TABLE e AS (SELECT * FROM d)");
+            final String truncated = "SELECT t.k, t.v, e.w FROM t LEFT JOIN e ON t.k = e.k AND e.w % 3 = 0";
+            final String truncatedKeys = "SELECT count() FROM (SELECT k, count() c FROM e WHERE w % 3 = 0) WHERE c > 1";
+            try (RecordCursorFactory factory = select(truncated)) {
+                assertExecution(factory, truncated, true, true, truncatedKeys);
+                execute("TRUNCATE TABLE e");
+                assertExecution(factory, truncated, true, true, truncatedKeys);
+                Assert.assertEquals(count("SELECT count() FROM t"), ordinaryRowCount(truncated));
+                execute("INSERT INTO e SELECT * FROM d");
+                assertExecution(factory, truncated, true, true, truncatedKeys);
+            }
+
+            // A bind variable that each execution of one factory binds anew.
+            final String bound = "SELECT t.k, t.v, d.w FROM t LEFT JOIN d ON t.k = d.k AND d.w > $1";
+            bindVariableService.clear();
+            bindVariableService.setLong(0, 5);
+            try (RecordCursorFactory factory = select(bound)) {
+                for (long lo : new long[]{5, 20}) {
+                    bindVariableService.clear();
+                    bindVariableService.setLong(0, lo);
+                    assertExecution(factory, bound, true, true, "SELECT count() FROM (SELECT k, count() c FROM d WHERE w > " + lo + ") WHERE c > 1");
+                }
             }
         });
     }
@@ -777,6 +919,8 @@ public class AsyncHashJoinBuildOnFilterTest extends AbstractCairoTest {
                     )
                     """);
             sqlExecutionContext.changePageFrameSizes(3, 3);
+            // A cap of one tuple, which a task lifts to its frame's three rows.
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 1);
             // Comparisons of variable-size columns are cheap; functions over them are not. arr2 holds no
             // NULL: two NULL arrays compare by what their views read before, in either plan.
             final Object[][] conjuncts = {
@@ -798,7 +942,161 @@ public class AsyncHashJoinBuildOnFilterTest extends AbstractCairoTest {
                 final boolean isSized = (Boolean) conjunct[1];
                 assertPushdown("t", "dv", "t.k = d.k", pushed + " AND d.w > t.v % 20", pushed, isSized, 0);
                 assertPushdown("t", "dv", "t.k = d.k", pushed, pushed, isSized, 0);
+                // dv holds no more rows than t, so the build runs the whole residual, and the stage
+                // hands the chains of the rows it kept to the consumer, which reads their payload.
+                assertChainsHandedOn(
+                        "SELECT t.k, t.v, d.* FROM t LEFT JOIN dv d ON t.k = d.k AND " + pushed,
+                        "SELECT count() FROM (SELECT k, count() c FROM dv WHERE " + pushed.replace("d.", "") + ") WHERE c > 1"
+                );
             }
+        });
+    }
+
+    @Test
+    public void testWholePushedResidualHandsChainsOn() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // A cap of one tuple, which a task lifts to its frame's rows: a stage that walked a build of
+            // several rows per key would leave the rest of a frame to a continuation.
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 1);
+            // The keys, the build's columns that they read, and the build: INT, SYMBOL and staged keys,
+            // and a build of unique keys.
+            final String[][] keys = {
+                    {"t.k = d.k", "k", "d"},
+                    {"t.sym = d.s", "s", "d"},
+                    {"t.k = d.k AND t.sym = d.s", "k, s", "d"},
+                    {"t.k = d.k", "k", "u"},
+            };
+            for (int frameRows : new int[]{1, 3, 1_000_000}) {
+                sqlExecutionContext.changePageFrameSizes(frameRows, frameRows);
+                for (Object[] residual : RESIDUALS) {
+                    final String on = (String) residual[0];
+                    // The residuals that the build runs whole in every execution: those whose leading
+                    // conjuncts of the build alone make up the residual, none of which the size rule
+                    // governs.
+                    if (!on.equals(residual[1]) || (Boolean) residual[2]) {
+                        continue;
+                    }
+                    final String kept = on.replace("d.", "");
+                    for (String[] key : keys) {
+                        final String sql = "SELECT t.k, t.v, d.* FROM t LEFT JOIN " + key[2] + " d ON " + key[0] + " AND " + on;
+                        final String repeatedKeys = "SELECT count() FROM (SELECT " + key[1] + ", count() c FROM " + key[2] + " WHERE " + kept + ") WHERE c > 1";
+                        assertChainsHandedOn(sql, repeatedKeys);
+                    }
+                    // A backward probe scan, and the build scan's own filter, compiled or not, which
+                    // runs before the residual.
+                    final String repeatedKeys = "SELECT count() FROM (SELECT k, count() c FROM d WHERE " + kept + ") WHERE c > 1";
+                    assertChainsHandedOn("SELECT t.k, t.v, d.* FROM t LEFT JOIN d ON t.k = d.k AND " + on + " ORDER BY t.ts DESC", repeatedKeys);
+                    for (int jitMode : new int[]{SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_DISABLED}) {
+                        sqlExecutionContext.setJitMode(jitMode);
+                        assertChainsHandedOn(
+                                "SELECT t.k, t.v, d.* FROM t LEFT JOIN (SELECT * FROM d WHERE w > 2) d ON t.k = d.k AND " + on,
+                                "SELECT count() FROM (SELECT k, count() c FROM d WHERE w > 2 AND " + kept + ") WHERE c > 1"
+                        );
+                    }
+                    sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+                }
+            }
+
+            // dp's row of key 20 holds w = 10, whose w * 1000 does not fit DECIMAL(4,0), and t holds no
+            // key 20: the build gives the conjunct up, since the serial join never runs it over that
+            // row, and the stage walks its matches under the whole residual, past the cap.
+            execute("CREATE TABLE dp AS (SELECT (x % 5)::INT k, x % 9 w FROM long_sequence(15))");
+            execute("INSERT INTO dp VALUES (20, 10)");
+            execute("INSERT INTO dp SELECT (x % 5)::INT, x % 9 FROM long_sequence(15)");
+            sqlExecutionContext.changePageFrameSizes(3, 3);
+            final String abandoned = "SELECT t.k, t.v, d.w FROM t LEFT JOIN dp d ON t.k = d.k AND (d.w * 1000)::DECIMAL(4,0) > d.k::DECIMAL(4,0)";
+            TestUtils.assertContains(assertParallelHashJoin(abandoned, sqlExecutionContext), "buildOnFilter: ");
+            try (RecordCursorFactory factory = select(abandoned)) {
+                assertExecution(factory, abandoned, false, false, null);
+            }
+        });
+    }
+
+    @Test
+    public void testWholePushedResidualInSqlContexts() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // A cap of one tuple, which a task lifts to its frame's three rows.
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 1);
+            sqlExecutionContext.changePageFrameSizes(3, 3);
+            // The residual keeps two of d's rows in every three, which repeat each key.
+            final String join = "SELECT t.k, t.v, t.ts, d.w FROM t LEFT JOIN d ON t.k = d.k AND d.w % 3 <> 0";
+            final String repeatedKeys = "SELECT count() FROM (SELECT k, count() c FROM d WHERE w % 3 <> 0) WHERE c > 1";
+            assertChainsHandedOn(join, repeatedKeys);
+            // The plain SQL that the residual means: a LEFT join of d's rows that pass it, on the
+            // ordinary plan.
+            try (RecordCursorFactory factory = select(join)) {
+                Assert.assertEquals(
+                        ordinary("SELECT t.k, t.v, t.ts, d.w FROM t LEFT JOIN (SELECT * FROM d WHERE w % 3 <> 0) d ON t.k = d.k", sqlExecutionContext),
+                        result(factory, sqlExecutionContext)
+                );
+            }
+            // A sub-query, a CTE, ORDER BY the probe's timestamp descending, a window function over
+            // the join, and a LIMIT, whose rows the first frame's three probe rows hold.
+            for (String sql : new String[]{
+                    "SELECT * FROM (" + join + ")",
+                    "WITH j AS (" + join + ") SELECT * FROM j",
+                    join + " ORDER BY t.ts DESC",
+                    "SELECT k, v, w, row_number() OVER (ORDER BY ts) rn FROM (" + join + ")",
+                    join + " LIMIT 10",
+            }) {
+                assertParallelHashJoin(sql, sqlExecutionContext);
+                try (RecordCursorFactory factory = select(sql)) {
+                    final AsyncHashJoinRecordCursorFactory asyncJoin = find(factory);
+                    Assert.assertNotNull(sql, asyncJoin);
+                    Assert.assertEquals(sql, ordinary(sql, sqlExecutionContext), result(factory, sqlExecutionContext));
+                    Assert.assertEquals(sql, 0, asyncJoin.getAtom().getContinuationCount());
+                }
+            }
+            // A negative LIMIT counts the rows first, which indexes the chain lengths of d's kept rows.
+            final String lastRows = join + " LIMIT -5";
+            assertParallelHashJoin(lastRows, sqlExecutionContext);
+            try (RecordCursorFactory factory = select(lastRows)) {
+                final AsyncHashJoinRecordCursorFactory asyncJoin = find(factory);
+                Assert.assertNotNull(lastRows, asyncJoin);
+                final HashJoinBuildStage stage = asyncJoin.getAtom().getStage(0);
+                final long passes = stage.getChainLengthIndexCount();
+                Assert.assertEquals(lastRows, ordinary(lastRows, sqlExecutionContext), result(factory, sqlExecutionContext));
+                Assert.assertEquals(lastRows, passes + 1, stage.getChainLengthIndexCount());
+            }
+            // UNION ALL of two such joins.
+            assertParallelHashJoin(join + " UNION ALL " + join.replace("d.w % 3 <> 0", "d.w % 3 = 0"), sqlExecutionContext);
+        });
+    }
+
+    @Test
+    public void testWholePushedResidualOverDataShapes() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // A cap of one tuple, which a task lifts to its frame's three rows.
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 1);
+            sqlExecutionContext.changePageFrameSizes(3, 3);
+            final long probeRows = count("SELECT count() FROM t");
+            // A residual that keeps none of d's rows leaves every probe row one row of NULLs, and one
+            // that keeps a single row one match at most; neither build repeats a key.
+            for (String residual : new String[]{"d.w > 1_000_000", "d.w = 7"}) {
+                final String sql = "SELECT t.k, t.v, d.w FROM t LEFT JOIN d ON t.k = d.k AND " + residual;
+                assertChainsHandedOn(sql, "SELECT count() FROM (SELECT k, count() c FROM d WHERE " + residual.replace("d.", "") + ") WHERE c > 1");
+                Assert.assertEquals(sql, probeRows, ordinaryRowCount(sql));
+            }
+            // A column of NULLs alone: one residual over it keeps every row, and another none.
+            execute("CREATE TABLE dn AS (SELECT (x % 5)::INT k, x w, NULL::LONG n FROM long_sequence(20))");
+            for (String residual : new String[]{"d.n IS NULL", "d.n > 0"}) {
+                assertChainsHandedOn(
+                        "SELECT t.k, t.v, d.w FROM t LEFT JOIN dn d ON t.k = d.k AND " + residual,
+                        "SELECT count() FROM (SELECT k, count() c FROM dn WHERE " + residual.replace("d.", "") + ") WHERE c > 1"
+                );
+            }
+            // A column added after the table held rows, which the earlier rows read as NULLs: the
+            // residual over it drops them, and keeps the later rows, which repeat each key.
+            execute("CREATE TABLE dc AS (SELECT k, w FROM d)");
+            execute("ALTER TABLE dc ADD COLUMN w2 LONG");
+            execute("INSERT INTO dc SELECT k, w + 40, w FROM d");
+            assertChainsHandedOn(
+                    "SELECT t.k, t.v, d.w, d.w2 FROM t LEFT JOIN dc d ON t.k = d.k AND d.w2 > 0",
+                    "SELECT count() FROM (SELECT k, count() c FROM dc WHERE w2 > 0) WHERE c > 1"
+            );
         });
     }
 
@@ -813,6 +1111,51 @@ public class AsyncHashJoinBuildOnFilterTest extends AbstractCairoTest {
                 Assert.assertEquals(rows, buildStage.getFrozenBuild().getRowCount());
             }
         }
+    }
+
+    // Asserts the query, whose first stage is a LEFT join of t under an ON residual that its build runs
+    // whole, against the ordinary plan, in order, and that the stage hands its chains to the
+    // consumer; see assertExecution().
+    private static void assertChainsHandedOn(String sql, String repeatedKeys) throws SqlException {
+        assertParallelHashJoin(sql, sqlExecutionContext);
+        try (RecordCursorFactory factory = select(sql)) {
+            assertExecution(factory, sql, true, true, repeatedKeys);
+        }
+    }
+
+    // Executes the factory of the query, a join of t whose first stage is a LEFT join under an ON
+    // residual that leads with conjuncts of the build alone, and asserts that the stage's build ran
+    // them, or not; that the rows equal the ordinary plan's, in order; and that the stage handed its
+    // chains to the consumer, or walked its matches on the workers. A stage that hands its chains on
+    // writes one tuple per probe row, so no frame continues past a cap of one tuple, and a count of
+    // the join's rows from the top indexes the chain lengths of its build when the build's rows repeat
+    // a key, which the given plain query, of the keys of more than one row that the build kept,
+    // tells. A stage that walks its matches, which the callers' builds repeat each key for, leaves
+    // the rest of some frame to a continuation, and indexes no build.
+    private static void assertExecution(
+            RecordCursorFactory factory,
+            String sql,
+            boolean isApplied,
+            boolean isHandedOn,
+            @Nullable String repeatedKeys
+    ) throws SqlException {
+        final AsyncHashJoinRecordCursorFactory join = find(factory);
+        Assert.assertNotNull(sql, join);
+        final HashJoinBuildStage stage = join.getAtom().getStage(0);
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            cursor.hasNext();
+            Assert.assertEquals(sql, isApplied, stage.isBuildOnFilterApplied());
+        }
+        Assert.assertEquals(sql, ordinary(sql, sqlExecutionContext), result(factory, sqlExecutionContext));
+        Assert.assertEquals(sql, isHandedOn, join.getAtom().getContinuationCount() == 0);
+        final long passes = stage.getChainLengthIndexCount();
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            final RecordCursor.Counter counter = new RecordCursor.Counter();
+            cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
+            Assert.assertEquals(sql, ordinaryRowCount(sql), counter.get());
+        }
+        final boolean isIndexed = isHandedOn && repeatedKeys != null && count(repeatedKeys) > 0;
+        Assert.assertEquals(sql, passes + (isIndexed ? 1 : 0), stage.getChainLengthIndexCount());
     }
 
     // Asserts the parallel hash join of t LEFT JOIN build d ON keys AND residual against the ordinary
@@ -901,10 +1244,31 @@ public class AsyncHashJoinBuildOnFilterTest extends AbstractCairoTest {
         return null;
     }
 
+    // True when the HashJoinBuildStage method is on the current thread's stack.
+    private static boolean isOnStack(String methodName) {
+        return StackWalker.getInstance().walk(frames -> frames.anyMatch(frame -> frame.getClassName().equals(HashJoinBuildStage.class.getName())
+                && frame.getMethodName().equals(methodName)));
+    }
+
     private static long ordinaryCount(String sql) throws SqlException {
         sqlExecutionContext.setParallelHashJoinEnabled(false);
         try {
             return count(sql);
+        } finally {
+            sqlExecutionContext.setParallelHashJoinEnabled(true);
+        }
+    }
+
+    // The rows of the query's ordinary plan, which runs no operator, read one by one.
+    private static long ordinaryRowCount(String sql) throws SqlException {
+        sqlExecutionContext.setParallelHashJoinEnabled(false);
+        try (RecordCursorFactory factory = select(sql); RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            Assert.assertNull(sql, find(factory));
+            long count = 0;
+            while (cursor.hasNext()) {
+                count++;
+            }
+            return count;
         } finally {
             sqlExecutionContext.setParallelHashJoinEnabled(true);
         }

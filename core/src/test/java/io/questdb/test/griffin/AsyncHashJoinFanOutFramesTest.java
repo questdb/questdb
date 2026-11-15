@@ -49,12 +49,13 @@ import static io.questdb.test.griffin.ParallelHashJoinTestUtils.*;
  * The probe frames of a parallel hash join whose workers walk duplicate matches: once the builds are
  * done, the probe scan cuts frames of no more rows than a task's cap of tuples holds at the fan-out
  * that the builds lead one to expect, the product of the rows per key of every build whose matches
- * the workers walk, under an ON residual or a post-join filter. Such a frame needs no continuation,
- * where a frame of the configured rows leaves its rest to the consumer. The frames never get fewer
- * rows than {@code cairo.sql.page.frame.min.rows}; a stage that hands its chains to the consumer,
- * a build of one row per key and an empty one lower nothing; a Parquet partition keeps its row
- * groups; and each execution of a cached factory sizes its frames from its own builds. The rows
- * always equal the ordinary plan's, in order.
+ * the workers walk, under an ON residual that the pairs run or a post-join filter. Such a frame
+ * needs no continuation, where a frame of the configured rows leaves its rest to the consumer. The
+ * frames never get fewer rows than {@code cairo.sql.page.frame.min.rows}; a stage that hands its
+ * chains to the consumer, a LEFT join's among them whose build ran its whole ON residual, a build
+ * of one row per key and an empty one lower nothing; a Parquet partition keeps its row groups; and
+ * each execution of a cached factory sizes its frames from its own builds. The rows always equal
+ * the ordinary plan's, in order.
  * <p>
  * The probe table t holds 24 rows in one partition, four keys, and d three rows of each key.
  */
@@ -62,11 +63,18 @@ public class AsyncHashJoinFanOutFramesTest extends AbstractCairoTest {
     // Joins whose single stage walks d's three matches of each key on the workers.
     private static final String[] ENUMERATED = {
             "SELECT t.v, d.w FROM t JOIN d ON t.k = d.k WHERE d.w > t.v - 1_000",
-            "SELECT t.v, d.w FROM t LEFT JOIN d ON t.k = d.k AND d.w > 0",
-            "SELECT t.v, d.w FROM t LEFT JOIN d ON t.k = d.k AND d.w > 0 ORDER BY ts DESC",
+            "SELECT t.v, d.w FROM t LEFT JOIN d ON t.k = d.k AND d.w > t.v - 1_000",
+            "SELECT t.v, d.w FROM t LEFT JOIN d ON t.k = d.k AND d.w > t.v - 1_000 ORDER BY ts DESC",
             "SELECT t.v, d.w FROM t JOIN d ON t.k = d.k WHERE t.v > 2 AND d.w > t.v - 1_000",
             // A projection that names a column twice keeps its own frame cursor over the scan's.
             "SELECT t.v, d.w FROM (SELECT ts, v, k k1, k k2 FROM t) t JOIN d ON t.k1 = d.k WHERE d.w > t.v - 1_000 + t.k2",
+    };
+    // LEFT joins whose ON residual reads d alone, which the build runs over d's rows, every one of
+    // which it keeps: the pairs run no filter, and the stage hands d's chains of three matches to the
+    // consumer, one entry per probe row, as a stage without a residual does.
+    private static final String[] PUSHED = {
+            "SELECT t.v, d.w FROM t LEFT JOIN d ON t.k = d.k AND d.w > 0",
+            "SELECT t.v, d.w FROM t LEFT JOIN d ON t.k = d.k AND d.w > 0 ORDER BY ts DESC",
     };
 
     @Override
@@ -93,6 +101,10 @@ public class AsyncHashJoinFanOutFramesTest extends AbstractCairoTest {
             sqlExecutionContext.changePageFrameSizes(2, 9);
             for (String sql : ENUMERATED) {
                 assertFrames(sql, 3, 0);
+            }
+            // A stage that hands its chains on caps no frame: the partition's seven rows make one.
+            for (String sql : PUSHED) {
+                assertFrames(sql, 1, 0);
             }
         });
     }
@@ -149,6 +161,10 @@ public class AsyncHashJoinFanOutFramesTest extends AbstractCairoTest {
             assertFrames("SELECT t.v, u.w FROM t JOIN u ON t.k = u.k WHERE u.w > t.v - 1_000", 4, 0);
             assertFrames("SELECT t.v, e.w FROM t LEFT JOIN e ON t.k = e.k AND e.w > t.v", 4, 0);
             assertFrames("SELECT t.v, e.w FROM t LEFT JOIN e ON t.k = e.k WHERE e.w IS NULL", 4, 0);
+            // So does a LEFT join's stage whose build ran its whole ON residual over d's rows.
+            for (String sql : PUSHED) {
+                assertFrames(sql, 4, 0);
+            }
         });
     }
 
@@ -172,6 +188,17 @@ public class AsyncHashJoinFanOutFramesTest extends AbstractCairoTest {
                 assertFrames(sql, 1, 0);
                 setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 6);
             }
+            for (String sql : PUSHED) {
+                // One tuple per probe row: frames of the six configured rows fit the cap of six.
+                sqlExecutionContext.changePageFrameSizes(6, 6);
+                assertFrames(sql, 4, 0);
+                sqlExecutionContext.changePageFrameSizes(1, 6);
+                assertFrames(sql, 4, 0);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 100);
+                sqlExecutionContext.changePageFrameSizes(1, 24);
+                assertFrames(sql, 1, 0);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 6);
+            }
         });
     }
 
@@ -186,6 +213,10 @@ public class AsyncHashJoinFanOutFramesTest extends AbstractCairoTest {
             for (String sql : ENUMERATED) {
                 assertFrames(sql, 6, -1);
             }
+            // A stage that hands its chains on keeps the six configured rows a frame.
+            for (String sql : PUSHED) {
+                assertFrames(sql, 4, 0);
+            }
         });
     }
 
@@ -193,30 +224,39 @@ public class AsyncHashJoinFanOutFramesTest extends AbstractCairoTest {
     public void testFramesPerExecutionOfCachedFactory() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            execute("CREATE TABLE g AS (SELECT (x % 4)::INT k, x * 3 w FROM long_sequence(4))");
             setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 12);
             sqlExecutionContext.changePageFrameSizes(1, 12);
-            final String sql = "SELECT t.v, g.w FROM t LEFT JOIN g ON t.k = g.k AND g.w > 0";
-            try (RecordCursorFactory factory = select(sql)) {
-                final AsyncHashJoinRecordCursorFactory join = find(factory);
-                Assert.assertNotNull(join);
-                // One row per key, then two, then six: frames of twelve rows, six, two.
-                final int[] frames = {2, 4, 12};
-                final int[] inserts = {4, 16};
-                for (int execution = 0; execution < frames.length; execution++) {
-                    if (execution > 0) {
-                        execute("INSERT INTO g SELECT (x % 4)::INT k, x * 3 w FROM long_sequence(" + inserts[execution - 1] + ")");
+            // One row per key, then two, then six: frames of twelve rows, six, two, where the workers
+            // walk g's matches; a stage whose build ran its whole residual over g's rows hands its
+            // chains on, and keeps frames of twelve rows.
+            final Object[][] queries = {
+                    {"SELECT t.v, g.w FROM t LEFT JOIN g ON t.k = g.k AND g.w > t.v - 1_000", new int[]{2, 4, 12}},
+                    {"SELECT t.v, g.w FROM t LEFT JOIN g ON t.k = g.k AND g.w > 0", new int[]{2, 2, 2}},
+            };
+            for (Object[] query : queries) {
+                final String sql = (String) query[0];
+                final int[] frames = (int[]) query[1];
+                execute("DROP TABLE IF EXISTS g");
+                execute("CREATE TABLE g AS (SELECT (x % 4)::INT k, x * 3 w FROM long_sequence(4))");
+                try (RecordCursorFactory factory = select(sql)) {
+                    final AsyncHashJoinRecordCursorFactory join = find(factory);
+                    Assert.assertNotNull(join);
+                    final int[] inserts = {4, 16};
+                    for (int execution = 0; execution < frames.length; execution++) {
+                        if (execution > 0) {
+                            execute("INSERT INTO g SELECT (x % 4)::INT k, x * 3 w FROM long_sequence(" + inserts[execution - 1] + ")");
+                        }
+                        final String expected = ordinary(sql, sqlExecutionContext);
+                        Assert.assertEquals(sql, expected, result(factory, sqlExecutionContext));
+                        Assert.assertEquals(sql, frames[execution], probeFrames(factory, join));
+                        Assert.assertEquals(sql, 0, join.getAtom().getContinuationCount());
                     }
-                    final String expected = ordinary(sql, sqlExecutionContext);
-                    Assert.assertEquals(sql, expected, result(factory, sqlExecutionContext));
-                    Assert.assertEquals(sql, frames[execution], probeFrames(factory, join));
-                    Assert.assertEquals(sql, 0, join.getAtom().getContinuationCount());
+                    // Back to one row per key: frames of twelve rows again.
+                    execute("TRUNCATE TABLE g");
+                    execute("INSERT INTO g SELECT (x % 4)::INT k, x * 3 w FROM long_sequence(4)");
+                    Assert.assertEquals(sql, ordinary(sql, sqlExecutionContext), result(factory, sqlExecutionContext));
+                    Assert.assertEquals(sql, 2, probeFrames(factory, join));
                 }
-                // Back to one row per key: the frames grow back.
-                execute("TRUNCATE TABLE g");
-                execute("INSERT INTO g SELECT (x % 4)::INT k, x * 3 w FROM long_sequence(4)");
-                Assert.assertEquals(ordinary(sql, sqlExecutionContext), result(factory, sqlExecutionContext));
-                Assert.assertEquals(2, probeFrames(factory, join));
             }
         });
     }
@@ -235,6 +275,11 @@ public class AsyncHashJoinFanOutFramesTest extends AbstractCairoTest {
                 // The Parquet frame's twelve rows yield thirty-six tuples, and leave a continuation.
                 assertFrames(sql, 1 + 6, -1);
             }
+            // A stage that hands its chains on writes twelve tuples for either partition: the native
+            // one keeps a frame of its twelve rows.
+            for (String sql : PUSHED) {
+                assertFrames(sql, 1 + 1, 0);
+            }
         });
     }
 
@@ -248,9 +293,14 @@ public class AsyncHashJoinFanOutFramesTest extends AbstractCairoTest {
             writeParquet("t", "t.parquet");
             setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 6);
             sqlExecutionContext.changePageFrameSizes(1, 6);
-            final String sql = "SELECT p.v, d.w FROM read_parquet('t.parquet') p LEFT JOIN d ON p.k = d.k AND d.w > 0";
+            final String sql = "SELECT p.v, d.w FROM read_parquet('t.parquet') p LEFT JOIN d ON p.k = d.k AND d.w > p.v - 1_000";
             assertFrames(sql, 2, -1);
             TestUtils.assertContains(assertParallelHashJoin(sql, sqlExecutionContext), "parquet");
+            // A stage whose build ran its whole residual writes twelve tuples per row group, which fit
+            // the cap of the frame's rows.
+            final String pushed = "SELECT p.v, d.w FROM read_parquet('t.parquet') p LEFT JOIN d ON p.k = d.k AND d.w > 0";
+            assertFrames(pushed, 2, 0);
+            TestUtils.assertContains(assertParallelHashJoin(pushed, sqlExecutionContext), "parquet");
         });
     }
 
@@ -266,9 +316,15 @@ public class AsyncHashJoinFanOutFramesTest extends AbstractCairoTest {
                 for (String sql : ENUMERATED) {
                     assertFrames(sql, 12, 0);
                 }
+                for (String sql : PUSHED) {
+                    assertFrames(sql, 4, 0);
+                }
                 sqlExecutionContext.changePageFrameSizes(6, 6);
                 for (String sql : ENUMERATED) {
                     assertFrames(sql, 4, -1);
+                }
+                for (String sql : PUSHED) {
+                    assertFrames(sql, 4, 0);
                 }
             } finally {
                 AsyncHashJoinRecordCursorFactory.setStepperCopiesEnabledForTesting(true);
@@ -284,12 +340,20 @@ public class AsyncHashJoinFanOutFramesTest extends AbstractCairoTest {
             execute("CREATE TABLE f AS (SELECT (x % 4)::INT k, x * 10 w2 FROM long_sequence(8))");
             setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 12);
             sqlExecutionContext.changePageFrameSizes(1, 12);
-            // Both stages walk their matches, three times two per probe row: frames of two rows.
+            // Both stages walk their matches, three times two per probe row: frames of two rows. The
+            // first stage's build ran its whole residual, but the second stage's residual reads its
+            // matches.
             assertFrames("SELECT t.v, d.w, f.w2 FROM t LEFT JOIN d ON t.k = d.k AND d.w > 0 LEFT JOIN f ON t.k = f.k AND f.w2 > d.w - 1_000", 12, 0);
             assertFrames("SELECT t.v, d.w, f.w2 FROM t JOIN d ON t.k = d.k JOIN f ON t.k = f.k WHERE f.w2 > t.v - 1_000", 12, 0);
             // Only the first stage walks its matches, three per probe row, and the second hands its
-            // chains to the consumer: frames of four rows.
-            assertFrames("SELECT t.v, d.w, f.w2 FROM t LEFT JOIN d ON t.k = d.k AND d.w > 0 LEFT JOIN f ON t.k = f.k", 6, 0);
+            // chains to the consumer, with no residual or with one that its build ran whole: frames
+            // of four rows.
+            assertFrames("SELECT t.v, d.w, f.w2 FROM t LEFT JOIN d ON t.k = d.k AND d.w > t.v - 1_000 LEFT JOIN f ON t.k = f.k", 6, 0);
+            assertFrames("SELECT t.v, d.w, f.w2 FROM t LEFT JOIN d ON t.k = d.k AND d.w > t.v - 1_000 LEFT JOIN f ON t.k = f.k AND f.w2 > 0", 6, 0);
+            // Both stages' builds ran their whole residuals: both hand their chains on, and the
+            // frames keep the twelve configured rows.
+            assertFrames("SELECT t.v, d.w, f.w2 FROM t LEFT JOIN d ON t.k = d.k AND d.w > 0 LEFT JOIN f ON t.k = f.k", 2, 0);
+            assertFrames("SELECT t.v, d.w, f.w2 FROM t LEFT JOIN d ON t.k = d.k AND d.w > 0 LEFT JOIN f ON t.k = f.k AND f.w2 > 0", 2, 0);
         });
     }
 
@@ -303,11 +367,16 @@ public class AsyncHashJoinFanOutFramesTest extends AbstractCairoTest {
             setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 6);
             sqlExecutionContext.changePageFrameSizes(1, 6);
             execute("CREATE TABLE u AS (SELECT (x % 4)::INT k, x * 7 w2 FROM long_sequence(4))");
+            // d holds three rows of each key.
+            execute("CREATE TABLE d AS (SELECT (x % 4)::INT k, x * 100 w FROM long_sequence(12))");
             for (String sql : new String[]{
                     "SELECT l.v, r.w FROM l JOIN r ON l.k = r.k WHERE r.w > l.v",
                     // A later stage reads its key from l's rows, so the workers walk l's matches,
                     // though no filter reads them; the query's orientation would hand them on.
                     "SELECT l.v, r.w, u.w2 FROM l JOIN r ON l.k = r.k JOIN u ON l.k = u.k",
+                    // So they do ahead of a LEFT stage whose build ran its whole residual over d's
+                    // rows, which hands d's chains on: only l's fan-out caps the frames.
+                    "SELECT l.v, r.w, d.w dw FROM l JOIN r ON l.k = r.k LEFT JOIN d ON l.k = d.k AND d.w > 0",
             }) {
                 assertFrames(sql, 12, 0);
                 try (RecordCursorFactory factory = select(sql)) {
@@ -318,6 +387,49 @@ public class AsyncHashJoinFanOutFramesTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testWholePushedResidualKeepsTheDefaultFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            // One partition of 200_001 probe rows, and a build of eleven rows of each of the probe's
+            // thousand keys, every one of which the ON residual keeps. At the server's default frame
+            // sizes, a stage that walked its matches would cut frames of the 100_000-row floor, whose
+            // 1_100_000 tuples pass the default cap of a page frame's rows and leave their rest to
+            // continuations. A stage whose build ran its whole residual cuts the frames of the join
+            // without the residual: one frame of the partition's rows, which needs no continuation.
+            execute("CREATE TABLE tl AS (SELECT (x % 1_000)::INT k, x v, timestamp_sequence('2024-01-01', 100_000) ts FROM long_sequence(200_001)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE dl AS (SELECT (x % 1_000)::INT k, x w FROM long_sequence(11_000))");
+            sqlExecutionContext.changePageFrameSizes(100_000, 1_000_000);
+            Assert.assertEquals(1_000_000, configuration.getSqlParallelHashJoinTaskOutputMaxRows());
+            final String plain = "SELECT tl.v, dl.w FROM tl LEFT JOIN dl ON tl.k = dl.k";
+            Assert.assertEquals(1, assertDefaultFrames(plain));
+            Assert.assertEquals(1, assertDefaultFrames(plain + " AND dl.w > 0"));
+        });
+    }
+
+    // Compares the operator's rows with the ordinary plan's, in order, row by row, checks that the
+    // operator's execution needed no continuation, and returns the probe frames it cut.
+    private static int assertDefaultFrames(String sql) throws SqlException {
+        sqlExecutionContext.setParallelHashJoinEnabled(false);
+        try (RecordCursorFactory expected = select(sql)) {
+            Assert.assertNull(sql, find(expected));
+            sqlExecutionContext.setParallelHashJoinEnabled(true);
+            try (RecordCursorFactory factory = select(sql)) {
+                final AsyncHashJoinRecordCursorFactory join = find(factory);
+                Assert.assertNotNull(sql, join);
+                try (
+                        RecordCursor expectedCursor = expected.getCursor(sqlExecutionContext);
+                        RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+                ) {
+                    TestUtils.assertEquals(expectedCursor, expected.getMetadata(), cursor, factory.getMetadata(), false);
+                    Assert.assertEquals(sql, 0, join.getAtom().getContinuationCount());
+                    return join.getProbeFrameCount();
+                }
+            }
+        } finally {
+            sqlExecutionContext.setParallelHashJoinEnabled(true);
+        }
     }
 
     // Runs the query on the operator and compares it with the ordinary plan, and checks the probe
