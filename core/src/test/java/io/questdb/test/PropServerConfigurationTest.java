@@ -1363,6 +1363,83 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testHttpAllowedHosts() throws Exception {
+        Properties properties = new Properties();
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        // both HTTP servers serve the names public DNS cannot point at them, and no other
+        for (HttpServerConfiguration httpConfiguration : new HttpServerConfiguration[]{
+                configuration.getHttpServerConfiguration(),
+                configuration.getHttpMinServerConfiguration()
+        }) {
+            Assert.assertTrue(httpConfiguration.getAllowedHosts().isAllowed(new Utf8String("localhost:9000")));
+            Assert.assertFalse(httpConfiguration.getAllowedHosts().isAllowed(new Utf8String("questdb.example.com:9000")));
+        }
+
+        properties.setProperty(PropertyKey.HTTP_ALLOWED_HOSTS.getPropertyPath(), "questdb.example.com");
+        configuration = newPropServerConfiguration(properties);
+        for (HttpServerConfiguration httpConfiguration : new HttpServerConfiguration[]{
+                configuration.getHttpServerConfiguration(),
+                configuration.getHttpMinServerConfiguration()
+        }) {
+            Assert.assertTrue(httpConfiguration.getAllowedHosts().isAllowed(new Utf8String("questdb.example.com:9000")));
+            Assert.assertFalse(httpConfiguration.getAllowedHosts().isAllowed(new Utf8String("rebind.example.com:9000")));
+        }
+    }
+
+    @Test
+    public void testHttpAllowedHostsRejectsInvalidEntry() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.HTTP_ALLOWED_HOSTS.getPropertyPath(), "questdb.example.com:9000");
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertEquals(
+                    "http.allowed.hosts: expected comma-separated host names, domains written with a leading dot such as .example.com, or *; host names are listed without a port: questdb.example.com:9000",
+                    e.getMessage()
+            );
+        }
+    }
+
+    @Test
+    public void testHttpBrowserAllowedOrigins() throws Exception {
+        Properties properties = new Properties();
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        for (HttpServerConfiguration httpConfiguration : new HttpServerConfiguration[]{
+                configuration.getHttpServerConfiguration(),
+                configuration.getHttpMinServerConfiguration()
+        }) {
+            Assert.assertFalse(httpConfiguration.getBrowserAllowedOrigins().isAllowed(new Utf8String("https://app.example.com")));
+        }
+
+        properties.setProperty(PropertyKey.HTTP_BROWSER_ALLOWED_ORIGINS.getPropertyPath(), "https://app.example.com");
+        configuration = newPropServerConfiguration(properties);
+        for (HttpServerConfiguration httpConfiguration : new HttpServerConfiguration[]{
+                configuration.getHttpServerConfiguration(),
+                configuration.getHttpMinServerConfiguration()
+        }) {
+            Assert.assertTrue(httpConfiguration.getBrowserAllowedOrigins().isAllowed(new Utf8String("https://app.example.com")));
+            Assert.assertFalse(httpConfiguration.getBrowserAllowedOrigins().isAllowed(new Utf8String("https://other.example.com")));
+        }
+        // the QWP WebSocket allowlist is a separate setting
+        Assert.assertFalse(configuration.getHttpServerConfiguration().getQwpBrowserAllowedOrigins().isAllowed(
+                new Utf8String("https://app.example.com")));
+    }
+
+    @Test
+    public void testHttpBrowserAllowedOriginsRejectsInvalidEntry() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.HTTP_BROWSER_ALLOWED_ORIGINS.getPropertyPath(), "https://app.example.com/");
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "http.browser.allowed.origins: expected comma-separated http(s) origins");
+            TestUtils.assertContains(e.getMessage(), ": https://app.example.com/");
+        }
+    }
+
+    @Test
     public void testHttpConnectionLimits() throws Exception {
         Properties properties = new Properties();
         properties.setProperty(PropertyKey.HTTP_NET_CONNECTION_LIMIT.getPropertyPath(), "10");
@@ -2246,83 +2323,6 @@ public class PropServerConfigurationTest {
         configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(PartitionBy.YEAR, configuration.getLineTcpReceiverConfiguration().getDefaultPartitionBy());
         Assert.assertEquals(PartitionBy.YEAR, configuration.getLineUdpReceiverConfiguration().getDefaultPartitionBy());
-    }
-
-    @Test
-    public void testHttpAllowedHosts() throws Exception {
-        Properties properties = new Properties();
-        PropServerConfiguration configuration = newPropServerConfiguration(properties);
-        // both HTTP servers serve the names public DNS cannot point at them, and no other
-        for (HttpServerConfiguration httpConfiguration : new HttpServerConfiguration[]{
-                configuration.getHttpServerConfiguration(),
-                configuration.getHttpMinServerConfiguration()
-        }) {
-            Assert.assertTrue(httpConfiguration.getAllowedHosts().isAllowed(new Utf8String("localhost:9000")));
-            Assert.assertFalse(httpConfiguration.getAllowedHosts().isAllowed(new Utf8String("questdb.example.com:9000")));
-        }
-
-        properties.setProperty(PropertyKey.HTTP_ALLOWED_HOSTS.getPropertyPath(), "questdb.example.com");
-        configuration = newPropServerConfiguration(properties);
-        for (HttpServerConfiguration httpConfiguration : new HttpServerConfiguration[]{
-                configuration.getHttpServerConfiguration(),
-                configuration.getHttpMinServerConfiguration()
-        }) {
-            Assert.assertTrue(httpConfiguration.getAllowedHosts().isAllowed(new Utf8String("questdb.example.com:9000")));
-            Assert.assertFalse(httpConfiguration.getAllowedHosts().isAllowed(new Utf8String("rebind.example.com:9000")));
-        }
-    }
-
-    @Test
-    public void testHttpAllowedHostsRejectsInvalidEntry() throws Exception {
-        Properties properties = new Properties();
-        properties.setProperty(PropertyKey.HTTP_ALLOWED_HOSTS.getPropertyPath(), "questdb.example.com:9000");
-        try {
-            newPropServerConfiguration(properties);
-            Assert.fail();
-        } catch (ServerConfigurationException e) {
-            TestUtils.assertEquals(
-                    "http.allowed.hosts: expected comma-separated host names, domains written with a leading dot such as .example.com, or *; host names are listed without a port: questdb.example.com:9000",
-                    e.getMessage()
-            );
-        }
-    }
-
-    @Test
-    public void testHttpBrowserAllowedOrigins() throws Exception {
-        Properties properties = new Properties();
-        PropServerConfiguration configuration = newPropServerConfiguration(properties);
-        for (HttpServerConfiguration httpConfiguration : new HttpServerConfiguration[]{
-                configuration.getHttpServerConfiguration(),
-                configuration.getHttpMinServerConfiguration()
-        }) {
-            Assert.assertFalse(httpConfiguration.getBrowserAllowedOrigins().isAllowed(new Utf8String("https://app.example.com")));
-        }
-
-        properties.setProperty(PropertyKey.HTTP_BROWSER_ALLOWED_ORIGINS.getPropertyPath(), "https://app.example.com");
-        configuration = newPropServerConfiguration(properties);
-        for (HttpServerConfiguration httpConfiguration : new HttpServerConfiguration[]{
-                configuration.getHttpServerConfiguration(),
-                configuration.getHttpMinServerConfiguration()
-        }) {
-            Assert.assertTrue(httpConfiguration.getBrowserAllowedOrigins().isAllowed(new Utf8String("https://app.example.com")));
-            Assert.assertFalse(httpConfiguration.getBrowserAllowedOrigins().isAllowed(new Utf8String("https://other.example.com")));
-        }
-        // the QWP WebSocket allowlist is a separate setting
-        Assert.assertFalse(configuration.getHttpServerConfiguration().getQwpBrowserAllowedOrigins().isAllowed(
-                new Utf8String("https://app.example.com")));
-    }
-
-    @Test
-    public void testHttpBrowserAllowedOriginsRejectsInvalidEntry() throws Exception {
-        Properties properties = new Properties();
-        properties.setProperty(PropertyKey.HTTP_BROWSER_ALLOWED_ORIGINS.getPropertyPath(), "https://app.example.com/");
-        try {
-            newPropServerConfiguration(properties);
-            Assert.fail();
-        } catch (ServerConfigurationException e) {
-            TestUtils.assertContains(e.getMessage(), "http.browser.allowed.origins: expected comma-separated http(s) origins");
-            TestUtils.assertContains(e.getMessage(), ": https://app.example.com/");
-        }
     }
 
     @Test
