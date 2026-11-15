@@ -47,7 +47,8 @@ import java.util.TreeMap;
  *     the twin may be missing there, but a bucket the view has must match the twin's.</li>
  *     <li>An ATTACH or UPDATE range reaches the view through an in-memory task, which a restart before the task runs
  *     loses, and which a view with an invalidation pending drops. The buckets of such a range may hold old values
- *     until a RANGE refresh recomputes them.</li>
+ *     until a RANGE refresh recomputes them. Once the task ran, the range is in the view's cache, which a restart
+ *     reloads.</li>
  *     <li>Every other bucket of the twin, the base's buckets, must be in the view with the same values in the view's
  *     columns that its SQL produces.</li>
  *     <li>A period view and its twin hold the days whose period ended, which the clock completes one at a time from
@@ -293,6 +294,12 @@ final class MatViewFuzzOracle {
     // The period of the next day ended.
     void onPeriodCompleted() {
         completeDays++;
+    }
+
+    // The range task of an ATTACH or UPDATE of the day ran, after a refresh job run's bookkeeping, see
+    // onRefreshJobRun(): the view's cache holds the range, or the view recomputed it.
+    void onRangeTaskRun(int day) {
+        isPendingRange[day] = false;
     }
 
     // The refresh job ran: a range task it ran while an invalidation was pending dropped its range.

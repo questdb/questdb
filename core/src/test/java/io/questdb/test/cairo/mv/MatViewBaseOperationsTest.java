@@ -48,12 +48,15 @@ import io.questdb.std.Files;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 import static io.questdb.cairo.TableUtils.DETACHED_DIR_MARKER;
@@ -119,6 +122,14 @@ public class MatViewBaseOperationsTest extends AbstractCairoTest {
             2024-01-01T10:00:00.000000Z\tb\t2.0
             2024-01-02T00:00:00.000000Z\tc\t3.0
             """;
+    // The rows of VIEW_ROWS_AFTER_ATTACH and the bucket of 'd', inserted into 2024-01-03.
+    private static final String VIEW_ROWS_AFTER_ATTACH_AND_INSERT = """
+            ts\tsym\tprice
+            2024-01-01T00:00:00.000000Z\ta\t1.0
+            2024-01-01T10:00:00.000000Z\tb\t2.0
+            2024-01-02T00:00:00.000000Z\tc\t3.0
+            2024-01-03T00:00:00.000000Z\td\t4.0
+            """;
     // The rows from before the truncate stay, the interval of 'a' at 00:20 written before it is dropped, and the
     // bucket of 'd' written after it is recomputed.
     private static final String VIEW_ROWS_AFTER_TRUNCATE = """
@@ -128,7 +139,25 @@ public class MatViewBaseOperationsTest extends AbstractCairoTest {
             2024-01-01T10:00:00.000000Z\tb\t2.0
             2024-01-02T00:00:00.000000Z\tc\t3.0
             """;
+    // The rows of a view over the base of createBaseWithAttachableDay() before the ATTACH: the bucket of 2024-01-02.
+    private static final String VIEW_ROWS_BEFORE_ATTACH = """
+            ts\tsym\tprice
+            2024-01-02T00:00:00.000000Z\tc\t3.0
+            """;
     private static final String VIEW_SQL = "SELECT ts, sym, last(price) AS price FROM base SAMPLE BY 1h";
+
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        // The real state store, with the hook that the tests of a range task taken before the WAL apply job moves the
+        // base's SeqTxnTracker arm, see applyInOneRunWithEarlyRangeTask().
+        engineFactory = conf -> new CairoEngine(conf) {
+            @Override
+            protected MatViewStateStore createMatViewStateStore() {
+                return getConfiguration().isMatViewEnabled() ? new MatViewRangeTaskSeamStateStore(this) : super.createMatViewStateStore();
+            }
+        };
+        AbstractCairoTest.setUpStatic();
+    }
 
     @Test
     public void testAttachAndTruncateInOneBatchQueueOnlyLaterRange() throws Exception {
@@ -1233,6 +1262,241 @@ public class MatViewBaseOperationsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRangeTaskBeforeTrackerUpdateCachesInsertBeforeAttach() throws Exception {
+        // A MANUAL view. An INSERT into 2024-01-03 (base txn 3) and the ATTACH of 2024-01-01 (4) apply in one WAL apply
+        // run, and the refresh job takes the ATTACH's range task before the apply job moves the base's SeqTxnTracker
+        // past 2. The task brings the view's cache up to the ATTACH: it caches the interval of the inserted row, which
+        // the WAL scan finds, then the attached day.
+        assertMemoryLeak(() -> {
+            createRefreshedViewOverAttachableDay("MANUAL");
+            applyInOneRunWithEarlyRangeTask(
+                    4,
+                    "INSERT INTO base VALUES ('d', 4.0, '2024-01-03T00:10:00.000000Z')",
+                    "ALTER TABLE base ATTACH PARTITION LIST '2024-01-01'"
+            );
+            assertCache(
+                    4,
+                    "2024-01-01T00:00:00.000000Z", "2024-01-01T23:59:59.999999Z",
+                    "2024-01-03T00:10:00.000000Z", "2024-01-03T00:10:00.000000Z"
+            );
+
+            execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+            drainWalAndMatViewQueues();
+            assertViewRows(VIEW_ROWS_AFTER_ATTACH_AND_INSERT);
+            assertAttachedDayMatchesViewSql();
+            assertCacheEmpty("price_1h");
+            assertViewValidAndCaughtUp("price_1h");
+        });
+    }
+
+    @Test
+    public void testRangeTaskBeforeTrackerUpdateCachesInsertBetweenTruncateAndAttach() throws Exception {
+        // A MANUAL view. TRUNCATE (base txn 3), an INSERT into 2024-01-03 (4) and the ATTACH of 2024-01-01 (5) apply in
+        // one WAL apply run, and the refresh job takes the ATTACH's range task before the apply job moves the base's
+        // SeqTxnTracker past 2. The task's WAL scan meets the TRUNCATE and keeps the interval of the row inserted after
+        // it, then the task adds the attached day. The view keeps its row of 2024-01-02, which the truncate removed.
+        assertMemoryLeak(() -> {
+            createRefreshedViewOverAttachableDay("MANUAL");
+            applyInOneRunWithEarlyRangeTask(
+                    5,
+                    "TRUNCATE TABLE base",
+                    "INSERT INTO base VALUES ('d', 4.0, '2024-01-03T00:10:00.000000Z')",
+                    "ALTER TABLE base ATTACH PARTITION LIST '2024-01-01'"
+            );
+            assertCache(
+                    5,
+                    "2024-01-01T00:00:00.000000Z", "2024-01-01T23:59:59.999999Z",
+                    "2024-01-03T00:10:00.000000Z", "2024-01-03T00:10:00.000000Z"
+            );
+
+            execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+            drainWalAndMatViewQueues();
+            assertViewRows(VIEW_ROWS_AFTER_ATTACH_AND_INSERT);
+            assertAttachedDayMatchesViewSql();
+            assertCacheEmpty("price_1h");
+            assertViewValidAndCaughtUp("price_1h");
+        });
+    }
+
+    @Test
+    public void testRangeTaskBeforeTrackerUpdateKeepsAttachAfterTruncateImmediate() throws Exception {
+        // An IMMEDIATE view. TRUNCATE (base txn 3) and the ATTACH of 2024-01-01 (4) apply in one WAL apply run, and the
+        // refresh job takes the ATTACH's range task before the apply job moves the base's SeqTxnTracker past 2, then
+        // the incremental refresh that the task queues. The task brings the view's cache up to the ATTACH, which
+        // applies the TRUNCATE cut before it adds the range, so the refresh recomputes the attached day. The view keeps
+        // its row of 2024-01-02, which the truncate removed.
+        assertMemoryLeak(() -> {
+            createRefreshedViewOverAttachableDay("IMMEDIATE");
+            applyInOneRunWithEarlyRangeTask(4, "TRUNCATE TABLE base", "ALTER TABLE base ATTACH PARTITION LIST '2024-01-01'");
+            drainWalAndMatViewQueues();
+            assertViewRows(VIEW_ROWS_AFTER_ATTACH);
+            assertAttachedDayMatchesViewSql();
+            assertCacheEmpty("price_1h");
+            assertViewValidAndCaughtUp("price_1h");
+        });
+    }
+
+    @Test
+    public void testRangeTaskBeforeTrackerUpdateKeepsAttachAfterTruncateInBacklog() throws Exception {
+        // An invalid MANUAL view, whose backlog is tracked. TRUNCATE (base txn 3) and the ATTACH of 2024-01-01 (4) apply
+        // in one WAL apply run, and the refresh job takes the ATTACH's range task before the apply job moves the base's
+        // SeqTxnTracker past 2. The task brings the backlog up to the ATTACH, which applies the TRUNCATE cut before it
+        // adds the range, so RESUME keeps the range and the next REFRESH ... INCREMENTAL recomputes the attached day.
+        assertMemoryLeak(() -> {
+            createRefreshedViewOverAttachableDay("MANUAL");
+            engine.getMatViewStateStore().enqueueInvalidate(engine.verifyTableName("price_1h"), "test invalidation");
+            drainWalAndMatViewQueues();
+            assertViewStatus("price_1h", "invalid", "test invalidation");
+
+            applyInOneRunWithEarlyRangeTask(4, "TRUNCATE TABLE base", "ALTER TABLE base ATTACH PARTITION LIST '2024-01-01'");
+            assertViewStatus("price_1h", "invalid", "test invalidation");
+            assertCache(4, "2024-01-01T00:00:00.000000Z", "2024-01-01T23:59:59.999999Z");
+
+            execute("REFRESH MATERIALIZED VIEW price_1h RESUME");
+            drainWalAndMatViewQueues();
+            assertViewStatus("price_1h", "valid", "");
+            assertCache(4, "2024-01-01T00:00:00.000000Z", "2024-01-01T23:59:59.999999Z");
+            assertViewRows(VIEW_ROWS_BEFORE_ATTACH);
+
+            execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+            drainWalAndMatViewQueues();
+            assertViewRows(VIEW_ROWS_AFTER_ATTACH);
+            assertAttachedDayMatchesViewSql();
+            assertCacheEmpty("price_1h");
+            assertViewValidAndCaughtUp("price_1h");
+        });
+    }
+
+    @Test
+    public void testRangeTaskBeforeTrackerUpdateKeepsAttachAfterTruncateManual() throws Exception {
+        // A MANUAL view. TRUNCATE (base txn 3) and the ATTACH of 2024-01-01 (4) apply in one WAL apply run, and the
+        // refresh job takes the ATTACH's range task before the apply job moves the base's SeqTxnTracker past 2. The task
+        // brings the view's cache up to the ATTACH, which applies the TRUNCATE cut before it adds the range, so the
+        // range stays and REFRESH ... INCREMENTAL recomputes the attached day. The view keeps its row of 2024-01-02,
+        // which the truncate removed.
+        assertMemoryLeak(() -> {
+            createRefreshedViewOverAttachableDay("MANUAL");
+            applyInOneRunWithEarlyRangeTask(4, "TRUNCATE TABLE base", "ALTER TABLE base ATTACH PARTITION LIST '2024-01-01'");
+            assertCache(4, "2024-01-01T00:00:00.000000Z", "2024-01-01T23:59:59.999999Z");
+            assertViewRows(VIEW_ROWS_BEFORE_ATTACH);
+
+            execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+            drainWalAndMatViewQueues();
+            assertViewRows(VIEW_ROWS_AFTER_ATTACH);
+            assertAttachedDayMatchesViewSql();
+            assertCacheEmpty("price_1h");
+            assertViewValidAndCaughtUp("price_1h");
+        });
+    }
+
+    @Test
+    public void testRangeTaskBeforeTrackerUpdateKeepsAttachAndUpdateAfterTruncate() throws Exception {
+        // A MANUAL view. TRUNCATE (base txn 3), the ATTACH of 2024-01-01 (4) and an UPDATE of the attached day (5)
+        // apply in one WAL apply run, which queues one range task with the UPDATE's txn, and the refresh job takes it
+        // before the apply job moves the base's SeqTxnTracker past 2. The task brings the view's cache up to the
+        // UPDATE, so REFRESH ... INCREMENTAL recomputes the attached day with the updated prices.
+        assertMemoryLeak(() -> {
+            createRefreshedViewOverAttachableDay("MANUAL");
+            applyInOneRunWithEarlyRangeTask(
+                    5,
+                    "TRUNCATE TABLE base",
+                    "ALTER TABLE base ATTACH PARTITION LIST '2024-01-01'",
+                    "UPDATE base SET price = price * 10 WHERE ts IN '2024-01-01'"
+            );
+            assertCache(5, "2024-01-01T00:00:00.000000Z", "2024-01-01T23:59:59.999999Z");
+
+            execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+            drainWalAndMatViewQueues();
+            assertViewRows("""
+                    ts\tsym\tprice
+                    2024-01-01T00:00:00.000000Z\ta\t10.0
+                    2024-01-01T10:00:00.000000Z\tb\t20.0
+                    2024-01-02T00:00:00.000000Z\tc\t3.0
+                    """);
+            assertAttachedDayMatchesViewSql();
+            assertCacheEmpty("price_1h");
+            assertViewValidAndCaughtUp("price_1h");
+        });
+    }
+
+    @Test
+    public void testRangeTaskBeforeTrackerUpdateKeepsAttachInCheckpoint() throws Exception {
+        // A MANUAL view. TRUNCATE (base txn 3) and the ATTACH of 2024-01-01 (4) apply in one WAL apply run, and the
+        // refresh job takes the ATTACH's range task before the apply job moves the base's SeqTxnTracker past 2. The
+        // view's cache reaches the ATTACH, so an incremental checkpoint finds no gap to merge, and no TRUNCATE cut to
+        // apply, and the checkpointed state keeps the attached day for a restore.
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
+        assertMemoryLeak(() -> {
+            createRefreshedViewOverAttachableDay("MANUAL");
+            applyInOneRunWithEarlyRangeTask(4, "TRUNCATE TABLE base", "ALTER TABLE base ATTACH PARTITION LIST '2024-01-01'");
+            assertCache(4, "2024-01-01T00:00:00.000000Z", "2024-01-01T23:59:59.999999Z");
+
+            engine.checkpointCreate(sqlExecutionContext.getCircuitBreaker(), true);
+            try {
+                final MatViewStateReader stateReader = readCheckpointedState("price_1h");
+                Assert.assertFalse(stateReader.isInvalid());
+                Assert.assertEquals(2, stateReader.getLastRefreshBaseTxn());
+                Assert.assertEquals(4, stateReader.getRefreshIntervalsBaseTxn());
+                final LongList attachedDay = new LongList();
+                attachedDay.add(parseFloorPartialTimestamp("2024-01-01T00:00:00.000000Z"), parseFloorPartialTimestamp("2024-01-01T23:59:59.999999Z"));
+                TestUtils.assertEquals(attachedDay, stateReader.getRefreshIntervals());
+            } finally {
+                execute("CHECKPOINT RELEASE");
+            }
+        });
+    }
+
+    @Test
+    public void testRangeTaskBeforeTrackerUpdateKeepsLaterInsertOfBatch() throws Exception {
+        // A MANUAL view. TRUNCATE (base txn 3), the ATTACH of 2024-01-01 (4) and an INSERT into 2024-01-03 (5) apply in
+        // one WAL apply run, and the refresh job takes the ATTACH's range task before the apply job moves the base's
+        // SeqTxnTracker past 2. The task brings the view's cache up to the ATTACH, not to the batch's end, so
+        // REFRESH ... INCREMENTAL scans the INSERT and recomputes its bucket with the attached day.
+        assertMemoryLeak(() -> {
+            createRefreshedViewOverAttachableDay("MANUAL");
+            applyInOneRunWithEarlyRangeTask(
+                    4,
+                    "TRUNCATE TABLE base",
+                    "ALTER TABLE base ATTACH PARTITION LIST '2024-01-01'",
+                    "INSERT INTO base VALUES ('d', 4.0, '2024-01-03T00:10:00.000000Z')"
+            );
+            assertCache(4, "2024-01-01T00:00:00.000000Z", "2024-01-01T23:59:59.999999Z");
+
+            execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+            drainWalAndMatViewQueues();
+            assertViewRows(VIEW_ROWS_AFTER_ATTACH_AND_INSERT);
+            assertAttachedDayMatchesViewSql();
+            Assert.assertEquals(5, getViewState("price_1h").getLastRefreshBaseTxn());
+            assertCacheEmpty("price_1h");
+            assertViewValidAndCaughtUp("price_1h");
+        });
+    }
+
+    @Test
+    public void testRangeTaskBeforeTrackerUpdateKeepsRangeAcrossRestart() throws Exception {
+        // A MANUAL view. TRUNCATE (base txn 3) and the ATTACH of 2024-01-01 (4) apply in one WAL apply run, and the
+        // refresh job takes the ATTACH's range task before the apply job moves the base's SeqTxnTracker past 2. The view
+        // state that a restart loads from disk holds the range at the ATTACH's txn, and the first REFRESH ...
+        // INCREMENTAL after the restart recomputes the attached day.
+        assertMemoryLeak(() -> {
+            createRefreshedViewOverAttachableDay("MANUAL");
+            applyInOneRunWithEarlyRangeTask(4, "TRUNCATE TABLE base", "ALTER TABLE base ATTACH PARTITION LIST '2024-01-01'");
+            drainWalQueue();
+
+            engine.getMatViewStateStore().clear();
+            engine.hydrateMatViewStateStore();
+            assertCache(4, "2024-01-01T00:00:00.000000Z", "2024-01-01T23:59:59.999999Z");
+
+            execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+            drainWalAndMatViewQueues();
+            assertViewRows(VIEW_ROWS_AFTER_ATTACH);
+            assertAttachedDayMatchesViewSql();
+            assertCacheEmpty("price_1h");
+            assertViewValidAndCaughtUp("price_1h");
+        });
+    }
+
+    @Test
     public void testRebuiltParentKeepsChildRows() throws Exception {
         // The base drops 2024-01-01, and a FULL refresh of the parent rebuilds it from the base, without that day.
         // The child keeps its row of 2024-01-01 and recomputes 2024-01-02, the range the parent re-inserts.
@@ -1468,6 +1732,39 @@ public class MatViewBaseOperationsTest extends AbstractCairoTest {
         });
     }
 
+    // Commits the statements, then applies them in one WAL apply run, whose range task the refresh job takes as soon as
+    // the apply job queued it: before the apply job moves the base's SeqTxnTracker past the batch, as a refresh worker
+    // can, see MatViewRangeTaskSeamStateStore. Asserts that the run queued the task with the given operation txn and
+    // that the tracker was still at the base txn from before the batch then.
+    private static void applyInOneRunWithEarlyRangeTask(long operationTxn, String... statements) throws Exception {
+        final TableToken baseToken = engine.verifyTableName("base");
+        final long writerTxnBeforeBatch = engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn();
+        for (String sql : statements) {
+            execute(sql);
+        }
+        // the operation txn of the range task the refresh job took early, and the tracker's writer txn then
+        final LongList seen = new LongList();
+        final MatViewRangeTaskSeamStateStore stateStore = (MatViewRangeTaskSeamStateStore) engine.getMatViewStateStore();
+        stateStore.armEarlyRangeTaskRun((baseTableToken, baseTableTxn) -> {
+            seen.add(baseTableTxn);
+            seen.add(engine.getTableSequencerAPI().getTxnTracker(baseTableToken).getWriterTxn());
+        });
+        try {
+            drainWalQueue();
+        } finally {
+            stateStore.disarmEarlyRangeTaskRun();
+        }
+        Assert.assertEquals("the refresh job takes one range task early", 2, seen.size());
+        Assert.assertEquals(operationTxn, seen.getQuick(0));
+        Assert.assertEquals(writerTxnBeforeBatch, seen.getQuick(1));
+        Assert.assertEquals(engine.getTableSequencerAPI().lastTxn(baseToken), engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn());
+    }
+
+    // Cross-checks the view's buckets of the attached day with its SQL over the base.
+    private static void assertAttachedDayMatchesViewSql() throws Exception {
+        assertSqlCursors("SELECT * FROM (" + VIEW_SQL + ") WHERE ts IN '2024-01-01'", "price_1h WHERE ts IN '2024-01-01'");
+    }
+
     private static void drainParentAndChild() {
         // A child view refreshes after its parent's refresh commit applies, so each drain round reaches one level
         // deeper.
@@ -1696,6 +1993,21 @@ public class MatViewBaseOperationsTest extends AbstractCairoTest {
         assertViewRows(PERIOD_VIEW_ROWS);
     }
 
+    // A base whose 2024-01-01 partition is detached and ready to attach, see createBaseWithAttachableDay(), at base txn
+    // 2, and a view price_1h of the given refresh type refreshed up to it.
+    private void createRefreshedViewOverAttachableDay(String refreshType) throws Exception {
+        createBaseWithAttachableDay();
+        createView("price_1h", refreshType);
+        drainWalQueue();
+        if (!"IMMEDIATE".equals(refreshType)) {
+            execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+        }
+        drainWalAndMatViewQueues();
+        assertViewRows(VIEW_ROWS_BEFORE_ATTACH);
+        Assert.assertEquals(2, getViewState("price_1h").getLastRefreshBaseTxn());
+        assertCacheEmpty("price_1h");
+    }
+
     private void createView(String viewName, String refreshType) throws Exception {
         execute("CREATE MATERIALIZED VIEW " + viewName + " REFRESH " + refreshType + " AS (" + VIEW_SQL + ") PARTITION BY DAY");
     }
@@ -1709,6 +2021,16 @@ public class MatViewBaseOperationsTest extends AbstractCairoTest {
                 return tasks;
             }
             tasks.add(task);
+        }
+    }
+
+    private MatViewStateReader readCheckpointedState(String viewName) {
+        final TableToken viewToken = engine.verifyTableName(viewName);
+        try (Path path = new Path(); BlockFileReader reader = new BlockFileReader(configuration)) {
+            path.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory()).concat(viewToken)
+                    .concat(MatViewState.MAT_VIEW_STATE_FILE_NAME);
+            reader.of(path.$());
+            return new MatViewStateReader().of(reader, viewToken);
         }
     }
 

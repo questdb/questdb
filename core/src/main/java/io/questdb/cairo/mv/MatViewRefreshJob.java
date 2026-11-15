@@ -1010,9 +1010,16 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             return false;
         }
 
-        // Bring the cache up to the base's applied transaction. The scan applies the TRUNCATE cut, so a truncate
-        // applied after the operation has cleared the intervals queued before it by now.
-        final long lastBaseTxn = engine.getTableSequencerAPI().getTxnTracker(baseTableToken).getWriterTxn();
+        // Bring the cache up to the base's applied transaction, and at least up to the operation. The WAL apply job
+        // queues the range once the batch that applied the operation has committed, so readers see the operation, but
+        // it moves the base's SeqTxnTracker only after it has released the writer, so the tracker can trail the
+        // operation. A cache position below the operation would leave a TRUNCATE applied before the operation to the
+        // next scan, whose cut would drop the range with the intervals queued before the truncate. The scan applies the
+        // TRUNCATE cut, so a truncate applied after the operation has cleared the intervals queued before it by now.
+        final long lastBaseTxn = Math.max(
+                engine.getTableSequencerAPI().getTxnTracker(baseTableToken).getWriterTxn(),
+                refreshTask.baseTableTxn
+        );
         if (isBacklog) {
             // The backlog update checks the base table's identity, and a mismatch loses the backlog instead of
             // invalidating the view again.

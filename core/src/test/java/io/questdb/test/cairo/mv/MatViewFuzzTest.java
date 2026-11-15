@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.mv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.MicrosTimestampDriver;
@@ -35,6 +36,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewState;
+import io.questdb.cairo.mv.MatViewStateStore;
 import io.questdb.cairo.mv.MatViewTimerJob;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -68,6 +70,7 @@ import io.questdb.test.fuzz.FuzzTransactionOperation;
 import io.questdb.test.fuzz.FuzzTruncateTableOperation;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.util.Map;
@@ -97,6 +100,19 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     private static final String[] timestampTypes = new String[]{"timestamp", "timestamp_ns"};
     // None of these time zones changes its UTC offset within two weeks of the monthStarts.
     private static final ObjList<String> timeZones = new ObjList<>("Europe/Berlin", "Asia/Kolkata", "America/Sao_Paulo");
+
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        // The real state store, with the hook that testViewAndBaseOperations' reload of the base arms, see
+        // applyOperationsFuzzWalWithEarlyRangeTask().
+        engineFactory = conf -> new CairoEngine(conf) {
+            @Override
+            protected MatViewStateStore createMatViewStateStore() {
+                return getConfiguration().isMatViewEnabled() ? new MatViewRangeTaskSeamStateStore(this) : super.createMatViewStateStore();
+            }
+        };
+        AbstractFuzzTest.setUpStatic();
+    }
 
     @Override
     public void setUp() {
@@ -766,8 +782,10 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         // that maps by name or copies by position, SET and
         // DROP EXPIRE of policies that hide no row, RANGE, FULL and RESUME, forced invalidations, backlog updates, WAL
         // purges and restarts of the view states, among
-        // them restarts right after a base replacement followed by FULL or RESUME. The WAL apply and the refresh job
-        // run at random points in between. The view is IMMEDIATE, so its own refreshes must keep up, or a period view
+        // them restarts right after a base replacement followed by FULL or RESUME, and reloads of a base day with
+        // TRUNCATE, ATTACH PARTITION and UPDATE in one WAL apply run, whose range task the refresh job takes before the
+        // apply job moves the base's SeqTxnTracker. The WAL apply and the refresh job run at random points in between.
+        // The view is IMMEDIATE, so its own refreshes must keep up, or a period view
         // of one day, IMMEDIATE or EVERY, whose period timer firings complete the days one at a time while the other
         // operations run; the refresh job runs of an EVERY view stand for its timer's firings. Half of a period view's
         // days after the first take no base row until their period ends, as a weekend does, so a firing can find its
@@ -889,6 +907,40 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         sink.put('\'');
         MicrosFormatUtils.appendDateTimeUSec(sink, OPS_DAY_LO + day * Micros.DAY_MICROS);
         sink.put('\'');
+    }
+
+    // Applies the base's WAL, as APPLY_WAL does, but the refresh job takes the first range task that the WAL apply job
+    // queues as soon as it is queued: before the apply job moves the base's SeqTxnTracker past the batch, as a refresh
+    // worker can, see MatViewRangeTaskSeamStateStore. When the task is the one of the reload's UPDATE of the day, the
+    // base's last transaction, the oracle learns that the day's range task ran.
+    private static void applyOperationsFuzzWalWithEarlyRangeTask(int day, MatViewFuzzOracle oracle) {
+        final long updateTxn = engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("base"));
+        // the operation txn of the range task that the refresh job took early
+        final LongList rangeTaskTxns = new LongList();
+        final MatViewRangeTaskSeamStateStore stateStore = (MatViewRangeTaskSeamStateStore) engine.getMatViewStateStore();
+        stateStore.armEarlyRangeTaskRun((baseTableToken, baseTableTxn) -> rangeTaskTxns.add(baseTableTxn));
+        try {
+            drainWalQueue();
+        } finally {
+            stateStore.disarmEarlyRangeTaskRun();
+        }
+        if (rangeTaskTxns.size() > 0) {
+            LOG.info().$("fuzz: refresh job ran before the base's tracker moved [rangeTaskTxn=").$(rangeTaskTxns.getQuick(0))
+                    .$(", updateTxn=").$(updateTxn)
+                    .I$();
+            oracle.onRefreshJobRun();
+            if (rangeTaskTxns.getQuick(0) == updateTxn) {
+                oracle.onRangeTaskRun(day);
+            }
+        }
+    }
+
+    private static void attachOperationsFuzzDay(int day, MatViewFuzzOracle oracle) throws SqlException {
+        final StringSink sql = new StringSink();
+        sql.put("ALTER TABLE base ATTACH PARTITION LIST ");
+        appendDay(sql, day);
+        execute(sql);
+        oracle.onAttach(day);
     }
 
     // A view check of testViewAndBaseOperations: drains the queues, catches a period view up on the periods that ended,
@@ -1289,6 +1341,17 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         oracle.onRestart();
     }
 
+    // An UPDATE that changes every row of the day.
+    private static void updateOperationsFuzzDay(int day, MatViewFuzzOracle oracle) throws SqlException {
+        final StringSink sql = new StringSink();
+        sql.put("UPDATE base SET price = price + 1.5, qty = qty + 1 WHERE ts >= ");
+        appendDay(sql, day);
+        sql.put(" AND ts < ");
+        appendDay(sql, day + 1);
+        execute(sql);
+        oracle.onUpdate(day);
+    }
+
     private static void runOperationsFuzzFull(MatViewFuzzOracle oracle) throws SqlException {
         LOG.info().$("fuzz: rebuilding view with FULL").$();
         drainWalQueue();
@@ -1337,24 +1400,20 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                     oracle.onBaseRemoved(op.day);
                 }
             }
-            case BASE_ATTACH_PARTITION -> {
-                sql.put("ALTER TABLE base ATTACH PARTITION LIST ");
-                appendDay(sql, op.day);
-                execute(sql);
-                oracle.onAttach(op.day);
-            }
+            case BASE_ATTACH_PARTITION -> attachOperationsFuzzDay(op.day, oracle);
             case BASE_TRUNCATE -> {
                 execute("TRUNCATE TABLE base");
                 oracle.onBaseRemovedBefore(OPS_DAY_COUNT);
             }
-            case BASE_UPDATE -> {
-                sql.put("UPDATE base SET price = price + 1.5, qty = qty + 1 WHERE ts >= ");
-                appendDay(sql, op.day);
-                sql.put(" AND ts < ");
-                appendDay(sql, op.day + 1);
-                execute(sql);
-                oracle.onUpdate(op.day);
+            case BASE_TRUNCATE_ATTACH_UPDATE -> {
+                LOG.info().$("fuzz: reloading base day ").$(op.day).$(" with TRUNCATE, ATTACH and UPDATE").$();
+                execute("TRUNCATE TABLE base");
+                oracle.onBaseRemovedBefore(OPS_DAY_COUNT);
+                attachOperationsFuzzDay(op.day, oracle);
+                updateOperationsFuzzDay(op.day, oracle);
+                applyOperationsFuzzWalWithEarlyRangeTask(op.day, oracle);
             }
+            case BASE_UPDATE -> updateOperationsFuzzDay(op.day, oracle);
             case BASE_SET_TTL -> {
                 execute("ALTER TABLE base SET TTL " + op.day + " DAYS");
                 oracle.onTtl(op.day);

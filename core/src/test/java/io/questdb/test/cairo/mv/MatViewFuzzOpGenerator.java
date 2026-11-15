@@ -37,6 +37,12 @@ import io.questdb.std.datetime.microtime.Micros;
  * restarts of the view states and the job runs that interleave them. For a period view of one day, it also draws the
  * period timer's firings, which complete the days one at a time from the first.
  * <p>
+ * It also draws a reload of the base: a TRUNCATE, the ATTACH of a detached partition and an UPDATE of the attached
+ * day, which one WAL apply run applies, and whose range task the refresh job takes before the apply job moves the
+ * base's SeqTxnTracker past the batch, as a refresh worker can. The UPDATE changes the day's values, so the view's
+ * buckets of the day, which the view usually computed before the partition detached, must change too: the oracle
+ * finds a lost range there. A period view's round reloads a day whose period ended, which the oracle compares.
+ * <p>
  * It draws the round's initial rows, one to ten in each day. In a period view's round, half of the days after the
  * first are gap days, as a weekend is: the base takes no row there until the day's period ends, so the period timer's
  * firing finds the day without a base partition. Most UPDATEs of such a round correct a day whose period ended, so
@@ -187,6 +193,8 @@ public final class MatViewFuzzOpGenerator {
             case INSERT -> 30;
             // an ATTACH needs a detached partition, and falls back to INSERT without one
             case BASE_ATTACH_PARTITION -> 8;
+            // so does a reload of the base, which needs one of a complete day in a period view's round
+            case BASE_TRUNCATE_ATTACH_UPDATE -> 8;
             case BASE_DROP_PARTITION_LIST, BASE_DETACH_PARTITION, VIEW_DROP_COLUMN, VIEW_DROP_PARTITION_LIST,
                  VIEW_RANGE, VIEW_RESUME -> 3;
             case BASE_DROP_PARTITION_WHERE, VIEW_DROP_PARTITION_WHERE, VIEW_FULL, BACKLOG_UPDATE, PURGE_WAL -> 2;
@@ -345,15 +353,14 @@ public final class MatViewFuzzOpGenerator {
                 }
             }
             case BASE_ATTACH_PARTITION -> {
-                final int start = rnd.nextInt(dayCount);
-                op.day = -1;
-                for (int i = 0; i < dayCount; i++) {
-                    final int day = (start + i) % dayCount;
-                    if (attachableDays[day]) {
-                        op.day = day;
-                        break;
-                    }
+                op.day = pickAttachableDay(rnd, dayCount);
+                if (op.day < 0) {
+                    return insteadInsert(rnd, op);
                 }
+            }
+            case BASE_TRUNCATE_ATTACH_UPDATE -> {
+                // the oracle compares the complete days of a period view only
+                op.day = pickAttachableDay(rnd, isPeriodView ? completeDays : dayCount);
                 if (op.day < 0) {
                     return insteadInsert(rnd, op);
                 }
@@ -551,6 +558,13 @@ public final class MatViewFuzzOpGenerator {
                     baseDays[d] = false;
                 }
             }
+            case BASE_TRUNCATE_ATTACH_UPDATE -> {
+                for (int d = 0; d < dayCount; d++) {
+                    baseDays[d] = false;
+                }
+                baseDays[op.day] = true;
+                attachableDays[op.day] = false;
+            }
             case BASE_REPLACE, BASE_REPLACE_FULL_RESTART, BASE_REPLACE_RESUME_RESTART -> {
                 for (int d = 0; d < dayCount; d++) {
                     baseDays[d] = false;
@@ -724,6 +738,18 @@ public final class MatViewFuzzOpGenerator {
         return -1;
     }
 
+    // A random day before dayHi with a detached partition that ATTACH takes, or -1 when there is none.
+    private int pickAttachableDay(Rnd rnd, int dayHi) {
+        final int start = rnd.nextInt(dayCount);
+        for (int i = 0; i < dayCount; i++) {
+            final int day = (start + i) % dayCount;
+            if (day < dayHi && attachableDays[day]) {
+                return day;
+            }
+        }
+        return -1;
+    }
+
     public enum Kind {
         INSERT,
         BASE_DROP_PARTITION_LIST,
@@ -731,6 +757,9 @@ public final class MatViewFuzzOpGenerator {
         BASE_DETACH_PARTITION,
         BASE_ATTACH_PARTITION,
         BASE_TRUNCATE,
+        // a TRUNCATE, the ATTACH of a detached partition and an UPDATE of the attached day, which one WAL apply run
+        // applies, and whose range task the refresh job takes before the apply job moves the base's SeqTxnTracker
+        BASE_TRUNCATE_ATTACH_UPDATE,
         BASE_UPDATE,
         BASE_SET_TTL,
         BASE_REPLACE,

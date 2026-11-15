@@ -47,6 +47,9 @@ import org.junit.Test;
  *     and of a column no SQL produces;</li>
  *     <li>an ATTACH of a partition the same round detached, and a row into a day whose base partition the round
  *     dropped, which recreates it;</li>
+ *     <li>a reload of the base: TRUNCATE, the ATTACH of a partition the round detached and an UPDATE of the attached
+ *     day, applied in one WAL apply run whose range task the refresh job takes before the apply job moves the base's
+ *     SeqTxnTracker; in a period view's round, of a day whose period ended;</li>
  *     <li>RESUME with and without SKIP BACKLOG;</li>
  *     <li>a base replacement that leaves out the first day, so the view keeps the old base's rows there;</li>
  *     <li>a SET EXPIRE of each policy shape, one that reads two columns, and one over a column the view lacks, which
@@ -84,6 +87,7 @@ public class MatViewFuzzOpGeneratorCoverageTest {
         int addCast = 0;
         int addUnproduced = 0;
         int attachAfterDetach = 0;
+        int reloadAfterDetach = 0;
         int insertIntoDropped = 0;
         int resumeSkip = 0;
         int resumePlain = 0;
@@ -176,6 +180,15 @@ public class MatViewFuzzOpGeneratorCoverageTest {
                         Assert.assertTrue("ATTACH of a partition that did not detach: " + op.day, isDetached[op.day]);
                         isDetached[op.day] = false;
                         attachAfterDetach++;
+                    }
+                    case BASE_TRUNCATE_ATTACH_UPDATE -> {
+                        Assert.assertTrue("reload of a partition that did not detach: " + op.day, isDetached[op.day]);
+                        isDetached[op.day] = false;
+                        for (int d = 0; d < DAY_COUNT; d++) {
+                            isDropped[d] = d != op.day;
+                        }
+                        Assert.assertTrue(generator.isBaseDay(op.day));
+                        reloadAfterDetach++;
                     }
                     case BASE_DROP_PARTITION_LIST -> isDropped[op.day] = true;
                     case INSERT -> {
@@ -284,6 +297,7 @@ public class MatViewFuzzOpGeneratorCoverageTest {
         assertKindShares(kindCounts, false);
         final int detachCount = kindCounts[MatViewFuzzOpGenerator.Kind.BASE_DETACH_PARTITION.ordinal()];
         assertShare("ATTACH of a partition the round detached, of " + detachCount + " DETACH", attachAfterDetach, detachCount / 4);
+        assertShare("reload of a partition the round detached, of " + detachCount + " DETACH", reloadAfterDetach, detachCount / 8);
         assertShare("ALTER ... AS refused by the same-position rule", alterRefused, 100);
         assertShare("ALTER ... AS accepted", alterAccepted, 100);
         assertShare("ALTER ... AS with ts and sym moved", alterReordered, 100);
@@ -316,6 +330,7 @@ public class MatViewFuzzOpGeneratorCoverageTest {
         int gapDayFirings = 0;
         int lateRowsIntoGapDay = 0;
         int updatesOfCompleteDay = 0;
+        int reloadsOfCompleteDay = 0;
         int periodRefreshOverEmptyDayWithQueuedRange = 0;
         for (int round = 0; round < ROUNDS; round++) {
             final MatViewFuzzOpGenerator generator = new MatViewFuzzOpGenerator(DAY_COUNT, true);
@@ -351,6 +366,12 @@ public class MatViewFuzzOpGeneratorCoverageTest {
                         }
                     }
                     case BASE_ATTACH_PARTITION -> isRangeQueued |= op.day < completeDays;
+                    case BASE_TRUNCATE_ATTACH_UPDATE -> {
+                        // the TRUNCATE drops the ranges queued before it, and the reload queues the day's
+                        Assert.assertTrue("reload of a day whose period has not ended: " + op.day, op.day < completeDays);
+                        reloadsOfCompleteDay++;
+                        isRangeQueued = true;
+                    }
                     // the EVERY firing, a rebuild, the TRUNCATE cut and a new base
                     case RUN_REFRESH_JOB, VIEW_FULL, BASE_TRUNCATE, BASE_REPLACE, BASE_REPLACE_FULL_RESTART,
                          BASE_REPLACE_RESUME_RESTART -> isRangeQueued = false;
@@ -380,6 +401,7 @@ public class MatViewFuzzOpGeneratorCoverageTest {
         assertShare("period timer firing over a gap day", gapDayFirings, ROUNDS);
         assertShare("late row into a gap day whose period ended", lateRowsIntoGapDay, 200);
         assertShare("UPDATE of a complete day", updatesOfCompleteDay, 500);
+        assertShare("reload of a complete day", reloadsOfCompleteDay, 50);
         assertShare(
                 "period timer firing over a day without a base partition while the range of an UPDATE or ATTACH of a complete day is queued",
                 periodRefreshOverEmptyDayWithQueuedRange,
@@ -431,9 +453,9 @@ public class MatViewFuzzOpGeneratorCoverageTest {
                 Assert.assertEquals(kind + " drawn for a view that does not have it", 0, kindCounts[kind.ordinal()]);
                 continue;
             }
-            if (kind == MatViewFuzzOpGenerator.Kind.BASE_ATTACH_PARTITION) {
-                // an ATTACH needs a partition that a DETACH of the round left detached, and falls back to INSERT
-                // without one
+            if (kind == MatViewFuzzOpGenerator.Kind.BASE_ATTACH_PARTITION || kind == MatViewFuzzOpGenerator.Kind.BASE_TRUNCATE_ATTACH_UPDATE) {
+                // an ATTACH and a reload need a partition that a DETACH of the round left detached, and fall back to
+                // INSERT without one; the callers pin their own shares
                 continue;
             }
             // at least a quarter of the share the kind's weight asks for: a kind whose parameters the state cannot give,
