@@ -35,6 +35,7 @@ import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRebuildRestatementGuard;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewState;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.microtime.Micros;
@@ -1057,6 +1058,59 @@ public class LiveViewCheckpointUpgradeRebuildTest extends AbstractLiveViewCheckp
                     .returns("view_status\tcheckpoint_recovery_phase\tcheckpoint_recovery_reason\n"
                             + "active\t\t\n");
             assertNoRefreshFaults("lv");
+        });
+    }
+
+    @Test
+    public void testShutdownDuringTheUpgradeRebuildsDriftRecoveryKeepsTheUpgradePending() throws Exception {
+        assertMemoryLeak(fault, () -> {
+            seedSixRows();
+            carryOverToOlderFormat();
+
+            // As in testABaseSchemaChangeDuringTheUpgradeRebuildStillCompletesTheUpgrade, the upgrade rebuild
+            // meets a base ADD COLUMN that landed after the restart compiled its plan, and the drift recovery
+            // takes it over. A shutdown trips the breaker as the drift reaches the handler, so the recovery's
+            // rebuild meets it before it scans. Nothing is charged, and the older superblock that owes the
+            // upgrade stays on disk for the next start.
+            fault.armSchemaChange(engine.verifyTableName("lv").getDirName());
+            final LiveViewInstance instance = instance("lv");
+            final AtomicBoolean isTripped = new AtomicBoolean();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                hooks(job).setRefreshFaultObserver(t -> {
+                    if (t instanceof TableReferenceOutOfDateException && isTripped.compareAndSet(false, true)) {
+                        // What ServerMain's signalClose() sets, which the refresh breaker reads.
+                        engine.setClosing(true);
+                    }
+                });
+                try {
+                    job.run();
+                } finally {
+                    engine.setClosing(false);
+                }
+            }
+            Assert.assertTrue("the schema change never landed inside the restart", fault.hasSchemaChangeFired());
+            Assert.assertTrue("the drift must have reached the handler", isTripped.get());
+            capture.drain();
+            capture.assertLogged("live view cannot restore its runtime from the checkpoint timeline, rebuilding from the applied base "
+                    + "[view=lv, cause=base table metadata change, reason=timeline predates the supported checkpoint format]");
+            capture.assertLoggedRE("live view window-state recompute failed \\[view=lv, cause=base table metadata change, error=[^\\n]*cancelled by user");
+            Assert.assertEquals(1, capture.countOccurrences("live view refresh cancelled during recovery [view=lv, dropped=false, invalid=false]"));
+            capture.assertNotLogged("live view refresh failed");
+            capture.assertNotLogged("budget exhausted");
+            Assert.assertFalse(instance.isInvalid());
+            Assert.assertEquals(0, instance.getFlushRetryCount());
+            Assert.assertEquals(Numbers.LONG_NULL, instance.getFlushRetryStartUs());
+            Assert.assertEquals(Numbers.LONG_NULL, instance.getRefreshRetryNotBeforeUs());
+            Assert.assertTrue("the cancelled rebuild retired nothing, so the upgrade is still owed", instance.isCheckpointUpgradeRebuildPending());
+            Assert.assertEquals(OLDER_FORMAT_VERSION, readSuperblockFormatVersion(checkpointsRootByDirName()));
+            assertViewRows(ALL_ROWS);
+
+            // The next start meets the older superblock and runs the upgrade rebuild to the end.
+            shutdown();
+            restart();
+            assertUpgradeRebuilt("lv");
+            assertViewRows(ALL_ROWS);
+            Assert.assertEquals(LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION, readSuperblockFormatVersion(checkpointsRootByDirName()));
         });
     }
 

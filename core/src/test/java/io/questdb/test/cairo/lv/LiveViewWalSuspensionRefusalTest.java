@@ -28,13 +28,11 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Numbers;
-import io.questdb.std.str.Path;
 import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
@@ -57,26 +55,9 @@ import java.util.regex.Pattern;
  * The suspension lands through the real gate: a hook ahead of the turn's latch runs the statement, or
  * a one-shot observer runs what the statement runs right before the next commit to the view's WAL.
  */
-public class LiveViewWalSuspensionRefusalTest extends AbstractLiveViewTest {
+public class LiveViewWalSuspensionRefusalTest extends AbstractLiveViewTxTest {
     private static final String PAUSE_LINE = "live view refresh paused, its WAL is suspended [view=lv";
-    private static final String RECOMPUTE_SQL = """
-            (
-                SELECT created_at, account_id,
-                    sum(amount) OVER (PARTITION BY account_id, bucket ORDER BY created_at
-                        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS cumulative_sum,
-                    count(account_id) OVER (PARTITION BY account_id, bucket ORDER BY created_at
-                        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS cumulative_count
-                FROM (
-                    SELECT created_at, account_id, amount,
-                        timestamp_floor('1d', created_at, '1970-01-01T00:00:00.000000Z'::timestamp) AS bucket
-                    FROM tx
-                )
-            ) ORDER BY 2, 1
-            """;
     private static final String RESTART_REBUILD_RETRY_LINE = "live view restart rebuild hit a retryable fault, retrying [view=lv";
-    private static final String VIEW_SQL = "SELECT created_at, account_id, sum(amount) OVER w AS cumulative_sum, "
-            + "count(account_id) OVER w AS cumulative_count "
-            + "FROM tx WINDOW w AS (PARTITION BY account_id ORDER BY created_at ANCHOR DAILY '00:00')";
     private static final LogCapture capture = new LogCapture();
 
     @After
@@ -857,40 +838,12 @@ public class LiveViewWalSuspensionRefusalTest extends AbstractLiveViewTest {
         return isWork;
     }
 
-    private static LiveViewInstance instance() {
-        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
-        Assert.assertNotNull("live view 'lv' must be registered", instance);
-        return instance;
-    }
-
     private static TableToken lvToken() {
         return engine.verifyTableName("lv");
     }
 
-    private static void removeTimeline() {
-        try (
-                Path dir = new Path().of(configuration.getDbRoot())
-                        .concat(instance().getLiveViewToken())
-                        .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
-                Path timelinePath = new Path()
-        ) {
-            LiveViewCheckpointLayout.timelinePath(timelinePath, dir);
-            Assert.assertTrue(
-                    "the fixture must have published a timeline to remove",
-                    configuration.getFilesFacade().removeQuiet(timelinePath.$())
-            );
-        }
-    }
-
     private static String repairRow(int day, int hour, String account) {
         return "('2026-01-0" + day + "T0" + hour + ":00:00.000000Z', '" + account + "', 1.0)";
-    }
-
-    private static void shutdown() {
-        engine.getLiveViewRegistry().clear();
-        engine.releaseAllReaders();
-        engine.releaseAllWriters();
-        engine.releaseInactive();
     }
 
     // What ALTER LIVE VIEW lv SUSPEND WAL WITH 'DISK FULL', 'manual halt' runs, once, right before the next
@@ -921,65 +874,6 @@ public class LiveViewWalSuspensionRefusalTest extends AbstractLiveViewTest {
             }
         });
         return isArmed;
-    }
-
-    private void assertViewMatchesRecompute() throws Exception {
-        TestUtils.assertSqlCursors(engine, sqlExecutionContext, RECOMPUTE_SQL, "(lv) ORDER BY 2, 1", LOG, true);
-    }
-
-    // tx (created_at, account_id, amount) with four commits on 2026-01-01, each refreshed into a view with
-    // a daily-anchored window.
-    private void createFixture(String dedupClause) throws Exception {
-        execute("CREATE TABLE tx (created_at TIMESTAMP, account_id SYMBOL, amount DOUBLE) "
-                + "TIMESTAMP(created_at) PARTITION BY DAY WAL " + dedupClause);
-        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " + VIEW_SQL);
-        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-            driveSeedToCompletion(job, "lv");
-            final String[] commits = {
-                    "('2026-01-01T09:00:00.000000Z', 'acct-1', 1.0)",
-                    "('2026-01-01T09:10:00.000000Z', 'acct-2', 2.0)",
-                    "('2026-01-01T09:20:00.000000Z', 'acct-1', 4.0)",
-                    "('2026-01-01T09:30:00.000000Z', 'acct-2', 8.0)"
-            };
-            for (String values : commits) {
-                insert(values);
-                driveRefreshToQuiescence(job);
-            }
-        }
-        assertViewMatchesRecompute();
-        assertNoRefreshFaults("lv");
-    }
-
-    // A deduplicating base and the view over it at the default seal cadence, which seals the first boundary
-    // only, with a last commit whose rows are out of order within it and collide on the dedup keys. The
-    // collision routes the drain through the applied base, whose reader yields them in order, so no repair
-    // runs and no root covers the commit; the raw WAL a restore replays still holds them unsorted.
-    private void createO3GapFixture() throws Exception {
-        execute("CREATE TABLE tx (created_at TIMESTAMP, account_id SYMBOL, amount DOUBLE) "
-                + "TIMESTAMP(created_at) PARTITION BY DAY WAL DEDUP UPSERT KEYS(created_at, account_id)");
-        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " + VIEW_SQL);
-        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-            driveSeedToCompletion(job, "lv");
-            final String[] commits = {
-                    "('2026-01-01T09:00:00.000000Z', 'acct-1', 1.0)",
-                    "('2026-01-02T09:00:00.000000Z', 'acct-1', 4.0)",
-                    "('2026-01-03T09:00:00.000000Z', 'acct-1', 8.0), ('2026-01-03T09:10:00.000000Z', 'acct-1', 16.0), "
-                            + "('2026-01-03T09:20:00.000000Z', 'acct-1', 32.0)",
-                    "('2026-01-03T09:50:00.000000Z', 'acct-1', 64.0), ('2026-01-03T09:50:00.000000Z', 'acct-1', 65.0), "
-                            + "('2026-01-03T09:40:00.000000Z', 'acct-1', 128.0)"
-            };
-            for (String values : commits) {
-                insert(values);
-                driveRefreshToQuiescence(job);
-            }
-        }
-        assertViewMatchesRecompute();
-        assertNoRefreshFaults("lv");
-    }
-
-    private void insert(String values) throws SqlException {
-        execute("INSERT INTO tx (created_at, account_id, amount) VALUES " + values);
-        drainWalQueue();
     }
 
     // tx partitioned by hour with three days of rows and a view refreshed over them, head rows on the fifth

@@ -17849,7 +17849,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * </ul>
      * Returns {@code null} when recovery completed (or was re-armed for the next
      * tick, or refused and the view stopped); otherwise the error the recovery
-     * failed with, which the caller feeds into the standard flush-retry accounting.
+     * failed with, which the caller feeds into the standard flush-retry accounting,
+     * or the cancellation that ended it, which neither caller charges.
      * An ACTIVE view whose recovery failed carries the window-state debt to its next
      * turn, whose gate recovers it again before anything drains.
      *
@@ -17897,7 +17898,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * gap can still be adopted before apply-side invalidation reaches the instance,
      * leaving an invalid but queryable view recomputed under the new schema.
      *
-     * @return true if recovery or a refused-rebuild stop handled the failure
+     * @return true when the re-derive recovered the view, a refused rebuild stopped it, the view's WAL
+     * suspension refused its write, or a cancellation ended it; false when the caller must invalidate the view
      */
     private boolean rederiveFromAppliedBaseAfterWalLoss(LiveViewInstance instance, CairoException cause) {
         final TableToken baseToken = instance.getDefinition().getBaseTableToken();
@@ -17997,6 +17999,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     pauseForWalSuspension(instance, recompiledError);
                     return true;
                 }
+                if (recompiledError instanceof CairoException cancelled && cancelled.isCancellation()) {
+                    endCancelledRederive(instance, viewName);
+                    return true;
+                }
                 LOG.error().$("live view could not re-derive from the applied base after base WAL loss [view=")
                         .$(viewName)
                         .$(", error=").$(recompiledError).I$();
@@ -18027,11 +18033,27 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 pauseForWalSuspension(instance, e);
                 return true;
             }
+            if (e instanceof CairoException cancelled && cancelled.isCancellation()) {
+                endCancelledRederive(instance, viewName);
+                return true;
+            }
             LOG.error().$("live view could not re-derive from the applied base after base WAL loss [view=")
                     .$(viewName)
                     .$(", error=").$(e).I$();
             return false;
         }
+    }
+
+    // DROP, invalidation or engine shutdown tripped the breaker, none of which an invalidation should
+    // answer. Wherever it stopped the re-derive, the runtime no longer matches what the view's table
+    // holds: the lead count went to 0 ahead of the replay, the replay may have wiped and partly fed the
+    // runtime, and the drift retry recompiled it. So whatever turn comes next settles the debt before
+    // it drains or flushes.
+    private void endCancelledRederive(LiveViewInstance instance, String viewName) {
+        carryWindowStateDebt(instance);
+        LOG.info().$("live view re-derive from the applied base cancelled [view=").$(viewName)
+                .$(", dropped=").$(instance.isDropped())
+                .$(", invalid=").$(instance.isInvalid()).I$();
     }
 
     private boolean refreshInstance(LiveViewInstance instance, long seqTxn) {
@@ -18713,7 +18735,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             if (t == null) {
                 return null;
             }
-            // The recovery itself failed; account for THAT error below.
+            // The recovery itself failed, or the breaker ended it, which the re-test below takes; account
+            // for THAT error below.
         }
         // Mid-drain fault with the accumulators advanced past the last durable commit:
         // put them back - restored from the timeline, or rebuilt from the applied base -
@@ -18787,15 +18810,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 instance.setWindowStateDirty(true);
                 // The recovery itself failed; account for THAT error below.
                 t = recoveryErr;
-                if (t instanceof CairoException recoveryCancelled && recoveryCancelled.isCancellation()) {
-                    // Re-test after the reassignment. The restore's replay and the rebuild
-                    // consult the same breaker, so a shutdown or a DROP that arrived mid-recovery
-                    // surfaces here rather than at the guard above - and counting it toward the
-                    // flush-retry budget is exactly what that guard exists to prevent.
-                    LOG.info().$("live view refresh cancelled during mid-drain recovery [view=")
-                            .$(instance.getDefinition().getViewName()).I$();
-                    return null;
-                }
             }
             // A SEEDING view falls through to the budget below. Its recovery only re-arms the
             // sweep resume: it recomputes nothing, commits nothing, and leaves the sweep facing
@@ -18806,6 +18820,18 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // and refreshInstance reporting work on every call so the worker never backs off. A
             // transient fault keeps its retries, because the sweep turn that finally succeeds
             // calls recordRefreshSuccess, which zeroes the streak the budget measures.
+        }
+        if (t instanceof CairoException recoveryCancelled && recoveryCancelled.isCancellation()) {
+            // A recovery above - the drift's or the mid-drain one - met the breaker and handed the
+            // cancellation back as its error. The guard at the top saw only the turn's own fault, so
+            // re-test after the reassignment: a shutdown, a DROP or an invalidation that arrived
+            // mid-recovery is no more a refresh fault than one that arrived mid-drain, and charging it is
+            // what that guard exists to prevent. Both recoveries left the window-state debt on the view.
+            LOG.info().$("live view refresh cancelled during recovery [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", dropped=").$(instance.isDropped())
+                    .$(", invalid=").$(instance.isInvalid()).I$();
+            return null;
         }
         if (isRefusedByWalSuspension(t)) {
             // A recovery above - the drift's or the mid-drain one - had its own write refused by the
@@ -19035,13 +19061,20 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 .$(", error=").$(refusal).I$();
         instance.markWalSuspensionPause(engine.getConfiguration().getMicrosecondClock().getTicks());
         if (windowStateDirty) {
-            if (instance.getStateReader().getSeedState() == LiveViewState.SEED_STATE_SEEDING) {
-                instance.resetSeedResumeAttempted();
-            } else {
-                markWindowStateDirty(instance);
-            }
+            carryWindowStateDebt(instance);
         }
         return null;
+    }
+
+    // Leaves the window-state debt where the view's next turn settles it: a SEEDING view re-arms its
+    // sweep's resume, which restarts the sweep from identity (the timeline's newest root, or offset 0
+    // behind the skip-write floor), and an ACTIVE view owes its gate a recovery before it drains.
+    private void carryWindowStateDebt(LiveViewInstance instance) {
+        if (instance.getStateReader().getSeedState() == LiveViewState.SEED_STATE_SEEDING) {
+            instance.resetSeedResumeAttempted();
+        } else {
+            markWindowStateDirty(instance);
+        }
     }
 
     private void refreshViewsForBaseTable(TableToken baseTableToken, long seqTxn) {
