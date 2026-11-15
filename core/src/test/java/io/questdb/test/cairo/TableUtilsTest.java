@@ -326,13 +326,15 @@ public class TableUtilsTest extends AbstractTest {
                 };
                 assertSupersededIndexFiles(day1Cases, metadata, columnVersionReader, day1);
                 // 2024-01-02 has no record: sym, p and c are live at txn -1, whose .pc host token is 0, s2 at its
-                // default 7
+                // default 7. A .pv name, unlike the .pc host token, spells txn 0 apart from txn -1: p.pv.0.3 is txn 0,
+                // seal 3.
                 final String[][] day2Cases = {
                         {"sym.k", "false"},
                         {"sym.v", "false"},
                         {"sym.k.5", "true"},
                         {"p.pk", "false"},
                         {"p.pv.3", "false"},
+                        {"p.pv.0.3", "true"},
                         {"p.pk.6", "true"},
                         {"p.pv.6.0", "true"},
                         {"c.pci", "false"},
@@ -342,6 +344,39 @@ public class TableUtilsTest extends AbstractTest {
                         {"s2.k.7", "false"}
                 };
                 assertSupersededIndexFiles(day2Cases, metadata, columnVersionReader, day2);
+            }
+        });
+    }
+
+    @Test
+    public void testIsSupersededIndexFileKeepsParquetFilesOfColumnNamedData() throws Exception {
+        // The name of an indexed column data starts the names of the parquet partition's own files, data.parquet and
+        // data.parquet.staging, so the column resolves. Their kind, parquet, is no index kind: neither is superseded,
+        // while the column's index files are classified against its live txn 5.
+        TestUtils.assertMemoryLeak(() -> {
+            final GenericRecordMetadata metadata = new GenericRecordMetadata();
+            metadata.add(new TableColumnMetadata("ts", ColumnType.TIMESTAMP, IndexType.NONE, 0, false, null, 0, false))
+                    .add(new TableColumnMetadata("data", ColumnType.SYMBOL, IndexType.BITMAP, 256, true, null, 1, false));
+            final long day = MicrosTimestampDriver.INSTANCE.fromDays(19_723);
+            try (
+                    Path cvPath = new Path().of(temp.newFolder().getAbsolutePath()).concat(TableUtils.COLUMN_VERSION_FILE_NAME);
+                    ColumnVersionWriter writer = new ColumnVersionWriter(new DefaultTestCairoConfiguration(root), cvPath.$(), true);
+                    ColumnVersionReader columnVersionReader = new ColumnVersionReader()
+            ) {
+                writer.upsert(day, 1, 5, 0);
+                writer.commit();
+                columnVersionReader.ofRO(FF, cvPath.$());
+                Assert.assertTrue(columnVersionReader.readSafe());
+                final String[][] cases = {
+                        {"data.parquet", "false"},
+                        {"data.parquet.staging", "false"},
+                        {"data.k", "true"},
+                        {"data.v", "true"},
+                        {"data.k.4", "true"},
+                        {"data.k.5", "false"},
+                        {"data.v.5", "false"}
+                };
+                assertSupersededIndexFiles(cases, metadata, columnVersionReader, day);
             }
         });
     }

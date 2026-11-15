@@ -905,6 +905,59 @@ public class ParquetInPlaceIndexPinnedReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testForceReindexKeepsDirectoryNamedLikeSupersededIndexFile() throws Exception {
+        // The pass removes files only: a directory whose name reads as a superseded index version of sym stays in the
+        // new directory of FORCE REINDEX and in the DETACH copy, as before the pass existed, and nothing is logged for
+        // it. A removal by name would delete an empty directory on POSIX and fail on Windows.
+        final String dirName = "sym.k.999";
+        node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 1);
+        setCurrentMicros(MicrosecondClockImpl.INSTANCE.getTicks());
+        final LogCapture capture = new LogCapture();
+        capture.start();
+        try {
+            assertMemoryLeak(() -> {
+                try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
+                    createSimpleTwins(IDX_BITMAP, false, "nat", "pq");
+                    final String exp0 = printed(plainQuery("nat", "s0"));
+                    final File oldDir = partitionDir("pq", DAY, partitionNameTxn(engine, "pq", 0));
+                    final long live;
+                    try (RecordCursorFactory factory = select(indexQuery("pq", "s0")); RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        applyO3Wave("pq", 1000, "00");
+                        live = symColumnNameTxn();
+                        assertSupersededVersionWaits("after O3", oldDir, "sym", live);
+                        Assert.assertTrue(new File(oldDir, dirName).mkdir());
+                        execute("ALTER TABLE pq FORCE REINDEX PARQUET PARTITION LIST '2024-01-01'");
+                        TestUtils.assertEquals(exp0, drain(factory, cursor));
+                    }
+                    final File newDir = partitionDir("pq", DAY, partitionNameTxn(engine, "pq", 0));
+                    final String[] reindexed = withFile(new String[]{"_pm", "data.parquet", "sym.k." + live, "sym.v." + live}, dirName);
+                    Assert.assertArrayEquals(reindexed, listDir(newDir));
+                    Assert.assertTrue(new File(newDir, dirName).isDirectory());
+                    settle(purgeJob);
+                    Assert.assertFalse(oldDir.exists());
+                    Assert.assertArrayEquals(reindexed, listDir(newDir));
+
+                    execute("ALTER TABLE pq DETACH PARTITION LIST '2024-01-01'");
+                    final File detachedDir = detachedCopy("pq", DAY);
+                    final String[] detached = withFile(new String[]{"_cv", "_meta", "_pm", "_txn", "data.parquet", "sym.k." + live, "sym.v." + live}, dirName);
+                    Assert.assertArrayEquals(detached, listDir(detachedDir));
+                    Assert.assertTrue(new File(detachedDir, dirName).isDirectory());
+                    capture.drain();
+                    capture.assertNotLogged("could not remove superseded index file");
+
+                    attach("pq", DAY);
+                    Assert.assertArrayEquals(detached, listDir(partitionDir("pq", DAY, partitionNameTxn(engine, "pq", 0))));
+                    applyO3Wave("nat", 1000, "00");
+                    assertTwins("after ATTACH");
+                }
+            });
+        } finally {
+            capture.stop();
+            setCurrentMicros(-1);
+        }
+    }
+
+    @Test
     public void testForceReindexKeepsFilesItCannotClassify() throws Exception {
         // Only an index file of an indexed column under another column name txn than the live one is superseded. The
         // index-like file of a column that is not indexed or does not exist, an index kind with a malformed txn, a
