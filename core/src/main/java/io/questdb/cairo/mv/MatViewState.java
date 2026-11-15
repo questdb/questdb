@@ -1471,7 +1471,9 @@ public class MatViewState implements QuietCloseable {
      * name of the view's SQL between a column and a call of the zero-argument function of that name, see
      * {@link MatViewBareNameGuard}. One entry per name, compared without regard to case, and base table keeps the
      * highest transaction: a FULL refresh that covers it covers the lower ones. Nothing removes an entry; a FULL
-     * refresh from a snapshot that includes its transaction covers it, see {@link #isCoveredByLastFullRefresh}.
+     * refresh from a snapshot that includes its transaction covers it, see {@link #isCoveredByLastFullRefresh}. A
+     * refresh that commits a refresh position below the transaction publishes the guard's invalidation again, see
+     * {@code MatViewRefreshJob.publishBareNameSwitchAboveRefreshPosition()}.
      */
     void recordBareNameSwitch(CharSequence name, int baseTableId, long baseTableTxn) {
         synchronized (bareNameSwitchesLock) {

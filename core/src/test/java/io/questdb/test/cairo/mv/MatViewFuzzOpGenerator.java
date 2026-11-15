@@ -74,6 +74,9 @@ import io.questdb.std.datetime.microtime.Micros;
  * count}, forced invalidations, RESUME, FULL, restarts and job runs, and predicts the outcome of RESUME and ALTER ...
  * AS: RESUME refuses an invalid view whose SQL still calls count bare once a switch stands that no FULL rebuilt the
  * view after, and refuses on its compile while count is no column. It also keeps the reading the view's rows hold.
+ * A base column change can race other operations: the test pauses its apply after the bare-name guard ran and before
+ * the change is visible, and runs one to three of the RACER_* operations meanwhile, see
+ * {@link Kind#BASE_RACED_BARE_NAME_COLUMN_CHANGE}.
  */
 public final class MatViewFuzzOpGenerator {
     // The SQL of the bare-name round's view, see bareNameViewSql()
@@ -91,6 +94,15 @@ public final class MatViewFuzzOpGenerator {
     // A column name longer than 64 characters: a SQL that references it without an alias relies on a generated column
     // name, so the view copies its columns by position.
     public static final String LONG_NAME = "long_" + "l".repeat(60);
+    // The operations that run while a raced base column change applies, see Kind.BASE_RACED_BARE_NAME_COLUMN_CHANGE:
+    // a FULL refresh, which runs then and there; a forced invalidation; REFRESH ... INCREMENTAL, which an invalid view
+    // refuses; the apply of the view's WAL; a run of the refresh job.
+    public static final int RACER_APPLY_WAL = 0;
+    public static final int RACER_COUNT = 5;
+    public static final int RACER_FULL = 1;
+    public static final int RACER_INCREMENTAL = 2;
+    public static final int RACER_INVALIDATE = 3;
+    public static final int RACER_RUN_REFRESH_JOB = 4;
     // The outcome of a RESUME of the bare-name round
     public static final int RESUME_ACCEPTED = 0;
     // the compile reads count as a column, which the base does not have
@@ -160,7 +172,7 @@ public final class MatViewFuzzOpGenerator {
             case INSERT -> 10;
             case VIEW_RESUME -> 6;
             case BASE_ADD_BARE_NAME_COLUMN, BASE_DROP_BARE_NAME_COLUMN, VIEW_INVALIDATE, APPLY_WAL, RUN_REFRESH_JOB -> 4;
-            case VIEW_FULL -> 3;
+            case VIEW_FULL, BASE_RACED_BARE_NAME_COLUMN_CHANGE -> 3;
             case VIEW_ALTER_AS, RESTART -> 2;
             default -> 0;
         };
@@ -273,7 +285,7 @@ public final class MatViewFuzzOpGenerator {
             case VIEW_DROP_EXPIRE -> 2;
             case VIEW_ALTER_AS -> 5;
             // only a bare-name round draws them, see bareNameRoundWeight()
-            case BASE_ADD_BARE_NAME_COLUMN, BASE_DROP_BARE_NAME_COLUMN -> 0;
+            case BASE_ADD_BARE_NAME_COLUMN, BASE_DROP_BARE_NAME_COLUMN, BASE_RACED_BARE_NAME_COLUMN_CHANGE -> 0;
         };
     }
 
@@ -743,6 +755,31 @@ public final class MatViewFuzzOpGenerator {
                     bareNameSql = op.bareNameSql;
                 }
             }
+            case BASE_RACED_BARE_NAME_COLUMN_CHANGE -> {
+                // the operations that race the change see the base without it
+                for (int i = 0, n = op.racers.size(); i < n; i++) {
+                    switch (op.racers.getQuick(i)) {
+                        case RACER_INVALIDATE -> isBareNameViewInvalid = true;
+                        case RACER_FULL -> {
+                            // FULL rebuilds every row from a snapshot without the change, and covers the earlier ones
+                            isBareNameViewInvalid = false;
+                            isBareNameSwitchStanding = false;
+                            isRowsReadingColumn = isColumnReading(bareNameSql, hasBaseCountColumn);
+                            isReadingMixedByAlter = false;
+                        }
+                        default -> {
+                            // nothing the model keeps changes
+                        }
+                    }
+                }
+                hasBaseCountColumn = op.isColumnAdded;
+                if (bareNameSql == BARE_NAME_SQL_BARE) {
+                    // the guard records the switch before the change applies, and a refresh that commits below it,
+                    // a FULL that raced the change included, publishes the guard's invalidation again
+                    isBareNameSwitchStanding = true;
+                    isBareNameViewInvalid = true;
+                }
+            }
             case VIEW_INVALIDATE -> isBareNameViewInvalid = true;
             case VIEW_RESUME -> {
                 if (op.resumeOutcome == RESUME_ACCEPTED) {
@@ -774,6 +811,16 @@ public final class MatViewFuzzOpGenerator {
                 // a SQL that reads the qualified column keeps it, so that no refresh fails
                 if (!hasBaseCountColumn || bareNameSql == BARE_NAME_SQL_QUALIFIED) {
                     return insteadInsert(rnd, op);
+                }
+            }
+            case BASE_RACED_BARE_NAME_COLUMN_CHANGE -> {
+                // a SQL that reads the qualified column keeps it, so that no refresh fails
+                if (bareNameSql == BARE_NAME_SQL_QUALIFIED) {
+                    return insteadInsert(rnd, op);
+                }
+                op.isColumnAdded = !hasBaseCountColumn;
+                for (int i = 0, n = 1 + rnd.nextInt(3); i < n; i++) {
+                    op.racers.add(rnd.nextInt(RACER_COUNT));
                 }
             }
             case VIEW_ALTER_AS -> {
@@ -947,6 +994,9 @@ public final class MatViewFuzzOpGenerator {
         // the bare-name round's base gains, or drops, its column count
         BASE_ADD_BARE_NAME_COLUMN,
         BASE_DROP_BARE_NAME_COLUMN,
+        // the bare-name round's base gains its column count, or drops it, while the RACER_* operations of Op.racers run
+        // after the bare-name guard ran and before the change is visible
+        BASE_RACED_BARE_NAME_COLUMN_CHANGE,
         BASE_DROP_PARTITION_LIST,
         BASE_DROP_PARTITION_WHERE,
         BASE_DETACH_PARTITION,
@@ -989,6 +1039,8 @@ public final class MatViewFuzzOpGenerator {
     public static final class Op {
         // the columns the policy of a SET EXPIRE reads
         public final ObjList<String> policyColumns = new ObjList<>();
+        // the RACER_* operations of a BASE_RACED_BARE_NAME_COLUMN_CHANGE, in their order
+        public final IntList racers = new IntList();
         public final LongList rowPrices = new LongList();
         public final LongList rowQtys = new LongList();
         public final IntList rowSyms = new IntList();
@@ -1003,6 +1055,8 @@ public final class MatViewFuzzOpGenerator {
         public int dayHi;
         // the policy as materialized_views().expire_clause shows it
         public String expireClause;
+        // a BASE_RACED_BARE_NAME_COLUMN_CHANGE adds the column count, rather than drops it
+        public boolean isColumnAdded;
         // the SQL of an ALTER ... AS copies by position, see viewSql(ObjList, boolean)
         public boolean isPositional;
         public boolean isProbed;
@@ -1023,11 +1077,13 @@ public final class MatViewFuzzOpGenerator {
             column = null;
             columnType = null;
             expireClause = null;
+            isColumnAdded = false;
             isPositional = false;
             isProbed = false;
             isRefused = false;
             policy = null;
             policyColumns.clear();
+            racers.clear();
             isSkipBacklog = false;
             sqlColumns.clear();
             rowTs.clear();

@@ -74,6 +74,8 @@ public class MatViewFuzzOpGeneratorCoverageTest {
     private static final int DAY_COUNT = 6;
     // each shape of an ALTER ... AS that copies by position, and the column changes it refuses
     private static final int POSITIONAL_ALTER_MIN = 20;
+    // the rounds of the bare-name round's shapes, which share their draws with the raced base column change
+    private static final int BARE_NAME_ROUNDS = 1_000;
     private static final int ROUNDS = 500;
     private static final int STEPS_PER_ROUND = 60;
 
@@ -416,7 +418,9 @@ public class MatViewFuzzOpGeneratorCoverageTest {
         // refuses, plain and with SKIP BACKLOG, until ALTER ... AS writes count(), after which RESUME accepts the view;
         // a switch that a FULL then covers, after which RESUME accepts the invalid view, which still calls count bare
         // and reads the base's column; RESUME refused on the compile; ALTER ... AS to count() and to the qualified
-        // column, and one refused for a qualified column the base lacks; and the view's rows mixed by such an ALTER.
+        // column, and one refused for a qualified column the base lacks; and the view's rows mixed by such an ALTER. A
+        // raced switch of the bare count, with every racer and with a FULL among its racers, and a raced change under
+        // count(), which switches nothing.
         final Rnd rnd = new Rnd(42, 42);
         final int[] kindCounts = new int[MatViewFuzzOpGenerator.Kind.values().length];
         int resumeRefusedOnSwitchPlain = 0;
@@ -428,8 +432,12 @@ public class MatViewFuzzOpGeneratorCoverageTest {
         int alterMixingReadings = 0;
         int recoveredByAlter = 0;
         int resumedAfterCoveringFull = 0;
+        final int[] racerCounts = new int[MatViewFuzzOpGenerator.RACER_COUNT];
+        int racedSwitches = 0;
+        int racedSwitchesWithFull = 0;
+        int racedChangesUnderCall = 0;
         final MatViewFuzzOpGenerator.Op op = new MatViewFuzzOpGenerator.Op();
-        for (int round = 0; round < ROUNDS; round++) {
+        for (int round = 0; round < BARE_NAME_ROUNDS; round++) {
             final MatViewFuzzOpGenerator generator = MatViewFuzzOpGenerator.forBareNameRound(DAY_COUNT);
             for (int day = 0; day < DAY_COUNT; day++) {
                 Assert.assertTrue(generator.initRows(rnd, day, op).rowTs.size() > 0);
@@ -453,6 +461,28 @@ public class MatViewFuzzOpGeneratorCoverageTest {
                             Assert.assertTrue(generator.isBareNameViewInvalid());
                             alterRecoveryStep = wasInvalid ? 1 : 0;
                             isSwitchCovered = false;
+                        }
+                    }
+                    case BASE_RACED_BARE_NAME_COLUMN_CHANGE -> {
+                        Assert.assertEquals(op.isColumnAdded, generator.hasBaseCountColumn());
+                        Assert.assertTrue(op.racers.size() > 0 && op.racers.size() < 4);
+                        for (int i = 0, n = op.racers.size(); i < n; i++) {
+                            racerCounts[op.racers.getQuick(i)]++;
+                        }
+                        if (sqlBefore == MatViewFuzzOpGenerator.BARE_NAME_SQL_BARE) {
+                            // a FULL that raced the change rebuilt the view without it, so the switch still stands
+                            Assert.assertTrue(generator.isBareNameSwitchStanding());
+                            Assert.assertTrue(generator.isBareNameViewInvalid());
+                            racedSwitches++;
+                            if (op.racers.contains(MatViewFuzzOpGenerator.RACER_FULL)) {
+                                racedSwitchesWithFull++;
+                            }
+                            alterRecoveryStep = wasInvalid ? 1 : 0;
+                            isSwitchCovered = false;
+                        } else {
+                            // a SQL that reads the qualified column keeps it
+                            Assert.assertEquals(MatViewFuzzOpGenerator.BARE_NAME_SQL_CALL, sqlBefore);
+                            racedChangesUnderCall++;
                         }
                     }
                     case VIEW_RESUME -> {
@@ -518,7 +548,7 @@ public class MatViewFuzzOpGeneratorCoverageTest {
                 }
             }
         }
-        final int total = ROUNDS * STEPS_PER_ROUND;
+        final int total = BARE_NAME_ROUNDS * STEPS_PER_ROUND;
         int totalWeight = 0;
         for (MatViewFuzzOpGenerator.Kind kind : MatViewFuzzOpGenerator.Kind.values()) {
             totalWeight += MatViewFuzzOpGenerator.bareNameRoundWeight(kind);
@@ -541,6 +571,12 @@ public class MatViewFuzzOpGeneratorCoverageTest {
         assertShare("ALTER ... AS that mixes the readings of the view's rows", alterMixingReadings, 50);
         assertShare("a switch while invalid, RESUME refused on it, ALTER ... AS to count(), RESUME accepted", recoveredByAlter, 20);
         assertShare("a switch that a FULL covers, RESUME accepted on the bare count", resumedAfterCoveringFull, 20);
+        assertShare("a raced switch of the bare count", racedSwitches, 100);
+        assertShare("a raced switch of the bare count with a FULL among its racers", racedSwitchesWithFull, 50);
+        assertShare("a raced base column change under count()", racedChangesUnderCall, 50);
+        for (int racer = 0; racer < MatViewFuzzOpGenerator.RACER_COUNT; racer++) {
+            assertShare("racer " + racer, racerCounts[racer], 100);
+        }
     }
 
     @Test

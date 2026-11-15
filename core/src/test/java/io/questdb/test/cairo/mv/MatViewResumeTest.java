@@ -1428,8 +1428,7 @@ public class MatViewResumeTest extends AbstractCairoTest {
     public void testResumeOfNeverRefreshedViewAfterSwitch() throws Exception {
         // A view that never completed a refresh keeps no rows that its next refresh does not recompute, so RESUME
         // accepts it after a bare-name switch. Its first build then reads count as the new column. Only a FULL refresh
-        // records the base snapshot it rebuilt the view from, so after that first build RESUME refuses until a FULL:
-        // the first build cannot be told from one that raced the switch until it records its snapshot too (D7).
+        // records the base snapshot it rebuilt the view from, so after that first build RESUME refuses until a FULL.
         assertMemoryLeak(() -> {
             createBase();
             insertBaseRows();

@@ -51,6 +51,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlParser;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
@@ -60,9 +61,11 @@ import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.cairo.fuzz.AbstractFuzzTest;
 import io.questdb.test.fuzz.FuzzDropCreateTableOperation;
 import io.questdb.test.fuzz.FuzzDropPartitionOperation;
@@ -70,6 +73,7 @@ import io.questdb.test.fuzz.FuzzSetTtlOperation;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.fuzz.FuzzTransactionOperation;
 import io.questdb.test.fuzz.FuzzTruncateTableOperation;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -77,12 +81,36 @@ import org.junit.Test;
 
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class MatViewFuzzTest extends AbstractFuzzTest {
     static final String FUZZ_INVALIDATION_REASON = "fuzz invalidation";
+    // A raced base column change of the bare-name round pauses its WAL apply in the removal of the swap file of the
+    // base's metadata, see raceBareNameColumnChange(): the bare-name guard has run, and a new reader does not see the
+    // change yet.
+    private static final AtomicReference<CountDownLatch> bareNameApplyPaused = new AtomicReference<>();
+    private static final AtomicReference<CountDownLatch> bareNameApplyRelease = new AtomicReference<>();
+    private static final AtomicReference<String> bareNamePauseSuffix = new AtomicReference<>();
+    private static final FilesFacade BARE_NAME_FF = new TestFilesFacadeImpl() {
+        @Override
+        public boolean removeQuiet(LPSZ name) {
+            final String suffix = bareNamePauseSuffix.get();
+            if (suffix != null && Utf8s.endsWithAscii(name, suffix) && bareNamePauseSuffix.compareAndSet(suffix, null)) {
+                bareNameApplyPaused.get().countDown();
+                try {
+                    Assert.assertTrue(bareNameApplyRelease.get().await(60, TimeUnit.SECONDS));
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+            return super.removeQuiet(name);
+        }
+    };
     // Two hours of fuzz data that NOT BETWEEN reads and view queries exclude.
     private static final String NOT_BETWEEN_HI = "'2022-02-24T20:00:00.000000Z'";
     private static final String NOT_BETWEEN_LO = "'2022-02-24T18:00:00.000000Z'";
@@ -149,9 +177,10 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         // rebuilds every row under one reading, and only an ALTER ... AS that changes the reading of later rows may
         // mix them, never an accepted RESUME.
         // The budget: questdb.fuzz.matview.rounds independent rounds of questdb.fuzz.matview.steps operations.
+        // A raced base column change runs other operations while its apply pauses, see raceBareNameColumnChange().
         final int rounds = Integer.getInteger("questdb.fuzz.matview.rounds", 1);
         final int steps = Integer.getInteger("questdb.fuzz.matview.steps", -1);
-        assertMemoryLeak(() -> {
+        assertMemoryLeak(BARE_NAME_FF, () -> {
             final Rnd rnd = generateRandom(LOG);
             for (int round = 0; round < rounds; round++) {
                 LOG.info().$("fuzz: bare-name round ").$(round).$();
@@ -995,6 +1024,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             case INSERT -> insertBareNameRows(op);
             case BASE_ADD_BARE_NAME_COLUMN -> execute("ALTER TABLE base ADD COLUMN count LONG");
             case BASE_DROP_BARE_NAME_COLUMN -> execute("ALTER TABLE base DROP COLUMN count");
+            case BASE_RACED_BARE_NAME_COLUMN_CHANGE -> raceBareNameColumnChange(op);
             case VIEW_ALTER_AS -> {
                 // Steers clear of a known bug until it is fixed (D8): ALTER ... AS validates against the base columns
                 // that the base's WAL applied, and the bare-name guard reads the SQL that the view's WAL applied, so a
@@ -1064,6 +1094,68 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             case RUN_REFRESH_JOB -> drainMatViewQueue(engine);
             default -> throw new AssertionError("unexpected operation: " + op.kind);
         }
+    }
+
+    // Applies the WAL of the raced base column change on another thread, whose apply pauses after the bare-name guard
+    // ran and before the change is visible, see BARE_NAME_FF, and runs the op's racers meanwhile on this thread.
+    private static void raceBareNameColumnChange(MatViewFuzzOpGenerator.Op op) throws Exception {
+        // The WAL applies first, and the view's WAL once more before the apply resumes, so that the thread of the paused
+        // apply applies the change only: a data transaction that a short-lived thread applies leaves a native path of
+        // the thread behind.
+        drainWalQueue();
+        final CountDownLatch paused = new CountDownLatch(1);
+        final CountDownLatch release = new CountDownLatch(1);
+        bareNameApplyPaused.set(paused);
+        bareNameApplyRelease.set(release);
+        bareNamePauseSuffix.set(engine.verifyTableName("base").getDirName() + Files.SEPARATOR + TableUtils.META_SWAP_FILE_NAME);
+        execute(op.isColumnAdded ? "ALTER TABLE base ADD COLUMN count LONG" : "ALTER TABLE base DROP COLUMN count");
+        final AtomicReference<Throwable> applierError = new AtomicReference<>();
+        final Thread applier = new Thread(() -> {
+            try {
+                drainWalQueue();
+            } catch (Throwable th) {
+                applierError.set(th);
+            } finally {
+                Path.clearThreadLocals();
+            }
+        });
+        applier.start();
+        try {
+            Assert.assertTrue(paused.await(30, TimeUnit.SECONDS));
+            for (int i = 0, n = op.racers.size(); i < n; i++) {
+                final int racer = op.racers.getQuick(i);
+                LOG.info().$("fuzz: racing the base column change [racer=").$(racer).I$();
+                switch (racer) {
+                    case MatViewFuzzOpGenerator.RACER_APPLY_WAL -> drainWalQueue();
+                    case MatViewFuzzOpGenerator.RACER_FULL -> {
+                        // The FULL runs before the change is visible: the jobs deliver what is queued, and the view's WAL
+                        // applies, so that the FULL does not wait for it.
+                        drainMatViewQueue(engine);
+                        drainWalQueue();
+                        execute("REFRESH MATERIALIZED VIEW mv FULL");
+                        drainMatViewQueue(engine);
+                        Assert.assertFalse(opsViewState("mv").hasPendingFullRefreshOwnerForTesting());
+                    }
+                    case MatViewFuzzOpGenerator.RACER_INCREMENTAL -> {
+                        try {
+                            execute("REFRESH MATERIALIZED VIEW mv INCREMENTAL");
+                        } catch (SqlException e) {
+                            TestUtils.assertContains(e.getFlyweightMessage(), "materialized view is invalid, run REFRESH MATERIALIZED VIEW mv RESUME first");
+                        }
+                    }
+                    case MatViewFuzzOpGenerator.RACER_INVALIDATE ->
+                            engine.getMatViewStateStore().enqueueInvalidate(engine.verifyTableName("mv"), FUZZ_INVALIDATION_REASON);
+                    case MatViewFuzzOpGenerator.RACER_RUN_REFRESH_JOB -> drainMatViewQueue(engine);
+                    default -> throw new AssertionError("unexpected racer: " + racer);
+                }
+            }
+            drainWalQueue();
+        } finally {
+            bareNamePauseSuffix.set(null);
+            release.countDown();
+            applier.join();
+        }
+        Assert.assertNull(applierError.get());
     }
 
     private static void runBareNameOperations(Rnd rnd, int steps) throws Exception {

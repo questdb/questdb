@@ -46,6 +46,7 @@ import io.questdb.griffin.ExpiryPolicyVersionChangedException;
 import io.questdb.griffin.RecordToRowCopier;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.model.IntervalUtils;
@@ -60,6 +61,7 @@ import io.questdb.mp.continuation.LaunchResult;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Chars;
 import io.questdb.std.LongList;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.MemoryTrackerWorkload;
 import io.questdb.std.Misc;
@@ -127,6 +129,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private final MatViewStateStore stateStore;
     private final TimeZoneIntervalIterator timeZoneIterator = new TimeZoneIntervalIterator();
     private final WalTxnRangeLoader txnRangeLoader;
+    // Parses a view's SQL for its bare select-list names, see publishBareNameSwitchAboveRefreshPosition(). Allocated on
+    // first use.
+    private SqlExecutionContextImpl bareNameParseContext;
     @TestOnly
     private long maxRunDurationNanos = MAX_RUN_DURATION_NANOS;
     @TestOnly
@@ -304,6 +309,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         Misc.free(fiberTask);
         Misc.free(refreshSqlExecutionContext);
         Misc.free(txnRangeLoader);
+        bareNameParseContext = Misc.free(bareNameParseContext);
     }
 
     @Override
@@ -1893,6 +1899,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             // the CAS fails and the post-release handoff wakes it conservatively.
                             viewState.clearPendingInvalidation(preSnapshotMarker);
                         }
+                        publishBareNameSwitchAboveRefreshPosition(baseTableToken, viewDefinition, viewState);
                     }
                 } finally {
                     refreshSqlExecutionContext.clearReader();
@@ -1987,6 +1994,15 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             stateStore.enqueueIncrementalRefresh(viewToken);
         }
         return true;
+    }
+
+    private SqlExecutionContextImpl getBareNameParseContext() {
+        if (bareNameParseContext == null) {
+            bareNameParseContext = new SqlExecutionContextImpl(engine, 1).with(
+                    configuration.getFactoryProvider().getSecurityContextFactory().getRootContext()
+            );
+        }
+        return bareNameParseContext;
     }
 
     // Builds the copier from the query's columns to the view's: by position when the view's SQL relies on generated
@@ -3398,6 +3414,68 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
     }
 
+    // The bare-name guard records a switch of a bare name of the view's SQL before the base column change applies, and
+    // publishes the view's invalidation, see MatViewBareNameGuard. A consumer can settle that invalidation before the
+    // change is visible: the INVALIDATE handler declines a view that never completed a refresh or marks the view
+    // invalid, a FULL refresh clears a marker that predates its base reader, a RESUME that refuses drops it, and the
+    // guard leaves an invalid view its own reason. A refresh that then commits a refresh position from a base snapshot
+    // without the change leaves the view valid below the switch, and the refreshes after the change would read the name
+    // the other way next to its rows. So each commit of a refresh position checks the switches the guard recorded and
+    // publishes the guard's invalidation again. The view has a refresh position by then, so the INVALIDATE handler
+    // marks it invalid instead of declining it, and the release of the latch delivers the marker. The caller holds the
+    // latch and has just committed the refresh position.
+    private void publishBareNameSwitchAboveRefreshPosition(
+            @NotNull TableToken baseTableToken,
+            @NotNull MatViewDefinition viewDefinition,
+            @NotNull MatViewState viewState
+    ) {
+        assert viewState.isLocked();
+        final ObjList<MatViewState.BareNameSwitch> bareNameSwitches = viewState.getBareNameSwitches();
+        if (bareNameSwitches.size() == 0) {
+            return;
+        }
+        final long refreshBaseTxn = viewState.getLastRefreshBaseTxn();
+        assert refreshBaseTxn >= 0 : "a committed refresh position must not be negative";
+        for (int i = 0, n = bareNameSwitches.size(); i < n; i++) {
+            final MatViewState.BareNameSwitch bareNameSwitch = bareNameSwitches.getQuick(i);
+            // A switch of another table, such as a base that the view's base table name no longer resolves to, is not
+            // the view's; one at or below the refresh position is in the rows the refresh read.
+            if (bareNameSwitch.baseTableId != baseTableToken.getTableId() || bareNameSwitch.baseTableTxn <= refreshBaseTxn) {
+                continue;
+            }
+            // Null when the SQL does not parse now, so that the reading of the name is unknown: the safe side keeps the
+            // name as the guard recorded it. The definition keeps a parsed set until its SQL changes.
+            final LowerCaseCharSequenceHashSet bareSelectNames = viewDefinition.getBareSelectNames(engine, getBareNameParseContext());
+            final CharSequence bareName;
+            if (bareSelectNames == null) {
+                bareName = bareNameSwitch.name;
+            } else {
+                final int keyIndex = bareSelectNames.keyIndex(bareNameSwitch.name);
+                if (keyIndex > -1) {
+                    // ALTER ... AS changed the SQL, which no longer reads the name bare
+                    continue;
+                }
+                // the name as the view's SQL writes it
+                bareName = bareSelectNames.keyAt(keyIndex);
+            }
+            LOG.info().$("materialized view refresh position is below a base column change that switches a bare name, invalidating it [view=")
+                    .$(viewDefinition.getMatViewToken())
+                    .$(", baseTable=").$(baseTableToken)
+                    .$(", refreshBaseTxn=").$(refreshBaseTxn)
+                    .$(", switchTxn=").$(bareNameSwitch.baseTableTxn)
+                    .$(", name=").$safe(bareName)
+                    .I$();
+            // The guard's base table and txn, so that a FULL refresh whose snapshot includes the change consumes it.
+            viewState.markAsPendingInvalidationAndGetMarker(
+                    MatViewBareNameGuard.invalidationReason(bareName),
+                    baseTableToken,
+                    bareNameSwitch.baseTableTxn,
+                    false
+            );
+            return;
+        }
+    }
+
     private boolean rangeRefresh(MatViewRefreshTask refreshTask) {
         final TableToken viewToken = refreshTask.matViewToken;
         assert viewToken != null;
@@ -3990,6 +4068,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 }
                 final RefreshContext refreshContext = findRefreshIntervals(baseTableReader, viewDefinition, viewState, walWriter, fromBaseTxn);
                 final boolean refreshed = insertAsSelect(viewDefinition, viewState, walWriter, refreshContext, refreshTriggerTimestamp, refreshTask, true, FAILURE_MODE_INVALIDATE);
+                if (refreshed) {
+                    publishBareNameSwitchAboveRefreshPosition(baseTableToken, viewDefinition, viewState);
+                }
                 // Reached only when the refresh completed without a retriable failure; clear any
                 // accumulated retry backoff and counter so a future transient error starts fresh.
                 viewState.resetRefreshRetry();

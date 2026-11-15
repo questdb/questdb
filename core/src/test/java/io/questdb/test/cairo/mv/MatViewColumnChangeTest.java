@@ -24,27 +24,40 @@
 
 package io.questdb.test.cairo.mv;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.mv.MatViewBareNameGuard;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewRefreshJob;
+import io.questdb.cairo.mv.MatViewRefreshTask;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateStoreImpl;
 import io.questdb.cairo.wal.seq.TableMetadataChange;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.Numbers;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Base DROP, RENAME and ALTER COLUMN TYPE invalidate no materialized view when they apply. The view's next refresh
@@ -72,6 +85,25 @@ public class MatViewColumnChangeTest extends AbstractCairoTest {
             2024-01-01T01:00:00.000000Z\ta\t2\t4.5
             """;
     private static final String BARE_VERSION_VIEW_SQL = "SELECT ts, sym, version, last(price) AS price FROM base SAMPLE BY 1h";
+    // the rows of COUNT_VIEW_SQL over the base of createCountBase() that call count(): one base row per bucket and sym
+    private static final String COUNT_CALL_ROWS = """
+            ts\tsym\tcount\tprice
+            2024-01-01T00:00:00.000000Z\ta\t1\t1.0
+            2024-01-01T01:00:00.000000Z\tb\t1\t2.0
+            """;
+    // COUNT_VIEW_SQL with count written as a call, the one reading of a view whose rows call count()
+    private static final String COUNT_CALL_SQL = "SELECT ts, sym, count() AS count, last(price) AS price FROM base SAMPLE BY 1h";
+    // the rows of COUNT_VIEW_SQL over the base of createCountBase() that read count as the column, a grouping key
+    private static final String COUNT_COLUMN_ROWS = """
+            ts\tsym\tcount\tprice
+            2024-01-01T00:00:00.000000Z\ta\t7\t1.0
+            2024-01-01T01:00:00.000000Z\tb\t8\t2.0
+            """;
+    private static final String COUNT_REASON = MatViewBareNameGuard.invalidationReason("count");
+    // reads count bare: the base column while the base has one, a call of count() otherwise
+    private static final String COUNT_VIEW_SQL = "SELECT ts, sym, count, last(price) AS price FROM base SAMPLE BY 1h";
+    private static final String CREATE_COUNT_BASE = "CREATE TABLE base (sym SYMBOL, price DOUBLE, count LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL";
+    private static final String DROP_COUNT = "ALTER TABLE base DROP COLUMN count";
     private static final String FILTER_VIEW_ROWS = """
             ts\tsym\tprice
             2024-01-01T00:00:00.000000Z\ta\t3.5
@@ -85,7 +117,8 @@ public class MatViewColumnChangeTest extends AbstractCairoTest {
             ('a', 3.5, 30.0, 2, '2024-01-01T00:40:00.000000Z'),
             ('a', 4.5, 40.0, 2, '2024-01-01T01:10:00.000000Z')
             """;
-
+    // a row of the hour 02:00 for the base of createCountBase() once the base has no column count
+    private static final String INSERT_C_ROW = "INSERT INTO base (sym, price, ts) VALUES ('c', 3.0, '2024-01-01T02:10:00.000000Z')";
     private static final String PRICE_VIEW_ROWS = """
             ts\tsym\tprice
             2024-01-01T00:00:00.000000Z\ta\t3.5
@@ -97,6 +130,30 @@ public class MatViewColumnChangeTest extends AbstractCairoTest {
     private static final String REGULAR_VIEW_SQL = "SELECT ts, sym, last(amount) AS amount FROM rv SAMPLE BY 1h";
     private static final String SELF_JOIN_VIEW_SQL = "SELECT a.ts, a.sym, last(b.amount) AS amount FROM base a ASOF JOIN base b ON (sym) SAMPLE BY 1h";
     private static final String VERSION_REASON = MatViewBareNameGuard.invalidationReason("version");
+    private static final int VIEW_NAME_POSITION = "REFRESH MATERIALIZED VIEW ".length();
+    // A test that races a column change with a refresh pauses the WAL apply of the change in its removal of the swap
+    // file of the changed table's metadata, see raceColumnChange(): the bare-name guard has run, and a new reader does
+    // not see the change yet.
+    private final CountDownLatch applyPaused = new CountDownLatch(1);
+    private final CountDownLatch applyRelease = new CountDownLatch(1);
+    private final AtomicReference<Throwable> applierError = new AtomicReference<>();
+    private final AtomicReference<String> pauseSuffix = new AtomicReference<>();
+    private final FilesFacade pausingFf = new TestFilesFacadeImpl() {
+        @Override
+        public boolean removeQuiet(LPSZ name) {
+            final String suffix = pauseSuffix.get();
+            if (suffix != null && Utf8s.endsWithAscii(name, suffix) && pauseSuffix.compareAndSet(suffix, null)) {
+                applyPaused.countDown();
+                try {
+                    Assert.assertTrue(applyRelease.await(60, TimeUnit.SECONDS));
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+            return super.removeQuiet(name);
+        }
+    };
+    private Thread applier;
 
     @Test
     public void testAlterColumnTypeCastsToViewColumn() throws Exception {
@@ -413,6 +470,126 @@ public class MatViewColumnChangeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGuardInvalidatesChildViewRebuiltWhileParentDropApplies() throws Exception {
+        // The child view reads its parent view's column count bare. The parent drops the column, and the child's INVALIDATE
+        // handler marks the child invalid while the drop applies. The child's FULL refresh then runs before the drop is
+        // visible: it reads count as the parent's column, commits the parent's txn before the drop as its refresh
+        // position, below the drop's txn that the guard recorded for the parent, and publishes the guard's invalidation
+        // again.
+        assertMemoryLeak(pausingFf, () -> {
+            createCountBase();
+            createView("p", "SELECT ts, sym, last(count) AS count, last(price) AS price FROM base SAMPLE BY 1h");
+            createView("child", "SELECT ts, sym, count, last(price) AS price FROM p SAMPLE BY 1d");
+            drainWalAndMatViewQueues();
+            drainWalAndMatViewQueues();
+            final long parentTxn = getSeqTxn(engine.verifyTableName("p"));
+            final String childRows = """
+                    ts\tsym\tcount\tprice
+                    2024-01-01T00:00:00.000000Z\ta\t7\t1.0
+                    2024-01-01T00:00:00.000000Z\tb\t8\t2.0
+                    """;
+            assertViewState("child", "valid", "", parentTxn);
+            assertViewRows("child", childRows);
+
+            raceColumnChange("p", "ALTER MATERIALIZED VIEW p DROP COLUMN count", () -> {
+                drainMatViewQueue(engine);
+                drainWalQueue();
+                assertViewState("child", "invalid", COUNT_REASON, parentTxn);
+                execute("REFRESH MATERIALIZED VIEW child FULL");
+                final AtomicReference<String> stateAtUnlock = captureStateAtUnlock("child");
+                drainMatViewQueue(engine);
+                Assert.assertEquals(pendingGuardState("p", parentTxn, parentTxn + 1), stateAtUnlock.get());
+                drainWalQueue();
+                assertViewState("child", "invalid", COUNT_REASON, parentTxn);
+                assertViewRows("child", childRows);
+            });
+            drainWalAndMatViewQueues();
+            assertViewState("child", "invalid", COUNT_REASON, parentTxn);
+            assertViewRows("child", childRows);
+        });
+    }
+
+    @Test
+    public void testGuardInvalidatesFirstBuildOfEmptyBaseRacedDrop() throws Exception {
+        // The view's first build on an empty base finds nothing to recompute while the DROP of count, the base's txn 1,
+        // applies. It still commits refresh position 0, below the switch the guard recorded, so it publishes the
+        // guard's invalidation again: the decline of the guard's invalidation is for a view without a refresh position.
+        assertMemoryLeak(pausingFf, () -> {
+            execute(CREATE_COUNT_BASE);
+            execute("CREATE MATERIALIZED VIEW mv REFRESH MANUAL DEFERRED AS (" + COUNT_VIEW_SQL + ") PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+            raceColumnChange("base", DROP_COUNT, () -> {
+                drainMatViewQueue(engine);
+                drainWalQueue();
+                assertViewState("mv", "valid", "", -1);
+                execute("REFRESH MATERIALIZED VIEW mv INCREMENTAL");
+                final AtomicReference<String> stateAtUnlock = captureStateAtUnlock("mv");
+                drainMatViewQueue(engine);
+                Assert.assertEquals(pendingGuardState("base", 0, 1), stateAtUnlock.get());
+                drainWalQueue();
+                assertViewState("mv", "invalid", COUNT_REASON, 0);
+            });
+            drainWalAndMatViewQueues();
+            assertViewState("mv", "invalid", COUNT_REASON, 0);
+            assertViewRows("mv", "ts\tsym\tcount\tprice\n");
+        });
+    }
+
+    @Test
+    public void testGuardInvalidatesImmediateViewWhoseFirstBuildRacedDrop() throws Exception {
+        // An IMMEDIATE view's first build runs while the DROP of count applies, after the INVALIDATE handler declined
+        // the guard's invalidation of the never-refreshed view. The build reads count as the column and publishes the
+        // guard's invalidation again. The refresh that the DROP's batch notifies then skips the invalid view, so its
+        // refresh position stays below the DROP, and the rows of later inserts do not reach it.
+        assertMemoryLeak(pausingFf, () -> {
+            createCountBaseWithView("REFRESH IMMEDIATE DEFERRED");
+            raceColumnChange("base", DROP_COUNT, () -> {
+                drainMatViewQueue(engine);
+                Assert.assertFalse(getViewState("mv").hasPendingInvalidationReason());
+                Assert.assertEquals(-1, getViewState("mv").getLastRefreshBaseTxn());
+                engine.getMatViewStateStore().enqueueIncrementalRefresh(engine.verifyTableName("mv"));
+                final AtomicReference<String> stateAtUnlock = captureStateAtUnlock("mv");
+                drainMatViewQueue(engine);
+                Assert.assertEquals(pendingGuardState("base", 1, 2), stateAtUnlock.get());
+                drainWalQueue();
+                assertViewState("mv", "invalid", COUNT_REASON, 1);
+            });
+            drainWalAndMatViewQueues();
+            assertViewState("mv", "invalid", COUNT_REASON, 1);
+            execute(INSERT_C_ROW);
+            drainWalAndMatViewQueues();
+            assertViewState("mv", "invalid", COUNT_REASON, 1);
+            assertViewRows("mv", COUNT_COLUMN_ROWS);
+        });
+    }
+
+    @Test
+    public void testGuardInvalidatesInvalidViewRebuiltWhileDropApplies() throws Exception {
+        // The view is invalid for another reason when the base drops count, so the bare-name guard records the switch
+        // and keeps the view's reason. A FULL refresh then runs while the DROP applies: it rebuilds the view from a base
+        // snapshot without the DROP, below the switch, and publishes the guard's invalidation, which the view never had.
+        assertMemoryLeak(pausingFf, () -> {
+            createRefreshedCountView();
+            engine.getMatViewStateStore().enqueueInvalidate(engine.verifyTableName("mv"), "test invalidation");
+            drainWalAndMatViewQueues();
+            assertViewState("mv", "invalid", "test invalidation", 1);
+            raceColumnChange("base", DROP_COUNT, () -> {
+                Assert.assertFalse(getViewState("mv").hasPendingInvalidationReason());
+                execute("REFRESH MATERIALIZED VIEW mv FULL");
+                final AtomicReference<String> stateAtUnlock = captureStateAtUnlock("mv");
+                drainMatViewQueue(engine);
+                Assert.assertEquals(pendingGuardState("base", 1, 2), stateAtUnlock.get());
+                drainWalQueue();
+                assertViewState("mv", "invalid", COUNT_REASON, 1);
+                assertViewRows("mv", COUNT_COLUMN_ROWS);
+            });
+            drainWalAndMatViewQueues();
+            assertViewState("mv", "invalid", COUNT_REASON, 1);
+            assertViewRows("mv", COUNT_COLUMN_ROWS);
+        });
+    }
+
+    @Test
     public void testGuardInvalidatesOnlyViewsUsingTheName() throws Exception {
         // One apply batch carries an insert, the DROP and another insert. The guard invalidates the view that reads
         // version bare and leaves the batch's incremental notification alone, so the other views refresh every row.
@@ -442,6 +619,50 @@ public class MatViewColumnChangeTest extends AbstractCairoTest {
             // the batch's last txn is 4: create 0, inserts 1 and 2, drop 3, insert 4
             assertRefreshBaseTxn("price_1h", 4);
             assertRefreshBaseTxn("amount_1h", 4);
+        });
+    }
+
+    @Test
+    public void testGuardInvalidatesRebuildWhoseSqlNoLongerParses() throws Exception {
+        // The view's first build runs while the DROP of count applies, and commits a batch per bucket. After the first
+        // batch the view's SQL stops parsing, as the test seam replaces it in place, and the build completes with the
+        // factory it compiled. Its commit cannot tell whether the SQL still reads count bare, so it publishes the
+        // guard's invalidation again, under the name the guard recorded.
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, 1);
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_INSERT_AS_SELECT_BATCH_SIZE, 1);
+        assertMemoryLeak(pausingFf, () -> {
+            createCountBaseWithView("REFRESH MANUAL DEFERRED");
+            raceColumnChange("base", DROP_COUNT, () -> {
+                drainMatViewQueue(engine);
+                Assert.assertFalse(getViewState("mv").hasPendingInvalidationReason());
+                execute("REFRESH MATERIALIZED VIEW mv INCREMENTAL");
+                final MatViewDefinition definition = getViewState("mv").getViewDefinition();
+                final AtomicBoolean isReplaced = new AtomicBoolean();
+                final AtomicReference<String> stateAtUnlock = captureStateAtUnlock("mv");
+                final LogCapture logCapture = new LogCapture();
+                logCapture.start();
+                try {
+                    try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
+                        job.setOnBatchCommittedForTesting(() -> {
+                            if (isReplaced.compareAndSet(false, true)) {
+                                definition.setMatViewSqlForTesting("SELECT ts, sym, count, last(price) AS price FROM");
+                            }
+                        });
+                        drainMatViewQueue(job);
+                    }
+                    Assert.assertTrue(isReplaced.get());
+                    Assert.assertEquals(pendingGuardState("base", 1, 2), stateAtUnlock.get());
+                    logCapture.waitForRegex("could not parse materialized view SQL to find its bare select-list names \\[view=mv~\\d+, error=table name or sub-query expected\\]");
+                } finally {
+                    logCapture.stop();
+                }
+                drainWalQueue();
+                assertViewState("mv", "invalid", COUNT_REASON, 1);
+                assertViewRows("mv", COUNT_COLUMN_ROWS);
+            });
+            drainWalAndMatViewQueues();
+            assertViewState("mv", "invalid", COUNT_REASON, 1);
+            assertViewRows("mv", COUNT_COLUMN_ROWS);
         });
     }
 
@@ -503,6 +724,486 @@ public class MatViewColumnChangeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGuardInvalidatesViewRebuiltWhileBaseSuspendedAfterFailedDrop() throws Exception {
+        // The bare-name guard records the switch of count and publishes its invalidation before the DROP applies, but the
+        // apply fails and suspends the base's WAL at base txn 1. A FULL refresh and a first build meanwhile read count as
+        // the column the base keeps and commit refresh position 1, below the switch, so both views end invalid with the
+        // guard's reason: the commit cannot tell a change that failed from one that has yet to apply. Once RESUME WAL
+        // skips the DROP, a FULL rebuilds the view from base txn 2, which no switch passes, and the view stays valid.
+        final AtomicReference<String> failSuffix = new AtomicReference<>();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean removeQuiet(LPSZ name) {
+                final String suffix = failSuffix.get();
+                if (suffix != null && Utf8s.containsAscii(name, suffix)) {
+                    return false;
+                }
+                return super.removeQuiet(name);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            createRefreshedCountView();
+            execute("CREATE MATERIALIZED VIEW mv2 REFRESH MANUAL DEFERRED AS (" + COUNT_VIEW_SQL + ") PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+            final TableToken baseToken = engine.verifyTableName("base");
+            failSuffix.set(baseToken.getDirName() + Files.SEPARATOR + TableUtils.META_SWAP_FILE_NAME);
+            execute(DROP_COUNT);
+            drainWalAndMatViewQueues();
+            failSuffix.set(null);
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(baseToken));
+            Assert.assertEquals(1, appliedTxn(baseToken));
+            assertViewState("mv", "invalid", COUNT_REASON, 1);
+            // the INVALIDATE handler declines the guard's invalidation of the never-refreshed view
+            assertViewState("mv2", "valid", "", -1);
+
+            execute("REFRESH MATERIALIZED VIEW mv FULL");
+            execute("REFRESH MATERIALIZED VIEW mv2 INCREMENTAL");
+            drainWalAndMatViewQueues();
+            drainWalAndMatViewQueues();
+            assertViewState("mv", "invalid", COUNT_REASON, 1);
+            assertViewRows("mv", COUNT_COLUMN_ROWS);
+            assertViewState("mv2", "invalid", COUNT_REASON, 1);
+            assertViewRows("mv2", COUNT_COLUMN_ROWS);
+
+            // the DROP is the base's txn 2, which the resume skips
+            execute("ALTER TABLE base RESUME WAL FROM TXN 3");
+            drainWalAndMatViewQueues();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(baseToken));
+            Assert.assertEquals(2, appliedTxn(baseToken));
+            execute("REFRESH MATERIALIZED VIEW mv FULL");
+            drainWalAndMatViewQueues();
+            drainWalAndMatViewQueues();
+            assertViewState("mv", "valid", "", 2);
+            Assert.assertFalse(getViewState("mv").hasPendingInvalidationReason());
+            assertViewRows("mv", COUNT_COLUMN_ROWS);
+            assertSqlCursors(COUNT_VIEW_SQL + " ORDER BY ts, sym", "mv ORDER BY ts, sym");
+        });
+    }
+
+    @Test
+    public void testGuardInvalidatesViewRebuiltWhileDropApplies() throws Exception {
+        // The INVALIDATE handler marks the refreshed view invalid with the guard's reason while the DROP of count
+        // applies, and a FULL refresh then rebuilds the view from a base snapshot without the DROP. The FULL commits
+        // refresh position 1, below the switch the guard recorded, so it publishes the guard's invalidation again,
+        // and the view does not stay valid with rows that later refreshes would read the other way.
+        assertMemoryLeak(pausingFf, () -> {
+            createRefreshedCountView();
+            raceColumnChange("base", DROP_COUNT, () -> {
+                drainMatViewQueue(engine);
+                drainWalQueue();
+                assertViewState("mv", "invalid", COUNT_REASON, 1);
+                execute("REFRESH MATERIALIZED VIEW mv FULL");
+                final AtomicReference<String> stateAtUnlock = captureStateAtUnlock("mv");
+                drainMatViewQueue(engine);
+                Assert.assertEquals(pendingGuardState("base", 1, 2), stateAtUnlock.get());
+                drainWalQueue();
+                assertViewState("mv", "invalid", COUNT_REASON, 1);
+                assertViewRows("mv", COUNT_COLUMN_ROWS);
+            });
+            drainWalAndMatViewQueues();
+            assertViewState("mv", "invalid", COUNT_REASON, 1);
+            assertViewRows("mv", COUNT_COLUMN_ROWS);
+        });
+    }
+
+    @Test
+    public void testGuardInvalidatesViewWhoseFirstBuildRacedAdd() throws Exception {
+        // The older view calls count without parentheses, and the base gains a column named count. The INVALIDATE
+        // handler declines the guard's invalidation of the never-refreshed view, and the view's first build runs before
+        // the ADD is visible: it calls count(), commits refresh position 1, below the switch, and publishes the guard's
+        // invalidation again. A FULL refresh after the ADD rebuilds the view under the column reading.
+        assertMemoryLeak(pausingFf, () -> {
+            createOlderCountView();
+            raceColumnChange("base", "ALTER TABLE base ADD COLUMN count LONG", () -> {
+                drainMatViewQueue(engine);
+                drainWalQueue();
+                assertViewState("mv", "valid", "", -1);
+                execute("REFRESH MATERIALIZED VIEW mv INCREMENTAL");
+                final AtomicReference<String> stateAtUnlock = captureStateAtUnlock("mv");
+                drainMatViewQueue(engine);
+                Assert.assertEquals(pendingGuardState("base", 1, 2), stateAtUnlock.get());
+                drainWalQueue();
+                assertViewState("mv", "invalid", COUNT_REASON, 1);
+                assertViewRows("mv", COUNT_CALL_ROWS);
+            });
+            drainWalAndMatViewQueues();
+            assertViewState("mv", "invalid", COUNT_REASON, 1);
+            assertViewRows("mv", COUNT_CALL_ROWS);
+
+            execute("REFRESH MATERIALIZED VIEW mv FULL");
+            drainWalAndMatViewQueues();
+            drainWalAndMatViewQueues();
+            assertViewState("mv", "valid", "", 2);
+            final String columnRows = """
+                    ts\tsym\tcount\tprice
+                    2024-01-01T00:00:00.000000Z\ta\tnull\t1.0
+                    2024-01-01T01:00:00.000000Z\tb\tnull\t2.0
+                    """;
+            assertViewRows("mv", columnRows);
+            execute("INSERT INTO base (sym, price, count, ts) VALUES ('c', 3.0, 9, '2024-01-01T02:10:00.000000Z')");
+            drainWalQueue();
+            execute("REFRESH MATERIALIZED VIEW mv INCREMENTAL");
+            drainWalAndMatViewQueues();
+            assertViewState("mv", "valid", "", 3);
+            assertViewRows("mv", columnRows + "2024-01-01T02:00:00.000000Z\tc\t9\t3.0\n");
+            assertSqlCursors(COUNT_VIEW_SQL + " ORDER BY ts, sym", "mv ORDER BY ts, sym");
+        });
+    }
+
+    @Test
+    public void testGuardInvalidatesViewWhoseFirstBuildRacedDrop() throws Exception {
+        // The bare-name guard publishes its invalidation before the DROP of count applies, and the INVALIDATE handler
+        // declines the view, which never completed a refresh. The view's first build then runs while the DROP applies:
+        // its reader does not see the DROP, so it reads count as the column, and it commits refresh position 1, below
+        // the DROP's base txn 2 that the guard recorded. The build publishes the guard's invalidation again, and the
+        // view ends invalid with its rows under one reading, as when the build runs before the guard.
+        assertMemoryLeak(pausingFf, () -> {
+            createCountBaseWithView("REFRESH MANUAL DEFERRED");
+            raceColumnChange("base", DROP_COUNT, () -> {
+                drainMatViewQueue(engine);
+                drainWalQueue();
+                assertViewState("mv", "valid", "", -1);
+                Assert.assertFalse(getViewState("mv").hasPendingInvalidationReason());
+                execute("REFRESH MATERIALIZED VIEW mv INCREMENTAL");
+                final AtomicReference<String> stateAtUnlock = captureStateAtUnlock("mv");
+                drainMatViewQueue(engine);
+                Assert.assertEquals(pendingGuardState("base", 1, 2), stateAtUnlock.get());
+                drainWalQueue();
+                assertViewState("mv", "invalid", COUNT_REASON, 1);
+                assertViewRows("mv", COUNT_COLUMN_ROWS);
+            });
+            drainWalAndMatViewQueues();
+            assertViewState("mv", "invalid", COUNT_REASON, 1);
+            assertViewRows("mv", COUNT_COLUMN_ROWS);
+
+            // the rows the base receives later do not reach the invalid view
+            execute(INSERT_C_ROW);
+            drainWalAndMatViewQueues();
+            assertExceptionNoLeakCheck(
+                    "REFRESH MATERIALIZED VIEW mv INCREMENTAL",
+                    VIEW_NAME_POSITION,
+                    "materialized view is invalid, run REFRESH MATERIALIZED VIEW mv RESUME first [reason=" + COUNT_REASON + ']'
+            );
+            assertViewState("mv", "invalid", COUNT_REASON, 1);
+            assertViewRows("mv", COUNT_COLUMN_ROWS);
+
+            // FULL rebuilds the view under the call reading
+            execute("REFRESH MATERIALIZED VIEW mv FULL");
+            drainWalAndMatViewQueues();
+            drainWalAndMatViewQueues();
+            assertViewState("mv", "valid", "", 3);
+            assertViewRows("mv", COUNT_CALL_ROWS + "2024-01-01T02:00:00.000000Z\tc\t1\t3.0\n");
+            assertSqlCursors(COUNT_CALL_SQL + " ORDER BY ts, sym", "mv ORDER BY ts, sym");
+        });
+    }
+
+    @Test
+    public void testGuardInvalidatesViewWhoseFirstBuildRacedRename() throws Exception {
+        // As testGuardInvalidatesViewWhoseFirstBuildRacedDrop(), with a RENAME of count away from the bare name.
+        assertMemoryLeak(pausingFf, () -> {
+            createCountBaseWithView("REFRESH MANUAL DEFERRED");
+            raceColumnChange("base", "ALTER TABLE base RENAME COLUMN count TO cnt", () -> {
+                drainMatViewQueue(engine);
+                Assert.assertFalse(getViewState("mv").hasPendingInvalidationReason());
+                execute("REFRESH MATERIALIZED VIEW mv INCREMENTAL");
+                final AtomicReference<String> stateAtUnlock = captureStateAtUnlock("mv");
+                drainMatViewQueue(engine);
+                Assert.assertEquals(pendingGuardState("base", 1, 2), stateAtUnlock.get());
+                drainWalQueue();
+                assertViewState("mv", "invalid", COUNT_REASON, 1);
+                assertViewRows("mv", COUNT_COLUMN_ROWS);
+            });
+            drainWalAndMatViewQueues();
+            assertViewState("mv", "invalid", COUNT_REASON, 1);
+            assertViewRows("mv", COUNT_COLUMN_ROWS);
+
+            execute(INSERT_C_ROW);
+            drainWalAndMatViewQueues();
+            assertViewState("mv", "invalid", COUNT_REASON, 1);
+            assertViewRows("mv", COUNT_COLUMN_ROWS);
+            execute("REFRESH MATERIALIZED VIEW mv FULL");
+            drainWalAndMatViewQueues();
+            drainWalAndMatViewQueues();
+            assertViewState("mv", "valid", "", 3);
+            assertViewRows("mv", COUNT_CALL_ROWS + "2024-01-01T02:00:00.000000Z\tc\t1\t3.0\n");
+            assertSqlCursors(COUNT_CALL_SQL + " ORDER BY ts, sym", "mv ORDER BY ts, sym");
+        });
+    }
+
+    @Test
+    public void testGuardInvalidatesViewWhoseFirstBuildReaderPredatesAppliedDrop() throws Exception {
+        // The view's first build fixes its base reader while the DROP of count applies, and the DROP becomes visible
+        // after the build's first batch commit. The build reads the base through its reader, so it reads count as the
+        // column and commits refresh position 1. The commit compares that position, not the base's applied txn, with
+        // the switch, and publishes the guard's invalidation again.
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, 1);
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_INSERT_AS_SELECT_BATCH_SIZE, 1);
+        assertMemoryLeak(pausingFf, () -> {
+            createCountBaseWithView("REFRESH MANUAL DEFERRED");
+            final TableToken baseToken = engine.verifyTableName("base");
+            raceColumnChange("base", DROP_COUNT, () -> {
+                drainMatViewQueue(engine);
+                Assert.assertFalse(getViewState("mv").hasPendingInvalidationReason());
+                execute("REFRESH MATERIALIZED VIEW mv INCREMENTAL");
+                final AtomicLong appliedBaseTxn = new AtomicLong(-1);
+                final AtomicReference<String> stateAtUnlock = captureStateAtUnlock("mv");
+                try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
+                    job.setOnBatchCommittedForTesting(() -> {
+                        if (appliedBaseTxn.get() == -1) {
+                            finishColumnChange();
+                            appliedBaseTxn.set(appliedTxn(baseToken));
+                        }
+                    });
+                    drainMatViewQueue(job);
+                }
+                Assert.assertEquals(2, appliedBaseTxn.get());
+                Assert.assertEquals(pendingGuardState("base", 1, 2), stateAtUnlock.get());
+            });
+            drainWalAndMatViewQueues();
+            assertViewState("mv", "invalid", COUNT_REASON, 1);
+            assertViewRows("mv", COUNT_COLUMN_ROWS);
+        });
+    }
+
+    @Test
+    public void testGuardInvalidatesViewWhoseFullRacedDrop() throws Exception {
+        // As testGuardInvalidatesViewWhoseFirstBuildRacedDrop(), with a FULL refresh in place of the first build: the
+        // FULL rebuilds the view from a base snapshot without the DROP, and publishes the guard's invalidation again.
+        assertMemoryLeak(pausingFf, () -> {
+            createCountBaseWithView("REFRESH MANUAL DEFERRED");
+            raceColumnChange("base", DROP_COUNT, () -> {
+                drainMatViewQueue(engine);
+                Assert.assertFalse(getViewState("mv").hasPendingInvalidationReason());
+                Assert.assertEquals(-1, getViewState("mv").getLastRefreshBaseTxn());
+                execute("REFRESH MATERIALIZED VIEW mv FULL");
+                final AtomicReference<String> stateAtUnlock = captureStateAtUnlock("mv");
+                drainMatViewQueue(engine);
+                Assert.assertEquals(pendingGuardState("base", 1, 2), stateAtUnlock.get());
+                drainWalQueue();
+                assertViewState("mv", "invalid", COUNT_REASON, 1);
+                assertViewRows("mv", COUNT_COLUMN_ROWS);
+            });
+            drainWalAndMatViewQueues();
+            assertViewState("mv", "invalid", COUNT_REASON, 1);
+            assertViewRows("mv", COUNT_COLUMN_ROWS);
+        });
+    }
+
+    @Test
+    public void testGuardInvalidatesViewWhoseFullReaderPredatesAppliedDrop() throws Exception {
+        // A FULL refresh fixes its base reader while the DROP of count applies, and the DROP becomes visible before the
+        // FULL truncates the view. The FULL reads the base through its reader, so it reads count as the column and
+        // commits refresh position 1. The commit compares that position, not the base's applied txn, with the switch,
+        // and publishes the guard's invalidation again.
+        assertMemoryLeak(pausingFf, () -> {
+            createRefreshedCountView();
+            final TableToken baseToken = engine.verifyTableName("base");
+            raceColumnChange("base", DROP_COUNT, () -> {
+                drainMatViewQueue(engine);
+                drainWalQueue();
+                assertViewState("mv", "invalid", COUNT_REASON, 1);
+                execute("REFRESH MATERIALIZED VIEW mv FULL");
+                final AtomicLong appliedBaseTxn = new AtomicLong(-1);
+                final AtomicReference<String> stateAtUnlock = captureStateAtUnlock("mv");
+                try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
+                    job.setOnBaseReaderSnapshotForTesting(() -> {
+                        if (appliedBaseTxn.get() == -1) {
+                            finishColumnChange();
+                            appliedBaseTxn.set(appliedTxn(baseToken));
+                        }
+                    });
+                    drainMatViewQueue(job);
+                }
+                Assert.assertEquals(2, appliedBaseTxn.get());
+                Assert.assertEquals(pendingGuardState("base", 1, 2), stateAtUnlock.get());
+            });
+            drainWalAndMatViewQueues();
+            assertViewState("mv", "invalid", COUNT_REASON, 1);
+            assertViewRows("mv", COUNT_COLUMN_ROWS);
+        });
+    }
+
+    @Test
+    public void testGuardInvalidatesViewWhoseParkedFullRanWhileDropApplies() throws Exception {
+        // A FULL refresh requested right after the INVALIDATE handler marked the view invalid waits for the view's own
+        // WAL. The WAL apply job redelivers it once that WAL applies, still before the DROP of count is visible, and the
+        // FULL rebuilds the view below the switch and publishes the guard's invalidation again.
+        assertMemoryLeak(pausingFf, () -> {
+            createRefreshedCountView();
+            raceColumnChange("base", DROP_COUNT, () -> {
+                drainMatViewQueue(engine);
+                Assert.assertTrue(getViewState("mv").isInvalid());
+                execute("REFRESH MATERIALIZED VIEW mv FULL");
+                drainMatViewQueue(engine);
+                // the FULL waits for the view's WAL, which holds the invalid state
+                Assert.assertTrue(getViewState("mv").hasPendingFullRefreshOwnerForTesting());
+                drainWalQueue();
+                final AtomicReference<String> stateAtUnlock = captureStateAtUnlock("mv");
+                drainMatViewQueue(engine);
+                Assert.assertEquals(pendingGuardState("base", 1, 2), stateAtUnlock.get());
+                Assert.assertFalse(getViewState("mv").hasPendingFullRefreshOwnerForTesting());
+                drainWalQueue();
+                assertViewState("mv", "invalid", COUNT_REASON, 1);
+                assertViewRows("mv", COUNT_COLUMN_ROWS);
+            });
+            drainWalAndMatViewQueues();
+            assertViewState("mv", "invalid", COUNT_REASON, 1);
+            assertViewRows("mv", COUNT_COLUMN_ROWS);
+        });
+    }
+
+    @Test
+    public void testGuardInvalidationOfRaceIsCoveredByLaterFull() throws Exception {
+        // A FULL refresh fixes its base reader while the DROP of count applies, the DROP becomes visible, and the FULL
+        // publishes the guard's invalidation of the DROP's base txn 2 again when it commits refresh position 1. A second
+        // FULL, requested meanwhile, runs before the INVALIDATE task that the first one's release enqueues: it rebuilds
+        // the view from base txn 2, which covers the invalidation, and the INVALIDATE task finds it covered.
+        assertMemoryLeak(pausingFf, () -> {
+            createRefreshedCountView();
+            raceColumnChange("base", DROP_COUNT, () -> {
+                drainMatViewQueue(engine);
+                drainWalQueue();
+                assertViewState("mv", "invalid", COUNT_REASON, 1);
+                execute("REFRESH MATERIALIZED VIEW mv FULL");
+                final AtomicBoolean isApplied = new AtomicBoolean();
+                final AtomicReference<String> stateAtUnlock = captureStateAtUnlock("mv");
+                try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
+                    job.setOnBaseReaderSnapshotForTesting(() -> {
+                        if (isApplied.compareAndSet(false, true)) {
+                            finishColumnChange();
+                            try {
+                                execute("REFRESH MATERIALIZED VIEW mv FULL");
+                            } catch (SqlException e) {
+                                throw new RuntimeException(e);
+                            }
+                        }
+                    });
+                    drainMatViewQueue(job);
+                }
+                Assert.assertTrue(isApplied.get());
+                Assert.assertEquals(pendingGuardState("base", 1, 2), stateAtUnlock.get());
+            });
+            drainWalAndMatViewQueues();
+            assertViewState("mv", "valid", "", 2);
+            Assert.assertFalse(getViewState("mv").hasPendingInvalidationReason());
+            assertViewRows("mv", COUNT_CALL_ROWS);
+            assertSqlCursors(COUNT_CALL_SQL + " ORDER BY ts, sym", "mv ORDER BY ts, sym");
+        });
+    }
+
+    @Test
+    public void testGuardInvalidationOfRaceSurvivesFailedPublication() throws Exception {
+        // The view's first build runs while the DROP of count applies, and the publication of the guard's invalidation
+        // that its commit makes fails on the heap. The refresh fails, which leaves the view invalid with its rows under
+        // one reading. A FULL refresh after the DROP rebuilds the view under the call reading.
+        assertMemoryLeak(pausingFf, () -> {
+            createCountBaseWithView("REFRESH MANUAL DEFERRED");
+            raceColumnChange("base", DROP_COUNT, () -> {
+                drainMatViewQueue(engine);
+                Assert.assertFalse(getViewState("mv").hasPendingInvalidationReason());
+                execute("REFRESH MATERIALIZED VIEW mv INCREMENTAL");
+                getViewState("mv").setOnPendingInvalidationMarkerReadForTesting(() -> {
+                    throw new OutOfMemoryError("guard republish");
+                });
+                drainMatViewQueue(engine);
+                drainWalQueue();
+                assertViewState("mv", "invalid", "guard republish", 1);
+                Assert.assertFalse(getViewState("mv").hasPendingInvalidationReason());
+                assertViewRows("mv", COUNT_COLUMN_ROWS);
+            });
+            drainWalAndMatViewQueues();
+            assertViewState("mv", "invalid", "guard republish", 1);
+
+            execute("REFRESH MATERIALIZED VIEW mv FULL");
+            drainWalAndMatViewQueues();
+            drainWalAndMatViewQueues();
+            assertViewState("mv", "valid", "", 2);
+            assertViewRows("mv", COUNT_CALL_ROWS);
+            assertSqlCursors(COUNT_CALL_SQL + " ORDER BY ts, sym", "mv ORDER BY ts, sym");
+        });
+    }
+
+    @Test
+    public void testGuardInvalidationOfRaceSurvivesRestart() throws Exception {
+        // The view's first build races the DROP of count and leaves the view invalid with the guard's reason, which the
+        // view's state keeps across a restart that loses the switch the guard recorded in memory.
+        assertMemoryLeak(pausingFf, () -> {
+            createCountBaseWithView("REFRESH MANUAL DEFERRED");
+            raceColumnChange("base", DROP_COUNT, () -> {
+                drainMatViewQueue(engine);
+                execute("REFRESH MATERIALIZED VIEW mv INCREMENTAL");
+                drainMatViewQueue(engine);
+            });
+            drainWalAndMatViewQueues();
+            assertViewState("mv", "invalid", COUNT_REASON, 1);
+            restartViewStates();
+            assertViewState("mv", "invalid", COUNT_REASON, 1);
+            assertViewRows("mv", COUNT_COLUMN_ROWS);
+            execute(INSERT_C_ROW);
+            drainWalAndMatViewQueues();
+            assertViewState("mv", "invalid", COUNT_REASON, 1);
+            assertViewRows("mv", COUNT_COLUMN_ROWS);
+        });
+    }
+
+    @Test
+    public void testGuardInvalidationOfRacedAddRefusesResumeAfterRestart() throws Exception {
+        // The older view's first build races the ADD of a column named count and leaves the view invalid with the
+        // guard's reason. A restart loses the switch the guard recorded in memory, and RESUME, which compiles count as
+        // the new column, refuses on the guard's reason that the view's state keeps.
+        assertMemoryLeak(pausingFf, () -> {
+            createOlderCountView();
+            raceColumnChange("base", "ALTER TABLE base ADD COLUMN count LONG", () -> {
+                drainMatViewQueue(engine);
+                execute("REFRESH MATERIALIZED VIEW mv INCREMENTAL");
+                drainMatViewQueue(engine);
+            });
+            drainWalAndMatViewQueues();
+            assertViewState("mv", "invalid", COUNT_REASON, 1);
+            restartViewStates();
+            final String refusal = "materialized view SQL reads a bare name whose meaning a base column change switched, fix it with "
+                    + "ALTER MATERIALIZED VIEW ... AS first [view=mv, error=" + COUNT_REASON + ']';
+            assertExceptionNoLeakCheck("REFRESH MATERIALIZED VIEW mv RESUME", VIEW_NAME_POSITION, refusal);
+            assertExceptionNoLeakCheck("REFRESH MATERIALIZED VIEW mv RESUME SKIP BACKLOG", VIEW_NAME_POSITION, refusal);
+            drainWalAndMatViewQueues();
+            assertViewState("mv", "invalid", COUNT_REASON, 1);
+            assertViewRows("mv", COUNT_CALL_ROWS);
+        });
+    }
+
+    @Test
+    public void testGuardInvalidationOfRacedFullSurvivesFailedPublication() throws Exception {
+        // As testGuardInvalidationOfRaceSurvivesFailedPublication(), with a FULL refresh of the view that the INVALIDATE
+        // handler marked invalid while the DROP of count applies.
+        assertMemoryLeak(pausingFf, () -> {
+            createRefreshedCountView();
+            raceColumnChange("base", DROP_COUNT, () -> {
+                drainMatViewQueue(engine);
+                drainWalQueue();
+                assertViewState("mv", "invalid", COUNT_REASON, 1);
+                execute("REFRESH MATERIALIZED VIEW mv FULL");
+                getViewState("mv").setOnPendingInvalidationMarkerReadForTesting(() -> {
+                    throw new OutOfMemoryError("guard republish");
+                });
+                drainMatViewQueue(engine);
+                drainWalQueue();
+                assertViewState("mv", "invalid", "guard republish", 1);
+                Assert.assertFalse(getViewState("mv").hasPendingInvalidationReason());
+                assertViewRows("mv", COUNT_COLUMN_ROWS);
+            });
+            drainWalAndMatViewQueues();
+            assertViewState("mv", "invalid", "guard republish", 1);
+
+            execute("REFRESH MATERIALIZED VIEW mv FULL");
+            drainWalAndMatViewQueues();
+            drainWalAndMatViewQueues();
+            assertViewState("mv", "valid", "", 2);
+            assertViewRows("mv", COUNT_CALL_ROWS);
+            assertSqlCursors(COUNT_CALL_SQL + " ORDER BY ts, sym", "mv ORDER BY ts, sym");
+        });
+    }
+
+    @Test
     public void testGuardKeepsReasonOfInvalidView() throws Exception {
         // An invalidation that reaches an invalid view is dropped, the guard's included, so the view keeps the
         // reason it went invalid with.
@@ -523,6 +1224,124 @@ public class MatViewColumnChangeTest extends AbstractCairoTest {
             Assert.assertFalse(getViewState("versions").hasPendingInvalidationReason());
             drainWalAndMatViewQueues();
             assertViewInvalid("versions", reason);
+        });
+    }
+
+    @Test
+    public void testGuardKeepsViewAlteredToCallWhileDropApplies() throws Exception {
+        // While the DROP of count applies, ALTER ... AS writes count() as a call, and a FULL refresh rebuilds the view
+        // from a base snapshot without the DROP. The view's SQL no longer reads count bare, so the switch the guard
+        // recorded is not the view's, and the view stays valid under the one reading of its new SQL.
+        assertMemoryLeak(pausingFf, () -> {
+            createRefreshedCountView();
+            raceColumnChange("base", DROP_COUNT, () -> {
+                drainMatViewQueue(engine);
+                drainWalQueue();
+                assertViewState("mv", "invalid", COUNT_REASON, 1);
+                execute("ALTER MATERIALIZED VIEW mv AS (" + COUNT_CALL_SQL + ")");
+                drainWalQueue();
+                execute("REFRESH MATERIALIZED VIEW mv FULL");
+                drainMatViewQueue(engine);
+                drainWalQueue();
+                assertViewState("mv", "valid", "", 1);
+                Assert.assertFalse(getViewState("mv").hasPendingInvalidationReason());
+                assertViewRows("mv", COUNT_CALL_ROWS);
+            });
+            drainWalAndMatViewQueues();
+            assertViewState("mv", "valid", "", 1);
+            execute(INSERT_C_ROW);
+            drainWalQueue();
+            execute("REFRESH MATERIALIZED VIEW mv INCREMENTAL");
+            drainWalAndMatViewQueues();
+            assertViewState("mv", "valid", "", 3);
+            assertViewRows("mv", COUNT_CALL_ROWS + "2024-01-01T02:00:00.000000Z\tc\t1\t3.0\n");
+            assertSqlCursors(COUNT_CALL_SQL + " ORDER BY ts, sym", "mv ORDER BY ts, sym");
+        });
+    }
+
+    @Test
+    public void testGuardKeepsViewRebuiltFromReplacedBase() throws Exception {
+        // The guard recorded the switch of count on the dropped base table. A FULL refresh rebuilds the view from the
+        // table that replaced it, at its txn 1, below the switch's txn 2: the switch belongs to another table, so the
+        // view stays valid and reads count as the new table's column.
+        assertMemoryLeak(() -> {
+            createRefreshedCountView();
+            execute(DROP_COUNT);
+            drainWalAndMatViewQueues();
+            assertViewState("mv", "invalid", COUNT_REASON, 1);
+            execute("DROP TABLE base");
+            execute(CREATE_COUNT_BASE);
+            execute("INSERT INTO base VALUES ('d', 4.0, 5, '2024-01-01T03:10:00.000000Z')");
+            drainWalAndMatViewQueues();
+            assertViewState("mv", "invalid", COUNT_REASON, 1);
+
+            execute("REFRESH MATERIALIZED VIEW mv FULL");
+            drainWalAndMatViewQueues();
+            drainWalAndMatViewQueues();
+            assertViewState("mv", "valid", "", 1);
+            Assert.assertFalse(getViewState("mv").hasPendingInvalidationReason());
+            final String rows = """
+                    ts\tsym\tcount\tprice
+                    2024-01-01T03:00:00.000000Z\td\t5\t4.0
+                    """;
+            assertViewRows("mv", rows);
+            execute("INSERT INTO base VALUES ('e', 5.0, 6, '2024-01-01T04:10:00.000000Z')");
+            drainWalQueue();
+            execute("REFRESH MATERIALIZED VIEW mv INCREMENTAL");
+            drainWalAndMatViewQueues();
+            assertViewState("mv", "valid", "", 2);
+            assertViewRows("mv", rows + "2024-01-01T04:00:00.000000Z\te\t6\t5.0\n");
+            assertSqlCursors(COUNT_VIEW_SQL + " ORDER BY ts, sym", "mv ORDER BY ts, sym");
+        });
+    }
+
+    @Test
+    public void testGuardKeepsViewWhoseFirstBuildFollowsDrop() throws Exception {
+        // The INVALIDATE handler declines the guard's invalidation of a view that never completed a refresh. The view's
+        // first build runs once the DROP of count applied, from base txn 2, the DROP's own, which the switch does not
+        // pass: the build calls count() in every bucket, and the view stays valid.
+        assertMemoryLeak(() -> {
+            createCountBaseWithView("REFRESH MANUAL DEFERRED");
+            execute(DROP_COUNT);
+            drainWalAndMatViewQueues();
+            assertViewState("mv", "valid", "", -1);
+            execute("REFRESH MATERIALIZED VIEW mv INCREMENTAL");
+            drainWalAndMatViewQueues();
+            assertViewState("mv", "valid", "", 2);
+            Assert.assertFalse(getViewState("mv").hasPendingInvalidationReason());
+            assertViewRows("mv", COUNT_CALL_ROWS);
+            execute(INSERT_C_ROW);
+            drainWalQueue();
+            execute("REFRESH MATERIALIZED VIEW mv INCREMENTAL");
+            drainWalAndMatViewQueues();
+            assertViewState("mv", "valid", "", 3);
+            assertViewRows("mv", COUNT_CALL_ROWS + "2024-01-01T02:00:00.000000Z\tc\t1\t3.0\n");
+            assertSqlCursors(COUNT_CALL_SQL + " ORDER BY ts, sym", "mv ORDER BY ts, sym");
+        });
+    }
+
+    @Test
+    public void testGuardKeepsViewWhoseFullFollowsDrop() throws Exception {
+        // A FULL refresh rebuilds the view that the guard invalidated from base txn 2, the DROP's own, which the switch
+        // does not pass: the FULL calls count() in every bucket, and the view stays valid.
+        assertMemoryLeak(() -> {
+            createRefreshedCountView();
+            execute(DROP_COUNT);
+            drainWalAndMatViewQueues();
+            assertViewState("mv", "invalid", COUNT_REASON, 1);
+            execute("REFRESH MATERIALIZED VIEW mv FULL");
+            drainWalAndMatViewQueues();
+            drainWalAndMatViewQueues();
+            assertViewState("mv", "valid", "", 2);
+            Assert.assertFalse(getViewState("mv").hasPendingInvalidationReason());
+            assertViewRows("mv", COUNT_CALL_ROWS);
+            execute(INSERT_C_ROW);
+            drainWalQueue();
+            execute("REFRESH MATERIALIZED VIEW mv INCREMENTAL");
+            drainWalAndMatViewQueues();
+            assertViewState("mv", "valid", "", 3);
+            assertViewRows("mv", COUNT_CALL_ROWS + "2024-01-01T02:00:00.000000Z\tc\t1\t3.0\n");
+            assertSqlCursors(COUNT_CALL_SQL + " ORDER BY ts, sym", "mv ORDER BY ts, sym");
         });
     }
 
@@ -558,6 +1377,48 @@ public class MatViewColumnChangeTest extends AbstractCairoTest {
             drainWalAndMatViewQueues();
             assertViewInvalid("versions", "[" + brokenSql.length() + "]: table name or sub-query expected");
             assertViewRows("versions", "ts, sym, version", BARE_VERSION_VIEW_ROWS);
+        });
+    }
+
+    @Test
+    public void testGuardRaceLeavesBaseNotificationIdle() throws Exception {
+        // The base commits an insert, base txn 2, and the DROP of count, base txn 3, pauses. The IMMEDIATE view's first
+        // build runs from a base notification meanwhile: it reads the base at txn 2 under the column reading, commits
+        // refresh position 2 and publishes the guard's invalidation again, whose delivery marks the view invalid. The
+        // next base notification's pass skips the view and writes nothing, so the refresh job goes idle while the DROP
+        // applies. The insert applies before the DROP's apply run: a data transaction that the thread of the paused
+        // apply applies leaves a native path of that short-lived thread behind.
+        assertMemoryLeak(pausingFf, () -> {
+            createCountBaseWithView("REFRESH IMMEDIATE DEFERRED");
+            execute("INSERT INTO base VALUES ('c', 3.0, 9, '2024-01-01T02:10:00.000000Z')");
+            drainWalQueue();
+            final String rows = COUNT_COLUMN_ROWS + "2024-01-01T02:00:00.000000Z\tc\t9\t3.0\n";
+            final TableToken viewToken = engine.verifyTableName("mv");
+            raceColumnChange("base", DROP_COUNT, () -> {
+                // the insert's notification skips the view, whose guard invalidation is pending, and the INVALIDATE
+                // handler declines the never-refreshed view
+                drainMatViewQueue(engine);
+                Assert.assertFalse(getViewState("mv").hasPendingInvalidationReason());
+                Assert.assertEquals(-1, getViewState("mv").getLastRefreshBaseTxn());
+                final MatViewRefreshTask task = new MatViewRefreshTask();
+                task.operation = MatViewRefreshTask.INCREMENTAL_REFRESH;
+                task.baseTableToken = engine.verifyTableName("base");
+                engine.notifyMatViewBaseTableCommit(task, 2);
+                final AtomicReference<String> stateAtUnlock = captureStateAtUnlock("mv");
+                runRefreshJobUntilIdle();
+                Assert.assertEquals(pendingGuardState("base", 2, 3), stateAtUnlock.get());
+                drainWalQueue();
+                assertViewState("mv", "invalid", COUNT_REASON, 2);
+                assertViewRows("mv", rows);
+
+                final long viewSeqTxn = getSeqTxn(viewToken);
+                engine.notifyMatViewBaseTableCommit(task, 2);
+                runRefreshJobUntilIdle();
+                Assert.assertEquals(viewSeqTxn, getSeqTxn(viewToken));
+            });
+            drainWalAndMatViewQueues();
+            assertViewState("mv", "invalid", COUNT_REASON, 2);
+            assertViewRows("mv", rows);
         });
     }
 
@@ -1060,6 +1921,11 @@ public class MatViewColumnChangeTest extends AbstractCairoTest {
         });
     }
 
+    // The last sequencer txn that the WAL table has applied.
+    private static long appliedTxn(TableToken tableToken) {
+        return engine.getTableSequencerAPI().getTxnTracker(tableToken).getWriterTxn();
+    }
+
     private static void assertNames(LowerCaseCharSequenceHashSet names, String... expected) {
         Assert.assertNotNull(names);
         Assert.assertEquals(expected.length, names.size());
@@ -1068,12 +1934,55 @@ public class MatViewColumnChangeTest extends AbstractCairoTest {
         }
     }
 
+    // Captures the view's state when the refresh that holds the view's latch releases it: after the refresh committed,
+    // and before the release wakes a pending invalidation, see describeState().
+    private static AtomicReference<String> captureStateAtUnlock(String viewName) {
+        final MatViewState state = getViewState(viewName);
+        final AtomicReference<String> captured = new AtomicReference<>();
+        state.setOnBeforeUnlockForTesting(() -> captured.set(describeState(state)));
+        return captured;
+    }
+
     private static void createBase() throws SqlException {
         execute("CREATE TABLE base (sym SYMBOL, price DOUBLE, amount DOUBLE, version INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
     }
 
+    // A base with the column count and two rows, base txn 1.
+    private static void createCountBase() throws SqlException {
+        execute(CREATE_COUNT_BASE);
+        execute("INSERT INTO base VALUES ('a', 1.0, 7, '2024-01-01T00:10:00.000000Z'), ('b', 2.0, 8, '2024-01-01T01:10:00.000000Z')");
+        drainWalQueue();
+    }
+
+    // createCountBase() and the view mv with the refresh clause, whose SQL reads the column count bare.
+    private static void createCountBaseWithView(String refreshClause) throws SqlException {
+        createCountBase();
+        execute("CREATE MATERIALIZED VIEW mv " + refreshClause + " AS (" + COUNT_VIEW_SQL + ") PARTITION BY DAY");
+        drainWalAndMatViewQueues();
+    }
+
+    // A base without a column count and with two rows, base txn 1, and the MANUAL DEFERRED view mv, created before the
+    // explicit-name rule, whose SQL calls count without parentheses.
+    private static void createOlderCountView() throws SqlException {
+        execute("CREATE TABLE base (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("INSERT INTO base VALUES ('a', 1.0, '2024-01-01T00:10:00.000000Z'), ('b', 2.0, '2024-01-01T01:10:00.000000Z')");
+        drainWalQueue();
+        executeWithoutExplicitNamesCheck("CREATE MATERIALIZED VIEW mv REFRESH MANUAL DEFERRED AS (" + COUNT_VIEW_SQL + ") PARTITION BY DAY");
+        drainWalAndMatViewQueues();
+    }
+
     private static void createView(String viewName, String sql) throws SqlException {
         execute("CREATE MATERIALIZED VIEW " + viewName + " AS (" + sql + ") PARTITION BY DAY");
+    }
+
+    // The view's validity, refresh position and pending invalidation, with the reason's base table and base txn.
+    private static String describeState(MatViewState state) {
+        final TableToken pendingBaseTableToken = state.getPendingInvalidationBaseTableTokenForTesting();
+        return "invalid=" + state.isInvalid()
+                + ", refreshBaseTxn=" + state.getLastRefreshBaseTxn()
+                + ", pendingReason=" + state.getPendingInvalidationReason()
+                + ", pendingBaseTable=" + (pendingBaseTableToken != null ? pendingBaseTableToken.getTableName() : null)
+                + ", pendingBaseTxn=" + state.getPendingInvalidationBaseTxnForTesting();
     }
 
     private static long getSeqTxn(TableToken tableToken) {
@@ -1113,6 +2022,15 @@ public class MatViewColumnChangeTest extends AbstractCairoTest {
 
     private static void insertBaseRows() throws SqlException {
         execute(INSERT_BASE_ROWS);
+    }
+
+    // The state, see describeState(), of a valid view at the refresh position, with the bare-name guard's invalidation
+    // of the switch of count at the base table's txn pending.
+    private static String pendingGuardState(String baseTableName, long refreshBaseTxn, long switchTxn) {
+        return "invalid=false, refreshBaseTxn=" + refreshBaseTxn
+                + ", pendingReason=" + COUNT_REASON
+                + ", pendingBaseTable=" + baseTableName
+                + ", pendingBaseTxn=" + switchTxn;
     }
 
     private static String queryVersion() throws SqlException {
@@ -1176,6 +2094,23 @@ public class MatViewColumnChangeTest extends AbstractCairoTest {
         });
     }
 
+    // A restart of the view states: the store reloads them from disk, as at startup.
+    private static void restartViewStates() {
+        engine.getMatViewStateStore().clear();
+        engine.hydrateMatViewStateStore();
+    }
+
+    // Runs a refresh job until it has nothing to do, a bounded number of times, and asserts that the queue is empty.
+    private static void runRefreshJobUntilIdle() {
+        try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
+            int busyRuns = 0;
+            while (job.run()) {
+                Assert.assertTrue("the refresh job does not go idle", ++busyRuns < 10);
+            }
+        }
+        Assert.assertTrue(engine.getMatViewStateStore().isRefreshQueueEmpty());
+    }
+
     private void assertRefreshBaseTxn(String viewName, long expectedTxn) throws Exception {
         assertQuery("SELECT refresh_base_table_txn FROM materialized_views() WHERE view_name = '" + viewName + "'")
                 .noLeakCheck()
@@ -1233,7 +2168,61 @@ public class MatViewColumnChangeTest extends AbstractCairoTest {
         }
     }
 
+    // The view's status, reason and refresh position as materialized_views() reports them: from the view's state file,
+    // which the apply of the view's WAL writes, so the caller applies the view's WAL first.
+    private void assertViewState(String viewName, String status, String reason, long refreshBaseTxn) throws Exception {
+        assertQuery("SELECT view_status, invalidation_reason, refresh_base_table_txn FROM materialized_views() WHERE view_name = '" + viewName + "'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("view_status\tinvalidation_reason\trefresh_base_table_txn\n" + status + '\t' + reason + '\t' + refreshBaseTxn + '\n');
+    }
+
     private void assertViewValid(String viewName) throws Exception {
         assertViewStatus(engine, viewName, "valid", "");
+    }
+
+    // createCountBaseWithView() with a MANUAL view, built by its first refresh from base txn 1 under the column reading.
+    private void createRefreshedCountView() throws Exception {
+        createCountBaseWithView("REFRESH MANUAL");
+        execute("REFRESH MATERIALIZED VIEW mv INCREMENTAL");
+        drainWalAndMatViewQueues();
+        assertViewState("mv", "valid", "", 1);
+        assertViewRows("mv", COUNT_COLUMN_ROWS);
+    }
+
+    // Lets the paused WAL apply of the column change finish, and waits for it, see raceColumnChange().
+    private void finishColumnChange() {
+        applyRelease.countDown();
+        try {
+            applier.join();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException(e);
+        }
+    }
+
+    // Runs the column change of the table, and applies the WAL on another thread, whose apply of the change pauses after
+    // the bare-name guard ran and before the change is visible, see pausingFf. The test thread runs racer meanwhile, and
+    // then lets the apply finish. The test runs under assertMemoryLeak(pausingFf, ...).
+    private void raceColumnChange(String tableName, String changeSql, TestUtils.LeakProneCode racer) throws Exception {
+        pauseSuffix.set(engine.verifyTableName(tableName).getDirName() + Files.SEPARATOR + TableUtils.META_SWAP_FILE_NAME);
+        execute(changeSql);
+        applier = new Thread(() -> {
+            try {
+                drainWalQueue();
+            } catch (Throwable th) {
+                applierError.set(th);
+            } finally {
+                Path.clearThreadLocals();
+            }
+        });
+        applier.start();
+        try {
+            Assert.assertTrue(applyPaused.await(30, TimeUnit.SECONDS));
+            racer.run();
+        } finally {
+            finishColumnChange();
+        }
+        Assert.assertNull(applierError.get());
     }
 }

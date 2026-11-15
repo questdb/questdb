@@ -60,6 +60,12 @@ import io.questdb.std.QuietCloseable;
  * and RESUME sets the flag before it reads the switches, so either RESUME sees the switch or the guard sees RESUME and
  * keeps its invalidation for the release of RESUME's latch.
  * <p>
+ * The guard publishes before the change applies, so its invalidation can be settled while the change is not visible
+ * yet: the INVALIDATE handler declines a view that never completed a refresh, or marks the view invalid, and a FULL
+ * refresh or a first build can then rebuild the view from a base snapshot without the change. The recorded switch
+ * outlives the invalidation, so a refresh that commits a refresh position below it publishes the guard's invalidation
+ * again, whatever settled the first one, see {@code MatViewRefreshJob.publishBareNameSwitchAboveRefreshPosition()}.
+ * <p>
  * The guard runs only on the node that refreshes views; a replica's state store holds no view states. Its
  * notification and the switches it records live in memory, so a crash before the refresh job handles the
  * notification loses it, and the next refresh then reads the switched name, as the refresh did before the guard.
