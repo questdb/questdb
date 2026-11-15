@@ -200,7 +200,10 @@ final class PivotBinder implements Mutable {
         final BindScope scope = ctx.scope();
         final ExpressionNode subquery = column.getSelectSubqueryExpr();
         final int position = subquery.position;
-        // The values of the sub-query become output columns, so it is generated and run while binding.
+        // The values of the sub-query become output columns, so it is generated and run while binding. A view compile
+        // runs it again detached from any caller whenever it recompiles the view, so it flags the sub-query.
+        final boolean wasViewMetadataSubquery = executionContext.isViewMetadataSubquery();
+        executionContext.setViewMetadataSubquery(wasViewMetadataSubquery || executionContext.isViewCompile());
         try (RecordCursorFactory factory = compiler.compileSubqueryFactory(subquery.queryModel, position, executionContext)) {
             final RecordMetadata metadata = factory.getMetadata();
             if (metadata.getColumnCount() != 1) {
@@ -238,6 +241,8 @@ final class PivotBinder implements Mutable {
                     }
                 }
             }
+        } finally {
+            executionContext.setViewMetadataSubquery(wasViewMetadataSubquery);
         }
         if (column.getValueList().size() == 0) {
             throw SqlException.$(position, "PIVOT IN subquery returned empty result set");

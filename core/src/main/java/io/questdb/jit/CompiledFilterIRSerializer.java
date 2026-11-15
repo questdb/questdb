@@ -44,6 +44,7 @@ import io.questdb.griffin.GeoHashUtil;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
+import io.questdb.griffin.SymbolKeyExtractor;
 import io.questdb.griffin.engine.functions.bind.CompiledFilterSymbolBindVariable;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
@@ -235,6 +236,9 @@ public class CompiledFilterIRSerializer implements Mutable {
     // Memoizes containsNarrowIntegerValue() for the current predicate. See arithExprTypeCache.
     private final ObjIntHashMap<BoundExpression> containsNarrowIntCache = new ObjIntHashMap<>(16, 0.5, NOT_CACHED);
     private final TypesObserver detectorTypesObserver = new TypesObserver();
+    // The constant the binder folded each arithmetic subtree of the current filter into, by the subtree, which the
+    // serializer walks in place of the constant, recorded by hasJitShape(). A SYMBOL predicate compares by its text.
+    private final ObjObjHashMap<BoundExpression, ConstantExpression> foldedConstants = new ObjObjHashMap<>();
     // Leaf nodes (column / bind variable / constant) a comparison or IN pairing must sign-extend
     // to i64 for the current predicate. Holds node references, compared by identity.
     // See markWidthSemantics.
@@ -402,6 +406,7 @@ public class CompiledFilterIRSerializer implements Mutable {
         bindVarIndexes.clear();
         collectedPredicates.clear();
         constantTokens.clear();
+        foldedConstants.clear();
         // The memo caches below are keyed by BoundExpression identity and live for a whole filter, so
         // this is their ONLY reset point - the plan pools can hand the same objects to the next
         // filter, where the cached answers would no longer describe the same subtree. The mark sets
@@ -669,6 +674,20 @@ public class CompiledFilterIRSerializer implements Mutable {
                     .put("unsupported int-width expression vs float operand: ").put(token(declined));
         }
 
+        // A SYMBOL predicate compares symbol keys, so no arithmetic may run on them. The Java filter
+        // compares the symbol with the text of the constant the binder folded an arithmetic subtree
+        // into, so such a subtree stubs that constant for the backfill, and any other declines the JIT.
+        if (predicateContext.isActive() && predicateContext.hasSymbolColumn && kind(node) == OPERATION
+                && (isArithmeticOperation(node) || paramCount(node) == 1 && Chars.equals(operator(node), '-'))) {
+            final ConstantExpression folded = foldedConstants.get(node);
+            if (folded == null || !SymbolKeyExtractor.isKeyConstant(folded)) {
+                throw SqlException.position(node.getPosition())
+                        .put("operator: ").put(token(node)).put(" is not supported for SYMBOL type");
+            }
+            serializeConstantStub(node);
+            return false;
+        }
+
         // A pure-constant NARROW integer arithmetic subtree that a 64-bit peer reads. The Java
         // filter folds it to one IntConstant and the comparison reads that through getLong(), so
         // the whole subtree is a single 8-byte immediate to the backend. Emitting the operations at
@@ -868,6 +887,7 @@ public class CompiledFilterIRSerializer implements Mutable {
         }
         if (expression instanceof ConstantExpression constant) {
             if (constant.getSource() != null) {
+                foldedConstants.put(constant.getSource(), constant);
                 return hasJitShape(constant.getSource());
             }
             final CharSequence token = constant.isLiteral() ? constantToken(constant) : null;
@@ -1491,24 +1511,15 @@ public class CompiledFilterIRSerializer implements Mutable {
             // stubs `-<constant>` for the backfill, and serializeConstant() emitted the code point
             // with the sign dropped, so `c < -'5'` compiled as `c < '5'`.
             //
-            // SYMBOL takes the same route. The Java filter compares the symbol with the TEXT of the
-            // folded constant, while the IR resolves each constant to a symbol KEY, so any
-            // arithmetic would run on keys. A stubbed `-<constant>` stays compilable, because
-            // serializeSymbolConstant() resolves the negated text.
+            // A SYMBOL predicate never gets here with arithmetic: descend() stubs or declines it.
             //
             // Until the serializer types an arithmetic node by its own result, decline the
             // predicate; the Java filter is always correct. This runs ahead of the constant
             // backfill so that the decline names the operator rather than a constant the backfill
             // would have refused for its own reasons.
             final int predicateColumnTypeTag = ColumnType.tagOf(predicateContext.columnType);
-            final boolean isArithmeticDeclined = switch (predicateColumnTypeTag) {
-                case ColumnType.IPv4, ColumnType.CHAR ->
-                        predicateContext.hasArithmeticOperations || predicateContext.unaryMinusNode != null;
-                case ColumnType.SYMBOL ->
-                        predicateContext.hasArithmeticOperations || predicateContext.arithmeticNode != null;
-                default -> false;
-            };
-            if (isArithmeticDeclined) {
+            if ((predicateColumnTypeTag == ColumnType.IPv4 || predicateColumnTypeTag == ColumnType.CHAR)
+                    && (predicateContext.hasArithmeticOperations || predicateContext.unaryMinusNode != null)) {
                 final BoundExpression operatorNode = predicateContext.arithmeticNode != null
                         ? predicateContext.arithmeticNode
                         : predicateContext.unaryMinusNode;
@@ -2245,8 +2256,15 @@ public class CompiledFilterIRSerializer implements Mutable {
         try {
             switch (kind(value)) {
                 case CONSTANT:
-                case OPERATION: // constant negation case
                     backfillConstant(key, value);
+                    break;
+                case OPERATION:
+                    if (predicateContext.hasSymbolColumn) {
+                        backfillSymbolFoldedConstant(key, value);
+                    } else {
+                        // constant negation case
+                        backfillConstant(key, value);
+                    }
                     break;
                 case BIND_VARIABLE:
                     backfillSymbolBindVariable(key, value);
@@ -2289,6 +2307,10 @@ public class CompiledFilterIRSerializer implements Mutable {
         int index = bindVarFunctions.size() - 1;
 
         putOperand(offset, VAR, typeCode, index);
+    }
+
+    private void backfillSymbolFoldedConstant(long offset, final BoundExpression node) throws SqlException {
+        serializeSymbol(offset, node.getPosition(), token(node), SymbolKeyExtractor.textOf(foldedConstants.get(node), sink));
     }
 
     /**
@@ -5725,6 +5747,15 @@ public class CompiledFilterIRSerializer implements Mutable {
         }
     }
 
+    private void serializeSymbol(long offset, int position, CharSequence token, @Nullable CharSequence symbol) throws SqlException {
+        if (predicateContext.symbolTable == null || predicateContext.symbolColumnIndex == -1) {
+            throw SqlException.position(position).put("reader or column index is missing for symbol constant: ").put(token);
+        }
+        final SymbolConstant function = SymbolConstant.fromValue(symbol);
+        bindVarFunctions.add(new CompiledFilterSymbolBindVariable(function, predicateContext.symbolColumnIndex));
+        putOperand(offset, VAR, bindVariableTypeCode(ColumnType.STRING), bindVarFunctions.size() - 1);
+    }
+
     /**
      * Emits the symbol key for a constant compared against a SYMBOL column.
      * The parser splits unary minus from its numeric token, including when the
@@ -5735,58 +5766,42 @@ public class CompiledFilterIRSerializer implements Mutable {
      */
     private void serializeSymbolConstant(long offset, int position, final CharSequence token, boolean negated) throws SqlException {
         final int len = token.length();
-        final CharSequence symbol;
         if (Chars.isQuoted(token)) {
             if (len < 3) {
                 throw SqlException.position(position).put("unsupported symbol constant: ").put(token);
             }
             sink.clear();
             Chars.unescape(token, 1, len - 1, '\'', sink);
-            if (negated) {
-                final long value;
-                try {
-                    final long parsedValue = Numbers.parseLong(sink);
-                    value = parsedValue != Numbers.LONG_NULL ? -parsedValue : Numbers.LONG_NULL;
-                } catch (NumericException e) {
-                    throw SqlException.position(position).put("unsupported symbol constant: ").put(token);
-                }
-                if (value == Numbers.LONG_NULL) {
-                    symbol = null;
-                } else {
-                    sink.clear();
-                    sink.put(value);
-                    symbol = sink;
-                }
-            } else {
-                symbol = sink;
+            if (!negated) {
+                serializeSymbol(offset, position, token, sink);
+                return;
             }
-        } else {
             final long value;
             try {
-                final long parsedValue = Numbers.parseLong(token);
-                value = negated ? -parsedValue : parsedValue;
+                value = Numbers.parseLong(sink);
             } catch (NumericException e) {
                 throw SqlException.position(position).put("unsupported symbol constant: ").put(token);
             }
-            if (value == Numbers.LONG_NULL) {
-                symbol = null;
-            } else {
-                sink.clear();
-                sink.put(value);
-                symbol = sink;
-            }
+            serializeSymbolNumber(offset, position, token, value != Numbers.LONG_NULL ? -value : Numbers.LONG_NULL);
+            return;
         }
-
-        if (predicateContext.symbolTable == null || predicateContext.symbolColumnIndex == -1) {
-            throw SqlException.position(position).put("reader or column index is missing for symbol constant: ").put(token);
+        final long value;
+        try {
+            value = Numbers.parseLong(token);
+        } catch (NumericException e) {
+            throw SqlException.position(position).put("unsupported symbol constant: ").put(token);
         }
+        serializeSymbolNumber(offset, position, token, negated ? -value : value);
+    }
 
-        final SymbolConstant function = SymbolConstant.fromValue(symbol);
-        bindVarFunctions.add(new CompiledFilterSymbolBindVariable(function, predicateContext.symbolColumnIndex));
-        int index = bindVarFunctions.size() - 1;
-
-        int typeCode = bindVariableTypeCode(ColumnType.STRING);
-        putOperand(offset, VAR, typeCode, index);
+    private void serializeSymbolNumber(long offset, int position, CharSequence token, long value) throws SqlException {
+        if (value == Numbers.LONG_NULL) {
+            serializeSymbol(offset, position, token, null);
+            return;
+        }
+        sink.clear();
+        sink.put(value);
+        serializeSymbol(offset, position, token, sink);
     }
 
     private void serializeUntypedNumber(long offset, int position, final CharSequence token, boolean negated, boolean isWidenedToI64, boolean isNarrowKept) throws SqlException {
@@ -6293,9 +6308,12 @@ public class CompiledFilterIRSerializer implements Mutable {
      * preserve the full long product and diverge.
      */
     private class NarrowI64WidenDetector implements Visitor, Mutable {
+        private boolean hasSymbolColumn;
+
         @Override
         public void clear() {
             detectorTypesObserver.clear();
+            hasSymbolColumn = false;
         }
 
         @Override
@@ -6309,7 +6327,9 @@ public class CompiledFilterIRSerializer implements Mutable {
                 case LITERAL: {
                     int columnIndex = columnIndex(node);
                     if (columnIndex != -1) {
-                        detectorTypesObserver.observe(columnTypeCode(ColumnType.tagOf(metadata.getColumnType(columnIndex))));
+                        final int columnTypeTag = ColumnType.tagOf(metadata.getColumnType(columnIndex));
+                        hasSymbolColumn |= columnTypeTag == ColumnType.SYMBOL;
+                        detectorTypesObserver.observe(columnTypeCode(columnTypeTag));
                     }
                     break;
                 }
@@ -6342,6 +6362,10 @@ public class CompiledFilterIRSerializer implements Mutable {
         boolean hasFloat() {
             return detectorTypesObserver.hasFloat();
         }
+
+        boolean hasSymbolColumn() {
+            return hasSymbolColumn;
+        }
     }
 
     /**
@@ -6370,9 +6394,9 @@ public class CompiledFilterIRSerializer implements Mutable {
         final TypesObserver globalTypesObserver = new TypesObserver();
         final TypesObserver localTypesObserver = new TypesObserver();
         int columnType;
-        // The first arithmetic operation the predicate visits, a unary minus included, for the
-        // IPv4 / CHAR / SYMBOL decline. Null when the predicate has none, or only a pure-constant
-        // subtree descend() folded or a `-<constant>` it stubbed.
+        // The first arithmetic operation the predicate holds, for the IPv4 / CHAR decline's
+        // message. Null when the predicate has none, or only a pure-constant subtree descend()
+        // folded.
         BoundExpression arithmeticNode;
         boolean hasArithmeticOperations;
         // The first unary minus the predicate holds, whether visited or stubbed by descend() over
@@ -6387,6 +6411,7 @@ public class CompiledFilterIRSerializer implements Mutable {
         // when the int-arithmetic subtree is consumed by IntFunction's
         // getDouble / getFloat, which call getInt() and wrap mod 2^32.
         boolean hasFloatInPredicate;
+        boolean hasSymbolColumn;
         int shortCircuitMode = SC_NONE; // short-circuit evaluation mode
         boolean singleBooleanColumn;
         int symbolColumnIndex; // used for symbol deferred constants and bind variables
@@ -6449,8 +6474,8 @@ public class CompiledFilterIRSerializer implements Mutable {
                             && !hasOtherComparison(node, columnFreeComparisonNode)) {
                         columnFreeComparisonNode = null;
                     }
-                    // Pre-pass: remember whether any FLOAT / DOUBLE source is present anywhere in
-                    // the predicate. See NarrowI64WidenDetector.
+                    // Pre-pass: remember whether any FLOAT / DOUBLE source or SYMBOL column is present
+                    // anywhere in the predicate. See NarrowI64WidenDetector.
                     i64WidenConstants.clear();
                     i64FoldedArithRoots.clear();
                     i64WidenArithRoots.clear();
@@ -6469,6 +6494,7 @@ public class CompiledFilterIRSerializer implements Mutable {
                         narrowI64WidenDetector.clear();
                         traverse(node, narrowI64WidenDetector);
                         hasFloatInPredicate = narrowI64WidenDetector.hasFloat();
+                        hasSymbolColumn = narrowI64WidenDetector.hasSymbolColumn();
                     } catch (SqlException ignore) {
                         // Detector does not throw; defensive only.
                         hasFloatInPredicate = false;
@@ -6559,9 +6585,6 @@ public class CompiledFilterIRSerializer implements Mutable {
                 }
             } else if (paramCount(node) == 1 && Chars.equals(operator(node), '-')) {
                 markUnaryMinus(node);
-                if (arithmeticNode == null) {
-                    arithmeticNode = node;
-                }
             }
         }
 
@@ -6581,6 +6604,7 @@ public class CompiledFilterIRSerializer implements Mutable {
             hasArithmeticOperations = false;
             unaryMinusNode = null;
             hasFloatInPredicate = false;
+            hasSymbolColumn = false;
             localTypesObserver.clear();
             currentInSerialization = false;
             handledShortCircuitExit = false;

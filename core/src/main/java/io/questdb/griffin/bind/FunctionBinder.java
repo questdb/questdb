@@ -861,13 +861,31 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
     }
 
     /**
+     * Binds the sub-query of an expression. One nested in a view's PIVOT IN subquery runs only if the subquery's plan
+     * keeps it, so it may hold what the subquery itself may not: code generation checks the table functions and SHOW
+     * statements it takes into the plan, see {@link io.questdb.griffin.TableFunctionSources#takeFactory}, and the
+     * calls it constructs, see {@link SqlExecutionContext#isViewMetadataSubquery()}.
+     */
+    private Subquery bindSubquery(ExpressionNode node, SqlExecutionContext executionContext) throws SqlException {
+        if (!executionContext.isViewMetadataSubquery()) {
+            return compiler.bindSubquery(node.queryModel, node.position, executionContext);
+        }
+        executionContext.setViewMetadataSubquery(false);
+        try {
+            return compiler.bindSubquery(node.queryModel, node.position, executionContext);
+        } finally {
+            executionContext.setViewMetadataSubquery(true);
+        }
+    }
+
+    /**
      * Timestamp interval analysis binds a sub-query BETWEEN bound pair low bound first.
      */
     private void bindTimestampBetweenLowerBound(ExpressionNode node, SqlExecutionContext executionContext) throws SqlException {
         final ExpressionNode lo = findTimestampBetweenLowerBound(node);
         if (lo != null) {
             final BindScope scope = ctx.scope();
-            scope.boundLowerBound = compiler.bindSubquery(lo.queryModel, lo.position, executionContext);
+            scope.boundLowerBound = bindSubquery(lo, executionContext);
             scope.boundLowerBoundNode = lo;
         }
     }
@@ -1215,7 +1233,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
             scope.boundLowerBound = null;
             scope.boundLowerBoundNode = null;
         } else {
-            subquery = compiler.bindSubquery(node.queryModel, node.position, executionContext);
+            subquery = bindSubquery(node, executionContext);
         }
         scope.currentPreparation.isRebuildRequired = true;
         final CursorExpression cursor = nextCursor().of(subquery, node.position);

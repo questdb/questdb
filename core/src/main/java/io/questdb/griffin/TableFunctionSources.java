@@ -133,7 +133,12 @@ public final class TableFunctionSources implements Closeable, Mutable {
         try {
             final CharSequence statement = objectDisclosingStatement(model.getShowKind());
             if (statement != null) {
-                parser.getFunctionResolver().addObjectDisclosingStatement(model.getModelPosition(), statement, executionContext);
+                final FunctionResolver resolver = parser.getFunctionResolver();
+                final int administrativeCount = resolver.getAdministrativeCallCount();
+                // the callback adds what its own factory for the statement requires
+                resolver.addStatementRequirements(model.getModelPosition(), statement,
+                        SqlExecutionRequirements.DISCLOSES_OBJECTS | callback.getShowExecutionRequirements(model), executionContext);
+                recordAdministrativeCall(plan, resolver, administrativeCount);
             }
             resources.own(slot, new CursorFunction(createShowFactory(model, executionContext, callback, path())));
             parser.getFunctionResolver().markCursorFunctionInstantiated();
@@ -186,6 +191,7 @@ public final class TableFunctionSources implements Closeable, Mutable {
         copy.copyPhysicalProperties(plan);
         copy.setRecordName(plan.getRecordName());
         copy.setNonDeterministicCall(plan.getNonDeterministicCallName(), plan.getNonDeterministicCallPosition());
+        copy.setAdministrativeCall(plan.getAdministrativeCallName(), plan.getAdministrativeCallPosition());
         prepared.add(copy);
         expressions.add(expressions.getQuick(index));
         views.add(views.getQuick(index));
@@ -269,6 +275,12 @@ public final class TableFunctionSources implements Closeable, Mutable {
         };
     }
 
+    private static void recordAdministrativeCall(FunctionSourcePlan plan, FunctionResolver resolver, int administrativeCount) {
+        if (resolver.getAdministrativeCallCount() > administrativeCount) {
+            plan.setAdministrativeCall(resolver.getAdministrativeCallName(administrativeCount), resolver.getAdministrativeCallPosition(administrativeCount));
+        }
+    }
+
     private void closeSlot(int slot, Throwable primary) {
         if (resources.isOwned(slot)) {
             Misc.free(resources.detach(slot), primary);
@@ -276,7 +288,7 @@ public final class TableFunctionSources implements Closeable, Mutable {
     }
 
     private RecordCursorFactory createSourceFactory(FunctionSourcePlan plan, int index, SqlExecutionContext executionContext) throws SqlException {
-        final QueryModel show = index < showModels.size() ? showModels.getQuick(index) : null;
+        final QueryModel show = showModel(index);
         if (show != null) {
             return createShowFactory(show, executionContext, callback, path());
         }
@@ -334,11 +346,13 @@ public final class TableFunctionSources implements Closeable, Mutable {
         final SqlExecutionRequirements requirements = resolver.getExecutionRequirements();
         final int deferredCount = requirements.getDeferredCount();
         final int callCount = resolver.getNonDeterministicCallCount();
+        final int administrativeCount = resolver.getAdministrativeCallCount();
         final Function function = parser.parseFunction(expression, AnyRecordMetadata.INSTANCE, executionContext);
         requirements.markSources(deferredCount);
         if (resolver.getNonDeterministicCallCount() > callCount) {
             plan.setNonDeterministicCall(resolver.getNonDeterministicCallName(callCount), resolver.getNonDeterministicCallPosition(callCount));
         }
+        recordAdministrativeCall(plan, resolver, administrativeCount);
         return function;
     }
 
@@ -363,10 +377,21 @@ public final class TableFunctionSources implements Closeable, Mutable {
         return plan;
     }
 
+    // the model of the prepared SHOW statement at the index, or null for a table function
+    private @Nullable QueryModel showModel(int index) {
+        return index < showModels.size() ? showModels.getQuick(index) : null;
+    }
+
     private RecordCursorFactory takeSourceFactory(FunctionSourcePlan plan, SqlExecutionContext executionContext) throws SqlException {
         final int index = prepared.indexOf(plan);
         if (index < 0) {
             throw new IllegalStateException("table-function source was not prepared");
+        }
+        if (plan.getAdministrativeCallName() != null && executionContext.isViewMetadataSubquery()) {
+            // Binding left the check to code generation: the source sits in a sub-query nested in a view's PIVOT IN
+            // subquery, which runs only if the subquery's plan keeps it, see FunctionBinder.bindSubquery().
+            SqlExecutionRequirements.checkViewMetadataSubquery(SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT,
+                    plan.getAdministrativeCallPosition(), plan.getAdministrativeCallName(), showModel(index) != null);
         }
         final int slot = slots.getQuick(index);
         if (!resources.isOwned(slot)) {

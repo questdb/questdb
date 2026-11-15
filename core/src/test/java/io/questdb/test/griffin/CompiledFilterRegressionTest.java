@@ -8263,52 +8263,105 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     @Test
     public void testSymbolConstantArithmetic() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (sy SYMBOL, k TIMESTAMP) TIMESTAMP(k)");
+            execute("CREATE TABLE x (sy SYMBOL, id INT, k TIMESTAMP) TIMESTAMP(k)");
             execute("""
                     INSERT INTO x VALUES
-                        ('1', 0), ('2', 1), ('3', 2), ('5000000001', 3), ('-1', 4), (null, 5)
+                        ('1', 1, 0),
+                        ('2', 2, 1),
+                        ('3', 3, 2),
+                        ('-1', 4, 3),
+                        ('5000000001', 5, 4),
+                        (null, 6, 5),
+                        ('1', 7, 6)
                     """);
-
-            final String one = """
-                    sy\tk
-                    1\t1970-01-01T00:00:00.000000Z
+            final String rowsOf1 = """
+                    id
+                    1
+                    7
                     """;
-            assertJitMatchesJava("x WHERE sy = 2 - 1", false, one);
-            assertJitMatchesJava("x WHERE 2 - 1 = sy", false, one);
-            assertJitMatchesJava("x WHERE sy = 1 * 1", false, one);
-            assertJitMatchesJava("x WHERE sy = -(-1)", false, one);
-            assertJitMatchesJava("x WHERE sy = 5_000_000_000 - 4_999_999_999", false, one);
-            assertJitMatchesJava("x WHERE sy = -(1 - 3)", false, """
-                    sy\tk
-                    2\t1970-01-01T00:00:00.000001Z
+            final String rowsOf2 = """
+                    id
+                    2
+                    """;
+            final String rowsOf3 = """
+                    id
+                    3
+                    """;
+            final String rowsOfNull = """
+                    id
+                    6
+                    """;
+            final String noRows = """
+                    id
+                    """;
+            assertJitScalarAndVectorMatchJava("select id from x where sy = 0 + 1", rowsOf1);
+            assertJitScalarAndVectorMatchJava("select id from x where 0 + 1 = sy", rowsOf1);
+            assertJitScalarAndVectorMatchJava("select id from x where sy = 2 * 1", rowsOf2);
+            assertJitScalarAndVectorMatchJava("select id from x where sy = (1 + 2) * 3 - 6", rowsOf3);
+            assertJitScalarAndVectorMatchJava("select id from x where sy = 7 / 2", rowsOf3);
+            assertJitScalarAndVectorMatchJava("select id from x where sy = -(2 - 1)", """
+                    id
+                    4
                     """);
-            assertJitMatchesJava("x WHERE sy != 3 - 1", false, """
-                    sy\tk
-                    1\t1970-01-01T00:00:00.000000Z
-                    3\t1970-01-01T00:00:00.000002Z
-                    5000000001\t1970-01-01T00:00:00.000003Z
-                    -1\t1970-01-01T00:00:00.000004Z
-                    \t1970-01-01T00:00:00.000005Z
+            assertJitScalarAndVectorMatchJava("select id from x where sy = 5_000_000_000 + 1", """
+                    id
+                    5
                     """);
-            assertJitMatchesJava("x WHERE sy = 5_000_000_000 + 1", false, """
-                    sy\tk
-                    5000000001\t1970-01-01T00:00:00.000003Z
+            // the INT sum wraps onto the NULL sentinel
+            assertJitScalarAndVectorMatchJava("select id from x where sy = 2_147_483_647 + 1", rowsOfNull);
+            assertJitScalarAndVectorMatchJava("select id from x where sy != 0 + 1", """
+                    id
+                    2
+                    3
+                    4
+                    5
+                    6
                     """);
-            assertJitMatchesJava("x WHERE sy = 1 / 0", false, """
-                    sy\tk
-                    \t1970-01-01T00:00:00.000005Z
+            assertJitScalarAndVectorMatchJava("select id from x where sy = 0 + 1 or sy = 1 + 2", """
+                    id
+                    1
+                    3
+                    7
                     """);
-            assertJitMatchesJava("x WHERE sy IN (2 - 1, 3)", false, """
-                    sy\tk
-                    1\t1970-01-01T00:00:00.000000Z
-                    3\t1970-01-01T00:00:00.000002Z
+            assertJitScalarAndVectorMatchJavaOnEmptyResult("select id from x where sy = 4 * 10", noRows);
+            assertJitScalarAndVectorMatchJava("select id from x where sy = -(-1)", rowsOf1);
+            assertJitScalarAndVectorMatchJava("select id from x where sy = 5_000_000_000 - 4_999_999_999", rowsOf1);
+            assertJitScalarAndVectorMatchJava("select id from x where sy IN (2 - 1, 3)", """
+                    id
+                    1
+                    3
+                    7
                     """);
-
-            assertJitMatchesJava("x WHERE sy = '1'", true, one);
-            assertJitMatchesJava("x WHERE sy = -1", true, """
-                    sy\tk
-                    -1\t1970-01-01T00:00:00.000004Z
+            assertJitScalarAndVectorMatchJava("select id from x where sy = '1'", rowsOf1);
+            assertJitScalarAndVectorMatchJava("select id from x where sy = -1", """
+                    id
+                    4
                     """);
+            // the binder folds the division by zero to NULL, which the JIT compares as the NULL key
+            assertJitScalarAndVectorMatchJava("select id from x where sy = 1 / 0", rowsOfNull);
+            // sy inside a function leaves the predicate numeric, and the JIT declines the function
+            assertJitMatchesJava("select id from x where 1.5 < length(sy) * id::FLOAT", false, """
+                    id
+                    2
+                    3
+                    4
+                    5
+                    7
+                    """);
+            assertJitMatchesJava("select id from x where length(sy) * id > 1 + 1", false, """
+                    id
+                    3
+                    4
+                    5
+                    7
+                    """);
+            // arithmetic on a STRING bind or on the column itself would run on symbol keys
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "2");
+            assertJitMatchesJava("select id from x where sy = $1 + 0", false, rowsOf2);
+            assertJitMatchesJava("select id from x where sy = 1 + $1", false, rowsOf3);
+            assertJitMatchesJavaOnEmptyResult("select id from x where sy = (1 + 1) * $1", false);
+            assertJitMatchesJava("select id from x where 1 + 1 = sy + 0", false);
         });
     }
 

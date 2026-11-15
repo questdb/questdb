@@ -3139,8 +3139,7 @@ public class SqlParser {
         // Hand any trailing token to the edition grammar hook, as CREATE TABLE / VIEW /
         // MATERIALIZED VIEW already do. Enterprise consumes OWNED BY '<principal>' here; the OSS
         // default rejects whatever is left over, which is what a bare trailing token did before
-        // this hook existed. SHOW CREATE LIVE VIEW emits the same clause, so its output has to
-        // parse back through this call.
+        // this hook existed. SHOW CREATE LIVE VIEW emits no OWNED BY clause: QuestDB records no owner.
         tok = optTok(lexer);
         return parseCreateLiveViewExt(lexer, executionContext, sqlParserCallback, tok, builder);
     }
@@ -6047,6 +6046,8 @@ public class SqlParser {
         // Syntax: SELECT ... FROM <subquery> WHERE <condition> PIVOT (agg FOR col IN (...))
         // The pivot transformation wraps the current model as a nested subquery.
         if (tok != null && isPivotKeyword(tok)) {
+            // a PIVOT nested in this PIVOT's IN subquery restores the mode of this one
+            final boolean isOuterPivotMode = pivotMode;
             try {
                 pivotMode = true;
                 QueryModel pivotModel = queryModelPool.next();
@@ -6055,7 +6056,7 @@ public class SqlParser {
                 tok = parsePivot(lexer, pivotModel, sqlParserCallback);
                 model = pivotModel;
             } finally {
-                pivotMode = false;
+                pivotMode = isOuterPivotMode;
             }
         }
 

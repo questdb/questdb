@@ -1867,13 +1867,13 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     .inferTimestamp()
                     .inferRandomAccess()
                     .sizeMayVary()
-                    .returns("column\ntrue\n");
+                    .returns("column\nfalse\n");
             assertQuery("select cast('' as char) >= null")
                     .noLeakCheck()
                     .inferTimestamp()
                     .inferRandomAccess()
                     .sizeMayVary()
-                    .returns("column\ntrue\n");
+                    .returns("column\nfalse\n");
             assertQuery("select cast('' as string) = null")
                     .noLeakCheck()
                     .inferTimestamp()
@@ -2947,13 +2947,13 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     .inferTimestamp()
                     .inferRandomAccess()
                     .sizeMayVary()
-                    .returns("column\ntrue\n");
+                    .returns("column\nfalse\n");
             assertQuery("select cast('' as char) >= null")
                     .noLeakCheck()
                     .inferTimestamp()
                     .inferRandomAccess()
                     .sizeMayVary()
-                    .returns("column\ntrue\n");
+                    .returns("column\nfalse\n");
             assertQuery("select cast('' as string) = null")
                     .noLeakCheck()
                     .inferTimestamp()

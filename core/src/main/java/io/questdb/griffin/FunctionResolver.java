@@ -157,6 +157,9 @@ import static io.questdb.griffin.SqlKeywords.*;
 public class FunctionResolver implements Mutable, SwitchFunctionFactory.EqualityFactory {
     private static final boolean ASSERTIONS_ENABLED = FunctionResolver.class.desiredAssertionStatus();
     private static final Log LOG = LogFactory.getLog(FunctionResolver.class);
+    // the administrative calls and SHOW statements admitted, at the positions their requirements surface at
+    private final ObjList<String> administrativeCallNames = new ObjList<>();
+    private final IntList administrativeCallPositions = new IntList();
     private final IntList argDistancesA = new IntList();
     private final IntList argDistancesB = new IntList();
     private final IntList argTraits = new IntList();
@@ -432,27 +435,31 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
     }
 
     /**
-     * Does for a SHOW statement that lists objects or reads their metadata what {@link #createFunction} does for a
-     * function that declares {@link SqlExecutionRequirements#DISCLOSES_OBJECTS}: checks the statement when the
-     * compile stores its result in a materialized or live view, or records it for the check that runs once
-     * CREATE MATERIALIZED VIEW bound its SQL. The compiler creates the cursor of a SHOW statement directly, not
-     * through a function factory, so it reports the statement here, before it creates the cursor.
+     * Does for a SHOW statement what {@link #createFunction} does for a function that declares the same
+     * {@link SqlExecutionRequirements}, e.g. a statement that lists objects or reads their metadata declares
+     * {@link SqlExecutionRequirements#DISCLOSES_OBJECTS}: checks the statement when the compile stores its result in a
+     * materialized or live view, or records it for the check that runs once CREATE MATERIALIZED VIEW bound its SQL,
+     * and checks it in a PIVOT IN subquery that derives an ordinary view's metadata. The compiler creates the cursor
+     * of a SHOW statement directly, not through a function factory, so it reports the statement here, before it
+     * creates the cursor.
      *
      * @param position         the position of the statement in the compiled SQL
      * @param statement        the statement, e.g. SHOW TABLES
+     * @param requirements     the requirements of the statement, see {@link SqlExecutionRequirements}
      * @param executionContext the context of the compile
-     * @throws SqlException when a materialized or live view may not store the result of the statement
+     * @throws SqlException when a stored view cannot use the statement in this position
      */
-    public void addObjectDisclosingStatement(int position, CharSequence statement, SqlExecutionContext executionContext) throws SqlException {
-        admitStoredView(SqlExecutionRequirements.DISCLOSES_OBJECTS, position, statement, true, executionContext);
+    public void addStatementRequirements(int position, CharSequence statement, int requirements, SqlExecutionContext executionContext)
+            throws SqlException {
+        admitRequirements(requirements, position, statement, true, executionContext);
+        executionRequirements.add(requirements, requirementPosition(position));
     }
 
     /**
      * Applies the checks constructing the overload would for a call the binder types without constructing it: the
-     * factory's checks of its arguments ({@link FunctionFactory#isConstructionDeferrable}), then the checks of a
-     * materialized or live view that stores its result, then records the execution requirements. Returns false,
-     * checking and recording nothing more, when the call must be constructed now. The caller keeps ownership of the
-     * arguments.
+     * factory's checks of its arguments ({@link FunctionFactory#isConstructionDeferrable}), then the checks of its
+     * execution requirements, then records them. Returns false, checking and recording nothing more, when the call
+     * must be constructed now. The caller keeps ownership of the arguments.
      */
     public boolean admitUnconstructed(
             FunctionFactoryDescriptor overload,
@@ -475,7 +482,7 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
         if (!isDeferrable) {
             return false;
         }
-        admitStoredView(factory.getExecutionRequirements(), position, name, false, executionContext);
+        admitRequirements(factory.getExecutionRequirements(), position, name, false, executionContext);
         executionRequirements.add(factory.getExecutionRequirements(), requirementPosition(position));
         return true;
     }
@@ -495,6 +502,8 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
 
     @Override
     public void clear() {
+        administrativeCallNames.clear();
+        administrativeCallPositions.clear();
         executionRequirements.clear();
         executionRequirementPosition = -1;
         nonDeterministicCallIndex = -1;
@@ -853,7 +862,7 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
     ) throws SqlException {
         final FunctionFactory factory = overload.getFactory();
         try {
-            admitStoredView(factory.getExecutionRequirements(), position, name, false, executionContext);
+            admitRequirements(factory.getExecutionRequirements(), position, name, false, executionContext);
             wrapTemporalText(overload, args, argPositions);
         } catch (Throwable th) {
             Misc.freeObjList(args, th);
@@ -1037,6 +1046,25 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
     }
 
     /**
+     * The number of calls and SHOW statements admitted that need the Enterprise security context of the caller, see
+     * {@link SqlExecutionRequirements#REQUIRES_ENTERPRISE_SECURITY_CONTEXT}, in the order they were admitted.
+     */
+    public int getAdministrativeCallCount() {
+        return administrativeCallPositions.size();
+    }
+
+    public String getAdministrativeCallName(int index) {
+        return administrativeCallNames.getQuick(index);
+    }
+
+    /**
+     * The position where the requirements of the call or statement surface in the compiled SQL.
+     */
+    public int getAdministrativeCallPosition(int index) {
+        return administrativeCallPositions.getQuick(index);
+    }
+
+    /**
      * The number of non-deterministic functions created for a context that refuses them, in the order they were
      * created.
      */
@@ -1202,6 +1230,7 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
 
         final int argCount = args == null ? 0 : args.size();
         final boolean isWindowContext = !sqlExecutionContext.getWindowContext().isEmpty();
+        final boolean isOrdering = argCount == 2 && isOrderingOperator(name);
         argTypes.clear();
         argTraits.clear();
         for (int i = 0; i < argCount; i++) {
@@ -1211,6 +1240,8 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
             argTypes.add(type);
             argTraits.add((isConstant ? OverloadResolver.ARG_CONSTANT : 0)
                     | (arg == CharTypeConstant.INSTANCE ? OverloadResolver.ARG_CHAR_TYPE : 0)
+                    | (isOrdering && isConstant && isNullCharOrderedAgainstNullOrChar(arg, args.getQuick(1 - i))
+                    ? OverloadResolver.ARG_NULL_CHAR_ORDERED : 0)
                     | (isUntypedEmptyArrayLiteral(arg) ? OverloadResolver.ARG_UNTYPED_EMPTY_ARRAY : 0)
                     | (isConstant && ColumnType.tagOf(type) == ColumnType.STRING && arg.getStrLen(null) > 1 ? OverloadResolver.ARG_MULTI_CHAR : 0));
         }
@@ -1403,6 +1434,20 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
             }
         }
         return false;
+    }
+
+    // STRING ordering reads NULL <= NULL as true, CHAR ordering never holds for NULL. A NULL CHAR constant ordered
+    // against NULL or CHAR keeps the CHAR semantics that a CHAR column gets.
+    private static boolean isNullCharOrderedAgainstNullOrChar(Function arg, Function other) {
+        if (ColumnType.tagOf(arg.getType()) != ColumnType.CHAR || arg.getChar(null) != Numbers.CHAR_NULL) {
+            return false;
+        }
+        final int otherType = other.getType();
+        return otherType == ColumnType.NULL || otherType == ColumnType.CHAR;
+    }
+
+    private static boolean isOrderingOperator(CharSequence name) {
+        return Chars.equals(name, "<") || Chars.equals(name, "<=") || Chars.equals(name, ">") || Chars.equals(name, ">=");
     }
 
     private static boolean isUntypedEmptyArrayLiteral(Function function) {
@@ -1611,9 +1656,23 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
         }
     }
 
-    private void admitStoredView(int requirements, int position, CharSequence name, boolean isStatement, SqlExecutionContext executionContext)
+    // Checks a call or SHOW statement before it is constructed, a rejected one must not run at all. A PIVOT IN subquery
+    // that derives an ordinary view's metadata rejects administrative ones, and a compile that stores the result in a
+    // materialized or live view, at CREATE or at refresh, rejects administrative and catalogue ones alike.
+    private void admitRequirements(int requirements, int position, CharSequence name, boolean isStatement, SqlExecutionContext executionContext)
             throws SqlException {
-        if (requirements == SqlExecutionRequirements.NONE || executionContext.allowNonDeterministicFunctions()) {
+        if (requirements == SqlExecutionRequirements.NONE) {
+            return;
+        }
+        if ((requirements & SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT) != 0) {
+            final int requirementPosition = requirementPosition(position);
+            if (executionContext.isViewMetadataSubquery()) {
+                SqlExecutionRequirements.checkViewMetadataSubquery(requirements, requirementPosition, name, isStatement);
+            }
+            administrativeCallNames.add(Chars.toString(name));
+            administrativeCallPositions.add(requirementPosition);
+        }
+        if (executionContext.allowNonDeterministicFunctions()) {
             return;
         }
         if (executionContext.isMatViewCompile()) {

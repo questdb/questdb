@@ -107,6 +107,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private long intervalPlanGenerationCounter;
     private boolean isMatViewCompile;
     private boolean isMetadataProbe;
+    private boolean isViewCompile;
+    private boolean isViewMetadataSubquery;
     private int jitMode;
     private boolean liveViewCompile;
     private MemoryTracker memoryTracker;
@@ -562,6 +564,16 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public boolean isViewCompile() {
+        return isViewCompile;
+    }
+
+    @Override
+    public boolean isViewMetadataSubquery() {
+        return isViewMetadataSubquery;
+    }
+
+    @Override
     public boolean isWalApplication() {
         return false;
     }
@@ -841,6 +853,16 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public void setViewCompile(boolean value) {
+        isViewCompile = value;
+    }
+
+    @Override
+    public void setViewMetadataSubquery(boolean value) {
+        isViewMetadataSubquery = value;
+    }
+
+    @Override
     public boolean shouldLogSql() {
         // Validation only compiles the SQL to check it; suppress query progress logging
         // so the validation endpoint does not pollute the log with every validated statement.
@@ -960,6 +982,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         isMatViewCompile = false;
         this.tableFunctionView = null;
         isMetadataProbe = false;
+        isViewCompile = false;
+        isViewMetadataSubquery = false;
         // QueryRegistry owns the tracker lifecycle; null it defensively so an error
         // unwinding between register() and unregister() cannot leak it into reuse.
         this.memoryTracker = null;

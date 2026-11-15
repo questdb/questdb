@@ -262,7 +262,7 @@ public final class SymbolKeyExtractor implements Mutable {
      * The UTF-16 text a STRING, VARCHAR, SYMBOL or integer constant matches a SYMBOL by, the decimal text of an
      * integer as {@code =} formats it; null for a NULL value or any other type. An integer formats into {@code sink}.
      */
-    private static CharSequence textOf(BoundExpression value, StringSink sink) {
+    public static CharSequence textOf(BoundExpression value, StringSink sink) {
         final ConstantExpression constant = (ConstantExpression) value;
         final int type = ColumnType.tagOf(constant.getDataType());
         if (isIntegerKey(type)) {

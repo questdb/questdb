@@ -44,6 +44,12 @@ final class OverloadResolver {
      * The argument is a constant STRING longer than one character.
      */
     static final int ARG_MULTI_CHAR = 4;
+    /**
+     * The argument is a NULL CHAR constant that {@code <}, {@code <=}, {@code >} or {@code >=} orders against NULL
+     * or CHAR. STRING ordering reads NULL <= NULL as true, CHAR ordering never holds for NULL, so the constant keeps
+     * the CHAR semantics that a CHAR column gets.
+     */
+    static final int ARG_NULL_CHAR_ORDERED = 16;
     static final int ARG_UNTYPED_EMPTY_ARRAY = 8;
     private static final int MATCH_EXACT_MATCH = 3;
     private static final int MATCH_FUZZY_MATCH = 1;
@@ -58,9 +64,25 @@ final class OverloadResolver {
      * Breaks a tie between two equally good overloads that no function list orders, so the result never depends on
      * the order the classes were found in. The overload that converts the first argument where the two differ less
      * wins, which keeps the type of the leading arguments: {@code arg_max(LONG, LONG)} returns LONG and
-     * {@code generate_series(DATE, $1, LONG)} returns timestamps. When the conversions are the same, an untyped NULL
-     * argument prefers a parameter type that can hold NULL.
+     * {@code generate_series(DATE, $1, LONG)} returns timestamps. An untyped NULL argument has no type to keep, so it
+     * decides only when the typed arguments tie, and the result does not depend on where it stands:
+     * {@code NULL >= c} and {@code c <= NULL} bind to the same overload. When the conversions are the same, an untyped
+     * NULL argument prefers a parameter type that can hold NULL.
      */
+    // The difference between the two distances of the first argument where they differ, of the untyped NULL arguments
+    // or of the others, or 0 when they all match.
+    private static int firstDistanceDifference(IntList distances, IntList candidateDistances, IntList argTypes, int n, boolean isNull) {
+        for (int i = 0; i < n; i++) {
+            if ((ColumnType.tagOf(argTypes.getQuick(i)) == ColumnType.NULL) == isNull) {
+                final int difference = distances.getQuick(i) - candidateDistances.getQuick(i);
+                if (difference != 0) {
+                    return difference;
+                }
+            }
+        }
+        return 0;
+    }
+
     private static boolean isPreferredOnTie(
             FunctionFactoryDescriptor descriptor,
             IntList distances,
@@ -72,12 +94,13 @@ final class OverloadResolver {
             return false;
         }
         final int n = Math.min(distances.size(), candidateDistances.size());
-        for (int i = 0; i < n; i++) {
-            final int distance = distances.getQuick(i);
-            final int candidateDistance = candidateDistances.getQuick(i);
-            if (distance != candidateDistance) {
-                return distance < candidateDistance;
-            }
+        final int typedDifference = firstDistanceDifference(distances, candidateDistances, argTypes, n, false);
+        if (typedDifference != 0) {
+            return typedDifference < 0;
+        }
+        final int nullDifference = firstDistanceDifference(distances, candidateDistances, argTypes, n, true);
+        if (nullDifference != 0) {
+            return nullDifference < 0;
         }
         for (int i = 0; i < n; i++) {
             if (ColumnType.tagOf(argTypes.getQuick(i)) == ColumnType.NULL) {
@@ -214,7 +237,7 @@ final class OverloadResolver {
                                     sigArgTypeTag == ColumnType.STRING &&  // for both string and char, otherwise ? > 'a' matches char function even though
                                     factory.supportImplicitCastCharToStr() &&
                                     isArgConstant && // bind variable parameter might be a string and throw error during execution.
-                                    (argTraitBits & ARG_CHAR_TYPE) == 0) ||   // Ignore type constant to keep cast(X as char) working
+                                    (argTraitBits & (ARG_CHAR_TYPE | ARG_NULL_CHAR_ORDERED)) == 0) ||   // Ignore type constant to keep cast(X as char) working
                             (sigArgTypeTag == ColumnType.GEOHASH && ColumnType.isGeoHash(argType)) ||
                             (sigArgTypeTag == ColumnType.DECIMAL && ColumnType.isDecimal(argType))) {
                         match = mergeWithExactMatch(match);
