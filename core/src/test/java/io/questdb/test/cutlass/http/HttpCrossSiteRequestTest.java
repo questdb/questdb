@@ -212,6 +212,30 @@ public class HttpCrossSiteRequestTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testCrossSiteRequestRejectedOnEndpointsWithoutCredentials() throws Exception {
+        // with authentication on, an endpoint that serves requests without a credential rejects
+        // a cross-site one with 403 and its reason, rather than ask for a credential with 401
+        assertMemoryLeak(() -> {
+            try (
+                    TestServerMain ignore = startWithEnvVariables(
+                            PropertyKey.HTTP_USER.getEnvVarName(), "admin",
+                            PropertyKey.HTTP_PASSWORD.getEnvVarName(), "quest",
+                            PropertyKey.HTTP_HEALTH_CHECK_AUTHENTICATION_REQUIRED.getEnvVarName(), "false"
+                    );
+                    HttpClient client = HttpClientFactory.newPlainTextInstance()
+            ) {
+                assertCrossSiteRequestsRejected(
+                        client,
+                        Endpoint.get("/settings"),
+                        Endpoint.get("/warnings"),
+                        Endpoint.get("/ping"),
+                        new Endpoint(HTTP_MIN_PORT, "GET", "/status", null, null)
+                );
+            }
+        });
+    }
+
+    @Test
     public void testCrossSiteRequestRejectedOnEveryEndpoint() throws Exception {
         assertMemoryLeak(() -> {
             try (
@@ -237,17 +261,7 @@ public class HttpCrossSiteRequestTest extends AbstractBootstrapTest {
                         // the health check is the default endpoint of the min HTTP server
                         new Endpoint(HTTP_MIN_PORT, "GET", "/status", null, null),
                 };
-                for (Endpoint endpoint : endpoints) {
-                    for (String[] headers : crossSiteHeaders("localhost:" + endpoint.port)) {
-                        final String[] browserHeaders = Arrays.copyOfRange(headers, 1, headers.length);
-                        final HttpClient.ResponseHeaders response = send(client, endpoint, false, null, browserHeaders);
-                        try {
-                            assertRejected(response, headers[0]);
-                        } catch (AssertionError e) {
-                            throw new AssertionError(endpoint.url + " " + String.join(", ", browserHeaders), e);
-                        }
-                    }
-                }
+                assertCrossSiteRequestsRejected(client, endpoints);
 
                 // nothing has run
                 serverMain.assertSql(
@@ -573,6 +587,20 @@ public class HttpCrossSiteRequestTest extends AbstractBootstrapTest {
                 }
             }
         });
+    }
+
+    private static void assertCrossSiteRequestsRejected(HttpClient client, Endpoint... endpoints) {
+        for (Endpoint endpoint : endpoints) {
+            for (String[] headers : crossSiteHeaders("localhost:" + endpoint.port)) {
+                final String[] browserHeaders = Arrays.copyOfRange(headers, 1, headers.length);
+                final HttpClient.ResponseHeaders response = send(client, endpoint, false, null, browserHeaders);
+                try {
+                    assertRejected(response, headers[0]);
+                } catch (AssertionError e) {
+                    throw new AssertionError(endpoint.url + " " + String.join(", ", browserHeaders), e);
+                }
+            }
+        }
     }
 
     private static void assertRejected(HttpClient.ResponseHeaders response, String message) {

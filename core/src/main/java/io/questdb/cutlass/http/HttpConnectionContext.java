@@ -1290,8 +1290,14 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
             try {
                 if (newRequest) {
+                    final HttpRequestProcessor routedProcessor = processor;
                     processor = checkHostName(processor);
                     processor = checkCrossSiteRequest(processor);
+                    // When a browser check rejects a request to an endpoint that serves requests
+                    // without a credential, the 403 and its reason stand: authenticating the request
+                    // would turn a missing credential into a 401, which only an endpoint that needs a
+                    // credential answers.
+                    final boolean isAuthenticationSkipped = processor != routedProcessor && !routedProcessor.requiresAuthentication();
                     final boolean isQwpCredentialOffered = QwpBrowserAuthorization.hasCredential(
                             headerParser.getHeader(QwpIngressHttpProcessor.HEADER_SEC_WEBSOCKET_PROTOCOL));
                     final boolean isQwpCrossOriginUpgrade = processor.isCrossOriginBrowserUpgrade(this);
@@ -1310,7 +1316,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     // request on this connection behind
                     clearRequestSession();
                     try {
-                        if (processor.requiresAuthentication()
+                        if (!isAuthenticationSkipped
+                                && processor.requiresAuthentication()
                                 && !configureSecurityContext(processor, isQwpCredentialOffered, isQwpCrossOriginUpgrade)) {
                             final byte requiredAuthType = processor.getRequiredAuthType();
                             processor = rejectProcessor.withAuthenticationType(requiredAuthType).reject(HTTP_UNAUTHORIZED);
