@@ -310,6 +310,15 @@ public final class QwpWireTestFixtures {
     }
 
     /**
+     * Sends a GET of {@code select 1} to {@code /exec} on {@code localhost:port}
+     * that carries the given header lines, each ending with CRLF, and returns
+     * the status line of the response, as {@link #statusLine(int, String)} does.
+     */
+    public static String execStatusLine(int port, String headers) throws Exception {
+        return statusLine(port, "GET /exec?query=select%201 HTTP/1.1\r\n" + headers + "Connection: close\r\n\r\n");
+    }
+
+    /**
      * Wraps {@code payload} in a masked client-to-server frame (FIN set) of the given
      * opcode. Client frames must be masked per RFC 6455.
      */

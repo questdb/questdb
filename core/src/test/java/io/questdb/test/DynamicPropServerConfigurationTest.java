@@ -116,7 +116,7 @@ import static io.questdb.test.cutlass.qwp.QwpWireTestFixtures.assertQwpBrowserUp
 import static io.questdb.test.cutlass.qwp.QwpWireTestFixtures.browserCredentialOffer;
 import static io.questdb.test.cutlass.qwp.QwpWireTestFixtures.browserCredentialProtocol;
 import static io.questdb.test.cutlass.qwp.QwpWireTestFixtures.browserCredentialUpgrade;
-import static io.questdb.test.cutlass.qwp.QwpWireTestFixtures.statusLine;
+import static io.questdb.test.cutlass.qwp.QwpWireTestFixtures.execStatusLine;
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 import static org.junit.Assert.assertFalse;
 
@@ -2416,11 +2416,6 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
             HttpUtils.awaitStatusCode(response, "200");
             return SESSION_COOKIE_NAME + '=' + HttpUtils.assertSessionCookie(response, false);
         }
-    }
-
-    // returns the status line of a GET of select 1 that carries the given headers
-    private static String execStatusLine(int port, String headers) throws Exception {
-        return statusLine(port, "GET /exec?query=select%201 HTTP/1.1\r\n" + headers + "Connection: close\r\n\r\n");
     }
 
     private static Connection getConnection(String user, String pass) throws SQLException {

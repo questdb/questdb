@@ -103,6 +103,7 @@ public class HttpAllowedHostsTest {
                 "rebind.localhostx",
                 "rebind.xlocal",
                 "rebind.home.arpax",
+                "xhome.arpa",
                 // a host name that only starts like an IPv4 address
                 "127.0.0.1.rebind.example.com",
                 // the last label is not a number, 0x needs hexadecimal digits
@@ -162,7 +163,10 @@ public class HttpAllowedHostsTest {
                 "foo.local.:9000",
                 "host.docker.internal:9000",
                 "nas.home.arpa",
-                "site.test"
+                "site.test",
+                // a special-use domain itself, as a configured domain covers its own name
+                "home.arpa",
+                "Home.Arpa.:9000"
         );
     }
 

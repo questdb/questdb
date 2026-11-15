@@ -130,8 +130,7 @@ public final class HttpAllowedHosts {
             }
         }
         for (int i = 0, n = domains.size(); i < n; i++) {
-            final String domain = domains.getQuick(i);
-            if (isInDomain(host, hi, domain) || equalsIgnoreCase(host, 0, hi, domain, 1)) {
+            if (isInDomain(host, hi, domains.getQuick(i))) {
                 return true;
             }
         }
@@ -155,9 +154,10 @@ public final class HttpAllowedHosts {
         return (b >= '0' && b <= '9') || (b >= 'a' && b <= 'f') || (b >= 'A' && b <= 'F');
     }
 
-    // whether host[0, hi) ends with the domain, a lowercase ASCII suffix that starts with a dot
+    // whether host[0, hi) is the domain, a lowercase ASCII name written with a leading dot, or a name under it
     private static boolean isInDomain(Utf8Sequence host, int hi, String domain) {
-        return hi > domain.length() && equalsIgnoreCase(host, hi - domain.length(), hi, domain, 0);
+        return equalsIgnoreCase(host, 0, hi, domain, 1)
+                || (hi > domain.length() && equalsIgnoreCase(host, hi - domain.length(), hi, domain, 0));
     }
 
     // WHATWG URL "ends in a number": decimal digits, or 0x followed by hexadecimal digits
