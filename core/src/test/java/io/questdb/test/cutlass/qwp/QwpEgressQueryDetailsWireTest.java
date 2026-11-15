@@ -37,6 +37,7 @@ import io.questdb.cutlass.qwp.codec.QwpEgressMsgKind;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpParseException;
 import io.questdb.cutlass.qwp.protocol.QwpVarint;
+import io.questdb.cutlass.qwp.server.egress.QwpEgressMetrics;
 import io.questdb.cutlass.qwp.server.egress.QwpEgressUpgradeProcessor;
 import io.questdb.cutlass.qwp.server.egress.QwpRowExceedsBufferException;
 import io.questdb.cutlass.qwp.websocket.WebSocketOpcode;
@@ -48,6 +49,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -697,19 +699,33 @@ public class QwpEgressQueryDetailsWireTest extends AbstractQwpQueryDetailsTest {
     @Test
     public void testStatsMeasureClientWait() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (TestServerMain ignored = startFragmented(PropertyKey.HTTP_FROZEN_CLOCK.getEnvVarName(), "false");
+            try (TestServerMain serverMain = startFragmented(
+                    PropertyKey.HTTP_FROZEN_CLOCK.getEnvVarName(), "false",
+                    PropertyKey.METRICS_ENABLED.getEnvVarName(), "true"
+            );
                  WireConnection conn = new WireConnection(maxBatchRows(7))) {
+                final QwpEgressMetrics metrics = serverMain.getEngine().getMetrics().qwpEgressMetrics();
+                // the clock the server measures client_wait_ns with
+                final NanosecondClock clock = serverMain.getConfiguration().getHttpServerConfiguration()
+                        .getHttpContextConfiguration().getNanosecondClock();
+                final long suspensionsBefore = metrics.creditSuspensionsCount();
                 conn.send(QwpWireTestFixtures.buildQueryRequest(1, "SELECT x FROM long_sequence(100)", 1, QwpEgressMsgKind.QUERY_FLAG_STATS, 0, 0));
                 Response r = new Response();
                 conn.readBatch(r, 1);
-                // the query waits for credit from the moment it sent the batch
-                final long waitMillis = 300;
-                Thread.sleep(waitMillis);
+                // The first batch spends the one byte of credit. The server starts the
+                // client wait when it parks for more credit and counts the suspension only
+                // after that, so the wait covers everything from the count to the CREDIT
+                // below, however late the scheduler lets the server park.
+                TestUtils.assertEventually(() -> Assert.assertTrue("the stream never parked for credit",
+                        metrics.creditSuspensionsCount() > suspensionsBefore));
+                final long waitStartNanos = clock.getTicks();
+                Thread.sleep(300);
+                final long waitedNanos = clock.getTicks() - waitStartNanos;
                 conn.send(QwpWireTestFixtures.buildCreditFrame(1, 1 << 20));
                 conn.readResponse(1, r);
                 assertSequence(r.longs, 1, 100);
                 Stats stats = r.resultEnd().readStats();
-                Assert.assertTrue(stats.toString(), stats.clientWaitNanos >= waitMillis * 1_000_000L);
+                Assert.assertTrue(stats + ", waitedNanos=" + waitedNanos, stats.clientWaitNanos >= waitedNanos);
                 Assert.assertTrue(stats.toString(), stats.executeNanos >= stats.clientWaitNanos + stats.compileNanos);
                 Assert.assertEquals(0, stats.countNanos);
             }
