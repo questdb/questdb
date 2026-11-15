@@ -101,7 +101,7 @@ public final class HttpAllowedHosts {
         }
         final int size = host.size();
         if (size == 0 || host.byteAt(0) == '[') {
-            // an IPv6 address
+            // no name, or an IPv6 address
             return true;
         }
         int hi = 0;
