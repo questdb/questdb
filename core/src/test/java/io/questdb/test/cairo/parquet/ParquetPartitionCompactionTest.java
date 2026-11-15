@@ -766,6 +766,62 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
     }
 
     /**
+     * DROP INDEX and ADD INDEX with a reader pinned leave the dropped version of the index waiting for its purge in the
+     * parquet partition directory. A sweep that carries the source's index files into the rewritten partition must
+     * leave that version out. A directory is carried whatever its name: only files are classified.
+     */
+    @Test
+    public void testIdleSweepCarriesOnlyTheLiveVersionOfAReAddedIndex() throws Exception {
+        setUpSmallRowGroupsNoAutoRewrite();
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, "0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "60m");
+        assertMemoryLeak(() -> {
+            // The index comes after the in-place commits that left dead bytes, so the sweep carries it
+            createTableWithDeadRowGroupBytes("ra", true, "");
+            execute("ALTER TABLE ra ALTER COLUMN s ADD INDEX");
+            drainWalQueue();
+            final TableToken tableToken = engine.verifyTableName("ra");
+            assertUnusedBytesPositive(tableToken);
+            final long live;
+            try (TableReader ignore = engine.getReader(tableToken)) {
+                execute("ALTER TABLE ra ALTER COLUMN s DROP INDEX");
+                drainWalQueue();
+                execute("ALTER TABLE ra ALTER COLUMN s ADD INDEX");
+                drainWalQueue();
+                live = parquetPartitionColumnNameTxn(tableToken, "s");
+                Assert.assertNotEquals(TableUtils.COLUMN_NAME_TXN_NONE, live);
+                Assert.assertEquals("s.k,s.k." + live + ",s.v,s.v." + live, liveIndexFileNames(tableToken, "s"));
+                // named as a superseded index version would be
+                Assert.assertTrue(new File(liveParquetPartitionDir(tableToken), "s.k.0").mkdir());
+
+                final long nameTxnBefore = parquetPartitionNameTxn(tableToken);
+                runSweepPastTheIdleTimeout();
+                Assert.assertNotEquals("the sweep did not rewrite the parquet partition", nameTxnBefore, parquetPartitionNameTxn(tableToken));
+            }
+            Assert.assertEquals("s.k.0,s.k." + live + ",s.v." + live, liveIndexFileNames(tableToken, "s"));
+            Assert.assertTrue(new File(liveParquetPartitionDir(tableToken), "s.k.0").isDirectory());
+            assertQuery("SELECT a, s, ts FROM ra WHERE s = 'k2'")
+                    .noLeakCheck()
+                    .expectSize(false)
+                    .inferRandomAccess()
+                    .timestamp("ts")
+                    .returns(
+                            """
+                                    a\ts\tts
+                                    2\tk2\t2020-01-01T01:00:00.000000Z
+                                    102\tk2\t2020-01-01T02:30:00.000000Z
+                                    4\tk2\t2020-01-01T03:00:00.000000Z
+                                    6\tk2\t2020-01-01T05:00:00.000000Z
+                                    8\tk2\t2020-01-01T07:00:00.000000Z
+                                    10\tk2\t2020-01-01T09:00:00.000000Z
+                                    12\tk2\t2020-01-01T11:00:00.000000Z
+                                    """
+                    );
+            assertSqlCursors("SELECT a, s, ts FROM ra WHERE concat(s, '') = 'k1'", "SELECT a, s, ts FROM ra WHERE s = 'k1'");
+        });
+    }
+
+    /**
      * An index added to a column of an already-converted parquet partition gets no column name txn in
      * {@code _cv}, so its files carry no txn suffix. The sweep must still recognise them as the live version
      * and carry them into the rewritten partition.

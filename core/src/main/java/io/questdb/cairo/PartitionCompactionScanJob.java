@@ -27,7 +27,6 @@ package io.questdb.cairo;
 import io.questdb.cairo.frm.Frame;
 import io.questdb.cairo.frm.FrameAlgebra;
 import io.questdb.cairo.frm.file.FrameFactory;
-import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -47,8 +46,6 @@ import io.questdb.std.LongHashSet;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
@@ -110,8 +107,6 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     // every table in one tick, on this job's single thread. Charging probes against a per-sweep budget
     // spreads that cost across sweeps; a partition memoized clean is never probed again until it changes.
     private static final int MAX_PROBE_PER_SWEEP = 10_000;
-    // The column name txn of an index file name the sweep cannot classify; such a file is carried as is.
-    private static final long UNKNOWN_COLUMN_NAME_TXN = Long.MIN_VALUE;
     private final long checkInterval;
     private final Clock clock;
     // The sweep's and the request path's own _cv snapshot, opened once per table visit - see openColumnVersions.
@@ -487,17 +482,6 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     }
 
     /**
-     * Whether {@code fileName[kindLo, kindHi)} is the kind of an index file that carries one version per column name
-     * txn and no seal txn: bitmap {@code .k} and {@code .v}, posting {@code .pk} and {@code .pci}.
-     */
-    private static boolean isUnsealedIndexFileKind(CharSequence fileName, int kindLo, int kindHi) {
-        return Chars.equals("k", fileName, kindLo, kindHi)
-                || Chars.equals("v", fileName, kindLo, kindHi)
-                || Chars.equals("pk", fileName, kindLo, kindHi)
-                || Chars.equals("pci", fileName, kindLo, kindHi);
-    }
-
-    /**
      * One long per {@code folders} word, folded in order, so any change to the run - a folder added, dropped,
      * rebuilt under a new name txn, grown, or moved to a new geometry generation - gives a different value. This
      * is the whole identity the sweep tracks a logical partition by.
@@ -508,26 +492,6 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             state = Hash.hashLong128_64(state, folders.getQuick(i));
         }
         return state;
-    }
-
-    /**
-     * Parses the column name txn that follows the kind in an unsealed index file name:
-     * {@code sym.k} gives {@link TableUtils#COLUMN_NAME_TXN_NONE} and {@code sym.k.12} gives 12.
-     * Returns {@link #UNKNOWN_COLUMN_NAME_TXN} when the rest of the name is not one numeric segment.
-     */
-    private static long parseUnsealedIndexFileColumnNameTxn(CharSequence fileName, int kindHi) {
-        final int len = fileName.length();
-        if (kindHi == len) {
-            return TableUtils.COLUMN_NAME_TXN_NONE;
-        }
-        if (kindHi + 1 == len || Chars.indexOf(fileName, kindHi + 1, len, '.') >= 0) {
-            return UNKNOWN_COLUMN_NAME_TXN;
-        }
-        try {
-            return Numbers.parseLong(fileName, kindHi + 1, len);
-        } catch (NumericException e) {
-            return UNKNOWN_COLUMN_NAME_TXN;
-        }
     }
 
     /**
@@ -1269,7 +1233,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                 || Chars.equals(TableUtils.PARQUET_METADATA_STAGING_FILE_NAME, sidecarName)) {
             return;
         }
-        if (type != Files.DT_DIR && isSupersededIndexFile(sidecarName)) {
+        if (type != Files.DT_DIR && TableUtils.isSupersededIndexFile(sidecarName, sidecarMetadata, sidecarColumnVersionReader, sidecarPartitionTimestamp)) {
             return;
         }
         path.trimTo(sidecarSrcLen).concat(pUtf8NameZ).$();
@@ -1964,49 +1928,6 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                 txReader.getPartitionNameTxn(partitionIndex)
         );
         return ff.isSoftLink(path.$());
-    }
-
-    /**
-     * Whether {@code fileName} is an index file of an indexed column under a column name txn other than the one the
-     * snapshot's {@code _cv} names. Unclassifiable names do not count as superseded.
-     */
-    private boolean isSupersededIndexFile(CharSequence fileName) {
-        // Column names cannot contain a dot, so the first one ends the column name.
-        final int nameHi = Chars.indexOf(fileName, '.');
-        if (nameHi < 1) {
-            return false;
-        }
-        final int columnIndex = sidecarMetadata.getColumnIndexQuiet(fileName, 0, nameHi);
-        if (columnIndex < 0 || !sidecarMetadata.isColumnIndexed(columnIndex)) {
-            return false;
-        }
-        final long liveColumnNameTxn = sidecarColumnVersionReader.getColumnNameTxn(
-                sidecarPartitionTimestamp,
-                sidecarMetadata.getWriterIndex(columnIndex)
-        );
-        final int len = fileName.length();
-        final int kindLo = nameHi + 1;
-        int kindHi = Chars.indexOf(fileName, kindLo, len, '.');
-        if (kindHi < 0) {
-            kindHi = len;
-        }
-        final long fileColumnNameTxn;
-        if (isUnsealedIndexFileKind(fileName, kindLo, kindHi)) {
-            fileColumnNameTxn = parseUnsealedIndexFileColumnNameTxn(fileName, kindHi);
-        } else {
-            // The sealed posting files, .pv and .pc<N>
-            final long sealedFileColumnNameTxn = PostingIndexUtils.sealedFileColumnNameTxn(fileName, kindLo);
-            if (sealedFileColumnNameTxn == PostingIndexUtils.PARSE_FAIL) {
-                fileColumnNameTxn = UNKNOWN_COLUMN_NAME_TXN;
-            } else if (fileName.charAt(kindLo + 1) == 'c'
-                    && sealedFileColumnNameTxn == PostingIndexUtils.coverFileHostTxn(liveColumnNameTxn)) {
-                // A cover data file spells COLUMN_NAME_TXN_NONE and txn 0 alike, as 0.
-                fileColumnNameTxn = liveColumnNameTxn;
-            } else {
-                fileColumnNameTxn = sealedFileColumnNameTxn;
-            }
-        }
-        return fileColumnNameTxn != UNKNOWN_COLUMN_NAME_TXN && fileColumnNameTxn != liveColumnNameTxn;
     }
 
     /**

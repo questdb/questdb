@@ -443,6 +443,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final LongList pendingParquetToNativeConversions = new LongList();
     private final LongAdder physicallyWrittenRowsSinceLastCommit = new LongAdder();
     private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
+    private final FindVisitor removeSupersededParquetIndexFileRef = this::removeSupersededParquetIndexFile;
     private final Row row = new RowImpl();
     private final LongList rowValueIsNotNull = new LongList();
     private final TableWriterSegmentCopyInfo segmentCopyInfo = new TableWriterSegmentCopyInfo();
@@ -622,6 +623,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private PurgingOperator purgingOperator;
     private boolean removeDirOnCancelRow = true;
     private int rowAction = ROW_ACTION_OPEN_PARTITION;
+    // The partition directory removeSupersededParquetIndexFiles() lists, its length and the partition's timestamp
+    private Path supersededParquetIndexDir;
+    private int supersededParquetIndexDirLen;
+    private long supersededParquetIndexPartitionTimestamp;
     private TableToken tableToken;
     private DirectLongList tempDirectMemList;
     private long tempMem16b = Unsafe.malloc(16, MemoryTag.NATIVE_TABLE_WRITER);
@@ -2915,6 +2920,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 .I$();
                         return AttachDetachStatus.DETACH_ERR_HARD_LINK;
                     }
+                }
+                if (txWriter.isPartitionParquet(partitionIndex)) {
+                    // An index version waiting for its purge in the partition directory would stay in the copy for
+                    // good. A native partition's copy keeps every file: ATTACH pins column versions from its names.
+                    removeSupersededParquetIndexFiles(detachedPath.trimTo(detachedPathLen), timestamp);
                 }
 
                 // copy _meta, _cv and _txn to partition.detached _meta, _cv and _txn
@@ -10899,6 +10909,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     throw CairoException.critical(ff.errno()).put("could not link partition directory [from=").put(path.trimTo(srcDirLen))
                             .put(", to=").put(other.trimTo(dstDirLen)).put(']');
                 }
+                // An index version waiting for its purge in the old directory would stay in the new one for good
+                removeSupersededParquetIndexFiles(other.trimTo(dstDirLen), partitionTimestamp);
                 for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
                     final byte indexType = metadata.getColumnIndexType(i);
                     if (!ColumnType.isSymbol(metadata.getColumnType(i)) || !IndexType.isIndexed(indexType)) {
@@ -19006,6 +19018,43 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         } catch (Throwable e) {
             handleHousekeepingException(e);
+        }
+    }
+
+    /**
+     * One entry of the directory {@link #removeSupersededParquetIndexFiles} lists: removes the file when
+     * {@link TableUtils#isSupersededIndexFile} calls it superseded. A name that is not valid UTF-8 stays, and so does a
+     * file the removal leaves on disk, which the error log names.
+     */
+    private void removeSupersededParquetIndexFile(long pUtf8NameZ, int type) {
+        if (type == DT_DIR) {
+            return;
+        }
+        utf16Sink.clear();
+        if (Utf8s.utf8ToUtf16Z(pUtf8NameZ, utf16Sink)
+                && TableUtils.isSupersededIndexFile(utf16Sink, metadata, columnVersionWriter, supersededParquetIndexPartitionTimestamp)) {
+            final LPSZ file = supersededParquetIndexDir.trimTo(supersededParquetIndexDirLen).concat(pUtf8NameZ).$();
+            if (!ff.removeQuiet(file) && ff.exists(file)) {
+                LOG.error().$("could not remove superseded index file [path=").$(file).$(", errno=").$(ff.errno()).I$();
+            }
+        }
+    }
+
+    /**
+     * Removes from a new copy of a parquet partition directory the index files of the versions {@code _cv} does not
+     * name. FORCE REINDEX PARQUET and DETACH link the whole directory, while the purge of a version an in-place commit
+     * superseded runs only against the directory it was superseded in. No {@code _txn} names the copy yet, so no
+     * reader can open the files this removes.
+     */
+    private void removeSupersededParquetIndexFiles(Path partitionDir, long partitionTimestamp) {
+        supersededParquetIndexDir = partitionDir;
+        supersededParquetIndexDirLen = partitionDir.size();
+        supersededParquetIndexPartitionTimestamp = partitionTimestamp;
+        try {
+            ff.iterateDir(partitionDir.$(), removeSupersededParquetIndexFileRef);
+        } finally {
+            partitionDir.trimTo(supersededParquetIndexDirLen);
+            supersededParquetIndexDir = null;
         }
     }
 
