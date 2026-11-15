@@ -128,6 +128,11 @@ public class MatViewColumnChangeTest extends AbstractCairoTest {
     private static final String PRICE_VIEW_ROWS_AFTER_INSERT = PRICE_VIEW_ROWS + "2024-01-01T02:00:00.000000Z\tb\t5.5\n";
     private static final String PRICE_VIEW_SQL = "SELECT ts, sym, last(price) AS price FROM base SAMPLE BY 1h";
     private static final String REGULAR_VIEW_SQL = "SELECT ts, sym, last(amount) AS amount FROM rv SAMPLE BY 1h";
+    // the rows of COUNT_VIEW_SQL over the table that replaces the base in createViewRebuiltFromReplacedBase()
+    private static final String REPLACED_BASE_ROWS = """
+            ts\tsym\tcount\tprice
+            2024-01-01T03:00:00.000000Z\td\t5\t4.0
+            """;
     private static final String SELF_JOIN_VIEW_SQL = "SELECT a.ts, a.sym, last(b.amount) AS amount FROM base a ASOF JOIN base b ON (sym) SAMPLE BY 1h";
     private static final String VERSION_REASON = MatViewBareNameGuard.invalidationReason("version");
     private static final int VIEW_NAME_POSITION = "REFRESH MATERIALIZED VIEW ".length();
@@ -724,6 +729,32 @@ public class MatViewColumnChangeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGuardInvalidatesViewOfReplacedBaseRebuiltWhileDropApplies() throws Exception {
+        // The view's state holds the switch of count that the guard recorded for the dropped base table, and then the
+        // one it records for the table that replaced it, whose DROP of count applies while a FULL refresh rebuilds the
+        // view from its txn 1. The FULL's commit passes over the dropped table's switch, which is not the view's, to
+        // the new table's switch at txn 2, above the refresh position, and publishes the guard's invalidation again.
+        assertMemoryLeak(pausingFf, () -> {
+            createViewRebuiltFromReplacedBase();
+            raceColumnChange("base", DROP_COUNT, () -> {
+                drainMatViewQueue(engine);
+                drainWalQueue();
+                assertViewState("mv", "invalid", COUNT_REASON, 1);
+                execute("REFRESH MATERIALIZED VIEW mv FULL");
+                final AtomicReference<String> stateAtUnlock = captureStateAtUnlock("mv");
+                drainMatViewQueue(engine);
+                Assert.assertEquals(pendingGuardState("base", 1, 2), stateAtUnlock.get());
+                drainWalQueue();
+                assertViewState("mv", "invalid", COUNT_REASON, 1);
+                assertViewRows("mv", REPLACED_BASE_ROWS);
+            });
+            drainWalAndMatViewQueues();
+            assertViewState("mv", "invalid", COUNT_REASON, 1);
+            assertViewRows("mv", REPLACED_BASE_ROWS);
+        });
+    }
+
+    @Test
     public void testGuardInvalidatesViewRebuiltWhileBaseSuspendedAfterFailedDrop() throws Exception {
         // The bare-name guard records the switch of count and publishes its invalidation before the DROP applies, but the
         // apply fails and suspends the base's WAL at base txn 1. A FULL refresh and a first build meanwhile read count as
@@ -1265,32 +1296,13 @@ public class MatViewColumnChangeTest extends AbstractCairoTest {
         // table that replaced it, at its txn 1, below the switch's txn 2: the switch belongs to another table, so the
         // view stays valid and reads count as the new table's column.
         assertMemoryLeak(() -> {
-            createRefreshedCountView();
-            execute(DROP_COUNT);
-            drainWalAndMatViewQueues();
-            assertViewState("mv", "invalid", COUNT_REASON, 1);
-            execute("DROP TABLE base");
-            execute(CREATE_COUNT_BASE);
-            execute("INSERT INTO base VALUES ('d', 4.0, 5, '2024-01-01T03:10:00.000000Z')");
-            drainWalAndMatViewQueues();
-            assertViewState("mv", "invalid", COUNT_REASON, 1);
-
-            execute("REFRESH MATERIALIZED VIEW mv FULL");
-            drainWalAndMatViewQueues();
-            drainWalAndMatViewQueues();
-            assertViewState("mv", "valid", "", 1);
-            Assert.assertFalse(getViewState("mv").hasPendingInvalidationReason());
-            final String rows = """
-                    ts\tsym\tcount\tprice
-                    2024-01-01T03:00:00.000000Z\td\t5\t4.0
-                    """;
-            assertViewRows("mv", rows);
+            createViewRebuiltFromReplacedBase();
             execute("INSERT INTO base VALUES ('e', 5.0, 6, '2024-01-01T04:10:00.000000Z')");
             drainWalQueue();
             execute("REFRESH MATERIALIZED VIEW mv INCREMENTAL");
             drainWalAndMatViewQueues();
             assertViewState("mv", "valid", "", 2);
-            assertViewRows("mv", rows + "2024-01-01T04:00:00.000000Z\te\t6\t5.0\n");
+            assertViewRows("mv", REPLACED_BASE_ROWS + "2024-01-01T04:00:00.000000Z\te\t6\t5.0\n");
             assertSqlCursors(COUNT_VIEW_SQL + " ORDER BY ts, sym", "mv ORDER BY ts, sym");
         });
     }
@@ -2188,6 +2200,28 @@ public class MatViewColumnChangeTest extends AbstractCairoTest {
         drainWalAndMatViewQueues();
         assertViewState("mv", "valid", "", 1);
         assertViewRows("mv", COUNT_COLUMN_ROWS);
+    }
+
+    // createRefreshedCountView() and the DROP of count, whose switch the guard records for the base table, which a
+    // table with the column count then replaces: its txn 1 inserts one row. A FULL refresh rebuilds the view from the
+    // new table, below the switch's txn 2, and the view stays valid, as the switch belongs to the dropped table.
+    private void createViewRebuiltFromReplacedBase() throws Exception {
+        createRefreshedCountView();
+        execute(DROP_COUNT);
+        drainWalAndMatViewQueues();
+        assertViewState("mv", "invalid", COUNT_REASON, 1);
+        execute("DROP TABLE base");
+        execute(CREATE_COUNT_BASE);
+        execute("INSERT INTO base VALUES ('d', 4.0, 5, '2024-01-01T03:10:00.000000Z')");
+        drainWalAndMatViewQueues();
+        assertViewState("mv", "invalid", COUNT_REASON, 1);
+
+        execute("REFRESH MATERIALIZED VIEW mv FULL");
+        drainWalAndMatViewQueues();
+        drainWalAndMatViewQueues();
+        assertViewState("mv", "valid", "", 1);
+        Assert.assertFalse(getViewState("mv").hasPendingInvalidationReason());
+        assertViewRows("mv", REPLACED_BASE_ROWS);
     }
 
     // Lets the paused WAL apply of the column change finish, and waits for it, see raceColumnChange().

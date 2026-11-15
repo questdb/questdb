@@ -67,16 +67,18 @@ import io.questdb.std.datetime.microtime.Micros;
  * name stands for, see {@link #CATALOGUE_NAMES}. The view's own columns can take another type with an implicit cast,
  * and the view can have columns no SQL produces.
  * <p>
- * A bare-name round, see {@link #forBareNameRound(int)}, drives {@link MatViewFuzzTest#testBareNameSwitchResume()}
- * instead: a view as the versions before the explicit-name rule store it, whose SQL calls count without parentheses,
- * over a base that gains and drops a column named count, which switches the bare count between a call and a column.
+ * A bare-name round, see {@link #forBareNameRound(int, boolean)}, drives
+ * {@link MatViewFuzzTest#testBareNameSwitchResume()} instead: a view as the versions before the explicit-name rule
+ * store it, whose SQL calls count without parentheses, over a base that gains and drops a column named count, which
+ * switches the bare count between a call and a column.
  * It draws ingestion, the base column changes, ALTER ... AS writing {@code count() AS count} or {@code base.count AS
  * count}, forced invalidations, RESUME, FULL, restarts and job runs, and predicts the outcome of RESUME and ALTER ...
  * AS: RESUME refuses an invalid view whose SQL still calls count bare once a switch stands that no FULL rebuilt the
  * view after, and refuses on its compile while count is no column. It also keeps the reading the view's rows hold.
  * A base column change can race other operations: the test pauses its apply after the bare-name guard ran and before
  * the change is visible, and runs one to three of the RACER_* operations meanwhile, see
- * {@link Kind#BASE_RACED_BARE_NAME_COLUMN_CHANGE}.
+ * {@link Kind#BASE_RACED_BARE_NAME_COLUMN_CHANGE}. The view of a deferred round completes no refresh before the
+ * round's first operation, a raced change whose racers build the view, see {@link #isBareNameViewBuilt()}.
  */
 public final class MatViewFuzzOpGenerator {
     // The SQL of the bare-name round's view, see bareNameViewSql()
@@ -133,6 +135,8 @@ public final class MatViewFuzzOpGenerator {
     private boolean hasBaseCountColumn;
     // the view dropped a column, whose slot the view's table keeps
     private boolean hasDroppedViewColumn;
+    // the bare-name round's view completed a refresh; a deferred round's view does so in the round's first operation
+    private boolean isBareNameViewBuilt = true;
     // the bare-name round's view is invalid, once the jobs have run
     private boolean isBareNameViewInvalid;
     // a base column change switched the bare count of the bare-name round's SQL, and no FULL rebuilt the view since
@@ -189,9 +193,13 @@ public final class MatViewFuzzOpGenerator {
         return "SELECT ts, sym, " + count + ", last(price) AS price FROM base SAMPLE BY 1h";
     }
 
-    // A generator of a bare-name round, see the class comment.
-    public static MatViewFuzzOpGenerator forBareNameRound(int dayCount) {
-        return new MatViewFuzzOpGenerator(dayCount, false, true);
+    // A generator of a bare-name round, see the class comment. The view of a deferred round is created REFRESH
+    // IMMEDIATE DEFERRED, so it completes no refresh until the round's first operation builds it, see
+    // isBareNameViewBuilt().
+    public static MatViewFuzzOpGenerator forBareNameRound(int dayCount, boolean isViewDeferred) {
+        final MatViewFuzzOpGenerator generator = new MatViewFuzzOpGenerator(dayCount, false, true);
+        generator.isBareNameViewBuilt = !isViewDeferred;
+        return generator;
     }
 
     public static String catalogueExpression(String name) {
@@ -373,6 +381,16 @@ public final class MatViewFuzzOpGenerator {
 
     public boolean isBareNameSwitchStanding() {
         return isBareNameSwitchStanding;
+    }
+
+    // Whether the bare-name round's view completed a refresh. Until it has, the next operation is the view's first
+    // build racing a change of the bare count: the racers run the refresh job, whose INVALIDATE handler declines the
+    // guard's invalidation of a view without a refresh position, then REFRESH ... INCREMENTAL and the refresh job
+    // again, which builds the view from the base without the change. The build commits a refresh position below the
+    // switch the guard recorded, so it publishes the guard's invalidation again: the view ends invalid, and the switch
+    // stands. Up to two drawn racers follow.
+    public boolean isBareNameViewBuilt() {
+        return isBareNameViewBuilt;
     }
 
     public boolean isBareNameViewInvalid() {
@@ -800,6 +818,20 @@ public final class MatViewFuzzOpGenerator {
     }
 
     private Op nextOfBareNameRound(Rnd rnd, Op op) {
+        if (!isBareNameViewBuilt) {
+            // the deferred view's first build races the first change of the bare count, see isBareNameViewBuilt()
+            op.kind = Kind.BASE_RACED_BARE_NAME_COLUMN_CHANGE;
+            op.isColumnAdded = !hasBaseCountColumn;
+            op.racers.add(RACER_RUN_REFRESH_JOB);
+            op.racers.add(RACER_INCREMENTAL);
+            op.racers.add(RACER_RUN_REFRESH_JOB);
+            for (int i = 0, n = rnd.nextInt(3); i < n; i++) {
+                op.racers.add(rnd.nextInt(RACER_COUNT));
+            }
+            isBareNameViewBuilt = true;
+            apply(op);
+            return op;
+        }
         switch (op.kind) {
             case INSERT -> generateRows(rnd, op, 1 + rnd.nextInt(5), -1);
             case BASE_ADD_BARE_NAME_COLUMN -> {

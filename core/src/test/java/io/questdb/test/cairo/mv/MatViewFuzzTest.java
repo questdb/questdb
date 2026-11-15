@@ -177,7 +177,9 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         // rebuilds every row under one reading, and only an ALTER ... AS that changes the reading of later rows may
         // mix them, never an accepted RESUME.
         // The budget: questdb.fuzz.matview.rounds independent rounds of questdb.fuzz.matview.steps operations.
-        // A raced base column change runs other operations while its apply pauses, see raceBareNameColumnChange().
+        // A raced base column change runs other operations while its apply pauses, see raceBareNameColumnChange(). Half
+        // of the rounds create the view REFRESH IMMEDIATE DEFERRED, and its first build races the round's first switch,
+        // see MatViewFuzzOpGenerator.isBareNameViewBuilt().
         final int rounds = Integer.getInteger("questdb.fuzz.matview.rounds", 1);
         final int steps = Integer.getInteger("questdb.fuzz.matview.steps", -1);
         assertMemoryLeak(BARE_NAME_FF, () -> {
@@ -1159,24 +1161,43 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     }
 
     private static void runBareNameOperations(Rnd rnd, int steps) throws Exception {
-        final MatViewFuzzOpGenerator generator = MatViewFuzzOpGenerator.forBareNameRound(OPS_DAY_COUNT);
+        final boolean isViewDeferred = rnd.nextBoolean();
+        LOG.info().$("fuzz: bare-name round [viewDeferred=").$(isViewDeferred).I$();
+        final MatViewFuzzOpGenerator generator = MatViewFuzzOpGenerator.forBareNameRound(OPS_DAY_COUNT, isViewDeferred);
         final MatViewFuzzOpGenerator.Op op = new MatViewFuzzOpGenerator.Op();
         execute("CREATE TABLE base (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
         for (int day = 0; day < OPS_DAY_COUNT; day++) {
             insertBareNameRows(generator.initRows(rnd, day, op));
         }
-        drainWalQueue();
+        // The refresh job takes the commit notifications of the initial rows before the view exists: the store notifies
+        // the commits of a base that an earlier round's view read, and the notification would build a deferred view.
+        drainWalAndMatViewQueues();
         SqlParser.setMatViewExplicitNamesCheckSkipped(true);
         try {
-            execute("CREATE MATERIALIZED VIEW mv AS (" + MatViewFuzzOpGenerator.bareNameViewSql(MatViewFuzzOpGenerator.BARE_NAME_SQL_BARE) + ") PARTITION BY DAY");
+            execute("CREATE MATERIALIZED VIEW mv " + (isViewDeferred ? "REFRESH IMMEDIATE DEFERRED " : "")
+                    + "AS (" + MatViewFuzzOpGenerator.bareNameViewSql(MatViewFuzzOpGenerator.BARE_NAME_SQL_BARE) + ") PARTITION BY DAY");
         } finally {
             SqlParser.setMatViewExplicitNamesCheckSkipped(false);
         }
         drainOperationsFuzzQueues();
+        // a deferred view has no refresh position until its first build
+        Assert.assertEquals("view built at CREATE", !isViewDeferred, opsViewState("mv").getLastRefreshBaseTxn() > -1);
         for (int step = 0; step < steps; step++) {
+            final boolean wasViewBuilt = generator.isBareNameViewBuilt();
             generator.next(rnd, op);
             LOG.info().$("fuzz: step ").$(step).$(" ").$(op.kind.name()).I$();
             runBareNameOp(generator, op);
+            if (!wasViewBuilt) {
+                // The racers built the deferred view from the base without the change, after the INVALIDATE handler
+                // declined the guard's invalidation of the view without a refresh position. The build committed a
+                // refresh position below the switch that the guard recorded, so it published the guard's invalidation
+                // again.
+                drainOperationsFuzzQueues();
+                final MatViewState state = opsViewState("mv");
+                Assert.assertTrue(generator.isBareNameViewInvalid());
+                Assert.assertTrue("the deferred view is valid after its first build raced the switch", state.isInvalid());
+                Assert.assertEquals(MatViewBareNameGuard.invalidationReason("count"), state.getInvalidationReasonForReport());
+            }
             if (rnd.nextBoolean()) {
                 drainWalAndMatViewQueues();
             }
