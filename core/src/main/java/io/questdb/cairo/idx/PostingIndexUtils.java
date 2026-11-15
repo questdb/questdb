@@ -26,6 +26,7 @@ package io.questdb.cairo.idx;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FindVisitor;
@@ -1694,6 +1695,55 @@ public final class PostingIndexUtils {
     }
 
     /**
+     * Resets the posting index of one column instance in a partition directory to an empty chain, for an index that is
+     * not committed: ADD INDEX does it before it builds the index, and checkpoint restore for every chain the restored
+     * metadata does not commit. Nothing reads what an earlier attempt left in the directory, and a crash or a copy can
+     * leave its chain torn, so the chain is never opened: the key file and every sealed file of the instance go. The
+     * new chain starts past every sealTxn the old one counted or left a file for, so a seal purge queued for one of
+     * those files cannot reach a file of the new chain. One listing of the directory finds the sealed files and the
+     * highest sealTxn they carry.
+     *
+     * @return {@code false} when the directory holds no key file of the instance, so there was nothing to reset
+     */
+    public static boolean resetIndex(
+            FilesFacade ff,
+            Path path,
+            int pathTrimTo,
+            CharSequence columnName,
+            long postingColumnNameTxn,
+            MemoryMA keyMem
+    ) {
+        try {
+            if (!ff.exists(keyFileName(path.trimTo(pathTrimTo), columnName, postingColumnNameTxn))) {
+                return false;
+            }
+            final long keyFileGenCounter = readKeyFileGenCounter(ff, path, pathTrimTo, columnName, postingColumnNameTxn);
+            final SealedFileRemover remover = new SealedFileRemover();
+            if (remover.remove(ff, path, pathTrimTo, columnName, postingColumnNameTxn)) {
+                throw CairoException.critical(ff.errno()).put("could not remove posting index files [path=")
+                        .put(path.trimTo(pathTrimTo)).put(", column=").put(columnName).put(']');
+            }
+            // A new key file rather than a rewrite: an older partition version may share the old one through a hard link.
+            final LPSZ keyFile = keyFileName(path.trimTo(pathTrimTo), columnName, postingColumnNameTxn);
+            if (!ff.removeQuiet(keyFile) && ff.exists(keyFile)) {
+                throw CairoException.critical(ff.errno()).put("could not remove posting index key file [path=")
+                        .put(keyFile).put(']');
+            }
+            keyMem.smallFile(ff, keyFile, MemoryTag.MMAP_INDEX_WRITER);
+            try {
+                // The new chain starts past both the key file's counter and the highest sealTxn of the files the
+                // remover visited.
+                PostingIndexWriter.initKeyMemory(keyMem, Math.max(keyFileGenCounter, remover.getLastSealTxn()) + 1);
+            } finally {
+                keyMem.close();
+            }
+            return true;
+        } finally {
+            path.trimTo(pathTrimTo);
+        }
+    }
+
+    /**
      * Reports to {@code visitor} every sealed {@code .pv} and {@code .pc} file of the posting column
      * instance {@code columnName} with column name txn {@code postingColumnNameTxn} in the directory
      * {@code path}, trimmed to {@code pathTrimTo}. Files of other instances of the same column name
@@ -2080,6 +2130,34 @@ public final class PostingIndexUtils {
         }
     }
 
+    /**
+     * The highest sealTxn that a stable header page of the instance's key file counted, or -1.
+     */
+    private static long readKeyFileGenCounter(
+            FilesFacade ff,
+            Path path,
+            int pathTrimTo,
+            CharSequence columnName,
+            long postingColumnNameTxn
+    ) {
+        long genCounter = -1;
+        final long fd = ff.openRO(keyFileName(path.trimTo(pathTrimTo), columnName, postingColumnNameTxn));
+        if (fd > -1) {
+            try {
+                for (long page = PAGE_A_OFFSET; page <= PAGE_B_OFFSET; page += PAGE_SIZE) {
+                    final long sequence = ff.readNonNegativeLong(fd, page + V2_HEADER_OFFSET_SEQUENCE_START);
+                    if (sequence > 0 && (sequence & 1L) == 0
+                            && sequence == ff.readNonNegativeLong(fd, page + V2_HEADER_OFFSET_SEQUENCE_END)) {
+                        genCounter = Math.max(genCounter, ff.readNonNegativeLong(fd, page + V2_HEADER_OFFSET_GEN_COUNTER));
+                    }
+                }
+            } finally {
+                ff.close(fd);
+            }
+        }
+        return genCounter;
+    }
+
     private static int efFirstOrdinalForHigh(long srcAddr, long trailer, int bitsL, long high) {
         final int count = Unsafe.getInt(srcAddr + Integer.BYTES);
         if (high <= 0) {
@@ -2311,12 +2389,22 @@ public final class PostingIndexUtils {
         private boolean isAnyFailed;
         // the .pc files of the host token 0 belong to instance 0, see removeAllSealedFiles()
         private boolean isCoverDataOfInstanceZero;
+        private long lastSealTxn;
         private Path path;
         private int pathTrimTo;
         private long postingColumnNameTxn;
 
+        /**
+         * The highest sealTxn among the sealed files the last {@link #remove} call visited, the ones it kept
+         * included, or -1 when it visited none.
+         */
+        public long getLastSealTxn() {
+            return lastSealTxn;
+        }
+
         @Override
         public void onCoverDataFile(int includeIdx, long coveredColumnNameTxn, long sealTxn) {
+            lastSealTxn = Math.max(lastSealTxn, sealTxn);
             if (isCoverDataOfInstanceZero) {
                 return;
             }
@@ -2329,6 +2417,7 @@ public final class PostingIndexUtils {
 
         @Override
         public void onValueFile(long sealTxn) {
+            lastSealTxn = Math.max(lastSealTxn, sealTxn);
             LPSZ p = valueFileName(path.trimTo(pathTrimTo), columnName, postingColumnNameTxn, sealTxn);
             if (!ff.removeQuiet(p) && ff.exists(p)) {
                 isAnyFailed = true;
@@ -2352,6 +2441,7 @@ public final class PostingIndexUtils {
             this.columnName = columnName;
             this.postingColumnNameTxn = postingColumnNameTxn;
             this.isAnyFailed = false;
+            this.lastSealTxn = -1;
             try {
                 LPSZ pciFile = coverInfoFileName(path.trimTo(pathTrimTo), columnName, postingColumnNameTxn);
                 if (ff.exists(pciFile) && !ff.removeQuiet(pciFile) && ff.exists(pciFile)) {
