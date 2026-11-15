@@ -91,6 +91,8 @@ public class HttpQueryTestBuilder {
     private MicrosecondClock microsecondClock;
     private NanosecondClock nanosecondClock = NanosecondClockImpl.INSTANCE;
     private QueryFutureUpdateListener queryFutureUpdateListener;
+    // Per-query native memory limit (cairo.query.memory.limit.bytes); -1 keeps the default.
+    private long queryMemoryLimitBytes = -1;
     private long queryTimeout = -1;
     private SecurityContext securityContext = null;
     private int sendBufferSize = -1;
@@ -184,6 +186,11 @@ public class HttpQueryTestBuilder {
                 @Override
                 public CharSequence getSqlCopyInputRoot() {
                     return copyInputRoot != null ? copyInputRoot : super.getSqlCopyInputRoot();
+                }
+
+                @Override
+                public long getQueryMemoryLimitBytes() {
+                    return queryMemoryLimitBytes >= 0 ? queryMemoryLimitBytes : super.getQueryMemoryLimitBytes();
                 }
 
                 @Override
@@ -415,6 +422,11 @@ public class HttpQueryTestBuilder {
 
     public HttpQueryTestBuilder withQueryFutureUpdateListener(QueryFutureUpdateListener queryFutureUpdateListener) {
         this.queryFutureUpdateListener = queryFutureUpdateListener;
+        return this;
+    }
+
+    public HttpQueryTestBuilder withQueryMemoryLimitBytes(long queryMemoryLimitBytes) {
+        this.queryMemoryLimitBytes = queryMemoryLimitBytes;
         return this;
     }
 

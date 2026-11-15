@@ -195,8 +195,8 @@ public class IntervalSearchOpenPartitionTrackingTest extends AbstractCairoTest {
         engine.releaseAllReaders();
         var partitionList = new IntList();
 
-        engine.setReaderListener((tableToken, partitionIndex) -> {
-            Assert.assertEquals("tmp", tableToken.getTableName());
+        engine.setReaderListener((reader, partitionIndex) -> {
+            Assert.assertEquals("tmp", reader.getTableToken().getTableName());
             partitionList.add(partitionIndex);
         });
         return partitionList;

@@ -138,7 +138,12 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
     @TestOnly
     @FunctionalInterface
     public interface ReaderListener {
-        void onOpenPartition(TableToken tableToken, int partitionIndex);
+        /**
+         * Runs on the calling thread each time a pooled reader is asked to open a partition,
+         * before it does. A partition the reader has not opened yet gets mapped under the
+         * reader's current scan profile.
+         */
+        void onOpenPartition(TableReader reader, int partitionIndex);
     }
 
     public static class R extends TableReader implements PoolTenant<R> {
@@ -269,7 +274,7 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
         @Override
         public long openPartition(int partitionIndex) {
             if (readerListener != null) {
-                readerListener.onOpenPartition(getTableToken(), partitionIndex);
+                readerListener.onOpenPartition(this, partitionIndex);
             }
             return super.openPartition(partitionIndex);
         }

@@ -161,6 +161,29 @@ public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
     @Nullable
     PageFrame next(long skipTarget);
 
+    /**
+     * Tells the cursor that the caller holds no pointer into the memory of any frame
+     * {@link #next(long)} has returned so far, the most recent one included, and never
+     * reads those frames again. A cursor that materializes frames into native memory it
+     * owns may then free that memory or reuse it for the frames it returns next.
+     * Partitions stay open: unlike {@link #releaseOpenPartitions()}, this does not unmap
+     * partition files, which the reader keeps or drops by its scan profile (see
+     * {@link #setScanProfile}).
+     * <p>
+     * A caller that reads frames one at a time and copies what it keeps, such as QWP
+     * egress, calls this before each {@link #next(long)}. A caller that collects frames
+     * before it reads them, such as the async page-frame sequences, must not call it.
+     */
+    default void releaseConsumedFrames() {
+        // no-op by default
+    }
+
+    /**
+     * Releases the partitions of every frame returned before the most recent one. The
+     * caller holds no pointer into the memory of those frames and never reads them again;
+     * it may still read the most recent frame. A cursor that materializes frames into
+     * native memory it owns frees the memory of those frames too.
+     */
     default void releaseOpenPartitions() {
         // no-op by default
     }

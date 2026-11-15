@@ -154,6 +154,7 @@ import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
@@ -736,11 +737,23 @@ public final class TestUtils {
         assertEventually(assertion, 60);
     }
 
+    /**
+     * Runs {@code assertion} until it completes, for up to 30 seconds, retrying the failures
+     * of {@code exceptionTypesToCatch} and of {@link AssertionError}. It leaves the caller's
+     * set as it was.
+     */
     public static void assertEventually(EventualCode assertion, Set<Class<?>> exceptionTypesToCatch) throws Exception {
-        exceptionTypesToCatch.add(AssertionError.class);
-        assertEventually(assertion, 30, exceptionTypesToCatch);
+        final Set<Class<?>> types = new HashSet<>(exceptionTypesToCatch);
+        types.add(AssertionError.class);
+        assertEventually(assertion, 30, types);
     }
 
+    /**
+     * Runs {@code assertion} until it completes, for up to {@code timeoutSeconds}. A failure of
+     * one of {@code exceptionTypesToCatch}, or of a subclass, makes it try again; that includes
+     * errors such as {@link AssertionError} when the caller lists them. Any other failure, and
+     * the last one when the time is up, goes to the caller.
+     */
     public static void assertEventually(EventualCode assertion, int timeoutSeconds, Set<Class<?>> exceptionTypesToCatch) throws Exception {
         long maxSleepingTimeMillis = 1000;
         long nextSleepingTimeMillis = 10;
@@ -750,11 +763,8 @@ public final class TestUtils {
             try {
                 assertion.run();
                 return;
-            } catch (Exception error) {
-                if (!exceptionTypesToCatch.contains(error.getClass())) {
-                    throw error;
-                }
-                if (System.nanoTime() >= deadline) {
+            } catch (Throwable error) {
+                if (!isInstanceOfAny(exceptionTypesToCatch, error) || System.nanoTime() >= deadline) {
                     throw error;
                 }
             }
@@ -3232,6 +3242,15 @@ public final class TestUtils {
         StringSink ss = tlSink.get();
         ss.clear();
         return ss;
+    }
+
+    private static boolean isInstanceOfAny(Set<Class<?>> types, Throwable error) {
+        for (Class<?> type : types) {
+            if (type.isInstance(error)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static long partitionIncrement(TimestampDriver driver, int partitionBy, long fromTimestamp, int totalRows, int partitionCount) {

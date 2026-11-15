@@ -59,6 +59,7 @@ public class QwpEgressMetrics implements Mutable {
     private final Counter queriesCancelledCounter;
     private final Counter queriesErroredCounter;
     private final Counter queriesStartedCounter;
+    private final Counter readAheadBytesCounter;
     private final Counter rowsStreamedCounter;
 
     public QwpEgressMetrics(MetricsRegistry metricsRegistry) {
@@ -73,6 +74,7 @@ public class QwpEgressMetrics implements Mutable {
         this.rowsStreamedCounter = metricsRegistry.newCounter("qwp_egress_rows_streamed");
         this.cacheResetDictCounter = metricsRegistry.newCounter("qwp_egress_cache_reset_dict");
         this.creditSuspensionsCounter = metricsRegistry.newCounter("qwp_egress_credit_suspensions");
+        this.readAheadBytesCounter = metricsRegistry.newCounter("qwp_egress_bytes_read_ahead");
     }
 
     @TestOnly
@@ -111,6 +113,7 @@ public class QwpEgressMetrics implements Mutable {
         rowsStreamedCounter.reset();
         cacheResetDictCounter.reset();
         creditSuspensionsCounter.reset();
+        readAheadBytesCounter.reset();
     }
 
     public AtomicLongGauge connectionCountGauge() {
@@ -154,6 +157,17 @@ public class QwpEgressMetrics implements Mutable {
         queriesStartedCounter.inc();
     }
 
+    /**
+     * Counts the page-frame bytes a descending scan asked the OS to read ahead of its walk
+     * down, or read itself, see {@link QwpBackwardReadAhead}. Bytes already in memory, which
+     * the scan does not ask for, do not count.
+     */
+    public void markReadAhead(long bytes) {
+        if (bytes > 0) {
+            readAheadBytesCounter.add(bytes);
+        }
+    }
+
     public void markStreamingCreditSuspended() {
         creditSuspensionsCounter.inc();
     }
@@ -165,6 +179,11 @@ public class QwpEgressMetrics implements Mutable {
     @TestOnly
     public long queriesStartedCount() {
         return queriesStartedCounter.getValue();
+    }
+
+    @TestOnly
+    public long readAheadBytesCount() {
+        return readAheadBytesCounter.getValue();
     }
 
     public Counter rowsStreamedCounter() {

@@ -472,16 +472,17 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      * Returns true when this factory's page-frame cursor ({@link #getPageFrameCursor})
      * yields frames whose column page addresses are fully materialized — a raw
      * page-frame consumer that reads {@code frame.getPageAddress(col)} directly (the
-     * parquet {@code /exp} / {@code COPY} DIRECT_PAGE_FRAME export) sees real data.
+     * parquet {@code /exp} / {@code COPY} DIRECT_PAGE_FRAME export, QWP egress) sees
+     * real data.
      * <p>
      * The covering-index single-key scan ({@code sym = 'x'}) instead produces
      * METADATA-ONLY frames: the covered columns are decoded lazily on the async reduce
      * workers (via {@code PageFrameMemoryPool#patchCoveredFrameMemory}) and the raw
      * frame addresses are placeholders, so a direct reader would export all-null
-     * covered columns. Such factories return false, and the parquet exporter routes
-     * them through the row-wise cursor path, which drives the same covered decode the
-     * query path uses. Delegates to the base factory so a wrapper over a metadata-only
-     * scan reports the same.
+     * covered columns. Such factories return false, and those consumers route them
+     * through the row-wise cursor path, which reads the covered columns the same way
+     * the serial query path does. Delegates to the base factory so a wrapper over a
+     * metadata-only scan reports the same.
      *
      * @return true if raw page-frame addresses are directly readable
      */
