@@ -48,6 +48,7 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
+import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
@@ -1140,6 +1141,34 @@ public class MatViewResumeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGuardBetweenResumeFlagAndSwitchReadRefusesResume() throws Exception {
+        // RESUME sets the view's resuming flag before it reads the bare-name switches, and the bare-name guard records a
+        // switch before it reads the flag. Here the guard runs between RESUME's two steps: the base gains a column named
+        // count, which the invalid older view calls bare. The guard sees RESUME and keeps its invalidation for the
+        // release of RESUME's latch, and RESUME sees the switch and refuses, which drops that invalidation: the view
+        // stays invalid with its reason.
+        assertMemoryLeak(() -> {
+            createBase();
+            insertBaseRows();
+            createBareCountView();
+            invalidate("test invalidation");
+            final AtomicReference<String> guardReason = new AtomicReference<>();
+            viewState().setOnResumeFlagSetForTesting(() -> {
+                try {
+                    execute("ALTER TABLE base ADD COLUMN count LONG");
+                } catch (SqlException e) {
+                    throw new RuntimeException(e);
+                }
+                drainWalQueue();
+                guardReason.set(viewState().getPendingInvalidationReason());
+            });
+            assertSwitchRefused(PLAIN_RESUME_SQL, "count", "test invalidation", BARE_COUNT_VIEW_ROWS);
+            Assert.assertEquals(MatViewBareNameGuard.invalidationReason("count"), guardReason.get());
+            Assert.assertEquals(2, appliedTxn(engine.verifyTableName("base")));
+        });
+    }
+
+    @Test
     public void testGuardRecordsEveryMatchedName() throws Exception {
         // An older view calls count without parentheses and reads the base column pi bare. While the view is invalid,
         // the base renames pi to count, which switches both names: pi from a column to a call of pi(), and count from
@@ -1183,6 +1212,89 @@ public class MatViewResumeTest extends AbstractCairoTest {
             drainWalAndMatViewQueues();
             assertViewStatus("valid", "");
             assertViewRows(rows + "2024-01-01T02:00:00.000000Z\tc\t1\t" + PI_TEXT + "\t3.0\n");
+        });
+    }
+
+    @Test
+    public void testGuardsOfTwoBasesRecordingAtOnceKeepEachSwitch() throws Exception {
+        // Around ALTER ... WITH BASE, the bare-name guards of two base tables can record on one view at once: the guard
+        // of the table the view leaves fetched the view before the move, and the guard of the table it moves to fetches
+        // it after. The view reads the column count of base bare, and ALTER ... WITH BASE moves it to base2 with a SQL
+        // that reads the count of base2 bare. The guard of base2's DROP COLUMN count builds its copy of the view's
+        // switches and holds it unpublished while ALTER ... WITH BASE moves the view back to base, and the guard of
+        // base's DROP COLUMN count then waits for the lock until the first copy is published, and copies it: neither
+        // guard drops the other's switch. RESUME SKIP BACKLOG runs before base's drop applies, so its compile reads count
+        // as the column of base, the table of the view's rows, and it refuses on the switch that the second guard
+        // recorded.
+        final CountDownLatch applyPaused = new CountDownLatch(1);
+        final CountDownLatch applyRelease = new CountDownLatch(1);
+        final AtomicReference<String> pauseSuffix = new AtomicReference<>();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean removeQuiet(LPSZ name) {
+                final String suffix = pauseSuffix.get();
+                if (suffix != null && Utf8s.endsWithAscii(name, suffix) && pauseSuffix.compareAndSet(suffix, null)) {
+                    applyPaused.countDown();
+                    try {
+                        Assert.assertTrue(applyRelease.await(60, TimeUnit.SECONDS));
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+                return super.removeQuiet(name);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            createCountColumnBaseWithView();
+            execute("CREATE TABLE base2 (sym SYMBOL, price DOUBLE, count LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base2 VALUES ('x', 9.0, 9, '2024-01-01T00:30:00.000000Z')");
+            drainWalAndMatViewQueues();
+            invalidate("test invalidation");
+            execute("ALTER MATERIALIZED VIEW price_1h WITH BASE base2 AS (SELECT ts, sym, count, last(price) AS price FROM base2 SAMPLE BY 1h)");
+            drainWalAndMatViewQueues();
+
+            final CountDownLatch copied = new CountDownLatch(1);
+            final CountDownLatch publish = new CountDownLatch(1);
+            viewState().setOnBareNameSwitchCopiedForTesting(() -> {
+                copied.countDown();
+                try {
+                    Assert.assertTrue(publish.await(60, TimeUnit.SECONDS));
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                }
+            });
+            execute("ALTER TABLE base2 DROP COLUMN count");
+            final AtomicReference<Throwable> base2ApplierError = new AtomicReference<>();
+            final Thread base2Applier = startWalApplier(base2ApplierError);
+            try {
+                Assert.assertTrue(copied.await(30, TimeUnit.SECONDS));
+                execute("ALTER MATERIALIZED VIEW price_1h WITH BASE base AS (" + BARE_COUNT_VIEW_SQL + ")");
+                drainWalQueue();
+                pauseSuffix.set(engine.verifyTableName("base").getDirName() + Files.SEPARATOR + TableUtils.META_SWAP_FILE_NAME);
+                execute("ALTER TABLE base DROP COLUMN count");
+                final AtomicReference<Throwable> baseApplierError = new AtomicReference<>();
+                final Thread baseApplier = startWalApplier(baseApplierError);
+                try {
+                    awaitBareNameSwitchLockOrLatch(baseApplier, applyPaused);
+                    publish.countDown();
+                    Assert.assertTrue(applyPaused.await(30, TimeUnit.SECONDS));
+                    // base2's guard is done, so nothing else runs on the view while RESUME does
+                    base2Applier.join();
+                    Assert.assertNull(base2ApplierError.get());
+                    assertSwitchRefusedInPlace(RESUME_SQL, "count");
+                } finally {
+                    publish.countDown();
+                    applyRelease.countDown();
+                    baseApplier.join();
+                }
+                Assert.assertNull(baseApplierError.get());
+            } finally {
+                publish.countDown();
+                base2Applier.join();
+            }
+            drainWalAndMatViewQueues();
+            assertViewStatus("invalid", MatViewBacklog.LOST_BASE_TABLE_CHANGED);
+            assertViewRows(COUNT_COLUMN_VIEW_ROWS);
         });
     }
 
@@ -1752,6 +1864,57 @@ public class MatViewResumeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testResumeRefusesSwitchRecordedWhileWaitingAgain() throws Exception {
+        // RESUME reads the bare-name switches on each pass under the latch. A view WAL transaction that arrives after
+        // RESUME's wait makes RESUME release the latch and wait again, and meanwhile the base gains a column named
+        // count, which the invalid older view calls bare. The bare-name guard finds the view invalid and not resuming,
+        // and keeps the view's reason; RESUME's next pass sees the switch and refuses.
+        assertMemoryLeak(() -> {
+            createBase();
+            insertBaseRows();
+            createBareCountView();
+            invalidate("test invalidation");
+            final MatViewState state = viewState();
+            final AtomicLong viewSeqTxnAfterAddColumn = new AtomicLong(-1);
+            final AtomicBoolean isResumingWhileWaiting = new AtomicBoolean(true);
+            state.setOnResumeWalAppliedForTesting(() -> {
+                try {
+                    execute("ALTER MATERIALIZED VIEW price_1h ADD COLUMN extra DOUBLE");
+                } catch (SqlException e) {
+                    throw new RuntimeException(e);
+                }
+                viewSeqTxnAfterAddColumn.set(viewSeqTxn());
+                // RESUME takes the latch, finds the view's new transaction unapplied and waits for it again
+                state.setOnResumeWalWaitForTesting(() -> {
+                    isResumingWhileWaiting.set(state.isResuming());
+                    try {
+                        execute("ALTER TABLE base ADD COLUMN count LONG");
+                    } catch (SqlException e) {
+                        throw new RuntimeException(e);
+                    }
+                    drainWalQueue();
+                });
+            });
+            assertExceptionNoLeakCheck(PLAIN_RESUME_SQL, VIEW_NAME_POSITION, switchedRefusal("count"));
+            Assert.assertFalse(isResumingWhileWaiting.get());
+            Assert.assertEquals(2, appliedTxn(engine.verifyTableName("base")));
+            Assert.assertTrue(state.isInvalid());
+            Assert.assertFalse(state.hasPendingInvalidationReason());
+            Assert.assertFalse(state.isLocked());
+            Assert.assertFalse(state.isResuming());
+            drainWalAndMatViewQueues();
+            // the refusal wrote no view transaction
+            Assert.assertEquals(viewSeqTxnAfterAddColumn.get(), viewSeqTxn());
+            assertViewStatus("invalid", "test invalidation");
+            assertViewRows("""
+                    ts\tsym\tcount\tprice\textra
+                    2024-01-01T00:00:00.000000Z\ta\t1\t1.0\tnull
+                    2024-01-01T01:00:00.000000Z\tb\t1\t2.0\tnull
+                    """);
+        });
+    }
+
+    @Test
     public void testResumeRefusesSwitchedBarePi() throws Exception {
         // The refusal is not count's: an older view calls pi without parentheses, and a base column named pi turns the
         // bare pi of its SQL from a call into a column while the view is invalid.
@@ -1807,6 +1970,37 @@ public class MatViewResumeTest extends AbstractCairoTest {
             execute("ALTER TABLE base ADD COLUMN count LONG");
             drainWalAndMatViewQueues();
             assertSwitchRefused(PLAIN_RESUME_SQL, "COUNT", "test invalidation", rows);
+        });
+    }
+
+    @Test
+    public void testResumeRefusesSwitchedNameRespelledByAlter() throws Exception {
+        // Names compare without regard to case also when ALTER ... AS spells the switched name another way. The older
+        // view's SQL writes COUNT, and the bare-name guard invalidates the valid view when the base gains count, with
+        // a reason that names COUNT. ALTER ... AS then writes count: RESUME refuses on the recorded switch, naming the
+        // bare name as the SQL it compiled writes it, and after a restart, which loses the switch, on the guard's
+        // reason.
+        assertMemoryLeak(() -> {
+            createBase();
+            insertBaseRows();
+            createOlderView("SELECT ts, sym, COUNT, last(price) AS price FROM base SAMPLE BY 1h");
+            final String rows = """
+                    ts\tsym\tCOUNT\tprice
+                    2024-01-01T00:00:00.000000Z\ta\t1\t1.0
+                    2024-01-01T01:00:00.000000Z\tb\t1\t2.0
+                    """;
+            assertViewRows(rows);
+            execute("ALTER TABLE base ADD COLUMN count LONG");
+            drainWalAndMatViewQueues();
+            final String reason = MatViewBareNameGuard.invalidationReason("COUNT");
+            assertViewStatus("invalid", reason);
+
+            execute("ALTER MATERIALIZED VIEW price_1h AS (" + BARE_COUNT_VIEW_SQL + ")");
+            drainWalQueue();
+            assertSwitchRefused(PLAIN_RESUME_SQL, "count", reason, rows);
+            restart();
+            assertViewStatus("invalid", reason);
+            assertSwitchRefused(PLAIN_RESUME_SQL, "count", reason, rows);
         });
     }
 
@@ -2717,6 +2911,24 @@ public class MatViewResumeTest extends AbstractCairoTest {
             assertViewStatus("valid", "");
             assertMappingColumns("extra", "");
         });
+    }
+
+    // Waits until the thread waits for the lock under which MatViewState.recordBareNameSwitch() copies and publishes the
+    // view's bare-name switches, or until the latch is counted down, as when the thread got past the lock at once.
+    private static void awaitBareNameSwitchLockOrLatch(Thread thread, CountDownLatch latch) {
+        final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+        while (latch.getCount() > 0) {
+            final Thread.State state = thread.getState();
+            if (state == Thread.State.BLOCKED) {
+                final StackTraceElement[] frames = thread.getStackTrace();
+                if (frames.length > 0 && "recordBareNameSwitch".equals(frames[0].getMethodName())) {
+                    return;
+                }
+            }
+            Assert.assertNotEquals("the thread ended", Thread.State.TERMINATED, state);
+            Assert.assertTrue("the thread neither waits for the lock nor got past it [state=" + state + ']', System.nanoTime() < deadline);
+            Os.pause();
+        }
     }
 
     // Applies the WAL on another thread, so that the test thread can run a statement while the apply pauses.

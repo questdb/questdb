@@ -372,6 +372,7 @@ public final class MatViewResume {
         // kept, so that it invalidates the view again once RESUME has made it valid.
         viewState.setResuming(true);
         try {
+            viewState.runResumeFlagSetSeamForTesting();
             // The bare-name switches recorded when RESUME takes the latch, see findSwitchedBareName(). The guard records
             // a switch before it reads the resuming flag, so the guard of a switch recorded from here on keeps its
             // invalidation pending, and the release of the latch invalidates the view again.

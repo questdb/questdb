@@ -248,6 +248,8 @@ public class MatViewState implements QuietCloseable {
     @TestOnly
     private volatile Runnable onAlterValidatedForTesting;
     @TestOnly
+    private volatile Runnable onBareNameSwitchCopiedForTesting;
+    @TestOnly
     private volatile Runnable onBareNameSwitchRecordedForTesting;
     @TestOnly
     private volatile Runnable onDefinitionWaitForTesting;
@@ -263,6 +265,8 @@ public class MatViewState implements QuietCloseable {
     private volatile Runnable onPendingIncrementalRefreshRequestForTesting;
     @TestOnly
     private volatile Runnable onPendingInvalidationMarkerReadForTesting;
+    @TestOnly
+    private volatile Runnable onResumeFlagSetForTesting;
     @TestOnly
     private volatile Runnable onResumeHoldingLockForTesting;
     @TestOnly
@@ -1483,6 +1487,11 @@ public class MatViewState implements QuietCloseable {
                 }
             }
             updatedSwitches.add(new BareNameSwitch(Chars.toString(name), baseTableId, switchTxn));
+            final Runnable onCopied = onBareNameSwitchCopiedForTesting;
+            if (onCopied != null) {
+                onBareNameSwitchCopiedForTesting = null;
+                onCopied.run();
+            }
             bareNameSwitches = updatedSwitches;
         }
     }
@@ -1735,6 +1744,17 @@ public class MatViewState implements QuietCloseable {
     }
 
     /**
+     * Test seam: runs once in {@link #recordBareNameSwitch}, under the lock that serializes its writers, after it built
+     * the updated copy of the view's bare-name switches and before it publishes the copy. Tests use it to hold the
+     * bare-name guard of one base table there while the guard of another base table records a switch on the same view.
+     * One-shot: the seam clears itself before firing.
+     */
+    @TestOnly
+    public void setOnBareNameSwitchCopiedForTesting(Runnable onBareNameSwitchCopiedForTesting) {
+        this.onBareNameSwitchCopiedForTesting = onBareNameSwitchCopiedForTesting;
+    }
+
+    /**
      * Test seam: runs once in the bare-name guard, after it recorded the bare-name switches of a base column change on
      * the view and before it reads the view's resuming and invalid flags, see {@link MatViewBareNameGuard}. Tests use
      * it to run RESUME in that window. One-shot: the seam clears itself before firing.
@@ -1813,6 +1833,16 @@ public class MatViewState implements QuietCloseable {
     @TestOnly
     public void setOnPendingInvalidationMarkerReadForTesting(Runnable onPendingInvalidationMarkerReadForTesting) {
         this.onPendingInvalidationMarkerReadForTesting = onPendingInvalidationMarkerReadForTesting;
+    }
+
+    /**
+     * Test seam: runs once while REFRESH MATERIALIZED VIEW ... RESUME holds the view latch, right after it set the
+     * view's resuming flag and before it reads the view's bare-name switches, see {@link MatViewResume}. Tests use it
+     * to make the bare-name guard record a switch in that window. One-shot: the seam clears itself before firing.
+     */
+    @TestOnly
+    public void setOnResumeFlagSetForTesting(Runnable onResumeFlagSetForTesting) {
+        this.onResumeFlagSetForTesting = onResumeFlagSetForTesting;
     }
 
     /**
@@ -1946,6 +1976,14 @@ public class MatViewState implements QuietCloseable {
         final Runnable seam = onDefinitionWaitForTesting;
         if (seam != null) {
             onDefinitionWaitForTesting = null;
+            seam.run();
+        }
+    }
+
+    void runResumeFlagSetSeamForTesting() {
+        final Runnable seam = onResumeFlagSetForTesting;
+        if (seam != null) {
+            onResumeFlagSetForTesting = null;
             seam.run();
         }
     }
