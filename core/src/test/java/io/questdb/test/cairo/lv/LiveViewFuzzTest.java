@@ -49,6 +49,7 @@ import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
@@ -381,6 +382,13 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // same reason.
     private static final long ROWLESS_ANCHOR_EPISODE_SALT0 = 0xD6E8FEB86659FD93L;
     private static final long ROWLESS_ANCHOR_EPISODE_SALT1 = 0xA0761D6478BD642FL;
+    // Salt the draw of a shutdown that cancels a drift recovery ahead of a restart apart from the run's
+    // sequence, for the same reason.
+    private static final long DRIFT_RECOVERY_CANCELLATION_SALT0 = 0x8BB84B93962EACC9L;
+    private static final long DRIFT_RECOVERY_CANCELLATION_SALT1 = 0x4B33A62ED433D4A3L;
+    // What handleRefreshFailure logs when a recovery a turn ran met the refresh breaker: see
+    // cancelADriftRecoveryByShutdown.
+    private static final String RECOVERY_CANCELLED_LINE = "live view refresh cancelled during recovery [view=lv, dropped=false, invalid=false]";
     // The outcomes of the head-miss rebuild's end-of-table splice departNewestRowsOverSparseRoots
     // sets up, one per shape: the splice kept roots above the new frontier and the rebuild
     // truncates there, the rebuild emits no row over a root at the frontier and keeps the
@@ -559,6 +567,11 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // guard refused over the day the run dropped, as a rebuild over an absent timeline: see
     // departOverSparseRootsFailingTheFrontierSeal.
     private int blockedTimelineAbsentSparseFrontierSeals;
+    // Turns runDedupFuzz ran ahead of a restart under a shutdown that trips the refresh breaker on the
+    // drift of a base ADD COLUMN, and of those, the turns whose drift recovery the breaker ended rather
+    // than one that completed ahead of any breaker check: see cancelADriftRecoveryByShutdown.
+    private int driftRecoveryCancellationTurns;
+    private int cancelledDriftRecoveries;
 
     @Test
     public void testFuzzAnchored() throws Exception {
@@ -829,6 +842,17 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                         LiveViewFuzzAnchor.draw(rnd, rnd.nextInt(LiveViewFuzzAnchor.DAILY_EPOCH)), -1);
             }
         });
+    }
+
+    @Test
+    public void testFuzzDedupDriftRecoveryCancellationShape() throws Exception {
+        // A pinned seed pair whose testFuzzDedup run ahead of a restart has a shutdown end the drift recovery a
+        // base ADD COLUMN asks for (see cancelADriftRecoveryByShutdown), rather than see the recovery complete
+        // ahead of any breaker check. A generator change that stops producing it fails here.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 2);
+        final Rnd rnd = new Rnd(3400517558656649421L, 9097098649117042840L);
+        assertMemoryLeak(checkpointFaults, () -> runDedupFuzz(rnd, 0, 200, true, true, false, true, null, -1));
+        Assert.assertTrue("the pinned seeds must cancel a drift recovery", cancelledDriftRecoveries > 0);
     }
 
     @Test
@@ -1889,6 +1913,12 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
 
     private static Path frontierTruncateCrashImageDir() {
         return new Path().of(configuration.getDbRoot()).concat("frontier_truncate_crash_image").slash();
+    }
+
+    // The sequence a restart of runDedupFuzz draws a shutdown that cancels a drift recovery ahead of it
+    // from, drawn from the run's without advancing it.
+    private static Rnd driftRecoveryCancellationRnd(Rnd rnd) {
+        return new Rnd(rnd.getSeed0() ^ DRIFT_RECOVERY_CANCELLATION_SALT0, rnd.getSeed1() ^ DRIFT_RECOVERY_CANCELLATION_SALT1);
     }
 
     // The sequence a run draws which of its two frontier-sealing departures restores a root inside
@@ -5807,6 +5837,42 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         return segmentRepairs;
     }
 
+    // One refresh turn ahead of a restart of runDedupFuzz, after a base ADD COLUMN no view references,
+    // with the engine's closing flag - what a shutdown raises, and what the refresh breaker reads -
+    // raised as the turn's drift reaches the refresh failure handler and lowered after the turn. The
+    // drift recovery completes ahead of any breaker check, or the breaker ends it; either way nothing
+    // is charged and the view stays valid, and the restart that follows recovers it.
+    private void cancelADriftRecoveryByShutdown(LiveViewRefreshJob job, LiveViewInstance instance) throws Exception {
+        execute("ALTER TABLE base ADD COLUMN cancelled_drift" + driftRecoveryCancellationTurns++ + " INT");
+        drainWalQueue();
+        final int retryCount = instance.getFlushRetryCount();
+        final long retryStartUs = instance.getFlushRetryStartUs();
+        final LogCapture capture = walApplySuspensionRule.getCapture();
+        capture.drain(LogCapture.STOP_DRAIN_TIMEOUT_MS);
+        final int cancelledBefore = capture.countOccurrences(RECOVERY_CANCELLED_LINE);
+        final AtomicBoolean isTripped = new AtomicBoolean();
+        hooks(job).setRefreshFaultObserver(t -> {
+            if (t instanceof TableReferenceOutOfDateException && isTripped.compareAndSet(false, true)) {
+                engine.setClosing(true);
+            }
+        });
+        // Past FLUSH EVERY, so the turn drains the column's commit and meets the drift.
+        setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+        try {
+            job.run();
+        } finally {
+            engine.setClosing(false);
+            hooks(job).setRefreshFaultObserver(null);
+        }
+        Assert.assertFalse("a shutdown must not invalidate the view [reason=" + instance.getInvalidationReason() + ']', instance.isInvalid());
+        Assert.assertEquals("a shutdown must not count toward the flush-retry budget", retryCount, instance.getFlushRetryCount());
+        Assert.assertEquals("a shutdown must not start a flush-retry streak", retryStartUs, instance.getFlushRetryStartUs());
+        capture.drain(LogCapture.STOP_DRAIN_TIMEOUT_MS);
+        if (capture.countOccurrences(RECOVERY_CANCELLED_LINE) > cancelledBefore) {
+            cancelledDriftRecoveries++;
+        }
+    }
+
     // Differential fuzz for a DEDUP UPSERT KEYS(ts, sym) base. Mirrors runFuzz's
     // ingestion shape (pre-CREATE seed history, then per-commit O3 refresh with
     // optional quiescent restarts and removal events), but with a data model built
@@ -5998,6 +6064,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                         LiveViewInstance inst = engine.getLiveViewRegistry().getViewInstance("lv");
                         if (inst != null
                                 && inst.getStateReader().getSeedState() == LiveViewState.SEED_STATE_ACTIVE) {
+                            if (driftRecoveryCancellationRnd(rnd).nextInt(3) == 0) {
+                                cancelADriftRecoveryByShutdown(job, inst);
+                            }
                             coverage.absorb(job);
                             job = Misc.free(job);
                             engine.getLiveViewRegistry().clear();
