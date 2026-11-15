@@ -161,7 +161,7 @@ public class TimeZoneIntervalIterator extends SampleByIntervalIterator {
             shiftOffset = tzRules.getLocalOffset(localShifts.getQuick(shiftLoIndex + 1));
         }
         localTimestampHi = localTs;
-        utcTimestampHi = localTs - shiftOffset;
+        utcTimestampHi = localToUtc(localTs);
     }
 
     // Local bucket floor of the given UTC timestamp, where snapToCluster() anchors the iterator.
@@ -170,8 +170,15 @@ public class TimeZoneIntervalIterator extends SampleByIntervalIterator {
         return Math.min(sampler.round(localTs), localMaxTimestamp);
     }
 
-    // UTC timestamp of the given local timestamp, as anchorHi() computes it, without changing the iterator.
+    // UTC timestamp where the bucket that starts at the given local timestamp starts, as anchorHi() computes it,
+    // without changing the iterator. A local timestamp inside a forward shift's gap never occurs: the bucket's first
+    // timestamp is the shift itself, the gap's start less the offset before the shift.
     private long localToUtc(long localTs) {
+        final long gapOffset = tzRules.getDstGapOffset(localTs);
+        if (gapOffset != 0) {
+            final long gapStart = localTs - gapOffset;
+            return gapStart - tzRules.getLocalOffset(gapStart);
+        }
         long offset = tzRules.getLocalOffset(localTs);
         for (int i = 0, n = localShifts.size(); i < n; i += 2) {
             if (localTs <= localShifts.getQuick(i)) {

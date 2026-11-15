@@ -52,6 +52,8 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
 import java.util.Collection;
 
@@ -72,6 +74,19 @@ import static io.questdb.cairo.wal.WalUtils.*;
 @RunWith(Parameterized.class)
 public class MatViewPartitionClipTest extends AbstractCairoTest {
     private static final Log LOG = LogFactory.getLog(MatViewPartitionClipTest.class);
+    // The rows of the view of createDstGapView() over the rows of insertDstGapRows() and a row x=100 at
+    // 2023-03-26T13:00Z: the row before the transition counts in the bucket before the gap, the other two in the
+    // bucket inside it.
+    private static final String DST_GAP_VIEW_ROWS = """
+            ts\tsym\tc\ts
+            2023-03-25T01:30:00.000000Z\ta\t1\t1
+            2023-03-26T01:30:00.000000Z\ta\t2\t102
+            """;
+    // Europe/Berlin moves its clocks forward at 2023-03-26T01:00:00Z, local 02:00 CET (+1h) to 03:00 CEST (+2h), so
+    // under this SQL the bucket of 2023-03-26 starts at local 02:30, inside the gap. Its rows start at the transition,
+    // and its key is 01:30Z. The rows before the transition, local 01:30-02:00 CET, belong to the bucket of
+    // 2023-03-25, keyed 2023-03-25T01:30Z.
+    private static final String DST_GAP_VIEW_SQL = dstGapViewSql("base", "Europe/Berlin", "1d", "02:30");
     // The rows of the period view of createPeriodTimerView().
     private static final String PERIOD_VIEW_ROWS = """
             ts\tsym\tprice
@@ -254,6 +269,89 @@ public class MatViewPartitionClipTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIncrementalRefreshAfterDstGapAcrossZones() throws Exception {
+        // Zones whose gap holds the view's bucket floor: gaps at local midnight, 01:00, 02:00 and 03:00, a 30-minute
+        // gap and a month bucket. Rows a minute before the transition and 11 hours after it, then a row 12 hours
+        // after it: the incremental refresh of the last row keeps the view valid, and the view holds what its SQL
+        // gives on the base.
+        assertMemoryLeak(() -> {
+            assertIncrementalRefreshAfterDstGap("cairo", "Africa/Cairo", "1d", "00:30", "2023-04-27T22:00:00");
+            assertIncrementalRefreshAfterDstGap("new_york", "America/New_York", "1d", "02:30", "2023-03-12T07:00:00");
+            assertIncrementalRefreshAfterDstGap("london", "Europe/London", "1d", "01:30", "2023-03-26T01:00:00");
+            assertIncrementalRefreshAfterDstGap("helsinki", "Europe/Helsinki", "1d", "03:30", "2023-03-26T01:00:00");
+            assertIncrementalRefreshAfterDstGap("lord_howe", "Australia/Lord_Howe", "1d", "02:15", "2023-09-30T15:30:00");
+            assertIncrementalRefreshAfterDstGap("sydney", "Australia/Sydney", "1M", "02:30", "2023-09-30T16:00:00");
+        });
+    }
+
+    @Test
+    public void testIncrementalRefreshInBucketAfterDstGapKeepsViewValid() throws Exception {
+        // An incremental refresh of a row in the bucket after the gap recomputes that bucket from the transition on,
+        // and leaves the row before the transition in the bucket before the gap.
+        assertMemoryLeak(() -> {
+            createDstGapView("");
+            insertDstGapRows();
+            drainWalAndMatViewQueues();
+            execute("INSERT INTO base VALUES ('a', 100, '2023-03-26T13:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+            assertDstGapView("v", DST_GAP_VIEW_ROWS);
+            assertViewCaughtUp("v");
+        });
+    }
+
+    @Test
+    public void testIncrementalRefreshNextToDstFoldAndGapEdgesKeepsViewValid() throws Exception {
+        // A bucket floor inside the fold of 2023-10-29, where local 02:00-03:00 happens twice, and floors at the gap's
+        // start and end, which exist: incremental refreshes next to them keep the views valid, and the views hold
+        // what their SQL gives on the base.
+        assertMemoryLeak(() -> {
+            createDstGapBase("fold_base");
+            final String foldSql = dstGapViewSql("fold_base", "Europe/Berlin", "1d", "02:30");
+            execute("CREATE MATERIALIZED VIEW fold_v AS (" + foldSql + ") PARTITION BY DAY");
+            execute("""
+                    INSERT INTO fold_base VALUES
+                    ('a', 1, '2023-10-28T12:00:00.000000Z'),
+                    ('a', 2, '2023-10-29T00:45:00.000000Z'),
+                    ('a', 4, '2023-10-29T01:15:00.000000Z'),
+                    ('a', 8, '2023-10-29T01:45:00.000000Z')
+                    """);
+            drainWalAndMatViewQueues();
+            assertDstGapViewMatchesSql("fold_v", foldSql);
+            execute("INSERT INTO fold_base VALUES ('a', 16, '2023-10-29T05:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+            assertDstGapViewMatchesSql("fold_v", foldSql);
+            // local 02:40 CEST and 02:20 CET, both inside the fold
+            execute("INSERT INTO fold_base VALUES ('a', 32, '2023-10-29T00:40:00.000000Z'), ('a', 64, '2023-10-29T01:20:00.000000Z')");
+            drainWalAndMatViewQueues();
+            assertDstGapViewMatchesSql("fold_v", foldSql);
+            assertQuery("fold_v ORDER BY ts").timestamp("ts").noLeakCheck().expectSize().returns(replaceTs("""
+                    ts\tsym\tc\ts
+                    2023-10-28T00:30:00.000000Z\ta\t3\t69
+                    2023-10-29T00:30:00.000000Z\ta\t2\t34
+                    2023-10-29T01:30:00.000000Z\ta\t2\t24
+                    """));
+
+            for (String offset : new String[]{"02:00", "03:00"}) {
+                final String base = "edge_" + offset.charAt(1) + "_base";
+                final String view = "edge_" + offset.charAt(1) + "_v";
+                final String sql = dstGapViewSql(base, "Europe/Berlin", "1d", offset);
+                createDstGapBase(base);
+                execute("CREATE MATERIALIZED VIEW " + view + " AS (" + sql + ") PARTITION BY DAY");
+                execute("INSERT INTO " + base + " VALUES ('a', 1, '2023-03-26T00:59:00.000000Z'), ('a', 2, '2023-03-26T12:00:00.000000Z')");
+                drainWalAndMatViewQueues();
+                execute("INSERT INTO " + base + " VALUES ('a', 100, '2023-03-26T13:00:00.000000Z')");
+                drainWalAndMatViewQueues();
+                assertDstGapViewMatchesSql(view, sql);
+                // an out-of-order row a year back makes the refresh snap from its bucket to the one at the gap's edge
+                execute("INSERT INTO " + base + " VALUES ('a', 50, '2022-02-19T01:00:00.000000Z')");
+                execute("INSERT INTO " + base + " VALUES ('a', 200, '2023-03-26T14:00:00.000000Z')");
+                drainWalAndMatViewQueues();
+                assertDstGapViewMatchesSql(view, sql);
+            }
+        });
+    }
+
+    @Test
     public void testIncrementalRefreshOfIntervalsQueuedBeforeInteriorDropKeepsRows() throws Exception {
         // A step of one partition's buckets at most.
         setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, 1);
@@ -299,6 +397,30 @@ public class MatViewPartitionClipTest extends AbstractCairoTest {
             drainWalAndMatViewQueues();
             assertViewRows(allFourDays());
             assertViewCaughtUp("price_1h");
+        });
+    }
+
+    @Test
+    public void testIncrementalRefreshesAtFirstTimestampsAfterDstGapKeepViewValid() throws Exception {
+        // Rows at the first timestamps after the transition. One time unit after it, at local 03:00 plus one unit, the
+        // row still lies in the DST shift, so the refresh merges its bucket with the bucket before the gap. Two units
+        // after it, the row's bucket floor is the one inside the gap, and the refresh starts the bucket at the
+        // transition.
+        assertMemoryLeak(() -> {
+            createDstGapView("");
+            insertDstGapRows();
+            drainWalAndMatViewQueues();
+            execute("INSERT INTO base VALUES ('a', 10, '" + timestampAfterDstGapTransition(1) + "')");
+            drainWalAndMatViewQueues();
+            assertDstGapViewMatchesSql("v", DST_GAP_VIEW_SQL);
+            execute("INSERT INTO base VALUES ('a', 20, '" + timestampAfterDstGapTransition(2) + "')");
+            drainWalAndMatViewQueues();
+            assertDstGapViewMatchesSql("v", DST_GAP_VIEW_SQL);
+            assertQuery("v ORDER BY ts").timestamp("ts").noLeakCheck().expectSize().returns(replaceTs("""
+                    ts\tsym\tc\ts
+                    2023-03-25T01:30:00.000000Z\ta\t1\t1
+                    2023-03-26T01:30:00.000000Z\ta\t3\t32
+                    """));
         });
     }
 
@@ -438,6 +560,27 @@ public class MatViewPartitionClipTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_MAT_VIEW_REFRESH_MISSING_WAL_FILES_FATAL, "false");
         setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, 1_000_000);
         assertMemoryLeak(this::assertMinMaxRecomputeAfterMissingWalFilesKeepsInteriorDroppedRows);
+    }
+
+    @Test
+    public void testOutOfOrderAndPostGapWritesInOneRefreshKeepViewValid() throws Exception {
+        // One incremental refresh of two transactions, an out-of-order row a year back and a row in the bucket after
+        // the gap: the snap from the old row's bucket to the bucket after the gap lands on the transition.
+        assertMemoryLeak(() -> {
+            createDstGapView("");
+            insertDstGapRows();
+            drainWalAndMatViewQueues();
+            execute("INSERT INTO base VALUES ('a', 50, '2022-02-19T01:00:00.000000Z')");
+            execute("INSERT INTO base VALUES ('a', 100, '2023-03-26T13:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+            assertDstGapView("v", """
+                    ts\tsym\tc\ts
+                    2022-02-18T01:30:00.000000Z\ta\t1\t50
+                    2023-03-25T01:30:00.000000Z\ta\t1\t1
+                    2023-03-26T01:30:00.000000Z\ta\t2\t102
+                    """);
+            assertViewCaughtUp("v");
+        });
     }
 
     @Test
@@ -752,6 +895,33 @@ public class MatViewPartitionClipTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRefreshAfterDstGapKeepsPreGapBucketWhoseFirstPartitionIsDropped() throws Exception {
+        // The bucket before the gap, [2023-03-25T01:30Z, 2023-03-26T01:00Z), straddles the base partitions of
+        // 2023-03-25 and 2023-03-26. The base drops 2023-03-25. A refresh of the bucket after the gap starts at the
+        // transition, so it leaves the bucket before the gap as it was, with both its rows.
+        assertMemoryLeak(() -> {
+            createDstGapView("");
+            execute("""
+                    INSERT INTO base VALUES
+                    ('a', 1, '2023-03-25T12:00:00.000000Z'),
+                    ('a', 2, '2023-03-26T00:30:00.000000Z'),
+                    ('a', 4, '2023-03-26T12:00:00.000000Z')
+                    """);
+            drainWalAndMatViewQueues();
+            execute("ALTER TABLE base DROP PARTITION LIST '2023-03-25'");
+            drainWalAndMatViewQueues();
+            execute("INSERT INTO base VALUES ('a', 8, '2023-03-26T13:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+            assertDstGapView("v", """
+                    ts\tsym\tc\ts
+                    2023-03-25T01:30:00.000000Z\ta\t2\t3
+                    2023-03-26T01:30:00.000000Z\ta\t2\t12
+                    """);
+            assertViewCaughtUp("v");
+        });
+    }
+
+    @Test
     public void testRefreshIntoDroppedGapAdvancesPositionWithoutRows() throws Exception {
         // A refresh whose whole working interval falls in a TTL-dropped gap recomputes nothing: it
         // leaves the view's rows untouched but still advances the refresh position, so the next
@@ -764,6 +934,49 @@ public class MatViewPartitionClipTest extends AbstractCairoTest {
             assertViewRows(allFourDays());
             assertViewCaughtUp("price_1h");
             assertViewValid();
+        });
+    }
+
+    @Test
+    public void testRefreshLimitBoundaryInBucketAfterDstGapKeepsFrozenBuckets() throws Exception {
+        // REFRESH LIMIT 11 HOURS with the base's newest row and the clock at 2023-03-26T13:00Z puts the boundary at
+        // 02:00Z, inside the bucket after the gap. The refresh starts that bucket at the transition: the bucket before
+        // the gap stays frozen, without the late row at 00:50Z, and a row the user backfilled below the boundary
+        // survives.
+        assertMemoryLeak(() -> {
+            createDstGapView("");
+            execute("""
+                    INSERT INTO base VALUES
+                    ('a', 1, '2023-03-25T12:00:00.000000Z'),
+                    ('a', 2, '2023-03-26T00:45:00.000000Z'),
+                    ('a', 4, '2023-03-26T12:00:00.000000Z')
+                    """);
+            drainWalAndMatViewQueues();
+            currentMicros = parseFloorPartialTimestamp("2023-03-26T13:00:00.000000Z");
+            execute("ALTER MATERIALIZED VIEW v SET REFRESH LIMIT 11 HOURS");
+            drainWalAndMatViewQueues();
+            execute("INSERT INTO v VALUES ('2023-03-24T01:30:00.000000Z', 'a', 7, 70)");
+            drainWalAndMatViewQueues();
+            assertDstGapView("v", """
+                    ts\tsym\tc\ts
+                    2023-03-24T01:30:00.000000Z\ta\t7\t70
+                    2023-03-25T01:30:00.000000Z\ta\t2\t3
+                    2023-03-26T01:30:00.000000Z\ta\t1\t4
+                    """);
+
+            execute("""
+                    INSERT INTO base VALUES
+                    ('a', 8, '2023-03-26T00:50:00.000000Z'),
+                    ('a', 16, '2023-03-26T13:00:00.000000Z')
+                    """);
+            drainWalAndMatViewQueues();
+            assertDstGapView("v", """
+                    ts\tsym\tc\ts
+                    2023-03-24T01:30:00.000000Z\ta\t7\t70
+                    2023-03-25T01:30:00.000000Z\ta\t2\t3
+                    2023-03-26T01:30:00.000000Z\ta\t2\t20
+                    """);
+            assertViewCaughtUp("v");
         });
     }
 
@@ -806,6 +1019,29 @@ public class MatViewPartitionClipTest extends AbstractCairoTest {
                     2024-01-04T00:00:00.000000Z\td\t4.0
                     """);
             assertViewValid();
+        });
+    }
+
+    @Test
+    public void testResumeCatchesUpInBucketAfterDstGap() throws Exception {
+        // RESUME catches up on a row that landed in the bucket after the gap while the view was invalid.
+        assertMemoryLeak(() -> {
+            createDstGapView("");
+            insertDstGapRows();
+            drainWalAndMatViewQueues();
+            engine.getMatViewStateStore().enqueueInvalidate(engine.verifyTableName("v"), "test invalidation");
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT view_status, invalidation_reason FROM materialized_views() WHERE view_name = 'v'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("view_status\tinvalidation_reason\ninvalid\ttest invalidation\n");
+            execute("INSERT INTO base VALUES ('a', 100, '2023-03-26T13:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+
+            execute("REFRESH MATERIALIZED VIEW v RESUME");
+            drainWalAndMatViewQueues();
+            assertDstGapView("v", DST_GAP_VIEW_ROWS);
+            assertViewCaughtUp("v");
         });
     }
 
@@ -853,6 +1089,27 @@ public class MatViewPartitionClipTest extends AbstractCairoTest {
             );
             assertViewCaughtUp("price_1h");
             assertViewValid();
+        });
+    }
+
+    @Test
+    public void testStreamingRowsAcrossDstGapKeepViewValid() throws Exception {
+        // One row per transaction every 10 minutes from 00:00Z to 02:00Z, across the transition at 01:00Z: every
+        // incremental refresh keeps the view valid. The six rows before the transition count in the bucket before the
+        // gap, the seven from it on in the bucket inside it.
+        assertMemoryLeak(() -> {
+            createDstGapView("");
+            for (int i = 0; i < 13; i++) {
+                execute(String.format("INSERT INTO base VALUES ('a', %d, '2023-03-26T%02d:%02d:00.000000Z')", i + 1, i / 6, 10 * (i % 6)));
+                drainWalAndMatViewQueues();
+                assertDstGapViewValid("v");
+            }
+            assertDstGapView("v", """
+                    ts\tsym\tc\ts
+                    2023-03-25T01:30:00.000000Z\ta\t6\t21
+                    2023-03-26T01:30:00.000000Z\ta\t7\t70
+                    """);
+            assertViewCaughtUp("v");
         });
     }
 
@@ -907,6 +1164,32 @@ public class MatViewPartitionClipTest extends AbstractCairoTest {
                     2024-01-04T00:00:00.000000Z\td\t4.0
                     """);
             assertViewValid();
+        });
+    }
+
+    @Test
+    public void testUserRangeInBucketAfterDstGapRefreshesRows() throws Exception {
+        // A user RANGE over the bucket after the gap, which the clip turns into a working interval, recomputes the
+        // bucket from the transition on and records no refresh error.
+        assertMemoryLeak(() -> {
+            // A fixed clock keeps the view's refresh timestamps, and so its status, deterministic.
+            currentMicros = parseFloorPartialTimestamp("2023-03-27T00:00:00.000000Z");
+            createDstGapView("REFRESH MANUAL ");
+            insertDstGapRows();
+            drainWalQueue();
+            execute("REFRESH MATERIALIZED VIEW v FULL");
+            drainWalAndMatViewQueues();
+            execute("INSERT INTO base VALUES ('a', 100, '2023-03-26T13:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+            assertDstGapView("v", """
+                    ts\tsym\tc\ts
+                    2023-03-25T01:30:00.000000Z\ta\t1\t1
+                    2023-03-26T01:30:00.000000Z\ta\t1\t2
+                    """);
+
+            execute("REFRESH MATERIALIZED VIEW v RANGE FROM '2023-03-26T12:00:00.000000Z' TO '2023-03-26T14:00:00.000000Z'");
+            drainWalAndMatViewQueues();
+            assertDstGapView("v", DST_GAP_VIEW_ROWS);
         });
     }
 
@@ -1102,6 +1385,45 @@ public class MatViewPartitionClipTest extends AbstractCairoTest {
         assertViewValid();
     }
 
+    private void assertDstGapView(String viewName, String expectedRows) throws Exception {
+        assertQuery(viewName + " ORDER BY ts, sym").timestamp("ts").noLeakCheck().expectSize().returns(replaceTs(expectedRows));
+        assertDstGapViewValid(viewName);
+    }
+
+    private void assertDstGapViewMatchesSql(String viewName, String viewSql) throws Exception {
+        assertDstGapViewValid(viewName);
+        assertSqlEquals(viewName + " ORDER BY ts, sym", "(" + viewSql + ") ORDER BY ts, sym");
+    }
+
+    private void assertDstGapViewValid(String viewName) throws Exception {
+        assertQuery("SELECT view_status, invalidation_reason, last_refresh_error FROM materialized_views() WHERE view_name = '" + viewName + "'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("view_status\tinvalidation_reason\tlast_refresh_error\nvalid\t\t\n");
+    }
+
+    // A view over its own base in the given zone and bucket: rows a minute before the transition and 11 hours after it
+    // build it, and the incremental refresh of a row 12 hours after it, in the bucket whose floor lies in the gap, keeps
+    // it valid and equal to its SQL.
+    private void assertIncrementalRefreshAfterDstGap(String name, String zone, String sampleBy, String offset, String transition) throws Exception {
+        final String base = name + "_base";
+        final String view = name + "_v";
+        final String viewSql = dstGapViewSql(base, zone, sampleBy, offset);
+        createDstGapBase(base);
+        execute("CREATE MATERIALIZED VIEW " + view + " AS (" + viewSql + ") PARTITION BY DAY");
+        final LocalDateTime transitionTs = LocalDateTime.parse(transition);
+        execute("INSERT INTO " + base + " VALUES ('a', 1, '" + isoMicros(transitionTs.minusMinutes(1)) + "'), ('a', 2, '" + isoMicros(transitionTs.plusHours(11)) + "')");
+        drainWalAndMatViewQueues();
+        execute("INSERT INTO " + base + " VALUES ('a', 4, '" + isoMicros(transitionTs.plusHours(12)) + "')");
+        drainWalAndMatViewQueues();
+        assertDstGapViewMatchesSql(view, viewSql);
+        assertQuery("SELECT sum(c) c, sum(s) s FROM " + view)
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("c\ts\n3\t7\n");
+    }
+
     // Asserts the cached refresh intervals of price_1h, in base table units, and their base txn, in memory and in the
     // view's state file.
     private void assertCache(long baseTxn, long... bounds) {
@@ -1272,11 +1594,26 @@ public class MatViewPartitionClipTest extends AbstractCairoTest {
         execute("CREATE TABLE base (sym SYMBOL, price DOUBLE, ts " + tsType() + ") TIMESTAMP(ts) PARTITION BY " + partitionBy + ttl + " WAL");
     }
 
+    private static String dstGapViewSql(String base, String zone, String sampleBy, String offset) {
+        return "SELECT ts, sym, count() AS c, sum(x) AS s FROM " + base + " SAMPLE BY " + sampleBy
+                + " ALIGN TO CALENDAR TIME ZONE '" + zone + "' WITH OFFSET '" + offset + "'";
+    }
+
     // A child view refreshes after its parent's refresh commit applies, so each drain round reaches one
     // level deeper.
     private static void drainParentAndChild() {
         drainWalAndMatViewQueues();
         drainWalAndMatViewQueues();
+    }
+
+    private void createDstGapBase(String base) throws Exception {
+        execute("CREATE TABLE " + base + " (sym SYMBOL, x LONG, ts " + tsType() + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+    }
+
+    // The view v of DST_GAP_VIEW_SQL over a new base table, with the given refresh clause.
+    private void createDstGapView(String refreshClause) throws Exception {
+        createDstGapBase("base");
+        execute("CREATE MATERIALIZED VIEW v " + refreshClause + "AS (" + DST_GAP_VIEW_SQL + ") PARTITION BY DAY");
     }
 
     // Builds price_1h over a DAY base with TTL 2 DAYS so the view holds four days (2024-01-01..04)
@@ -1350,6 +1687,12 @@ public class MatViewPartitionClipTest extends AbstractCairoTest {
         }
     }
 
+    // The rows of the view of createDstGapView() before the transition and in the bucket inside the gap: x=1 at
+    // 00:59Z, local 01:59 CET, and x=2 at 12:00Z.
+    private void insertDstGapRows() throws Exception {
+        execute("INSERT INTO base VALUES ('a', 1, '2023-03-26T00:59:00.000000Z'), ('a', 2, '2023-03-26T12:00:00.000000Z')");
+    }
+
     private void insertFourDays() throws Exception {
         execute("""
                 INSERT INTO base VALUES
@@ -1358,6 +1701,10 @@ public class MatViewPartitionClipTest extends AbstractCairoTest {
                 ('c', 3.0, '2024-01-03T00:10:00.000000Z'),
                 ('d', 4.0, '2024-01-04T00:10:00.000000Z')
                 """);
+    }
+
+    private static String isoMicros(LocalDateTime utc) {
+        return utc.format(DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")) + ".000000Z";
     }
 
     private static MatViewState getViewState() {
@@ -1408,6 +1755,13 @@ public class MatViewPartitionClipTest extends AbstractCairoTest {
             }
         }
         return rows.toString();
+    }
+
+    // The timestamp the given number of time units after the transition of DST_GAP_VIEW_SQL, 2023-03-26T01:00Z.
+    private String timestampAfterDstGapTransition(int units) {
+        return ColumnType.isTimestampMicro(timestampType.getTimestampType())
+                ? "2023-03-26T01:00:00.00000" + units + "Z"
+                : "2023-03-26T01:00:00.00000000" + units + "Z";
     }
 
     private long ts(String isoSeconds) throws Exception {
