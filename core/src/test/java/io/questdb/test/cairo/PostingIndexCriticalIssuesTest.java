@@ -7335,7 +7335,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
             // Plant a committed-visible base head plus a page-spanning fully
             // future head on the historic first partition.
-            appendPageSpanningFutureHead(token, firstPartitionTimestamp, firstPartitionNameTxn, currentTxn);
+            appendPageSpanningFutureHead(token, firstPartitionTimestamp, firstPartitionNameTxn, currentTxn, "sym");
 
             // Source .pk size right before the rename links (and recovers) it.
             final long srcColumnNameTxn;
@@ -7445,6 +7445,48 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                     newColumnNameTxn,
                     "link recovery truncated the renamed column's .pk below its header regionLimit"
             );
+        });
+    }
+
+    @Test
+    public void testRenameColumnLinkRecoveryLogsMultiByteName() throws Exception {
+        // Link-time recovery logs the column whose future chain entry it drops. A name with 2-, 3- and 4-byte UTF-8
+        // characters must reach the log as valid UTF-8: test log paranoia fails the rename on any other record.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_link_multibyte (
+                        ts TIMESTAMP,
+                        "prix_é_符号😀" SYMBOL INDEX TYPE POSTING,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_link_multibyte VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0),
+                    ('2024-01-02T00:00:00', 'B', 2.0)
+                    """);
+            engine.releaseAllWriters();
+
+            final TableToken token = engine.verifyTableName("t_link_multibyte");
+            final long currentTxn;
+            final long firstPartitionTimestamp;
+            final long firstPartitionNameTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                currentTxn = reader.getTxn();
+                firstPartitionTimestamp = reader.getTxFile().getPartitionTimestampByIndex(0);
+                firstPartitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+            }
+            // The rename's link recovery drops the future head, and logs it
+            appendPageSpanningFutureHead(token, firstPartitionTimestamp, firstPartitionNameTxn, currentTxn, "prix_é_符号😀");
+
+            execute("ALTER TABLE t_link_multibyte RENAME COLUMN \"prix_é_符号😀\" TO \"nouveau_é_符号😀\"");
+            assertQuery("SELECT price FROM t_link_multibyte WHERE \"nouveau_é_符号😀\" = 'A'")
+                    .noLeakCheck()
+                    .withPlanContaining("Index forward scan on: nouveau_é_符号😀")
+                    .returns("""
+                            price
+                            1.0
+                            """);
         });
     }
 
@@ -13140,7 +13182,8 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             TableToken token,
             long partitionTimestamp,
             long partitionNameTxn,
-            long currentTxn
+            long currentTxn,
+            String columnName
     ) {
         // gens sized so the future head's entry region spans at least one OS
         // page; dropping it rewinds regionLimit across a page boundary, the
@@ -13153,7 +13196,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             final int plen = path.size();
             // No setCurrentTableTxn: recovery must not run on this open, or it
             // would drop the future head we are about to plant.
-            writer.of(path.trimTo(plen), "sym", COLUMN_NAME_TXN_NONE, false);
+            writer.of(path.trimTo(plen), columnName, COLUMN_NAME_TXN_NONE, false);
 
             // Committed-visible base head. discardForRebuild rotates sealTxn so
             // this commit takes the appendNewEntry branch (a fresh entry chained
