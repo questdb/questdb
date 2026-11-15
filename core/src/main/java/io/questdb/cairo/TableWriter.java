@@ -38,6 +38,7 @@ import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.idx.IndexWriter;
+import io.questdb.cairo.idx.PostingIndexBuildValidator;
 import io.questdb.cairo.idx.PostingIndexChainWriter;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.idx.PostingIndexWriter;
@@ -1864,7 +1865,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // it uses the primary column object as a temporary tool
             if (IndexType.isIndexed(indexType)) {
                 SymbolColumnIndexer indexer = (SymbolColumnIndexer) indexers.get(columnIndex);
-                writeIndex(columnName, indexValueBlockCapacity, indexType, columnIndex, indexer);
+                try {
+                    writeIndex(columnName, indexValueBlockCapacity, indexType, columnIndex, indexer);
+                } catch (Throwable th) {
+                    // writeIndex removed the files of the index it built. The change commits nothing now, and the
+                    // next writer open restores the _meta that addColumnToMeta swapped, so no version of the table
+                    // names the converted column either.
+                    removeConvertedColumnFiles(columnName, columnIndex, columnNameTxn);
+                    throw th;
+                }
                 // add / remove indexers
                 indexers.extendAndSet(columnIndex, indexer);
                 populateDenseIndexerList();
@@ -10024,7 +10033,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 int dropped = chain.recoveryDropAbandoned(keyMem, currentTableTxn, linkPostingIndexOrphanSealTxns);
                 if (dropped > 0 || chain.isHeadTrimmedOnLastRecovery()) {
                     LOG.info().$("posting index link recovery [table=").$(tableToken)
-                            .$(", column=").$(columnName)
+                            .$(", column=").$safe(columnName)
                             .$(", columnNameTxn=").$(columnNameTxn)
                             .$(", dropped=").$(dropped)
                             .$(", isHeadTrimmed=").$(chain.isHeadTrimmedOnLastRecovery())
@@ -11599,7 +11608,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return;
         }
 
-        // ALTER TABLE ALTER COLUMN ADD INDEX: building a fresh index, no live indexer holds the .pk.
+        // ALTER TABLE ALTER COLUMN ADD INDEX: building a fresh index, no live indexer holds the .pk. An interrupted
+        // build can leave its chain here, torn by a power loss or naming files a checkpoint copy lost. The column has
+        // no committed index, so nothing reads that chain: start over from an empty one.
+        if (IndexType.isPosting(indexType)) {
+            PostingIndexUtils.resetIndex(ff, path, plen, columnName, columnNameTxn, ddlMem);
+        }
         createIndexFiles(columnName, columnNameTxn, indexValueBlockSize, indexType, plen, true, true);
 
         final long lastPartitionTs = txWriter.getLastPartitionTimestamp();
@@ -11673,22 +11687,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int plen,
             long timestamp
     ) {
-        // Skip partitions that already have a fully-sealed posting index (resume after restart).
-        // A partition is fully indexed when the .pk key file has a valid seqlock (seq_start == seq_end)
-        // AND genCount > 0 (at least one generation was sealed). Partially-written files from a crash
-        // will have genCount == 0 or a broken seqlock, so they are safely rebuilt.
-        if (IndexType.isPosting(indexType) && isPostingIndexSealed(plen, columnName, columnNameTxn)) {
-            path.trimTo(plen);
-            LOG.info().$("skipping already-indexed partition [path=").$substr(pathRootSize, path).I$();
-            return;
-        }
         path.trimTo(plen);
-        LOG.info().$("indexing [path=").$substr(pathRootSize, path).I$();
-
-        // ALTER TABLE ALTER COLUMN ADD INDEX (older partitions): building a fresh index from scratch.
-        createIndexFiles(columnName, columnNameTxn, indexValueBlockSize, indexType, plen, true, true);
         // The whole DIRECTORY's shared frame, not one piece's rows - see getPartitionPhysicalRowCount.
         final long partitionSize = getPartitionFileRowCountByTimestamp(timestamp);
+        if (IndexType.isPosting(indexType)) {
+            if (PostingIndexBuildValidator.isComplete(
+                    ff, path, columnName, columnNameTxn, txWriter.getTxn() + 1, partitionSize,
+                    metadata.getCoveringColumnIndices(columnIndex), columnVersionWriter, timestamp
+            )) {
+                LOG.info().$("skipping already-indexed partition [path=").$substr(pathRootSize, path).I$();
+                return;
+            }
+            // An interrupted ADD INDEX can leave a chain that covers part of the partition, torn by a power loss, and
+            // a checkpoint can copy a .pk without the files it names. The probe did not prove this one reusable, and
+            // the column has no committed index, so nothing reads it: start over from an empty chain.
+            PostingIndexUtils.resetIndex(ff, path, plen, columnName, columnNameTxn, ddlMem);
+        }
+        LOG.info().$("indexing [path=").$substr(pathRootSize, path).I$();
+
+        createIndexFiles(columnName, columnNameTxn, indexValueBlockSize, indexType, plen, true, true);
         final long columnTop = columnVersionWriter.getColumnTop(timestamp, columnIndex);
 
         if (columnTop > -1 && partitionSize > columnTop) {
@@ -11891,6 +11908,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // parquet partition
         path.trimTo(plen);
         LOG.info().$("indexing parquet [path=").$substr(pathRootSize, path).I$();
+        // As for a native partition, nothing reads what an interrupted ADD INDEX left here: start over.
+        if (IndexType.isPosting(indexType)) {
+            PostingIndexUtils.resetIndex(ff, path, plen, columnName, columnNameTxn, ddlMem);
+        }
 
         long parquetAddr = 0;
         long parquetSize = 0;
@@ -12172,27 +12193,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         }
         return !hasO3RowInLogicalPartition(logicalPartitionTimestamp);
-    }
-
-    /**
-     * Checks whether a partition already has a sealed posting index for the
-     * given column. The v2 .pk chain has at least one published entry
-     * (sealTxn >= 0) iff at least one seal landed for this partition; the
-     * fd-based chain walker enforces seqlock consistency internally.
-     *
-     * @param plen          path length. This is used to trim the shared path object to.
-     * @param columnName    column name
-     * @param columnNameTxn column name txn
-     * @return true if the posting index key file exists with a non-empty
-     * v2 chain (at least one published seal entry).
-     */
-    private boolean isPostingIndexSealed(int plen, CharSequence columnName, long columnNameTxn) {
-        LPSZ keyFile = io.questdb.cairo.idx.PostingIndexUtils.keyFileName(
-                path.trimTo(plen), columnName, columnNameTxn);
-        if (!ff.exists(keyFile)) {
-            return false;
-        }
-        return io.questdb.cairo.idx.PostingIndexUtils.readSealTxnFromKeyFile(ff, keyFile) >= 0;
     }
 
     private void learnWalBlockCopyRatios() {
@@ -18500,34 +18500,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void removeColumnFilesInPartition(CharSequence columnName, int columnIndex, long partitionTimestamp) {
-        if (!txWriter.isPartitionReadOnlyByPartitionTimestamp(partitionTimestamp)) {
-            setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, -1);
-            int plen = path.size();
-            long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
-            byte indexType = metadata.getColumnIndexType(columnIndex);
-            removeFileOrLog(ff, dFile(path, columnName, columnNameTxn));
-            removeFileOrLog(ff, iFile(path.trimTo(plen), columnName, columnNameTxn));
-            if (IndexType.isIndexed(indexType)) {
-                if (IndexType.isPosting(indexType)) {
-                    // Enumerate every sealed .pv / .pc<N> for this column
-                    // instance across all on-disk sealTxn generations.
-                    PostingIndexUtils.removeAllSealedFiles(ff, path, plen, columnName, columnNameTxn);
-                }
-                removeFileOrLog(ff, keyFileName(indexType, path.trimTo(plen), columnName, columnNameTxn));
-                if (!IndexType.isPosting(indexType)) {
-                    // BITMAP keeps a single .v at columnNameTxn (no sealTxn axis).
-                    removeFileOrLog(ff, valueFileName(indexType, path.trimTo(plen), columnName, columnNameTxn, columnNameTxn));
-                }
+    /**
+     * Removes the files of the SYMBOL column a failed {@link #changeColumnType} converted to: its data file in every
+     * partition and its symbol map. The change commits nothing, and the next writer open restores the _meta it swapped,
+     * so no version of the table names them. On Windows a file that a mapping still holds stays.
+     */
+    private void removeConvertedColumnFiles(CharSequence columnName, int columnIndex, long columnNameTxn) {
+        final boolean isPartitioned = PartitionBy.isPartitioned(partitionBy);
+        try {
+            for (int i = isPartitioned ? txWriter.getPartitionCount() - 1 : 0; i > -1; i--) {
+                final long partitionTimestamp = isPartitioned ? txWriter.getPartitionTimestampByIndex(i) : txWriter.getLastPartitionTimestamp();
+                final long partitionNameTxn = isPartitioned ? txWriter.getPartitionNameTxn(i) : txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp);
+                setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+                removeFileOrLog(ff, dFile(path, columnName, columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex)));
             }
+        } finally {
             path.trimTo(pathSize);
-        } else {
-            LOG.critical()
-                    .$("o3 ignoring removal of column in read-only partition [table=").$(tableToken)
-                    .$(", column=").$safe(columnName)
-                    .$(", timestamp=").$ts(timestampDriver, partitionTimestamp)
-                    .$();
         }
+        removeSymbolMapFilesQuiet(columnName, columnNameTxn);
     }
 
     /**
@@ -18554,23 +18544,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void removeIndexFilesInPartition(CharSequence columnName, int columnIndex, long partitionTimestamp, long partitionNameTxn) {
-        setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
-        int plen = path.size();
-        long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
-        byte indexType = metadata.getColumnIndexType(columnIndex);
-        if (IndexType.isIndexed(indexType)) {
-            if (IndexType.isPosting(indexType)) {
-                // Enumerate every sealed .pv / .pc<N> for this column
-                // instance across all on-disk sealTxn generations.
-                PostingIndexUtils.removeAllSealedFiles(ff, path, plen, columnName, columnNameTxn);
+    private void removeIndexFilesInPartition(CharSequence columnName, int columnIndex, byte indexType, long partitionTimestamp, long partitionNameTxn) {
+        try {
+            setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            final int plen = path.size();
+            final long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
+            // Every sealed .pv / .pc<N> of the column instance, across all on-disk sealTxn generations. The key file
+            // stays while one of them does: the next ADD INDEX resets the instance's files only when it finds the key
+            // file, see PostingIndexUtils.resetIndex.
+            if (IndexType.isPosting(indexType)
+                    && PostingIndexUtils.removeAllSealedFiles(ff, path, plen, columnName, columnNameTxn)) {
+                throw CairoException.critical(ff.errno()).put("could not remove posting index files [path=")
+                        .put(path.trimTo(plen)).put(", column=").put(columnName).put(']');
             }
             removeFileOrLog(ff, keyFileName(indexType, path.trimTo(plen), columnName, columnNameTxn));
             if (!IndexType.isPosting(indexType)) {
                 removeFileOrLog(ff, valueFileName(indexType, path.trimTo(plen), columnName, columnNameTxn, columnNameTxn));
             }
+        } finally {
+            path.trimTo(pathSize);
         }
-        path.trimTo(pathSize);
     }
 
     private void removeMetaFile() {
@@ -19590,18 +19583,40 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         columnVersionWriter.readUnsafe();
     }
 
-    private void rollbackRemoveIndexFiles(CharSequence columnName, int columnIndex) {
-        try {
-            for (int i = txWriter.getPartitionCount() - 1; i > -1L; i--) {
-                long partitionTimestamp = txWriter.getPartitionTimestampByIndex(i);
-                long partitionNameTxn = txWriter.getPartitionNameTxn(i);
-                removeIndexFilesInPartition(columnName, columnIndex, partitionTimestamp, partitionNameTxn);
+    /**
+     * Removes the files of the index a failed {@link #writeIndex} built, and never the column it indexes: ADD INDEX
+     * reads a committed column, and a column type change removes the column it converted itself, see
+     * {@link #removeConvertedColumnFiles}. A partition it cannot list, or whose sealed posting files it cannot all remove,
+     * keeps them with their key file, and the rollback goes on with the others: no committed index names those files,
+     * and the next ADD INDEX resets them. It throws the first such failure once it has visited every partition. A key
+     * file or BITMAP value file that will not go, it logs: an ADD INDEX of the same type replaces it.
+     *
+     * @param indexType the type of the index the build wrote; for ADD INDEX the metadata does not carry it yet
+     */
+    private void rollbackRemoveIndexFiles(CharSequence columnName, int columnIndex, byte indexType) {
+        if (!PartitionBy.isPartitioned(partitionBy)) {
+            final long timestamp = txWriter.getLastPartitionTimestamp();
+            removeIndexFilesInPartition(columnName, columnIndex, indexType, timestamp, txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp));
+            return;
+        }
+        CairoException firstFailure = null;
+        for (int i = txWriter.getPartitionCount() - 1; i > -1; i--) {
+            final long partitionTimestamp = txWriter.getPartitionTimestampByIndex(i);
+            try {
+                removeIndexFilesInPartition(columnName, columnIndex, indexType, partitionTimestamp, txWriter.getPartitionNameTxn(i));
+            } catch (CairoException e) {
+                LOG.error().$("could not remove index files of a failed build [table=").$(tableToken)
+                        .$(", column=").$safe(columnName)
+                        .$(", partition=").$ts(timestampDriver, partitionTimestamp)
+                        .$(", error=").$((Throwable) e)
+                        .I$();
+                if (firstFailure == null) {
+                    firstFailure = e;
+                }
             }
-            if (!PartitionBy.isPartitioned(partitionBy)) {
-                removeColumnFilesInPartition(columnName, columnIndex, txWriter.getLastPartitionTimestamp());
-            }
-        } finally {
-            path.trimTo(pathSize);
+        }
+        if (firstFailure != null) {
+            throw firstFailure;
         }
     }
 
@@ -22284,7 +22299,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } catch (Throwable th) {
             Misc.free(indexer);
             LOG.error().$("rolling back index created so far [path=").$substr(pathRootSize, path).I$();
-            rollbackRemoveIndexFiles(columnName, columnIndex);
+            try {
+                rollbackRemoveIndexFiles(columnName, columnIndex, indexType);
+            } catch (Throwable rollbackError) {
+                // The caller must learn why the build failed, not why its cleanup did. The files the rollback left
+                // belong to no committed index, and the next ADD INDEX resets them.
+                th.addSuppressed(rollbackError);
+            }
             throw th;
         }
     }
