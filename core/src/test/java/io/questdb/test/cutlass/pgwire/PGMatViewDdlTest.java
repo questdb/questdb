@@ -25,8 +25,10 @@
 package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.mv.MatViewBareNameGuard;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlParser;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -476,6 +478,66 @@ public class PGMatViewDdlTest extends BasePGTest {
                     2024-01-04 00:00:00.0,a,4.0,null
                     2024-01-05 00:00:00.0,a,5.0,null
                     """);
+        });
+    }
+
+    @Test
+    public void testResumeRefusedForSwitchedBareNameTwice() throws Exception {
+        // An older view calls count without parentheses, and its base gains a column named count while the view is
+        // invalid. A prepared RESUME refuses on the switch at each execution, as a fresh compile does, and writes
+        // nothing; once ALTER ... AS calls count(), the same prepared RESUME makes the view valid.
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
+            execute("CREATE TABLE base (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base VALUES ('a', 1.0, '2024-01-01T00:10:00.000000Z'), ('b', 2.0, '2024-01-01T01:10:00.000000Z')");
+            drainWalQueue();
+            SqlParser.setMatViewExplicitNamesCheckSkipped(true);
+            try {
+                execute("CREATE MATERIALIZED VIEW mv AS (SELECT ts, sym, count, last(price) AS price FROM base SAMPLE BY 1h) PARTITION BY DAY");
+            } finally {
+                SqlParser.setMatViewExplicitNamesCheckSkipped(false);
+            }
+            drainWalAndMatViewQueues();
+            engine.getMatViewStateStore().enqueueInvalidate(engine.verifyTableName("mv"), "test invalidation");
+            drainWalAndMatViewQueues();
+            execute("ALTER TABLE base ADD COLUMN count LONG");
+            drainWalAndMatViewQueues();
+            final long viewSeqTxn = viewSeqTxn();
+            final String resumeSql = "REFRESH MATERIALIZED VIEW mv RESUME";
+            final String refusal = "materialized view SQL reads a bare name whose meaning a base column change switched, fix it with ALTER "
+                    + "MATERIALIZED VIEW ... AS first [view=mv, error=" + MatViewBareNameGuard.invalidationReason("count") + ']';
+            final String rows = """
+                    ts[TIMESTAMP],sym[VARCHAR],count[BIGINT],price[DOUBLE]
+                    2024-01-01 00:00:00.0,a,1,1.0
+                    2024-01-01 01:00:00.0,b,1,2.0
+                    """;
+            try (PreparedStatement resume = connection.prepareStatement(resumeSql)) {
+                for (int i = 0; i < 2; i++) {
+                    try {
+                        resume.execute();
+                        Assert.fail("the prepared RESUME must refuse the switched bare name");
+                    } catch (PSQLException e) {
+                        Assert.assertNotNull(e.getServerErrorMessage());
+                        TestUtils.assertEquals(refusal, e.getServerErrorMessage().getMessage());
+                        // the position the server reports counts from 1
+                        Assert.assertEquals(resumeSql.indexOf("mv") + 1, e.getServerErrorMessage().getPosition());
+                    }
+                    drainWalAndMatViewQueues();
+                    Assert.assertEquals(viewSeqTxn, viewSeqTxn());
+                    assertQueryResult(connection, "SELECT view_status, invalidation_reason FROM materialized_views()",
+                            "view_status[VARCHAR],invalidation_reason[VARCHAR]\ninvalid,test invalidation\n");
+                    assertQueryResult(connection, "SELECT * FROM mv ORDER BY ts", rows);
+                }
+
+                execute("ALTER MATERIALIZED VIEW mv AS (SELECT ts, sym, count() AS count, last(price) AS price FROM base SAMPLE BY 1h)");
+                drainWalQueue();
+                resume.execute();
+            }
+            drainWalAndMatViewQueues();
+            assertQueryResult(connection, "SELECT view_status, invalidation_reason FROM materialized_views()",
+                    "view_status[VARCHAR],invalidation_reason[VARCHAR]\nvalid,null\n");
+            execute("INSERT INTO base (sym, price, ts) VALUES ('c', 3.0, '2024-01-01T02:10:00.000000Z')");
+            drainWalAndMatViewQueues();
+            assertQueryResult(connection, "SELECT * FROM mv ORDER BY ts", rows + "2024-01-01 02:00:00.0,c,1,3.0\n");
         });
     }
 

@@ -39,8 +39,11 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Chars;
 import io.questdb.std.LongList;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -71,6 +74,10 @@ import org.jetbrains.annotations.Nullable;
  *     checks the column mapping and casts;</li>
  *     <li>it resolves the base table by name, which must be a WAL table or a materialized view with the view's
  *     designated timestamp type, and reads its latest applied transaction from a reader;</li>
+ *     <li>it refuses a view that completed a refresh from that table and whose SQL uses bare a name that a base column
+ *     change switched between a column and a call since the view's rows were computed, see
+ *     {@link MatViewBareNameGuard}: a switch that the guard recorded, unless a FULL refresh rebuilt the view from a
+ *     base snapshot that includes it, or the guard's invalidation that the view's state keeps;</li>
  *     <li>without SKIP BACKLOG, it brings the view's backlog up to that transaction, which checks every condition
  *     that loses the backlog, and refuses a lost backlog with its cause;</li>
  *     <li>it persists the new state, which carries the base table id, through the view's WAL under the role-switch
@@ -182,10 +189,11 @@ public final class MatViewResume {
     // so an invalidation without a base table change, such as a base table drop, says nothing that RESUME did not
     // see, as for an invalidation published before a FULL refresh fixes its base reader. The bare-name guard publishes
     // an invalidation for a base table change before the change applies, so RESUME read past it only when the change
-    // belongs to a table the view no longer follows, or had applied when RESUME took the latch, before its compile.
-    // Otherwise the change may switch a bare name after RESUME's compile, and the invalidation stays pending: the
-    // release of the latch invalidates the view again. An invalidation published from the latch on, which minted
-    // another marker, stays pending too.
+    // belongs to a table the view no longer follows, or had applied when RESUME took the latch, before its compile; a
+    // change that switches a name the SQL still uses bare was refused before, by findSwitchedBareName(). Otherwise the
+    // change may switch a bare name after RESUME's compile, and the invalidation stays pending: the release of the
+    // latch invalidates the view again. An invalidation published from the latch on, which minted another marker,
+    // stays pending too.
     private static void consumePriorInvalidation(
             TableToken viewToken,
             MatViewState viewState,
@@ -225,6 +233,45 @@ public final class MatViewResume {
     private static @Nullable String findKnownLostCause(MatViewState viewState, TableToken baseTableToken, long baseTableTxn) {
         final String cause = viewState.getBacklogLostReason();
         return cause != null ? cause : MatViewBacklog.findLostCause(viewState, baseTableToken, baseTableTxn);
+    }
+
+    // Returns the bare select-list name of the SQL that RESUME compiled, as the SQL writes it, whose meaning a column
+    // change of the base table that RESUME positions the view on switched after the view's rows were computed, or
+    // null. Only a view that completed a refresh keeps rows that its next refresh does not recompute, and RESUME judges
+    // only rows of that base table. A switch counts when the bare-name guard recorded it, unless the last FULL refresh
+    // rebuilt the view from a snapshot that includes it: no other refresh rewrites every row, and RESUME SKIP BACKLOG
+    // moves the refresh position without computing a row. The guard's invalidation of a valid view counts too: the
+    // view's state keeps it across a restart, which loses the recorded switches, until a FULL refresh succeeds.
+    private static @Nullable CharSequence findSwitchedBareName(
+            MatViewState viewState,
+            ObjList<MatViewState.BareNameSwitch> bareNameSwitches,
+            LowerCaseCharSequenceHashSet bareSelectNames,
+            int baseTableId
+    ) {
+        if (viewState.getLastRefreshBaseTxn() == -1) {
+            return null;
+        }
+        final int viewBaseTableId = viewState.getBaseTableId();
+        if (viewBaseTableId != MatViewState.BASE_TABLE_ID_UNKNOWN && viewBaseTableId != baseTableId) {
+            return null;
+        }
+        for (int i = 0, n = bareNameSwitches.size(); i < n; i++) {
+            final MatViewState.BareNameSwitch bareNameSwitch = bareNameSwitches.getQuick(i);
+            if (bareNameSwitch.baseTableId == baseTableId) {
+                final int keyIndex = bareSelectNames.keyIndex(bareNameSwitch.name);
+                if (keyIndex < 0 && !viewState.isCoveredByLastFullRefresh(baseTableId, bareNameSwitch.baseTableTxn)) {
+                    return bareSelectNames.keyAt(keyIndex);
+                }
+            }
+        }
+        final String invalidationReason = viewState.getInvalidationReason();
+        for (int i = 0, n = bareSelectNames.getKeyCount(); i < n; i++) {
+            final CharSequence bareName = bareSelectNames.getKey(i);
+            if (bareName != null && Chars.equalsIgnoreCaseNc(MatViewBareNameGuard.invalidationReason(bareName), invalidationReason)) {
+                return bareName;
+            }
+        }
+        return null;
     }
 
     private static SqlException fullRefreshPending(TableToken viewToken, int viewNamePosition) {
@@ -325,6 +372,10 @@ public final class MatViewResume {
         // kept, so that it invalidates the view again once RESUME has made it valid.
         viewState.setResuming(true);
         try {
+            // The bare-name switches recorded when RESUME takes the latch, see findSwitchedBareName(). The guard records
+            // a switch before it reads the resuming flag, so the guard of a switch recorded from here on keeps its
+            // invalidation pending, and the release of the latch invalidates the view again.
+            final ObjList<MatViewState.BareNameSwitch> bareNameSwitches = viewState.getBareNameSwitches();
             viewState.runResumeHoldingLockSeamForTesting();
             if (viewState.isPendingFullRefresh()) {
                 throw fullRefreshPending(viewToken, viewNamePosition);
@@ -375,6 +426,20 @@ public final class MatViewResume {
                         throw SqlException.$(viewNamePosition, refusal);
                     }
                     baseTableTxn = baseTableReader.getSeqTxn();
+                }
+
+                // The check writes no view state, so it comes before the backlog update, which can write the backlog.
+                final CharSequence switchedBareName = findSwitchedBareName(
+                        viewState,
+                        bareNameSwitches,
+                        validator.getBareSelectNames(),
+                        baseTableToken.getTableId()
+                );
+                if (switchedBareName != null) {
+                    throw SqlException.$(viewNamePosition, "materialized view SQL reads a bare name whose meaning a base column change switched, ")
+                            .put("fix it with ALTER MATERIALIZED VIEW ... AS first [view=").put(viewToken.getTableName())
+                            .put(", error=").put(MatViewBareNameGuard.invalidationReason(switchedBareName))
+                            .put(']');
                 }
 
                 // A view that never completed a refresh has no backlog: it keeps its position, so its next refresh

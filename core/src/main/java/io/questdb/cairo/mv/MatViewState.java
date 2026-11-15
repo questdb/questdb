@@ -35,6 +35,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -126,6 +127,8 @@ public class MatViewState implements QuietCloseable {
     private final AtomicLong backfillFrontier = new AtomicLong(Long.MIN_VALUE);
     // Used to avoid concurrent refresh runs.
     private final AtomicBoolean latch = new AtomicBoolean(false);
+    // Serializes the writers of bareNameSwitches: the WAL apply threads of the view's base tables.
+    private final Object bareNameSwitchesLock = new Object();
     // A full refresh task that lost the view lock left its owner's delivery to the lock holder: the
     // holder's release claims the handoff and enqueues the pending owner, even an owner the holder
     // itself deferred. See MatViewRefreshJob#tryLockForFullRefresh.
@@ -173,6 +176,10 @@ public class MatViewState implements QuietCloseable {
     // keeps recording its base table's changes in its refresh-interval cache until the backlog is lost. Written under
     // this.latch and by the load, cleared when the view becomes valid; persisted with every view state event.
     private volatile String backlogLostReason;
+    // The bare-name switches that the bare-name guard recorded on this view, see recordBareNameSwitch(): one entry per
+    // name and base table. Writers publish a new list under bareNameSwitchesLock and never change a published one, so
+    // RESUME reads it without a lock. Kept in memory only.
+    private volatile ObjList<BareNameSwitch> bareNameSwitches = new ObjList<>();
     // The id of the base table that the refresh position and the cached refresh intervals belong to, or
     // BASE_TABLE_ID_UNKNOWN. Written under this.latch by incremental refresh (when unknown), FULL and RESUME, and
     // by the load; read under the latch by the base identity check of every refresh except FULL.
@@ -240,6 +247,8 @@ public class MatViewState implements QuietCloseable {
     private volatile long lastRefreshStartTimestampUs = Numbers.LONG_NULL;
     @TestOnly
     private volatile Runnable onAlterValidatedForTesting;
+    @TestOnly
+    private volatile Runnable onBareNameSwitchRecordedForTesting;
     @TestOnly
     private volatile Runnable onDefinitionWaitForTesting;
     @TestOnly
@@ -861,6 +870,14 @@ public class MatViewState implements QuietCloseable {
         return baseTableId;
     }
 
+    /**
+     * Returns the bare-name switches recorded on the view, see {@link #recordBareNameSwitch}. The caller must not
+     * change the list.
+     */
+    ObjList<BareNameSwitch> getBareNameSwitches() {
+        return bareNameSwitches;
+    }
+
     public long getLastRefreshFrozenBoundaryFloor() {
         return lastRefreshFrozenBoundaryFloor;
     }
@@ -1056,6 +1073,17 @@ public class MatViewState implements QuietCloseable {
 
     public boolean isClosed() {
         return closed;
+    }
+
+    /**
+     * Returns true when the last successful FULL refresh rebuilt the view from a snapshot of the base table that
+     * includes the transaction: the view's rows read the base table as it was from that transaction on. The
+     * caller holds the latch, under which FULL records its snapshot.
+     */
+    boolean isCoveredByLastFullRefresh(int baseTableId, long baseTableTxn) {
+        assert latch.get();
+        final FullRefreshCoverage coverage = lastFullRefreshCoverage;
+        return coverage != null && coverage.baseTableToken.getTableId() == baseTableId && coverage.baseTableTxn >= baseTableTxn;
     }
 
     public boolean isDropped() {
@@ -1434,6 +1462,31 @@ public class MatViewState implements QuietCloseable {
         avgCommitNanos = foldEma(avgCommitNanos, sampleNanos);
     }
 
+    /**
+     * Records that a column change of the base table, at the base table's transaction, switches the bare select-list
+     * name of the view's SQL between a column and a call of the zero-argument function of that name, see
+     * {@link MatViewBareNameGuard}. One entry per name, compared without regard to case, and base table keeps the
+     * highest transaction: a FULL refresh that covers it covers the lower ones. Nothing removes an entry; a FULL
+     * refresh from a snapshot that includes its transaction covers it, see {@link #isCoveredByLastFullRefresh}.
+     */
+    void recordBareNameSwitch(CharSequence name, int baseTableId, long baseTableTxn) {
+        synchronized (bareNameSwitchesLock) {
+            final ObjList<BareNameSwitch> switches = bareNameSwitches;
+            final ObjList<BareNameSwitch> updatedSwitches = new ObjList<>(switches.size() + 1);
+            long switchTxn = baseTableTxn;
+            for (int i = 0, n = switches.size(); i < n; i++) {
+                final BareNameSwitch bareNameSwitch = switches.getQuick(i);
+                if (bareNameSwitch.baseTableId == baseTableId && Chars.equalsIgnoreCase(bareNameSwitch.name, name)) {
+                    switchTxn = Math.max(switchTxn, bareNameSwitch.baseTableTxn);
+                } else {
+                    updatedSwitches.add(bareNameSwitch);
+                }
+            }
+            updatedSwitches.add(new BareNameSwitch(Chars.toString(name), baseTableId, switchTxn));
+            bareNameSwitches = updatedSwitches;
+        }
+    }
+
     void recordFullRefreshSuccess(TableToken baseTableToken, long baseTableTxn) {
         assert latch.get();
         lastFullRefreshCoverage = new FullRefreshCoverage(baseTableToken, baseTableTxn);
@@ -1682,6 +1735,16 @@ public class MatViewState implements QuietCloseable {
     }
 
     /**
+     * Test seam: runs once in the bare-name guard, after it recorded the bare-name switches of a base column change on
+     * the view and before it reads the view's resuming and invalid flags, see {@link MatViewBareNameGuard}. Tests use
+     * it to run RESUME in that window. One-shot: the seam clears itself before firing.
+     */
+    @TestOnly
+    public void setOnBareNameSwitchRecordedForTesting(Runnable onBareNameSwitchRecordedForTesting) {
+        this.onBareNameSwitchRecordedForTesting = onBareNameSwitchRecordedForTesting;
+    }
+
+    /**
      * Test seam: runs once, while a REFRESH waits for the definition event of an ALTER MATERIALIZED VIEW ... AS to
      * apply, see {@link MatViewAlter#awaitPendingDefinition}.
      */
@@ -1871,6 +1934,14 @@ public class MatViewState implements QuietCloseable {
         }
     }
 
+    void runBareNameSwitchRecordedSeamForTesting() {
+        final Runnable seam = onBareNameSwitchRecordedForTesting;
+        if (seam != null) {
+            onBareNameSwitchRecordedForTesting = null;
+            seam.run();
+        }
+    }
+
     void runDefinitionWaitSeamForTesting() {
         final Runnable seam = onDefinitionWaitForTesting;
         if (seam != null) {
@@ -1919,6 +1990,20 @@ public class MatViewState implements QuietCloseable {
         }
         if (!latch.compareAndSet(true, false)) {
             throw new IllegalStateException("cannot unlock, not locked");
+        }
+    }
+
+    // A base column change that switches a bare select-list name of the view's SQL, see recordBareNameSwitch().
+    static final class BareNameSwitch {
+        final int baseTableId;
+        final long baseTableTxn;
+        // the name as the view's SQL wrote it when the bare-name guard recorded the switch
+        final String name;
+
+        private BareNameSwitch(String name, int baseTableId, long baseTableTxn) {
+            this.name = name;
+            this.baseTableId = baseTableId;
+            this.baseTableTxn = baseTableTxn;
         }
     }
 

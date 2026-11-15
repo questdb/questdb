@@ -66,8 +66,20 @@ import io.questdb.std.datetime.microtime.Micros;
  * Every column name of the SQL stands for one aggregate, so a view row computed under any SQL holds the value the
  * name stands for, see {@link #CATALOGUE_NAMES}. The view's own columns can take another type with an implicit cast,
  * and the view can have columns no SQL produces.
+ * <p>
+ * A bare-name round, see {@link #forBareNameRound(int)}, drives {@link MatViewFuzzTest#testBareNameSwitchResume()}
+ * instead: a view as the versions before the explicit-name rule store it, whose SQL calls count without parentheses,
+ * over a base that gains and drops a column named count, which switches the bare count between a call and a column.
+ * It draws ingestion, the base column changes, ALTER ... AS writing {@code count() AS count} or {@code base.count AS
+ * count}, forced invalidations, RESUME, FULL, restarts and job runs, and predicts the outcome of RESUME and ALTER ...
+ * AS: RESUME refuses an invalid view whose SQL still calls count bare once a switch stands that no FULL rebuilt the
+ * view after, and refuses on its compile while count is no column. It also keeps the reading the view's rows hold.
  */
 public final class MatViewFuzzOpGenerator {
+    // The SQL of the bare-name round's view, see bareNameViewSql()
+    public static final int BARE_NAME_SQL_BARE = 0;
+    public static final int BARE_NAME_SQL_CALL = 1;
+    public static final int BARE_NAME_SQL_QUALIFIED = 2;
     // Each name always stands for the same aggregate, whatever SQL a view has.
     public static final String[] CATALOGUE_EXPRESSIONS = {"last(price)", "sum(qty)", "count()", "max(price)"};
     public static final String[] CATALOGUE_NAMES = {"price", "qty", "cnt", "hi"};
@@ -79,6 +91,12 @@ public final class MatViewFuzzOpGenerator {
     // A column name longer than 64 characters: a SQL that references it without an alias relies on a generated column
     // name, so the view copies its columns by position.
     public static final String LONG_NAME = "long_" + "l".repeat(60);
+    // The outcome of a RESUME of the bare-name round
+    public static final int RESUME_ACCEPTED = 0;
+    // the compile reads count as a column, which the base does not have
+    public static final int RESUME_REFUSED_COMPILE = 1;
+    // a switch of the bare count stands, which no FULL covers
+    public static final int RESUME_REFUSED_SWITCH = 2;
     public static final String SYM = "sym";
     public static final String TS = "ts";
     private final boolean[] attachableDays;
@@ -86,6 +104,7 @@ public final class MatViewFuzzOpGenerator {
     private final int dayCount;
     // the days of a period view's round that take no row until their period ends
     private final boolean[] gapDays;
+    private final boolean isBareNameRound;
     private final boolean isPeriodView;
     // the columns the view's last accepted SET EXPIRE reads, none without a policy
     private final ObjList<String> policyColumns = new ObjList<>();
@@ -96,25 +115,71 @@ public final class MatViewFuzzOpGenerator {
     private int completeDays;
     // the view's EXPIRE ROWS policy as materialized_views().expire_clause shows it, null without one
     private String expireClause;
+    // the bare-name round's view SQL, one of BARE_NAME_SQL_*
+    private int bareNameSql = BARE_NAME_SQL_BARE;
+    // the bare-name round's base has the column count, once the WAL applies the changes drawn so far
+    private boolean hasBaseCountColumn;
     // the view dropped a column, whose slot the view's table keeps
     private boolean hasDroppedViewColumn;
+    // the bare-name round's view is invalid, once the jobs have run
+    private boolean isBareNameViewInvalid;
+    // a base column change switched the bare count of the bare-name round's SQL, and no FULL rebuilt the view since
+    private boolean isBareNameSwitchStanding;
     // the test ran a view ADD or DROP COLUMN and has not applied the view's WAL since, as far as it has told
     private boolean isColumnChangePending;
     // the test ran a SET or DROP EXPIRE and has not applied the view's WAL since, as far as it has told
     private boolean isPolicyChangePending;
+    // an ALTER ... AS of the bare-name round changed the reading of the view's later rows since the last FULL, so the
+    // view's rows may hold both readings
+    private boolean isReadingMixedByAlter;
+    // the bare-name round's view rows read count as the column, which holds NULL, instead of calling count()
+    private boolean isRowsReadingColumn;
     // the view's SQL relies on a generated column name, so refresh copies its columns by position
     private boolean isSqlPositional;
     private int totalWeight;
 
     public MatViewFuzzOpGenerator(int dayCount, boolean isPeriodView) {
+        this(dayCount, isPeriodView, false);
+    }
+
+    private MatViewFuzzOpGenerator(int dayCount, boolean isPeriodView, boolean isBareNameRound) {
         this.dayCount = dayCount;
         this.isPeriodView = isPeriodView;
+        this.isBareNameRound = isBareNameRound;
         this.attachableDays = new boolean[dayCount];
         this.baseDays = new boolean[dayCount];
         this.gapDays = new boolean[dayCount];
         for (Kind kind : Kind.values()) {
-            totalWeight += weight(kind, isPeriodView);
+            totalWeight += isBareNameRound ? bareNameRoundWeight(kind) : weight(kind, isPeriodView);
         }
+    }
+
+    // How often each operation of a bare-name round comes up; the other operations do not.
+    public static int bareNameRoundWeight(Kind kind) {
+        return switch (kind) {
+            case INSERT -> 10;
+            case VIEW_RESUME -> 6;
+            case BASE_ADD_BARE_NAME_COLUMN, BASE_DROP_BARE_NAME_COLUMN, VIEW_INVALIDATE, APPLY_WAL, RUN_REFRESH_JOB -> 4;
+            case VIEW_FULL -> 3;
+            case VIEW_ALTER_AS, RESTART -> 2;
+            default -> 0;
+        };
+    }
+
+    // The SQL of the bare-name round's view: count bare, as the versions before the explicit-name rule store it,
+    // count() or the qualified column.
+    public static String bareNameViewSql(int bareNameSql) {
+        final String count = switch (bareNameSql) {
+            case BARE_NAME_SQL_BARE -> "count";
+            case BARE_NAME_SQL_CALL -> "count() AS count";
+            default -> "base.count AS count";
+        };
+        return "SELECT ts, sym, " + count + ", last(price) AS price FROM base SAMPLE BY 1h";
+    }
+
+    // A generator of a bare-name round, see the class comment.
+    public static MatViewFuzzOpGenerator forBareNameRound(int dayCount) {
+        return new MatViewFuzzOpGenerator(dayCount, false, true);
     }
 
     public static String catalogueExpression(String name) {
@@ -132,6 +197,11 @@ public final class MatViewFuzzOpGenerator {
 
     public static boolean isCatalogueName(String name) {
         return catalogueIndex(name) > -1;
+    }
+
+    // Whether the rows that the bare-name round's view computes under the SQL read count as the column.
+    private static boolean isColumnReading(int bareNameSql, boolean hasBaseCountColumn) {
+        return bareNameSql == BARE_NAME_SQL_QUALIFIED || (bareNameSql == BARE_NAME_SQL_BARE && hasBaseCountColumn);
     }
 
     // The rule of ALTER ... AS for a SQL that copies by position: refused unless the SQL's columns are the view's, in
@@ -202,7 +272,23 @@ public final class MatViewFuzzOpGenerator {
             case VIEW_ADD_COLUMN, VIEW_INVALIDATE, RESTART, APPLY_WAL, RUN_REFRESH_JOB, VIEW_SET_EXPIRE -> 4;
             case VIEW_DROP_EXPIRE -> 2;
             case VIEW_ALTER_AS -> 5;
+            // only a bare-name round draws them, see bareNameRoundWeight()
+            case BASE_ADD_BARE_NAME_COLUMN, BASE_DROP_BARE_NAME_COLUMN -> 0;
         };
+    }
+
+    // The recovery of the bare-name round's invalid view at a view check: RESUME when the generator predicts that it
+    // accepts the view, FULL otherwise.
+    public Op bareNameRecovery(Op op) {
+        op.clear();
+        op.kind = predictBareNameResume() == RESUME_ACCEPTED ? Kind.VIEW_RESUME : Kind.VIEW_FULL;
+        op.resumeOutcome = RESUME_ACCEPTED;
+        apply(op);
+        return op;
+    }
+
+    public int getBareNameSql() {
+        return bareNameSql;
     }
 
     // The days, from the first, whose period ended.
@@ -265,8 +351,20 @@ public final class MatViewFuzzOpGenerator {
         return sqlColumns;
     }
 
+    public boolean hasBaseCountColumn() {
+        return hasBaseCountColumn;
+    }
+
     public boolean isAttachable(int day) {
         return attachableDays[day];
+    }
+
+    public boolean isBareNameSwitchStanding() {
+        return isBareNameSwitchStanding;
+    }
+
+    public boolean isBareNameViewInvalid() {
+        return isBareNameViewInvalid;
     }
 
     // Whether the generator believes that the base holds a partition of the day.
@@ -296,6 +394,14 @@ public final class MatViewFuzzOpGenerator {
         return isPolicyChangePending;
     }
 
+    public boolean isReadingMixedByAlter() {
+        return isReadingMixedByAlter;
+    }
+
+    public boolean isRowsReadingColumn() {
+        return isRowsReadingColumn;
+    }
+
     // Whether the view's SQL relies on a generated column name, so refresh copies its columns by position.
     public boolean isSqlPositional() {
         return isSqlPositional;
@@ -306,13 +412,16 @@ public final class MatViewFuzzOpGenerator {
         int pick = rnd.nextInt(totalWeight);
         Kind kind = Kind.INSERT;
         for (Kind k : Kind.values()) {
-            pick -= weight(k, isPeriodView);
+            pick -= isBareNameRound ? bareNameRoundWeight(k) : weight(k, isPeriodView);
             if (pick < 0) {
                 kind = k;
                 break;
             }
         }
         op.kind = kind;
+        if (isBareNameRound) {
+            return nextOfBareNameRound(rnd, op);
+        }
         switch (kind) {
             case INSERT -> {
                 final int rowCount = rnd.nextInt(8) == 0 ? 20 + rnd.nextInt(40) : 1 + rnd.nextInt(5);
@@ -530,6 +639,10 @@ public final class MatViewFuzzOpGenerator {
     }
 
     private void apply(Op op) {
+        if (isBareNameRound) {
+            applyBareNameRound(op);
+            return;
+        }
         switch (op.kind) {
             case INSERT -> {
                 for (int i = 0, n = op.rowTs.size(); i < n; i++) {
@@ -611,6 +724,85 @@ public final class MatViewFuzzOpGenerator {
                 // nothing the generator draws from changes
             }
         }
+    }
+
+    private void applyBareNameRound(Op op) {
+        switch (op.kind) {
+            case BASE_ADD_BARE_NAME_COLUMN, BASE_DROP_BARE_NAME_COLUMN -> {
+                hasBaseCountColumn = op.kind == Kind.BASE_ADD_BARE_NAME_COLUMN;
+                if (bareNameSql == BARE_NAME_SQL_BARE) {
+                    // the bare-name guard records the switch and invalidates a valid view; an invalid view stays so
+                    isBareNameSwitchStanding = true;
+                    isBareNameViewInvalid = true;
+                }
+            }
+            case VIEW_ALTER_AS -> {
+                if (!op.isRefused) {
+                    // rows computed from now on read the base as the new SQL does
+                    isReadingMixedByAlter |= isColumnReading(op.bareNameSql, hasBaseCountColumn) != isRowsReadingColumn;
+                    bareNameSql = op.bareNameSql;
+                }
+            }
+            case VIEW_INVALIDATE -> isBareNameViewInvalid = true;
+            case VIEW_RESUME -> {
+                if (op.resumeOutcome == RESUME_ACCEPTED) {
+                    isBareNameViewInvalid = false;
+                }
+            }
+            case VIEW_FULL -> {
+                // FULL rebuilds every row from a snapshot that includes every change drawn so far
+                isBareNameViewInvalid = false;
+                isBareNameSwitchStanding = false;
+                isRowsReadingColumn = isColumnReading(bareNameSql, hasBaseCountColumn);
+                isReadingMixedByAlter = false;
+            }
+            default -> {
+                // nothing the model keeps changes
+            }
+        }
+    }
+
+    private Op nextOfBareNameRound(Rnd rnd, Op op) {
+        switch (op.kind) {
+            case INSERT -> generateRows(rnd, op, 1 + rnd.nextInt(5), -1);
+            case BASE_ADD_BARE_NAME_COLUMN -> {
+                if (hasBaseCountColumn) {
+                    return insteadInsert(rnd, op);
+                }
+            }
+            case BASE_DROP_BARE_NAME_COLUMN -> {
+                // a SQL that reads the qualified column keeps it, so that no refresh fails
+                if (!hasBaseCountColumn || bareNameSql == BARE_NAME_SQL_QUALIFIED) {
+                    return insteadInsert(rnd, op);
+                }
+            }
+            case VIEW_ALTER_AS -> {
+                op.bareNameSql = rnd.nextBoolean() ? BARE_NAME_SQL_CALL : BARE_NAME_SQL_QUALIFIED;
+                op.isRefused = op.bareNameSql == BARE_NAME_SQL_QUALIFIED && !hasBaseCountColumn;
+            }
+            case VIEW_RESUME -> {
+                op.isSkipBacklog = rnd.nextInt(3) == 0;
+                op.resumeOutcome = predictBareNameResume();
+            }
+            default -> {
+                // no parameters
+            }
+        }
+        apply(op);
+        return op;
+    }
+
+    // The outcome of a RESUME of the bare-name round's view, plain or SKIP BACKLOG: nothing to do on a valid view; a
+    // refusal on the compile while the SQL calls count bare and the base has no count, and on the switch while the base
+    // has one and a switch stands; an accepted view otherwise.
+    private int predictBareNameResume() {
+        if (!isBareNameViewInvalid || bareNameSql != BARE_NAME_SQL_BARE) {
+            return RESUME_ACCEPTED;
+        }
+        if (!hasBaseCountColumn) {
+            return RESUME_REFUSED_COMPILE;
+        }
+        return isBareNameSwitchStanding ? RESUME_REFUSED_SWITCH : RESUME_ACCEPTED;
     }
 
     // A policy that hides no row: one of the shapes of the class comment, over view columns of a numeric type, or of
@@ -752,6 +944,9 @@ public final class MatViewFuzzOpGenerator {
 
     public enum Kind {
         INSERT,
+        // the bare-name round's base gains, or drops, its column count
+        BASE_ADD_BARE_NAME_COLUMN,
+        BASE_DROP_BARE_NAME_COLUMN,
         BASE_DROP_PARTITION_LIST,
         BASE_DROP_PARTITION_WHERE,
         BASE_DETACH_PARTITION,
@@ -800,6 +995,8 @@ public final class MatViewFuzzOpGenerator {
         // offsets from the first day
         public final LongList rowTs = new LongList();
         public final ObjList<String> sqlColumns = new ObjList<>();
+        // the SQL of an ALTER ... AS of the bare-name round, one of BARE_NAME_SQL_*
+        public int bareNameSql;
         public String column;
         public String columnType;
         public int day;
@@ -814,9 +1011,13 @@ public final class MatViewFuzzOpGenerator {
         public Kind kind;
         // the text after SET EXPIRE ROWS
         public String policy;
+        // the outcome of a RESUME of the bare-name round, one of RESUME_*
+        public int resumeOutcome;
 
         public void clear() {
             kind = null;
+            bareNameSql = BARE_NAME_SQL_BARE;
+            resumeOutcome = RESUME_ACCEPTED;
             day = -1;
             dayHi = -1;
             column = null;

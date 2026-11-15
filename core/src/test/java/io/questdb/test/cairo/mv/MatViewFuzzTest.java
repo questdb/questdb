@@ -34,6 +34,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.mv.MatViewBareNameGuard;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateStore;
@@ -47,6 +48,7 @@ import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlParser;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.LongList;
@@ -134,6 +136,28 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         final String view2Sql = "select min(min) as min, max(max) as max, ts from " + mvName + " sample by 2h";
         final Rnd rnd = generateRandom(LOG);
         testMvFuzz(rnd, tableName, mvName, viewSql, mv2Name, view2Sql);
+    }
+
+    @Test
+    public void testBareNameSwitchResume() throws Exception {
+        // A bare-name round, see MatViewFuzzOpGenerator.forBareNameRound(): a view whose SQL calls count without
+        // parentheses, as the versions before the explicit-name rule store it, over a base that gains and drops a
+        // column named count, with ALTER ... AS writing count() or the qualified column, forced invalidations, RESUME,
+        // FULL, restarts of the view states and job runs. The generator predicts the outcome of RESUME and ALTER ... AS,
+        // and the test asserts that the engine agrees. Oracle: the readings of the view's rows. A bucket that calls
+        // count() holds the row count, one that reads the column holds NULL, since no row writes the column; a FULL
+        // rebuilds every row under one reading, and only an ALTER ... AS that changes the reading of later rows may
+        // mix them, never an accepted RESUME.
+        // The budget: questdb.fuzz.matview.rounds independent rounds of questdb.fuzz.matview.steps operations.
+        final int rounds = Integer.getInteger("questdb.fuzz.matview.rounds", 1);
+        final int steps = Integer.getInteger("questdb.fuzz.matview.steps", -1);
+        assertMemoryLeak(() -> {
+            final Rnd rnd = generateRandom(LOG);
+            for (int round = 0; round < rounds; round++) {
+                LOG.info().$("fuzz: bare-name round ").$(round).$();
+                runBareNameOperations(rnd, steps > 0 ? steps : 40 + rnd.nextInt(40));
+            }
+        });
     }
 
     @Test
@@ -903,6 +927,176 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         }
     }
 
+    // A view check of testBareNameSwitchResume(): drains the queues, recovers an invalid view with RESUME or FULL, as
+    // the generator decides, and asserts the readings of the view's rows.
+    private static void checkBareNameView(MatViewFuzzOpGenerator generator, MatViewFuzzOpGenerator.Op op, int step) throws Exception {
+        drainOperationsFuzzQueues();
+        final String context = "[step=" + step + ", sql=" + MatViewFuzzOpGenerator.bareNameViewSql(generator.getBareNameSql())
+                + ", baseCount=" + generator.hasBaseCountColumn() + ']';
+        final MatViewState state = opsViewState("mv");
+        Assert.assertEquals("view validity " + context, generator.isBareNameViewInvalid(), state.isInvalid());
+        if (state.isInvalid()) {
+            generator.bareNameRecovery(op);
+            runBareNameOp(generator, op);
+        }
+        Assert.assertFalse("view is invalid: " + state.getInvalidationReasonForReport() + ' ' + context, state.isInvalid());
+        drainOperationsFuzzQueues();
+        Assert.assertFalse("view is invalid: " + state.getInvalidationReasonForReport() + ' ' + context, state.isInvalid());
+
+        int callRowCount = 0;
+        int columnRowCount = 0;
+        try (
+                SqlCompiler compiler = engine.getSqlCompiler();
+                RecordCursorFactory factory = compiler.compile("SELECT count FROM mv", sqlExecutionContext).getRecordCursorFactory();
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            final Record record = cursor.getRecord();
+            while (cursor.hasNext()) {
+                final long count = record.getLong(0);
+                if (count == Numbers.LONG_NULL) {
+                    columnRowCount++;
+                } else {
+                    Assert.assertTrue("a bucket counts its rows " + context, count > 0);
+                    callRowCount++;
+                }
+            }
+        }
+        LOG.info().$("fuzz: view rows [callRows=").$(callRowCount).$(", columnRows=").$(columnRowCount)
+                .$(", mixedByAlter=").$(generator.isReadingMixedByAlter())
+                .I$();
+        if (!generator.isReadingMixedByAlter()) {
+            if (generator.isRowsReadingColumn()) {
+                Assert.assertEquals("buckets that call count() in a view whose rows read the column " + context, 0, callRowCount);
+            } else {
+                Assert.assertEquals("buckets that read the column in a view whose rows call count() " + context, 0, columnRowCount);
+            }
+        }
+    }
+
+    private static void insertBareNameRows(MatViewFuzzOpGenerator.Op op) throws SqlException {
+        if (op.rowTs.size() == 0) {
+            return;
+        }
+        final StringSink sink = new StringSink();
+        sink.put("INSERT INTO base (sym, price, ts) VALUES ");
+        for (int i = 0, n = op.rowTs.size(); i < n; i++) {
+            if (i > 0) {
+                sink.put(", ");
+            }
+            sink.put("('s").put(op.rowSyms.getQuick(i)).put("', ").put(op.rowPrices.getQuick(i)).put(".5, '");
+            MicrosFormatUtils.appendDateTimeUSec(sink, OPS_DAY_LO + op.rowTs.getQuick(i));
+            sink.put("')");
+        }
+        execute(sink);
+    }
+
+    private static void runBareNameOp(MatViewFuzzOpGenerator generator, MatViewFuzzOpGenerator.Op op) throws Exception {
+        switch (op.kind) {
+            case INSERT -> insertBareNameRows(op);
+            case BASE_ADD_BARE_NAME_COLUMN -> execute("ALTER TABLE base ADD COLUMN count LONG");
+            case BASE_DROP_BARE_NAME_COLUMN -> execute("ALTER TABLE base DROP COLUMN count");
+            case VIEW_ALTER_AS -> {
+                // Steers clear of a known bug until it is fixed (D8): ALTER ... AS validates against the base columns
+                // that the base's WAL applied, and the bare-name guard reads the SQL that the view's WAL applied, so a
+                // base column change and an ALTER ... AS that apply out of their order can leave a switch unrecorded.
+                // The WALs apply before and after the statement. Remove the steering with the fix.
+                drainWalQueue();
+                final String viewSql = MatViewFuzzOpGenerator.bareNameViewSql(op.bareNameSql);
+                LOG.info().$("fuzz: ALTER AS ").$(viewSql).$();
+                final long viewSeqTxn = opsViewSeqTxn();
+                try {
+                    execute("ALTER MATERIALIZED VIEW mv AS (" + viewSql + ')');
+                    Assert.assertFalse("ALTER ... AS must refuse a column the base lacks: " + viewSql, op.isRefused);
+                } catch (SqlException e) {
+                    if (!op.isRefused) {
+                        throw e;
+                    }
+                    TestUtils.assertContains(e.getFlyweightMessage(), "Invalid column: base.count");
+                    Assert.assertEquals("a refused ALTER ... AS wrote to the view's WAL", viewSeqTxn, opsViewSeqTxn());
+                }
+                drainWalQueue();
+            }
+            case VIEW_INVALIDATE -> engine.getMatViewStateStore().enqueueInvalidate(engine.verifyTableName("mv"), FUZZ_INVALIDATION_REASON);
+            case VIEW_RESUME -> {
+                // RESUME waits for the view's WAL, and the jobs deliver the invalidations published so far
+                drainOperationsFuzzQueues();
+                LOG.info().$("fuzz: resuming view [skipBacklog=").$(op.isSkipBacklog).$(", outcome=").$(op.resumeOutcome).I$();
+                try {
+                    execute(op.isSkipBacklog ? "REFRESH MATERIALIZED VIEW mv RESUME SKIP BACKLOG" : "REFRESH MATERIALIZED VIEW mv RESUME");
+                    Assert.assertEquals("RESUME accepted the view", MatViewFuzzOpGenerator.RESUME_ACCEPTED, op.resumeOutcome);
+                } catch (SqlException e) {
+                    switch (op.resumeOutcome) {
+                        case MatViewFuzzOpGenerator.RESUME_REFUSED_COMPILE ->
+                                TestUtils.assertContains(e.getFlyweightMessage(), "count is not a column; write count() to call the function");
+                        case MatViewFuzzOpGenerator.RESUME_REFUSED_SWITCH ->
+                                TestUtils.assertContains(e.getFlyweightMessage(), "materialized view SQL reads a bare name whose meaning a base column change switched");
+                        default -> throw e;
+                    }
+                }
+                Assert.assertEquals(generator.isBareNameViewInvalid(), opsViewState("mv").isInvalid());
+            }
+            case VIEW_FULL -> {
+                LOG.info().$("fuzz: rebuilding view with FULL").$();
+                drainWalQueue();
+                execute("REFRESH MATERIALIZED VIEW mv FULL");
+                drainOperationsFuzzQueues();
+                final MatViewState state = opsViewState("mv");
+                Assert.assertFalse("view is invalid after FULL: " + state.getInvalidationReasonForReport(), state.isInvalid());
+            }
+            case RESTART -> {
+                // The restart loses no task here, so the view's state stays the generator's.
+                drainOperationsFuzzQueues();
+                // Steers clear of the documented loss of the bare-name guard's notification: the switches the guard
+                // records live in memory, so a restart loses a switch that reached a view already invalid for another
+                // reason, and RESUME then accepts the view. A switch that invalidated a valid view leaves the guard's
+                // reason in the view's state, on which RESUME refuses after a restart.
+                if (generator.getBareNameSql() == MatViewFuzzOpGenerator.BARE_NAME_SQL_BARE
+                        && generator.isBareNameSwitchStanding()
+                        && !MatViewBareNameGuard.invalidationReason("count").equals(opsViewState("mv").getInvalidationReasonForReport())) {
+                    LOG.info().$("fuzz: skipping the restart, it would lose a bare-name switch of a view invalid for another reason").$();
+                } else {
+                    LOG.info().$("fuzz: restarting view states").$();
+                    engine.getMatViewStateStore().clear();
+                    engine.hydrateMatViewStateStore();
+                }
+            }
+            case APPLY_WAL -> drainWalQueue();
+            case RUN_REFRESH_JOB -> drainMatViewQueue(engine);
+            default -> throw new AssertionError("unexpected operation: " + op.kind);
+        }
+    }
+
+    private static void runBareNameOperations(Rnd rnd, int steps) throws Exception {
+        final MatViewFuzzOpGenerator generator = MatViewFuzzOpGenerator.forBareNameRound(OPS_DAY_COUNT);
+        final MatViewFuzzOpGenerator.Op op = new MatViewFuzzOpGenerator.Op();
+        execute("CREATE TABLE base (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        for (int day = 0; day < OPS_DAY_COUNT; day++) {
+            insertBareNameRows(generator.initRows(rnd, day, op));
+        }
+        drainWalQueue();
+        SqlParser.setMatViewExplicitNamesCheckSkipped(true);
+        try {
+            execute("CREATE MATERIALIZED VIEW mv AS (" + MatViewFuzzOpGenerator.bareNameViewSql(MatViewFuzzOpGenerator.BARE_NAME_SQL_BARE) + ") PARTITION BY DAY");
+        } finally {
+            SqlParser.setMatViewExplicitNamesCheckSkipped(false);
+        }
+        drainOperationsFuzzQueues();
+        for (int step = 0; step < steps; step++) {
+            generator.next(rnd, op);
+            LOG.info().$("fuzz: step ").$(step).$(" ").$(op.kind.name()).I$();
+            runBareNameOp(generator, op);
+            if (rnd.nextBoolean()) {
+                drainWalAndMatViewQueues();
+            }
+            if (step % 6 == 5 || step == steps - 1) {
+                checkBareNameView(generator, op, step);
+            }
+        }
+        execute("DROP MATERIALIZED VIEW mv");
+        execute("DROP TABLE base");
+        drainWalAndMatViewQueues();
+    }
+
     private static void appendDay(StringSink sink, int day) {
         sink.put('\'');
         MicrosFormatUtils.appendDateTimeUSec(sink, OPS_DAY_LO + day * Micros.DAY_MICROS);
@@ -1161,6 +1355,12 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
 
     private static void createOperationsFuzzBase(String timestampType) throws SqlException {
         execute("CREATE TABLE base (sym SYMBOL, price DOUBLE, qty LONG, ts " + timestampType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+    }
+
+    private static void drainOperationsFuzzQueues() {
+        for (int i = 0; i < 4; i++) {
+            drainWalAndMatViewQueues();
+        }
     }
 
     // Drains the WAL apply and the refresh job until neither has work: FULL on an invalid view waits for the view's

@@ -27,6 +27,8 @@ package io.questdb.griffin;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.model.IQueryModel;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.Mutable;
 import io.questdb.std.str.StringSink;
 
@@ -46,6 +48,7 @@ import io.questdb.std.str.StringSink;
  * compile.
  */
 public final class MatViewSqlValidator implements Mutable {
+    private final LowerCaseCharSequenceHashSet bareSelectNames = new LowerCaseCharSequenceHashSet();
     private final StringSink error = new StringSink();
     private final GenericRecordMetadata queryMetadata = new GenericRecordMetadata();
     private boolean hasGeneratedColumnNames;
@@ -54,11 +57,22 @@ public final class MatViewSqlValidator implements Mutable {
 
     @Override
     public void clear() {
+        bareSelectNames.clear();
         error.clear();
         queryMetadata.clear();
         hasGeneratedColumnNames = false;
         isCompiled = false;
         isParsed = false;
+    }
+
+    /**
+     * Returns the bare select-list names of the view's SQL, as the SQL writes them, once {@link #isParsed()}, see
+     * {@link SqlCompiler#collectMatViewBareSelectNames}: for a validation that reads bare names as columns, as for
+     * RESUME, of a view that is not passthrough; empty otherwise. Names compare without regard to case.
+     */
+    public LowerCaseCharSequenceHashSet getBareSelectNames() {
+        assert isParsed;
+        return bareSelectNames;
     }
 
     /**
@@ -119,6 +133,11 @@ public final class MatViewSqlValidator implements Mutable {
         try (SqlCompiler compiler = executionContext.getCairoEngine().getSqlCompiler()) {
             compiler.validateMatViewSql(viewDefinition, isCompiling, isReadingBareNamesAsColumns, executionContext, this);
         }
+    }
+
+    // Collects the bare select-list names of the parsed view SQL, before the optimiser rewrites the model.
+    void ofBareSelectNames(IQueryModel model) {
+        MatViewBareSelectNames.collect(model, bareSelectNames);
     }
 
     void ofCompiled(RecordMetadata metadata) {

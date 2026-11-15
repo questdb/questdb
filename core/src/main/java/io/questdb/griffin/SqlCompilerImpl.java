@@ -1126,7 +1126,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * view reads every bare name as a column, an aggregating view reads a bare name that matches no column as a
      * call to the zero-argument function of that name, and the SQL may read no view with a row-expiry policy. The
      * parse runs in view-SQL compile mode, which reports whether the SQL names its columns. With
-     * {@code isReadingBareNamesAsColumns} set, as for RESUME, every bare name is a column, as in CREATE.
+     * {@code isReadingBareNamesAsColumns} set, as for RESUME, every bare name is a column, as in CREATE, and the
+     * validator keeps the bare select-list names of the parsed SQL of a view that is not passthrough.
      */
     @Override
     public void validateMatViewSql(
@@ -1157,6 +1158,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 return;
             }
             validator.ofParsed(executionContext.hasViewSqlGeneratedColumnNames());
+            // A passthrough view's refresh reads every bare name as a column, so no column change switches one.
+            if (isReadingBareNamesAsColumns && !viewDefinition.isPassthrough()) {
+                validator.ofBareSelectNames((IQueryModel) model);
+            }
             if (isCompiling) {
                 final IQueryModel queryModel = optimiser.optimise((IQueryModel) model, executionContext, this);
                 try (RecordCursorFactory factory = generateSelectWithRetries(queryModel, null, executionContext, false)) {

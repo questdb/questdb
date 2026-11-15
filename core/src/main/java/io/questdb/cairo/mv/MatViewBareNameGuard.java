@@ -53,9 +53,16 @@ import io.questdb.std.QuietCloseable;
  * them. A view that is already invalid, and not being rebuilt by a pending FULL refresh, is left with its reason,
  * as for any other invalidation.
  * <p>
+ * Before it publishes, the guard records each switched name on the view's state, see
+ * {@link MatViewState#recordBareNameSwitch}, invalid view or not, so that REFRESH ... RESUME refuses a view whose SQL
+ * still uses the name bare, see {@link MatViewResume}. Only a FULL refresh that rebuilds the view from a base
+ * snapshot that includes the change covers the switch. The guard records before it reads the view's resuming flag,
+ * and RESUME sets the flag before it reads the switches, so either RESUME sees the switch or the guard sees RESUME and
+ * keeps its invalidation for the release of RESUME's latch.
+ * <p>
  * The guard runs only on the node that refreshes views; a replica's state store holds no view states. Its
- * notification lives in memory, so a crash before the refresh job handles it loses it, and the next refresh then
- * reads the switched name, as the refresh did before the guard.
+ * notification and the switches it records live in memory, so a crash before the refresh job handles the
+ * notification loses it, and the next refresh then reads the switched name, as the refresh did before the guard.
  */
 public class MatViewBareNameGuard implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(MatViewBareNameGuard.class);
@@ -123,13 +130,21 @@ public class MatViewBareNameGuard implements QuietCloseable {
                 if (bareNames == null) {
                     continue;
                 }
+                CharSequence firstBareName = null;
                 for (int i = 0, m = matchedNames.size(); i < m; i++) {
                     final int keyIndex = bareNames.keyIndex(matchedNames.getQuick(i));
                     if (keyIndex < 0) {
                         // the name as the view's SQL writes it
-                        publishInvalidation(stateStore, viewToken, viewState, invalidationReason(bareNames.keyAt(keyIndex)), baseTableToken, seqTxn);
-                        break;
+                        final CharSequence bareName = bareNames.keyAt(keyIndex);
+                        viewState.recordBareNameSwitch(bareName, baseTableToken.getTableId(), seqTxn);
+                        if (firstBareName == null) {
+                            firstBareName = bareName;
+                        }
                     }
+                }
+                if (firstBareName != null) {
+                    viewState.runBareNameSwitchRecordedSeamForTesting();
+                    publishInvalidation(stateStore, viewToken, viewState, invalidationReason(firstBareName), baseTableToken, seqTxn);
                 }
             }
         } catch (Throwable th) {

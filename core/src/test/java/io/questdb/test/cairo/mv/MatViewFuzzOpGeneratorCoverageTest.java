@@ -410,6 +410,140 @@ public class MatViewFuzzOpGeneratorCoverageTest {
     }
 
     @Test
+    public void testBareNameRoundShapes() {
+        // The shapes a bare-name round, which MatViewFuzzTest#testBareNameSwitchResume() runs, has to keep drawing:
+        // every operation of the round and no other; a switch of the bare count while the view is invalid, which RESUME
+        // refuses, plain and with SKIP BACKLOG, until ALTER ... AS writes count(), after which RESUME accepts the view;
+        // a switch that a FULL then covers, after which RESUME accepts the invalid view, which still calls count bare
+        // and reads the base's column; RESUME refused on the compile; ALTER ... AS to count() and to the qualified
+        // column, and one refused for a qualified column the base lacks; and the view's rows mixed by such an ALTER.
+        final Rnd rnd = new Rnd(42, 42);
+        final int[] kindCounts = new int[MatViewFuzzOpGenerator.Kind.values().length];
+        int resumeRefusedOnSwitchPlain = 0;
+        int resumeRefusedOnSwitchSkip = 0;
+        int resumeRefusedOnCompile = 0;
+        int alterToCall = 0;
+        int alterToQualified = 0;
+        int alterRefused = 0;
+        int alterMixingReadings = 0;
+        int recoveredByAlter = 0;
+        int resumedAfterCoveringFull = 0;
+        final MatViewFuzzOpGenerator.Op op = new MatViewFuzzOpGenerator.Op();
+        for (int round = 0; round < ROUNDS; round++) {
+            final MatViewFuzzOpGenerator generator = MatViewFuzzOpGenerator.forBareNameRound(DAY_COUNT);
+            for (int day = 0; day < DAY_COUNT; day++) {
+                Assert.assertTrue(generator.initRows(rnd, day, op).rowTs.size() > 0);
+            }
+            // the steps of the recovery with ALTER ... AS: a switch while the view is invalid, RESUME refused on it,
+            // ALTER ... AS to count()
+            int alterRecoveryStep = 0;
+            // a FULL came after a switch, and no switch since
+            boolean isSwitchCovered = false;
+            for (int step = 0; step < STEPS_PER_ROUND; step++) {
+                final boolean wasInvalid = generator.isBareNameViewInvalid();
+                final int sqlBefore = generator.getBareNameSql();
+                final boolean wasMixed = generator.isReadingMixedByAlter();
+                generator.next(rnd, op);
+                kindCounts[op.kind.ordinal()]++;
+                switch (op.kind) {
+                    case BASE_ADD_BARE_NAME_COLUMN, BASE_DROP_BARE_NAME_COLUMN -> {
+                        Assert.assertEquals(op.kind == MatViewFuzzOpGenerator.Kind.BASE_ADD_BARE_NAME_COLUMN, generator.hasBaseCountColumn());
+                        if (sqlBefore == MatViewFuzzOpGenerator.BARE_NAME_SQL_BARE) {
+                            Assert.assertTrue(generator.isBareNameSwitchStanding());
+                            Assert.assertTrue(generator.isBareNameViewInvalid());
+                            alterRecoveryStep = wasInvalid ? 1 : 0;
+                            isSwitchCovered = false;
+                        }
+                    }
+                    case VIEW_RESUME -> {
+                        switch (op.resumeOutcome) {
+                            case MatViewFuzzOpGenerator.RESUME_REFUSED_SWITCH -> {
+                                Assert.assertTrue(wasInvalid && generator.hasBaseCountColumn() && generator.isBareNameSwitchStanding());
+                                if (op.isSkipBacklog) {
+                                    resumeRefusedOnSwitchSkip++;
+                                } else {
+                                    resumeRefusedOnSwitchPlain++;
+                                }
+                                if (alterRecoveryStep == 1) {
+                                    alterRecoveryStep = 2;
+                                }
+                            }
+                            case MatViewFuzzOpGenerator.RESUME_REFUSED_COMPILE -> {
+                                Assert.assertFalse(generator.hasBaseCountColumn());
+                                resumeRefusedOnCompile++;
+                            }
+                            default -> {
+                                Assert.assertFalse(generator.isBareNameViewInvalid());
+                                if (wasInvalid && alterRecoveryStep == 3) {
+                                    recoveredByAlter++;
+                                }
+                                if (wasInvalid && isSwitchCovered && sqlBefore == MatViewFuzzOpGenerator.BARE_NAME_SQL_BARE
+                                        && generator.hasBaseCountColumn()) {
+                                    resumedAfterCoveringFull++;
+                                }
+                                if (wasInvalid) {
+                                    alterRecoveryStep = 0;
+                                }
+                            }
+                        }
+                    }
+                    case VIEW_ALTER_AS -> {
+                        if (op.isRefused) {
+                            Assert.assertEquals(MatViewFuzzOpGenerator.BARE_NAME_SQL_QUALIFIED, op.bareNameSql);
+                            Assert.assertFalse(generator.hasBaseCountColumn());
+                            Assert.assertEquals(sqlBefore, generator.getBareNameSql());
+                            alterRefused++;
+                        } else {
+                            Assert.assertEquals(op.bareNameSql, generator.getBareNameSql());
+                            if (op.bareNameSql == MatViewFuzzOpGenerator.BARE_NAME_SQL_CALL) {
+                                alterToCall++;
+                                if (alterRecoveryStep == 2) {
+                                    alterRecoveryStep = 3;
+                                }
+                            } else {
+                                alterToQualified++;
+                            }
+                            if (!wasMixed && generator.isReadingMixedByAlter()) {
+                                alterMixingReadings++;
+                            }
+                        }
+                    }
+                    case VIEW_FULL -> {
+                        Assert.assertFalse(generator.isBareNameSwitchStanding());
+                        Assert.assertFalse(generator.isReadingMixedByAlter());
+                        isSwitchCovered |= sqlBefore == MatViewFuzzOpGenerator.BARE_NAME_SQL_BARE && generator.hasBaseCountColumn();
+                    }
+                    default -> {
+                    }
+                }
+            }
+        }
+        final int total = ROUNDS * STEPS_PER_ROUND;
+        int totalWeight = 0;
+        for (MatViewFuzzOpGenerator.Kind kind : MatViewFuzzOpGenerator.Kind.values()) {
+            totalWeight += MatViewFuzzOpGenerator.bareNameRoundWeight(kind);
+        }
+        for (MatViewFuzzOpGenerator.Kind kind : MatViewFuzzOpGenerator.Kind.values()) {
+            final int weight = MatViewFuzzOpGenerator.bareNameRoundWeight(kind);
+            if (weight == 0) {
+                Assert.assertEquals(kind + " drawn in a bare-name round", 0, kindCounts[kind.ordinal()]);
+            } else {
+                final long expected = (long) total * weight / totalWeight;
+                Assert.assertTrue(kind + " drawn " + kindCounts[kind.ordinal()] + " times, expected about " + expected, kindCounts[kind.ordinal()] > expected / 4);
+            }
+        }
+        assertShare("plain RESUME refused on a switch", resumeRefusedOnSwitchPlain, 100);
+        assertShare("RESUME SKIP BACKLOG refused on a switch", resumeRefusedOnSwitchSkip, 50);
+        assertShare("RESUME refused on the compile", resumeRefusedOnCompile, 100);
+        assertShare("ALTER ... AS to count()", alterToCall, 100);
+        assertShare("ALTER ... AS to the qualified column", alterToQualified, 50);
+        assertShare("ALTER ... AS refused for a qualified column the base lacks", alterRefused, 50);
+        assertShare("ALTER ... AS that mixes the readings of the view's rows", alterMixingReadings, 50);
+        assertShare("a switch while invalid, RESUME refused on it, ALTER ... AS to count(), RESUME accepted", recoveredByAlter, 20);
+        assertShare("a switch that a FULL covers, RESUME accepted on the bare count", resumedAfterCoveringFull, 20);
+    }
+
+    @Test
     public void testPositionalCopyRule() {
         // the rule ALTER MATERIALIZED VIEW ... AS applies to a SQL that copies by position, which the generator predicts
         final ObjList<String> view = new ObjList<>("ts", "sym", "price", "qty");
