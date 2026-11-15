@@ -90,6 +90,14 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
     private static final String M65 = "more_col_" + "z".repeat(56);
     // the hourly maximum and minimum of the price in the base rows of createLongNameBase() and insertSecondHour()
     private static final String MIN_MAX_SQL = "SELECT ts, max(price) mx, min(price) mn FROM base SAMPLE BY 1h";
+    // the error of the rule CREATE MATERIALIZED VIEW applies to a passthrough view's designated timestamp
+    private static final String PASSTHROUGH_TIMESTAMP_ERROR = "passthrough materialized view timestamp must reference the base table designated timestamp without transformation";
+    // the rows of the view pv of createPassthroughBase()
+    private static final String PASSTHROUGH_VIEW_ROWS = """
+            ts\tsym\tprice
+            2024-01-01T10:00:00.000000Z\ta\t1.0
+            2024-01-01T11:00:00.000000Z\tb\t2.0
+            """;
     private static final String POSITIONAL_COPY_HINT = "; the query relies on generated column names, so refresh copies its columns by position: "
             + "keep each view column at its position, or give the query's columns explicit names";
     private static final String RESUME_SKIP_SQL = "REFRESH MATERIALIZED VIEW price_1h RESUME SKIP BACKLOG";
@@ -1590,6 +1598,271 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPassthroughAlterKeepsUntransformedTimestamp() throws Exception {
+        // ALTER ... AS takes, as CREATE does, a SQL whose designated timestamp is the base table's designated timestamp
+        // as it is, under any spelling, table alias, alias chain, CTE or regular view, with filters and other columns.
+        // The view's FULL and incremental refreshes then give the SQL's rows over the base. SHOW CREATE of a view with
+        // such a SQL recreates it.
+        assertMemoryLeak(() -> {
+            createPassthroughBase();
+            createPassthroughRegularViews();
+            final String[] accepted = {
+                    "base",
+                    "SELECT * FROM base",
+                    "SELECT b.ts, sym, price * 2 AS price FROM base b",
+                    "SELECT TS, sym, price FROM base",
+                    "SELECT x AS ts, sym, price FROM (SELECT ts AS x, sym, price FROM base)",
+                    "WITH c AS (SELECT ts, sym, price FROM base) SELECT * FROM c",
+                    "SELECT * FROM rv_ok",
+                    "SELECT ts, sym, price FROM base TIMESTAMP(ts) WHERE price > 0",
+                    "SELECT ts2 AS other, ts, sym, price FROM base"
+            };
+            final String[] ignored = {"ts2", "ts2", "", "", "", "", "", "", "other"};
+            for (int i = 0; i < accepted.length; i++) {
+                final String query = accepted[i];
+                execute("CREATE MATERIALIZED VIEW parity AS (" + query + ") PARTITION BY DAY");
+                execute("DROP MATERIALIZED VIEW parity");
+
+                execute("ALTER MATERIALIZED VIEW pv AS (" + query + ")");
+                assertMappingColumns("pv", "", ignored[i]);
+                drainWalQueue();
+                Assert.assertEquals(query, engine.getDependentViewGraph().getViewDefinition(engine.verifyTableName("pv")).getMatViewSql());
+                execute("REFRESH MATERIALIZED VIEW pv FULL");
+                drainWalAndMatViewQueues();
+                // one row a round, at 12:00 and an hour later each round
+                final int hour = 12 + i;
+                execute("INSERT INTO base VALUES ('2024-01-01T" + hour + ":00:00.000000Z', '2024-01-01T" + hour + ":30:00.000000Z', 'c', " + hour + ".0)");
+                drainWalAndMatViewQueues();
+                assertViewStatus("pv", "valid", "");
+                assertSqlCursors("SELECT ts, sym, price FROM (" + query + ")", "pv");
+            }
+
+            final String aliasChain = accepted[4];
+            execute("ALTER MATERIALIZED VIEW pv AS (" + aliasChain + ")");
+            drainWalAndMatViewQueues();
+            final String ddl = queryShowCreate("pv").trim();
+            execute("DROP MATERIALIZED VIEW pv");
+            drainWalAndMatViewQueues();
+            execute(ddl);
+            drainWalAndMatViewQueues();
+            // SHOW CREATE prints the SQL on lines of its own, which the recreated view keeps
+            Assert.assertEquals(aliasChain, engine.getDependentViewGraph().getViewDefinition(engine.verifyTableName("pv")).getMatViewSql().trim());
+            assertViewStatus("pv", "valid", "");
+            assertSqlCursors(aliasChain, "pv");
+        });
+    }
+
+    @Test
+    public void testPassthroughAlterMatchesBaseNameInAnyCase() throws Exception {
+        // The SQL may name the view's base table in another letter case: the rule finds the base table's designated
+        // timestamp through it as the statement's base check finds the table.
+        assertMemoryLeak(() -> {
+            createPassthroughBase();
+            assertPassthroughAlterRefused("pv", "SELECT dateadd('m', 15, ts) AS ts, sym, price FROM BASE", "dateadd");
+            final String query = "SELECT ts, sym, price FROM BASE";
+            execute("ALTER MATERIALIZED VIEW pv AS (" + query + ")");
+            drainWalQueue();
+            Assert.assertEquals(query, engine.getDependentViewGraph().getViewDefinition(engine.verifyTableName("pv")).getMatViewSql());
+            execute("INSERT INTO base VALUES ('2024-01-01T12:00:00.000000Z', '2024-01-01T12:30:00.000000Z', 'c', 3.0)");
+            drainWalAndMatViewQueues();
+            assertViewStatus("pv", "valid", "");
+            assertQuery("pv").timestamp("ts").noLeakCheck().expectSize().returns(PASSTHROUGH_VIEW_ROWS + "2024-01-01T12:00:00.000000Z\tc\t3.0\n");
+        });
+    }
+
+    @Test
+    public void testPassthroughAlterOnRecreatedBaseChecksItsTimestamp() throws Exception {
+        // A base dropped and created again under its name with another designated timestamp, ts2, leaves the view
+        // invalid. ALTER ... AS checks the fix against the new table: its old timestamp column ts under TIMESTAMP(ts) is
+        // refused, ts2 under the view's timestamp name is taken, and RESUME SKIP BACKLOG makes the view follow it.
+        assertMemoryLeak(() -> {
+            createPassthroughBase();
+            execute("DROP TABLE base");
+            execute("CREATE TABLE base (ts TIMESTAMP, ts2 TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts2) PARTITION BY DAY WAL");
+            execute("INSERT INTO base VALUES ('2024-01-02T10:00:00.000000Z', '2024-01-02T10:30:00.000000Z', 'c', 3.0)");
+            drainWalAndMatViewQueues();
+            Assert.assertTrue(engine.getMatViewStateStore().getViewState(engine.verifyTableName("pv")).isInvalid());
+            assertPassthroughAlterRefused("pv", "ALTER MATERIALIZED VIEW pv AS (", "SELECT ts, sym, price FROM base TIMESTAMP(ts)", "ts,", true);
+            final String query = "SELECT ts2 AS ts, sym, price FROM base";
+            execute("ALTER MATERIALIZED VIEW pv AS (" + query + ")");
+            drainWalQueue();
+            execute("REFRESH MATERIALIZED VIEW pv RESUME SKIP BACKLOG");
+            drainWalAndMatViewQueues();
+            execute("INSERT INTO base VALUES ('2024-01-02T11:00:00.000000Z', '2024-01-02T11:30:00.000000Z', 'd', 4.0)");
+            drainWalAndMatViewQueues();
+            assertViewStatus("pv", "valid", "");
+            Assert.assertEquals(query, engine.getDependentViewGraph().getViewDefinition(engine.verifyTableName("pv")).getMatViewSql());
+            // the old base's rows stay, and the row inserted before RESUME SKIP BACKLOG falls into the gap
+            assertQuery("pv").timestamp("ts").noLeakCheck().expectSize().returns(PASSTHROUGH_VIEW_ROWS + "2024-01-02T11:30:00.000000Z\td\t4.0\n");
+        });
+    }
+
+    @Test
+    public void testPassthroughAlterOnRenamedTimestampAndViewBase() throws Exception {
+        // The rule follows the view's own timestamp name, quoted or not, a quoted base table name, and a materialized
+        // view as the base table, whose designated timestamp is the view's.
+        assertMemoryLeak(() -> {
+            createPassthroughBase();
+            execute("CREATE TABLE \"Base Q\" (ts TIMESTAMP, ts2 TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO \"Base Q\" VALUES ('2024-01-01T10:00:00.000000Z', '2024-01-01T10:30:00.000000Z', 'a', 1.0)");
+            drainWalQueue();
+            execute("CREATE MATERIALIZED VIEW ev AS (SELECT ts AS event_ts, sym, price FROM base) TIMESTAMP(event_ts) PARTITION BY DAY");
+            execute("CREATE MATERIALIZED VIEW dq AS (SELECT ts AS \"my ts\", sym, price FROM base) TIMESTAMP(\"my ts\") PARTITION BY DAY");
+            execute("CREATE MATERIALIZED VIEW qv AS (SELECT ts, sym, price FROM \"Base Q\") PARTITION BY DAY");
+            execute("CREATE MATERIALIZED VIEW price_1h AS (SELECT ts, sym, last(price) AS price FROM base SAMPLE BY 1h) PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+            execute("CREATE MATERIALIZED VIEW pv2 AS (SELECT ts, sym, price FROM price_1h) PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+
+            assertPassthroughAlterRefused("ev", "SELECT dateadd('m', 15, ts) AS event_ts, sym, price FROM base", "dateadd");
+            assertPassthroughAlterRefused("ev", "SELECT ts2 AS event_ts, sym, price FROM base TIMESTAMP(ts2)", "ts2");
+            // the designated timestamp event_ts passes the base's through; the view ignores the query column ts
+            execute("ALTER MATERIALIZED VIEW ev AS (SELECT ts2 AS ts, ts AS event_ts, sym, price FROM base)");
+            assertMappingColumns("ev", "", "ts");
+            assertPassthroughAlterRefused("dq", "SELECT dateadd('m', 15, ts) AS \"my ts\", sym, price FROM base", "dateadd");
+            execute("ALTER MATERIALIZED VIEW dq AS (SELECT ts AS \"my ts\", sym, price FROM base WHERE price > 0)");
+            assertPassthroughAlterRefused("qv", "SELECT dateadd('m', 15, ts) AS ts, sym, price FROM \"Base Q\"", "dateadd");
+            execute("ALTER MATERIALIZED VIEW qv AS (SELECT ts, sym, price FROM \"Base Q\" WHERE price > 0)");
+            assertPassthroughAlterRefused("pv2", "SELECT dateadd('h', 1, ts) AS ts, sym, price FROM price_1h", "dateadd");
+            execute("ALTER MATERIALIZED VIEW pv2 AS (SELECT ts, sym, price * 2 AS price FROM price_1h)");
+            drainWalQueue();
+
+            execute("INSERT INTO base VALUES ('2024-01-01T12:00:00.000000Z', '2024-01-01T12:30:00.000000Z', 'c', 3.0)");
+            execute("INSERT INTO \"Base Q\" VALUES ('2024-01-01T11:00:00.000000Z', '2024-01-01T11:30:00.000000Z', 'b', 2.0)");
+            drainWalAndMatViewQueues();
+            drainWalAndMatViewQueues();
+            for (String view : new String[]{"ev", "dq", "qv", "pv2"}) {
+                assertViewStatus(view, "valid", "");
+            }
+            final String rows = """
+                    2024-01-01T10:00:00.000000Z\ta\t1.0
+                    2024-01-01T11:00:00.000000Z\tb\t2.0
+                    2024-01-01T12:00:00.000000Z\tc\t3.0
+                    """;
+            assertQuery("ev").timestamp("event_ts").noLeakCheck().expectSize().returns("event_ts\tsym\tprice\n" + rows);
+            assertQuery("dq").timestamp("my ts").noLeakCheck().expectSize().returns("my ts\tsym\tprice\n" + rows);
+            assertQuery("qv").timestamp("ts").noLeakCheck().expectSize().returns(PASSTHROUGH_VIEW_ROWS);
+            // the base insert refreshed the 12:00 bucket of price_1h, which pv2 doubles from then on
+            assertQuery("pv2").timestamp("ts").noLeakCheck().expectSize().returns(PASSTHROUGH_VIEW_ROWS + "2024-01-01T12:00:00.000000Z\tc\t6.0\n");
+        });
+    }
+
+    @Test
+    public void testPassthroughAlterRefusesTransformedNanosTimestamp() throws Exception {
+        // The rule holds for a nanosecond designated timestamp too.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base_ns (ts TIMESTAMP_NS, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base_ns VALUES ('2024-01-01T10:00:00.000000001Z', 'a', 1.0)");
+            drainWalQueue();
+            execute("CREATE MATERIALIZED VIEW nv AS (SELECT ts, sym, price FROM base_ns) PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+            assertPassthroughAlterRefused("nv", "SELECT dateadd('m', 15, ts) AS ts, sym, price FROM base_ns", "dateadd");
+            execute("ALTER MATERIALIZED VIEW nv AS (SELECT ts, sym, price FROM base_ns WHERE price > 0)");
+            drainWalQueue();
+            execute("INSERT INTO base_ns VALUES ('2024-01-01T11:00:00.000000002Z', 'b', 2.0), ('2024-01-01T12:00:00.000000003Z', 'c', -1.0)");
+            drainWalAndMatViewQueues();
+            assertViewStatus("nv", "valid", "");
+            assertQuery("nv").timestamp("ts").noLeakCheck().expectSize().returns("""
+                    ts\tsym\tprice
+                    2024-01-01T10:00:00.000000001Z\ta\t1.0
+                    2024-01-01T11:00:00.000000002Z\tb\t2.0
+                    """);
+        });
+    }
+
+    @Test
+    public void testPassthroughAlterRefusesTransformedTimestamp() throws Exception {
+        // A non-aggregating view replaces the base table's intervals of its designated timestamp at each refresh, so
+        // ALTER ... AS refuses, as CREATE does, a SQL whose designated timestamp is not the base table's designated
+        // timestamp as it is: shifted, another column, or either through a subquery, a CTE or a regular view. The error
+        // points at the query column, or at the SQL under a wildcard. The view keeps refreshing with its SQL.
+        assertMemoryLeak(() -> {
+            createPassthroughBase();
+            createPassthroughRegularViews();
+            final String[][] refused = {
+                    {"SELECT dateadd('m', 15, ts) AS ts, sym, price FROM base", "dateadd"},
+                    {"SELECT dateadd('m', -15, ts) AS ts, sym, price FROM base", "dateadd"},
+                    {"SELECT ts2 AS ts, sym, price FROM base TIMESTAMP(ts2)", "ts2 AS ts"},
+                    {"SELECT ts2 AS ts, ts AS ts2, sym, price FROM base TIMESTAMP(ts2)", "ts2 AS ts"},
+                    {"SELECT x AS ts, sym, price FROM (SELECT dateadd('m', 15, ts) AS x, sym, price FROM base)", "x AS ts"},
+                    {"SELECT ts, sym, price FROM (SELECT ts2 AS ts, sym, price FROM base) TIMESTAMP(ts)", "ts,"},
+                    {"SELECT * FROM (SELECT dateadd('m', 15, ts) AS ts, sym, price FROM base)", null},
+                    {"WITH s AS (SELECT dateadd('m', 15, ts) AS ts, sym, price FROM base) SELECT * FROM s", null},
+                    {"SELECT * FROM rv", null}
+            };
+            for (String[] shape : refused) {
+                assertPassthroughAlterRefused("pv", shape[0], shape[1]);
+                assertCreateRefusesPassthroughTimestamp(shape[0]);
+            }
+            execute("INSERT INTO base VALUES ('2024-01-01T12:00:00.000000Z', '2024-01-01T12:30:00.000000Z', 'c', 3.0)");
+            drainWalAndMatViewQueues();
+            assertViewStatus("pv", "valid", "");
+            assertQuery("pv").timestamp("ts").noLeakCheck().expectSize().returns(PASSTHROUGH_VIEW_ROWS + "2024-01-01T12:00:00.000000Z\tc\t3.0\n");
+        });
+    }
+
+    @Test
+    public void testPassthroughAlterWithBaseChecksNewBaseTimestamp() throws Exception {
+        // WITH BASE checks the SQL against the new base table's designated timestamp, event_time here: the column named
+        // as the old base's timestamp, or a shifted event_time, is refused before the view goes invalid, and event_time
+        // under the view's timestamp name is taken.
+        assertMemoryLeak(() -> {
+            createPassthroughBase();
+            execute("CREATE TABLE base3 (ts TIMESTAMP, event_time TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(event_time) PARTITION BY DAY WAL");
+            execute("INSERT INTO base3 VALUES ('2024-01-02T10:00:00.000000Z', '2024-01-02T10:30:00.000000Z', 'c', 3.0)");
+            drainWalQueue();
+            final String head = "ALTER MATERIALIZED VIEW pv WITH BASE base3 AS (";
+            assertPassthroughAlterRefused("pv", head, "SELECT ts, sym, price FROM base3 TIMESTAMP(ts)", "ts,", false);
+            assertPassthroughAlterRefused("pv", head, "SELECT dateadd('m', 15, event_time) AS ts, sym, price FROM base3", "dateadd", false);
+            Assert.assertNull(engine.getMatViewStateStore().getViewState(engine.verifyTableName("pv")).getBacklogLostReason());
+            assertDependents("base", "pv");
+            assertDependents("base3");
+
+            execute(head + "SELECT event_time AS ts, sym, price FROM base3)");
+            drainWalAndMatViewQueues();
+            assertViewStatus("pv", "invalid", "base table changed");
+            execute("REFRESH MATERIALIZED VIEW pv RESUME SKIP BACKLOG");
+            drainWalAndMatViewQueues();
+            execute("INSERT INTO base3 VALUES ('2024-01-02T11:00:00.000000Z', '2024-01-02T11:30:00.000000Z', 'd', 4.0)");
+            drainWalAndMatViewQueues();
+            assertViewStatus("pv", "valid", "");
+            // the old base's rows stay, and the row base3 held before RESUME SKIP BACKLOG falls into the gap
+            assertQuery("pv").timestamp("ts").noLeakCheck().expectSize().returns(PASSTHROUGH_VIEW_ROWS + "2024-01-02T11:30:00.000000Z\td\t4.0\n");
+        });
+    }
+
+    @Test
+    public void testPassthroughTimestampCheckOrder() throws Exception {
+        // The rule comes after the designated timestamp check, so a SQL without the view's designated timestamp keeps
+        // that error, and before the column checks, so a shifted timestamp fails on the rule first. An aggregating view
+        // computes its designated timestamp, which the rule does not apply to.
+        assertMemoryLeak(() -> {
+            createPassthroughBase();
+            execute("CREATE MATERIALIZED VIEW price_1h AS (SELECT ts, sym, last(price) AS price FROM base SAMPLE BY 1h) PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+            final String noDesignated = "materialized view query must produce the view's designated timestamp as its designated timestamp [column=ts, type=TIMESTAMP]";
+            final String head = "ALTER MATERIALIZED VIEW pv AS (";
+            final String[][] notDesignated = {
+                    {"SELECT ts2 AS ts, sym, price FROM base", "ts2"},
+                    {"SELECT null::TIMESTAMP AS ts, sym, price FROM base", "::"},
+                    {"SELECT ts::TIMESTAMP_NS AS ts, sym, price FROM base", "::"},
+                    {"SELECT ts AS ts0, sym, price FROM base", "SELECT"}
+            };
+            for (String[] shape : notDesignated) {
+                assertAlterRefused("pv", head + shape[0] + ')', head.length() + shape[0].indexOf(shape[1]), noDesignated);
+            }
+            assertPassthroughAlterRefused("pv", "SELECT dateadd('m', 15, ts) AS ts, sym, price AS px FROM base", "dateadd");
+
+            execute("ALTER MATERIALIZED VIEW price_1h AS (SELECT timestamp_floor('1h', ts) AS ts, sym, last(price) AS price FROM base ORDER BY ts)");
+            drainWalQueue();
+            execute("INSERT INTO base VALUES ('2024-01-01T12:10:00.000000Z', '2024-01-01T12:30:00.000000Z', 'c', 3.0)");
+            drainWalAndMatViewQueues();
+            assertViewStatus("price_1h", "valid", "");
+            assertQuery("price_1h").timestamp("ts").noLeakCheck().expectSize().returns(PASSTHROUGH_VIEW_ROWS + "2024-01-01T12:00:00.000000Z\tc\t3.0\n");
+        });
+    }
+
+    @Test
     public void testPositionalAlterAfterByNameReorder() throws Exception {
         // A by-name ALTER that reordered the SQL leaves the view's columns in their order, so a later SQL that drops
         // the long reference's alias, and so copies by position, must follow the view's order, not the previous SQL's.
@@ -1958,6 +2231,45 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPositionalPassthroughAlterRefusesTransformedTimestamp() throws Exception {
+        // A SQL that copies by position meets the passthrough timestamp rule before its column checks, which a shifted
+        // timestamp under the view's name and at its position would pass. A SQL that passes the base's timestamp
+        // through goes on to them: a type with no cast to the view column's at its position fails, and one that keeps
+        // the view's columns at their positions is taken.
+        assertMemoryLeak(() -> {
+            createLongNameBase("base");
+            execute("CREATE MATERIALIZED VIEW ptv AS (SELECT ts, " + L65 + ", price, amount FROM base) PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+            assertPassthroughAlterRefused("ptv", "SELECT dateadd('m', 15, ts) AS ts, " + L65 + ", price, amount FROM base", "dateadd");
+            final String noCast = "ALTER MATERIALIZED VIEW ptv AS (SELECT ts, " + L65 + ", ok AS price, amount FROM base)";
+            assertAlterRefused("ptv", noCast, noCast.indexOf("SELECT"), "inconvertible types: BOOLEAN -> DOUBLE [from=price, to=price]");
+            insertSecondHour("base");
+            assertViewStatus("ptv", "valid", "");
+            assertQuery("SELECT ts, price, amount FROM ptv").timestamp("ts").noLeakCheck().expectSize().returns("""
+                    ts\tprice\tamount
+                    2024-01-01T00:10:00.000000Z\t1.0\t100.0
+                    2024-01-01T00:20:00.000000Z\t9.0\t900.0
+                    2024-01-01T01:10:00.000000Z\t2.0\t200.0
+                    2024-01-01T01:20:00.000000Z\t6.0\t600.0
+                    """);
+
+            execute("ALTER MATERIALIZED VIEW ptv AS (SELECT ts, " + L65 + ", price * 2 AS price, amount FROM base)");
+            assertMappingColumns("ptv", "", "");
+            drainWalQueue();
+            execute("REFRESH MATERIALIZED VIEW ptv FULL");
+            drainWalAndMatViewQueues();
+            assertViewStatus("ptv", "valid", "");
+            assertQuery("SELECT ts, price, amount FROM ptv").timestamp("ts").noLeakCheck().expectSize().returns("""
+                    ts\tprice\tamount
+                    2024-01-01T00:10:00.000000Z\t2.0\t100.0
+                    2024-01-01T00:20:00.000000Z\t18.0\t900.0
+                    2024-01-01T01:10:00.000000Z\t4.0\t200.0
+                    2024-01-01T01:20:00.000000Z\t12.0\t600.0
+                    """);
+        });
+    }
+
+    @Test
     public void testRebaseRegistersViewOnLoop() throws Exception {
         // A rebase of a view on a loop registers the rebased view with its edge, on the loop.
         setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
@@ -2139,6 +2451,17 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
         isFailArmed.set(true);
     }
 
+    // CREATE MATERIALIZED VIEW refuses the query as the SQL of a passthrough view, with the error of the passthrough
+    // timestamp rule, at a position of its own.
+    private static void assertCreateRefusesPassthroughTimestamp(String query) {
+        try {
+            execute("CREATE MATERIALIZED VIEW parity AS (" + query + ") PARTITION BY DAY");
+            Assert.fail("CREATE must refuse: " + query);
+        } catch (SqlException e) {
+            TestUtils.assertEquals(PASSTHROUGH_TIMESTAMP_ERROR, e.getFlyweightMessage());
+        }
+    }
+
     private static void assertDependents(String baseTableName, String... expected) {
         final io.questdb.std.ObjList<TableToken> sink = new io.questdb.std.ObjList<>();
         engine.getDependentViewGraph().getDependentViews(engine.verifyTableName(baseTableName), sink);
@@ -2204,6 +2527,11 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
     // Fails the statement twice, with the message at the position, and asserts that it left the view as it was: no
     // view transaction, the same SQL, base table and rows, valid, and its latch free.
     private void assertAlterRefused(String viewName, String sql, int position, String message) throws Exception {
+        assertAlterRefused(viewName, sql, position, message, false);
+    }
+
+    // As assertAlterRefused() above, on a view that is invalid, or valid, before and after the statement.
+    private void assertAlterRefused(String viewName, String sql, int position, String message, boolean isInvalid) throws Exception {
         Assert.assertTrue(position > -1);
         final TableToken viewToken = engine.verifyTableName(viewName);
         final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
@@ -2224,7 +2552,7 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
         final MatViewDefinition definitionAfter = engine.getDependentViewGraph().getViewDefinition(viewToken);
         Assert.assertEquals(definition.getMatViewSql(), definitionAfter.getMatViewSql());
         Assert.assertEquals(definition.getBaseTableName(), definitionAfter.getBaseTableName());
-        Assert.assertFalse(state.isInvalid());
+        Assert.assertEquals(isInvalid, state.isInvalid());
         Assert.assertFalse(state.isLocked());
         final StringSink rowsAfter = new StringSink();
         printSql(viewName, rowsAfter);
@@ -2245,6 +2573,20 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
     // The rows of a view with the mx and mn columns.
     private void assertMinMaxRows(String viewName, String expected) throws Exception {
         assertQuery("SELECT ts, mx, mn FROM " + viewName + " ORDER BY ts").timestamp("ts").noLeakCheck().expectSize().returns("ts\tmx\tmn\n" + expected);
+    }
+
+    // Fails ALTER MATERIALIZED VIEW ... AS (query) on the valid view with the passthrough timestamp rule, see
+    // assertAlterRefused(), at the token of the query, or at the query's start when the token is null.
+    private void assertPassthroughAlterRefused(String viewName, String query, String token) throws Exception {
+        assertPassthroughAlterRefused(viewName, "ALTER MATERIALIZED VIEW " + viewName + " AS (", query, token, false);
+    }
+
+    // As assertPassthroughAlterRefused() above, for the statement that starts with head, on a view that is invalid, or
+    // valid, before and after the statement.
+    private void assertPassthroughAlterRefused(String viewName, String head, String query, String token, boolean isInvalid) throws Exception {
+        final int tokenIndex = token != null ? query.indexOf(token) : 0;
+        Assert.assertTrue(tokenIndex > -1);
+        assertAlterRefused(viewName, head + query + ')', head.length() + tokenIndex, PASSTHROUGH_TIMESTAMP_ERROR, isInvalid);
     }
 
     // A base renamed under a valid view invalidates it; ALTER ... WITH BASE follows the renamed table, whose table id
@@ -2383,6 +2725,28 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
                 ('2024-01-01T00:20:00.000000Z', 'a', 'b', 'c', 9.0, 900.0, false)
                 """);
         drainWalQueue();
+    }
+
+    // The base of the passthrough timestamp tests, whose ts2 is a TIMESTAMP column besides the designated timestamp
+    // ts, with rows at 10:00 and 11:00, and the passthrough view pv that mirrors it, see PASSTHROUGH_VIEW_ROWS.
+    private void createPassthroughBase() throws Exception {
+        execute("CREATE TABLE base (ts TIMESTAMP, ts2 TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("""
+                INSERT INTO base VALUES
+                ('2024-01-01T10:00:00.000000Z', '2024-01-01T10:30:00.000000Z', 'a', 1.0),
+                ('2024-01-01T11:00:00.000000Z', '2024-01-01T10:45:00.000000Z', 'b', 2.0)
+                """);
+        drainWalQueue();
+        execute("CREATE MATERIALIZED VIEW pv AS (SELECT ts, sym, price FROM base) PARTITION BY DAY");
+        drainWalAndMatViewQueues();
+        assertQuery("pv").timestamp("ts").noLeakCheck().expectSize().returns(PASSTHROUGH_VIEW_ROWS);
+    }
+
+    // Regular views over the base of createPassthroughBase(): rv names ts2 ts and takes it as its designated timestamp,
+    // rv_ok passes ts through.
+    private void createPassthroughRegularViews() throws Exception {
+        execute("CREATE VIEW rv AS (SELECT ts2 AS ts, sym, price FROM base TIMESTAMP(ts2))");
+        execute("CREATE VIEW rv_ok AS (SELECT ts, sym, price FROM base)");
     }
 
     // Two rows in the second hour of the base of createLongNameBase(), whose price has the maximum 6.0 and the minimum

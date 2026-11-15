@@ -1967,8 +1967,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     viewDefinition,
                     viewMetadata,
                     query,
+                    baseTableToken,
                     asm,
-                    configuration
+                    engine
             );
             compiler.compileMatViewSql(executionContext, matViewToken.getTableName(), matViewSql, matViewSqlPosition, validator);
             columnMappingSummary = validator.getColumnMappingSummary();

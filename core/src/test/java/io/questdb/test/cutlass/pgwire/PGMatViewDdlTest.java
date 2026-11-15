@@ -288,6 +288,54 @@ public class PGMatViewDdlTest extends BasePGTest {
     }
 
     @Test
+    public void testPassthroughAlterAsTransformedTimestampRefusedAtEachExecution() throws Exception {
+        // A non-aggregating view's designated timestamp must be the base table's designated timestamp as it is, so
+        // ALTER ... AS refuses a shifted one. A prepared one compiles again at each execution, so it fails each time as
+        // a fresh compile does, writes nothing, and the view keeps refreshing with its SQL.
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base VALUES ('2024-01-01T10:00:00.000000Z', 'a', 1.0), ('2024-01-01T11:00:00.000000Z', 'b', 2.0)");
+            drainWalQueue();
+            final String viewSql = "SELECT ts, sym, price FROM base";
+            execute("CREATE MATERIALIZED VIEW mv AS (" + viewSql + ") PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+            final long viewSeqTxn = viewSeqTxn();
+            final String alterSql = "ALTER MATERIALIZED VIEW mv AS (SELECT dateadd('m', 15, ts) AS ts, sym, price FROM base)";
+            final ServerErrorMessage expected = freshError(connection, alterSql);
+            TestUtils.assertEquals(
+                    "passthrough materialized view timestamp must reference the base table designated timestamp without transformation",
+                    expected.getMessage()
+            );
+            // the position the server reports counts from 1
+            Assert.assertEquals(alterSql.indexOf("dateadd") + 1, expected.getPosition());
+            try (PreparedStatement alter = connection.prepareStatement(alterSql)) {
+                for (int i = 0; i < 2; i++) {
+                    try {
+                        alter.execute();
+                        Assert.fail("the prepared ALTER ... AS must fail as a fresh compile does");
+                    } catch (PSQLException e) {
+                        Assert.assertNotNull(e.getServerErrorMessage());
+                        TestUtils.assertEquals(expected.getMessage(), e.getServerErrorMessage().getMessage());
+                        Assert.assertEquals(expected.getPosition(), e.getServerErrorMessage().getPosition());
+                    }
+                }
+            }
+            drainWalAndMatViewQueues();
+            Assert.assertEquals(viewSeqTxn, viewSeqTxn());
+            assertQueryResult(connection, "SELECT view_status, view_sql, suspended FROM materialized_views() JOIN wal_tables() ON view_name = name",
+                    "view_status[VARCHAR],view_sql[VARCHAR],suspended[BIT]\nvalid," + viewSql + ",false\n");
+            execute("INSERT INTO base VALUES ('2024-01-01T12:00:00.000000Z', 'c', 3.0)");
+            drainWalAndMatViewQueues();
+            assertQueryResult(connection, "SELECT * FROM mv ORDER BY ts", """
+                    ts[TIMESTAMP],sym[VARCHAR],price[DOUBLE]
+                    2024-01-01 10:00:00.0,a,1.0
+                    2024-01-01 11:00:00.0,b,2.0
+                    2024-01-01 12:00:00.0,c,3.0
+                    """);
+        });
+    }
+
+    @Test
     public void testPositionalAlterAsRefusedAtEachExecution() throws Exception {
         // An unaliased reference to a column name longer than 64 characters makes the SQL copy by position, so ALTER
         // ... AS refuses one that moves a view column. A prepared one compiles again at each execution, so it fails

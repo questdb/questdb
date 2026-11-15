@@ -24,7 +24,7 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
@@ -32,13 +32,16 @@ import io.questdb.cairo.mv.MatViewColumnMapping;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationImpl;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
+import io.questdb.griffin.model.QueryColumn;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.datetime.CommonUtils;
 import org.jetbrains.annotations.Nullable;
 
@@ -49,6 +52,10 @@ import org.jetbrains.annotations.Nullable;
  *     <li>the SAMPLE BY interval and unit of the view's, or, for a non-aggregating passthrough view, a passthrough SQL
  *     without one; the parse checks the time zone and offset;</li>
  *     <li>the view's designated timestamp produced under its name and type, as the query's designated timestamp;</li>
+ *     <li>for a passthrough view, that timestamp taken from the designated timestamp of the new definition's base table
+ *     without transformation, through aliases and nested selects, as CREATE MATERIALIZED VIEW requires, see
+ *     {@link CreateMatViewOperationImpl#isPassthroughTimestampColumn}: refresh replaces the base table's intervals of
+ *     that timestamp in the view;</li>
  *     <li>an implicit cast from every query column to the view column of its name, see
  *     {@link io.questdb.griffin.RecordToRowCopierUtils#isCopierConvertible(int, int)};</li>
  *     <li>no view column replaced by a differently named query column at its position, and, for a SQL that copies by
@@ -60,28 +67,38 @@ import org.jetbrains.annotations.Nullable;
  */
 final class AlterMatViewQueryValidator implements MatViewQueryValidator {
     private BytecodeAssembler asm;
+    private TableToken baseTableToken;
     private MatViewColumnMapping.Summary columnMappingSummary;
-    private CairoConfiguration configuration;
+    private CairoEngine engine;
+    // whether the query column under the view's timestamp name passes the base table's designated timestamp through,
+    // which validateModel() tells a passthrough view and validateMetadata() requires
+    private boolean isTimestampPassedThrough;
     private SqlParser.AlterMatViewQuery query;
     private MatViewDefinition viewDefinition;
     private RecordMetadata viewMetadata;
     private TableToken viewToken;
 
+    /**
+     * @param baseTableToken the base table of the new definition: the table WITH BASE names, or the view's current one
+     */
     AlterMatViewQueryValidator of(
             TableToken viewToken,
             MatViewDefinition viewDefinition,
             RecordMetadata viewMetadata,
             SqlParser.AlterMatViewQuery query,
+            TableToken baseTableToken,
             BytecodeAssembler asm,
-            CairoConfiguration configuration
+            CairoEngine engine
     ) {
         this.viewToken = viewToken;
         this.viewDefinition = viewDefinition;
         this.viewMetadata = viewMetadata;
         this.query = query;
+        this.baseTableToken = baseTableToken;
         this.asm = asm;
-        this.configuration = configuration;
+        this.engine = engine;
         this.columnMappingSummary = null;
+        this.isTimestampPassedThrough = false;
         return this;
     }
 
@@ -109,6 +126,9 @@ final class AlterMatViewQueryValidator implements MatViewQueryValidator {
                     .put(", type=").put(ColumnType.nameOf(viewTimestampType))
                     .put(']');
         }
+        if (viewDefinition.isPassthrough() && !isTimestampPassedThrough) {
+            throw SqlException.$(query.getColumnPosition(viewTimestampName), CreateMatViewOperationImpl.PASSTHROUGH_TIMESTAMP_ERROR);
+        }
 
         if (hasGeneratedColumnNames) {
             // A SQL that references a column name longer than 64 characters without an alias copies by position, as
@@ -129,7 +149,7 @@ final class AlterMatViewQueryValidator implements MatViewQueryValidator {
                                         + "keep each view column at its position, or give the query's columns explicit names");
                     }
                 }
-                MatViewColumnMapping.newRecordToRowCopier(asm, queryMetadata, viewMetadata, true, configuration);
+                MatViewColumnMapping.newRecordToRowCopier(asm, queryMetadata, viewMetadata, true, engine.getConfiguration());
             } catch (CairoException e) {
                 throw SqlException.$(query.sqlPosition, e.getFlyweightMessage());
             }
@@ -183,6 +203,24 @@ final class AlterMatViewQueryValidator implements MatViewQueryValidator {
             if (!CreateMatViewOperationImpl.isPassthroughQuery(functionFactoryCache, queryModel)) {
                 throw SqlException.$(query.sqlPosition, "non-aggregating materialized view takes only a non-aggregating query over its base table [view=")
                         .put(viewToken.getTableName()).put(']');
+            }
+            // validateMetadata() requires the query's designated timestamp under the view's timestamp name, and the
+            // columns of a select model have unique names, so the column of that name is the one to check.
+            final CharSequence viewTimestampName = viewMetadata.getColumnName(viewMetadata.getTimestampIndex());
+            final ObjList<QueryColumn> columns = queryModel.getBottomUpColumns();
+            try (TableMetadata baseTableMetadata = engine.getTableMetadata(baseTableToken)) {
+                for (int i = 0, n = columns.size(); i < n; i++) {
+                    final QueryColumn column = columns.getQuick(i);
+                    if (Chars.equalsIgnoreCase(SqlUtil.toColumnName(column.getName()), viewTimestampName)) {
+                        isTimestampPassedThrough = CreateMatViewOperationImpl.isPassthroughTimestampColumn(
+                                queryModel,
+                                column,
+                                baseTableToken.getTableName(),
+                                baseTableMetadata
+                        );
+                        break;
+                    }
+                }
             }
             return;
         }

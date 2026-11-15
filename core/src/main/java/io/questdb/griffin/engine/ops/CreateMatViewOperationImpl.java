@@ -87,6 +87,8 @@ import static io.questdb.griffin.model.ExpressionNode.LITERAL;
  * queries.
  */
 public class CreateMatViewOperationImpl implements CreateMatViewOperation {
+    // the error of the rule isPassthroughTimestampColumn() tells, which ALTER MATERIALIZED VIEW ... AS applies too
+    public static final String PASSTHROUGH_TIMESTAMP_ERROR = "passthrough materialized view timestamp must reference the base table designated timestamp without transformation";
     private final String baseTableName;
     private final int baseTableNamePosition;
     private final CairoConfiguration configuration;
@@ -538,9 +540,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                     if (baseColumnIndex > -1 && passthroughColumnNames.getQuick(baseColumnIndex) == null) {
                         passthroughColumnNames.setQuick(baseColumnIndex, columnName);
                     }
-                    // The projection AST references the input model, not its own output aliases.
-                    if (resolveBaseColumnIndex(column.getAst(), queryModel.getNestedModel(), baseTableName, baseTableMetadata)
-                            == baseTableMetadata.getTimestampIndex()) {
+                    if (isPassthroughTimestampColumn(queryModel, column, baseTableName, baseTableMetadata)) {
                         passthroughTimestampColumnNames.add(columnName);
                     }
                 }
@@ -638,8 +638,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                 final int timestampPosition = createTableOperation.getTimestampColumnName() != null
                         ? createTableOperation.getTimestampColumnNamePosition()
                         : selectTextPosition + createColumnModelMap.get(timestampName).getColumnNamePos();
-                throw SqlException.$(timestampPosition,
-                        "passthrough materialized view timestamp must reference the base table designated timestamp without transformation");
+                throw SqlException.$(timestampPosition, PASSTHROUGH_TIMESTAMP_ERROR);
             }
             setPassthroughChunkInterval();
         }
@@ -664,6 +663,23 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
      */
     public static boolean isPassthroughQuery(@NotNull FunctionFactoryCache functionFactoryCache, @NotNull IQueryModel queryModel) {
         return isPassthrough(functionFactoryCache, queryModel, new IntList(), new LowerCaseCharSequenceHashSet(), new ArrayDeque<>());
+    }
+
+    /**
+     * Returns true when an output column of a passthrough view's optimised query references the base table's designated
+     * timestamp without transformation, through aliases and nested selects, as a passthrough view's designated timestamp
+     * must: refresh replaces the base table's intervals of that timestamp in the view. ALTER MATERIALIZED VIEW ... AS
+     * applies the rule as CREATE MATERIALIZED VIEW does.
+     */
+    public static boolean isPassthroughTimestampColumn(
+            @NotNull IQueryModel queryModel,
+            @NotNull QueryColumn column,
+            @NotNull CharSequence baseTableName,
+            @NotNull TableMetadata baseTableMetadata
+    ) {
+        // The projection AST references the input model, not its own output aliases.
+        return resolveBaseColumnIndex(column.getAst(), queryModel.getNestedModel(), baseTableName, baseTableMetadata)
+                == baseTableMetadata.getTimestampIndex();
     }
 
     private static void copyBaseTableSymbolColumnCapacity(

@@ -401,6 +401,98 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
+    public void testPassthroughSqlGeneratorEmitsBothKinds() {
+        // testPassthroughViewAlterAs must keep drawing both kinds of SQL: a designated timestamp that passes the base's
+        // through, which ALTER ... AS takes, and one that a level of the SQL shifts with dateadd() or takes from ts2,
+        // which it refuses, at each nesting depth, with a shift inside and at the top, and with a CTE and a wildcard at
+        // the top. The error position a refused SQL predicts is that of its outermost timestamp column, or the SQL's
+        // start under a wildcard. The seed is fixed, so a failure reproduces.
+        final Rnd rnd = new Rnd(42, 42);
+        final PassthroughSql sql = new PassthroughSql();
+        final int[] kindCounts = new int[3];
+        final int[] passedThroughDepthCounts = new int[3];
+        final int[] refusedDepthCounts = new int[3];
+        int innerShift = 0;
+        int topShift = 0;
+        int cteTop = 0;
+        int wildcardTop = 0;
+        for (int i = 0; i < 500; i++) {
+            generatePassthroughSql(rnd, sql);
+            final String text = sql.sql.toString();
+            kindCounts[sql.kind]++;
+            switch (sql.kind) {
+                case PassthroughSql.PASSED_THROUGH -> {
+                    Assert.assertFalse(text, text.contains("dateadd") || text.contains("TIMESTAMP(ts2)") || text.contains("ts2 AS"));
+                    Assert.assertEquals(text, -1, sql.transformLevel);
+                    passedThroughDepthCounts[sql.depth]++;
+                }
+                case PassthroughSql.SHIFTED -> {
+                    // a shift of the timestamp under the base's name, see generatePassthroughSql()
+                    Assert.assertTrue(text, text.matches(".*dateadd\\('[mh]', -?[0-9]+, (ts|TS|\"ts\"|base\\.ts|b\\.ts|t\\.ts)\\).*")
+                            && !text.contains("TIMESTAMP(ts2)"));
+                    if (sql.transformLevel < sql.depth) {
+                        innerShift++;
+                    } else {
+                        topShift++;
+                    }
+                    refusedDepthCounts[sql.depth]++;
+                }
+                default -> {
+                    Assert.assertTrue(text, text.contains("ts2 AS ") && text.contains("TIMESTAMP(ts2)") && !text.contains("dateadd"));
+                    Assert.assertEquals(text, 0, sql.transformLevel);
+                    refusedDepthCounts[sql.depth]++;
+                }
+            }
+            if (sql.isCteTop) {
+                Assert.assertTrue(text, text.startsWith("WITH c AS ("));
+                cteTop++;
+            }
+            if (sql.isWildcardTop) {
+                Assert.assertEquals(text, 0, sql.timestampPosition);
+                wildcardTop++;
+            } else {
+                Assert.assertTrue(text, text.startsWith(sql.topTimestampColumn, sql.timestampPosition));
+                Assert.assertTrue(text, sql.topTimestampColumn.equals("ts") || sql.topTimestampColumn.endsWith(" AS ts")
+                        || sql.topTimestampColumn.equals("TS") || sql.topTimestampColumn.equals("\"ts\"")
+                        || sql.topTimestampColumn.endsWith(".ts"));
+            }
+        }
+        for (int depth = 0; depth < 3; depth++) {
+            Assert.assertTrue("no SQL passing the timestamp through at depth " + depth, passedThroughDepthCounts[depth] > 20);
+            Assert.assertTrue("no refused SQL at depth " + depth, refusedDepthCounts[depth] > 20);
+        }
+        Assert.assertTrue("too few SQL passing the timestamp through", kindCounts[PassthroughSql.PASSED_THROUGH] > 150);
+        Assert.assertTrue("too few SQL shifting the timestamp", kindCounts[PassthroughSql.SHIFTED] > 75);
+        Assert.assertTrue("too few SQL taking ts2 as the timestamp", kindCounts[PassthroughSql.OTHER_COLUMN] > 75);
+        Assert.assertTrue("too few shifts inside the SQL", innerShift > 20);
+        Assert.assertTrue("too few shifts at the top", topShift > 20);
+        Assert.assertTrue("too few CTEs at the top", cteTop > 20);
+        Assert.assertTrue("too few wildcards at the top", wildcardTop > 20);
+    }
+
+    @Test
+    public void testPassthroughViewAlterAs() throws Exception {
+        // ALTER MATERIALIZED VIEW ... AS on a non-aggregating passthrough view, mixed with ingestion in and out of
+        // order, WAL apply and refresh job runs at random points, FULL refreshes and restarts of the view states. Half
+        // of the new SQLs take the base table's designated timestamp as it is through a random chain of aliases,
+        // subqueries and a CTE, which the statement takes; the others shift it with dateadd() at a random level of such
+        // a chain, or take ts2 as the designated timestamp, which the statement refuses with the passthrough timestamp
+        // rule, at the outermost timestamp column, and no view transaction, see generatePassthroughSql(). Each SQL the
+        // statement takes produces the base's rows as they are, so the oracle is the view's SQL run on the base: at
+        // each check, the view holds exactly its rows.
+        // The budget: questdb.fuzz.matview.rounds independent rounds of questdb.fuzz.matview.steps operations.
+        final int rounds = Integer.getInteger("questdb.fuzz.matview.rounds", 1);
+        final int steps = Integer.getInteger("questdb.fuzz.matview.steps", -1);
+        assertMemoryLeak(() -> {
+            final Rnd rnd = generateRandom(LOG);
+            for (int round = 0; round < rounds; round++) {
+                LOG.info().$("fuzz: passthrough round ").$(round).$();
+                runPassthroughAlterOperations(rnd, steps > 0 ? steps : 40 + rnd.nextInt(40));
+            }
+        });
+    }
+
+    @Test
     public void testPeriodRefreshConcurrent() throws Exception {
         final TestMicroClock testClock = new TestMicroClock(MicrosTimestampDriver.floor("2000-01-01T00:00:00.000000Z"));
         testMicrosClock = testClock;
@@ -1580,6 +1672,27 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         drainWalAndMatViewQueues();
     }
 
+    // A check of testPassthroughViewAlterAs(): catches the view up, as the next base commit would after a restart lost
+    // its refresh, and asserts that the view is valid, has the SQL the fuzzer last saw taken, and holds exactly the
+    // rows the SQL gives on the base.
+    private static void checkPassthroughFuzzView(String viewSql, int step) throws Exception {
+        final TableToken viewToken = engine.verifyTableName("mv");
+        engine.getMatViewStateStore().enqueueIncrementalRefresh(viewToken);
+        for (int i = 0; i < 3; i++) {
+            drainWalAndMatViewQueues();
+        }
+        final String context = "[step=" + step + ", sql=" + viewSql + ']';
+        assertNotSuspended("base");
+        assertNotSuspended("mv");
+        final MatViewState state = opsViewState("mv");
+        Assert.assertFalse("view is invalid: " + state.getInvalidationReasonForReport() + ' ' + context, state.isInvalid());
+        Assert.assertEquals(context, viewSql, state.getViewDefinition().getMatViewSql());
+        assertSqlCursors(
+                "SELECT ts, sym, price, qty FROM (" + viewSql + ") ORDER BY ts, sym, price, qty",
+                "SELECT ts, sym, price, qty FROM mv ORDER BY ts, sym, price, qty"
+        );
+    }
+
     private static void createMatView(String viewSql, String mvName, boolean deferred) throws SqlException {
         execute("create materialized view " + mvName + " refresh immediate " + (deferred ? "deferred" : "") + " as (" + viewSql + ") partition by DAY");
     }
@@ -1594,6 +1707,130 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         execute("create materialized view " + mvName + " refresh every " + interval + intervalUnit + " " + (deferred ? "deferred" : "") + " start '" + sink + "' as (" + viewSql + ") partition by DAY");
     }
 
+    // The SQL of an ALTER ... AS of testPassthroughViewAlterAs(): the columns ts, sym, price and qty of the base's rows
+    // through zero to two SELECTs over the innermost one, the outermost of them over a subquery or a CTE. Each level
+    // names its timestamp column ts or another name, takes it as the level below names it, in any spelling, under a
+    // table alias at times, and filters no row; the outermost one can order its columns otherwise or select them all.
+    // With half the chance the designated timestamp passes the base's through. Otherwise one level shifts it with
+    // dateadd(), or the innermost SELECT takes the base column ts2 under TIMESTAMP(ts2), and ALTER ... AS refuses the
+    // SQL with the passthrough timestamp rule. The level below a shift names its timestamp ts: a dateadd() of a
+    // timestamp under another name loses the designated timestamp, which the statement refuses with another error.
+    private static void generatePassthroughSql(Rnd rnd, PassthroughSql out) {
+        final int depth = rnd.nextInt(3);
+        final int draw = rnd.nextInt(4);
+        out.depth = depth;
+        out.kind = draw < 2 ? PassthroughSql.PASSED_THROUGH : (draw == 2 ? PassthroughSql.SHIFTED : PassthroughSql.OTHER_COLUMN);
+        out.transformLevel = switch (out.kind) {
+            case PassthroughSql.SHIFTED -> rnd.nextInt(depth + 1);
+            case PassthroughSql.OTHER_COLUMN -> 0;
+            default -> -1;
+        };
+        out.isCteTop = depth > 0 && rnd.nextInt(3) == 0;
+        out.isWildcardTop = false;
+        out.topTimestampColumn = null;
+        out.timestampPosition = 0;
+        String levelSql = null;
+        String levelName = null;
+        final StringBuilder sb = new StringBuilder();
+        final ObjList<String> columns = new ObjList<>();
+        for (int level = 0; level <= depth; level++) {
+            final boolean isTop = level == depth;
+            final boolean isTransform = level == out.transformLevel;
+            // the view's timestamp name at the top and below a shift, elsewhere ts or another name
+            final String name = isTop || level + 1 == out.transformLevel || rnd.nextBoolean() ? "ts" : "x" + level;
+            final String timestampColumn;
+            final String from;
+            boolean hasTs2 = false;
+            if (level == 0) {
+                // no alias before a TIMESTAMP clause
+                final boolean isOtherColumn = out.kind == PassthroughSql.OTHER_COLUMN;
+                final boolean isAliased = !isOtherColumn && rnd.nextInt(4) == 0;
+                final String ref;
+                if (isOtherColumn) {
+                    ref = "ts2";
+                } else if (isAliased) {
+                    ref = rnd.nextBoolean() ? "b.ts" : "ts";
+                } else {
+                    ref = switch (rnd.nextInt(5)) {
+                        case 0 -> "TS";
+                        case 1 -> "\"ts\"";
+                        case 2 -> "base.ts";
+                        default -> "ts";
+                    };
+                }
+                if (isTransform && !isOtherColumn) {
+                    timestampColumn = shiftPassthroughTimestamp(rnd, ref) + " AS " + name;
+                } else {
+                    // each spelling of ts names the column ts, in one letter case or another
+                    timestampColumn = !isOtherColumn && name.equals("ts") && rnd.nextBoolean() ? ref : ref + " AS " + name;
+                }
+                if (isOtherColumn) {
+                    from = "base TIMESTAMP(ts2)";
+                } else if (isAliased) {
+                    from = "base b";
+                } else {
+                    from = rnd.nextInt(4) == 0 ? "base TIMESTAMP(ts)" : "base";
+                }
+                // a column the view does not have, which an outer SELECT * carries up
+                hasTs2 = !isOtherColumn && rnd.nextInt(4) == 0;
+            } else {
+                final boolean isCte = isTop && out.isCteTop;
+                final boolean isAliased = !isCte && rnd.nextInt(4) == 0;
+                final String ref = isAliased ? "t." + levelName : levelName;
+                if (!isTransform && name.equals(levelName) && rnd.nextInt(3) == 0) {
+                    // SELECT *
+                    timestampColumn = null;
+                } else if (isTransform) {
+                    timestampColumn = shiftPassthroughTimestamp(rnd, ref) + " AS " + name;
+                } else {
+                    timestampColumn = ref.equals(name) ? ref : ref + " AS " + name;
+                }
+                from = isCte ? "c" : "(" + levelSql + ")" + (isAliased ? " t" : "");
+            }
+
+            sb.setLength(0);
+            if (isTop && out.isCteTop) {
+                sb.append("WITH c AS (").append(levelSql).append(") ");
+            }
+            sb.append("SELECT ");
+            if (timestampColumn == null) {
+                sb.append('*');
+                out.isWildcardTop = isTop;
+            } else {
+                columns.clear();
+                columns.add(timestampColumn);
+                columns.add("sym");
+                columns.add("price");
+                columns.add("qty");
+                // the outermost SELECT can put the timestamp column after the others
+                final int rotation = isTop ? rnd.nextInt(4) : 0;
+                for (int i = 0; i < 4; i++) {
+                    final int index = (i + rotation) % 4;
+                    if (i > 0) {
+                        sb.append(", ");
+                    }
+                    if (isTop && index == 0) {
+                        out.timestampPosition = sb.length();
+                        out.topTimestampColumn = timestampColumn;
+                    }
+                    sb.append(columns.getQuick(index));
+                }
+                if (hasTs2) {
+                    sb.append(", ts2");
+                }
+            }
+            sb.append(" FROM ").append(from);
+            if (rnd.nextInt(4) == 0) {
+                // no base row has a negative price
+                sb.append(" WHERE price > -1");
+            }
+            levelSql = sb.toString();
+            levelName = name;
+        }
+        out.sql.clear();
+        out.sql.put(levelSql);
+    }
+
     // Half of the views exclude two hours of base data with their own NOT BETWEEN on the designated
     // timestamp. Each refresh adds its refresh range to the same where-clause model.
     private static String generateViewSql(Rnd rnd, String tableName) {
@@ -1606,6 +1843,25 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     // time zone and an optional offset. With a month or year stride, a positive offset moves the bucket
     // start past midnight on the 1st, and a negative offset moves it to the last day of the previous month,
     // which is shorter than 31 days at the end of February or of a 30-day month.
+    // Rows at random times of the days of testPassthroughViewAlterAs(), in and out of order, whose ts2 lies within an
+    // hour of their ts.
+    private static void insertPassthroughFuzzRows(Rnd rnd, int rowCount) throws SqlException {
+        final StringSink sink = new StringSink();
+        sink.put("INSERT INTO base VALUES ");
+        for (int i = 0; i < rowCount; i++) {
+            if (i > 0) {
+                sink.put(", ");
+            }
+            final long ts = OPS_DAY_LO + rnd.nextLong(OPS_DAY_COUNT * Micros.DAY_MICROS);
+            sink.put("('");
+            MicrosFormatUtils.appendDateTimeUSec(sink, ts);
+            sink.put("', '");
+            MicrosFormatUtils.appendDateTimeUSec(sink, ts - Micros.HOUR_MICROS + rnd.nextLong(2 * Micros.HOUR_MICROS));
+            sink.put("', 's").put(rnd.nextInt(3)).put("', ").put(rnd.nextInt(1000)).put(".5, ").put(rnd.nextInt(100)).put(')');
+        }
+        execute(sink);
+    }
+
     private static String randomAlignment(Rnd rnd) {
         if (rnd.nextInt(4) == 0) {
             return "";
@@ -1639,6 +1895,76 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 );
             }
         }
+    }
+
+    // A round of testPassthroughViewAlterAs(): a base with the designated timestamp ts and another TIMESTAMP column ts2,
+    // of either precision, and a passthrough view of its ts, sym, price and qty.
+    private static void runPassthroughAlterOperations(Rnd rnd, int steps) throws Exception {
+        final String timestampType = rnd.nextBoolean() ? "TIMESTAMP" : "TIMESTAMP_NS";
+        execute("CREATE TABLE base (ts " + timestampType + ", ts2 " + timestampType + ", sym SYMBOL, price DOUBLE, qty LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        insertPassthroughFuzzRows(rnd, 1 + rnd.nextInt(20));
+        String viewSql = "SELECT ts, sym, price, qty FROM base";
+        LOG.info().$("fuzz: passthrough view [timestampType=").$(timestampType).I$();
+        execute("CREATE MATERIALIZED VIEW mv AS (" + viewSql + ") PARTITION BY DAY");
+        drainWalAndMatViewQueues();
+        final TableToken viewToken = engine.verifyTableName("mv");
+        final String alterHead = "ALTER MATERIALIZED VIEW mv AS (";
+        final PassthroughSql alter = new PassthroughSql();
+        for (int step = 0; step < steps; step++) {
+            switch (rnd.nextInt(10)) {
+                case 0, 1, 2 -> insertPassthroughFuzzRows(rnd, rnd.nextInt(8) == 0 ? 20 + rnd.nextInt(40) : 1 + rnd.nextInt(5));
+                case 3, 4, 5 -> {
+                    generatePassthroughSql(rnd, alter);
+                    final String sql = alter.sql.toString();
+                    LOG.info().$("fuzz: step ").$(step).$(" ALTER AS ").$(sql).$(" [kind=").$(alter.kind).I$();
+                    final long viewSeqTxn = engine.getTableSequencerAPI().lastTxn(viewToken);
+                    try {
+                        execute(alterHead + sql + ')');
+                        Assert.assertEquals("ALTER ... AS must refuse a designated timestamp that is not the base's as it is: " + sql,
+                                PassthroughSql.PASSED_THROUGH, alter.kind);
+                        // one definition event
+                        Assert.assertEquals(viewSeqTxn + 1, engine.getTableSequencerAPI().lastTxn(viewToken));
+                        viewSql = sql;
+                    } catch (SqlException e) {
+                        if (alter.kind == PassthroughSql.PASSED_THROUGH) {
+                            throw e;
+                        }
+                        TestUtils.assertEquals(sql, "passthrough materialized view timestamp must reference the base table designated timestamp without transformation",
+                                e.getFlyweightMessage());
+                        Assert.assertEquals(sql, alterHead.length() + alter.timestampPosition, e.getPosition());
+                        Assert.assertEquals("a refused ALTER ... AS wrote to the view's WAL: " + sql, viewSeqTxn, engine.getTableSequencerAPI().lastTxn(viewToken));
+                    }
+                }
+                case 6 -> drainWalQueue();
+                case 7 -> drainMatViewQueue(engine);
+                case 8 -> {
+                    LOG.info().$("fuzz: step ").$(step).$(" FULL").$();
+                    // a REFRESH waits for an ALTER ... AS until the view's WAL applies it
+                    drainWalQueue();
+                    execute("REFRESH MATERIALIZED VIEW mv FULL");
+                }
+                default -> {
+                    LOG.info().$("fuzz: step ").$(step).$(" restarting view states").$();
+                    engine.getMatViewStateStore().clear();
+                    engine.hydrateMatViewStateStore();
+                }
+            }
+            if (rnd.nextBoolean()) {
+                drainWalAndMatViewQueues();
+            }
+            if (step % 6 == 5 || step == steps - 1) {
+                checkPassthroughFuzzView(viewSql, step);
+            }
+        }
+        execute("DROP MATERIALIZED VIEW mv");
+        execute("DROP TABLE base");
+        drainWalAndMatViewQueues();
+    }
+
+    // dateadd() of the timestamp column by a nonzero number of minutes or hours, forward or back.
+    private static String shiftPassthroughTimestamp(Rnd rnd, String ref) {
+        final int stride = (1 + rnd.nextInt(30)) * (rnd.nextBoolean() ? 1 : -1);
+        return "dateadd('" + (rnd.nextBoolean() ? 'm' : 'h') + "', " + stride + ", " + ref + ")";
     }
 
     private ObjList<FuzzTransaction> createTransactionsAndMv(
@@ -2119,5 +2445,28 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 }
             }
         });
+    }
+
+    // An ALTER ... AS SQL of testPassthroughViewAlterAs(), see generatePassthroughSql().
+    private static final class PassthroughSql {
+        // the innermost SELECT takes the base column ts2 as the designated timestamp, which ALTER ... AS refuses
+        static final int OTHER_COLUMN = 2;
+        // the designated timestamp passes the base's through, so ALTER ... AS takes the SQL
+        static final int PASSED_THROUGH = 0;
+        // a level of the SQL shifts the designated timestamp with dateadd(), which ALTER ... AS refuses
+        static final int SHIFTED = 1;
+        final StringSink sql = new StringSink();
+        // the number of SELECTs over the innermost one
+        int depth;
+        boolean isCteTop;
+        boolean isWildcardTop;
+        int kind;
+        // the offset in the SQL of the outermost SELECT's timestamp column, where a refusal points, or 0 under a
+        // wildcard, the SQL's start
+        int timestampPosition;
+        // the outermost SELECT's timestamp column, null under a wildcard
+        String topTimestampColumn;
+        // the level that shifts the timestamp or takes ts2, from 0 for the innermost SELECT, or -1
+        int transformLevel;
     }
 }
