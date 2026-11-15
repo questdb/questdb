@@ -25,9 +25,12 @@
 package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.Metrics;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cutlass.pgwire.DefaultPGCircuitBreakerRegistry;
 import io.questdb.cutlass.pgwire.PGServer;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
+import io.questdb.griffin.engine.table.HashJoinBuildStage;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolMode;
 import io.questdb.mp.WorkerPoolUtils;
@@ -43,11 +46,13 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Drives the parallel hash join through PG wire with the real pgjdbc driver: named statements whose
  * bind variables sit in a LEFT join's ON residual, in the probe input's WHERE clause and in a
- * post-join filter, each executed many times with new values, in text and binary transfer, against
+ * post-join filter, and a LIKE pattern over a small build of several frames, whose filter the build's
+ * rounds run on the workers, each executed many times with new values, in text and binary transfer, against
  * a server whose connections run the operator and one whose connections run the ordinary plan. The
  * two servers return the same rows in the same order.
  */
@@ -62,7 +67,55 @@ public class PGAsyncHashJoinTest extends BasePGTest {
             // A residual over both inputs and a bound post-join filter of a LEFT join.
             "SELECT f.k, f.v, d.w FROM f LEFT JOIN d ON f.k = d.k AND d.w + ? > f.v WHERE d.w IS NULL OR d.w < ? ORDER BY f.ts DESC",
     };
+    private static final StackWalker STACK_WALKER = StackWalker.getInstance();
+    private static final String STAGE = HashJoinBuildStage.class.getName();
     private static final int WORKER_COUNT = 4;
+
+    @Test
+    public void testNamedStatementWithBuildLikePattern() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE f AS (SELECT (x % 9)::INT k, x v, timestamp_sequence('2024-01-01', 1_800_000_000) ts FROM long_sequence(120)) TIMESTAMP(ts) PARTITION BY DAY");
+            // dp holds 120 rows over three days, far fewer than the configured 300_000, and its scan's
+            // filter, which the JIT does not compile, filters its frames in the build's rounds, as the
+            // filter's test_latched_counter() records.
+            execute("""
+                    CREATE TABLE dp AS (
+                        SELECT (x % 7)::INT k, x w, CASE WHEN x % 3 = 0 THEN 'bar' || x ELSE 'foo' || x END::VARCHAR vch,
+                            timestamp_sequence('2024-01-01', 2_160_000_000) ts
+                        FROM long_sequence(120)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            final String sql = "SELECT f.ts, f.k, f.v, d.w, d.vch FROM f JOIN (SELECT * FROM dp WHERE vch LIKE ? AND test_latched_counter()) d ON f.k = d.k";
+            // Patterns that keep some rows, every row and none, executed twice over.
+            final String[] patterns = {"%a%", "%", "zzz%", "bar1%"};
+            final StringSink expected = new StringSink();
+            final StringSink actual = new StringSink();
+            withServer(false, null, port -> readPatterns(port, sql, patterns, expected, false));
+            final AtomicInteger roundCalls = new AtomicInteger();
+            final AtomicInteger ownerCalls = new AtomicInteger();
+            // The function takes the callback when the statement compiles.
+            TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
+                @Override
+                public boolean onGet(Record rec, int count) {
+                    if (isOnStack("partitionFrame")) {
+                        roundCalls.incrementAndGet();
+                    } else if (isOnStack("buildOnOwner")) {
+                        ownerCalls.incrementAndGet();
+                    }
+                    return true;
+                }
+            });
+            try {
+                withServer(true, null, port -> readPatterns(port, sql, patterns, actual, true));
+            } finally {
+                TestLatchedCounterFunctionFactory.reset(null);
+            }
+            Assert.assertTrue(expected.length() > 0);
+            TestUtils.assertEquals(expected, actual);
+            Assert.assertTrue(roundCalls.get() > 0);
+            Assert.assertEquals(0, ownerCalls.get());
+        });
+    }
 
     @Test
     public void testNamedStatementsWithBindVariablesInOnAndWhere() throws Exception {
@@ -86,6 +139,10 @@ public class PGAsyncHashJoinTest extends BasePGTest {
                 return plan.toString();
             }
         }
+    }
+
+    private static boolean isOnStack(String methodName) {
+        return STACK_WALKER.walk(frames -> frames.anyMatch(frame -> frame.getClassName().equals(STAGE) && frame.getMethodName().equals(methodName)));
     }
 
     private void assertNamedStatements(@Nullable WorkerPoolMode queryPoolMode) throws Exception {
@@ -127,6 +184,42 @@ public class PGAsyncHashJoinTest extends BasePGTest {
                     }
                     final String plan = explain(connection, sql, BINDS[0]);
                     Assert.assertEquals(plan, isParallel, plan.contains("Hash Join workers:"));
+                }
+            }
+        }
+    }
+
+    // Executes the query's named statement with every pattern, twice over, in binary and text
+    // transfer, and appends the rows to the sink.
+    private void readPatterns(int port, String sql, String[] patterns, StringSink sink, boolean isParallel) throws Exception {
+        final StringSink rows = new StringSink();
+        for (boolean isBinary : new boolean[]{true, false}) {
+            // A prepare threshold of 1 makes pgjdbc parse a named statement once and bind it again on
+            // every later execution.
+            try (
+                    Connection connection = getConnection(Mode.EXTENDED, port, isBinary, 1);
+                    PreparedStatement statement = connection.prepareStatement(sql)
+            ) {
+                for (int pass = 0; pass < 2; pass++) {
+                    for (String pattern : patterns) {
+                        statement.setString(1, pattern);
+                        try (ResultSet resultSet = statement.executeQuery()) {
+                            rows.clear();
+                            printToSink(rows, resultSet, null);
+                        }
+                        sink.put(pattern).put('\n').put(rows);
+                    }
+                }
+                try (PreparedStatement explain = connection.prepareStatement("EXPLAIN " + sql)) {
+                    explain.setString(1, patterns[0]);
+                    try (ResultSet resultSet = explain.executeQuery()) {
+                        final StringBuilder plan = new StringBuilder();
+                        while (resultSet.next()) {
+                            plan.append(resultSet.getString(1)).append('\n');
+                        }
+                        Assert.assertEquals(plan.toString(), isParallel, plan.indexOf("Hash Join workers:") > -1);
+                        Assert.assertEquals(plan.toString(), isParallel, plan.indexOf("buildFilter: ") > -1);
+                    }
                 }
             }
         }

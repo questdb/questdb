@@ -118,18 +118,20 @@ public class PGAsyncHashJoinFailureTest extends BasePGTest {
     // Where each cancellation lands: the SQL, the count at which the latch may hold, the frame that
     // must be on the latched thread's stack, and the plan attribute that shows where the function runs.
     private static final Site[] SITES = {
-            // A small build's filter, which the owner runs alone.
+            // A small build's filter, which the owner runs alone: a filter that the JIT does not
+            // compile builds in rounds over more than one frame, so d0s holds 30 rows, one frame.
             new Site("build on the owner",
-                    "SELECT f.k, f.v, d0.w0 FROM f LEFT JOIN (SELECT * FROM d0 WHERE test_latched_counter()) d0 ON f.k = d0.k",
-                    100, () -> isOnStack(STAGE, "buildOnOwner"), "buildFilter: test_latched_counter()", false),
+                    "SELECT f.k, f.v, d0s.w0 FROM f LEFT JOIN (SELECT * FROM d0s WHERE test_latched_counter()) d0s ON f.k = d0s.k",
+                    10, () -> isOnStack(STAGE, "buildOnOwner"), "buildFilter: test_latched_counter()", false),
             // A large build's filter, which runs in the first round of the build's rounds.
             new Site("build in rounds",
                     "SELECT f.k, f.v, d1.w FROM f LEFT JOIN (SELECT * FROM d1 WHERE test_latched_counter()) d1 ON f.k = d1.k",
                     300, () -> isOnStack(STAGE, "partitionFrame"), "buildFilter: test_latched_counter()", false),
-            // A later stage's filter, inside one task of the round of the two small builds.
+            // A later stage's filter, inside one task of the round of the two small builds: d2s holds
+            // 30 rows, one frame, so its filtered stage stays small.
             new Site("concurrent small build",
-                    "SELECT f.k, f.v, d0.w0, d2.w2 FROM f LEFT JOIN d0 ON f.k = d0.k JOIN (SELECT * FROM d2 WHERE test_latched_counter()) d2 ON f.l = d2.l",
-                    50, () -> isOnStack(STAGE, "buildStage"), "buildFilter: test_latched_counter()", false),
+                    "SELECT f.k, f.v, d0.w0, d2s.w2 FROM f LEFT JOIN d0 ON f.k = d0.k JOIN (SELECT * FROM d2s WHERE test_latched_counter()) d2s ON f.l = d2s.l",
+                    10, () -> isOnStack(STAGE, "buildStage"), "buildFilter: test_latched_counter()", false),
             // The probe filter, which the operator took from the probe's scan.
             new Site("probe filter",
                     "SELECT f.k, f.v, d1.w, d2.w2 FROM (SELECT * FROM f WHERE test_latched_counter()) f LEFT JOIN d1 ON f.k = d1.k JOIN d2 ON f.l = d2.l",
@@ -153,6 +155,11 @@ public class PGAsyncHashJoinFailureTest extends BasePGTest {
             new Site("consumer chain expansion",
                     "SELECT f.v, d0.w0, hot.hw, test_latched_counter() c FROM f LEFT JOIN d0 ON f.k = d0.k JOIN hot ON f.h = hot.h",
                     50, () -> !isOnStack(FACTORY, "probeFrame") && !isOnStack(ATOM, "continueFrame"), "stages: 2", false),
+            // A small build's filter that the JIT does not compile, over d0's frames: it runs in the
+            // first round of the build's rounds, although d0 holds fewer rows than the configured 500.
+            new Site("small filtered build in rounds",
+                    "SELECT f.k, f.v, d0.w0 FROM f LEFT JOIN (SELECT * FROM d0 WHERE test_latched_counter()) d0 ON f.k = d0.k",
+                    100, () -> isOnStack(STAGE, "partitionFrame"), "buildFilter: test_latched_counter()", false),
     };
 
     @Override
@@ -681,8 +688,10 @@ public class PGAsyncHashJoinFailureTest extends BasePGTest {
         execute("CREATE TABLE f AS (SELECT (x % 97)::INT k, x v, (x % 41)::LONG l, CASE WHEN x <= 20 THEN 0 ELSE x::INT END h, " +
                 "timestamp_sequence('2024-01-01', 60_000_000) ts FROM long_sequence(6_000)) TIMESTAMP(ts) PARTITION BY DAY");
         execute("CREATE TABLE d0 AS (SELECT (x % 90)::INT k, x w0 FROM long_sequence(300))");
+        execute("CREATE TABLE d0s AS (SELECT (x % 90)::INT k, x w0 FROM long_sequence(30))");
         execute("CREATE TABLE d1 AS (SELECT (x % 90)::INT k, x w FROM long_sequence(900))");
         execute("CREATE TABLE d2 AS (SELECT (x % 41)::LONG l, x w2 FROM long_sequence(120))");
+        execute("CREATE TABLE d2s AS (SELECT (x % 41)::LONG l, x w2 FROM long_sequence(30))");
         execute("CREATE TABLE hot AS (SELECT 0 h, x hw FROM long_sequence(300))");
     }
 

@@ -32,13 +32,14 @@ import io.questdb.test.cairo.Overrides;
 
 /**
  * The two ways a fused hash join GROUP BY builds, whatever its key. The operator picks one
- * per execution from the build input's row count; a differential suite forces one through the
- * build properties, picked at random per test, so that across runs every query it checks runs both
- * the owner's build and the parallel build's rounds. The parallel mode also shrinks the context's
- * page frames, which the suite restores after each test.
+ * per execution from the build input's row count and filter; a differential suite forces one
+ * through the build properties, picked at random per test, so that across runs every query it
+ * checks runs both the owner's build and the parallel build's rounds. The parallel mode also
+ * shrinks the context's page frames, which the suite restores after each test.
  */
 public enum HashJoinBuildMode {
-    // Every build walks its frames on the query's own thread.
+    // Every build walks its frames on the query's own thread, but one that spans more than one frame
+    // under a WHERE filter that runs interpreted, which builds in rounds whatever its rows.
     SERIAL {
         @Override
         public void applyProperties(Overrides overrides) {

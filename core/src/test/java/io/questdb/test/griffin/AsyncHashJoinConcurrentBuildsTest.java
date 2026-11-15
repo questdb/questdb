@@ -54,7 +54,8 @@ import static io.questdb.test.griffin.ParallelHashJoinTestUtils.*;
  * The parallel hash join's concurrent small builds: the stages whose build inputs hold fewer rows
  * than {@code cairo.sql.parallel.hash.join.groupby.build.parallel.min.rows} build at once, in one
  * round of the join's build sequence with one task per stage, when there are more than one, and the
- * larger stages build one at a time, each in rounds of its own. The builds equal those that the
+ * larger stages build one at a time, each in rounds of its own, as does a smaller stage whose filter
+ * runs interpreted over more than one frame. The builds equal those that the
  * stages make one at a time: every result compares with the ordinary plan, in order, and with the
  * operator's own results when every stage builds alone, key and row counts included. A failure and
  * a cancellation inside one of the concurrent builds release every build and slot, and the factory
@@ -86,9 +87,12 @@ public class AsyncHashJoinConcurrentBuildsTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTables();
             sqlExecutionContext.changePageFrameSizes(4, 4);
-            // The second stage's build filter trips the breaker from inside its task of the round.
-            final String sql = "SELECT t.v, d1.w, x.w2, d3.w3 FROM t LEFT JOIN d1 ON t.k = d1.k"
-                    + " LEFT JOIN (SELECT * FROM d2 WHERE test_latched_counter()) x ON t.lk = x.lk LEFT JOIN d3 ON t.sym = d3.s";
+            // The first stage's build filter trips the breaker from inside its task of the round. A
+            // filter that the JIT does not compile builds a stage in rounds of its own over more than
+            // one frame, so the filtered stages here build d3's four rows and u1's five, one frame
+            // each, and stay small.
+            final String sql = "SELECT t.v, x.w3, d1.w, y.w FROM t LEFT JOIN (SELECT * FROM d3 WHERE test_latched_counter()) x ON t.sym = x.s"
+                    + " LEFT JOIN d1 ON t.k = d1.k LEFT JOIN (SELECT * FROM u1 WHERE test_latched_counter()) y ON t.k = y.k";
             final String expected = ordinary(sql, sqlExecutionContext);
             final AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(engine);
             final AtomicBoolean isArmed = new AtomicBoolean();
@@ -96,7 +100,7 @@ public class AsyncHashJoinConcurrentBuildsTest extends AbstractCairoTest {
             final TestLatchedCounterFunctionFactory.Callback callback = new TestLatchedCounterFunctionFactory.Callback() {
                 @Override
                 public boolean onGet(Record rec, int count) {
-                    if (isArmed.get() && count == 5) {
+                    if (isArmed.get() && count == 2) {
                         isInsideTask.set(isOnStack("buildStage"));
                         breaker.cancel();
                     }
@@ -128,11 +132,77 @@ public class AsyncHashJoinConcurrentBuildsTest extends AbstractCairoTest {
                 }
                 Assert.assertTrue(isInsideTask.get());
                 Assert.assertEquals(rounds + 1, roundAtom.getConcurrentBuildRoundCount());
+                // d3's four rows went through the filter, its frame to the end, and u1's five never
+                // did: the round's tasks after the cancelled one found the query cancelled.
+                Assert.assertEquals(4, TestLatchedCounterFunctionFactory.getCount());
+                assertReleased(join);
+                Assert.assertEquals(expected, result(factory, sqlExecutionContext));
+                Assert.assertEquals(rounds + 2, roundAtom.getConcurrentBuildRoundCount());
+            }
+            assertQuery("SELECT count() FROM d3").noLeakCheck().noRandomAccess().expectSize().returns("count\n4\n");
+        });
+    }
+
+    @Test
+    public void testCancellationInsideSmallFilteredStageRounds() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            sqlExecutionContext.changePageFrameSizes(4, 4);
+            // The second stage's build filter, which the JIT does not compile, spans d2's four frames,
+            // so the stage builds in rounds of its own, after the round that builds d1 and d3 at once,
+            // and the filter trips the breaker from inside a task of its first round.
+            final String sql = "SELECT t.v, d1.w, x.w2, d3.w3 FROM t LEFT JOIN d1 ON t.k = d1.k"
+                    + " LEFT JOIN (SELECT * FROM d2 WHERE test_latched_counter()) x ON t.lk = x.lk LEFT JOIN d3 ON t.sym = d3.s";
+            final String expected = ordinary(sql, sqlExecutionContext);
+            final AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(engine);
+            final AtomicBoolean isArmed = new AtomicBoolean();
+            final AtomicBoolean isInsideTask = new AtomicBoolean();
+            final TestLatchedCounterFunctionFactory.Callback callback = new TestLatchedCounterFunctionFactory.Callback() {
+                @Override
+                public boolean onGet(Record rec, int count) {
+                    if (isArmed.get() && count == 5) {
+                        isInsideTask.set(isOnStack("partitionFrame"));
+                        breaker.cancel();
+                    }
+                    return true;
+                }
+            };
+            TestLatchedCounterFunctionFactory.reset(callback);
+            try (RecordCursorFactory factory = select(sql)) {
+                final AsyncHashJoinRecordCursorFactory join = find(factory);
+                Assert.assertNotNull(join);
+                final HashJoinBuildRoundAtom roundAtom = join.getBuildRoundAtom();
+                final HashJoinBuildStage stage = join.getAtom().getStage(1);
+                final long concurrentRounds = roundAtom.getConcurrentBuildRoundCount();
+                final long stageRounds = stage.getRoundCount();
+                TestLatchedCounterFunctionFactory.reset(callback);
+                isArmed.set(true);
+                final SqlExecutionCircuitBreaker previous = sqlExecutionContext.getCircuitBreaker();
+                ((SqlExecutionContextImpl) sqlExecutionContext).with(breaker);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    //noinspection StatementWithEmptyBody
+                    while (cursor.hasNext()) {
+                    }
+                    Assert.fail("expected cancellation");
+                } catch (CairoException e) {
+                    Assert.assertTrue(e.getMessage(), e.isCancellation());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "cancelled by user");
+                } finally {
+                    isArmed.set(false);
+                    ((SqlExecutionContextImpl) sqlExecutionContext).with(previous);
+                }
+                Assert.assertTrue(isInsideTask.get());
+                Assert.assertEquals(concurrentRounds + 1, roundAtom.getConcurrentBuildRoundCount());
+                // The first round of the stage's own, which the cancellation ended.
+                Assert.assertEquals(stageRounds + 1, stage.getRoundCount());
                 // The 15 rows of the build went through the filter only up to the cancelled frame.
                 Assert.assertTrue(String.valueOf(TestLatchedCounterFunctionFactory.getCount()), TestLatchedCounterFunctionFactory.getCount() < 15);
                 assertReleased(join);
                 Assert.assertEquals(expected, result(factory, sqlExecutionContext));
-                Assert.assertEquals(rounds + 2, roundAtom.getConcurrentBuildRoundCount());
+                Assert.assertEquals(concurrentRounds + 2, roundAtom.getConcurrentBuildRoundCount());
+                // The next execution built in two rounds and copied its payload in a third: the
+                // probe's 60 rows are more than 0.125 times the build's 15.
+                Assert.assertEquals(stageRounds + 4, stage.getRoundCount());
             }
             assertQuery("SELECT count() FROM d2").noLeakCheck().noRandomAccess().expectSize().returns("count\n15\n");
         });
@@ -210,10 +280,12 @@ public class AsyncHashJoinConcurrentBuildsTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTables();
             sqlExecutionContext.changePageFrameSizes(4, 4);
-            // d2.w2 * 1000 does not fit DECIMAL(4,0) from w2 = 10 on, so the second stage's build filter
-            // fails on its first row, inside its task of the round, or in its rounds of its own.
-            final String sql = "SELECT t.v, d1.w, x.w2, d3.w3 FROM t LEFT JOIN d1 ON t.k = d1.k"
-                    + " LEFT JOIN (SELECT * FROM d2 WHERE (w2 * 1000)::DECIMAL(4,0) > 0) x ON t.lk = x.lk LEFT JOIN d3 ON t.sym = d3.s";
+            // d3.w3 * 100 does not fit DECIMAL(4,0) from w3 = 100 on, so the third stage's build filter
+            // fails on its first row, inside its task of the round, or in its rounds of its own. A
+            // filter that the JIT does not compile builds a stage in rounds of its own over more than
+            // one frame, so the filter runs over d3's four rows, one frame, which stay small.
+            final String sql = "SELECT t.v, d1.w, d2.w2, x.w3 FROM t LEFT JOIN d1 ON t.k = d1.k"
+                    + " LEFT JOIN d2 ON t.lk = d2.lk LEFT JOIN (SELECT * FROM d3 WHERE (w3 * 100)::DECIMAL(4,0) > 0) x ON t.sym = x.s";
             for (long minRows : new long[]{Long.MAX_VALUE, 0}) {
                 setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, minRows);
                 final String expected = error(sql, false);
@@ -239,6 +311,47 @@ public class AsyncHashJoinConcurrentBuildsTest extends AbstractCairoTest {
             }
             // The tables still work, and so does the stack whose filter passes the rows.
             setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, Long.MAX_VALUE);
+            assertParallelHashJoin("SELECT t.v, d1.w, d2.w2, x.w3 FROM t LEFT JOIN d1 ON t.k = d1.k"
+                    + " LEFT JOIN d2 ON t.lk = d2.lk LEFT JOIN (SELECT * FROM d3 WHERE (w3 * 10)::DECIMAL(4,0) > 0) x ON t.sym = x.s", sqlExecutionContext);
+        });
+    }
+
+    @Test
+    public void testFailureInsideSmallFilteredStageRounds() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            sqlExecutionContext.changePageFrameSizes(4, 4);
+            // d2.w2 * 1000 does not fit DECIMAL(4,0) from w2 = 10 on, so the second stage's build filter
+            // fails on its first row. The filter runs interpreted over d2's four frames, so the stage
+            // builds in rounds of its own, after the round that builds d1 and d3 at once, and fails in
+            // a task of its first round.
+            final String sql = "SELECT t.v, d1.w, x.w2, d3.w3 FROM t LEFT JOIN d1 ON t.k = d1.k"
+                    + " LEFT JOIN (SELECT * FROM d2 WHERE (w2 * 1000)::DECIMAL(4,0) > 0) x ON t.lk = x.lk LEFT JOIN d3 ON t.sym = d3.s";
+            final String expected = error(sql, false);
+            TestUtils.assertContains(expected, "inconvertible value: 10000 [LONG -> DECIMAL(4,0)]");
+            Assert.assertEquals(sql, expected, error(sql, true));
+            try (RecordCursorFactory factory = select(sql)) {
+                final AsyncHashJoinRecordCursorFactory join = find(factory);
+                Assert.assertNotNull(join);
+                final HashJoinBuildStage stage = join.getAtom().getStage(1);
+                final long concurrentRounds = join.getBuildRoundAtom().getConcurrentBuildRoundCount();
+                final long stageRounds = stage.getRoundCount();
+                for (int run = 0; run < 2; run++) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        //noinspection StatementWithEmptyBody
+                        while (cursor.hasNext()) {
+                        }
+                        Assert.fail("expected the build filter to fail");
+                    } catch (CairoException | ImplicitCastException e) {
+                        Assert.assertEquals(sql, expected, e.getPosition() + ": " + e.getFlyweightMessage());
+                    }
+                    assertReleased(join);
+                }
+                // Each run built d1 and d3 at once, then failed in the first round of d2's own.
+                Assert.assertEquals(concurrentRounds + 2, join.getBuildRoundAtom().getConcurrentBuildRoundCount());
+                Assert.assertEquals(stageRounds + 2, stage.getRoundCount());
+            }
+            // The tables still work, and so does the stack whose filter passes the rows.
             assertParallelHashJoin("SELECT t.v, d1.w, x.w2, d3.w3 FROM t LEFT JOIN d1 ON t.k = d1.k"
                     + " LEFT JOIN (SELECT * FROM d2 WHERE (w2 * 10)::DECIMAL(4,0) > 0) x ON t.lk = x.lk LEFT JOIN d3 ON t.sym = d3.s", sqlExecutionContext);
         });
@@ -277,6 +390,69 @@ public class AsyncHashJoinConcurrentBuildsTest extends AbstractCairoTest {
                 Assert.assertEquals(expected, result(factory, sqlExecutionContext));
             }
             assertQuery("SELECT count() FROM d1").noLeakCheck().noRandomAccess().expectSize().returns("count\n20\n");
+        });
+    }
+
+    @Test
+    public void testMemoryLimitInsideSmallFilteredStageRounds() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            sqlExecutionContext.changePageFrameSizes(4, 4);
+            // The stage's filter runs interpreted over d1's five frames, so it builds in rounds.
+            final String sql = "SELECT t.v, x.w FROM t LEFT JOIN (SELECT * FROM d1 WHERE s::STRING ~ 's[1-3]') x ON t.k = x.k";
+            final String expected = ordinary(sql, sqlExecutionContext);
+            try (RecordCursorFactory factory = select(sql)) {
+                final AsyncHashJoinRecordCursorFactory join = find(factory);
+                Assert.assertNotNull(join);
+                // Limits from a few bytes up fail the query at its allocations in turn, those of the
+                // build's rounds among them; each failure releases the build and every slot, and the
+                // first limit that admits the query reads the rows.
+                int roundFailures = 0;
+                for (long limit = 4; ; limit *= 2) {
+                    setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, limit);
+                    try {
+                        Assert.assertEquals(expected, result(factory, sqlExecutionContext));
+                        break;
+                    } catch (CairoException e) {
+                        Assert.assertTrue(e.getMessage(), e.isOutOfMemory());
+                        TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                        if (isThrownFrom(e, STAGE, "buildInRounds")) {
+                            roundFailures++;
+                        }
+                    }
+                    assertReleased(join);
+                }
+                Assert.assertTrue(roundFailures > 0);
+                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
+                Assert.assertEquals(expected, result(factory, sqlExecutionContext));
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertTrue(join.getAtom().getStage(0).isBuiltInRounds());
+                }
+            }
+            assertQuery("SELECT count() FROM d1").noLeakCheck().noRandomAccess().expectSize().returns("count\n20\n");
+        });
+    }
+
+    @Test
+    public void testSmallFilteredStagesBuildInRoundsOfTheirOwn() throws Exception {
+        // No build copies its payload, so that a build in rounds of its own runs two rounds.
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MIN_PROBE_RATIO, "1000000");
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_PARALLEL_MIN_PROBE_RATIO, "1000000");
+        assertMemoryLeak(() -> {
+            createTables();
+            sqlExecutionContext.changePageFrameSizes(4, 4);
+            // Every build holds fewer rows than the configured 300_000. A stage whose filter the JIT
+            // does not compile spans more than one frame, d1's five or d2's four, and builds in rounds
+            // of its own. Two such stages and one unfiltered: the unfiltered stage is the only small
+            // one, which the owner builds alone, with no round of concurrent builds.
+            final String twoFiltered = "SELECT t.v, x.w, y.w2, d3.w3 FROM t LEFT JOIN (SELECT * FROM d1 WHERE s::STRING ~ 's[1-3]') x ON t.k = x.k"
+                    + " LEFT JOIN (SELECT * FROM d2 WHERE w2::STRING LIKE '1%') y ON t.lk = y.lk LEFT JOIN d3 ON t.sym = d3.s";
+            assertStageBuilds(twoFiltered, new boolean[]{true, true, false}, 0);
+            // One such stage and two unfiltered: the two small stages build at once, in one round.
+            final String oneFiltered = "SELECT t.v, x.w, d2.w2, d3.w3 FROM t LEFT JOIN (SELECT * FROM d1 WHERE s::STRING ~ 's[1-3]') x ON t.k = x.k"
+                    + " LEFT JOIN d2 ON t.lk = d2.lk LEFT JOIN d3 ON t.sym = d3.s";
+            assertStageBuilds(oneFiltered, new boolean[]{true, false, false}, 1);
         });
     }
 
@@ -328,6 +504,35 @@ public class AsyncHashJoinConcurrentBuildsTest extends AbstractCairoTest {
         }
         Assert.assertEquals(0, join.getAtom().getRing().getAllocatedBytes());
         Assert.assertEquals(0, engine.getBusyReaderCount());
+    }
+
+    // Executes the query twice, compares its rows with the ordinary plan's, and asserts for each
+    // execution which stages built in rounds of their own, two rounds each, and how many rounds of
+    // concurrent builds ran.
+    private static void assertStageBuilds(String sql, boolean[] isBuiltInRounds, int concurrentRoundsPerExecution) throws SqlException {
+        assertParallelHashJoin(sql, sqlExecutionContext);
+        try (RecordCursorFactory factory = select(sql)) {
+            final AsyncHashJoinRecordCursorFactory join = find(factory);
+            Assert.assertNotNull(sql, join);
+            final int stageCount = join.getSpec().getStageCount();
+            Assert.assertEquals(sql, isBuiltInRounds.length, stageCount);
+            for (int execution = 0; execution < 2; execution++) {
+                final long concurrentRounds = join.getBuildRoundAtom().getConcurrentBuildRoundCount();
+                final long[] stageRounds = new long[stageCount];
+                for (int k = 0; k < stageCount; k++) {
+                    stageRounds[k] = join.getAtom().getStage(k).getRoundCount();
+                }
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertTrue(sql, cursor.hasNext());
+                    for (int k = 0; k < stageCount; k++) {
+                        final HashJoinBuildStage stage = join.getAtom().getStage(k);
+                        Assert.assertEquals(sql + ", stage " + k, isBuiltInRounds[k], stage.isBuiltInRounds());
+                        Assert.assertEquals(sql + ", stage " + k, stageRounds[k] + (isBuiltInRounds[k] ? 2 : 0), stage.getRoundCount());
+                    }
+                }
+                Assert.assertEquals(sql, concurrentRounds + concurrentRoundsPerExecution, join.getBuildRoundAtom().getConcurrentBuildRoundCount());
+            }
+        }
     }
 
     private static void createTables() throws Exception {

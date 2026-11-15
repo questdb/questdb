@@ -62,6 +62,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.test.tools.TestUtils.assertContains;
 
@@ -275,24 +276,34 @@ public class PGHashJoinGroupByTest extends BasePGTest {
         super.setUp();
     }
 
+    // A build filter that the JIT does not compile builds in rounds over more than one frame, so
+    // frames of 1_000 rows hold d's 300 rows in one, which the owner builds.
     @Test
     public void testCancelRequestDuringBuild() throws Exception {
-        assertCancelled(BUILD_LATCHED_SQL, 120, false);
+        useOneFrameBuild();
+        assertCancelled(BUILD_LATCHED_SQL, 120, false, "buildOnOwner");
     }
 
     @Test
     public void testCancelRequestDuringParallelBuild() throws Exception {
-        assertCancelled(BUILD_LATCHED_SQL, 120, true);
+        assertCancelled(BUILD_LATCHED_SQL, 120, true, "partitionFrame");
     }
 
     @Test
     public void testCancelRequestDuringProbe() throws Exception {
-        assertCancelled(PROBE_LATCHED_SQL, 400, false);
+        assertCancelled(PROBE_LATCHED_SQL, 400, false, null);
     }
 
     @Test
     public void testCancelRequestDuringProbeAfterParallelBuild() throws Exception {
-        assertCancelled(PROBE_LATCHED_SQL, 400, true);
+        assertCancelled(PROBE_LATCHED_SQL, 400, true, null);
+    }
+
+    // d's 300 rows, far fewer than the configured 300_000, span six frames, so its filter, which the
+    // JIT does not compile, runs in the frame tasks of the build's first round.
+    @Test
+    public void testCancelRequestDuringSmallFilteredBuild() throws Exception {
+        assertCancelled(BUILD_LATCHED_SQL, 120, false, "partitionFrame");
     }
 
     // Each connection runs the same SQL with its own sequence of bind values, so the server's
@@ -366,6 +377,51 @@ public class PGHashJoinGroupByTest extends BasePGTest {
     @Test
     public void testFiberOwnerBuildsInRoundsWithoutQueryPool() throws Exception {
         assertFiberOwnerBuildsInRounds(null);
+    }
+
+    // d's 300 rows span six frames, so its filter, which the JIT does not compile, runs in the frame
+    // tasks of the build's first round, as its test_latched_counter() records, with every pattern.
+    @Test
+    public void testNamedStatementRebindsBuildLikePattern() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            final String sql = """
+                    SELECT d.g, count(*) n, sum(f.v) v, sum(d.w) w
+                    FROM f JOIN (SELECT * FROM d WHERE sym::STRING LIKE ? AND test_latched_counter()) d ON f.k = d.k
+                    ORDER BY d.g""";
+            // Patterns that keep half of the rows, every row and none.
+            final String[] patterns = {"a%", "%", "z%", "b"};
+            final StringSink expected = new StringSink();
+            final StringSink actual = new StringSink();
+            // The rows of the ordinary plan: neither the fused GROUP BY nor the parallel hash join.
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_ENABLED, "false");
+            withServer(false, false, null, port -> readPatterns(port, sql, patterns, expected, false));
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_ENABLED, (String) null);
+            final AtomicInteger roundCalls = new AtomicInteger();
+            final AtomicInteger ownerCalls = new AtomicInteger();
+            // The function takes the callback when the statement compiles.
+            TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
+                @Override
+                public boolean onGet(Record rec, int count) {
+                    final StackTraceElement[] stack = Thread.currentThread().getStackTrace();
+                    if (isOnStack(stack, "partitionFrame")) {
+                        roundCalls.incrementAndGet();
+                    } else if (isOnStack(stack, "buildOnOwner")) {
+                        ownerCalls.incrementAndGet();
+                    }
+                    return true;
+                }
+            });
+            try {
+                withServer(true, false, null, port -> readPatterns(port, sql, patterns, actual, true));
+            } finally {
+                TestLatchedCounterFunctionFactory.reset(null);
+            }
+            Assert.assertTrue(expected.length() > 0);
+            TestUtils.assertEquals(expected, actual);
+            Assert.assertTrue(roundCalls.get() > 0);
+            Assert.assertEquals(0, ownerCalls.get());
+        });
     }
 
     @Test
@@ -474,14 +530,16 @@ public class PGHashJoinGroupByTest extends BasePGTest {
         });
     }
 
+    // As testCancelRequestDuringBuild(): d's 300 rows in one frame, which the owner builds.
     @Test
     public void testStatementTimeoutDuringBuild() throws Exception {
-        assertTimedOut(BUILD_LATCHED_SQL, 120);
+        useOneFrameBuild();
+        assertTimedOut(BUILD_LATCHED_SQL, 120, "buildOnOwner");
     }
 
     @Test
     public void testStatementTimeoutDuringProbe() throws Exception {
-        assertTimedOut(PROBE_LATCHED_SQL, 400);
+        assertTimedOut(PROBE_LATCHED_SQL, 400, null);
     }
 
     private static void assertFused(String plan, boolean isFused) {
@@ -554,7 +612,12 @@ public class PGHashJoinGroupByTest extends BasePGTest {
         return false;
     }
 
-    private void assertCancelled(String sql, int latchCount, boolean isParallelBuild) throws Exception {
+    /**
+     * Cancels the query while the latched function holds its execution, at the given count of
+     * calls, inside the given method of the build when it is not null, and checks that the same
+     * statement then reads the rows.
+     */
+    private void assertCancelled(String sql, int latchCount, boolean isParallelBuild, @Nullable String buildMethod) throws Exception {
         assertMemoryLeak(() -> {
             createTables();
             if (isParallelBuild) {
@@ -562,6 +625,7 @@ public class PGHashJoinGroupByTest extends BasePGTest {
             }
             withServer(true, false, null, port -> {
                 final AtomicBoolean isLatched = new AtomicBoolean();
+                final AtomicBoolean isInBuildMethod = new AtomicBoolean();
                 final CountDownLatch reached = new CountDownLatch(1);
                 final CountDownLatch cancelSent = new CountDownLatch(1);
                 TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
@@ -569,6 +633,7 @@ public class PGHashJoinGroupByTest extends BasePGTest {
                     public boolean onGet(Record rec, int count) {
                         // Blocks once, so the execution after the cancellation runs freely.
                         if (count >= latchCount && isLatched.compareAndSet(false, true)) {
+                            isInBuildMethod.set(buildMethod != null && isOnStack(Thread.currentThread().getStackTrace(), buildMethod));
                             reached.countDown();
                             await(cancelSent);
                         }
@@ -603,6 +668,7 @@ public class PGHashJoinGroupByTest extends BasePGTest {
                         canceller.join();
                     }
                     Assert.assertTrue(isCancelSent.get());
+                    Assert.assertEquals(buildMethod, buildMethod != null, isInBuildMethod.get());
                     // The connection stays usable and the next execution builds anew.
                     try (ResultSet resultSet = statement.executeQuery()) {
                         assertResultSet(sql, LEFT_EXPECTED, sink, resultSet);
@@ -711,15 +777,19 @@ public class PGHashJoinGroupByTest extends BasePGTest {
         });
     }
 
-    private void assertTimedOut(String sql, int latchCount) throws Exception {
+    // Holds the execution past the statement's timeout once, at the given count of the latched
+    // function's calls, inside the given method of the build when it is not null.
+    private void assertTimedOut(String sql, int latchCount, @Nullable String buildMethod) throws Exception {
         assertMemoryLeak(() -> {
             createTables();
             withServer(true, false, null, port -> {
                 final AtomicBoolean isLatched = new AtomicBoolean();
+                final AtomicBoolean isInBuildMethod = new AtomicBoolean();
                 TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
                     @Override
                     public boolean onGet(Record rec, int count) {
                         if (count >= latchCount && isLatched.compareAndSet(false, true)) {
+                            isInBuildMethod.set(buildMethod != null && isOnStack(Thread.currentThread().getStackTrace(), buildMethod));
                             Os.sleep(1_000);
                         }
                         return true;
@@ -736,6 +806,7 @@ public class PGHashJoinGroupByTest extends BasePGTest {
                         assertContains(e.getMessage(), "timeout, query aborted");
                     }
                     Assert.assertTrue(isLatched.get());
+                    Assert.assertEquals(buildMethod, buildMethod != null, isInBuildMethod.get());
                     // The next execution runs within the timeout.
                     try (ResultSet resultSet = statement.executeQuery()) {
                         assertResultSet(sql, LEFT_EXPECTED, sink, resultSet);
@@ -756,6 +827,41 @@ public class PGHashJoinGroupByTest extends BasePGTest {
         execute("""
                 INSERT INTO d SELECT (x % 50)::INT, (x % 7)::INT, CASE WHEN x % 2 = 0 THEN 'a' ELSE 'b' END, x * 0.5
                 FROM long_sequence(300)""");
+    }
+
+    // Executes the statement with every pattern, twice over, in binary and text transfer, and appends
+    // the rows to the sink.
+    private void readPatterns(int port, String sql, String[] patterns, StringSink rows, boolean isFused) throws Exception {
+        final StringSink resultSink = new StringSink();
+        for (boolean isBinary : new boolean[]{true, false}) {
+            // A prepare threshold of 1 makes pgjdbc parse a named statement once and bind it again on
+            // every later execution.
+            try (
+                    Connection connection = getConnection(Mode.EXTENDED, port, isBinary, 1);
+                    PreparedStatement statement = connection.prepareStatement(sql)
+            ) {
+                for (int pass = 0; pass < 2; pass++) {
+                    for (String pattern : patterns) {
+                        statement.setString(1, pattern);
+                        try (ResultSet resultSet = statement.executeQuery()) {
+                            resultSink.clear();
+                            printToSink(resultSink, resultSet, null);
+                        }
+                        rows.put(pattern).put('\n').put(resultSink);
+                    }
+                }
+                final String plan = explain(connection, sql, (ps, values) -> ps.setString(1, values[0]), new String[]{patterns[0]});
+                assertFused(plan, isFused);
+                Assert.assertEquals(plan, isFused, plan.contains("buildFilter: "));
+                Assert.assertFalse(plan, plan.contains("Async Hash Join workers"));
+            }
+        }
+    }
+
+    // Frames of 1_000 rows: d's 300 rows in one frame, and f's 100 rows a day in one frame a day.
+    private void useOneFrameBuild() {
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 1_000);
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1_000);
     }
 
     // Builds every key on the query workers, over as many hash partitions as the rows allow.

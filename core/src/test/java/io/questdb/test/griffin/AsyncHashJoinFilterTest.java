@@ -41,6 +41,7 @@ import io.questdb.griffin.HashJoinKeyLayout;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.griffin.engine.join.JoinRecordMetadata;
 import io.questdb.griffin.engine.table.AsyncFilterContext;
 import io.questdb.griffin.engine.table.AsyncHashJoinRecordCursorFactory;
@@ -58,6 +59,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Assume;
@@ -71,7 +73,9 @@ import static io.questdb.test.griffin.ParallelHashJoinTestUtils.*;
 /**
  * The parallel hash join over inputs with a filter that it steals: the left input's filter runs on
  * the workers, over each probe frame, before the frame's rows probe the build, and the build input's
- * filter runs as the build walks its frames, on the owner or in the build's rounds. Each runs as JIT
+ * filter runs as the build walks its frames, on the owner or in the build's rounds: a build whose
+ * filter runs interpreted over more than one frame builds in rounds, whatever its rows, in every
+ * context, mode, key layout and data shape that the tests vary. Each runs as JIT
  * code when the filter it was stolen from did, and falls back to the interpreted filter on frames
  * with column tops or Parquet columns that the record converts per row. The rows, their order,
  * types and symbol tables match the ordinary plan of the same SQL, whose filters run in their own
@@ -105,6 +109,8 @@ public class AsyncHashJoinFilterTest extends AbstractCairoTest {
             // A regex, which the JIT does not compile and which is not thread safe.
             "t.str ~ 'str[13]'",
     };
+    private static final StackWalker STACK_WALKER = StackWalker.getInstance();
+    private static final String STAGE = HashJoinBuildStage.class.getName();
 
     @Override
     @Before
@@ -163,7 +169,9 @@ public class AsyncHashJoinFilterTest extends AbstractCairoTest {
                         }
                         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                             Assert.assertTrue(cursor.hasNext());
-                            Assert.assertEquals(minRows == 0, stage.isBuiltInRounds());
+                            // b spans many frames, so a filter that runs interpreted builds in rounds
+                            // whatever the configured rows.
+                            Assert.assertEquals(minRows == 0 || !isCompiled, stage.isBuiltInRounds());
                             // The filter kept the 29 rows with w from 6 to 34.
                             Assert.assertEquals(29, stage.getFrozenBuild().getRowCount());
                             // Native frames without column tops run the compiled filter, each once.
@@ -262,7 +270,9 @@ public class AsyncHashJoinFilterTest extends AbstractCairoTest {
                                 Assert.assertEquals(plan, !isCompiled, plan.contains("buildFilter: "));
                                 // The operator's name speaks for the probe filter only.
                                 TestUtils.assertContains(plan, "Async Hash Join workers");
-                                assertBuiltInRounds(sql, minRows == 0);
+                                // d spans seven hourly frames, so a filter that runs interpreted builds
+                                // in rounds whatever the configured rows.
+                                assertBuiltInRounds(sql, minRows == 0 || !isCompiled);
                             }
                         }
                     }
@@ -567,6 +577,364 @@ public class AsyncHashJoinFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInterpretedBuildFilterAsTheBuildTableChanges() throws Exception {
+        assertMemoryLeak(() -> {
+            createInterpretedFilterTables();
+            execute("CREATE TABLE bg AS (SELECT * FROM bd WHERE ts < '2024-01-02') TIMESTAMP(ts) PARTITION BY DAY");
+            final String sql = "SELECT p.k, p.v, b.w, b.vch FROM pt p LEFT JOIN (SELECT * FROM bg WHERE vch LIKE '%a%') b ON p.k = b.k";
+            // One factory over a build table of one day, one frame, which the owner builds; of two days
+            // after an insert, which build in rounds; of one day again once a partition drops; of no
+            // frame once the table is truncated, which the owner builds, empty; and of two days again.
+            try (RecordCursorFactory factory = select(sql)) {
+                final AsyncHashJoinRecordCursorFactory join = find(factory);
+                Assert.assertNotNull(join);
+                assertExecution(factory, join, sql, 1, false);
+                execute("INSERT INTO bg SELECT * FROM bd WHERE ts >= '2024-01-02' AND ts < '2024-01-03'");
+                assertExecution(factory, join, sql, 2, true);
+                execute("ALTER TABLE bg DROP PARTITION LIST '2024-01-01'");
+                assertExecution(factory, join, sql, 1, false);
+                execute("TRUNCATE TABLE bg");
+                assertExecution(factory, join, sql, 0, false);
+                execute("INSERT INTO bg SELECT * FROM bd WHERE ts < '2024-01-03'");
+                assertExecution(factory, join, sql, 2, true);
+            }
+            // A column added after the rows: the frames written before it hold a column top, which the
+            // interpreted filter reads as NULL, and the build spans three frames.
+            execute("ALTER TABLE bg ADD COLUMN ev VARCHAR");
+            execute("INSERT INTO bg SELECT k, l, vk, sym, w, vch, str, ts, vch FROM bd WHERE ts >= '2024-01-03'");
+            final String overTop = "SELECT p.k, p.v, b.w, b.ev FROM pt p LEFT JOIN (SELECT * FROM bg WHERE ev LIKE '%a%' OR ev IS NULL) b ON p.k = b.k";
+            try (RecordCursorFactory factory = select(overTop)) {
+                final AsyncHashJoinRecordCursorFactory join = find(factory);
+                Assert.assertNotNull(join);
+                assertExecution(factory, join, overTop, 3, true);
+            }
+        });
+    }
+
+    @Test
+    public void testInterpretedBuildFilterAtMinRowsLimits() throws Exception {
+        assertMemoryLeak(() -> {
+            createInterpretedFilterTables();
+            // A filter that runs interpreted over bd's three frames builds in rounds at the server's
+            // default rows, at none and at the most that the property takes.
+            final String like = "SELECT p.k, p.v, b.w FROM pt p JOIN bd b ON p.k = b.k WHERE b.vch LIKE '%a%'";
+            for (long minRows : new long[]{0, 300_000, Long.MAX_VALUE}) {
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, minRows);
+                assertBuildPath(like, "buildFilter: ", true);
+            }
+            // A filter that the JIT compiled leaves the decision to bd's 60 rows: one row short of the
+            // configured rows, the owner builds, and at the configured rows the build runs in rounds.
+            final boolean isJit = JitUtil.isJitSupported();
+            final String jit = "SELECT p.k, p.v, b.w FROM pt p JOIN bd b ON p.k = b.k WHERE b.w > 10";
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 61);
+            assertBuildPath(jit, isJit ? "buildJitFilter: " : "buildFilter: ", !isJit);
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 60);
+            assertBuildPath(jit, isJit ? "buildJitFilter: " : "buildFilter: ", true);
+        });
+    }
+
+    @Test
+    public void testInterpretedBuildFilterBuildsInRounds() throws Exception {
+        assertMemoryLeak(() -> {
+            createInterpretedFilterTables();
+            // bd holds fewer rows than the configured 300_000, over three frames. A filter that the JIT
+            // does not compile, a LIKE, a regex, a LIKE over a SYMBOL read as a STRING and a function
+            // over a VARCHAR, or one that it would compile, run with the JIT off, has a cost per row
+            // that the rows do not tell, so the build runs in rounds, where the frames filter on the
+            // workers. @ stands for the build's alias.
+            final String[] filters = {"@vch LIKE '%a%'", "@str ~ 'a.c'", "@sym::STRING LIKE 's1%'", "upper(@vch) LIKE 'BAR1%'", "@w > 10"};
+            // The INT layout, a LONG and a VARCHAR key that the build stages into its map, the INT
+            // layout's translated SYMBOL key, and a composite key with a SYMBOL column.
+            final String[] keys = {"p.k = b.k", "p.l = b.l", "p.vk = b.vk", "p.sym = b.sym", "p.k = b.k AND p.sym = b.sym"};
+            for (String key : keys) {
+                for (String filter : filters) {
+                    sqlExecutionContext.setJitMode(filter.equals("@w > 10") ? SqlJitMode.JIT_MODE_DISABLED : SqlJitMode.JIT_MODE_ENABLED);
+                    // An INNER join with the filter on the build table, and a LEFT join over a filtered
+                    // sub-query.
+                    assertBuildPath("SELECT p.k, p.v, b.w, b.vch FROM pt p JOIN bd b ON " + key + " WHERE " + filter.replace("@", "b."), "buildFilter: ", true);
+                    assertBuildPath("SELECT p.k, p.v, b.w, b.vch FROM pt p LEFT JOIN (SELECT * FROM bd WHERE " + filter.replace("@", "") + ") b ON " + key, "buildFilter: ", true);
+                }
+            }
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            // A filter that the JIT compiled, a build of one frame, a build without a filter, and a
+            // LEFT join's ON condition on the build alone, which the ordinary plan never ran on the
+            // workers, leave the decision to the rows, so the owner builds.
+            final boolean isJit = JitUtil.isJitSupported();
+            assertBuildPath("SELECT p.k, p.v, b.w FROM pt p JOIN bd b ON p.k = b.k WHERE b.w > 10", isJit ? "buildJitFilter: " : "buildFilter: ", !isJit);
+            assertBuildPath("SELECT p.k, p.v, b.w, b.vch FROM pt p JOIN bd1 b ON p.k = b.k WHERE b.vch LIKE '%a%'", "buildFilter: ", false);
+            assertBuildPath("SELECT p.k, p.v, b.w, b.vch FROM pt p LEFT JOIN bd b ON p.k = b.k", null, false);
+            final String buildOn = "SELECT p.k, p.v, b.w, b.vch FROM pt p LEFT JOIN bd b ON p.k = b.k AND b.vch LIKE '%a%'";
+            TestUtils.assertContains(planText(buildOn), "buildOnFilter: ");
+            assertBuildPath(buildOn, null, false);
+        });
+    }
+
+    @Test
+    public void testInterpretedBuildFilterDataShapes() throws Exception {
+        assertMemoryLeak(() -> {
+            createInterpretedFilterTables();
+            // A filter that keeps no row: the INNER join returns none and dispatches no probe task, the
+            // LEFT join reads every probe row with NULL build columns.
+            final String inner = "SELECT p.k, p.v, b.w FROM pt p JOIN bd b ON p.k = b.k WHERE b.vch LIKE 'zzz%'";
+            assertBuildPath(inner, "buildFilter: ", true);
+            try (RecordCursorFactory factory = select(inner)) {
+                final AsyncHashJoinRecordCursorFactory join = find(factory);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertFalse(cursor.hasNext());
+                    Assert.assertEquals(0, join.getProbeFrameCount());
+                    Assert.assertEquals(0, join.getAtom().getStage(0).getFrozenBuild().getRowCount());
+                }
+            }
+            assertBuildPath("SELECT p.k, p.v, b.w FROM pt p LEFT JOIN (SELECT * FROM bd WHERE vch LIKE 'zzz%') b ON p.k = b.k", "buildFilter: ", true);
+            // A filter that keeps every row: length() is -1 for NULL.
+            assertBuildPath("SELECT p.k, p.v, b.w FROM pt p JOIN bd b ON p.k = b.k WHERE length(b.vch) >= -1", "buildFilter: ", true);
+            // Kept rows above and at most rows.per.partition: bar holds the 16 values of x from 1 to 60
+            // divisible by 3 but not by 5, and bar1 two of them, 12 and 18.
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_ROWS_PER_PARTITION, 4);
+            for (String pattern : new String[]{"bar%", "bar1%"}) {
+                final String sql = "SELECT p.k, p.v, b.w FROM pt p JOIN bd b ON p.k = b.k WHERE b.vch LIKE '" + pattern + "'";
+                assertBuildPath(sql, "buildFilter: ", true);
+                try (RecordCursorFactory factory = select(sql)) {
+                    final HashJoinBuildStage stage = find(factory).getAtom().getStage(0);
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        Assert.assertTrue(cursor.hasNext());
+                        final long kept = stage.getFrozenBuild().getRowCount();
+                        Assert.assertEquals(pattern.equals("bar%") ? 16 : 2, kept);
+                        Assert.assertEquals(kept > 4, stage.isBuildPartitioned());
+                    }
+                }
+            }
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_ROWS_PER_PARTITION, (String) null);
+            // Exactly two frames, frames of one row each, and a filter column that holds NULL only.
+            execute("CREATE TABLE bd2 AS (SELECT * FROM bd WHERE ts < '2024-01-03') TIMESTAMP(ts) PARTITION BY DAY");
+            assertBuildPath("SELECT p.k, p.v, b.w FROM pt p JOIN bd2 b ON p.k = b.k WHERE b.vch LIKE '%a%'", "buildFilter: ", true);
+            execute("CREATE TABLE bn AS (SELECT k, w, vch FROM bd)");
+            sqlExecutionContext.changePageFrameSizes(1, 1);
+            assertBuildPath("SELECT p.k, p.v, b.w FROM pt p LEFT JOIN (SELECT * FROM bn WHERE vch LIKE '%a%') b ON p.k = b.k", "buildFilter: ", true);
+            sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            execute("CREATE TABLE bnull AS (SELECT k, w, NULL::VARCHAR vch, ts FROM bd) TIMESTAMP(ts) PARTITION BY DAY");
+            assertBuildPath("SELECT p.k, p.v, b.w FROM pt p LEFT JOIN (SELECT * FROM bnull WHERE vch LIKE '%a%') b ON p.k = b.k", "buildFilter: ", true);
+            // A table without rows has no frame, so the owner builds.
+            execute("CREATE TABLE be (k INT, w LONG, vch VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            assertBuildPath("SELECT p.k, p.v, b.w FROM pt p LEFT JOIN (SELECT * FROM be WHERE vch LIKE '%a%') b ON p.k = b.k", "buildFilter: ", false);
+            // 100_000 distinct keys over four days, half of which pass: the build table holds more rows
+            // than the probe's, so the partitions' key tables grow as they fill.
+            execute("""
+                    CREATE TABLE bk AS (
+                        SELECT x::INT k, x w, CASE WHEN x % 2 = 0 THEN 'bar' ELSE 'foo' END::VARCHAR vch,
+                            timestamp_sequence('2024-01-01', 3_456_000) ts
+                        FROM long_sequence(100_000)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            final String wide = "SELECT p.k, p.v, b.w FROM pt p LEFT JOIN (SELECT * FROM bk WHERE vch LIKE '%a%') b ON p.k = b.k";
+            assertBuildPath(wide, "buildFilter: ", true);
+            try (RecordCursorFactory factory = select(wide)) {
+                final HashJoinBuildStage stage = find(factory).getAtom().getStage(0);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(4, stage.getBuildFrameCount());
+                    Assert.assertEquals(50_000, stage.getFrozenBuild().getRowCount());
+                    Assert.assertTrue(stage.isBuildPartitioned());
+                    Assert.assertFalse(stage.isKeyCapacityPresized());
+                    Assert.assertTrue(stage.getKeyTableGrowCount() > 0);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testInterpretedBuildFilterInExecutionModes() throws Exception {
+        assertMemoryLeak(() -> {
+            createInterpretedFilterTables();
+            // A WAL table and a table without WAL.
+            execute("CREATE TABLE bdw AS (SELECT * FROM bd) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE bdn AS (SELECT * FROM bd) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            drainWalQueue();
+            for (String table : new String[]{"bdw", "bdn"}) {
+                assertBuildPath("SELECT p.k, p.v, b.w, b.vch FROM pt p JOIN " + table + " b ON p.k = b.k WHERE b.vch LIKE '%a%'", "buildFilter: ", true);
+            }
+            // Parquet frames, which the frame tasks decode, among a native one; the payload reads fixed
+            // size columns, which a Parquet build serves.
+            execute("CREATE TABLE bq AS (SELECT * FROM bd) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("ALTER TABLE bq CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-03'");
+            assertBuildPath("SELECT p.k, p.v, b.w FROM pt p JOIN bq b ON p.k = b.k WHERE b.vch LIKE '%a%'", "buildFilter: ", true);
+            assertBuildPath("SELECT p.k, p.v, b.w FROM pt p LEFT JOIN (SELECT * FROM bq WHERE str ~ 'a.c') b ON p.k = b.k", "buildFilter: ", true);
+            assertQuery("SELECT count() c, sum(isParquet::INT) p FROM table_partitions('bq')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            c\tp
+                            3\t2
+                            """);
+            // Columns added after the rows: a filter that the JIT compiles builds on the owner, whose
+            // frames with a column top run it interpreted, and with the JIT off it builds in rounds; a
+            // LIKE over such a column builds in rounds either way.
+            execute("CREATE TABLE bc AS (SELECT * FROM bd) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("ALTER TABLE bc ADD COLUMN extra INT");
+            execute("ALTER TABLE bc ADD COLUMN ev VARCHAR");
+            execute("INSERT INTO bc SELECT k, l, vk, sym, w, vch, str, dateadd('d', 3, ts), (w % 4)::INT, vch FROM bd");
+            final boolean isJit = JitUtil.isJitSupported();
+            final String extra = "SELECT p.k, p.v, b.w FROM pt p LEFT JOIN (SELECT * FROM bc WHERE extra > 1 OR extra IS NULL) b ON p.k = b.k";
+            assertBuildPath(extra, isJit ? "buildJitFilter: " : "buildFilter: ", !isJit);
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            assertBuildPath(extra, "buildFilter: ", true);
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            assertBuildPath("SELECT p.k, p.v, b.w FROM pt p LEFT JOIN (SELECT * FROM bc WHERE ev LIKE '%a%') b ON p.k = b.k", "buildFilter: ", true);
+            // A table without partitions: frames of 16 to 32 rows split its 60 rows, and frames of a
+            // million rows hold them in one, which the owner builds.
+            execute("CREATE TABLE bnp AS (SELECT k, w, vch FROM bd)");
+            final String unpartitioned = "SELECT p.k, p.v, b.w FROM pt p LEFT JOIN (SELECT * FROM bnp WHERE vch LIKE '%a%') b ON p.k = b.k";
+            sqlExecutionContext.changePageFrameSizes(16, 32);
+            assertBuildPath(unpartitioned, "buildFilter: ", true);
+            sqlExecutionContext.changePageFrameSizes(1_000_000, 1_000_000);
+            assertBuildPath(unpartitioned, "buildFilter: ", false);
+            sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            // An indexed SYMBOL: a filter that the join takes runs over the scan's frames, and builds in
+            // rounds over several of them; one that keeps its index route leaves the join no filter to
+            // run, and the owner builds.
+            execute("CREATE TABLE bix AS (SELECT * FROM bd) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("ALTER TABLE bix ALTER COLUMN sym ADD INDEX");
+            for (String filter : new String[]{"sym = 's1'", "sym LIKE 's1%'", "sym = 's1' AND vch LIKE '%a%'", "sym LIKE 's1%' AND vch LIKE '%o%'"}) {
+                final String sql = "SELECT p.k, p.v, b.w FROM pt p LEFT JOIN (SELECT * FROM bix WHERE " + filter + ") b ON p.k = b.k";
+                final String plan = planText(sql);
+                if (plan.contains("Hash Join workers:")) {
+                    final boolean isStolen = plan.contains("buildFilter: ");
+                    assertBuildPath(sql, isStolen ? "buildFilter: " : null, isStolen);
+                } else {
+                    assertOrdinaryPlan(sql, sqlExecutionContext);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testInterpretedBuildFilterInSqlContexts() throws Exception {
+        assertMemoryLeak(() -> {
+            createInterpretedFilterTables();
+            final String join = "SELECT p.k, p.v, p.ts, b.w, b.vch FROM pt p JOIN bd b ON p.k = b.k WHERE b.vch LIKE '%a%'";
+            final String narrower = "SELECT p.k, p.v, p.ts, b.w, b.vch FROM pt p JOIN bd b ON p.k = b.k WHERE b.vch LIKE '%a3%'";
+            for (String sql : new String[]{
+                    // The filtered build input as a CTE and as a sub-query, and the join under a query.
+                    "WITH b AS (SELECT * FROM bd WHERE vch LIKE '%a%') SELECT p.k, p.v, b.w FROM pt p JOIN b ON p.k = b.k",
+                    "SELECT p.k, p.v, b.w FROM pt p LEFT JOIN (SELECT * FROM bd WHERE vch LIKE '%a%') b ON p.k = b.k",
+                    "SELECT k, v, w FROM (" + join + ") WHERE v % 2 = 0",
+                    // LIMITs, a negative one among them, and an ORDER BY over the join.
+                    join + " LIMIT 3",
+                    join + " LIMIT -3",
+                    join + " LIMIT 2, 5",
+                    join + " ORDER BY b.w DESC, p.v LIMIT 3",
+                    // A window function over the join.
+                    "SELECT p.k, p.v, b.w, row_number() OVER (PARTITION BY p.k ORDER BY p.ts) rn FROM pt p JOIN bd b ON p.k = b.k WHERE b.vch LIKE '%a%'",
+            }) {
+                assertBuildPath(sql, "buildFilter: vch like %a%", true);
+            }
+            // Set operations of two such joins, and LATEST ON over one, whose factories do not lead to
+            // the join's: the build scans' filters record where they run in test_latched_counter().
+            final String latched = "SELECT p.k, p.v, p.ts, b.w, b.vch FROM pt p JOIN (SELECT * FROM bd WHERE vch LIKE '%a%' AND test_latched_counter()) b ON p.k = b.k";
+            final String narrowerLatched = "SELECT p.k, p.v, p.ts, b.w, b.vch FROM pt p JOIN (SELECT * FROM bd WHERE vch LIKE '%a3%' AND test_latched_counter()) b ON p.k = b.k";
+            for (String sql : new String[]{
+                    latched + " UNION ALL " + narrowerLatched,
+                    "(" + latched + " EXCEPT " + narrowerLatched + ") ORDER BY 1, 2, 3",
+                    "(" + latched + " INTERSECT " + narrowerLatched + ") ORDER BY 1, 2, 3",
+                    "SELECT * FROM (" + latched + ") LATEST ON ts PARTITION BY k",
+            }) {
+                assertFilterRunsInRounds(sql);
+            }
+            // A pattern in a bind variable, which each execution of the factory reads anew: some rows,
+            // every row and none pass.
+            final String bound = "SELECT p.k, p.v, b.w, b.vch FROM pt p JOIN bd b ON p.k = b.k WHERE b.vch LIKE $1";
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "%a%");
+            try (RecordCursorFactory factory = select(bound)) {
+                final AsyncHashJoinRecordCursorFactory boundJoin = find(factory);
+                Assert.assertNotNull(boundJoin);
+                TestUtils.assertContains(plan(factory, sqlExecutionContext), "buildFilter: ");
+                for (String pattern : new String[]{"%a%", "%", "zzz%", "%a%"}) {
+                    bindVariableService.setStr(0, pattern);
+                    Assert.assertEquals(pattern, ordinary(bound, sqlExecutionContext), result(factory, sqlExecutionContext));
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        cursor.hasNext();
+                        Assert.assertTrue(pattern, boundJoin.getAtom().getStage(0).isBuiltInRounds());
+                    }
+                }
+            }
+            // EXPLAIN shows the filter as before: the decision is the execution's. The build scan
+            // reads vch for the filter, a VARCHAR payload column, so the build never copies its payload.
+            assertQuery("SELECT p.k, b.w FROM pt p JOIN bd b ON p.k = b.k WHERE b.vch LIKE '%a%'")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            SelectedRecord
+                                Async Hash Join workers: 1
+                                  stages: 1
+                                    Probe
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: pt
+                                    Build
+                                      joinType: inner
+                                      condition: b.k=p.k
+                                      buildFilter: vch like %a%
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: bd
+                            """);
+        });
+    }
+
+    @Test
+    public void testInterpretedBuildFilterOverColumnTypes() throws Exception {
+        assertMemoryLeak(() -> {
+            createInterpretedFilterTables();
+            execute("""
+                    CREATE TABLE bt AS (
+                        SELECT
+                            (x % 7)::INT k, x w,
+                            CASE WHEN x % 3 = 0 THEN 'a' ELSE 'b' END::CHAR c,
+                            CASE WHEN x % 3 = 0 THEN '11111111-1111-1111-1111-111111111111' ELSE '22222222-2222-2222-2222-222222222222' END::UUID u,
+                            ('10.0.0.' || (x % 5))::IPv4 ip,
+                            CASE WHEN x % 3 = 0 THEN 0x01 ELSE 0x02 END l256,
+                            CAST(CASE WHEN x % 3 = 0 THEN 'u33d' ELSE 'u33e' END AS GEOHASH(4c)) g,
+                            (x * 1.5)::DECIMAL(18,3) d18,
+                            (x * 2.5)::DECIMAL(38,5) d38,
+                            ARRAY[x::DOUBLE, (x % 4)::DOUBLE] arr,
+                            timestamp_sequence('2024-01-01', 4_320_000_000) ts
+                        FROM long_sequence(60)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            final String[] filters = {
+                    "c = 'a'",
+                    "u = '11111111-1111-1111-1111-111111111111'",
+                    "ip = '10.0.0.3'",
+                    "l256 = 0x01",
+                    "g = #u33d",
+                    "d18 > 30::DECIMAL(18,3)",
+                    "d38 > 50::DECIMAL(38,5)",
+                    "arr[2] > 1",
+            };
+            // The expected build follows the planner's attribute: a filter that runs as JIT code leaves
+            // the decision to the rows, and the owner builds bt's 60 rows; one that runs interpreted
+            // builds in rounds over bt's three frames. With the JIT off, every filter runs interpreted.
+            int compiledCount = 0;
+            for (int jitMode : new int[]{SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_DISABLED}) {
+                sqlExecutionContext.setJitMode(jitMode);
+                for (String filter : filters) {
+                    final String sql = "SELECT p.k, p.v, b.w FROM pt p LEFT JOIN (SELECT * FROM bt WHERE " + filter + ") b ON p.k = b.k";
+                    final boolean isCompiled = planText(sql).contains("buildJitFilter: ");
+                    Assert.assertTrue(sql, !isCompiled || jitMode == SqlJitMode.JIT_MODE_ENABLED);
+                    assertBuildPath(sql, isCompiled ? "buildJitFilter: " : "buildFilter: ", !isCompiled);
+                    if (isCompiled) {
+                        compiledCount++;
+                    }
+                }
+            }
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            // Where the JIT runs, some of the types compile and some do not, so both builds ran.
+            Assert.assertTrue(String.valueOf(compiledCount), !JitUtil.isJitSupported() || (compiledCount > 0 && compiledCount < filters.length));
+        });
+    }
+
+    @Test
     public void testPlanInsideScalarSubQuery() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
@@ -829,6 +1197,50 @@ public class AsyncHashJoinFilterTest extends AbstractCairoTest {
         });
     }
 
+    // Compares the query with its ordinary plan, asserts the build filter attribute of its plan, none
+    // when null, and whether the first stage of an execution builds in rounds.
+    private static void assertBuildPath(String sql, @Nullable String filterAttribute, boolean isBuiltInRounds) throws SqlException {
+        final String plan = assertParallelHashJoin(sql, sqlExecutionContext);
+        if (filterAttribute != null) {
+            TestUtils.assertContains(plan, filterAttribute);
+        } else {
+            Assert.assertFalse(plan, plan.contains("buildFilter: ") || plan.contains("buildJitFilter: "));
+        }
+        assertBuiltInRounds(sql, isBuiltInRounds);
+    }
+
+    // Compares the query with its ordinary plan, and asserts that every build filter's
+    // test_latched_counter() ran in a frame task of a build's rounds, and never on the owner's build.
+    private static void assertFilterRunsInRounds(String sql) throws SqlException {
+        TestLatchedCounterFunctionFactory.reset(null);
+        final String expected = ordinary(sql, sqlExecutionContext);
+        final AtomicInteger roundCalls = new AtomicInteger();
+        final AtomicInteger ownerCalls = new AtomicInteger();
+        // The function takes the callback when it compiles.
+        TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
+            @Override
+            public boolean onGet(Record rec, int count) {
+                if (isOnStack(STAGE, "partitionFrame")) {
+                    roundCalls.incrementAndGet();
+                } else if (isOnStack(STAGE, "buildOnOwner")) {
+                    ownerCalls.incrementAndGet();
+                }
+                return true;
+            }
+        });
+        try (RecordCursorFactory factory = select(sql)) {
+            final String plan = plan(factory, sqlExecutionContext);
+            TestUtils.assertContains(plan, "Hash Join workers:");
+            TestUtils.assertContains(plan, "buildFilter: ");
+            Assert.assertEquals(sql, expected, result(factory, sqlExecutionContext));
+            Assert.assertEquals(sql, expected, result(factory, sqlExecutionContext));
+        } finally {
+            TestLatchedCounterFunctionFactory.reset(null);
+        }
+        Assert.assertTrue(sql, roundCalls.get() > 0);
+        Assert.assertEquals(sql, 0, ownerCalls.get());
+    }
+
     private static void assertBuiltInRounds(String sql, boolean isBuiltInRounds) throws SqlException {
         try (RecordCursorFactory factory = select(sql)) {
             final HashJoinBuildStage stage = find(factory).getAtom().getStage(0);
@@ -836,6 +1248,24 @@ public class AsyncHashJoinFilterTest extends AbstractCairoTest {
                 cursor.hasNext();
                 Assert.assertEquals(sql, isBuiltInRounds, stage.isBuiltInRounds());
             }
+        }
+    }
+
+    // Executes the factory, compares its rows with the ordinary plan's, and asserts the frames of the
+    // execution's build and whether it ran in rounds.
+    private static void assertExecution(
+            RecordCursorFactory factory,
+            AsyncHashJoinRecordCursorFactory join,
+            String sql,
+            int frameCount,
+            boolean isBuiltInRounds
+    ) throws SqlException {
+        Assert.assertEquals(sql, ordinary(sql, sqlExecutionContext), result(factory, sqlExecutionContext));
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            cursor.hasNext();
+            final HashJoinBuildStage stage = join.getAtom().getStage(0);
+            Assert.assertEquals(sql, frameCount, stage.getBuildFrameCount());
+            Assert.assertEquals(sql, isBuiltInRounds, stage.isBuiltInRounds());
         }
     }
 
@@ -870,6 +1300,41 @@ public class AsyncHashJoinFilterTest extends AbstractCairoTest {
                     FROM long_sequence(40)
                 ) TIMESTAMP(dts) PARTITION BY HOUR
                 """);
+    }
+
+    // pt, the probe, holds 80 rows over four hours. bd, the build, holds 60 rows over three days, one
+    // page frame each, far fewer than the configured 300_000; its keys repeat and hold NULLs, and its
+    // VARCHAR, STRING and SYMBOL columns give filters that the JIT does not compile some rows to keep:
+    // vch is bar<x> for x divisible by 3, foo<x> otherwise, NULL for x divisible by 5; str is abc, xbc
+    // or adc, NULL for x divisible by 4. bd1 holds bd's first day, one frame.
+    private static void createInterpretedFilterTables() throws Exception {
+        execute("""
+                CREATE TABLE pt AS (
+                    SELECT
+                        CASE WHEN x % 13 = 0 THEN NULL ELSE (x % 7)::INT END k,
+                        (x % 6)::LONG l,
+                        ('v' || (x % 5))::VARCHAR vk,
+                        ('s' || (x % 4))::SYMBOL sym,
+                        x v,
+                        timestamp_sequence('2024-01-01', 180_000_000) ts
+                    FROM long_sequence(80)
+                ) TIMESTAMP(ts) PARTITION BY HOUR
+                """);
+        execute("""
+                CREATE TABLE bd AS (
+                    SELECT
+                        CASE WHEN x % 11 = 0 THEN NULL ELSE (x % 7)::INT END k,
+                        (x % 6)::LONG l,
+                        ('v' || (x % 5))::VARCHAR vk,
+                        ('s' || ((x + 2) % 4))::SYMBOL sym,
+                        x w,
+                        CASE WHEN x % 5 = 0 THEN NULL WHEN x % 3 = 0 THEN 'bar' || x ELSE 'foo' || x END::VARCHAR vch,
+                        CASE WHEN x % 4 = 0 THEN NULL WHEN x % 3 = 1 THEN 'xbc' WHEN x % 3 = 2 THEN 'adc' ELSE 'abc' END str,
+                        timestamp_sequence('2024-01-01', 4_320_000_000) ts
+                    FROM long_sequence(60)
+                ) TIMESTAMP(ts) PARTITION BY DAY
+                """);
+        execute("CREATE TABLE bd1 AS (SELECT * FROM bd WHERE ts < '2024-01-02') TIMESTAMP(ts) PARTITION BY DAY");
     }
 
     // The error that reading the query's rows ends with, under the operator or under the ordinary plan.
@@ -991,6 +1456,10 @@ public class AsyncHashJoinFilterTest extends AbstractCairoTest {
             CursorPrinter.println(cursor.getRecord(), metadata, sink, true);
         }
         return sink.toString();
+    }
+
+    private static boolean isOnStack(String className, String methodName) {
+        return STACK_WALKER.walk(frames -> frames.anyMatch(frame -> frame.getClassName().equals(className) && frame.getMethodName().equals(methodName)));
     }
 
     private static String ordinaryPlan(String sql) throws SqlException {

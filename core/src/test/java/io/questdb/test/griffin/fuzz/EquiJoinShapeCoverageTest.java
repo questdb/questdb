@@ -219,6 +219,12 @@ public class EquiJoinShapeCoverageTest {
         assertCorpusMatches(corpus, "a composite key", Pattern.compile("ON [lr]\\.\\w+ = [lr]\\.\\w+ AND [lr]\\.\\w+ = [lr]\\.\\w+"));
         // The inputs: projections with filters, backward scans and LIMIT barriers.
         assertCorpusMatches(corpus, "a filtered projection", Pattern.compile("\\(SELECT [^()]*\\w+_v[^()]* FROM t[01] WHERE "));
+        // A build input whose filter reads a VARCHAR column, which the JIT does not compile: the
+        // build runs it in rounds over a multi-frame input, whatever its rows.
+        Assert.assertTrue(
+                "the generator produced no build input filtered over a VARCHAR column in " + CORPUS_SIZE + " queries",
+                hasBuildFilterOverVarchar(corpus)
+        );
         assertCorpusMatches(corpus, "a backward left input", Pattern.compile("FROM \\(SELECT \\* FROM t[01] ORDER BY ts DESC\\) l "));
         assertCorpusMatches(corpus, "a LIMIT barrier", Pattern.compile("\\(SELECT \\* FROM t[01] LIMIT \\d+\\) [lr]"));
         // The projection, the order and the limits.
@@ -460,6 +466,24 @@ public class EquiJoinShapeCoverageTest {
         }
         final String input = sql.substring(open + 1, closing(sql, open));
         return indexAtDepthZero(input, " WHERE ", 0) > 0;
+    }
+
+    // True when a query of the corpus joins, as its right input, a projection whose WHERE clause reads
+    // the VARCHAR columns c2 or vk: a filtered input never swaps, so the right input builds.
+    private static boolean hasBuildFilterOverVarchar(String corpus) {
+        final Pattern varchar = Pattern.compile("\\b(?:c2|vk)\\b");
+        for (String sql : corpus.split("\n")) {
+            for (int at = sql.indexOf("JOIN (SELECT "); at > -1; at = sql.indexOf("JOIN (SELECT ", at + 1)) {
+                final int open = at + 5;
+                final int close = closing(sql, open);
+                final String input = sql.substring(open + 1, close);
+                final int where = indexAtDepthZero(input, " WHERE ", 0);
+                if (where > 0 && sql.startsWith(") r ON ", close) && varchar.matcher(input.substring(where)).find()) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     // 0 for a condition over the left input alone, 1 for the right input alone, 2 for both, 3 for

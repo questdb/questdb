@@ -40,6 +40,7 @@ import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.Rnd;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;
@@ -76,7 +77,11 @@ import java.util.concurrent.TimeUnit;
  *       build of {@code largeDimRows} rows, built in partition rounds), {@code LEFT} (LEFT JOIN,
  *       100,000-row build), {@code PROBE_FILTER} (JIT probe filter keeping 10% of the rows),
  *       {@code SYMBOL} (SYMBOL key translated into the build's dictionary), {@code STAGED} (LONG key,
- *       staged in a map) and {@code COUNT} (count of the pairs, no aggregate column).</li>
+ *       staged in a map), {@code COUNT} (count of the pairs, no aggregate column),
+ *       {@code BUILD_REGEX} (a regex over a 400 to 600 character VARCHAR, which the JIT does not
+ *       compile, filters a 250,000-row build over 25 daily partitions) and {@code BUILD_LIKE_TINY} (a
+ *       LIKE filters a build of 500 rows over 50 daily partitions, ten rows each, for a probe of the
+ *       fact table's first 10 seconds, an interval scan of about 2,800 rows).</li>
  *   <li>{@code workers}: the size of the query worker pool, and the context's worker count.</li>
  *   <li>{@code factRows}, {@code largeDimRows}: table sizes. The fact table holds a million rows
  *       per hourly partition.</li>
@@ -99,9 +104,9 @@ import java.util.concurrent.TimeUnit;
         "--enable-native-access=ALL-UNNAMED"
 })
 public class HashJoinGroupByBenchmark {
-    private static final String DATA_VERSION = "v1";
+    private static final String DATA_VERSION = "v2";
     private static final String FUSED_NODE = "Hash Join Group By";
-    private static final String[] TABLES = {"ready", "fact", "d1", "d2", "d3", "dsym"};
+    private static final String[] TABLES = {"ready", "fact", "d1", "d2", "d3", "dsym", "dreg", "dtiny"};
 
     @Param({"10000000"})
     public long factRows;
@@ -112,7 +117,7 @@ public class HashJoinGroupByBenchmark {
     @Param({"250000"})
     public int pageFrameMaxRows;
 
-    @Param({"INT_SMALL", "INT_LARGE", "LEFT", "PROBE_FILTER", "SYMBOL", "STAGED", "COUNT"})
+    @Param({"INT_SMALL", "INT_LARGE", "LEFT", "PROBE_FILTER", "SYMBOL", "STAGED", "COUNT", "BUILD_REGEX", "BUILD_LIKE_TINY"})
     public String shape;
 
     @Param({"8"})
@@ -201,6 +206,15 @@ public class HashJoinGroupByBenchmark {
         // no match, and s64 to s70 match no fact row.
         engine.execute("CREATE TABLE dsym AS (SELECT ('s' || (71 - x))::SYMBOL sym, ('cat' || (x % 5))::SYMBOL cat " +
                 "FROM long_sequence(56))", ctx);
+        // Builds of fewer rows than parallel.min.rows, over many daily partitions, with VARCHAR texts
+        // that a regex or a LIKE filters: 250,000 rows of 400 to 600 characters over 25 days, and 500
+        // rows of 8 to 16 characters over 50 days. The seeded generator gives every revision's
+        // tables the same texts.
+        ctx.setRandom(new Rnd(42, 4242));
+        engine.execute("CREATE TABLE dreg AS (SELECT ((x - 1) * 4)::INT k, (x * 7 % 1_000) / 1000.0 w, rnd_str(400, 600, 0)::VARCHAR s, " +
+                "timestamp_sequence(0, 8_640_000) ts FROM long_sequence(250_000)) TIMESTAMP(ts) PARTITION BY DAY", ctx);
+        engine.execute("CREATE TABLE dtiny AS (SELECT ((x - 1) * 16)::INT k, (x * 7 % 1_000) / 1000.0 w, rnd_str(8, 16, 0)::VARCHAR s, " +
+                "timestamp_sequence(0, 8_640_000_000) ts FROM long_sequence(500)) TIMESTAMP(ts) PARTITION BY DAY", ctx);
         engine.execute("CREATE TABLE ready (x INT)", ctx);
     }
 
@@ -275,6 +289,10 @@ public class HashJoinGroupByBenchmark {
             case "SYMBOL" -> "SELECT ds.cat, count(*) c, sum(f.v) sv FROM fact f JOIN dsym ds ON f.sym = ds.sym GROUP BY ds.cat";
             case "STAGED" -> "SELECT d2.s, count(*) c, sum(f.v) sv FROM fact f JOIN d2 ON f.k2l = d2.kl GROUP BY d2.s";
             case "COUNT" -> "SELECT count(*) FROM fact f JOIN d3 ON f.k3 = d3.k";
+            case "BUILD_REGEX" -> "SELECT f.sym, count(*) c, sum(d.w) sw FROM fact f JOIN dreg d ON f.k3 = d.k WHERE d.s ~ '[B-C][X-Z][B-C][X-Z]' GROUP BY f.sym";
+            // A LEFT join builds the filtered dimension whatever the probe's interval holds.
+            case "BUILD_LIKE_TINY" -> "SELECT f.sym, count(*) c, sum(d.w) sw FROM fact f LEFT JOIN (SELECT * FROM dtiny WHERE s LIKE '%B%') d ON f.k1 = d.k " +
+                    "WHERE f.ts IN '1970-01-01T00:00:00;10s' GROUP BY f.sym";
             default -> throw new IllegalArgumentException("unknown shape: " + shape);
         };
     }

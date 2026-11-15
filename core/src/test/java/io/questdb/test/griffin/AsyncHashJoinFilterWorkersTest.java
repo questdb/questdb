@@ -29,9 +29,11 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.griffin.engine.table.AsyncHashJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.HashJoinBuildStage;
 import io.questdb.log.Log;
@@ -45,14 +47,20 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.test.griffin.ParallelHashJoinTestUtils.*;
 
 /**
  * The parallel hash join over filtered inputs on shared query workers that run on threads and on
  * fibers: the probe filter runs on the workers' slots, each with a copy of its own when the filter is
- * not thread safe, and the build filter runs in the build's rounds, on the workers' copies too. Every
+ * not thread safe, and the build filter runs in the build's rounds, on the workers' copies too, also
+ * for a small build whose filter runs interpreted, whose frame tasks run at once on two threads. Every
  * query compares with the ordinary plan, in order. {@link SlotGatedWorkStealingStrategy} holds the
  * owner off until a worker took a slot, so that the checks that every slot is back after a query, a
  * failed one included, count slots that workers really took.
@@ -72,6 +80,8 @@ public class AsyncHashJoinFilterWorkersTest extends AbstractCairoTest {
             // Bind variables in both filters.
             "SELECT t.k, t.v, d2.w FROM t JOIN (SELECT * FROM d WHERE w > $2) d2 ON t.k = d2.k WHERE t.v > $1",
     };
+    private static final StackWalker STACK_WALKER = StackWalker.getInstance();
+    private static final String STAGE = HashJoinBuildStage.class.getName();
     private static final int WORKER_COUNT = 4;
 
     @Override
@@ -99,6 +109,16 @@ public class AsyncHashJoinFilterWorkersTest extends AbstractCairoTest {
     @Test
     public void testMemoryLimitsReleaseSlotsOnThreadWorkers() throws Exception {
         assertMemoryLimitsReleaseSlots(WorkerPoolMode.LEGACY);
+    }
+
+    @Test
+    public void testSmallInterpretedBuildFilterRunsOnSeveralThreadsOnFiberWorkers() throws Exception {
+        assertSmallInterpretedBuildFilterRunsOnSeveralThreads(WorkerPoolMode.FIBER_HOST);
+    }
+
+    @Test
+    public void testSmallInterpretedBuildFilterRunsOnSeveralThreadsOnThreadWorkers() throws Exception {
+        assertSmallInterpretedBuildFilterRunsOnSeveralThreads(WorkerPoolMode.LEGACY);
     }
 
     private static void assertFilters(WorkerPoolMode mode) throws Exception {
@@ -171,6 +191,82 @@ public class AsyncHashJoinFilterWorkersTest extends AbstractCairoTest {
                 Assert.assertEquals(expected, result(factory, context));
             }
         });
+    }
+
+    // A build of 200 rows over two days, far fewer than the configured 300_000, whose filter the JIT
+    // does not compile: each of its two frames runs the filter in a task of the build's first round,
+    // on the workers. The filter holds the first thread that runs it inside a frame task until a
+    // second thread does too, which only two frame tasks that run at once let pass.
+    private static void assertSmallInterpretedBuildFilterRunsOnSeveralThreads(WorkerPoolMode mode) throws Exception {
+        execute(mode, (db, context) -> {
+            db.execute("""
+                    CREATE TABLE dp AS (
+                        SELECT (x % 450)::INT k, x w, timestamp_sequence('2024-01-01', 864_000_000) ts
+                        FROM long_sequence(200)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """, context);
+            final String sql = "SELECT t.k, t.v, b.w FROM t LEFT JOIN (SELECT * FROM dp WHERE test_latched_counter()) b ON t.k = b.k";
+            final String expected = ordinary(sql, context);
+            final AtomicBoolean isArmed = new AtomicBoolean();
+            final AtomicBoolean isTimedOut = new AtomicBoolean();
+            final Set<Thread> filterThreads = ConcurrentHashMap.newKeySet();
+            final AtomicReference<CountDownLatch> bothStarted = new AtomicReference<>();
+            TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
+                @Override
+                public boolean onGet(Record rec, int count) {
+                    if (isArmed.get() && isOnStack("partitionFrame") && filterThreads.add(Thread.currentThread())) {
+                        final CountDownLatch latch = bothStarted.get();
+                        latch.countDown();
+                        try {
+                            if (!latch.await(10, TimeUnit.SECONDS)) {
+                                isTimedOut.set(true);
+                            }
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            throw new AssertionError(e);
+                        }
+                    }
+                    return true;
+                }
+            });
+            try {
+                context.setParallelHashJoinEnabled(true);
+                try (RecordCursorFactory factory = db.select(sql, context)) {
+                    final AsyncHashJoinRecordCursorFactory join = find(factory);
+                    Assert.assertNotNull(join);
+                    TestUtils.assertContains(plan(factory, context), "buildFilter: test_latched_counter()");
+                    final HashJoinBuildStage stage = join.getAtom().getStage(0);
+                    for (int run = 0; run < 2; run++) {
+                        filterThreads.clear();
+                        bothStarted.set(new CountDownLatch(2));
+                        // The owner waits until a worker took a slot of the build's rounds.
+                        final CountDownLatch roundSlot = new CountDownLatch(1);
+                        join.getBuildRoundAtom().getPerWorkerLocks().setTestAcquireLatch(roundSlot);
+                        isArmed.set(true);
+                        try (RecordCursor cursor = factory.getCursor(context)) {
+                            Assert.assertTrue(cursor.hasNext());
+                            Assert.assertTrue(stage.isBuiltInRounds());
+                            Assert.assertEquals(2, stage.getBuildFrameCount());
+                        } finally {
+                            isArmed.set(false);
+                            join.getBuildRoundAtom().getPerWorkerLocks().setTestAcquireLatch(null);
+                        }
+                        Assert.assertFalse("the two frame tasks did not run at once", isTimedOut.get());
+                        Assert.assertEquals(2, filterThreads.size());
+                        Assert.assertEquals(0, roundSlot.getCount());
+                        Assert.assertEquals(0, join.getBuildRoundAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                        Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                        Assert.assertEquals(expected, result(factory, context));
+                    }
+                }
+            } finally {
+                TestLatchedCounterFunctionFactory.reset(null);
+            }
+        });
+    }
+
+    private static boolean isOnStack(String methodName) {
+        return STACK_WALKER.walk(frames -> frames.anyMatch(frame -> frame.getClassName().equals(STAGE) && frame.getMethodName().equals(methodName)));
     }
 
     private static void execute(WorkerPoolMode mode, Code code) throws Exception {

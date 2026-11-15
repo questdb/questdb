@@ -651,8 +651,11 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
      * clear() closes the builds.
      * <p>
      * Every stage first loads its build's frames, which tells a large build, one that runs in rounds
-     * of its own, see {@link HashJoinBuildStage#prepareBuild()}, from a small one. The small builds
-     * run first: more than one build at once, in one round with one task per stage, see
+     * of its own, see {@link HashJoinBuildStage#prepareBuild()}, from a small one: a large build
+     * holds at least the configured rows, or filters more than one frame through a WHERE filter that
+     * runs interpreted, which its frame tasks then run on the workers rather than one task per stage
+     * on one thread. The small builds run first: more than one build at once, in one round with one
+     * task per stage, see
      * {@link HashJoinBuildRoundAtom#buildConcurrently}, and a lone one on the owner. The large builds
      * then run one at a time, in stage order, each through rounds of its own, which already spread one
      * build over the workers.

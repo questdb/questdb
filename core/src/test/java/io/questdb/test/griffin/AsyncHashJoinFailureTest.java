@@ -27,6 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.Record;
@@ -67,7 +68,8 @@ import static io.questdb.test.griffin.ParallelHashJoinTestUtils.*;
 /**
  * The parallel hash join's failure paths, each followed by a check that the failure released
  * everything it held and that the same factory, and the tables, still work: cancellation inside
- * each round of a parallel build, inside a probe task and inside a continuation chunk; per-query
+ * each round of a parallel build, inside a probe task and inside a continuation chunk; a small
+ * build's filter that runs interpreted and fails in the first round of the build's rounds; per-query
  * memory limit breaches in the build, the symbol key translator, the payload copy, a probe task,
  * a continuation, the consumer's Parquet output reader and the pass that indexes the builds' chain
  * lengths for a count that follows some rows; failing file operations on the build
@@ -442,6 +444,58 @@ public class AsyncHashJoinFailureTest extends AbstractCairoTest {
             assertQuery("SELECT count() FROM probe_tab").noLeakCheck().noRandomAccess().expectSize().returns("count\n400\n");
             assertQuery("SELECT count() FROM build_tab").noLeakCheck().noRandomAccess().expectSize().returns("count\n200\n");
             assertQuery("SELECT count() FROM later_tab").noLeakCheck().noRandomAccess().expectSize().returns("count\n100\n");
+        });
+    }
+
+    @Test
+    public void testInterpretedBuildFilterFailsInRounds() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // bf holds 30 rows over three days, far fewer than the configured 300_000. p * 1000 does
+            // not fit DECIMAL(4,0) for the one row with p = 10, and p * 100 fits for every row. The
+            // filter runs interpreted, so the build runs in rounds, whose first round filters the
+            // frames: the round fails there, before it partitions any row.
+            execute("""
+                    CREATE TABLE bf AS (
+                        SELECT (x % 40)::INT k, CASE WHEN x = 17 THEN 10 ELSE x % 10 END p, timestamp_sequence('2024-01-01', 8_640_000_000) ts
+                        FROM long_sequence(30)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            for (String join : new String[]{" JOIN ", " LEFT JOIN "}) {
+                final String sql = "SELECT t.k, t.v, b.p FROM t" + join + "(SELECT * FROM bf WHERE (p * $1)::DECIMAL(4,0) > 0::DECIMAL(4,0)) b ON t.k = b.k";
+                bindVariableService.clear();
+                bindVariableService.setLong(0, 1_000);
+                final String expected = error(sql, false);
+                TestUtils.assertContains(expected, "inconvertible value: 10000 [LONG -> DECIMAL(4,0)]");
+                try (RecordCursorFactory factory = select(sql)) {
+                    final AsyncHashJoinRecordCursorFactory asyncJoin = find(factory);
+                    Assert.assertNotNull(sql, asyncJoin);
+                    TestUtils.assertContains(plan(factory, sqlExecutionContext), "buildFilter: ");
+                    final HashJoinBuildStage stage = asyncJoin.getAtom().getStage(0);
+                    for (int run = 0; run < 2; run++) {
+                        final long rounds = stage.getRoundCount();
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            //noinspection StatementWithEmptyBody
+                            while (cursor.hasNext()) {
+                            }
+                            Assert.fail("expected the build filter to fail: " + sql);
+                        } catch (CairoException | ImplicitCastException e) {
+                            Assert.assertEquals(sql, expected, e.getPosition() + ": " + e.getFlyweightMessage());
+                        }
+                        Assert.assertEquals(sql, rounds + 1, stage.getRoundCount());
+                        assertReleased(asyncJoin);
+                    }
+                    // The same factory, with a value that every row passes, builds in rounds and reads
+                    // the ordinary plan's rows.
+                    bindVariableService.setLong(0, 100);
+                    Assert.assertEquals(sql, ordinary(sql, sqlExecutionContext), result(factory, sqlExecutionContext));
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        Assert.assertTrue(cursor.hasNext());
+                        Assert.assertTrue(stage.isBuiltInRounds());
+                    }
+                }
+            }
+            assertQuery("SELECT count() FROM bf").noLeakCheck().noRandomAccess().expectSize().returns("count\n30\n");
         });
     }
 
@@ -827,6 +881,25 @@ public class AsyncHashJoinFailureTest extends AbstractCairoTest {
         } finally {
             sqlExecutionContext.setParallelHashJoinEnabled(true);
         }
+    }
+
+    // The error that reading the query's rows ends with, under the operator or under the ordinary plan.
+    private static String error(String sql, boolean isParallel) throws SqlException {
+        sqlExecutionContext.setParallelHashJoinEnabled(isParallel);
+        try (RecordCursorFactory factory = select(sql)) {
+            Assert.assertEquals(sql, isParallel, find(factory) != null);
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                //noinspection StatementWithEmptyBody
+                while (cursor.hasNext()) {
+                }
+                Assert.fail("expected the filter to fail: " + sql);
+            } catch (CairoException | ImplicitCastException e) {
+                return e.getPosition() + ": " + e.getFlyweightMessage();
+            }
+        } finally {
+            sqlExecutionContext.setParallelHashJoinEnabled(true);
+        }
+        return null;
     }
 
     // True when the method was on the stack where the exception was thrown.

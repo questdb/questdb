@@ -45,6 +45,7 @@ import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -119,6 +120,11 @@ import java.util.concurrent.locks.LockSupport;
  *       rows per key, and {@code COUNT_FANOUT_2_LARGE} those of the whole fact table joined with that
  *       dimension. Each count runs from the top, and, with the suffix {@code _AFTER_PAGE}, after the
  *       first 1,001 rows, as an HTTP request with {@code count=true} and a page of 1,000 rows does.
+ *       {@code SMALL_BUILD_REGEX} joins the fact table's first 5,000,000 rows with a 250,000-row
+ *       dimension over 25 daily partitions under a regex over its 400 to 600 character VARCHAR, which
+ *       the JIT does not compile, and {@code SMALL_BUILD_LIKE_TINY} its first 10,000 rows with a
+ *       dimension of 500 rows over 50 daily partitions, ten rows each, under a LIKE: builds of fewer
+ *       rows than parallel.min.rows whose filters run interpreted over many frames.
  *       </li>
  *   <li>{@code workers}: the size of the query worker pool, and the context's worker count.</li>
  *   <li>{@code factRows}, {@code largeDimRows}: table sizes. The fact table holds a million rows
@@ -172,14 +178,14 @@ public class ParallelHashJoinBenchmark {
     // The rows that a count after a page reads first, as an HTTP request for a page of 1,000 rows
     // reads one row past it.
     private static final long COUNT_PAGE_ROWS = 1_001;
-    private static final String DATA_VERSION = "v2";
+    private static final String DATA_VERSION = "v3";
     private static final int LIMIT_PROBE_EXECUTIONS = 20;
     private static final String OPERATOR_NODE = "Hash Join workers:";
     private static final String POOL_NAME = "hashjoinbench";
     private static final String STAR_JOINS = " JOIN d1 ON f.k1 = d1.k JOIN d2 ON f.k2 = d2.k JOIN d3 ON f.k3 = d3.k";
     private static final String STAR_LEFT_JOINS = " LEFT JOIN d1 ON f.k1 = d1.k LEFT JOIN d2 ON f.k2 = d2.k LEFT JOIN d3 ON f.k3 = d3.k";
     private static final String STAR_SELECT = "SELECT f.id, f.v, d1.w w1, d2.w w2, d3.w w3 FROM ";
-    private static final String[] TABLES = {"ready", "fact", "fact_pq", "fact_mixed", "d1", "d2", "d3", "d3_pq", "dup", "dup2", "dup50", "dup1000"};
+    private static final String[] TABLES = {"ready", "fact", "fact_pq", "fact_mixed", "d1", "d2", "d3", "d3_pq", "dup", "dup2", "dup50", "dup1000", "dreg", "dtiny"};
 
     @Param({"10000000"})
     public long factRows;
@@ -227,7 +233,8 @@ public class ParallelHashJoinBenchmark {
             "PARQUET_VAR_BUILD_1", "PARQUET_VAR_BUILD_2", "PARQUET_VAR_BUILD_4", "PARQUET_VAR_RESIDUAL",
             "SMALL_SINGLE", "SMALL_STAR",
             "COUNT_FANOUT_50", "COUNT_FANOUT_50_AFTER_PAGE", "COUNT_FANOUT_1000", "COUNT_FANOUT_1000_AFTER_PAGE",
-            "COUNT_TINY_PROBE", "COUNT_TINY_PROBE_AFTER_PAGE", "COUNT_FANOUT_2_LARGE", "COUNT_FANOUT_2_LARGE_AFTER_PAGE"
+            "COUNT_TINY_PROBE", "COUNT_TINY_PROBE_AFTER_PAGE", "COUNT_FANOUT_2_LARGE", "COUNT_FANOUT_2_LARGE_AFTER_PAGE",
+            "SMALL_BUILD_REGEX", "SMALL_BUILD_LIKE_TINY"
     })
     public String shape;
 
@@ -411,6 +418,15 @@ public class ParallelHashJoinBenchmark {
                 "TIMESTAMP(ts) PARTITION BY DAY", ctx);
         engine.execute("INSERT INTO d3_pq VALUES (-2, -2, 'c0', 0.0, 'name', '2100-01-01')", ctx);
         engine.execute("ALTER TABLE d3_pq CONVERT PARTITION TO PARQUET WHERE ts < '2100-01-01'", ctx);
+        // Builds of fewer rows than parallel.min.rows, over many daily partitions, with VARCHAR texts
+        // that a regex or a LIKE filters: 250,000 rows of 400 to 600 characters over 25 days, and 500
+        // rows of 8 to 16 characters over 50 days. The seeded generator gives every revision's
+        // tables the same texts.
+        ctx.setRandom(new Rnd(42, 4242));
+        engine.execute("CREATE TABLE dreg AS (SELECT ((x - 1) * 4)::INT k, (x * 7 % 1_000) / 1000.0 w, rnd_str(400, 600, 0)::VARCHAR s, " +
+                "timestamp_sequence(0, 8_640_000) ts FROM long_sequence(250_000)) TIMESTAMP(ts) PARTITION BY DAY", ctx);
+        engine.execute("CREATE TABLE dtiny AS (SELECT ((x - 1) * 16)::INT k, (x * 7 % 1_000) / 1000.0 w, rnd_str(8, 16, 0)::VARCHAR s, " +
+                "timestamp_sequence(0, 8_640_000_000) ts FROM long_sequence(500)) TIMESTAMP(ts) PARTITION BY DAY", ctx);
         engine.execute("CREATE TABLE ready (x INT)", ctx);
     }
 
@@ -708,6 +724,12 @@ public class ParallelHashJoinBenchmark {
             case "COUNT_TINY_PROBE", "COUNT_TINY_PROBE_AFTER_PAGE" -> "SELECT f.id, x.w FROM fact f JOIN dup2 x ON f.k3 = x.k WHERE f.ts < "
                     + probeBound(2_500);
             case "COUNT_FANOUT_2_LARGE", "COUNT_FANOUT_2_LARGE_AFTER_PAGE" -> "SELECT f.id, x.w FROM fact f JOIN dup2 x ON f.k3 = x.k";
+            // Builds of fewer rows than parallel.min.rows, whose filters run interpreted over many
+            // frames; the filtered input never swaps.
+            case "SMALL_BUILD_REGEX" -> "SELECT f.id, f.v, d.w FROM fact f JOIN dreg d ON f.k3 = d.k WHERE d.s ~ '[B-C][X-Z][B-C][X-Z]' AND f.ts < "
+                    + probeBound(5_000_000);
+            case "SMALL_BUILD_LIKE_TINY" -> "SELECT f.id, f.v, d.w FROM fact f JOIN dtiny d ON f.k1 = d.k WHERE d.s LIKE '%B%' AND f.ts < "
+                    + probeBound(10_000);
             default -> throw new IllegalArgumentException("unknown shape: " + shape);
         };
     }

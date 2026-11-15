@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
@@ -83,6 +84,16 @@ public class AsyncHashJoinConcurrentTest extends AbstractCairoTest {
     @Test
     public void testConcurrentQueriesSaturateThreadWorkers() throws Exception {
         assertConcurrentQueries(WorkerPoolMode.LEGACY);
+    }
+
+    @Test
+    public void testConcurrentSmallInterpretedFilterBuildsOnFiberWorkers() throws Exception {
+        assertConcurrentSmallInterpretedFilterBuilds(WorkerPoolMode.FIBER_HOST);
+    }
+
+    @Test
+    public void testConcurrentSmallInterpretedFilterBuildsOnThreadWorkers() throws Exception {
+        assertConcurrentSmallInterpretedFilterBuilds(WorkerPoolMode.LEGACY);
     }
 
     @Test
@@ -181,6 +192,70 @@ public class AsyncHashJoinConcurrentTest extends AbstractCairoTest {
             }
             Assert.assertTrue(errors.isEmpty() ? "" : errors.peek().toString(), errors.isEmpty());
             Assert.assertEquals(threadCount * iterations, operatorRuns.get());
+        }, configuration, LOG));
+    }
+
+    // Queries on many threads whose builds hold fewer rows than the configured 300_000, over two day
+    // partitions of d, one of them Parquet, with filters that the JIT does not compile: every build
+    // runs in rounds, its frame tasks among the other queries' tasks on the shared workers.
+    private void assertConcurrentSmallInterpretedFilterBuilds(WorkerPoolMode mode) throws Exception {
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 4);
+        setProperty(PropertyKey.CAIRO_UNORDERED_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 4);
+        assertMemoryLeak(() -> TestUtils.execute(new TestWorkerPool(WORKER_COUNT, mode), (db, compiler, ignore) -> {
+            final String[] queries = {
+                    "SELECT t.k, t.v, d.w FROM t LEFT JOIN (SELECT * FROM d WHERE s::STRING LIKE 's1%') d ON t.k = d.k",
+                    "SELECT t.k, t.v, d.w, d.s FROM t JOIN (SELECT * FROM d WHERE s::STRING ~ 's[2-4]') d ON t.l = d.l",
+                    "SELECT t.k, t.v, d.w FROM t JOIN (SELECT * FROM d WHERE w::STRING LIKE '%7%') d ON t.s = d.s",
+                    "SELECT t.k, t.v, d.w FROM t LEFT JOIN (SELECT * FROM d WHERE s::STRING LIKE '%3') d ON t.k = d.k ORDER BY t.ts DESC LIMIT 300",
+            };
+            final ObjList<String> expected = new ObjList<>();
+            try (SqlExecutionContextImpl context = newContext(db)) {
+                createTables(db, context);
+                for (String sql : queries) {
+                    expected.add(ordinary(sql, context));
+                }
+            }
+            final int threadCount = 6;
+            final int iterations = 8;
+            final CyclicBarrier start = new CyclicBarrier(threadCount);
+            final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
+            final AtomicInteger roundBuilds = new AtomicInteger();
+            final ObjList<Thread> threads = new ObjList<>();
+            for (int i = 0; i < threadCount; i++) {
+                final int threadIndex = i;
+                final Thread thread = new Thread(() -> {
+                    try (SqlExecutionContextImpl context = newContext(db)) {
+                        start.await(30, TimeUnit.SECONDS);
+                        for (int n = 0; n < iterations; n++) {
+                            final int q = (threadIndex + n) % queries.length;
+                            try (RecordCursorFactory factory = db.select(queries[q], context)) {
+                                final AsyncHashJoinRecordCursorFactory join = find(factory);
+                                Assert.assertNotNull(queries[q], join);
+                                Assert.assertEquals(queries[q], expected.getQuick(q), result(factory, context));
+                                try (RecordCursor cursor = factory.getCursor(context)) {
+                                    Assert.assertTrue(queries[q], cursor.hasNext());
+                                    Assert.assertTrue(queries[q], join.getAtom().getStage(0).isBuiltInRounds());
+                                }
+                                Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                                Assert.assertEquals(0, join.getBuildRoundAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                                roundBuilds.incrementAndGet();
+                            }
+                        }
+                    } catch (Throwable th) {
+                        errors.add(th);
+                    }
+                });
+                threads.add(thread);
+                thread.start();
+            }
+            for (int i = 0; i < threadCount; i++) {
+                threads.getQuick(i).join();
+            }
+            for (Throwable th : errors) {
+                LOG.error().$("concurrent query failed: ").$(th).$();
+            }
+            Assert.assertTrue(errors.isEmpty() ? "" : errors.peek().toString(), errors.isEmpty());
+            Assert.assertEquals(threadCount * iterations, roundBuilds.get());
         }, configuration, LOG));
     }
 

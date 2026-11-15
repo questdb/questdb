@@ -85,9 +85,11 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
  * {@link #build(SqlExecutionCircuitBreaker, PageFrameRoundDispatcher)} runs once per execution,
  * when the cursor is first asked for a result: it walks the build scan's page frames, filters each
  * one and keeps the key and the row id of every row that passes. The owner builds alone, unless
- * the build input holds at least the configured row count; then the frames filter and sort their
- * rows on the workers, and the workers fill the hash partitions of {@link IntHashJoinBuild} or
- * {@link MapHashJoinBuild}, through rounds of tasks that the operator's dispatcher runs. Each task
+ * the build input holds at least the configured row count, or spans more than one frame under a
+ * WHERE filter that runs interpreted, whose cost per row its rows do not tell; then the frames
+ * filter and sort their rows on the workers, and the workers fill the hash partitions of
+ * {@link IntHashJoinBuild} or {@link MapHashJoinBuild}, through rounds of tasks that the
+ * operator's dispatcher runs. Each task
  * of a round finds the stage through the {@link HashJoinBuildHost} atom of the dispatcher's
  * sequence. A parallel hash join first prepares every stage's build, see {@link #prepareBuild()},
  * and builds its stages that are too small for rounds of their own at once, when it has more than
@@ -174,7 +176,9 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
     private final boolean isParallelBuildCapable;
     // The INT layout's lone SYMBOL pair, whose probe keys the reducer translates per row.
     private final boolean isSymbolKey;
-    // The build input's row count, before any filter, from which the build runs on the workers.
+    // The build input's row count, before any filter, from which the build runs on the workers. A
+    // build that spans more than one frame under a WHERE filter that runs interpreted runs there
+    // whatever its rows; see prepareBuild().
     private final long parallelBuildMinRows;
     // The INT layout's only probe key column, -1 when the key sinks stage the key instead.
     private final int probeKeyColumn;
@@ -1489,6 +1493,13 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
         }
     }
 
+    // True when the build input's WHERE filter runs interpreted: the JIT did not compile it, as with a
+    // regex, a LIKE, or any filter with the JIT off. Its cost per row has no bound, so the input's rows
+    // do not measure the build's work, and the ordinary plan ran it on the workers through Async Filter.
+    private boolean isBuildFilterInterpreted() {
+        return buildFilterContext.getFilter(-1) != null && buildFilterContext.getCompiledFilter() == null;
+    }
+
     /**
      * Gives every slot its probe of the frozen build, which {@link Slot#getProbe()} then returns.
      * Runs once per execution, after the build and the SYMBOL key translation, on the thread that
@@ -1608,8 +1619,9 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
      * Walks the build scan's page frames, keeping the key and the row id of every row that the
      * build filters pass. The frame count is known before the first row, and so is the row count
      * of an unfiltered build, interval scans included. The owner walks the frames itself, unless
-     * the frames hold enough rows to build on the workers; see {@link #buildInRounds}. There, every
-     * build knows its exact row count before it sizes anything. On the owner, a filtered build stays
+     * the frames hold enough rows to build on the workers, or more than one of them run a WHERE
+     * filter that runs interpreted; see {@link #prepareBuild()} and {@link #buildInRounds}. There,
+     * every build knows its exact row count before it sizes anything. On the owner, a filtered build stays
      * unknown and grows as it goes: the unfiltered row count only bounds it, and sizing by that bound
      * over-allocates by the filter's selectivity. On failure the caller runs {@link #clear()}, which
      * closes the build, the filters and the frames.
@@ -1786,10 +1798,15 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
     /**
      * Loads the build scan's page frames and decides how the open cursor's build runs, on the owner
      * and before any of its rows is read: in rounds of its own, on the workers, when it can and its
-     * input holds at least the configured rows, and alone otherwise, on the owner, or, for a parallel
-     * hash join with several small stages, as a task of a round that builds them at once; see
-     * {@link #BUILD_STAGE}. A build alone takes its presize hints here, on the owner, since the key
-     * hint of a SYMBOL key reads the build scan's dictionary. The caller then builds, see
+     * input holds at least the configured rows, or spans more than one frame under a WHERE filter
+     * that the JIT did not compile, such as a regex or a LIKE; and alone otherwise, on the owner,
+     * or, for a parallel hash join with several small stages, as a task of a round that builds them
+     * at once; see {@link #BUILD_STAGE}. Such a filter's cost per row has no bound, so the input's
+     * rows do not measure the build's work, and the plan without the operator ran the filter on the
+     * workers; a filter that the JIT compiled, a build ON filter alone and a build of one frame,
+     * whose one task would run on one thread anyway, leave the decision to the rows, by which a
+     * small build saves the rounds' fixed cost. A build alone takes its presize hints here, on the
+     * owner, since the key hint of a SYMBOL key reads the build scan's dictionary. The caller then builds, see
      * {@link #build}, which also prepares a build that nothing prepared, and {@link #BUILD_STAGE},
      * after which it runs {@link #finishBuild()}. On failure the caller runs {@link #clear()}, which
      * closes what this opened.
@@ -1804,7 +1821,9 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
         buildFrames.loadFrames();
         buildFilterContext.initMemoryPools(buildFrames.getAddressCache(), memoryTracker);
         isBuildFiltered = buildFilterContext.getFilter(-1) != null || isBuildOnFilterActive;
-        isLargeBuild = isParallelBuildCapable && buildFrames.getFrameCount() > 0 && buildFrames.getRowCount() >= parallelBuildMinRows;
+        final int frameCount = buildFrames.getFrameCount();
+        isLargeBuild = isParallelBuildCapable && frameCount > 0
+                && (buildFrames.getRowCount() >= parallelBuildMinRows || (frameCount > 1 && isBuildFilterInterpreted()));
         if (!isLargeBuild) {
             rowCountHint = isBuildFiltered ? -1 : buildFrames.getRowCount();
             keyCountHint = getKeyCountHint(rowCountHint);

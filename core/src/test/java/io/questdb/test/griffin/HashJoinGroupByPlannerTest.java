@@ -3580,6 +3580,9 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                 .returns(column + '\n' + expected + '\n');
         try (RecordCursorFactory factory = engine.select(sql, context)) {
             final AsyncHashJoinGroupByAtom atom = fused(factory).getAtom();
+            // A build filter that runs interpreted, as the plan's attribute names it, builds in rounds
+            // over more than one frame, whatever the configured rows.
+            final boolean isBuildFilterInterpreted = plan(factory, context).contains("buildFilter: ");
             try (RecordCursor cursor = factory.getCursor(context)) {
                 // The first read builds and counts; an open cursor has done neither.
                 Assert.assertFalse(sql, atom.isCountedByKey());
@@ -3588,7 +3591,11 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                 Assert.assertTrue(cursor.hasNext());
                 Assert.assertEquals(sql, isCountedByKey, atom.isCountedByKey());
                 Assert.assertEquals(sql, !isCountedByKey, atom.isCountedByMatch());
-                Assert.assertEquals(sql, buildMode == HashJoinBuildMode.PARALLEL, atom.isBuiltInRounds());
+                Assert.assertEquals(
+                        sql,
+                        buildMode == HashJoinBuildMode.PARALLEL || (isBuildFilterInterpreted && atom.getBuildFrameCount() > 1),
+                        atom.isBuiltInRounds()
+                );
                 if (buildMode == HashJoinBuildMode.PARALLEL && atom.getFrozenBuild().getRowCount() > 1) {
                     // More than one hash partition, so the reducers run the loops over the partitioned probes.
                     Assert.assertTrue(sql + ", partitions: " + atom.getBuildPartitionCount(), atom.getBuildPartitionCount() > 1);

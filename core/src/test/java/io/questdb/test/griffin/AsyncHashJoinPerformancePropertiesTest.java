@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -37,6 +38,8 @@ import io.questdb.griffin.engine.table.AsyncHashJoinGroupByAtom;
 import io.questdb.griffin.engine.table.AsyncHashJoinGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHashJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.HashJoinBuildStage;
+import io.questdb.jit.JitUtil;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
@@ -57,7 +60,9 @@ import static io.questdb.test.griffin.ParallelHashJoinTestUtils.*;
  * moving ring window; and so does a count of the rows. And an execution builds each stage once, in a known
  * number of rounds of tasks, however often its cursor goes back to the top or counts its rows, and
  * indexes the chain lengths of a stage that hands its chains on once, for its counts, whose breaker
- * checks then follow the frames and the MiB of the indexed rows rather than the chains' links.
+ * checks then follow the frames and the MiB of the indexed rows rather than the chains' links. A
+ * small build whose filter runs interpreted over more than one frame builds in the two rounds of a
+ * large one, and copies its payload and presizes its key table as builds in rounds do.
  */
 public class AsyncHashJoinPerformancePropertiesTest extends AbstractCairoTest {
 
@@ -202,6 +207,125 @@ public class AsyncHashJoinPerformancePropertiesTest extends AbstractCairoTest {
                     Assert.assertTrue(checks, breaker.stateChecks.get() <= frameCount + 16);
                     Assert.assertTrue(checks, breaker.throttledChecks.get() <= frameCount + passCheckCount + 16);
                     Assert.assertEquals(checks, passCheckCount, breaker.passChecks.get());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testInterpretedFilterBuildPresizesAndCopiesAsInRounds() throws Exception {
+        assertMemoryLeak(() -> {
+            // pa holds 1_000 rows over four days with the keys 0 to 999 and the symbols S0 to S9, of
+            // which the regex keeps S1 to S3, 300 rows of 300 keys; r50 holds 50 probe rows and r2k
+            // 2_000, more than pa.
+            execute("""
+                    CREATE TABLE pa AS (
+                        SELECT (x - 1)::INT k, x::DOUBLE w, ('S' || (x % 10))::SYMBOL s, timestamp_sequence('2024-01-01', 345_600_000) ts
+                        FROM long_sequence(1_000)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("CREATE TABLE r50 AS (SELECT (x * 7)::INT k, (x % 5)::INT g, timestamp_sequence('2024-01-01', 60_000_000) ts FROM long_sequence(50)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE r2k AS (SELECT (x % 1_000)::INT k, (x % 5)::INT g, timestamp_sequence('2024-01-01', 60_000_000) ts FROM long_sequence(2_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            final String filtered = "(SELECT * FROM pa WHERE s::STRING ~ 'S[1-3]') pa";
+            // The build runs in rounds, so the copy of its payload weighs the probe's 50 rows with the
+            // parallel ratio: 50 >= 0.125 * 300, where the owner's ratio would ask for 0.4 * 300 = 120
+            // rows. The copy runs in a third round, on the workers.
+            final String copied = "SELECT r50.g, count() n, sum(pa.w) w FROM r50 LEFT JOIN " + filtered + " ON r50.k = pa.k ORDER BY r50.g";
+            try (RecordCursorFactory factory = select(copied)) {
+                final AsyncHashJoinGroupByRecordCursorFactory fused = findFused(factory);
+                Assert.assertNotNull(copied, fused);
+                final HashJoinBuildStage stage = fused.getAtom().getBuildingStage();
+                for (int execution = 0; execution < 2; execution++) {
+                    final long rounds = stage.getRoundCount();
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        Assert.assertTrue(cursor.hasNext());
+                        Assert.assertTrue(fused.getAtom().isBuiltInRounds());
+                        Assert.assertEquals(300, fused.getAtom().getFrozenBuild().getRowCount());
+                        Assert.assertTrue(fused.getAtom().isPayloadCopied());
+                    }
+                    Assert.assertEquals(rounds + 3, stage.getRoundCount());
+                }
+                Assert.assertEquals(ordinaryGroupBy(copied), groupByResult(factory));
+            }
+            // pa holds fewer rows than r2k, so the key table is presized: by the 300 rows that the
+            // rounds kept, where a build on the owner, whose filter thins rows it cannot count ahead,
+            // starts at 64 slots and doubles past 32 keys. The fused GROUP BY and the join size alike.
+            final String presized = "SELECT r2k.g, count() n, sum(pa.w) w FROM r2k JOIN " + filtered + " ON r2k.k = pa.k ORDER BY r2k.g";
+            try (RecordCursorFactory factory = select(presized)) {
+                final AsyncHashJoinGroupByRecordCursorFactory fused = findFused(factory);
+                Assert.assertNotNull(presized, fused);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertTrue(cursor.hasNext());
+                    final HashJoinBuildStage stage = fused.getAtom().getBuildingStage();
+                    Assert.assertTrue(fused.getAtom().isBuiltInRounds());
+                    Assert.assertTrue(stage.isKeyCapacityPresized());
+                    Assert.assertEquals(300, fused.getAtom().getFrozenBuild().getKeyCount());
+                    Assert.assertEquals(0, stage.getKeyTableGrowCount());
+                }
+                Assert.assertEquals(ordinaryGroupBy(presized), groupByResult(factory));
+            }
+            sqlExecutionContext.setParallelHashJoinGroupByEnabled(false);
+            try {
+                final String join = "SELECT r2k.k, r2k.g, pa.w FROM r2k JOIN " + filtered + " ON r2k.k = pa.k";
+                assertParallelHashJoin(join, sqlExecutionContext);
+                try (RecordCursorFactory factory = select(join)) {
+                    final AsyncHashJoinRecordCursorFactory asyncJoin = find(factory);
+                    Assert.assertNotNull(join, asyncJoin);
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        Assert.assertTrue(cursor.hasNext());
+                        final HashJoinBuildStage stage = asyncJoin.getAtom().getStage(0);
+                        Assert.assertTrue(stage.isBuiltInRounds());
+                        Assert.assertTrue(stage.isKeyCapacityPresized());
+                        Assert.assertEquals(300, stage.getFrozenBuild().getKeyCount());
+                        Assert.assertEquals(0, stage.getKeyTableGrowCount());
+                    }
+                }
+            } finally {
+                sqlExecutionContext.setParallelHashJoinGroupByEnabled(true);
+            }
+        });
+    }
+
+    @Test
+    public void testInterpretedFilterBuildRunsInRounds() throws Exception {
+        // No build copies its payload, so that a build in rounds runs its two rounds alone.
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MIN_PROBE_RATIO, "1000000");
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_PARALLEL_MIN_PROBE_RATIO, "1000000");
+        assertMemoryLeak(() -> {
+            // b2 holds 20 rows over two days, a frame each, of the keys 0 to 9 twice; b1 holds its first
+            // day, one frame. The LIKE keeps n1 and n10 to n19: the keys 1, 0 and 1 to 9.
+            execute("CREATE TABLE f2 AS (SELECT (x % 10)::INT k, x v, timestamp_sequence('2024-01-01', 60_000_000) ts FROM long_sequence(1_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE b2 AS (SELECT (x % 10)::INT k, x w, ('n' || x)::VARCHAR vch, timestamp_sequence('2024-01-01', 8_640_000_000) ts FROM long_sequence(20)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE b1 AS (SELECT * FROM b2 WHERE ts < '2024-01-02') TIMESTAMP(ts) PARTITION BY DAY");
+            final boolean isJit = JitUtil.isJitSupported();
+            // At the default rows, a LIKE over two frames builds in two rounds per execution, however
+            // often the execution counts or reads again; a filter that the JIT compiled, a LIKE over
+            // one frame and no filter build on the owner, in no round. A build that repeats its keys
+            // indexes its chains once per execution for its count; b1's LIKE keeps one row per key.
+            assertCounts("SELECT f2.k, f2.v, b2.w FROM f2 LEFT JOIN (SELECT * FROM b2 WHERE vch LIKE '%1%') b2 ON f2.k = b2.k", 1, 2, 1);
+            assertCounts("SELECT f2.k, f2.v, b2.w FROM f2 LEFT JOIN (SELECT * FROM b2 WHERE w > 3) b2 ON f2.k = b2.k", 1, isJit ? 0 : 2, 1);
+            assertCounts("SELECT f2.k, f2.v, b1.w FROM f2 LEFT JOIN (SELECT * FROM b1 WHERE vch LIKE '%1%') b1 ON f2.k = b1.k", 1, 0, 0);
+            assertCounts("SELECT f2.k, f2.v, b2.w FROM f2 LEFT JOIN b2 ON f2.k = b2.k", 1, 0, 1);
+            // The fused GROUP BY builds its LIKE over two frames in two rounds per execution, and its
+            // compiled filter on the owner.
+            for (String filter : new String[]{"vch LIKE '%1%'", "w > 3"}) {
+                final String sql = "SELECT f2.k % 3 g, count() n, sum(b2.w) w FROM f2 LEFT JOIN (SELECT * FROM b2 WHERE " + filter + ") b2 ON f2.k = b2.k ORDER BY g";
+                final int roundsPerExecution = filter.startsWith("w") && isJit ? 0 : 2;
+                try (RecordCursorFactory factory = select(sql)) {
+                    final AsyncHashJoinGroupByRecordCursorFactory fused = findFused(factory);
+                    Assert.assertNotNull(sql, fused);
+                    final HashJoinBuildStage stage = fused.getAtom().getBuildingStage();
+                    for (int execution = 0; execution < 2; execution++) {
+                        final long rounds = stage.getRoundCount();
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            Assert.assertTrue(cursor.hasNext());
+                            cursor.toTop();
+                            Assert.assertTrue(cursor.hasNext());
+                            Assert.assertEquals(sql, roundsPerExecution > 0, fused.getAtom().isBuiltInRounds());
+                        }
+                        Assert.assertEquals(sql, rounds + roundsPerExecution, stage.getRoundCount());
+                    }
+                    Assert.assertEquals(sql, ordinaryGroupBy(sql), groupByResult(factory));
                 }
             }
         });
@@ -488,6 +612,26 @@ public class AsyncHashJoinPerformancePropertiesTest extends AbstractCairoTest {
             return false;
         } finally {
             setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
+        }
+    }
+
+    // The rows of an execution of the factory, as CursorPrinter prints them.
+    private static String groupByResult(RecordCursorFactory factory) throws Exception {
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            final StringSink sink = new StringSink();
+            CursorPrinter.println(cursor, factory.getMetadata(), sink, true, true);
+            return sink.toString();
+        }
+    }
+
+    // The rows of the query's plan without the fused GROUP BY.
+    private static String ordinaryGroupBy(String sql) throws Exception {
+        sqlExecutionContext.setParallelHashJoinGroupByEnabled(false);
+        try (RecordCursorFactory factory = select(sql)) {
+            Assert.assertNull(sql, findFused(factory));
+            return groupByResult(factory);
+        } finally {
+            sqlExecutionContext.setParallelHashJoinGroupByEnabled(true);
         }
     }
 

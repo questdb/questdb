@@ -62,6 +62,7 @@ import static io.questdb.test.griffin.ParallelHashJoinTestUtils.*;
  * The parallel hash join's concurrent small builds and its count of rows on shared query workers that
  * run on threads and on fibers. Two small builds run at once: each task of the round holds its
  * thread until the other task runs too, which only threads that build the stages at once let pass.
+ * Two small builds whose filters run interpreted over many frames build in rounds of their own.
  * count(*) and negative {@code LIMIT}s count on count-only tasks that the workers run, and a count that
  * follows some rows meets the tuple-carrying tasks that the workers ran before it. The pass that
  * indexes the builds' chain lengths for a count runs on the owner, with the owner's breaker, also
@@ -130,11 +131,24 @@ public class AsyncHashJoinConcurrentBuildsWorkersTest extends AbstractCairoTest 
         assertIndexPassBesideTupleTask(WorkerPoolMode.LEGACY);
     }
 
+    @Test
+    public void testSmallFilteredBuildsInRoundsOnFiberWorkers() throws Exception {
+        assertSmallFilteredBuildsInRounds(WorkerPoolMode.FIBER_HOST);
+    }
+
+    @Test
+    public void testSmallFilteredBuildsInRoundsOnThreadWorkers() throws Exception {
+        assertSmallFilteredBuildsInRounds(WorkerPoolMode.LEGACY);
+    }
+
     private static void assertConcurrentBuilds(WorkerPoolMode mode) throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, Long.MAX_VALUE);
         execute(mode, (db, context) -> {
             // Each stage's build filter holds the first thread that runs it until the other stage's
-            // task runs too: the two builds must run at once to get past it.
+            // task runs too: the two builds must run at once to get past it. A filter that the JIT
+            // does not compile builds a stage in rounds of its own over more than one frame, so frames
+            // of 4_096 rows hold d's 3_000 rows and d2's 1_000 in one each, and the stages stay small.
+            context.changePageFrameSizes(4_096, 4_096);
             final String sql = "SELECT t.k, t.v, a.w, b.w2 FROM t LEFT JOIN (SELECT * FROM d WHERE test_latched_counter()) a ON t.k = a.k"
                     + " LEFT JOIN (SELECT * FROM d2 WHERE test_latched_counter()) b ON t.l = b.l";
             final String expected = ordinary(sql, context);
@@ -190,6 +204,7 @@ public class AsyncHashJoinConcurrentBuildsWorkersTest extends AbstractCairoTest 
             // Limits from a few bytes up fail the concurrent builds, and the probes after them, at
             // their allocations in turn, on the workers and the owner; each failure leaves every slot
             // back, and the first limit that admits the query reads the rows.
+            context.changePageFrameSizes(256, 256);
             final String starExpected = ordinary(STAR, context);
             context.setParallelHashJoinEnabled(true);
             try (RecordCursorFactory factory = db.select(STAR, context)) {
@@ -395,6 +410,46 @@ public class AsyncHashJoinConcurrentBuildsWorkersTest extends AbstractCairoTest 
                     Assert.assertEquals(rounds + 1, join.getBuildRoundAtom().getConcurrentBuildRoundCount());
                     Assert.assertEquals(2, breaker.getPassCheckCount());
                     Assert.assertTrue(breaker.isPassOnlyOn(Thread.currentThread()));
+                    assertSlotsBack(join);
+                }
+            }
+        });
+    }
+
+    // d's 3_000 rows and d2's 1_000 span frames of 256 rows, and each stage's filter runs interpreted,
+    // so each stage builds in rounds of its own, one after the other, rather than in a round of
+    // concurrent builds.
+    private static void assertSmallFilteredBuildsInRounds(WorkerPoolMode mode) throws Exception {
+        // No build copies its payload, so that each build runs two rounds.
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MIN_PROBE_RATIO, "1000000");
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_PARALLEL_MIN_PROBE_RATIO, "1000000");
+        execute(mode, (db, context) -> {
+            final String sql = "SELECT t.k, t.v, a.w, b.w2 FROM t LEFT JOIN (SELECT * FROM d WHERE w::STRING LIKE '%7%') a ON t.k = a.k"
+                    + " LEFT JOIN (SELECT * FROM d2 WHERE w2::STRING LIKE '%3%') b ON t.l = b.l";
+            final String expected = ordinary(sql, context);
+            context.setParallelHashJoinEnabled(true);
+            try (RecordCursorFactory factory = db.select(sql, context)) {
+                final AsyncHashJoinRecordCursorFactory join = find(factory);
+                Assert.assertNotNull(join);
+                for (int run = 0; run < 2; run++) {
+                    final long concurrentRounds = join.getBuildRoundAtom().getConcurrentBuildRoundCount();
+                    final long rounds0 = join.getAtom().getStage(0).getRoundCount();
+                    final long rounds1 = join.getAtom().getStage(1).getRoundCount();
+                    // The owner waits until a worker took a slot of the build's rounds.
+                    final CountDownLatch roundSlot = new CountDownLatch(1);
+                    join.getBuildRoundAtom().getPerWorkerLocks().setTestAcquireLatch(roundSlot);
+                    try (RecordCursor cursor = factory.getCursor(context)) {
+                        Assert.assertTrue(cursor.hasNext());
+                        Assert.assertTrue(join.getAtom().getStage(0).isBuiltInRounds());
+                        Assert.assertTrue(join.getAtom().getStage(1).isBuiltInRounds());
+                    } finally {
+                        join.getBuildRoundAtom().getPerWorkerLocks().setTestAcquireLatch(null);
+                    }
+                    Assert.assertEquals(0, roundSlot.getCount());
+                    Assert.assertEquals(concurrentRounds, join.getBuildRoundAtom().getConcurrentBuildRoundCount());
+                    Assert.assertEquals(rounds0 + 2, join.getAtom().getStage(0).getRoundCount());
+                    Assert.assertEquals(rounds1 + 2, join.getAtom().getStage(1).getRoundCount());
+                    Assert.assertEquals(expected, result(factory, context));
                     assertSlotsBack(join);
                 }
             }

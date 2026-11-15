@@ -90,6 +90,19 @@ INSERT INTO managers VALUES
 (102, 'Noa', '2024-01-01T01:00:00.000000Z'),
 (102, 'Oli', '2024-01-01T02:00:00.000000Z')
 
+# Suppliers over three day partitions: product 12 has two, products 10, 11 and 13 one each. A LIKE
+# over the name, which QuestDB's JIT does not compile, filters the rows that the join hashes.
+statement ok
+CREATE TABLE suppliers (prod INT, sname VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+
+statement ok
+INSERT INTO suppliers VALUES
+(10, 'Acme', '2024-01-01T00:00:00.000000Z'),
+(12, 'Alpine', '2024-01-02T00:00:00.000000Z'),
+(12, 'Valley', '2024-01-02T01:00:00.000000Z'),
+(13, 'Bakers', '2024-01-03T00:00:00.000000Z'),
+(11, 'Mill', '2024-01-03T01:00:00.000000Z')
+
 # INNER star of three dimensions
 query ITTT nosort
 SELECT s.id, c.cname, p.pname, st.city
@@ -362,6 +375,35 @@ LEFT JOIN managers m ON st.store = m.store
 8 Austin Oli
 8 Boston Noa
 8 Boston Oli
+
+# A LEFT join over the suppliers that a LIKE keeps: Acme and Alpine
+query IT nosort
+SELECT s.id, su.sname
+FROM sales s
+LEFT JOIN (SELECT * FROM suppliers WHERE sname LIKE 'A%') su ON s.prod = su.prod
+ORDER BY s.id, su.sname
+----
+1 Acme
+2 NULL
+3 Acme
+4 Alpine
+5 NULL
+6 NULL
+7 Alpine
+8 Acme
+
+# GROUP BY over an INNER join with the suppliers whose name holds an l: Alpine and Valley supply
+# product 12, sold twice for 3 and 6, and Mill product 11, sold twice for 1 and 1
+query TII nosort
+SELECT su.sname, count(*), sum(s.qty)
+FROM sales s
+JOIN (SELECT * FROM suppliers WHERE sname LIKE '%l%') su ON s.prod = su.prod
+GROUP BY su.sname
+ORDER BY su.sname
+----
+Alpine 2 9
+Mill 2 2
+Valley 2 9
 
 # ---------------------------------------------------------------------------------------------
 # QuestDB-specific
