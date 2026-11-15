@@ -25,6 +25,10 @@
 package io.questdb.test.cutlass.qwp;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.sql.PartitionFrameCursorFactory;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.client.Query;
 import io.questdb.client.QueryException;
 import io.questdb.client.QuestDB;
@@ -35,10 +39,14 @@ import io.questdb.client.cutlass.qwp.client.QwpQueryDetails;
 import io.questdb.client.cutlass.qwp.client.QwpQueryOptions;
 import io.questdb.cutlass.qwp.codec.QwpEgressMsgKind;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
+import io.questdb.cutlass.qwp.server.egress.QwpEgressUpgradeProcessor;
 import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
+import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.jit.JitUtil;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
+import io.questdb.std.str.Path;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -221,6 +229,70 @@ public class QwpEgressQueryDetailsClientTest extends AbstractQwpQueryDetailsTest
     }
 
     @Test
+    public void testRowWindowsAndFullScansShareCachedFactory() throws Exception {
+        // The query cache is on by default, and with one HTTP worker every run of a
+        // SQL text gets the factory the previous run put back into the cache. A run
+        // with a row window reads it through getCursor() and skipRows(), a run
+        // without one through its page frames, so the two alternate on one factory.
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = startFragmented(
+                    PropertyKey.HTTP_WORKER_COUNT.getEnvVarName(), "1",
+                    PropertyKey.HTTP_QUERY_CACHE_ENABLED.getEnvVarName(), "true",
+                    PropertyKey.HTTP_FROZEN_CLOCK.getEnvVarName(), "false"
+            );
+                 QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";max_batch_rows=64;")) {
+                client.connect();
+                // 1_800 rows ten seconds apart, 360 an hour; y starts at row 500, in
+                // hour 1, and is NULL at every 4th row from there
+                serverMain.execute("CREATE TABLE qd_cached (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+                serverMain.execute("INSERT INTO qd_cached SELECT x - 1, ((x - 1) * 10_000_000)::TIMESTAMP FROM long_sequence(500)");
+                serverMain.awaitTable("qd_cached");
+                serverMain.execute("ALTER TABLE qd_cached ADD COLUMN y LONG");
+                serverMain.execute("INSERT INTO qd_cached SELECT x + 499, ((x + 499) * 10_000_000)::TIMESTAMP, "
+                        + "CASE WHEN (x + 499) % 4 = 0 THEN NULL ELSE x + 499 END FROM long_sequence(1_300)");
+                serverMain.awaitTable("qd_cached");
+                // hour 2, rows 720 to 1_079, also goes to a file for read_parquet(); hours
+                // 0 and 1, the column top included, become parquet partitions
+                writeParquetFile(serverMain.getEngine(), "qd_cached", 2, "qd_cached.parquet");
+                serverMain.execute("ALTER TABLE qd_cached CONVERT PARTITION TO PARQUET WHERE ts < '1970-01-01T02'");
+                serverMain.awaitTable("qd_cached");
+                serverMain.assertSql("SELECT count() FROM table_partitions('qd_cached') WHERE isParquet", "count\n2\n");
+
+                final LongList x = new LongList();
+                final LongList y = new LongList();
+                for (int i = 0; i < 1_800; i++) {
+                    x.add(i);
+                    y.add(i < 500 || i % 4 == 0 ? Numbers.LONG_NULL : i);
+                }
+                final LongList yDescending = new LongList();
+                for (int i = y.size() - 1; i > -1; i--) {
+                    yDescending.add(y.getQuick(i));
+                }
+                final LongList xParquet = new LongList();
+                xParquet.add(x, 720, 1_080);
+                final LongList yParquet = new LongList();
+                yParquet.add(y, 720, 1_080);
+
+                // {skip_rows, max_rows}: windows across the parquet hours, the column top,
+                // the switch to native partitions and the ends of the result
+                final long[][] windows = {
+                        {0, 10}, {355, 10}, {495, 10}, {715, 10}, {1_075, 10}, {1_295, 10}, {1_795, 10},
+                        {2_000, 5}, {0, 0}, {17, Long.MAX_VALUE},
+                };
+                assertWindowsAndFullScansAlternate(serverMain, client, "SELECT y FROM qd_cached",
+                        PartitionFrameCursorFactory.ORDER_ASC, y, windows, true);
+                assertWindowsAndFullScansAlternate(serverMain, client, "SELECT y FROM qd_cached ORDER BY ts DESC",
+                        PartitionFrameCursorFactory.ORDER_DESC, yDescending, windows, false);
+                // read_parquet() shares one page-frame cursor between its two read paths
+                assertWindowsAndFullScansAlternate(serverMain, client, "SELECT x FROM read_parquet('qd_cached.parquet')",
+                        PartitionFrameCursorFactory.ORDER_ASC, xParquet, windows, true);
+                assertWindowsAndFullScansAlternate(serverMain, client, "SELECT y FROM read_parquet('qd_cached.parquet')",
+                        PartitionFrameCursorFactory.ORDER_ASC, yParquet, windows, false);
+            }
+        });
+    }
+
+    @Test
     public void testStatsWithFrozenClock() throws Exception {
         // A frozen HTTP clock makes every duration 0, so the reported values are
         // fully known; the JIT flag matches the explain of /exec.
@@ -234,7 +306,7 @@ public class QwpEgressQueryDetailsClientTest extends AbstractQwpQueryDetailsTest
                 for (String sql : new String[]{"SELECT x FROM qd_window WHERE x > 500", "SELECT x FROM qd_window"}) {
                     final Collector select = new Collector();
                     client.execute(sql, select, stats);
-                    assertFrozenStats(sql, select, execJitCompiled(sql));
+                    assertFrozenStats(sql, select, isJitCompiledOnExec(sql));
                     Assert.assertFalse(sql, select.hasRowCount);
                     isAnyJit |= select.isJitCompiled;
                 }
@@ -279,8 +351,80 @@ public class QwpEgressQueryDetailsClientTest extends AbstractQwpQueryDetailsTest
         }
     }
 
+    /**
+     * Runs {@code sql} alternately with and without each of the row windows,
+     * starting with a window when {@code isWindowFirst}, and checks each run
+     * against {@code rows}, the whole result. Every run after the first must
+     * reuse the cached factory, which streams through page frames in
+     * {@code pageFrameOrder} when the run has no window.
+     */
+    private static void assertWindowsAndFullScansAlternate(
+            TestServerMain serverMain,
+            QwpQueryClient client,
+            String sql,
+            int pageFrameOrder,
+            LongList rows,
+            long[][] windows,
+            boolean isWindowFirst
+    ) throws Exception {
+        try (RecordCursorFactory factory = serverMain.getEngine().select(sql, serverMain.getSqlExecutionContext())) {
+            Assert.assertEquals(sql, pageFrameOrder, QwpEgressUpgradeProcessor.pageFrameOrder(factory, false));
+        }
+        final int rowCount = rows.size();
+        int run = 0;
+        for (int w = 0; w < windows.length; w++) {
+            for (int i = 0; i < 2; i++) {
+                final boolean isWindow = (i == 0) == isWindowFirst;
+                final boolean isCounted = w % 2 == 1;
+                final long skip = isWindow ? windows[w][0] : 0;
+                final long max = isWindow ? windows[w][1] : Long.MAX_VALUE;
+                final QwpQueryOptions options = new QwpQueryOptions().stats(true).countRows(isCounted);
+                if (isWindow) {
+                    options.skipRows(skip).maxRows(max);
+                }
+                final Collector c = new Collector();
+                client.execute(sql, c, options);
+
+                final String msg = sql + " [run=" + run + (isWindow ? ", skip=" + skip + ", max=" + max : ", no window") + ']';
+                Assert.assertEquals(msg + ": " + c.errorMessage, 0, c.errorCount);
+                final int lo = (int) Math.min(skip, rowCount);
+                final int hi = lo + (int) Math.min(max, rowCount - lo);
+                final LongList expected = new LongList();
+                expected.add(rows, lo, hi);
+                assertLongs(msg, expected, c.longs);
+                Assert.assertEquals(msg, hi - lo, c.totalRows);
+                Assert.assertEquals(msg, isCounted, c.hasRowCount);
+                if (isCounted) {
+                    Assert.assertEquals(msg, rowCount, c.rowCount);
+                }
+                if (run++ == 0) {
+                    Assert.assertTrue(msg + " compiles", c.compileNanos > 0);
+                } else {
+                    Assert.assertEquals(msg + " reuses the cached factory", 0, c.compileNanos);
+                }
+            }
+        }
+    }
+
     private static QwpQueryClient newClient() {
         return QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";");
+    }
+
+    /**
+     * Writes partition {@code partitionIndex} of {@code tableName} to the parquet
+     * file {@code fileName} in the copy input root, where read_parquet() finds it.
+     */
+    private static void writeParquetFile(CairoEngine engine, String tableName, int partitionIndex, String fileName) {
+        final CharSequence inputRoot = engine.getConfiguration().getSqlCopyInputRoot();
+        TestUtils.createTestPath(inputRoot);
+        try (
+                Path path = new Path();
+                PartitionDescriptor descriptor = new PartitionDescriptor();
+                TableReader reader = engine.getReader(tableName)
+        ) {
+            PartitionEncoder.populateFromTableReader(reader, descriptor, partitionIndex);
+            PartitionEncoder.encode(descriptor, path.of(inputRoot).concat(fileName));
+        }
     }
 
     /**

@@ -1008,7 +1008,7 @@ public class QwpEgressQueryDetailsWireTest extends AbstractQwpQueryDetailsTest {
                     for (int windowed = 0; windowed < 2; windowed++) {
                         final long flags = QwpEgressMsgKind.QUERY_FLAG_STATS | (windowed == 1 ? WINDOW : 0);
                         Stats stats = conn.query(requestId++, sql, flags, 1, 3).resultEnd().readStats();
-                        Assert.assertEquals(sql, execJitCompiled(sql), stats.isJitCompiled);
+                        Assert.assertEquals(sql, isJitCompiledOnExec(sql), stats.isJitCompiled);
                         isAnyJit |= stats.isJitCompiled;
                     }
                 }
@@ -1101,13 +1101,6 @@ public class QwpEgressQueryDetailsWireTest extends AbstractQwpQueryDetailsTest {
             Assert.assertEquals("0x" + Integer.toHexString(bit) + " must be a single bit", 1, Integer.bitCount(bit));
             Assert.assertEquals("0x" + Integer.toHexString(bit) + " is taken twice", 0, union & bit);
             union |= bit;
-        }
-    }
-
-    private static void assertLongs(String message, LongList expected, LongList actual) {
-        Assert.assertEquals(message, expected.size(), actual.size());
-        for (int i = 0, n = expected.size(); i < n; i++) {
-            Assert.assertEquals(message + " at " + i, expected.getQuick(i), actual.getQuick(i));
         }
     }
 

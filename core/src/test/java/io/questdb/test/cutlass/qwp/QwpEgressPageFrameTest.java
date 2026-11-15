@@ -209,7 +209,7 @@ public class QwpEgressPageFrameTest extends AbstractQwpBootstrapTest {
                     WHEN y %% 13 = 1 THEN -2_147_483_647 ELSE (y * 5)::INT END,
                 CASE WHEN y %% 17 = 0 THEN 32_767 WHEN y %% 19 = 0 THEN -32_768 ELSE y %% 1_000 - 500 END::SHORT,
                 CASE WHEN y %% 17 = 1 THEN 127 WHEN y %% 19 = 1 THEN -128 ELSE y %% 200 - 100 END::BYTE,
-                CASE WHEN y %% 23 = 0 THEN CAST(NULL AS CHAR) WHEN y %% 2 = 0 THEN 'a'::CHAR ELSE '\u20AC'::CHAR END,
+                CASE WHEN y %% 23 = 0 THEN NULL::CHAR WHEN y %% 2 = 0 THEN 'a'::CHAR ELSE '\u20AC'::CHAR END,
                 y %% 3 = 0,
                 CASE WHEN y %% 7 = 2 THEN NULL WHEN y %% 11 = 2 THEN -0.0 WHEN y %% 13 = 2 THEN 1.7976931348623157E308
                     WHEN y %% 17 = 2 THEN 4.9E-324 ELSE y * 1.25 END,
@@ -226,12 +226,12 @@ public class QwpEgressPageFrameTest extends AbstractQwpBootstrapTest {
                 CASE WHEN y %% 9 = 6 THEN NULL ELSE rnd_long256() END,
                 CASE WHEN y %% 9 = 7 THEN NULL ELSE rnd_geohash(4) END,
                 CASE WHEN y %% 9 = 8 THEN NULL ELSE rnd_geohash(40) END,
-                CASE WHEN y %% 10 = 0 THEN NULL ELSE CAST(y %% 9 AS DECIMAL(2, 1)) END,
-                CASE WHEN y %% 10 = 1 THEN NULL ELSE CAST(y %% 99 AS DECIMAL(4, 2)) END,
-                CASE WHEN y %% 10 = 2 THEN NULL ELSE CAST(y * 7 AS DECIMAL(9, 3)) END,
-                CASE WHEN y %% 10 = 3 THEN NULL ELSE CAST(y * 1_000 AS DECIMAL(18, 4)) END,
-                CASE WHEN y %% 10 = 4 THEN NULL ELSE CAST(y AS DECIMAL(38, 5)) END,
-                CASE WHEN y %% 10 = 5 THEN NULL ELSE CAST(y AS DECIMAL(76, 6)) END,
+                CASE WHEN y %% 10 = 0 THEN NULL ELSE (y %% 9)::DECIMAL(2, 1) END,
+                CASE WHEN y %% 10 = 1 THEN NULL ELSE (y %% 99)::DECIMAL(4, 2) END,
+                CASE WHEN y %% 10 = 2 THEN NULL ELSE (y * 7)::DECIMAL(9, 3) END,
+                CASE WHEN y %% 10 = 3 THEN NULL ELSE (y * 1_000)::DECIMAL(18, 4) END,
+                CASE WHEN y %% 10 = 4 THEN NULL ELSE y::DECIMAL(38, 5) END,
+                CASE WHEN y %% 10 = 5 THEN NULL ELSE y::DECIMAL(76, 6) END,
                 CASE WHEN y %% 10 = 6 THEN NULL ELSE ARRAY[y * 1.0, y * 2.0] END
                 """.formatted(rowsPerPartition);
         serverMain.execute("INSERT INTO bwd_types SELECT " + values

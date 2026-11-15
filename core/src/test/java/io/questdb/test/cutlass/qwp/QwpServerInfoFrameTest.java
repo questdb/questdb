@@ -257,16 +257,16 @@ public class QwpServerInfoFrameTest {
                 io.questdb.cutlass.qwp.codec.QwpEgressMsgKind.CAP_QUERY_FLAGS | 0x40000000,
         };
         for (int providerCapability : providerCapabilities) {
-            for (boolean advertiseCompression : new boolean[]{false, true}) {
+            for (boolean isCompressionAdvertised : new boolean[]{false, true}) {
                 QwpServerInfo info = decodeUpgradeFrame(
                         new FixedServerInfoProvider(providerCapability),
-                        advertiseCompression,
+                        isCompressionAdvertised,
                         QwpConstants.COMPRESSION_ZSTD,
                         (byte) 3
                 );
                 final int expected = providerCapability
                         | io.questdb.cutlass.qwp.codec.QwpEgressMsgKind.CAP_QUERY_DETAILS
-                        | (advertiseCompression ? io.questdb.cutlass.qwp.codec.QwpEgressMsgKind.CAP_COMPRESSION : 0);
+                        | (isCompressionAdvertised ? io.questdb.cutlass.qwp.codec.QwpEgressMsgKind.CAP_COMPRESSION : 0);
                 Assert.assertEquals("provider capabilities 0x" + Integer.toHexString(providerCapability),
                         expected, info.getCapabilities());
                 Assert.assertEquals(0, info.getCapabilities() & io.questdb.cutlass.qwp.codec.QwpEgressMsgKind.CAP_QUERY_TIMEOUT);

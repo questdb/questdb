@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.qwp;
 
+import io.questdb.std.LongList;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -57,6 +58,13 @@ public abstract class AbstractQwpQueryDetailsTest extends AbstractQwpBootstrapTe
         dbPath.parent().$();
     }
 
+    protected static void assertLongs(String message, LongList expected, LongList actual) {
+        Assert.assertEquals(message, expected.size(), actual.size());
+        for (int i = 0, n = expected.size(); i < n; i++) {
+            Assert.assertEquals(message + " at " + i, expected.getQuick(i), actual.getQuick(i));
+        }
+    }
+
     /**
      * A WAL table {@code qd_window} of {@code rows} rows with x = 0, 1, 2, ... in
      * timestamp order, one microsecond apart.
@@ -82,17 +90,17 @@ public abstract class AbstractQwpQueryDetailsTest extends AbstractQwpBootstrapTe
     }
 
     /**
-     * Whether /exec reports {@code sql}'s filter as JIT-compiled.
-     */
-    protected static boolean execJitCompiled(String sql) throws Exception {
-        return Boolean.parseBoolean(find(EXEC_JIT, exec(sql, "&limit=0,1&explain=true")));
-    }
-
-    /**
      * The error position /exec reports for the failing {@code sql}.
      */
     protected static int execPosition(String sql) throws Exception {
         return Integer.parseInt(find(EXEC_POSITION, exec(sql, "")));
+    }
+
+    /**
+     * Whether /exec reports {@code sql}'s filter as JIT-compiled.
+     */
+    protected static boolean isJitCompiledOnExec(String sql) throws Exception {
+        return Boolean.parseBoolean(find(EXEC_JIT, exec(sql, "&limit=0,1&explain=true")));
     }
 
     private static String exec(String sql, String params) throws Exception {

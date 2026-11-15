@@ -140,6 +140,9 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      * fragmented send buffer.
      */
     private boolean handshakeFlushPending;
+    // Whether the current query's filter is JIT-compiled, for QUERY_FLAG_STATS.
+    // Kept and cleared with the per-query details below.
+    private boolean isQueryJitCompiled;
     // The page-frame stream emits its rows last to first: a backward scan hands
     // out its frames last first, and each frame's rows are stored ascending.
     private boolean isStreamingPageFrameDescending;
@@ -215,7 +218,6 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     private long queryCompileNanos;
     private long queryCountNanos;
     private long queryFlags;
-    private boolean queryJitCompiled;
     // Rows in the whole result set, -1 until counted.
     private long queryRowCount = -1;
     private long queryStartNanos;
@@ -1088,7 +1090,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     }
 
     public boolean isQueryJitCompiled() {
-        return queryJitCompiled;
+        return isQueryJitCompiled;
     }
 
     /**
@@ -1338,7 +1340,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     }
 
     public void setQueryJitCompiled(boolean isJitCompiled) {
-        this.queryJitCompiled = isJitCompiled;
+        this.isQueryJitCompiled = isJitCompiled;
     }
 
     public void setRecvBufferLen(int recvBufferLen) {
@@ -1417,7 +1419,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         queryCountNanos = 0;
         queryClientWaitNanos = 0;
         queryClientWaitStartNanos = -1;
-        queryJitCompiled = false;
+        isQueryJitCompiled = false;
         queryRowCount = -1;
         rowWindowAppended = 0;
         rowWindowRemaining = Long.MAX_VALUE;
