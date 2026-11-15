@@ -27,6 +27,7 @@ package io.questdb.test.cairo.lv;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.TableReader;
@@ -58,6 +59,7 @@ import io.questdb.griffin.engine.lv.LiveViewRecordCursorFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.LongHashSet;
 import io.questdb.std.LongList;
@@ -386,6 +388,39 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             "AA", "BB", "CC", "DD", "EE", "FF", "GG", "HH",
             "II", "JJ", "KK", "LL", "MM", "NN", "OO", "PP"
     };
+    // The shapes runOperatorSuspensionFuzz records, which testFuzzOperatorWalSuspensionShapes pins.
+    private static final int SUSPENSION_SHAPE_ADD_COLUMN = 0;
+    private static final int SUSPENSION_SHAPE_LATE_ROW = 1;
+    private static final int SUSPENSION_SHAPE_LIST_ACROSS_RESTART = 2;
+    private static final String[] SUSPENSION_SHAPE_NAMES = {
+            "a base ADD COLUMN inside an episode",
+            "a late row inside an episode",
+            "a listed view restarted inside an episode",
+            "a repair parked across an episode",
+            "a refusal at a writer acquire",
+            "a refusal at a commit",
+            "a refused restart rebuild",
+            "a refused seed commit"
+    };
+    private static final int SUSPENSION_SHAPE_PARKED_REPAIR = 3;
+    private static final int SUSPENSION_SHAPE_REFUSED_ACQUIRE = 4;
+    private static final int SUSPENSION_SHAPE_REFUSED_COMMIT = 5;
+    private static final int SUSPENSION_SHAPE_REFUSED_RESTART_REBUILD = 6;
+    private static final int SUSPENSION_SHAPE_REFUSED_SEED = 7;
+    // Seed pairs for testFuzzOperatorWalSuspensionShapes, each with whether its run is anchored, and the shapes it runs.
+    private static final long[][] SUSPENSION_SHAPE_SEEDS = {
+            // a refused seed commit, a base ADD COLUMN and a late row inside an episode
+            {625199969504902L, 6314394583738L, 0},
+            // a refusal at a writer acquire and a refused restart rebuild
+            {858644142239532L, 6841997108474L, 0},
+            // a listed view restarted inside an episode
+            {700697597008148L, 8795306794114L, 0},
+            // a refusal at a commit
+            {319271087038110L, 1090664651966L, 0},
+            // a repair parked across an episode
+            {767450532419752L, 3528567112905L, 1}
+    };
+    private static final String SUSPENSION_PAUSE_LINE = "live view refresh paused, its WAL is suspended [view=lv";
     // Fails a test during which a WAL apply suspended a table, which would leave the oracles comparing
     // a frozen base or view table. runAnchoredRemovalFuzz reads its live view lines through the
     // rule's capture.
@@ -960,6 +995,65 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 runFuzz(rnd, v, 140, true, true, false, rnd.nextBoolean());
             }
         });
+    }
+
+    @Test
+    public void testFuzzOperatorWalSuspension() throws Exception {
+        // SUSPEND WAL and cairo.wal.apply.suspended.tables pause a live view over out-of-order ingestion: one to
+        // three episodes a run, each over random commits and refresh passes, with write denial drawn per run.
+        // An episode may start inside a turn - ahead of its latch, at its commit, or while it handles a fault -
+        // and may hold a base ADD COLUMN, a DROP PARTITION, a restart of a listed view, and a mid-drain fault
+        // armed for the first drain after it. While an episode lasts the view consumes nothing, commits nothing,
+        // stays valid and is charged nothing, and wal_tables() reports its source; after each, and at the end,
+        // the view equals its SELECT over the base, or over a shadow of every insert after a removal.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault("ts", "x", "sym");
+        final IntHashSet shapes = new IntHashSet();
+        assertMemoryLeak(fault.facade(), () -> {
+            for (int run = 0; run < 3; run++) {
+                runOperatorSuspensionFuzz(rnd, fault, false, 60 + rnd.nextInt(140), shapes);
+            }
+        });
+    }
+
+    @Test
+    public void testFuzzOperatorWalSuspensionAnchored() throws Exception {
+        // testFuzzOperatorWalSuspension over anchored views, whose repairs follow the anchor's segments, with a
+        // replay budget of a few rows in one run of two, so an episode can start over a parked repair.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
+        if (rnd.nextBoolean()) {
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1 + rnd.nextInt(4));
+        }
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault("ts", "x", "sym");
+        final IntHashSet shapes = new IntHashSet();
+        assertMemoryLeak(fault.facade(), () -> {
+            for (int run = 0; run < 3; run++) {
+                runOperatorSuspensionFuzz(rnd, fault, true, 60 + rnd.nextInt(140), shapes);
+            }
+        });
+    }
+
+    @Test
+    public void testFuzzOperatorWalSuspensionShapes() throws Exception {
+        // Pinned seeds whose runs, between them, start or hold an episode in every shape the generator draws: a
+        // refusal at a writer acquire, one at a commit, a refused restart rebuild, a refused seed commit, a
+        // repair parked across an episode, a late row inside an episode, a base ADD COLUMN inside an episode, and
+        // a listed view restarted inside an episode. A generator change that stops producing a shape fails here.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 2);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 2);
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault("ts", "x", "sym");
+        final IntHashSet shapes = new IntHashSet();
+        assertMemoryLeak(fault.facade(), () -> {
+            for (int s = 0; s < SUSPENSION_SHAPE_SEEDS.length; s++) {
+                final Rnd rnd = new Rnd(SUSPENSION_SHAPE_SEEDS[s][0], SUSPENSION_SHAPE_SEEDS[s][1]);
+                runOperatorSuspensionFuzz(rnd, fault, SUSPENSION_SHAPE_SEEDS[s][2] == 1, 120, shapes);
+            }
+        });
+        for (int shape = 0; shape < SUSPENSION_SHAPE_NAMES.length; shape++) {
+            Assert.assertTrue("the pinned seeds must run the shape: " + SUSPENSION_SHAPE_NAMES[shape], shapes.contains(shape));
+        }
     }
 
     @Test
@@ -1976,6 +2070,68 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
 
     // Row indices [lo, lo+1, ..., hi-1], shuffled in place when o3 is set so
     // insertion order diverges from ts order (the source of out-of-order writes).
+    // The oldest day of the base's rows when every row up to the end of that day is committed and no row still
+    // to come falls on it, so a DROP PARTITION of it leaves nothing for a later commit to repair below;
+    // Numbers.LONG_NULL otherwise.
+    private static long removableDay(long[] tsv, boolean[] committed) {
+        int prefix = 0;
+        while (prefix < tsv.length && committed[prefix]) {
+            prefix++;
+        }
+        if (prefix == 0) {
+            return Numbers.LONG_NULL;
+        }
+        final long day = tsv[0] - tsv[0] % Micros.DAY_MICROS;
+        if (prefix < tsv.length && tsv[prefix] - tsv[prefix] % Micros.DAY_MICROS <= day) {
+            return Numbers.LONG_NULL;
+        }
+        return day;
+    }
+
+    private static void removeTimelineIfAny(LiveViewInstance instance) {
+        try (
+                Path dir = new Path().of(configuration.getDbRoot())
+                        .concat(instance.getLiveViewToken())
+                        .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
+                Path timelinePath = new Path()
+        ) {
+            LiveViewCheckpointLayout.timelinePath(timelinePath, dir);
+            configuration.getFilesFacade().removeQuiet(timelinePath.$());
+        }
+    }
+
+    // The INSERT into base that sink holds, made an INSERT into shadow.
+    private static String shadowInsert(StringSink sink) {
+        return Chars.toString(sink).replace("INSERT INTO base (", "INSERT INTO shadow (");
+    }
+
+    // What ALTER LIVE VIEW lv SUSPEND WAL runs, once, right before the next commit to a live view's WAL.
+    private static AtomicBoolean suspendAtNextLiveViewCommit() {
+        final TableToken token = engine.verifyTableName("lv");
+        final AtomicBoolean isArmed = new AtomicBoolean(true);
+        CairoEngine.setRoleSwitchMintObserver(() -> {
+            if (isArmed.compareAndSet(true, false)) {
+                engine.addWalApplySuspended(token);
+                engine.getTableSequencerAPI().suspendTable(token, ErrorTag.DISK_FULL, "fuzz");
+            }
+        });
+        return isArmed;
+    }
+
+    private static int countPauses(LogCapture capture) {
+        capture.drain();
+        return capture.countOccurrences(SUSPENSION_PAUSE_LINE);
+    }
+
+    // ALTER LIVE VIEW lv SUSPEND WAL, with or without an operator tag and message.
+    private static void suspendLiveView(Rnd rnd) {
+        try {
+            execute(rnd.nextBoolean() ? "ALTER LIVE VIEW lv SUSPEND WAL" : "ALTER LIVE VIEW lv SUSPEND WAL WITH 'DISK FULL', 'fuzz'");
+        } catch (SqlException e) {
+            throw new AssertionError(e);
+        }
+    }
+
     private static int[] segmentOrder(Rnd rnd, int lo, int hi, boolean o3) {
         return segmentOrder(rnd, lo, hi, o3, 0);
     }
@@ -6770,6 +6926,341 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // transparent to parquet conversion. SEED over a parquet base is covered
     // separately by runSeedParquetFuzz: it reads base partitions, so it
     // exercises the parquet page-frame skip path the incremental path does not.
+    // Operator WAL suspension fuzz (see testFuzzOperatorWalSuspension). Rows in out-of-order commits, part of
+    // them committed before CREATE so the view seeds, and one to three suspension episodes over the commits.
+    // Every shape an episode ran goes into shapes.
+    private void runOperatorSuspensionFuzz(
+            Rnd rnd,
+            LiveViewMidDrainFault fault,
+            boolean isAnchored,
+            int rowCount,
+            IntHashSet shapes
+    ) throws Exception {
+        setCurrentMicros(MicrosTimestampDriver.floor("2025-12-31T00:00:00.000000Z"));
+        final int symCount = 1 + rnd.nextInt(SYMBOLS.length);
+        final int variant = isAnchored ? rnd.nextInt(ANCHORED_VARIANT_COUNT) : FIXED_WIDTH_VARIANTS[rnd.nextInt(FIXED_WIDTH_VARIANTS.length)];
+        final int n = 1 + rnd.nextInt(MAX_FRAME);
+        final String bucket = rnd.nextBoolean() ? "timestamp_floor('1h', ts)" : "timestamp_floor('1d', ts)";
+        final LiveViewFuzzRows rows = LiveViewFuzzRows.generate(
+                rnd, rowCount, symCount, MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z"),
+                60_000_000, 12, isAnchored || variant != 5 ? tiePct(rnd) : 0
+        );
+        final long[] tsv = rows.tsv;
+        // Drawn after the rows: a seed's first draws are its weakest.
+        final boolean isWriteDenied = rnd.nextBoolean();
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, String.valueOf(isWriteDenied));
+        final int preCount = rnd.nextInt(3) == 0 ? 1 + rnd.nextInt(rowCount / 2) : 0;
+        final String viewSql = isAnchored
+                ? "SELECT " + anchoredViewProjection(variant) + " FROM base WINDOW w AS (PARTITION BY sym ORDER BY ts "
+                + anchoredWindowFrame(variant) + "ANCHOR EXPRESSION " + bucket + ")"
+                : "SELECT " + projection(variant, n) + " FROM base";
+        final String oracleFrom = isAnchored ? "SELECT " + anchoredOracleProjection(variant, bucket) + " FROM " : "SELECT " + projection(variant, n) + " FROM ";
+
+        execute("DROP LIVE VIEW IF EXISTS lv");
+        execute("DROP TABLE IF EXISTS base");
+        execute("DROP TABLE IF EXISTS shadow");
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("CREATE TABLE shadow (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        final StringSink sink = new StringSink();
+        if (preCount > 0) {
+            final int[] preOrder = segmentOrder(rnd, 0, preCount, true);
+            insertCommit(sink, preOrder, 0, preOrder.length, tsv, rows.symIdx, rows.iv, rows.xv, rows.xNull, null);
+            execute(shadowInsert(sink));
+            drainWalQueue();
+        }
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " + viewSql);
+        fault.of(engine.verifyTableName("base").getDirName());
+
+        // The rows CREATE did not see, in commits of a few rows, late by a few positions at most.
+        final int[] order = segmentOrder(rnd, preCount, rowCount, true, 1 + rnd.nextInt(6));
+        final int commitCount = Math.max(1, Math.min(order.length, 10 + rnd.nextInt(20)));
+        final int[] bounds = new int[commitCount + 1];
+        for (int c = 0; c <= commitCount; c++) {
+            bounds[c] = (int) ((long) c * order.length / commitCount);
+        }
+        // Episodes [start, end) in commit indices: they do not overlap, and each ends by the last commit.
+        final int episodeCount = 1 + rnd.nextInt(3);
+        final int[] episodeStart = new int[episodeCount];
+        final int[] episodeEnd = new int[episodeCount];
+        // A seeding view's first episode starts at the first commit in one run of two, so it can catch the sweep.
+        int next = preCount > 0 && rnd.nextBoolean() ? 0 : rnd.nextInt(Math.max(1, commitCount / 3));
+        int episodes = 0;
+        for (int e = 0; e < episodeCount && next < commitCount; e++) {
+            episodeStart[episodes] = next;
+            episodeEnd[episodes] = Math.min(commitCount, next + 1 + rnd.nextInt(Math.max(1, commitCount / 4)));
+            next = episodeEnd[episodes] + 1 + rnd.nextInt(3);
+            episodes++;
+        }
+        LOG.info().$("LV operator suspension fuzz [anchored=").$(isAnchored).$(", variant=").$(variant)
+                .$(", rows=").$(rowCount).$(", preCount=").$(preCount).$(", commits=").$(commitCount)
+                .$(", episodes=").$(episodes).$(", writeDenied=").$(isWriteDenied).$(", sql=").$(viewSql).I$();
+
+        final LogCapture capture = walApplySuspensionRule.getCapture();
+        final boolean[] committed = new boolean[rowCount];
+        for (int k = 0; k < preCount; k++) {
+            committed[k] = true;
+        }
+        long maxCommittedTs = preCount > 0 ? tsv[preCount - 1] : Long.MIN_VALUE;
+        boolean isRemoved = false;
+        boolean isColumnAdded = false;
+        LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1);
+        try {
+            // A seeding view sweeps part of its history before the first commit, so an episode that starts at
+            // the first commit can catch the sweep.
+            for (int i = 0; i < 2; i++) {
+                job.run();
+                drainWalQueue();
+            }
+            int episode = 0;
+            boolean isStatement = false;
+            long pausedProcessed = 0;
+            long pausedConsumed = 0;
+            long pausedViewSeqTxn = 0;
+            int pausedRetries = 0;
+            boolean isFaultDue = false;
+            boolean isLateSincePause = false;
+            final boolean[] committedBeforePause = new boolean[rowCount];
+            for (int c = 0; c < commitCount; c++) {
+                final boolean isStarting = episode < episodes && c == episodeStart[episode];
+                final boolean isInside = episode < episodes && c > episodeStart[episode] && c < episodeEnd[episode];
+                final boolean isEnding = episode < episodes && c == episodeEnd[episode];
+                if (isEnding) {
+                    if (isStatement) {
+                        execute("ALTER LIVE VIEW lv RESUME WAL");
+                    } else {
+                        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, null);
+                    }
+                    isFaultDue = rnd.nextInt(4) == 0;
+                    episode++;
+                }
+                // A removal of rows the view emitted before the pause, with no late row pending since: the
+                // drain after RESUME reads every pending row in order from the WAL, and the rest of the run
+                // commits in order, so no repair reads the base below the removal (freeze-and-continue).
+                if (isInside && !isAnchored && !isRemoved && !isLateSincePause && rnd.nextInt(5) == 0) {
+                    final long day = removableDay(tsv, committedBeforePause);
+                    if (day != Numbers.LONG_NULL) {
+                        execute("ALTER TABLE base DROP PARTITION LIST '" + Micros.toString(day).substring(0, 10) + "'");
+                        drainWalQueue();
+                        Arrays.sort(order, bounds[c], order.length);
+                        isRemoved = true;
+                    }
+                }
+                if (isInside && !isColumnAdded && rnd.nextInt(4) == 0) {
+                    execute("ALTER TABLE base ADD COLUMN note INT");
+                    execute("ALTER TABLE shadow ADD COLUMN note INT");
+                    drainWalQueue();
+                    isColumnAdded = true;
+                    shapes.add(SUSPENSION_SHAPE_ADD_COLUMN);
+                }
+                if (isInside && !isStatement && rnd.nextInt(3) == 0) {
+                    job = Misc.free(job);
+                    engine.getLiveViewRegistry().clear();
+                    engine.buildViewGraphs();
+                    job = new LiveViewRefreshJob(0, engine, 1);
+                    shapes.add(SUSPENSION_SHAPE_LIST_ACROSS_RESTART);
+                }
+
+                if (isStarting) {
+                    System.arraycopy(committed, 0, committedBeforePause, 0, rowCount);
+                    isLateSincePause = false;
+                }
+                boolean isLate = false;
+                for (int r = bounds[c]; r < bounds[c + 1]; r++) {
+                    final int k = order[r];
+                    isLate |= tsv[k] < maxCommittedTs;
+                    maxCommittedTs = Math.max(maxCommittedTs, tsv[k]);
+                    committed[k] = true;
+                }
+                if (isLate && isInside) {
+                    shapes.add(SUSPENSION_SHAPE_LATE_ROW);
+                }
+                isLateSincePause |= isLate;
+                insertCommit(sink, order, bounds[c], bounds[c + 1], tsv, rows.symIdx, rows.iv, rows.xv, rows.xNull, null);
+                execute(shadowInsert(sink));
+                drainWalQueue();
+                final boolean isFaultArmed = isEnding && isFaultDue;
+                if (isFaultArmed) {
+                    // A one-shot fault for the first drain after the episode, armed once every WAL apply of the
+                    // commit is past, and withdrawn after that drain so no later apply meets it.
+                    fault.arm(rnd.nextInt(2));
+                    isFaultDue = false;
+                }
+
+                if (isStarting) {
+                    isStatement = rnd.nextInt(3) != 0;
+                    final LiveViewInstance before = engine.getLiveViewRegistry().getViewInstance("lv");
+                    Assert.assertNotNull(before);
+                    if (before.getSuspendedRepair() != null) {
+                        shapes.add(SUSPENSION_SHAPE_PARKED_REPAIR);
+                    }
+                    final boolean isSeeding = before.getStateReader().getSeedState() == LiveViewState.SEED_STATE_SEEDING;
+                    capture.drain();
+                    final int pausesBefore = capture.countOccurrences(SUSPENSION_PAUSE_LINE);
+                    final int restartRebuildsBefore = capture.countOccurrences("live view restart rebuild hit a retryable fault, retrying [view=lv");
+                    // A sweep commits through the same fence the mint observer sits in, so a seeding view takes
+                    // that start in one episode of two.
+                    final int startMode = !isStatement ? 0 : isSeeding && rnd.nextBoolean() ? 2 : rnd.nextInt(5);
+                    switch (startMode) {
+                        case 1 -> {
+                            // Ahead of the latch of the turn that drains this commit.
+                            final AtomicBoolean isArmed = new AtomicBoolean(true);
+                            hooks(job).setSimulatePeerTurnBeforeRefreshLatch(() -> {
+                                if (isArmed.compareAndSet(true, false)) {
+                                    suspendLiveView(rnd);
+                                }
+                            });
+                            refreshCycle(job);
+                            hooks(job).setSimulatePeerTurnBeforeRefreshLatch(null);
+                            if (isArmed.get()) {
+                                suspendLiveView(rnd);
+                            } else if (isWriteDenied && countPauses(capture) > pausesBefore) {
+                                shapes.add(SUSPENSION_SHAPE_REFUSED_ACQUIRE);
+                            }
+                        }
+                        case 2 -> {
+                            // At the next commit to the view's WAL.
+                            final AtomicBoolean isArmed = suspendAtNextLiveViewCommit();
+                            refreshCycle(job);
+                            CairoEngine.setRoleSwitchMintObserver(null);
+                            if (isArmed.get()) {
+                                suspendLiveView(rnd);
+                            } else if (isWriteDenied && countPauses(capture) > pausesBefore) {
+                                shapes.add(isSeeding ? SUSPENSION_SHAPE_REFUSED_SEED : SUSPENSION_SHAPE_REFUSED_COMMIT);
+                            }
+                        }
+                        case 3 -> {
+                            // While the turn handles a fault of its drain, which the commit's rows are past the
+                            // apply of by now.
+                            final AtomicBoolean isArmed = new AtomicBoolean(true);
+                            hooks(job).setRefreshFaultObserver(t -> {
+                                if (isArmed.compareAndSet(true, false)) {
+                                    suspendLiveView(rnd);
+                                }
+                            });
+                            fault.arm(0);
+                            refreshCycle(job);
+                            fault.disarm();
+                            hooks(job).setRefreshFaultObserver(null);
+                            if (isArmed.get()) {
+                                suspendLiveView(rnd);
+                            }
+                        }
+                        case 4 -> {
+                            // A restart that finds no timeline, whose rebuild commits once SUSPEND has landed.
+                            if (!isRemoved && !isSeeding && before.getSuspendedRepair() == null) {
+                                job = Misc.free(job);
+                                removeTimelineIfAny(before);
+                                engine.getLiveViewRegistry().clear();
+                                engine.buildViewGraphs();
+                                job = new LiveViewRefreshJob(0, engine, 1);
+                                final AtomicBoolean isArmed = suspendAtNextLiveViewCommit();
+                                refreshCycle(job);
+                                CairoEngine.setRoleSwitchMintObserver(null);
+                                if (isArmed.get()) {
+                                    suspendLiveView(rnd);
+                                } else {
+                                    capture.drain();
+                                    if (isWriteDenied
+                                            && countPauses(capture) > pausesBefore
+                                            && capture.countOccurrences("live view restart rebuild hit a retryable fault, retrying [view=lv") > restartRebuildsBefore) {
+                                        shapes.add(SUSPENSION_SHAPE_REFUSED_RESTART_REBUILD);
+                                    }
+                                }
+                            } else {
+                                suspendLiveView(rnd);
+                                refreshCycle(job);
+                            }
+                        }
+                        default -> {
+                            if (isStatement) {
+                                suspendLiveView(rnd);
+                            } else {
+                                setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, engine.verifyTableName("lv").getDirName());
+                            }
+                            refreshCycle(job);
+                        }
+                    }
+                    // What the turn the suspension caught left is what the pause must keep.
+                    final LiveViewInstance paused = engine.getLiveViewRegistry().getViewInstance("lv");
+                    Assert.assertNotNull(paused);
+                    pausedProcessed = paused.getLastProcessedSeqTxn();
+                    pausedConsumed = paused.getStateReader().getLvConsumedSeqTxn();
+                    pausedViewSeqTxn = engine.getTableSequencerAPI().getTxnTracker(engine.verifyTableName("lv")).getSeqTxn();
+                    pausedRetries = paused.getFlushRetryCount();
+                } else if (rnd.nextInt(3) == 0) {
+                    // One pass, which can leave a repair parked on its turn budget for the next episode.
+                    setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                    job.run();
+                    drainWalQueue();
+                    if (isFaultArmed) {
+                        fault.disarm();
+                    }
+                } else {
+                    refreshCycle(job);
+                    if (isFaultArmed) {
+                        fault.disarm();
+                    }
+                }
+
+                final boolean isPaused = episode < episodes && c >= episodeStart[episode] && c < episodeEnd[episode];
+                if (isPaused) {
+                    for (int pass = 0; pass < 2; pass++) {
+                        setCurrentMicros(currentMicros + 61_000_000L);
+                        drainWalQueue();
+                        drainJob(job);
+                    }
+                    final LiveViewInstance paused = engine.getLiveViewRegistry().getViewInstance("lv");
+                    Assert.assertNotNull(paused);
+                    Assert.assertFalse("a paused view must stay valid [reason=" + paused.getInvalidationReason() + ']', paused.isInvalid());
+                    Assert.assertEquals("a paused view consumes nothing", pausedProcessed, paused.getLastProcessedSeqTxn());
+                    Assert.assertEquals("a paused view applies nothing", pausedConsumed, paused.getStateReader().getLvConsumedSeqTxn());
+                    Assert.assertEquals("a paused view commits nothing", pausedViewSeqTxn,
+                            engine.getTableSequencerAPI().getTxnTracker(engine.verifyTableName("lv")).getSeqTxn());
+                    Assert.assertTrue("a pause is not charged", paused.getFlushRetryCount() <= pausedRetries);
+                    sink.clear();
+                    printSql("SELECT suspended FROM wal_tables() WHERE name = 'lv'", sink);
+                    TestUtils.assertEquals("suspended\n" + isStatement + '\n', sink);
+                }
+            }
+            if (episode < episodes) {
+                if (isStatement) {
+                    execute("ALTER LIVE VIEW lv RESUME WAL");
+                } else {
+                    setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, null);
+                }
+            }
+            for (int pass = 0; pass < 4; pass++) {
+                setCurrentMicros(currentMicros + 61_000_000L);
+                driveRefreshToQuiescence(job);
+            }
+            fault.disarmAll();
+        } finally {
+            fault.disarmAll();
+            CairoEngine.setRoleSwitchMintObserver(null);
+            setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, null);
+            Misc.free(job);
+        }
+
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        Assert.assertNotNull(instance);
+        Assert.assertFalse("[reason=" + instance.getInvalidationReason() + ']', instance.isInvalid());
+        Assert.assertFalse(instance.isCheckpointRecoveryBlocked());
+        sink.clear();
+        printSql("SELECT suspended FROM wal_tables() WHERE name = 'lv'", sink);
+        TestUtils.assertEquals("suspended\nfalse\n", sink);
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                "(" + oracleFrom + (isRemoved ? "shadow" : "base") + ") ORDER BY 1, 2",
+                "(lv) ORDER BY 1, 2",
+                LOG,
+                true
+        );
+        execute("DROP LIVE VIEW lv");
+        execute("DROP TABLE base");
+        execute("DROP TABLE shadow");
+    }
+
     private void runParquetBaseFuzz(Rnd rnd, int variant, int rowCount, boolean o3, boolean inMemory) throws Exception {
         if (currentMicros < 0) {
             setCurrentMicros(MicrosTimestampDriver.floor("2025-12-31T00:00:00.000000Z"));

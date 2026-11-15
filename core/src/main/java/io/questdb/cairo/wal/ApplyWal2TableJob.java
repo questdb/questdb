@@ -1297,9 +1297,11 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             } else {
                 long writerTxn, dirtyWriterTxn;
                 txnTracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
-                if (txnTracker.isSuspended() && txnTracker.consumeIdleEpochRequest()) {
+                if (queueDriven && txnTracker.isSuspended() && txnTracker.consumeIdleEpochRequest()) {
                     // The idle save point request raced a suspension: a suspended table gets no run, so its
-                    // failed transaction is not retried; RESUME WAL notifies the table again.
+                    // failed transaction is not retried; RESUME WAL notifies the table again. A direct caller
+                    // (the live view refresh worker, TableConverter's boot replay) applies what it committed,
+                    // and the run consumes the request it finds after applying.
                     return;
                 }
                 // A run for the idle save point alone has nothing to apply, so any holder of the writer is a

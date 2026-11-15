@@ -734,6 +734,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         return retryPendingLiveViewApply(instance);
     }
 
+    /**
+     * Test-only: drives {@link #takeIdleSavePoint(LiveViewInstance)} directly, so a test can assert what
+     * it does under its latch for a view that {@link #scanForLaggingViews()} would have skipped by the time
+     * it got there, such as one suspended between the scan's check and the helper's latch.
+     */
+    @TestOnly
+    public void takeIdleSavePointForTest(LiveViewInstance instance) {
+        takeIdleSavePoint(instance);
+    }
+
     @Override
     public boolean run(@NotNull WorkerContext workerContext) {
         return processNotifications();
@@ -14308,8 +14318,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * Takes the idle save point the WAL purge job asked for: an apply of the live view's own WAL with
      * nothing to apply, which consumes the request and takes the save point through the apply job's
      * usual gates. Leaves a view with committed but unapplied WAL to the apply retry, whose apply
-     * consumes the request too. Reports no work, so a request the apply cannot consume (the writer
-     * is busy) does not make the worker spin.
+     * consumes the request too. A view an operator suspended (SUSPEND WAL, or its listing in
+     * cairo.wal.apply.suspended.tables) takes none: the request stays pending until RESUME WAL or
+     * the unlisting, as a hard-suspended table's does. Reports no work, so a request the apply
+     * cannot consume (the writer is busy) does not make the worker spin.
      */
     private void takeIdleSavePoint(LiveViewInstance instance) {
         if (!instance.tryLockForRefresh()) {
@@ -14322,7 +14334,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     || instance.isDropped()
                     || instance.isInvalid()
                     || instance.isFreezeArmed()
-                    || tracker.getSeqTxn() > tracker.getWriterTxn()) {
+                    || tracker.getSeqTxn() > tracker.getWriterTxn()
+                    || engine.isWalApplySuspended(token, tracker)) {
                 return;
             }
             applyJob.applyWalDirect(token, Job.RUNNING_STATUS);
@@ -14871,17 +14884,29 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Whether {@code t} is the write gate's refusal of the view's own WAL: an operator suspended the view
+     * - SUSPEND WAL, or its listing in cairo.wal.apply.suspended.tables - with
+     * cairo.wal.apply.suspended.write.denied on. Every WAL write of a refresh turn targets the view's own
+     * table, so no other table's suspension reaches a turn.
+     */
+    private static boolean isRefusedByWalSuspension(Throwable t) {
+        return t instanceof CairoException ce && ce.isTableSuspended();
+    }
+
+    /**
      * Whether {@code e}, which a restore from the checkpoint timeline failed with, is a fault
      * of the environment that a retry may get past, rather than evidence that the timeline
-     * cannot be restored from. Four kinds qualify: an operating system error other than a
+     * cannot be restored from. Five kinds qualify: an operating system error other than a
      * missing file - EMFILE, EIO, ENOSPC and the like; an allocation refused for want of
      * memory; a table pool with nothing to give right now, which reports "table busy" with no
      * operating system error - full ({@link EntryUnavailableException}) or locked
-     * ({@link EntryLockedException}); and the read-only gate's refusal during a role switch,
-     * which {@link #handleRefreshFailure} retries later rather than charges. The restart and the
-     * running recoveries hand such a failure to {@link #handleRefreshFailure}, whose back-off and
-     * flush-retry budget retry the restore in place, instead of falling back to the whole-view
-     * rebuild: over a base that lost rows the view retains, {@link LiveViewRebuildRestatementGuard}
+     * ({@link EntryLockedException}); the read-only gate's refusal during a role switch,
+     * which {@link #handleRefreshFailure} retries later rather than charges; and the write
+     * gate's refusal of a view whose WAL an operator suspended while the turn ran
+     * ({@link #isRefusedByWalSuspension}), which {@link #handleRefreshFailure} takes as a pause.
+     * The restart and the running recoveries hand such a failure to {@link #handleRefreshFailure},
+     * whose back-off and flush-retry budget retry the restore in place, instead of falling back to
+     * the whole-view rebuild: over a base that lost rows the view retains, {@link LiveViewRebuildRestatementGuard}
      * refuses that rebuild, and a rebuild that is not refused replaces the view's output where a
      * retry restores it. An out-of-order repair whose restore of the root it resumes from fails
      * on such a fault hands it over the same way rather than retiring the timeline
@@ -14897,6 +14922,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * which a retry may meet again.
      */
     private static boolean isTransientRestoreFailure(CairoException e) {
+        if (e.isTableSuspended()) {
+            return true;
+        }
         if (e.isOutOfMemory()
                 || e.isAuthorizationError()
                 || e instanceof EntryUnavailableException
@@ -17427,6 +17455,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 didWork = true;
                 continue;
             }
+            // An operator's SUSPEND WAL on the view, or its listing in cairo.wal.apply.suspended.tables, pauses
+            // the whole view: no apply retry, no idle save point and no refresh turn below, so its output, its
+            // watermarks and its WAL stay where the pause found them until RESUME WAL or the unlisting.
+            final TableToken lvToken = instance.getLiveViewToken();
+            final SeqTxnTracker lvTracker = engine.getTableSequencerAPI().getTxnTracker(lvToken);
+            if (engine.isWalApplySuspended(lvToken, lvTracker)) {
+                instance.markWalSuspensionPause(engine.getConfiguration().getMicrosecondClock().getTicks());
+                continue;
+            }
             // Re-drive an LV WAL block whose inline apply never landed. The refresh worker owns the
             // LV's TableWriter, so ApplyWal2TableJob.doRun drops every live-view notification and
             // flushLead's inline applyWalDirect is the view's ONLY applier. When that apply silently
@@ -17444,7 +17481,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // The WAL purge job asked for an idle save point (WalPurgeJob.requestIdleSavePoint). The
             // global apply job drops live-view notifications, so this worker, which owns the view's
             // writer, runs the apply that takes it.
-            if (engine.getTableSequencerAPI().getTxnTracker(instance.getLiveViewToken()).isIdleEpochRequested()) {
+            if (lvTracker.isIdleEpochRequested()) {
                 takeIdleSavePoint(instance);
             }
             final long appliedHead = engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn();
@@ -17512,12 +17549,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     /**
      * True when the live view's own WAL carries transactions its inline apply never landed
      * ({@code seqTxn > writerTxn}) and a retry can make progress. Excludes the states a retry
-     * cannot move: a suspended table (only an operator RESUME clears it), a memory-pressure
-     * back-off ({@code applyWal} returns at its own readiness gate without advancing), and a
-     * view whose tracker is not initialised yet. Excludes a view with an un-flushed lead too -
-     * its next FLUSH EVERY tick calls {@code flushLead}, whose {@code applyWalDirect} re-drives
-     * the outstanding block anyway, so only a view the scan would otherwise leave idle needs
-     * the retry.
+     * cannot move: a suspended table (only an operator RESUME clears it), an operator's
+     * suspension of the view (SUSPEND WAL, or its listing in cairo.wal.apply.suspended.tables),
+     * which pauses it, a memory-pressure back-off ({@code applyWal} returns at its own readiness
+     * gate without advancing), and a view whose tracker is not initialised yet. Excludes a view
+     * with an un-flushed lead too - its next FLUSH EVERY tick calls {@code flushLead}, whose
+     * {@code applyWalDirect} re-drives the outstanding block anyway, so only a view the scan
+     * would otherwise leave idle needs the retry.
      */
     private boolean hasPendingLiveViewApply(LiveViewInstance instance) {
         if (instance.getLeadRowCount() > 0) {
@@ -17532,6 +17570,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // and this scan is the only thing that re-drives a block flushLead could not apply
         // inline, so the view would sit behind its own WAL until an unrelated base commit.
         return !tracker.isSuspended()
+                && !engine.isWalApplySuspended(instance.getLiveViewToken(), tracker)
                 && tracker.getMemPressureControl().isReadyToProcess()
                 && !isLiveViewWalFullyApplied(instance);
     }
@@ -17952,6 +17991,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 return false;
             }
             if (recompiledError != null) {
+                if (isRefusedByWalSuspension(recompiledError)) {
+                    // The recompiled rebuild's write was refused by the view's suspension: a pause, which
+                    // the caller must not answer with an invalidation.
+                    pauseForWalSuspension(instance, recompiledError);
+                    return true;
+                }
                 LOG.error().$("live view could not re-derive from the applied base after base WAL loss [view=")
                         .$(viewName)
                         .$(", error=").$(recompiledError).I$();
@@ -17976,6 +18021,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(", reason=").$safe(cause.getFlyweightMessage()).I$();
             return true;
         } catch (Throwable e) {
+            if (isRefusedByWalSuspension(e)) {
+                // The re-derive's write was refused by the view's suspension: a pause, which the caller
+                // must not answer with an invalidation.
+                pauseForWalSuspension(instance, e);
+                return true;
+            }
             LOG.error().$("live view could not re-derive from the applied base after base WAL loss [view=")
                     .$(viewName)
                     .$(", error=").$(e).I$();
@@ -18056,8 +18107,20 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // and the next tick retries once apply readiness returns (the back-off self-clears on
         // its timeout). A healthy view - the common case - reads ready and is unaffected.
         // Cheap guard before the latch, like the apply-lag defer above.
-        if (!engine.getTableSequencerAPI().getTxnTracker(instance.getLiveViewToken())
-                .getMemPressureControl().isReadyToProcess()) {
+        final SeqTxnTracker lvTracker = engine.getTableSequencerAPI().getTxnTracker(instance.getLiveViewToken());
+        if (!lvTracker.getMemPressureControl().isReadyToProcess()) {
+            return false;
+        }
+        // Operator suspension: SUSPEND WAL on the view, or its listing in cairo.wal.apply.suspended.tables,
+        // pauses the whole view in both write-denial modes. Skip the turn ahead of the latch, as the
+        // memory-pressure back-off above does: the published lead stays in RAM under its stamp, and
+        // nothing consumes the base, commits or applies until RESUME WAL or the unlisting, after which the
+        // view continues from here. Covers the notification path and driveSuspendedRepairs, which do not
+        // pass the fallback scan's check. A turn that passed this check before the suspension landed
+        // finishes as an apply in flight does or, with write denial on, meets the write gate's refusal,
+        // which handleRefreshFailure takes as a pause.
+        if (engine.isWalApplySuspended(instance.getLiveViewToken(), lvTracker)) {
+            instance.markWalSuspensionPause(engine.getConfiguration().getMicrosecondClock().getTicks());
             return false;
         }
         hooks.beforeRefreshLatch();
@@ -18138,6 +18201,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             if (isRefreshRetryDeferred(instance)) {
                 return false;
             }
+            // A turn runs, so a pause an operator's suspension held the view in is over. Keep it out of
+            // the duration term of the flush-retry streak a fault before it began: RESUME WAL continues the
+            // view from where it stopped, not with a budget the pause spent.
+            instance.endWalSuspensionPause(engine.getConfiguration().getMicrosecondClock().getTicks());
             // Reconciliation gate. A prior turn's out-of-order repair committed a
             // REPLACE_RANGE whose inline apply never landed, so the live view's table
             // does not yet hold the output its WAL carries. Every coordinate this turn
@@ -18619,6 +18686,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
             return null;
         }
+        if (isRefusedByWalSuspension(t)) {
+            // Ahead of the recoveries below: a write the turn made refused by the view's own suspension
+            // asks for none of them.
+            return pauseForWalSuspension(instance, t);
+        }
         if (t instanceof TableReferenceOutOfDateException) {
             // The base table's metadata version drifted from the cached compiled factory:
             // a schema change that does not touch the view's referenced columns keeps the
@@ -18734,6 +18806,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // and refreshInstance reporting work on every call so the worker never backs off. A
             // transient fault keeps its retries, because the sweep turn that finally succeeds
             // calls recordRefreshSuccess, which zeroes the streak the budget measures.
+        }
+        if (isRefusedByWalSuspension(t)) {
+            // A recovery above - the drift's or the mid-drain one - had its own write refused by the
+            // view's suspension, and left its debt on the view. Only the charge is left to stop.
+            return pauseForWalSuspension(instance, t);
         }
         long nowUs = engine.getConfiguration().getMicrosecondClock().getTicks();
         // Read before the record call below, which stamps the streak start when none is running:
@@ -18932,8 +19009,39 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         }
         // Null when the rebuild healed the view or the guard refused it and stopped the view. A
         // cancellation is DROP, invalidation or engine shutdown, none of which a durable
-        // invalidation should answer.
+        // invalidation should answer, and the write gate's refusal is a pause.
+        if (isRefusedByWalSuspension(rebuildErr)) {
+            pauseForWalSuspension(instance, rebuildErr);
+            return true;
+        }
         return rebuildErr == null || (rebuildErr instanceof CairoException ce && ce.isCancellation());
+    }
+
+    /**
+     * Ends a turn whose write the view's own suspension refused ({@link #isRefusedByWalSuspension}): a
+     * pause, not a refresh failure. Nothing is charged, no recovery runs and the view is not invalidated:
+     * {@link #refreshInstance} holds every later turn until RESUME WAL or the unlisting, so the refusal
+     * cannot recur meanwhile, and the pause it starts stays out of the flush-retry duration budget
+     * ({@link LiveViewInstance#markWalSuspensionPause}). The turn's window-state debt goes onto the view,
+     * so the first turn after the pause settles it before anything drains: a SEEDING view re-arms its
+     * sweep's resume, as {@link #recoverWindowStateAfterMidDrainFailure} does, and an ACTIVE view keeps
+     * the debt for the gate.
+     *
+     * @return null, which {@link #handleRefreshFailure} returns for a fault it handled
+     */
+    private String pauseForWalSuspension(LiveViewInstance instance, Throwable refusal) {
+        LOG.info().$("live view refresh paused, its WAL is suspended [view=")
+                .$(instance.getDefinition().getViewName())
+                .$(", error=").$(refusal).I$();
+        instance.markWalSuspensionPause(engine.getConfiguration().getMicrosecondClock().getTicks());
+        if (windowStateDirty) {
+            if (instance.getStateReader().getSeedState() == LiveViewState.SEED_STATE_SEEDING) {
+                instance.resetSeedResumeAttempted();
+            } else {
+                markWindowStateDirty(instance);
+            }
+        }
+        return null;
     }
 
     private void refreshViewsForBaseTable(TableToken baseTableToken, long seqTxn) {

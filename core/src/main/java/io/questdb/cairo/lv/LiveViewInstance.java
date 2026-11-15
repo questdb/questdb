@@ -870,6 +870,10 @@ public class LiveViewInstance implements QuietCloseable {
     // view_name / view_status. Final, so it is safely published to the catalogue read
     // thread. Null for a normally-loaded instance.
     private final LiveViewLifecycleState stubState;
+    // Wall-clock (micros) of the first refresh pass that held the view because an operator suspended its
+    // WAL; Numbers.LONG_NULL outside such a pause. Set by any worker, cleared by the turn that ends the
+    // pause (endWalSuspensionPause), which keeps the pause out of the flush-retry duration budget.
+    private volatile long walSuspensionPauseStartUs = Numbers.LONG_NULL;
     // Wall-clock (micros) when the in-mem tier's slow-path tryAcquireWrite first
     // observed both slots reader-pinned. Numbers.LONG_NULL when not stalled.
     // Cleared on the next successful acquire. Surfaces via
@@ -2840,6 +2844,36 @@ public class LiveViewInstance implements QuietCloseable {
     public void recordRecoveredRefreshFailure(long nowUs) {
         if (flushRetryStartUs == Numbers.LONG_NULL) {
             flushRetryStartUs = nowUs;
+        }
+    }
+
+    /**
+     * Ends the pause an operator's suspension of the view's WAL held it in ({@link #markWalSuspensionPause}),
+     * once a refresh turn runs again, and keeps the pause out of the duration term of a flush-retry streak
+     * that began before it: the streak's start moves forward by the time from the first pass that saw the
+     * suspension to this turn. The shift never shortens the budget - it stops at {@code nowUs}, and a clock
+     * behind the stamp shifts nothing - and the count term is untouched. Called by the refresh worker under
+     * the refresh latch.
+     */
+    public void endWalSuspensionPause(long nowUs) {
+        final long pauseStartUs = walSuspensionPauseStartUs;
+        if (pauseStartUs == Numbers.LONG_NULL) {
+            return;
+        }
+        walSuspensionPauseStartUs = Numbers.LONG_NULL;
+        if (flushRetryStartUs != Numbers.LONG_NULL) {
+            flushRetryStartUs = Math.min(nowUs, flushRetryStartUs + Math.max(0, nowUs - pauseStartUs));
+        }
+    }
+
+    /**
+     * Records that a refresh worker held the view because an operator suspended its WAL (SUSPEND WAL, or
+     * its listing in cairo.wal.apply.suspended.tables), keeping the first such pass's time until
+     * {@link #endWalSuspensionPause} ends the pause. Any worker may call it, without the refresh latch.
+     */
+    public void markWalSuspensionPause(long nowUs) {
+        if (walSuspensionPauseStartUs == Numbers.LONG_NULL) {
+            walSuspensionPauseStartUs = nowUs;
         }
     }
 

@@ -51,6 +51,7 @@ import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.lv.LiveViewPageFrameCursor;
 import io.questdb.griffin.engine.lv.LiveViewRecordCursor;
 import io.questdb.griffin.engine.lv.LiveViewRecordCursorFactory;
@@ -74,6 +75,7 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.CairoTestConfiguration;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
@@ -1293,6 +1295,137 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         // surface, now from genuinely concurrent commits rather than shuffled inserts).
         final Rnd rnd = TestUtils.generateRandom(LOG);
         assertMemoryLeak(() -> runConcurrent(rnd, 1, 6, 600, false, false));
+    }
+
+    @Test
+    public void testOperatorSuspendResumeUnderIngest() throws Exception {
+        // An ingest thread commits base rows and applies them, two refresh workers serve the view - sharded
+        // scan, shared notification queue - and an operator thread toggles the view's suspension through SUSPEND
+        // WAL / RESUME WAL and its listing in cairo.wal.apply.suspended.tables, all started together, with write
+        // denial drawn per run. However the toggles fall between and into the workers' turns, no turn fails and
+        // the view is never invalidated, and once the operator resumes and unlists it, the view converges on
+        // the recompute and wal_tables() reports it running.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        final boolean isWriteDenied = rnd.nextBoolean();
+        final int commitCount = 100 + rnd.nextInt(100);
+        final int toggleCount = 50 + rnd.nextInt(100);
+        final LogCapture capture = new LogCapture();
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, String.valueOf(isWriteDenied));
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosTimestampDriver.floor(CLOCK_START));
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final String viewSql = "SELECT ts, sym, i, count(*) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 1000 PRECEDING AND CURRENT ROW) AS c, "
+                    + "sum(i) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 1000 PRECEDING AND CURRENT ROW) AS s FROM base";
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " + viewSql);
+            final TableToken baseToken = engine.verifyTableName("base");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            LOG.info().$("operator suspension under ingest [writeDenied=").$(isWriteDenied)
+                    .$(", commits=").$(commitCount).$(", toggles=").$(toggleCount).I$();
+            capture.start();
+            final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
+            final ObjList<LiveViewRefreshJob> jobs = new ObjList<>();
+            try {
+                jobs.add(new LiveViewRefreshJob(0, engine, 2));
+                jobs.add(new LiveViewRefreshJob(1, engine, 2));
+                final CyclicBarrier barrier = new CyclicBarrier(4);
+                final AtomicBoolean isRunning = new AtomicBoolean(true);
+                final AtomicLong workedTurns = new AtomicLong();
+                final ObjList<Thread> workers = new ObjList<>();
+                for (int w = 0; w < 2; w++) {
+                    workers.add(newRefreshWorkerThread(w, jobs.getQuick(w), barrier, isRunning, workedTurns, errors));
+                }
+                final long seed0 = rnd.nextLong();
+                final long seed1 = rnd.nextLong();
+                final Thread ingest = new Thread(() -> {
+                    final Rnd ingestRnd = new Rnd(seed0, seed1);
+                    try (WalWriter walWriter = engine.getWalWriter(baseToken)) {
+                        barrier.await(REFRESH_TICK_WAIT_NANOS, TimeUnit.NANOSECONDS);
+                        long ts = MicrosTimestampDriver.floor("2026-04-01T00:00:00.000000Z");
+                        for (int c = 0; c < commitCount && errors.isEmpty(); c++) {
+                            for (int r = 0, n = 1 + ingestRnd.nextInt(5); r < n; r++) {
+                                ts += 1 + ingestRnd.nextInt(60_000_000);
+                                final TableWriter.Row row = walWriter.newRow(ts);
+                                row.putSym(1, "k" + ingestRnd.nextInt(8));
+                                row.putLong(2, ingestRnd.nextLong(1000));
+                                row.putDouble(3, ingestRnd.nextDouble());
+                                row.append();
+                            }
+                            walWriter.commit();
+                            setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                            drainWalQueue();
+                        }
+                    } catch (Throwable th) {
+                        errors.add(th);
+                        barrier.reset();
+                    } finally {
+                        clearWorkerThreadLocals();
+                    }
+                }, "lv-ingest");
+                final Thread operator = new Thread(() -> {
+                    final Rnd operatorRnd = new Rnd(seed1, seed0);
+                    try (SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
+                        barrier.await(REFRESH_TICK_WAIT_NANOS, TimeUnit.NANOSECONDS);
+                        for (int t = 0; t < toggleCount && errors.isEmpty(); t++) {
+                            switch (operatorRnd.nextInt(4)) {
+                                case 0 -> execute("ALTER LIVE VIEW lv SUSPEND WAL WITH 'DISK FULL', 'operator " + t + "'", context);
+                                case 1 -> execute("ALTER LIVE VIEW lv RESUME WAL", context);
+                                case 2 -> setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, lvToken.getDirName());
+                                default -> setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, null);
+                            }
+                            for (int spin = operatorRnd.nextInt(2_000); spin > 0; spin--) {
+                                Os.pause();
+                            }
+                        }
+                    } catch (Throwable th) {
+                        errors.add(th);
+                        barrier.reset();
+                    } finally {
+                        clearWorkerThreadLocals();
+                    }
+                }, "lv-operator");
+                for (int w = 0, n = workers.size(); w < n; w++) {
+                    workers.getQuick(w).start();
+                }
+                ingest.start();
+                operator.start();
+                ingest.join();
+                operator.join();
+                isRunning.set(false);
+                for (int w = 0, n = workers.size(); w < n; w++) {
+                    workers.getQuick(w).join();
+                }
+                if (!errors.isEmpty()) {
+                    throw new AssertionError("a thread failed", errors.peek());
+                }
+
+                execute("ALTER LIVE VIEW lv RESUME WAL");
+                setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, null);
+                for (int pass = 0; pass < 4; pass++) {
+                    setCurrentMicros(currentMicros + 61_000_000L);
+                    driveRefreshToQuiescence(jobs);
+                }
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                Assert.assertFalse("[reason=" + instance.getInvalidationReason() + ']', instance.isInvalid());
+                Assert.assertEquals(
+                        engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn(),
+                        instance.getLastProcessedSeqTxn()
+                );
+                TestUtils.assertSqlCursors(engine, sqlExecutionContext, viewSql, "lv", LOG);
+                assertQuery("SELECT name, suspended, errorTag, errorMessage FROM wal_tables() WHERE name = 'lv'")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("name\tsuspended\terrorTag\terrorMessage\nlv\tfalse\t\t\n");
+                capture.drain();
+                capture.assertNotLogged("live view refresh failed");
+                capture.assertNotLogged("budget exhausted");
+            } finally {
+                capture.stop();
+                setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, null);
+                Misc.freeObjList(jobs);
+            }
+            execute("DROP LIVE VIEW lv");
+        });
     }
 
     @Test
