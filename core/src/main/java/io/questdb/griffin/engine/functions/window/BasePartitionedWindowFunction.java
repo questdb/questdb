@@ -261,17 +261,20 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
     }
 
     /**
-     * True: {@link #onCheckpointPersisted} adopts the root as the baseline, and
-     * {@link #markPartitionAlive(Record, boolean)} builds the dirty set out of
-     * {@link #newCompactionScratch()}. A subclass that keeps no set answers false: lag supplies
-     * no scratch, and AvgDouble's bounded classes override {@code markPartitionAlive} to mark
-     * nothing. A bounded-frame subclass without a scratch inherits true unread, because CREATE
-     * refuses an ANCHOR on a bounded frame, so the ANCHOR window never dispatches to it; see
-     * the assertion in {@link #markCheckpointPartitionDirty(Record)}.
+     * True unless this function is ring-shaped: {@link #onCheckpointPersisted} adopts the root
+     * as the baseline, and {@link #markPartitionAlive(Record, boolean)} builds the dirty set out
+     * of {@link #newCompactionScratch()}. A ring keeps no set, because its seal images every key
+     * whole - {@code LiveViewCheckpointTimelineStoreWriter.freezeFunction} never reads a ring's
+     * dirty set - so its scratch serves the frontier sweep alone. A subclass that keeps no set
+     * for another reason answers false itself: lag supplies no scratch, and AvgDouble's bounded
+     * classes override {@code markPartitionAlive} to mark nothing. A bounded-frame subclass
+     * without a scratch inherits true unread, because CREATE refuses an ANCHOR on a bounded
+     * frame, so the ANCHOR window never dispatches to it; see the assertion in
+     * {@link #markCheckpointPartitionDirty(Record)}.
      */
     @Override
     public boolean isCheckpointDirtyTracked() {
-        return true;
+        return !supportsCheckpointRingState();
     }
 
     @Override
@@ -328,6 +331,8 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
      * The dirty mark fires only on {@code isFirstCadenceTouch}, which spares a repeat row
      * inside one cadence the key serialization and the dirty-map probe; see
      * {@link #markCheckpointPartitionDirty(Record)} for why that still names every moved key.
+     * It also needs {@link #isCheckpointDirtyTracked()}: a ring keeps no set, since its seal
+     * reads none, while its tombstone still clears below.
      * <p>
      * Subclasses that need to clear additional per-partition scratch state
      * may override; most do not. An override that keeps the checkpoint dirty
@@ -340,7 +345,7 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
             // The window keeps the fused value alive and marks it dirty once, for the group.
             return;
         }
-        if (isFirstCadenceTouch) {
+        if (isFirstCadenceTouch && isCheckpointDirtyTracked()) {
             markCheckpointPartitionDirty(record);
         }
         if (tombstoneValueIndex < 0 || tombstoneCount == 0) {

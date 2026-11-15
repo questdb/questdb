@@ -1122,6 +1122,7 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
                 // Same reasoning as the row after the first sweep: read the re-homed ring at the
                 // home the SECOND compaction gave it.
                 commit("('2026-01-05T02:00:00.000000Z', 'a', 16.0)", job);
+                assertRingsKeepNoCheckpointDirtySet(anchorable);
 
                 assertNoRefreshFaults("lv");
                 // The anchor still resets the ring at every bucket crossing, so the first row of
@@ -1224,6 +1225,7 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
                 assertRingArenasReclaimed(anchorable, fourPartitionArenaBytes);
 
                 commitDecimals(decimalRow("2026-01-03T03:00:00.000000Z", "a", "9.0"), job);
+                assertRingsKeepNoCheckpointDirtySet(anchorable);
 
                 assertNoRefreshFaults("lv");
                 // The anchor resets every ring at each bucket crossing, so the first row of each
@@ -1326,6 +1328,7 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
                 assertRingArenasReclaimed(anchorable, fourPartitionArenaBytes);
 
                 commitPositionalValues(positionalValueRow("2026-01-03T03:00:00.000000Z", "a", "9"), job);
+                assertRingsKeepNoCheckpointDirtySet(anchorable);
 
                 assertNoRefreshFaults("lv");
                 // The anchor resets every ring at each bucket crossing, so the first row of each
@@ -1430,6 +1433,7 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
                 assertRingArenasReclaimed(anchorable, fourPartitionArenaBytes);
 
                 commitPositionalValues(positionalValueRow("2026-01-03T03:00:00.000000Z", "a", "9"), job);
+                assertRingsKeepNoCheckpointDirtySet(anchorable);
 
                 assertNoRefreshFaults("lv");
                 // The anchor resets every ring at each bucket crossing, so the first row of each
@@ -1533,6 +1537,7 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
                 // takes the locked early return over the same slab.
                 commitPositionalValues(positionalValueRow("2026-01-03T03:00:00.000000Z", "a", "9") + ", "
                         + positionalValueRow("2026-01-03T04:00:00.000000Z", "a", "7"), job);
+                assertRingsKeepNoCheckpointDirtySet(anchorable);
 
                 assertNoRefreshFaults("lv");
                 // The anchor resets every ring at each bucket crossing, and n is 2 over a frame
@@ -1851,6 +1856,28 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
                         + " after a sweep that dropped three of its four partitions",
                 ringBytes <= peakRingBytes
         );
+    }
+
+    /**
+     * Asserts no ring-shaped call of the anchorable subset keeps a checkpoint dirty set or claims
+     * one. A seal walks a ring's whole map whatever a dirty set names -
+     * {@code LiveViewCheckpointTimelineStoreWriter.freezeFunction} reads the set only for a
+     * function that is not ring-shaped - so a set would cost a key insert per touched key,
+     * charged to {@code cairo.live.view.refresh.memory.limit.bytes}, for nothing any seal reads.
+     */
+    private static void assertRingsKeepNoCheckpointDirtySet(ObjList<WindowFunction> anchorable) {
+        for (int i = 0, n = anchorable.size(); i < n; i++) {
+            final WindowFunction f = anchorable.getQuick(i);
+            Assert.assertTrue(f.getName() + "#" + i + " must be ring-shaped", f.supportsCheckpointRingState());
+            Assert.assertNull(
+                    f.getName() + "#" + i + " is a ring, which keeps no checkpoint dirty set",
+                    f.getCheckpointDirtyPartitionMap()
+            );
+            Assert.assertFalse(
+                    f.getName() + "#" + i + " is a ring, which claims no checkpoint dirty set",
+                    f.isCheckpointDirtyTracked()
+            );
+        }
     }
 
     /**

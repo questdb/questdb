@@ -103,13 +103,48 @@ public class LiveViewCheckpointImagedWholeLedgerTest extends AbstractLiveViewTes
             // A bounded ROWS call the ANCHOR window does not dispatch to.
             "sum(x) OVER w s, sum(x) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) v|1"
     };
-    // Every call EXCLUDE CURRENT ROW accepts is a ring, which no seal freezes incrementally.
+    // Every call EXCLUDE CURRENT ROW accepts is a ring, which no seal freezes incrementally: each
+    // ring class per argument type, IGNORE NULLS where the family takes it (nth_value does not),
+    // and avg(d256, scale) aside, which CREATE refuses for its rescaled precision.
     private static final String[] EXCLUDE_FRAME_VIEWS = {
-            "sum(x) OVER w v|1", "avg(x) OVER w v|1", "count(x) OVER w v|1", "count() OVER w v|1", "sum(d64) OVER w v|1",
-            "avg(d128) OVER w v|1", "first_value(x) OVER w v|1", "last_value(x) OVER w v|1", "nth_value(x, 2) OVER w v|1"
+            "sum(x) OVER w v|1", "sum(l) OVER w v|1", "avg(x) OVER w v|1", "avg(l) OVER w v|1",
+            "sum(d8) OVER w v|1", "sum(d16) OVER w v|1", "sum(d32) OVER w v|1", "sum(d64) OVER w v|1",
+            "sum(d128) OVER w v|1", "sum(d256) OVER w v|1", "avg(d8) OVER w v|1", "avg(d16) OVER w v|1",
+            "avg(d32) OVER w v|1", "avg(d64) OVER w v|1", "avg(d128) OVER w v|1", "avg(d256) OVER w v|1",
+            "avg(d8, 2) OVER w v|1", "avg(d16, 2) OVER w v|1", "avg(d32, 2) OVER w v|1", "avg(d64, 4) OVER w v|1",
+            "avg(d128, 4) OVER w v|1",
+            "count() OVER w v|1", "count(*) OVER w v|1", "count(x) OVER w v|1", "count(l) OVER w v|1",
+            "count(sym) OVER w v|1", "count(v) OVER w v|1", "count(d64) OVER w v|1",
+            "first_value(x) OVER w v|1", "first_value(x) IGNORE NULLS OVER w v|1",
+            "first_value(l) OVER w v|1", "first_value(l) IGNORE NULLS OVER w v|1",
+            "first_value(t) OVER w v|1", "first_value(t) IGNORE NULLS OVER w v|1",
+            "first_value(dt) OVER w v|1", "first_value(dt) IGNORE NULLS OVER w v|1",
+            "first_value(d8) OVER w v|1", "first_value(d8) IGNORE NULLS OVER w v|1",
+            "first_value(d16) OVER w v|1", "first_value(d16) IGNORE NULLS OVER w v|1",
+            "first_value(d32) OVER w v|1", "first_value(d32) IGNORE NULLS OVER w v|1",
+            "first_value(d64) OVER w v|1", "first_value(d64) IGNORE NULLS OVER w v|1",
+            "first_value(d128) OVER w v|1", "first_value(d128) IGNORE NULLS OVER w v|1",
+            "first_value(d256) OVER w v|1", "first_value(d256) IGNORE NULLS OVER w v|1",
+            "last_value(x) OVER w v|1", "last_value(x) IGNORE NULLS OVER w v|1",
+            "last_value(l) OVER w v|1", "last_value(l) IGNORE NULLS OVER w v|1",
+            "last_value(t) OVER w v|1", "last_value(t) IGNORE NULLS OVER w v|1",
+            "last_value(dt) OVER w v|1", "last_value(dt) IGNORE NULLS OVER w v|1",
+            "last_value(d8) OVER w v|1", "last_value(d8) IGNORE NULLS OVER w v|1",
+            "last_value(d16) OVER w v|1", "last_value(d16) IGNORE NULLS OVER w v|1",
+            "last_value(d32) OVER w v|1", "last_value(d32) IGNORE NULLS OVER w v|1",
+            "last_value(d64) OVER w v|1", "last_value(d64) IGNORE NULLS OVER w v|1",
+            "last_value(d128) OVER w v|1", "last_value(d128) IGNORE NULLS OVER w v|1",
+            "last_value(d256) OVER w v|1", "last_value(d256) IGNORE NULLS OVER w v|1",
+            "nth_value(x, 2) OVER w v|1", "nth_value(l, 2) OVER w v|1", "nth_value(t, 2) OVER w v|1",
+            "nth_value(dt, 2) OVER w v|1", "nth_value(d8, 2) OVER w v|1", "nth_value(d16, 2) OVER w v|1",
+            "nth_value(d32, 2) OVER w v|1", "nth_value(d64, 2) OVER w v|1", "nth_value(d128, 2) OVER w v|1",
+            "nth_value(d256, 2) OVER w v|1"
     };
-    // An EXCLUDE CURRENT ROW avg: AvgDouble's bounded RANGE class, a ring claiming no dirty set.
-    private static final String[] EXCLUDE_FRAME_FAMILY_VIEWS = {"avg(x) OVER w v|1"};
+    // An EXCLUDE CURRENT ROW avg, AvgDouble's bounded RANGE class, beside a count over the
+    // base-class ring and a DECIMAL first_value: three ring families, each claiming no dirty set.
+    private static final String[] EXCLUDE_FRAME_FAMILY_VIEWS = {
+            "avg(x) OVER w v|1", "count(x) OVER w v|1", "first_value(d64) OVER w v|1"
+    };
     private final boolean isFused;
     private int viewSeq;
 
@@ -263,7 +298,8 @@ public class LiveViewCheckpointImagedWholeLedgerTest extends AbstractLiveViewTes
 
     // Method truthfulness after three seals: a dispatched, stateful function the window does not
     // own claims a dirty set exactly when it holds one, and a claim comes with the baseline that
-    // clears its full scan.
+    // clears its full scan. A ring holds none: freezeFunction walks a ring's whole map whatever
+    // its dirty set names, so a set would cost a key insert per touched key and read nothing.
     private void assertDirtySetClaims(String tag, LiveViewInstance instance) {
         final WindowRecordCursorFactory windowFactory = instance.getCompiledPlan().getWindowFactory();
         final ObjList<WindowFunction> functions = windowFactory.getWindowFunctions();
@@ -274,6 +310,10 @@ public class LiveViewCheckpointImagedWholeLedgerTest extends AbstractLiveViewTes
                 continue;
             }
             final String name = tag + " " + function.getClass().getSimpleName();
+            if (function.supportsCheckpointRingState()) {
+                Assert.assertNull(name + ": a ring's seal walks its whole map, so it keeps no set", function.getCheckpointDirtyPartitionMap());
+                Assert.assertFalse(name + ": a ring's seal walks its whole map, so it claims no set", function.isCheckpointDirtyTracked());
+            }
             Assert.assertEquals(name + ": claims a dirty set iff it holds one", function.getCheckpointDirtyPartitionMap() != null, function.isCheckpointDirtyTracked());
             if (function.isCheckpointDirtyTracked()) {
                 Assert.assertFalse(name + ": a claim comes with a baseline", function.isCheckpointFullScanRequired());

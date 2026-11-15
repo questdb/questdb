@@ -718,12 +718,13 @@ public interface WindowFunction extends Function {
      * for its own and only the baseline half is read.
      * <p>
      * Asked only of a function the ANCHOR window dispatches to, or of a runtime-only member of
-     * a fused group: nothing else ever marks a dirty set, and a ring-shaped function's seal
-     * walks its whole map whatever this answers, so a caller reads
-     * {@link #supportsCheckpointRingState()} first. A property of the implementation rather
-     * than of the runtime: the dirty set appears on the first dispatched row, so the answer is
-     * the same before and after a restart. False, the default, is the conservative answer: a
-     * caller prices every seal of the function as a walk of its whole map.
+     * a fused group: nothing else ever marks a dirty set. A ring-shaped function's seal walks
+     * its whole map and reads no set, so a ring keeps none and answers false; a caller still
+     * reads {@link #supportsCheckpointRingState()} first, as the seal does. A property of the
+     * implementation rather than of the runtime: the dirty set appears on the first dispatched
+     * row, so the answer is the same before and after a restart. False, the default, is the
+     * conservative answer: a caller prices every seal of the function as a walk of its whole
+     * map.
      */
     default boolean isCheckpointDirtyTracked() {
         return false;

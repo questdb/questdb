@@ -39,6 +39,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointRecoveryPhase;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairMarker;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairRoute;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
+import io.questdb.cairo.lv.LiveViewCompiledPlan;
 import io.questdb.cairo.lv.LiveViewInMemoryBuffer;
 import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.lv.LiveViewInstance;
@@ -56,6 +57,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.lv.LiveViewRecordCursor;
 import io.questdb.griffin.engine.lv.LiveViewRecordCursorFactory;
+import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -271,18 +273,22 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // Anchored shapes past ANCHORED_VARIANT_COUNT, which only testFuzzResumeChainPrice drives, so
     // every other anchored arm draws what it drew before. Each one's seals image every key whole,
     // as rank's and dense_rank's do: lag keeps no dirty set, covar_pop no baseline, and an
-    // EXCLUDE CURRENT ROW avg is a ring.
+    // EXCLUDE CURRENT ROW avg or first_value is a ring - AvgDouble's own class, and a
+    // first_value that inherits BasePartitionedWindowFunction's markPartitionAlive.
     private static final int ANCHORED_LAG_VARIANT = 7;
     private static final int ANCHORED_COVAR_POP_VARIANT = 8;
     private static final int ANCHORED_EXCLUDE_CURRENT_ROW_AVG_VARIANT = 9;
+    private static final int ANCHORED_EXCLUDE_CURRENT_ROW_FIRST_VALUE_VARIANT = 10;
     // testFuzzResumeChainPrice's shapes, every one a function a chained seal images whole: the
     // unanchored ROWS and RANGE sums and avgs and lag, and the anchored rank, dense_rank, lag,
-    // covar_pop and EXCLUDE CURRENT ROW avg.
+    // covar_pop and EXCLUDE CURRENT ROW avg and first_value. The first_value comes last, so
+    // every shape before it draws what it drew before it was added.
     private static final int[] CHAIN_PRICE_UNANCHORED_VARIANTS = {
             0, 4, RANGE_SUM_VARIANT, RANGE_AVG_VARIANT, LAG_VARIANT
     };
     private static final int[] CHAIN_PRICE_ANCHORED_VARIANTS = {
-            5, 6, ANCHORED_LAG_VARIANT, ANCHORED_COVAR_POP_VARIANT, ANCHORED_EXCLUDE_CURRENT_ROW_AVG_VARIANT
+            5, 6, ANCHORED_LAG_VARIANT, ANCHORED_COVAR_POP_VARIANT, ANCHORED_EXCLUDE_CURRENT_ROW_AVG_VARIANT,
+            ANCHORED_EXCLUDE_CURRENT_ROW_FIRST_VALUE_VARIANT
     };
     // Salt the chain price arm's draws apart from the run's sequence, so its runs draw their data
     // as every other arm's do.
@@ -1526,6 +1532,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             case ANCHORED_COVAR_POP_VARIANT -> "ts, sym, i, x, covar_pop(x, i) OVER (" + part + ") AS v";
             case ANCHORED_EXCLUDE_CURRENT_ROW_AVG_VARIANT ->
                     "ts, sym, x, avg(x) OVER (" + part + " " + anchoredWindowFrame(variant) + ") AS v";
+            case ANCHORED_EXCLUDE_CURRENT_ROW_FIRST_VALUE_VARIANT ->
+                    "ts, sym, x, first_value(x) OVER (" + part + " " + anchoredWindowFrame(variant) + ") AS v";
             default -> throw new IllegalArgumentException("anchored variant=" + variant);
         };
     }
@@ -1546,6 +1554,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             case ANCHORED_LAG_VARIANT -> "ts, sym, i, lag(i) OVER w AS v";
             case ANCHORED_COVAR_POP_VARIANT -> "ts, sym, i, x, covar_pop(x, i) OVER w AS v";
             case ANCHORED_EXCLUDE_CURRENT_ROW_AVG_VARIANT -> "ts, sym, x, avg(x) OVER w AS v";
+            case ANCHORED_EXCLUDE_CURRENT_ROW_FIRST_VALUE_VARIANT -> "ts, sym, x, first_value(x) OVER w AS v";
             default -> throw new IllegalArgumentException("anchored variant=" + variant);
         };
     }
@@ -1553,7 +1562,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // The frame an anchored fuzz variant's named window carries ahead of its ANCHOR clause, with
     // a trailing space, or nothing for the default frame.
     private static String anchoredWindowFrame(int variant) {
-        return variant == ANCHORED_EXCLUDE_CURRENT_ROW_AVG_VARIANT
+        return variant == ANCHORED_EXCLUDE_CURRENT_ROW_AVG_VARIANT || variant == ANCHORED_EXCLUDE_CURRENT_ROW_FIRST_VALUE_VARIANT
                 ? "RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW "
                 : "";
     }
@@ -2310,6 +2319,25 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             printSql(viewOrderedSql, rows);
             TestUtils.assertEquals("the view must keep the rows of the day its base dropped", rowsBeforeTheDrop, rows);
         }
+    }
+
+    // The one call an anchored EXCLUDE CURRENT ROW run's ANCHOR window dispatches to is a ring,
+    // which keeps no checkpoint dirty set and claims none: a seal walks a ring's whole map
+    // whatever a set names. A view with no compiled plan yet has dispatched no row, so holds none.
+    private void assertDispatchedRingKeepsNoCheckpointDirtySet() {
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        Assert.assertNotNull("live view 'lv' must be registered", instance);
+        final LiveViewCompiledPlan plan = instance.getCompiledPlan();
+        if (plan == null) {
+            return;
+        }
+        final ObjList<WindowFunction> dispatched = plan.getWindowFactory().getAnchorableWindowFunctions();
+        Assert.assertNotNull("the anchored window must dispatch to its call", dispatched);
+        Assert.assertEquals(1, dispatched.size());
+        final WindowFunction ring = dispatched.getQuick(0);
+        Assert.assertTrue(ring.getName() + " over the EXCLUDE CURRENT ROW frame must be a ring", ring.supportsCheckpointRingState());
+        Assert.assertNull(ring.getName() + " is a ring, which keeps no checkpoint dirty set", ring.getCheckpointDirtyPartitionMap());
+        Assert.assertFalse(ring.getName() + " is a ring, which claims no checkpoint dirty set", ring.isCheckpointDirtyTracked());
     }
 
     // Every outcome of the head-miss rebuild's end-of-table splice, which a batch's RANGE-frame runs
@@ -5847,6 +5875,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final String window = anchor != null
                 ? " WINDOW w AS (PARTITION BY sym ORDER BY ts " + anchoredWindowFrame(variant) + anchor.clause + ")"
                 : "";
+        // The anchored EXCLUDE CURRENT ROW shapes, whose one call the ANCHOR window dispatches to a ring.
+        final boolean isDispatchedRing = anchor != null && !anchoredWindowFrame(variant).isEmpty();
 
         execute("DROP LIVE VIEW IF EXISTS lv");
         execute("DROP TABLE IF EXISTS base");
@@ -5955,6 +5985,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                     insertCommit(sink, postOrder, cb[c], cb[c + 1], tsv, symIdx, iv, xv, xNull, null);
                     drainWalQueue();
                     refreshCycle(job);
+                    if (isDispatchedRing) {
+                        assertDispatchedRingKeepsNoCheckpointDirtySet();
+                    }
 
                     // Remove rows the LV has not yet emitted (see dropDoomedFuturePartition).
                     if (removals && rnd.nextInt(4) == 0) {
@@ -5973,6 +6006,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                             if (isChainPriceArm) {
                                 driveRefreshToQuiescence(job);
                                 TestUtils.assertSqlCursors(engine, sqlExecutionContext, oracleOrderedSql, viewOrderedSql, LOG, true);
+                                if (isDispatchedRing) {
+                                    assertDispatchedRingKeepsNoCheckpointDirtySet();
+                                }
                             }
                         }
                     }
@@ -5984,6 +6020,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             // view from the base, which erases a ghost row or restores a missing row the main loop
             // left, so the check after that restart does not stand in for this one.
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, oracleOrderedSql, viewOrderedSql, LOG, true);
+            if (isDispatchedRing) {
+                assertDispatchedRingKeepsNoCheckpointDirtySet();
+            }
             // One run in two, counted rather than drawn, so every batch runs its share.
             if (priceRnd != null && newKeyEpisodeCandidates++ % 2 == 0 && commitNewKeyEpisode(priceRnd, job, symCount)) {
                 TestUtils.assertSqlCursors(engine, sqlExecutionContext, oracleOrderedSql, viewOrderedSql, LOG, true);
@@ -6129,6 +6168,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 } else {
                     // No fault struck the run, so the departure left a root at the view's frontier.
                     assertRestoredFromTimeline("lv");
+                    if (isDispatchedRing) {
+                        assertDispatchedRingKeepsNoCheckpointDirtySet();
+                    }
                 }
                 if (withWhere) {
                     commitRowlessCyclesAfterARestart(job, null);

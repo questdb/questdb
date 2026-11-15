@@ -730,6 +730,7 @@ public class LiveViewSteadyStateBenchmark {
                             + selectShape.projections(sumColumns)
                             + " from payments "
                             + "window w as (partition by account_id order by created_at "
+                            + selectShape.anchoredWindowFrame()
                             + anchorClause(anchorPeriod, anchorZone) + ")"
                             + selectShape.extraWindows(),
                     sqlCtx
@@ -1550,9 +1551,11 @@ public class LiveViewSteadyStateBenchmark {
         final String bucket = DAILY_ANCHOR_PERIOD.equals(anchorPeriod)
                 ? "timestamp_floor('1d', dateadd('h', -" + DAILY_ANCHOR_OFFSET_MICROS / Micros.HOUR_MICROS + ", created_at))"
                 : "timestamp_floor('" + anchorPeriod + "', created_at)";
+        final String anchoredFrame = shape.anchoredWindowFrame();
         final String projections = shape.projections(sumColumns)
                 .replace(" over w ", " over (partition by account_id, bucket order by created_at "
-                        + "rows between unbounded preceding and current row) ")
+                        + (anchoredFrame.isEmpty() ? "rows between unbounded preceding and current row" : anchoredFrame.trim())
+                        + ") ")
                 .replace(" over r ", " over (" + BOUNDED_ROWS_WINDOW + ") ")
                 .replace(" over g ", " over (" + BOUNDED_RANGE_WINDOW + ") ");
         final String oracle = "select created_at, account_id, " + projections
@@ -2271,6 +2274,14 @@ public class LiveViewSteadyStateBenchmark {
          */
         DISPERSION("dispersion"),
         /**
+         * A {@code count} over the key and a {@code first_value} over the amount on an anchored
+         * window whose frame excludes the current row, which sends both to their RANGE rings:
+         * no window-owned state, and every seal walks each ring's whole map. The row that prices
+         * what a ring's per-cadence checkpoint bookkeeping costs a batch and the view's
+         * off-heap total.
+         */
+        EXCLUDE_COUNT("exclude-count"),
+        /**
          * A fused group beside a bounded ROWS call, which keeps a ring-backed root of its
          * own. The mixed shape the acceptance plan asks for.
          */
@@ -2331,6 +2342,17 @@ public class LiveViewSteadyStateBenchmark {
             throw new IllegalArgumentException("unknown --shape: " + name);
         }
 
+        /**
+         * The frame the anchored window {@code w} carries ahead of its ANCHOR clause, with a
+         * trailing space, or nothing for the default frame. The oracle restates it over the
+         * bucketed partition.
+         */
+        String anchoredWindowFrame() {
+            return this == EXCLUDE_COUNT
+                    ? "range between unbounded preceding and current row exclude current row "
+                    : "";
+        }
+
         String extraWindows() {
             return switch (this) {
                 case MIXED -> ", r as (" + BOUNDED_ROWS_WINDOW + ")";
@@ -2358,6 +2380,8 @@ public class LiveViewSteadyStateBenchmark {
                 case DISPERSION -> "stddev_samp(amount) over w as ss, stddev_pop(amount) over w as sp, "
                         + "var_samp(amount) over w as vs, var_pop(amount) over w as vp, "
                         + "count(amount) over w as c";
+                case EXCLUDE_COUNT -> "count(account_id) over w as preceding_count, "
+                        + "first_value(amount) over w as first_amount";
                 case MIXED -> "sum(amount) over w as cumulative_sum, sum(amount) over r as bounded_sum";
                 case ROW_COUNT -> "count(*) over w as n, row_number() over w as rn";
                 case SINGLE_COUNT -> "count(account_id) over w as cumulative_count";

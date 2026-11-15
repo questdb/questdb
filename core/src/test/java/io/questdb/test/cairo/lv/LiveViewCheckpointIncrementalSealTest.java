@@ -32,6 +32,7 @@ import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkSPI;
 import io.questdb.cairo.SingleColumnType;
+import io.questdb.cairo.lv.LiveViewCheckpointCaptureLedger;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionDirectory;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionRoot;
 import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
@@ -76,6 +77,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.LimitedMemoryTracker;
 import io.questdb.test.tools.TestUtils;
@@ -109,6 +111,14 @@ import static io.questdb.cairo.lv.LiveViewRefreshStats.OPEN_SEGMENT_KEYED_RESUME
  */
 public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest {
 
+    // 2026-01-01T00:00:00Z, the day every row of the duration-cadence cases lands on, so their
+    // views' one ANCHOR bucket holds the whole run and the plain window recomputes them.
+    private static final long DURATION_CADENCE_CLOCK_MICROS = 1_767_225_600_000_000L;
+    // An anchored window whose frame excludes the current row. It keeps its ANCHOR, and the frame
+    // end the exclusion folds below the current row sends count, first_value, last_value,
+    // nth_value and the DECIMAL sum and avg to their RANGE rings.
+    private static final String EXCLUDE_CURRENT_ROW_WINDOW = "PARTITION BY sym ORDER BY ts "
+            + "RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW ANCHOR DAILY '00:00'";
     // Midnight. ANCHOR DAILY '00:00' is the only daily form the frontier sweep
     // accepts: it desugars into the two-argument timestamp_floor, and
     // LiveViewRefreshJob.isProvablyMonotoneAnchor takes that form and no other.
@@ -116,6 +126,9 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
     // Noon, so a bucket crossing lands in the middle of a day rather than on the
     // calendar boundary a careless oracle would agree with by accident.
     private static final String NOON_ANCHOR = "12:00";
+    // Keys per batch of testRingShapedCallsKeepNoCheckpointDirtySet: past the initial capacity of
+    // every map a dirty set could be built as, so a set would have had to grow.
+    private static final int RING_KEYS = 2_000;
     // Room for anything the window allocates, so a tracker a case has already tripped once
     // stops standing in the way of the retry that case is really about.
     private static final long ROOMY_TRACKER_LIMIT_BYTES = 64 * 1024 * 1024L;
@@ -831,6 +844,67 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
         });
     }
 
+    /**
+     * A ring crossing its ANCHOR bucket still takes back the tombstone its reset set, with no
+     * dirty set to mark. {@code resetPartition} tombstones the crossing key and the crossing
+     * row's own {@code markPartitionAlive} clears it. A ring's seal walks its whole map and skips
+     * a tombstoned key, so a tombstone left standing would drop the key from the root, and the
+     * restart would bring the key back with no state.
+     * <p>
+     * {@code count(x)} over a frame that excludes the current row is a ring. The row after the
+     * restart counts the one row before it in its bucket - 1 - only if the root carried the key.
+     */
+    @Test
+    public void testARingCrossingItsAnchorBucketClearsItsTombstoneWithoutADirtySet() throws Exception {
+        // One boundary per commit, so the crossing commit seals.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS "
+                    + "SELECT ts, sym, x, count(x) OVER w AS v FROM base WINDOW w AS (" + EXCLUDE_CURRENT_ROW_WINDOW + ")");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                commitBase("('2026-01-01T10:00:00.000000Z', 'a', 1.0)", job);
+                // The next day's bucket: the anchor resets the ring's partition, tombstoning 'a'.
+                commitBase("('2026-01-02T01:00:00.000000Z', 'a', 2.0)", job);
+                final ObjList<WindowFunction> functions = windowFunctions(viewInstance());
+                Assert.assertEquals(1, functions.size());
+                final WindowFunction ring = functions.getQuick(0);
+                Assert.assertTrue("count over a frame excluding the current row must be a ring", ring.supportsCheckpointRingState());
+                Assert.assertEquals("the crossing row must clear the tombstone its reset set", 0, ring.getTombstoneCount());
+                Assert.assertNull("a ring keeps no checkpoint dirty set", ring.getCheckpointDirtyPartitionMap());
+                Assert.assertFalse("a ring claims no checkpoint dirty set", ring.isCheckpointDirtyTracked());
+                assertNoRefreshFaults("lv");
+            }
+
+            restartLiveViewsAndRecover();
+            assertRestoredFromTimeline("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                commitBase("('2026-01-02T02:00:00.000000Z', 'a', 3.0)", job);
+                assertNoRefreshFaults("lv");
+                assertQuery("SELECT ts, sym, x, v FROM lv ORDER BY ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .timestamp("ts")
+                        .returns("""
+                                ts\tsym\tx\tv
+                                2026-01-01T10:00:00.000000Z\ta\t1.0\t0
+                                2026-01-02T01:00:00.000000Z\ta\t2.0\t0
+                                2026-01-02T02:00:00.000000Z\ta\t3.0\t1
+                                """);
+                // The anchor's own definition: a partition per key and day bucket.
+                TestUtils.assertSqlCursors(
+                        engine,
+                        sqlExecutionContext,
+                        "SELECT ts, sym, x, count(x) OVER (PARTITION BY sym, timestamp_floor('1d', ts) ORDER BY ts "
+                                + "RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW) AS v FROM base ORDER BY ts",
+                        "SELECT ts, sym, x, v FROM lv ORDER BY ts",
+                        LOG,
+                        true
+                );
+            }
+        });
+    }
+
     @Test
     public void testDirtyKeyMissingWithoutASweepStillFails() throws Exception {
         // Four rows per boundary, so the three rows below leave the dirty sets standing
@@ -868,6 +942,16 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
                 );
             }
         });
+    }
+
+    @Test
+    public void testExcludeCurrentRowViewKeepsOnlyTheTrackedSetFused() throws Exception {
+        assertExcludeCurrentRowViewKeepsOnlyTheTrackedSet(true);
+    }
+
+    @Test
+    public void testExcludeCurrentRowViewKeepsOnlyTheTrackedSetUnfused() throws Exception {
+        assertExcludeCurrentRowViewKeepsOnlyTheTrackedSet(false);
     }
 
     @Test
@@ -1701,6 +1785,30 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
         Assert.assertTrue(fullScan.isRetained);
     }
 
+    /**
+     * A ring keeps no checkpoint dirty set, however many keys its cadences touch. Every call here
+     * sits on an anchored window whose frame excludes the current row, which makes it a RANGE
+     * ring, and {@code LiveViewCheckpointTimelineStoreWriter.freezeFunction} walks a ring's whole
+     * state map whatever a dirty set names. A set would cost each key's first row of a cadence a
+     * key serialization and a map insert, and hold up to the state map's key count between seals,
+     * charged to {@code cairo.live.view.refresh.memory.limit.bytes}, for nothing a seal reads.
+     * <p>
+     * Over three partition keys: a SYMBOL, a LONG and a (SYMBOL, INT) pair. Rows never seal here,
+     * the duration does: the first refresh seals one row, two batches of {@link #RING_KEYS} keys
+     * follow inside one cadence, and a row six minutes later seals again, walking each ring's
+     * keys whole.
+     */
+    @Test
+    public void testRingShapedCallsKeepNoCheckpointDirtySet() throws Exception {
+        setDurationOnlyCheckpointCadence();
+        assertMemoryLeak(() -> {
+            setCurrentMicros(DURATION_CADENCE_CLOCK_MICROS);
+            assertRingShapedCallsKeepNoCheckpointDirtySet("symbol_key", "ks");
+            assertRingShapedCallsKeepNoCheckpointDirtySet("long_key", "kl");
+            assertRingShapedCallsKeepNoCheckpointDirtySet("pair_key", "ps, pi");
+        });
+    }
+
     @Test
     public void testTheCadenceCounterWrappingStillNamesEveryTouchedKey() throws Exception {
         // Four rows per boundary, as in testARepeatedKeyEntersTheDirtySetOncePerCadence and
@@ -1987,6 +2095,29 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
         });
     }
 
+    /**
+     * Asserts what the function roots of the seals since {@code before} add up to: how many the
+     * seals published, how many of them froze incrementally, and the keys they walked and imaged.
+     */
+    private static void assertFunctionCaptureDelta(
+            String what,
+            long[] before,
+            LiveViewInstance instance,
+            long captures,
+            long incrementalCaptures,
+            long keysVisited,
+            long keysImaged
+    ) {
+        final long[] after = functionCaptureLedger(instance);
+        Assert.assertEquals(
+                what,
+                "captures=" + captures + ", incremental=" + incrementalCaptures
+                        + ", visited=" + keysVisited + ", imaged=" + keysImaged,
+                "captures=" + (after[0] - before[0]) + ", incremental=" + (after[1] - before[1])
+                        + ", visited=" + (after[2] - before[2]) + ", imaged=" + (after[3] - before[3])
+        );
+    }
+
     private static void assertPartitionCount(
             String what,
             int expected,
@@ -1998,10 +2129,45 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
         Assert.assertEquals(what + " partition count", expected, count[0]);
     }
 
+    /**
+     * Asserts every function of {@code rings} is a ring holding {@code liveKeys} keys of state,
+     * with no checkpoint dirty set and no claim to one.
+     */
+    private static void assertRingsKeepNoCheckpointDirtySet(ObjList<WindowFunction> rings, long liveKeys) {
+        for (int i = 0, n = rings.size(); i < n; i++) {
+            final WindowFunction ring = rings.getQuick(i);
+            final String name = ring.getName() + "#" + i;
+            Assert.assertTrue(name + " must be a ring", ring.supportsCheckpointRingState());
+            Assert.assertEquals(name + " live keys", liveKeys, ring.getPartitionMap().size());
+            Assert.assertNull(name + " is a ring, which keeps no checkpoint dirty set", ring.getCheckpointDirtyPartitionMap());
+            Assert.assertFalse(name + " is a ring, which claims no checkpoint dirty set", ring.isCheckpointDirtyTracked());
+        }
+    }
+
     private static Path checkpointsDir(LiveViewInstance instance) {
         return new Path().of(configuration.getDbRoot())
                 .concat(instance.getLiveViewToken())
                 .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
+    }
+
+    // The view's function-root capture counters: captures, incremental captures, keys visited
+    // and keys imaged, each cumulative over the view instance's life.
+    private static long[] functionCaptureLedger(LiveViewInstance instance) {
+        final LiveViewCheckpointCaptureLedger ledger = instance.getCheckpointCaptureLedgerForTest();
+        return new long[]{
+                ledger.getFunctionCaptures(),
+                ledger.getFunctionIncrementalCaptures(),
+                ledger.getFunctionKeysVisited(),
+                ledger.getFunctionKeysImaged()
+        };
+    }
+
+    // Rows never seal: a seal comes from the first refresh, and then only once the clock has
+    // moved five minutes past the previous one.
+    private static void setDurationOnlyCheckpointCadence() {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000_000L);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS, 5 * Micros.MINUTE_MICROS);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ADAPTIVE_CADENCE_ENABLED, "false");
     }
 
     /**
@@ -2206,6 +2372,183 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
             Assert.assertEquals("function " + i + " eviction marker count", expected, marked);
         }
         Assert.assertTrue("no window function tracks dirty partitions", fused || tracked > 0);
+    }
+
+    /**
+     * One anchored window whose frame excludes the current row, carrying row_number - which the
+     * window's root holds, fused or not - an EMA, which keeps a dirty set, and two rings: count
+     * and a DECIMAL first_value. Only the EMA keeps a set. Its seals stay incremental over the
+     * keys its rows moved, and a seal walks each ring whole whatever a set would name, so the
+     * rings keep none: before and after a restart, and through the repair a late row takes.
+     * <p>
+     * The frame sits on {@code w} itself. A call refining {@code w} with a frame of its own,
+     * {@code count(x) OVER (w RANGE ... EXCLUDE CURRENT ROW)}, is refused at CREATE with advice
+     * to add the ANCHOR the window already has - a separate bug.
+     */
+    private void assertExcludeCurrentRowViewKeepsOnlyTheTrackedSet(boolean isFused) throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_WINDOW_MAP_FUSION_ENABLED, String.valueOf(isFused));
+        setDurationOnlyCheckpointCadence();
+        assertMemoryLeak(() -> {
+            setCurrentMicros(DURATION_CADENCE_CLOCK_MICROS);
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE, d64 DECIMAL(18,2)) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final String select = "SELECT ts, sym, row_number() OVER w AS rn, avg(x, 'period', 5) OVER w AS e, "
+                    + "count(x) OVER w AS c, first_value(d64) OVER w AS f FROM base WINDOW w AS ("
+                    + EXCLUDE_CURRENT_ROW_WINDOW + ")";
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " + select);
+            // One day's rows, so the plain window over the same frame recomputes the anchored one.
+            final String recompute = select.replace(" ANCHOR DAILY '00:00'", "");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Eight keys, which the first refresh seals.
+                commitBase("('2026-01-01T11:00:01.000000Z', 'k1', 10.0, 1.5m), ('2026-01-01T11:00:02.000000Z', 'k2', 20.0, 2.5m), "
+                        + "('2026-01-01T11:00:03.000000Z', 'k3', 30.0, 3.5m), ('2026-01-01T11:00:04.000000Z', 'k4', 40.0, 4.5m), "
+                        + "('2026-01-01T11:00:05.000000Z', 'k5', 50.0, 5.5m), ('2026-01-01T11:00:06.000000Z', 'k6', 60.0, 6.5m), "
+                        + "('2026-01-01T11:00:07.000000Z', 'k7', 70.0, 7.5m), ('2026-01-01T11:00:08.000000Z', 'k8', 80.0, 8.5m)", job);
+                assertOnlyTheEmaKeepsADirtySet(0);
+
+                // One row each on k3, k4 and k5 inside the cadence: the EMA's set names the three.
+                final long[] beforeSeal = functionCaptureLedger(viewInstance());
+                commitBase("('2026-01-01T11:00:20.000000Z', 'k3', 31.0, 3.25m), "
+                        + "('2026-01-01T11:00:21.000000Z', 'k4', 41.0, 4.25m), "
+                        + "('2026-01-01T11:00:22.000000Z', 'k5', 51.0, 5.25m)", job);
+                assertOnlyTheEmaKeepsADirtySet(3);
+                assertFunctionCaptureDelta("no seal inside the cadence", beforeSeal, viewInstance(), 0, 0, 0, 0);
+
+                // Six minutes on, one more row on k5 seals: the EMA's root over the three keys it
+                // names, each ring's over all eight - three roots and 3 + 2 x 8 keys.
+                setCurrentMicros(currentMicros + 6 * Micros.MINUTE_MICROS);
+                commitBase("('2026-01-01T11:00:40.000000Z', 'k5', 52.0, 5.75m)", job);
+                assertFunctionCaptureDelta("the duration seal", beforeSeal, viewInstance(), 3, 1, 3 + 2 * 8, 3 + 2 * 8);
+                assertOnlyTheEmaKeepsADirtySet(0);
+                assertNoRefreshFaults("lv");
+            }
+
+            restartLiveViewsAndRecover();
+            assertRestoredFromTimeline("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // 15 seconds below the head, between the two roots: a repair.
+                commitBase("('2026-01-01T11:00:25.000000Z', 'k6', 61.0, 6.25m)", job);
+                assertNoRefreshFaults("lv");
+                TestUtils.assertSqlCursors(
+                        engine,
+                        sqlExecutionContext,
+                        "SELECT * FROM (" + recompute + ") ORDER BY ts, sym",
+                        "SELECT * FROM lv ORDER BY ts, sym",
+                        LOG,
+                        true
+                );
+                assertRingsKeepNoCheckpointDirtySet(viewRings(), 8);
+
+                // The seal after the repair: the EMA's root incremental again, each ring's whole.
+                final long[] beforeSeal = functionCaptureLedger(viewInstance());
+                setCurrentMicros(currentMicros + 6 * Micros.MINUTE_MICROS);
+                commitBase("('2026-01-01T11:00:50.000000Z', 'k7', 71.0, 7.25m)", job);
+                assertFunctionCaptureDelta("the seal after the repair", beforeSeal, viewInstance(), 3, 1, 1 + 2 * 8, 1 + 2 * 8);
+                assertOnlyTheEmaKeepsADirtySet(0);
+                assertNoRefreshFaults("lv");
+                TestUtils.assertSqlCursors(
+                        engine,
+                        sqlExecutionContext,
+                        "SELECT * FROM (" + recompute + ") ORDER BY ts, sym",
+                        "SELECT * FROM lv ORDER BY ts, sym",
+                        LOG,
+                        true
+                );
+            }
+        });
+    }
+
+    /**
+     * Asserts {@link #assertExcludeCurrentRowViewKeepsOnlyTheTrackedSet}'s view holds one dirty
+     * set, the EMA's, naming {@code emaDirtyKeys} keys: row_number keeps none, and neither ring
+     * keeps or claims one over its eight keys.
+     */
+    private void assertOnlyTheEmaKeepsADirtySet(long emaDirtyKeys) {
+        final ObjList<WindowFunction> functions = windowFunctions(viewInstance());
+        Assert.assertEquals(4, functions.size());
+        int emaCount = 0;
+        int rowNumberCount = 0;
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            final WindowFunction function = functions.getQuick(i);
+            if (function.supportsCheckpointRingState()) {
+                continue;
+            }
+            final Map dirty = function.getCheckpointDirtyPartitionMap();
+            if ("avg".equals(function.getName())) {
+                emaCount++;
+                Assert.assertTrue("the EMA claims a checkpoint dirty set", function.isCheckpointDirtyTracked());
+                Assert.assertNotNull("the EMA keeps a checkpoint dirty set", dirty);
+                Assert.assertEquals("the EMA's dirty keys", emaDirtyKeys, dirty.size());
+            } else {
+                rowNumberCount++;
+                Assert.assertEquals("RowNumberFunction", function.getClass().getSimpleName());
+                Assert.assertNull("row_number keeps no checkpoint dirty set", dirty);
+                Assert.assertFalse("row_number claims no checkpoint dirty set", function.isCheckpointDirtyTracked());
+            }
+        }
+        Assert.assertEquals(1, emaCount);
+        Assert.assertEquals(1, rowNumberCount);
+        final ObjList<WindowFunction> rings = viewRings();
+        Assert.assertEquals("count and first_value are the rings", 2, rings.size());
+        assertRingsKeepNoCheckpointDirtySet(rings, 8);
+    }
+
+    /**
+     * Builds {@link #testRingShapedCallsKeepNoCheckpointDirtySet}'s view partitioned by
+     * {@code partitionBy}, drives it through two duration seals and drops it. Four rings: count,
+     * first_value, nth_value over a TIMESTAMP and a DECIMAL sum.
+     */
+    private void assertRingShapedCallsKeepNoCheckpointDirtySet(String suffix, String partitionBy) throws Exception {
+        final String base = "base_" + suffix;
+        final String lv = "lv_" + suffix;
+        execute("CREATE TABLE " + base + " (ts TIMESTAMP, ks SYMBOL, kl LONG, ps SYMBOL, pi INT, x DOUBLE, t TIMESTAMP, "
+                + "d64 DECIMAL(18,2)) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        final String select = "SELECT ts, ks, kl, ps, pi, count(x) OVER w AS c, first_value(x) OVER w AS f, "
+                + "nth_value(t, 2) OVER w AS n, sum(d64) OVER w AS s FROM " + base + " WINDOW w AS (PARTITION BY "
+                + partitionBy + " ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW "
+                + "ANCHOR DAILY '00:00')";
+        execute("CREATE LIVE VIEW " + lv + " FLUSH EVERY 100ms START FROM BEGINNING AS " + select);
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            driveSeedToCompletion(job, lv);
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance(lv);
+            Assert.assertNotNull(instance);
+            final String tag = "PARTITION BY " + partitionBy + ": ";
+
+            // One key, which the first refresh seals: four roots of one key each.
+            long[] beforeSeal = functionCaptureLedger(instance);
+            commitRingKeys(base, "2026-01-01T11:00:00.000000Z", 1, job);
+            final ObjList<WindowFunction> rings = instance.getCompiledPlan().getWindowFactory().getAnchorableWindowFunctions();
+            Assert.assertEquals(tag + "the ANCHOR window dispatches to every call", 4, rings.size());
+            assertFunctionCaptureDelta(tag + "the first seal", beforeSeal, instance, 4, 0, 4, 4);
+            assertRingsKeepNoCheckpointDirtySet(rings, 1);
+
+            // Every key in one commit, then every key again, inside the cadence.
+            beforeSeal = functionCaptureLedger(instance);
+            commitRingKeys(base, "2026-01-01T11:01:00.000000Z", RING_KEYS, job);
+            assertRingsKeepNoCheckpointDirtySet(rings, RING_KEYS);
+            commitRingKeys(base, "2026-01-01T11:02:00.000000Z", RING_KEYS, job);
+            assertRingsKeepNoCheckpointDirtySet(rings, RING_KEYS);
+            assertFunctionCaptureDelta(tag + "no seal inside the cadence", beforeSeal, instance, 0, 0, 0, 0);
+
+            // Six minutes on, one row seals: each of the four rings walked whole.
+            setCurrentMicros(currentMicros + 6 * Micros.MINUTE_MICROS);
+            commitRingKeys(base, "2026-01-01T11:05:00.000000Z", 1, job);
+            assertFunctionCaptureDelta(tag + "the duration seal", beforeSeal, instance, 4, 0, 4 * RING_KEYS, 4 * RING_KEYS);
+            assertRingsKeepNoCheckpointDirtySet(rings, RING_KEYS);
+            assertNoRefreshFaults(lv);
+            // One day's rows, so the plain window over the same frame recomputes the anchored one.
+            TestUtils.assertSqlCursors(
+                    engine,
+                    sqlExecutionContext,
+                    "SELECT * FROM (" + select.replace(" ANCHOR DAILY '00:00'", "") + ") ORDER BY ts",
+                    "SELECT * FROM " + lv + " ORDER BY ts",
+                    LOG,
+                    true
+            );
+            execute("DROP LIVE VIEW " + lv);
+            drainJob(job);
+        }
+        execute("DROP TABLE " + base);
+        drainWalQueue();
     }
 
     /**
@@ -2636,6 +2979,26 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
         driveRefreshToQuiescence(job);
     }
 
+    private void commitBase(String values, LiveViewRefreshJob job) throws Exception {
+        execute("INSERT INTO base VALUES " + values);
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+    }
+
+    /**
+     * Commits one row for each of keys 1 to {@code keys}, a millisecond apart from
+     * {@code fromTimestamp}. Key x is the same under every PARTITION BY the ring case takes:
+     * {@code ks} is 'kx', {@code kl} is x, and ({@code ps}, {@code pi}) is ('s' || x % 20, x / 20).
+     */
+    private void commitRingKeys(String base, String fromTimestamp, int keys, LiveViewRefreshJob job) throws Exception {
+        execute("INSERT INTO " + base + " SELECT ('" + fromTimestamp + "'::timestamp + x * 1_000)::timestamp, "
+                + "('k' || x)::symbol, x, ('s' || (x % 20))::symbol, (x / 20)::int, x * 1.5, "
+                + "('2025-06-01T00:00:00.000000Z'::timestamp + x)::timestamp, (x % 100)::decimal(18,2) "
+                + "FROM long_sequence(" + keys + ")");
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+    }
+
     /**
      * The unfused view again, over the two accumulators whose own markPartitionAlive
      * used to skip the dirty marking. Both arguments are expressions, so the fused
@@ -2909,6 +3272,18 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
             }
         }
         Assert.assertTrue("no window function carries a tombstone slot", tombstoned > 0);
+    }
+
+    // The ring-shaped window functions of the view, in projection order.
+    private ObjList<WindowFunction> viewRings() {
+        final ObjList<WindowFunction> functions = windowFunctions(viewInstance());
+        final ObjList<WindowFunction> rings = new ObjList<>();
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            if (functions.getQuick(i).supportsCheckpointRingState()) {
+                rings.add(functions.getQuick(i));
+            }
+        }
+        return rings;
     }
 
     private LiveViewInstance viewInstance() {
