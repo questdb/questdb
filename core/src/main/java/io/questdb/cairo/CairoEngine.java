@@ -2705,11 +2705,13 @@ public class CairoEngine implements Closeable, WriterSource {
             validateDesiredMetadataVersion(tableToken, metadata, desiredVersion);
             return metadata;
         } catch (CairoException e) {
-            if (tableToken.isWal()) {
+            // A locked pool reports that another thread, such as a DROP or RENAME inside lockAll(),
+            // holds or takes the table's lock, not damaged files. A repair would take the writer that
+            // the lock holder locks next, and fail its statement.
+            if (tableToken.isWal() || e instanceof EntryLockedException) {
                 throw e;
-            } else {
-                tryRepairTable(tableToken, e);
             }
+            tryRepairTable(tableToken, e);
         }
         TableMetadata metadata = tableMetadataPool.get(tableToken);
         validateDesiredMetadataVersion(tableToken, metadata, desiredVersion);

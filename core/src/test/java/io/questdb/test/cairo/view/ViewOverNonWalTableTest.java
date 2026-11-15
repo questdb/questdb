@@ -35,6 +35,7 @@ import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.view.ViewCompilerJob;
 import io.questdb.cairo.view.ViewStateStore;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
@@ -83,6 +84,12 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
             {"RENAME TABLE t TO t3", "meta meta close 0:0 lock "},
             {"DROP TABLE t", "meta meta close 0:0 lock "}
     };
+    // the error that the compile of SELECT name FROM table_partitions('t') fails with when it meets
+    // a lock of t: table_partitions() reports the lock at its argument 't', at position 34
+    private static final String PARTITIONS_QUERY_LOCK_ERROR = "[34] table busy [reason=unknown]";
+    // a read of a non-WAL table's metadata logs this line when it opens the table's writer to
+    // repair the table
+    private static final String REPAIR_LINE = "starting table repair [table=";
     // 2025-06-19T12:00:00.000000Z
     private static final long TRUNCATE_MICROS = 1_750_334_400_000_000L;
     // a DROP, RENAME or TRUNCATE of t logs this line when it waits for a view compile run
@@ -626,6 +633,19 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
     }
 
     @Test
+    public void testDdlRetrySucceedsWhenMetadataReadMetItsLockAfterBusyReader() throws Exception {
+        // A view compile run holds t's reader, so the first lock attempt of DROP or RENAME fails on
+        // t's reader. The attempt unlocks t's writer before t's metadata, and a query that reads t's
+        // metadata in between meets the lock: it fails as busy and leaves t's writer alone. The DDL
+        // waits for the run, and its second lock attempt succeeds.
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, Long.MAX_VALUE);
+            assertDdlRetrySucceedsWhenMetadataReadMetItsLockAfterBusyReader("DROP TABLE t");
+            assertDdlRetrySucceedsWhenMetadataReadMetItsLockAfterBusyReader("RENAME TABLE t TO t2");
+        });
+    }
+
+    @Test
     public void testDdlRetryingAtOnceGivesUpOnceBusyWaitTimeoutPasses() throws Exception {
         // The busy wait timeout bounds the lock attempts of a DDL that finds nothing that holds its
         // table after a failed attempt. A query holds t while an unrelated view compile run over u
@@ -1063,6 +1083,35 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
             execute("RENAME TABLE t TO t3");
             execute("DROP TABLE t3");
             assertTableListed("t3", false);
+        });
+    }
+
+    @Test
+    public void testDropOrRenameFailsAtOnceOnQueryWhenMetadataReadMeetsItsLock() throws Exception {
+        // A query holds t's reader. A view compile, or a query compile, reads t's metadata while
+        // DROP or RENAME holds the lock of t's metadata and has not locked t's writer yet. The read
+        // fails as busy and leaves t's writer alone, so the DDL fails on the query's reader after
+        // one lock attempt, as it does without views, and succeeds once the query ended.
+        assertMemoryLeak(() -> {
+            // the server default; a DDL that waited would log its wait before it fails
+            node1.setProperty(PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 500);
+            for (boolean isQueueDrain : new boolean[]{true, false}) {
+                assertDropOrRenameWhenMetadataReadMeetsItsLock("DROP TABLE t", isQueueDrain, "could not lock 't~' [reason='busyReader']");
+                assertDropOrRenameWhenMetadataReadMeetsItsLock("RENAME TABLE t TO t2", isQueueDrain, "table busy [reason=busyReader]");
+            }
+        });
+    }
+
+    @Test
+    public void testDropOrRenameSucceedsWhenMetadataReadMeetsItsLock() throws Exception {
+        // DROP and RENAME of t lock t's metadata before t's writer. A view compile, or a query
+        // compile, that reads t's metadata in between meets the lock: it fails as busy and leaves
+        // t's writer alone, so the DDL locks t and succeeds.
+        assertMemoryLeak(() -> {
+            for (boolean isQueueDrain : new boolean[]{true, false}) {
+                assertDropOrRenameWhenMetadataReadMeetsItsLock("DROP TABLE t", isQueueDrain, null);
+                assertDropOrRenameWhenMetadataReadMeetsItsLock("RENAME TABLE t TO t2", isQueueDrain, null);
+            }
         });
     }
 
@@ -2671,6 +2720,13 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
         return lockAttempts;
     }
 
+    // creates the non-WAL table t (a INT, ts TIMESTAMP), partitioned by day, with the rows 1 and 2
+    private static void createPartitionedTableWithRows() throws SqlException {
+        execute("CREATE TABLE t (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+        execute("INSERT INTO t VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-02T00:00:00.000000Z')");
+        Assert.assertFalse(engine.verifyTableName("t").isWal());
+    }
+
     // runs the statements with an execution context of the calling thread
     private static void executeInOwnContext(String... sqls) throws SqlException {
         try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
@@ -3063,6 +3119,38 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
         Assert.assertEquals(2, lockAttempts.get());
     }
 
+    // Creates t, partitioned, with the rows 1 and 2, and the view v over it, and adds a column to t,
+    // which queues the compile of v. Then runs the DDL of t while that compile holds t's reader. A
+    // query that reads t's metadata starts when the first lock attempt of the DDL has failed on the
+    // reader and unlocked t's writer, before it unlocks t's metadata. The DDL waits for the compile
+    // and succeeds at its second lock attempt.
+    private void assertDdlRetrySucceedsWhenMetadataReadMetItsLockAfterBusyReader(String ddl) throws Exception {
+        createPartitionedTableWithRows();
+        createView("v", "SELECT * FROM t");
+        execute("ALTER TABLE t ADD COLUMN c INT");
+        final MetadataReadInsideLock read = MetadataReadInsideLock.ofPartitionsQuery(PoolListener.SRC_WRITER, PoolListener.EV_UNLOCKED);
+        final AtomicInteger lockAttempts = countTableMetadataLocks(read);
+        try {
+            // the compile run passes each pool event on to the listener that counts the locks
+            executeWhileViewCompileHolds("t", PoolListener.SRC_READER, ddl, null);
+        } finally {
+            read.finish();
+            engine.setPoolListener(null);
+        }
+        Assert.assertEquals(2, lockAttempts.get());
+        read.assertEndedWithoutWriter(PARTITIONS_QUERY_LOCK_ERROR);
+        capture.drain();
+        capture.assertOnlyOnce(Pattern.quote(WAIT_LINE));
+        capture.assertNotLogged(REPAIR_LINE);
+        assertDroppedOrRenamedToT2(ddl);
+        drainViewQueue();
+        assertViewState("v", "table does not exist [table=t]");
+
+        execute("DROP VIEW v");
+        execute("DROP TABLE IF EXISTS t2");
+        drainViewQueue();
+    }
+
     // Runs the DDL of t while a query holds t's reader. The query ends before each scan of the DDL
     // for the holders of t, and a new one takes t's reader before each retry of the lock, so that
     // the DDL keeps trying the lock again at once; the test clock moves by a quarter of the busy
@@ -3324,6 +3412,77 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
         capture.assertOnlyOnce(Pattern.quote(WAIT_LINE));
     }
 
+    // Creates t, partitioned, with the rows 1 and 2, and the view v over table_partitions('t'), and
+    // adds a column to t, which queues the compile of v. Then runs DROP TABLE t or RENAME TABLE t TO
+    // t2, while a query holds t's reader when an error is expected. A view compile run, which compiles
+    // v, or a query compile reads t's metadata once the DDL thread locked t's metadata, before it
+    // locks t's writer. The DDL makes one lock attempt: it succeeds, or it fails with the error and
+    // succeeds once the query ended.
+    private void assertDropOrRenameWhenMetadataReadMeetsItsLock(String ddl, boolean isQueueDrain, @Nullable String expectedError) throws Exception {
+        capture.start();
+        createPartitionedTableWithRows();
+        createView("v", "SELECT name, numRows FROM table_partitions('t')");
+        execute("ALTER TABLE t ADD COLUMN c INT");
+        final MetadataReadInsideLock read = isQueueDrain
+                ? MetadataReadInsideLock.ofQueueDrain(PoolListener.SRC_TABLE_METADATA, PoolListener.EV_LOCK_SUCCESS)
+                : MetadataReadInsideLock.ofPartitionsQuery(PoolListener.SRC_TABLE_METADATA, PoolListener.EV_LOCK_SUCCESS);
+        final AtomicInteger lockAttempts = countTableMetadataLocks(read);
+        final ReaderHoldingThread query = expectedError != null ? ReaderHoldingThread.start(engine, "t") : null;
+        try {
+            if (expectedError != null) {
+                assertDdlFails(ddl, expectedError);
+            } else {
+                execute(ddl);
+            }
+        } finally {
+            read.finish();
+            engine.setPoolListener(null);
+            if (query != null) {
+                query.close();
+            }
+        }
+        Assert.assertEquals(1, lockAttempts.get());
+        read.assertEndedWithoutWriter(isQueueDrain ? null : PARTITIONS_QUERY_LOCK_ERROR);
+        capture.drain();
+        capture.assertNotLogged(WAIT_LINE);
+        capture.assertNotLogged(REPAIR_LINE);
+        if (isQueueDrain) {
+            // table_partitions() reports the lock as an error of its argument, not as a lock, so the
+            // compile leaves v invalid, with no busy retry
+            assertViewState("v", "table busy [reason=unknown]");
+            assertPendingCompileBusyRetries("");
+        }
+        if (expectedError != null) {
+            // the query ended
+            execute(ddl);
+        }
+        assertDroppedOrRenamedToT2(ddl);
+        drainViewQueue();
+        assertViewState("v", "table does not exist [table=t]");
+
+        execute("DROP VIEW v");
+        execute("DROP TABLE IF EXISTS t2");
+        drainViewQueue();
+    }
+
+    // DROP TABLE t or RENAME TABLE t TO t2 succeeded: t is gone, and t2 holds t's rows
+    private void assertDroppedOrRenamedToT2(String ddl) throws Exception {
+        assertTableListed("t", false);
+        if (ddl.startsWith("DROP")) {
+            Assert.assertFalse(isPresentInDbRoot("t~"));
+        } else {
+            assertQuery("t2")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            a\tts\tc
+                            1\t2024-01-01T00:00:00.000000Z\tnull
+                            2\t2024-01-02T00:00:00.000000Z\tnull
+                            """);
+        }
+    }
+
     private void assertTableListed(String tableName, boolean isListed) throws Exception {
         assertQuery("SELECT table_name FROM tables() WHERE table_name = '" + tableName + "'")
                 .noLeakCheck()
@@ -3474,6 +3633,114 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
     // t and parks on t2's reader, the action runs, and the run ends.
     private void executeWhileViewCompileHoldsThenMovesOn(String ddl, @Nullable TestUtils.CheckedRunnable onWait) throws Exception {
         ViewCompileParker.executeWhileViewCompileHoldsThenMovesOn(engine, sqlExecutionContext, capture, scenarioCount++, () -> execute(ddl), onWait);
+    }
+
+    // Reads t's pooled metadata on a thread of its own: the thread drains the view compile queue, as
+    // a view-compiler worker does, or compiles a query over table_partitions('t'). The read starts at
+    // the DDL thread's first event of the given kind on the given pool of t, inside its lock attempt
+    // of t, and the DDL thread waits there until the read ended or its thread took t's writer, as a
+    // table repair does. A thread that took t's writer keeps it until finish(), so that the DDL meets
+    // it. The thread that runs the DDL creates the read. The engine passes its pool events to
+    // onEvent(): a test sets the read, or a listener that calls it, with
+    // CairoEngine.setPoolListener().
+    private static class MetadataReadInsideLock implements PoolListener {
+        private static final long TIMEOUT_SECONDS = 30;
+        private final long ddlThread;
+        private final AtomicReference<String> error = new AtomicReference<>();
+        private final AtomicBoolean hasTakenWriter = new AtomicBoolean();
+        // the first wait of a hook that timed out or was interrupted
+        private final AtomicReference<String> hookError = new AtomicReference<>();
+        private final CountDownLatch isDdlDone = new CountDownLatch(1);
+        private final CountDownLatch isEndedOrHoldingWriter = new CountDownLatch(1);
+        private final AtomicBoolean isStarted = new AtomicBoolean();
+        private final Thread readThread;
+        private final short startEvent;
+        private final byte startPoolSource;
+
+        private MetadataReadInsideLock(byte startPoolSource, short startEvent, TestUtils.LeakProneCode read) {
+            this.ddlThread = Thread.currentThread().threadId();
+            this.startPoolSource = startPoolSource;
+            this.startEvent = startEvent;
+            this.readThread = new Thread(() -> {
+                try {
+                    read.run();
+                } catch (SqlException e) {
+                    error.set("[" + e.getPosition() + "] " + e.getFlyweightMessage());
+                } catch (Throwable th) {
+                    error.set(th.toString());
+                } finally {
+                    isEndedOrHoldingWriter.countDown();
+                    Path.clearThreadLocals();
+                }
+            }, "metadata-reader");
+        }
+
+        @Override
+        public void onEvent(byte factoryType, long thread, TableToken tableToken, short event, short segment, short position) {
+            if (tableToken == null || !Chars.equals(tableToken.getTableName(), "t")) {
+                return;
+            }
+            if (thread == ddlThread && factoryType == startPoolSource && event == startEvent && isStarted.compareAndSet(false, true)) {
+                readThread.start();
+                await(isEndedOrHoldingWriter, "the read neither ended nor took t's writer");
+            } else if (thread == readThread.threadId()
+                    && factoryType == PoolListener.SRC_WRITER
+                    && (event == PoolListener.EV_GET || event == PoolListener.EV_CREATE)) {
+                hasTakenWriter.set(true);
+                isEndedOrHoldingWriter.countDown();
+                await(isDdlDone, "the DDL did not end");
+            }
+        }
+
+        // an error thrown into the pool would leave the table locked: a wait that does not end in
+        // time is left to assertEndedWithoutWriter() to fail
+        private void await(CountDownLatch latch, String timeoutError) {
+            try {
+                if (!latch.await(TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                    hookError.compareAndSet(null, timeoutError);
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                hookError.compareAndSet(null, timeoutError + ", interrupted");
+            }
+        }
+
+        // compiles SELECT name FROM table_partitions('t'), see PARTITIONS_QUERY_LOCK_ERROR
+        static MetadataReadInsideLock ofPartitionsQuery(byte startPoolSource, short startEvent) {
+            return new MetadataReadInsideLock(startPoolSource, startEvent, () -> {
+                try (
+                        SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine);
+                        RecordCursorFactory ignore = engine.select("SELECT name FROM table_partitions('t')", executionContext)
+                ) {
+                    // the query compiled
+                }
+            });
+        }
+
+        // drains the view compile queue, which holds the compile of the views over t
+        static MetadataReadInsideLock ofQueueDrain(byte startPoolSource, short startEvent) {
+            return new MetadataReadInsideLock(startPoolSource, startEvent, () -> {
+                try (ViewCompilerJob job = new ViewCompilerJob(0, engine)) {
+                    job.run();
+                }
+            });
+        }
+
+        // the read ran and ended with the error, or with none when null, without taking t's writer
+        void assertEndedWithoutWriter(@Nullable String expectedError) {
+            Assert.assertNull(hookError.get());
+            Assert.assertTrue("the read did not start", isStarted.get());
+            Assert.assertFalse("the read took t's writer", hasTakenWriter.get());
+            Assert.assertEquals(expectedError, error.get());
+        }
+
+        // lets a thread that holds t's writer go on, and waits for the thread
+        void finish() throws InterruptedException {
+            isDdlDone.countDown();
+            if (isStarted.get()) {
+                readThread.join();
+            }
+        }
     }
 
     // Releases the run unless closed within 30 seconds: a DDL that waits for the run, which the test
