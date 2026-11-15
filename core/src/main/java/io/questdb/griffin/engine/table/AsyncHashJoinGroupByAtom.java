@@ -963,8 +963,7 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
      * A new compile reads the same sizes and passes this check, so a recompile repeats only when
      * the tables change again in between. An input that is not a table scan offers no reader, and
      * keeps the compile-time choice. So does an execution whose context
-     * {@link SqlExecutionContext#isTableRowCountChangeTolerated() tolerates} row count changes,
-     * such as a queued export, which runs a factory that nothing compiles again.
+     * {@link SqlExecutionContext#isTableRowCountChangeTolerated() tolerates} row count changes.
      */
     private void checkTableRowCounts(SymbolTableSource probeScan, SqlExecutionContext executionContext) {
         if (executionContext.isTableRowCountChangeTolerated()

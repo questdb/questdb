@@ -31,11 +31,14 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cutlass.parquet.HybridColumnMaterializer;
+import io.questdb.cutlass.parquet.ParquetExportMode;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -50,8 +53,10 @@ import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHashJoinGroupByRecordCursorFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
+import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.NumericException;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
@@ -59,6 +64,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.cairo.Overrides;
 import io.questdb.test.cairo.fuzz.FailureFileFacade;
 import io.questdb.test.griffin.fuzz.FuzzTableFactory.ParquetMode;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayDeque;
 import java.util.Arrays;
@@ -170,7 +176,7 @@ import java.util.regex.Pattern;
  *       TS-ASC) and a full scan (preserves it).</li>
  * </ul>
  */
-public final class QueryRunner {
+public class QueryRunner {
     // FP-column mask of an Outcome that never produced a projection (it threw).
     // reconcilePair only consults the masks when both sides succeeded, so this
     // is never read; it keeps the record's accessor total.
@@ -211,6 +217,10 @@ public final class QueryRunner {
     private final boolean diffShadow;
     private final CairoEngine engine;
     private final SqlExecutionContext executionContext;
+    // The columns of the cursor that checkExportedSymbolKeys() reads the keys of
+    private final IntList exportedSymbolColumns = new IntList();
+    // Per entry of exportedSymbolColumns: the table symbol map through which the export resolves the column's keys
+    private final ObjList<SymbolMapReader> exportedSymbolMaps = new ObjList<>();
     // The engine's FilesFacade when it is a FailureFileFacade, which enables FILE
     // faults; null otherwise (then FILE is dropped from faultTypes).
     private final FailureFileFacade failureFf;
@@ -588,6 +598,14 @@ public final class QueryRunner {
     }
 
     /**
+     * Test hook: {@link #setUpExportedSymbolKeyCheck} calls it with the SYMBOL columns that a query's export keeps and
+     * the maps through which {@link #checkExportedSymbolKeys} resolves their keys. Does nothing; a test overrides it to
+     * replace a map, so that the check meets a wrong map, which only a broken export picks.
+     */
+    void onExportedSymbolMapsCollected(IntList columns, ObjList<SymbolMapReader> symbolMaps) {
+    }
+
+    /**
      * Builds the per-output-column FLOAT/DOUBLE mask for a projection. Cell
      * {@code i} of a materialized row is FP-typed iff {@code mask[i]} is true;
      * only those cells get the floating-point reduction-order tolerance, so an
@@ -894,6 +912,90 @@ public final class QueryRunner {
             return false;
         }
         return erroring.failure instanceof ImplicitCastException;
+    }
+
+    /**
+     * Picks the SYMBOL columns that a CURSOR_BASED Parquet export of the cursor keeps as SYMBOL the way the export
+     * does: a {@link HybridColumnMaterializer} sets up on the fresh cursor, before its first row. Replaces the contents
+     * of {@code columns} with the kept columns and the contents of {@code symbolMaps} with the table symbol map through
+     * which the export resolves the keys of each. The maps belong to the readers of the cursor, so they stay valid while
+     * the cursor is open.
+     */
+    static void collectExportedSymbolMaps(RecordCursor cursor, RecordMetadata metadata, IntList columns, ObjList<SymbolMapReader> symbolMaps) {
+        columns.clear();
+        symbolMaps.clear();
+        try (HybridColumnMaterializer materializer = new HybridColumnMaterializer()) {
+            materializer.setUp(metadata, cursor);
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                final SymbolMapReader symbolMap = materializer.getCursorSymbolMap(i);
+                if (symbolMap != null) {
+                    columns.add(i);
+                    symbolMaps.add(symbolMap);
+                }
+            }
+        }
+    }
+
+    /**
+     * Returns the first violation of the contract a CURSOR_BASED Parquet export relies on for every SYMBOL column it
+     * keeps as SYMBOL, as {@code [column=..., row=..., key=..., symbol=..., resolved=...]}, or null when every row keeps
+     * it: the export writes the column's keys, which the encoder resolves through the table symbol map the export
+     * picked for the column, so each row's key must resolve through that map to the row's symbol, and a key below zero
+     * must go with a NULL symbol. {@code symbolMaps} holds the map of each of {@code columns}, as
+     * {@link #collectExportedSymbolMaps} picks them. Reads the cursor from the top and leaves it exhausted.
+     */
+    static @Nullable String findExportedSymbolKeyViolation(RecordCursor cursor, RecordMetadata metadata, IntList columns, ObjList<SymbolMapReader> symbolMaps) {
+        cursor.toTop();
+        final Record record = cursor.getRecord();
+        for (int row = 0; cursor.hasNext(); row++) {
+            for (int k = 0, n = columns.size(); k < n; k++) {
+                final int column = columns.getQuick(k);
+                final int key = record.getInt(column);
+                final CharSequence symbol = record.getSymA(column);
+                final CharSequence resolved = key < 0 ? null : symbolMaps.getQuick(k).valueOf(key);
+                // A key the map does not hold resolves to null, and the encoder rejects it.
+                if (key < 0 ? symbol != null : resolved == null || !Chars.equalsNc(resolved, symbol)) {
+                    return "[column=" + metadata.getColumnName(column) + ", row=" + row + ", key=" + key
+                            + ", symbol=" + symbol + ", resolved=" + resolved + "]";
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Returns the first row of the cursor whose timestamp breaks the contract that a CURSOR_BASED Parquet export of a
+     * lazily type-converted column relies on for a plan whose timestamp {@link #streamedTimestampDirection} streams:
+     * the export writes that timestamp as the file's designated timestamp, which holds no NULL and ascends for a
+     * forward plan and descends for a backward one. Returns -1 when every row keeps it. Reads the cursor from the top
+     * and leaves it exhausted.
+     */
+    static long findStreamedTimestampViolation(RecordCursor cursor, int timestampIndex, int direction) {
+        cursor.toTop();
+        final Record record = cursor.getRecord();
+        long previous = Numbers.LONG_NULL;
+        for (long row = 0; cursor.hasNext(); row++) {
+            final long timestamp = record.getTimestamp(timestampIndex);
+            if (timestamp == Numbers.LONG_NULL) {
+                return row;
+            }
+            if (row > 0 && (direction == RecordCursorFactory.SCAN_DIRECTION_FORWARD ? timestamp < previous : timestamp > previous)) {
+                return row;
+            }
+            previous = timestamp;
+        }
+        return -1;
+    }
+
+    /**
+     * Returns the direction, forward or backward, in which a CURSOR_BASED Parquet export of a lazily type-converted
+     * column writes the plan's timestamp as the file's designated timestamp, or {@code SCAN_DIRECTION_OTHER} when the
+     * plan has no timestamp or the export does not stream it.
+     */
+    static int streamedTimestampDirection(RecordCursorFactory factory) {
+        return factory.getMetadata().getTimestampIndex() > -1 && ParquetExportMode.hasStreamableTimestamp(factory)
+                ? factory.getScanDirection()
+                : RecordCursorFactory.SCAN_DIRECTION_OTHER;
     }
 
     /**
@@ -1238,6 +1340,66 @@ public final class QueryRunner {
             throw new CursorCheckException(cursorFailureMessage(
                     "calculateSize() counted " + calculated + " but the cursor materialized " + firstRowsRead + " rows",
                     sql, firstPass, firstRowsRead, null, -1), null);
+        }
+    }
+
+    /**
+     * Verifies the contract of {@link #findExportedSymbolKeyViolation} for every SYMBOL column that a CURSOR_BASED
+     * Parquet export keeps as SYMBOL: each row's key must resolve to the row's symbol through the table symbol map the
+     * export picked for the column, which {@link #setUpExportedSymbolKeyCheck} read before the first row, and a key
+     * below zero must go with a NULL symbol. A violation is a real bug, either in the cursor or in the pick, and
+     * throws {@link CursorCheckException}. Leaves the cursor exhausted.
+     */
+    private void checkExportedSymbolKeys(String sql, RecordCursor cursor, RecordMetadata metadata) {
+        if (exportedSymbolColumns.size() == 0) {
+            return;
+        }
+        final String violation;
+        try {
+            violation = findExportedSymbolKeyViolation(cursor, metadata, exportedSymbolColumns, exportedSymbolMaps);
+        } catch (Exception e) {
+            // A per-row cast error past a parallel filter's LIMIT cutoff can surface on one pass and
+            // not another, as checkToTop() describes. Any other throw is a defect.
+            if (isPerRowRuntimeError(e)) {
+                throw new CursorCheckException("exported symbol key re-pass surfaced " + e.getClass().getSimpleName()
+                        + " absent on the first pass (parallel-filter LIMIT non-determinism)", e, true);
+            }
+            throw new CursorCheckException("exported symbol key re-pass threw after a clean first pass:\n  sql: " + sql, e);
+        }
+        if (violation != null) {
+            throw new CursorCheckException("the key of an exported SYMBOL column does not resolve to its symbol " + violation + "\n  sql: " + sql, null);
+        }
+    }
+
+    /**
+     * Verifies, for a plan whose timestamp {@link #streamedTimestampDirection} streams, the contract of
+     * {@link #findStreamedTimestampViolation}. A violation is a real bug, in a
+     * {@link RecordCursorFactory#hasTableScanTimestamp()} answer or in the plan's rows, and throws
+     * {@link CursorCheckException}. Leaves the cursor exhausted.
+     */
+    private void checkStreamedTimestamp(String sql, RecordCursorFactory factory, RecordCursor cursor, int direction) {
+        if (direction == RecordCursorFactory.SCAN_DIRECTION_OTHER) {
+            return;
+        }
+        final long row;
+        try {
+            row = findStreamedTimestampViolation(cursor, factory.getMetadata().getTimestampIndex(), direction);
+        } catch (Exception e) {
+            // A per-row cast error past a parallel filter's LIMIT cutoff can surface on one pass and
+            // not another, as checkToTop() describes. Any other throw is a defect.
+            if (isPerRowRuntimeError(e)) {
+                throw new CursorCheckException("streamed timestamp re-pass surfaced " + e.getClass().getSimpleName()
+                        + " absent on the first pass (parallel-filter LIMIT non-determinism)", e, true);
+            }
+            throw new CursorCheckException("streamed timestamp re-pass threw after a clean first pass:\n  sql: " + sql, e);
+        }
+        if (row > -1) {
+            planSink.of(factory, executionContext);
+            throw new CursorCheckException(
+                    "the timestamp that a Parquet export streams as the designated timestamp is NULL or out of the plan's order"
+                            + " [direction=" + direction + ", row=" + row + "]\n  sql: " + sql + "\n  plan:\n" + planSink.getSink(),
+                    null
+            );
         }
     }
 
@@ -1727,9 +1889,19 @@ public final class QueryRunner {
         ) {
             int rowsRead;
             boolean[] fpColumnMask;
+            // A Parquet export asks a plan for its direction before it opens the cursor, and only once the plan answered
+            // that a table scan orders its timestamp, so a hash join keeps the sides its open picks here as well.
+            final int streamedTimestampDirection = verifyCursor
+                    ? streamedTimestampDirection(factory)
+                    : RecordCursorFactory.SCAN_DIRECTION_OTHER;
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 RecordMetadata metadata = factory.getMetadata();
                 int columnCount = metadata.getColumnCount();
+                // A CURSOR_BASED Parquet export picks the SYMBOL columns it keeps on the fresh cursor, so the
+                // check that their keys resolve picks them before the first pass as well.
+                if (verifyCursor) {
+                    setUpExportedSymbolKeyCheck(sql, cursor, metadata);
+                }
                 // The FP-column mask belongs to THIS projection, so it travels on this
                 // Outcome. reconcilePair intersects the two sides' masks: on the bind
                 // axis the literal and the bind form can legitimately resolve a
@@ -1747,6 +1919,8 @@ public final class QueryRunner {
                 if (verifyCursor) {
                     checkToTop(sql, cursor, metadata, columnCount, rows, rowsRead, deterministic);
                     checkCalculateSize(sql, cursor, rows, rowsRead);
+                    checkExportedSymbolKeys(sql, cursor, metadata);
+                    checkStreamedTimestamp(sql, factory, cursor, streamedTimestampDirection);
                 }
             }
             planSink.of(factory, executionContext);
@@ -1974,6 +2148,23 @@ public final class QueryRunner {
                 "grouping sets",
                 "union all    "
         );
+    }
+
+    /**
+     * Picks the SYMBOL columns that a CURSOR_BASED Parquet export of the query keeps as SYMBOL the way the
+     * export does: {@link HybridColumnMaterializer} sets up on the fresh cursor, before its first row, and
+     * keeps a column only when its keys resolve through a table's symbol map. Remembers each kept column
+     * with the map the export resolves its keys through, for {@link #checkExportedSymbolKeys}.
+     * The export of a query that runs must not fail here, so a throw is a real bug and throws
+     * {@link CursorCheckException}.
+     */
+    private void setUpExportedSymbolKeyCheck(String sql, RecordCursor cursor, RecordMetadata metadata) {
+        try {
+            collectExportedSymbolMaps(cursor, metadata, exportedSymbolColumns, exportedSymbolMaps);
+        } catch (Exception e) {
+            throw new CursorCheckException("the export's materializer set-up threw on a fresh cursor:\n  sql: " + sql, e);
+        }
+        onExportedSymbolMapsCollected(exportedSymbolColumns, exportedSymbolMaps);
     }
 
     private static final class CursorCheckException extends RuntimeException {

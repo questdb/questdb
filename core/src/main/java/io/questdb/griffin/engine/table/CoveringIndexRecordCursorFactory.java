@@ -554,6 +554,17 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         return SCAN_DIRECTION_OTHER;
     }
 
+    // Outside LATEST ON the cursor reads ascending frames in row id order. When an open selects the backup instead, the
+    // export reads the backup's rows, so the backup must answer for them as well.
+    @Override
+    public boolean hasTableScanTimestamp() {
+        final int timestampIndex = metadata.getTimestampIndex();
+        return !latestBy
+                && timestampIndex > -1
+                && columnIndexes.getQuick(timestampIndex) == dfcFactory.getMetadata().getTimestampIndex()
+                && (backup == null || backup.hasTableScanTimestamp());
+    }
+
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;

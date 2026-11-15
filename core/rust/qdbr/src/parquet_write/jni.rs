@@ -1187,10 +1187,11 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     bloom_filter_column_count: jint,
     bloom_filter_fpp: jdouble,
     min_compression_ratio: jdouble,
+    dense_symbol_dictionary: jboolean,
 ) -> *mut StreamingParquetWriter {
     let env = &mut env;
     let create = || -> ParquetResult<StreamingParquetWriter> {
-        let partition_template = create_partition_template(
+        let mut partition_template = create_partition_template(
             col_count,
             col_names_ptr,
             col_names_len,
@@ -1198,6 +1199,15 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             timestamp_index,
             timestamp_descending,
         )?;
+        if dense_symbol_dictionary != 0 {
+            // The frames clone the template's columns, so every row group of a Symbol
+            // column gets a dictionary of only the symbols it uses.
+            for column in partition_template.columns.iter_mut() {
+                if column.data_type.tag() == qdb_core::col_type::ColumnTypeTag::Symbol {
+                    column.dense_symbol_dictionary = true;
+                }
+            }
+        }
         let compression_options =
             compression_from_i64(compression_codec).context("CompressionCodec")?;
         let row_group_size_opt = if row_group_size > 0 {
@@ -2245,6 +2255,7 @@ mod validation_tests {
                 strided_timestamp_16: false,
                 designated_timestamp_ascending: false,
                 parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+                dense_symbol_dictionary: false,
             }],
         }
     }

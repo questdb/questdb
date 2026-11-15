@@ -33,6 +33,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SampleBySortStrategy;
 import io.questdb.cairo.SecurityContext;
@@ -218,6 +219,9 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(32, configuration.getCairoConfiguration().getCopyPoolCapacity());
         Assert.assertEquals(5, configuration.getCairoConfiguration().getCreateAsSelectRetryCount());
         Assert.assertEquals(8, configuration.getCairoConfiguration().getViewLexerPoolCapacity());
+        // the server and the embedded default retry a view compile that met a table lock after 1 s
+        Assert.assertEquals(1_000, configuration.getCairoConfiguration().getViewCompileBusyRetryTimeout());
+        Assert.assertEquals(1_000, new DefaultCairoConfiguration(root).getViewCompileBusyRetryTimeout());
         Assert.assertTrue(configuration.getCairoConfiguration().isMatViewEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isMatViewRowExpiryCleanupEnabled());
         Assert.assertEquals(16_384, configuration.getCairoConfiguration().getMatViewRowExpiryCleanupMaxCachedPartitions());
@@ -3071,6 +3075,38 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testViewCompileBusyRetryTimeoutAcceptsZeroAndLongMax() throws Exception {
+        final Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_VIEW_COMPILE_BUSY_RETRY_TIMEOUT.getPropertyPath(), "0");
+        Assert.assertEquals(0, newPropServerConfiguration(properties).getCairoConfiguration().getViewCompileBusyRetryTimeout());
+        properties.setProperty(PropertyKey.CAIRO_VIEW_COMPILE_BUSY_RETRY_TIMEOUT.getPropertyPath(), "9_223_372_036_854_775_807");
+        Assert.assertEquals(Long.MAX_VALUE, newPropServerConfiguration(properties).getCairoConfiguration().getViewCompileBusyRetryTimeout());
+    }
+
+    @Test
+    public void testViewCompileBusyRetryTimeoutRejectsInvalidValues() throws Exception {
+        final String key = PropertyKey.CAIRO_VIEW_COMPILE_BUSY_RETRY_TIMEOUT.getPropertyPath();
+        final String[][] valuesAndErrors = {
+                // a negative delay, in milliseconds or with a unit
+                {"-1", key + " must not be negative"},
+                {"-1s", key + " must not be negative"},
+                // one past the largest value, and a value that does not parse
+                {"9223372036854775808", "invalid configuration value [key=" + key + ", value=9223372036854775808]"},
+                {"1.5s", "invalid configuration value [key=" + key + ", value=1.5s]"}
+        };
+        for (String[] valueAndError : valuesAndErrors) {
+            final Properties properties = new Properties();
+            properties.setProperty(key, valueAndError[0]);
+            try {
+                newPropServerConfiguration(properties);
+                Assert.fail("expected ServerConfigurationException for " + valueAndError[0]);
+            } catch (ServerConfigurationException e) {
+                TestUtils.assertEquals(valueAndError[1], e.getMessage());
+            }
+        }
+    }
+
+    @Test
     public void testWebConsolePathChangeUpdatesDefaultDependencies() throws Exception {
         Properties properties = new Properties();
         properties.setProperty("http.context.web.console", "/new-path");
@@ -3701,6 +3737,8 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(configuration.isAdaptiveEpochColumnSyncBatched());
         Assert.assertEquals(12, configuration.getCreateAsSelectRetryCount());
         Assert.assertEquals(16, configuration.getViewLexerPoolCapacity());
+        // 2s
+        Assert.assertEquals(2_000, configuration.getViewCompileBusyRetryTimeout());
         Assert.assertFalse(configuration.isMatViewEnabled());
         Assert.assertTrue(configuration.getDefaultSymbolCacheFlag());
         Assert.assertEquals(512, configuration.getDefaultSymbolCapacity());

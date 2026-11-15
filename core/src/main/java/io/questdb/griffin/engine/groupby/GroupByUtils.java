@@ -201,6 +201,11 @@ public class GroupByUtils {
                                 baseMetadata.isSymbolTableStatic(index),
                                 baseMetadata.getMetadata(index)
                         );
+                        // A column key passes its column through, so it keeps the column's PARQUET(...) setting.
+                        // The sampler computes the bucket timestamp of the legacy SAMPLE BY, which keeps the default.
+                        if (index != timestampIndex || timestampUnimportant) {
+                            m.setParquetEncodingConfig(baseMetadata.getColumnMetadata(index).getParquetEncodingConfig());
+                        }
                     }
                 }
                 projectionMetadata.add(m);

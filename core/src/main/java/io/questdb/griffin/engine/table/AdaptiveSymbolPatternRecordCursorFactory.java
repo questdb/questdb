@@ -472,6 +472,16 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
         CairoException.rethrowCleanupFailure(failure);
     }
 
+    // Each open hands out the rows of one delegate, so the answer must hold for every delegate it could open, as
+    // getScanDirection()'s does.
+    @Override
+    public boolean hasTableScanTimestamp() {
+        final int timestampIndex = getMetadata().getTimestampIndex();
+        return hasDelegateTableScanTimestamp(indexDelegate, timestampIndex)
+                && hasDelegateTableScanTimestamp(scanDelegate, timestampIndex)
+                && (coveringDelegate == null || hasDelegateTableScanTimestamp(coveringDelegate, timestampIndex));
+    }
+
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         // Same reasoning as getScanDirection(): the answer must hold for every delegate the runtime
@@ -542,6 +552,10 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
         // getScanDirection() above answers the mirror image of the same question: a compile-time caller
         // cannot know which delegate an open picks, so that method reports what holds for all of them.
         return false;
+    }
+
+    private static boolean hasDelegateTableScanTimestamp(RecordCursorFactory delegate, int timestampIndex) {
+        return delegate.getMetadata().getTimestampIndex() == timestampIndex && delegate.hasTableScanTimestamp();
     }
 
     private boolean buildEffectiveKeys(SymbolTableSource symbolTableSource, boolean isProbeCapApplied) {

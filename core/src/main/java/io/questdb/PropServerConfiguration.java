@@ -712,6 +712,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int utf8SinkSize;
     private final PropertyValidator validator;
     private final int vectorAggregateQueueCapacity;
+    private final long viewCompileBusyRetryTimeout;
     private final PropViewCompilerPoolConfiguration viewCompilerPoolConfiguration = new PropViewCompilerPoolConfiguration();
     private final long viewCompilerSleepTimeout;
     private final int[] viewCompilerWorkerAffinity;
@@ -1781,6 +1782,10 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.viewCompilerWorkerAffinity = getAffinity(properties, env, PropertyKey.VIEW_COMPILER_WORKER_AFFINITY, viewCompilerWorkerCount);
             this.viewCompilerWorkerYieldThreshold = getLong(properties, env, PropertyKey.VIEW_COMPILER_WORKER_YIELD_THRESHOLD, 1000);
             this.viewCompilerWorkerHaltOnError = getBoolean(properties, env, PropertyKey.VIEW_COMPILER_WORKER_HALT_ON_ERROR, false);
+            this.viewCompileBusyRetryTimeout = getMillis(properties, env, PropertyKey.CAIRO_VIEW_COMPILE_BUSY_RETRY_TIMEOUT, 1000);
+            if (viewCompileBusyRetryTimeout < 0) {
+                throw new ServerConfigurationException(PropertyKey.CAIRO_VIEW_COMPILE_BUSY_RETRY_TIMEOUT.getPropertyPath() + " must not be negative");
+            }
 
             // Export pool configuration
             this.exportWorkerCount = getInt(properties, env, PropertyKey.EXPORT_WORKER_COUNT, cpuExportWorkers);
@@ -5995,6 +6000,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getVectorAggregateQueueCapacity() {
             return vectorAggregateQueueCapacity;
+        }
+
+        @Override
+        public long getViewCompileBusyRetryTimeout() {
+            return viewCompileBusyRetryTimeout;
         }
 
         @Override
