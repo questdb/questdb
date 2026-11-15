@@ -771,6 +771,72 @@ public class AsyncHashJoinBuildOnFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStackPushdownDecidesTheWalkPerExecution() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // A cap of one tuple, which a task lifts to its frame's three rows.
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 1);
+            sqlExecutionContext.changePageFrameSizes(3, 3);
+            // The first stage has no residual, and the second stage's residual consists of conjuncts of
+            // d2 alone; test_latched_counter() reads no column. An execution whose build of d2 meets a
+            // failure of it gives the conjuncts up, so the second stage's pairs run the whole residual:
+            // the workers walk the second stage's matches, and the first stage's, whose columns the
+            // residual may read. The next execution runs the conjuncts over d2's rows, which leaves no
+            // stage a filter, so both stages hand their chains on; the one after it gives them up again.
+            final String sql = "SELECT t.k, t.v, d.w, d2.w w2 FROM t LEFT JOIN d ON t.k = d.k"
+                    + " LEFT JOIN d d2 ON t.sym = d2.s AND test_latched_counter() AND d2.w % 3 = 0";
+            // Whether each stage's build repeats a key in an execution that ran the conjuncts over d2's
+            // rows, as plain queries tell.
+            final boolean[] isRepeated = {
+                    count("SELECT count() FROM (SELECT k, count() c FROM d) WHERE c > 1") > 0,
+                    count("SELECT count() FROM (SELECT s, count() c FROM d WHERE w % 3 = 0) WHERE c > 1") > 0,
+            };
+            final AtomicBoolean isFailing = new AtomicBoolean();
+            TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
+                @Override
+                public boolean onGet(Record rec, int count) {
+                    if (isFailing.get() && isOnStack("applyAbandonableBuildOnFilter")) {
+                        throw CairoException.nonCritical().put("test value failure");
+                    }
+                    return true;
+                }
+            });
+            final String expected = ordinary(sql, sqlExecutionContext);
+            final long expectedRows = ordinaryRowCount(sql);
+            try (RecordCursorFactory factory = select(sql)) {
+                final AsyncHashJoinRecordCursorFactory join = find(factory);
+                Assert.assertNotNull(join);
+                final AsyncHashJoinAtom atom = join.getAtom();
+                final boolean[] isWalkingByExecution = {true, false, true};
+                for (int execution = 0; execution < isWalkingByExecution.length; execution++) {
+                    final boolean isWalking = isWalkingByExecution[execution];
+                    final String message = sql + ", execution " + execution;
+                    isFailing.set(isWalking);
+                    // The first execution after each flip reads the rows, so that a decision left over
+                    // from the execution before shows: stages that walk the matches, which d and d2
+                    // repeat for each key, leave the rest of some frame to a continuation, while stages
+                    // that hand their chains on write one tuple per probe row.
+                    Assert.assertEquals(message, expected, result(factory, sqlExecutionContext));
+                    Assert.assertEquals(message, isWalking, atom.getContinuationCount() > 0);
+                    // A count from the top indexes the chain lengths of the builds of the stages that
+                    // hand their chains on, and of no stage that walks its matches.
+                    final long[] passes = {atom.getStage(0).getChainLengthIndexCount(), atom.getStage(1).getChainLengthIndexCount()};
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        final RecordCursor.Counter counter = new RecordCursor.Counter();
+                        cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
+                        Assert.assertEquals(message, expectedRows, counter.get());
+                        Assert.assertEquals(message, !isWalking, atom.getStage(1).isBuildOnFilterApplied());
+                    }
+                    for (int k = 0; k < passes.length; k++) {
+                        final boolean isIndexed = !isWalking && isRepeated[k];
+                        Assert.assertEquals(message + ", stage " + k, passes[k] + (isIndexed ? 1 : 0), atom.getStage(k).getChainLengthIndexCount());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testStacks() throws Exception {
         assertMemoryLeak(() -> {
             createTables();

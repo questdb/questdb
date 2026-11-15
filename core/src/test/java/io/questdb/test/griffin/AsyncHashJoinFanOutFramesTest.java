@@ -25,11 +25,15 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.griffin.engine.table.AsyncHashJoinRecordCursorFactory;
+import io.questdb.griffin.engine.table.HashJoinBuildStage;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetVersion;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
@@ -42,6 +46,8 @@ import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static io.questdb.test.griffin.ParallelHashJoinTestUtils.*;
 
@@ -198,6 +204,51 @@ public class AsyncHashJoinFanOutFramesTest extends AbstractCairoTest {
                 sqlExecutionContext.changePageFrameSizes(1, 24);
                 assertFrames(sql, 1, 0);
                 setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 6);
+            }
+        });
+    }
+
+    @Test
+    public void testFramesFollowThePushdownOfEachExecution() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 6);
+            sqlExecutionContext.changePageFrameSizes(1, 6);
+            // test_latched_counter() reads no column, so the ON residual consists of conjuncts of d
+            // alone. An execution whose build of d meets a failure of it gives the conjuncts up and
+            // walks d's three matches of each key under the whole residual: frames of two rows, six
+            // tuples. The next execution runs the conjuncts over d's rows, every one of which they
+            // keep, and hands d's chains on, one entry per probe row: frames of the six configured
+            // rows. The one after it gives them up again.
+            final String sql = "SELECT t.v, d.w FROM t LEFT JOIN d ON t.k = d.k AND test_latched_counter() AND d.w > 0";
+            final AtomicBoolean isFailing = new AtomicBoolean();
+            TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
+                @Override
+                public boolean onGet(Record rec, int count) {
+                    if (isFailing.get() && isOnStack("applyAbandonableBuildOnFilter")) {
+                        throw CairoException.nonCritical().put("test value failure");
+                    }
+                    return true;
+                }
+            });
+            try {
+                final String expected = ordinary(sql, sqlExecutionContext);
+                try (RecordCursorFactory factory = select(sql)) {
+                    final AsyncHashJoinRecordCursorFactory join = find(factory);
+                    Assert.assertNotNull(join);
+                    final int[] frames = {12, 4, 12};
+                    for (int execution = 0; execution < frames.length; execution++) {
+                        final String message = sql + ", execution " + execution;
+                        isFailing.set(execution != 1);
+                        // The first execution after each flip cuts the frames, so that a walk left over
+                        // from the execution before shows.
+                        Assert.assertEquals(message, frames[execution], probeFrames(factory, join));
+                        Assert.assertEquals(message, 0, join.getAtom().getContinuationCount());
+                        Assert.assertEquals(message, expected, result(factory, sqlExecutionContext));
+                    }
+                }
+            } finally {
+                TestLatchedCounterFunctionFactory.reset(null);
             }
         });
     }
@@ -458,6 +509,12 @@ public class AsyncHashJoinFanOutFramesTest extends AbstractCairoTest {
                 Assert.assertTrue(plan, plan.indexOf("SelectedRecord", plan.indexOf("Probe")) > -1);
             }
         }
+    }
+
+    // True when the HashJoinBuildStage method is on the current thread's stack.
+    private static boolean isOnStack(String methodName) {
+        return StackWalker.getInstance().walk(frames -> frames.anyMatch(frame -> frame.getClassName().equals(HashJoinBuildStage.class.getName())
+                && frame.getMethodName().equals(methodName)));
     }
 
     // The probe frames of an execution of the factory, which reads every row.
