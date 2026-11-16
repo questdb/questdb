@@ -239,8 +239,9 @@ pub struct ColumnChunkBuffers {
     /// writes these rows as 0 or false, a value of the type, so a conversion to a type with a NULL
     /// reads NULL in them only through this list. A `_pm` decode records them from the definition
     /// levels where the chunk has them, see `row_groups::decode_records_top_rows`, and otherwise
-    /// takes the leading rows the chunk null count gives. The footer decoder takes the leading rows
-    /// of the column top that the file metadata records, see `row_groups::takes_file_column_top`.
+    /// takes the leading rows the chunk null count gives. The footer decoder records them the same
+    /// way, but otherwise takes the leading rows of the column top that the file metadata records,
+    /// see `row_groups::takes_file_column_top`.
     top_rows: AcVec<[u64; 2]>,
 
     /// Allocated capacity of `page_buffers` last published by `refresh_ptrs`.
