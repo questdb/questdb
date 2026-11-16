@@ -74,10 +74,17 @@ public class MatViewFuzzOpGeneratorCoverageTest {
     private static final int DAY_COUNT = 6;
     // each shape of an ALTER ... AS that copies by position, and the column changes it refuses
     private static final int POSITIONAL_ALTER_MIN = 20;
-    // the restarts of testRestartShapesOverViewWal() above the purged txn-log parts
-    private static final int PURGE_THEN_RESTART_MIN = 30;
-    // the restarts of testRestartShapesOverViewWal() above a view state operation and one without view state
-    private static final int STATE_OP_THEN_RESTART_MIN = 200;
+    // the restarts of testRestartShapesOverViewWal() above the purged txn-log parts, in RESTART_SHAPE_ROUNDS rounds
+    private static final int PURGE_THEN_RESTART_MIN = 40;
+    // the rounds of testRestartShapesOverViewWal(), half of them of a period view: each of its restart shapes needs a few
+    // given operations between two view checks, so the generator draws it only a few times in a thousand rounds
+    private static final int RESTART_SHAPE_ROUNDS = 10_000;
+    // the restarts of testRestartShapesOverViewWal() above a RESUME event and a view operation without view state, in
+    // RESTART_SHAPE_ROUNDS rounds
+    private static final int RESUME_THEN_RESTART_MIN = 8;
+    // the restarts of testRestartShapesOverViewWal() above a view state event and a view operation without view state,
+    // in RESTART_SHAPE_ROUNDS rounds
+    private static final int STATE_OP_THEN_RESTART_MIN = 10;
     // the rounds of the bare-name round's shapes, which share their draws with the raced base column change; the
     // minimums of testBareNameRoundShapes() are for this many rounds
     private static final int BARE_NAME_ROUNDS = 1_000;
@@ -419,46 +426,135 @@ public class MatViewFuzzOpGeneratorCoverageTest {
     @Test
     public void testRestartShapesOverViewWal() {
         // The shapes that the load of a view's state at a restart needs, over the rounds of a view without a period and
-        // of a period view: each class of the transaction logs' part size; a view state operation, then a view
-        // operation that writes no view state, then RESTART, with no WAL apply operation from the first to the restart;
-        // and an accepted view column change, a WAL purge and a view operation that writes no view state, then RESTART
-        // with no WAL apply operation since that operation, which puts the restart above the purged txn-log parts.
+        // of a period view: each class of the transaction logs' part size; a view state event that waits in the view's
+        // WAL, then a view operation that writes no view state, then RESTART; the same with the event of a RESUME, the
+        // shape that found the restart's load of a stale state file; and, in a round that keeps the transaction logs in
+        // parts, an accepted view column change, a WAL purge and a view operation that writes no view state, then
+        // RESTART, which puts the restart above the purged txn-log parts. A shape counts only when the fuzz runs it: no
+        // view check, which applies the view's WAL, and no operation that applies it, see isViewWalApplied(), comes
+        // between the view state event, or the purge shape's operation without view state, and the RESTART.
+        // A view state event waits in the view's WAL after RUN_REFRESH_JOB ran the task that VIEW_INVALIDATE, VIEW_FULL
+        // or VIEW_PERIOD_REFRESH queued, which a RESTART loses; after a RESUME of a view that VIEW_INVALIDATE and
+        // RUN_REFRESH_JOB made invalid, since a RESUME of a valid view writes nothing; and after
+        // BASE_REPLACE_RESUME_RESTART. The task of BACKLOG_UPDATE writes an event only when the base's WAL applied
+        // commits since the view's refresh, which the generator does not follow, so it counts for none. A RUN_REFRESH_JOB
+        // can write a refresh commit above the operation without view state, so the shape starts over at its view state
+        // event, and a RESUME event no longer counts. The fuzz also drains the queues after an operation at random,
+        // which these counts leave out, as the other counts of this class do.
         final Rnd rnd = new Rnd(42, 42);
         final int[] partSizeClasses = new int[3];
         int stateOpThenRestart = 0;
+        int resumeThenRestart = 0;
         int purgeThenRestart = 0;
         final MatViewFuzzOpGenerator.Op op = new MatViewFuzzOpGenerator.Op();
-        for (int round = 0; round < 2 * ROUNDS; round++) {
+        for (int round = 0; round < RESTART_SHAPE_ROUNDS; round++) {
             final int partSize = MatViewFuzzOpGenerator.pickSeqPartTxnCount(rnd);
             Assert.assertTrue("part size out of range: " + partSize, partSize > -1 && partSize < 6);
             partSizeClasses[Math.min(partSize, 2)]++;
-            final MatViewFuzzOpGenerator generator = new MatViewFuzzOpGenerator(DAY_COUNT, round >= ROUNDS);
+            final MatViewFuzzOpGenerator generator = new MatViewFuzzOpGenerator(DAY_COUNT, round >= RESTART_SHAPE_ROUNDS / 2);
             generator.initView(rnd);
             for (int day = 0; day < DAY_COUNT; day++) {
                 generator.initRows(rnd, day, op);
             }
-            // 1: a view state operation, 2: then a view operation without view state
+            // the round added a view column, after which the fuzz applies the view's WAL before a view DROP PARTITION
+            boolean isViewColumnAdded = false;
+            // 1: a view state event waits in the view's WAL, 2: then a view operation without view state
             int stateOpStage = 0;
+            // the same for the event of a RESUME
+            int resumeStage = 0;
             // 1: an accepted view column change, 2: then a WAL purge, 3: then a view operation without view state
             int purgeStage = 0;
+            // a queued task writes a view state event when RUN_REFRESH_JOB runs it
+            boolean isStateTaskQueued = false;
+            // VIEW_INVALIDATE queued the invalidation of a valid view
+            boolean isInvalidationQueued = false;
+            // RUN_REFRESH_JOB ran that invalidation, so a RESUME writes its event
+            boolean isInvalidatedByForce = false;
+            // a base replacement or a FULL may have left the view invalid or a FULL pending, so no invalidation, RESUME
+            // or period firing counts until the view check
+            boolean isValidityUnknown = false;
             for (int step = 0; step < STEPS_PER_ROUND; step++) {
+                final boolean wasSqlPositional = generator.isSqlPositional();
                 generator.next(rnd, op);
+                if (isViewWalApplied(op, wasSqlPositional, isViewColumnAdded)) {
+                    stateOpStage = 0;
+                    resumeStage = 0;
+                    if (purgeStage == 3) {
+                        purgeStage = 2;
+                    }
+                } else if (isViewOperationWithoutState(op)) {
+                    if (stateOpStage == 1) {
+                        stateOpStage = 2;
+                    }
+                    if (resumeStage == 1) {
+                        resumeStage = 2;
+                    }
+                    if (purgeStage == 2) {
+                        purgeStage = 3;
+                    }
+                }
                 switch (op.kind) {
-                    case VIEW_RESUME, BASE_REPLACE_RESUME_RESTART, VIEW_FULL, VIEW_INVALIDATE, BACKLOG_UPDATE,
-                         VIEW_PERIOD_REFRESH -> stateOpStage = 1;
+                    case VIEW_INVALIDATE -> {
+                        if (!isInvalidatedByForce && !isValidityUnknown) {
+                            isInvalidationQueued = true;
+                            isStateTaskQueued = true;
+                        }
+                    }
+                    case VIEW_FULL -> {
+                        isStateTaskQueued = true;
+                        isInvalidationQueued = false;
+                        isInvalidatedByForce = false;
+                        isValidityUnknown = true;
+                    }
+                    case VIEW_PERIOD_REFRESH -> {
+                        // the firing queues no refresh of a view that is invalid or about to go invalid
+                        if (!isInvalidationQueued && !isInvalidatedByForce && !isValidityUnknown) {
+                            isStateTaskQueued = true;
+                        }
+                    }
+                    case RUN_REFRESH_JOB -> {
+                        if (isStateTaskQueued || stateOpStage == 2) {
+                            stateOpStage = 1;
+                        }
+                        resumeStage = 0;
+                        isStateTaskQueued = false;
+                        if (isInvalidationQueued) {
+                            isInvalidationQueued = false;
+                            isInvalidatedByForce = true;
+                        }
+                    }
+                    case VIEW_RESUME -> {
+                        if (isInvalidatedByForce) {
+                            isInvalidatedByForce = false;
+                            stateOpStage = 1;
+                            resumeStage = 1;
+                        }
+                    }
+                    case BASE_REPLACE_RESUME_RESTART -> {
+                        // the operation drains the queues before its RESUME, and restarts after it
+                        isStateTaskQueued = false;
+                        isInvalidationQueued = false;
+                        isInvalidatedByForce = false;
+                        stateOpStage = 1;
+                        resumeStage = 1;
+                    }
+                    case BASE_REPLACE, BASE_REPLACE_FULL_RESTART -> {
+                        if (op.kind == MatViewFuzzOpGenerator.Kind.BASE_REPLACE_FULL_RESTART) {
+                            // the operation drains the queues before its FULL
+                            isStateTaskQueued = false;
+                        }
+                        isInvalidationQueued = false;
+                        isInvalidatedByForce = false;
+                        isValidityUnknown = true;
+                    }
                     case VIEW_ADD_COLUMN, VIEW_DROP_COLUMN -> {
                         if (!op.isRefused) {
                             purgeStage = 1;
                         }
                     }
                     case PURGE_WAL -> {
-                        if (purgeStage == 1) {
-                            purgeStage = 2;
-                        }
-                    }
-                    case APPLY_WAL -> {
-                        stateOpStage = 0;
-                        if (purgeStage == 3) {
+                        // the purge deletes txn-log parts only of a log kept in parts
+                        if (purgeStage == 1 && partSize > 0) {
                             purgeStage = 2;
                         }
                     }
@@ -467,28 +563,41 @@ public class MatViewFuzzOpGeneratorCoverageTest {
                             stateOpThenRestart++;
                             stateOpStage = 0;
                         }
+                        if (resumeStage == 2) {
+                            resumeThenRestart++;
+                            resumeStage = 0;
+                        }
                         if (purgeStage == 3) {
                             purgeThenRestart++;
                             purgeStage = 0;
                         }
+                        // the restart loses the queued tasks
+                        isStateTaskQueued = false;
+                        isInvalidationQueued = false;
                     }
                     default -> {
                     }
                 }
-                if (isViewOperationWithoutState(op)) {
-                    if (stateOpStage == 1) {
-                        stateOpStage = 2;
+                isViewColumnAdded |= op.kind == MatViewFuzzOpGenerator.Kind.VIEW_ADD_COLUMN && !op.isRefused;
+                if (step % CHECK_STEPS == CHECK_STEPS - 1) {
+                    // the view check drains the queues, which applies the view's WAL, and leaves the view valid
+                    stateOpStage = 0;
+                    resumeStage = 0;
+                    if (purgeStage == 3) {
+                        purgeStage = 2;
                     }
-                    if (purgeStage == 2) {
-                        purgeStage = 3;
-                    }
+                    isStateTaskQueued = false;
+                    isInvalidationQueued = false;
+                    isInvalidatedByForce = false;
+                    isValidityUnknown = false;
                 }
             }
         }
-        assertShare("transaction logs in one file", partSizeClasses[0], 100);
-        assertShare("transaction logs in parts of one transaction", partSizeClasses[1], 100);
-        assertShare("transaction logs in parts of two to five transactions", partSizeClasses[2], 100);
-        assertShare("view state operation, view operation without view state, RESTART", stateOpThenRestart, STATE_OP_THEN_RESTART_MIN);
+        assertShare("transaction logs in one file", partSizeClasses[0], 1_000);
+        assertShare("transaction logs in parts of one transaction", partSizeClasses[1], 1_000);
+        assertShare("transaction logs in parts of two to five transactions", partSizeClasses[2], 1_000);
+        assertShare("view state event, view operation without view state, RESTART", stateOpThenRestart, STATE_OP_THEN_RESTART_MIN);
+        assertShare("RESUME event, view operation without view state, RESTART", resumeThenRestart, RESUME_THEN_RESTART_MIN);
         assertShare("view column change, WAL purge, view operation without view state, RESTART", purgeThenRestart, PURGE_THEN_RESTART_MIN);
     }
 
@@ -753,6 +862,22 @@ public class MatViewFuzzOpGeneratorCoverageTest {
         return switch (op.kind) {
             case VIEW_DROP_PARTITION_LIST, VIEW_DROP_PARTITION_WHERE, VIEW_DROP_EXPIRE -> true;
             case VIEW_SET_EXPIRE -> !op.isRefused;
+            default -> false;
+        };
+    }
+
+    // Whether MatViewFuzzTest applies the view's WAL while it runs the operation, see runOperationsFuzzOp(): the
+    // operations that wait for the view's WAL or drain the queues, a view DROP PARTITION once the round added a view
+    // column, and an accepted ALTER ... AS whose SQL copies by position or did. A view DROP COLUMN and a SET EXPIRE
+    // whose policy has a read probe apply it while a policy or column change waits in the view's WAL, which this takes
+    // as always.
+    private static boolean isViewWalApplied(MatViewFuzzOpGenerator.Op op, boolean wasSqlPositional, boolean isViewColumnAdded) {
+        return switch (op.kind) {
+            case APPLY_WAL, BASE_DETACH_PARTITION, BASE_TRUNCATE_ATTACH_UPDATE, BASE_REPLACE_FULL_RESTART,
+                 BASE_REPLACE_RESUME_RESTART, VIEW_DROP_COLUMN, VIEW_RANGE, VIEW_FULL, VIEW_RESUME -> true;
+            case VIEW_DROP_PARTITION_LIST, VIEW_DROP_PARTITION_WHERE -> isViewColumnAdded;
+            case VIEW_SET_EXPIRE -> op.isProbed;
+            case VIEW_ALTER_AS -> !op.isRefused && (op.isPositional || wasSqlPositional);
             default -> false;
         };
     }

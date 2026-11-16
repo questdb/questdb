@@ -3304,6 +3304,16 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReadMatViewStateTakesAppliedEventBelowStructuralTxnsV1() throws Exception {
+        assertMemoryLeak(() -> testReadMatViewStateTakesAppliedEventBelowStructuralTxns(0));
+    }
+
+    @Test
+    public void testReadMatViewStateTakesAppliedEventBelowStructuralTxnsV2() throws Exception {
+        assertMemoryLeak(() -> testReadMatViewStateTakesAppliedEventBelowStructuralTxns(2));
+    }
+
+    @Test
     public void testReadMatViewStateUnknownFormat() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = "testReadMatViewStateUnknownFormat";
@@ -7021,6 +7031,75 @@ public class WalWriterTest extends AbstractCairoTest {
             assertEquals(42, matViewStateReader.getLastRefreshBaseTxn());
             // and past applied transactions without view state, to the newest view state event
             assertTrue(WalUtils.readMatViewState(path.trimTo(tableLen), tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader, 4));
+            assertEquals(42, matViewStateReader.getLastRefreshBaseTxn());
+        } finally {
+            node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, chunkSizeOld);
+        }
+    }
+
+    // Every transaction above the applied seqTxn is structural, so no transaction leaves the state to an older event,
+    // and the load takes it from the newest transaction with a WAL event: the applied refresh commit of base txn 42,
+    // not _mv.s, which holds base txn 7. The transactions are 1 without view state, 2 the refresh commit and 3 a column
+    // added.
+    private static void testReadMatViewStateTakesAppliedEventBelowStructuralTxns(int chunkSize) {
+        int chunkSizeOld = node1.getConfiguration().getDefaultSeqPartTxnCount();
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, chunkSize);
+        final String tableName = "testReadMatViewStateStructural" + (chunkSize > 0 ? "_v2" : "_v1");
+        TableModel model = new TableModel(configuration, tableName, PartitionBy.YEAR)
+                .col("a", ColumnType.BYTE)
+                .col("b", ColumnType.SYMBOL)
+                .timestamp("ts")
+                .wal();
+        final TableToken tableToken = createTable(model);
+
+        try (
+                Path path = new Path();
+                MemoryCMR txnMem = Vm.getCMRInstance();
+                BlockFileReader reader = new BlockFileReader(configuration);
+                WalEventReader walEventReader = new WalEventReader(configuration);
+                BlockFileWriter stateWriter = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode())
+        ) {
+            final MatViewStateReader matViewStateReader = new MatViewStateReader();
+            path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
+            final int tableLen = path.size();
+            stateWriter.of(path.concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
+            MatViewState.append(
+                    Numbers.LONG_NULL,
+                    7,
+                    false,
+                    null,
+                    Numbers.LONG_NULL,
+                    null,
+                    -1,
+                    Long.MIN_VALUE,
+                    Numbers.LONG_NULL,
+                    0,
+                    stateWriter
+            );
+
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                TableWriter.Row row = walWriter.newRow(0);
+                row.putByte(0, (byte) 1);
+                row.append();
+                walWriter.commit();
+                row = walWriter.newRow(0);
+                row.putByte(0, (byte) 2);
+                row.append();
+                walWriter.commitMatView(42, 42, 42, 0, 1);
+                addColumn(walWriter, "c", ColumnType.INT);
+            }
+            try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(tableToken, 2)) {
+                assertTrue(cursor.hasNext());
+                assertEquals(3, cursor.getTxn());
+                assertEquals(TableTransactionLogFile.STRUCTURAL_CHANGE_WAL_ID, cursor.getWalId());
+                assertFalse(cursor.hasNext());
+            }
+
+            // the refresh commit applied, the column added above it not
+            assertTrue(WalUtils.readMatViewState(path.trimTo(tableLen), tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader, 2));
+            assertEquals(42, matViewStateReader.getLastRefreshBaseTxn());
+            // every transaction applied
+            assertTrue(WalUtils.readMatViewState(path.trimTo(tableLen), tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader, 3));
             assertEquals(42, matViewStateReader.getLastRefreshBaseTxn());
         } finally {
             node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, chunkSizeOld);
