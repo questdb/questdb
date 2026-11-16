@@ -127,6 +127,7 @@ import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.BoolList;
 import io.questdb.std.Chars;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -160,6 +161,7 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
     // the administrative calls and SHOW statements admitted, at the positions their requirements surface at
     private final ObjList<String> administrativeCallNames = new ObjList<>();
     private final IntList administrativeCallPositions = new IntList();
+    private final BoolList administrativeCallStatements = new BoolList();
     private final IntList argDistancesA = new IntList();
     private final IntList argDistancesB = new IntList();
     private final IntList argTraits = new IntList();
@@ -336,6 +338,13 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
     }
 
     /**
+     * Whether the operator orders two values: {@code <}, {@code <=}, {@code >} or {@code >=}.
+     */
+    public static boolean isOrderingOperator(CharSequence operator) {
+        return Chars.equals(operator, '<') || Chars.equals(operator, "<=") || Chars.equals(operator, '>') || Chars.equals(operator, ">=");
+    }
+
+    /**
      * Whether an ordering comparison reads the constant at {@code constantIndex}, when it is finer than the TIMESTAMP
      * operand on the other side, as the first operand value not before it rather than the last one not after it:
      * true when the constant is the inclusive lower bound of {@code >=} or the exclusive upper bound of {@code <}.
@@ -349,8 +358,7 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
      * {@code >} or {@code >=}.
      */
     public static boolean isTemporalComparisonOperator(CharSequence operator) {
-        return Chars.equals(operator, '=') || Chars.equals(operator, '<') || Chars.equals(operator, '>')
-                || Chars.equals(operator, "<=") || Chars.equals(operator, ">=") || isNotEqualsOperator(operator);
+        return Chars.equals(operator, '=') || isNotEqualsOperator(operator) || isOrderingOperator(operator);
     }
 
     /**
@@ -504,6 +512,7 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
     public void clear() {
         administrativeCallNames.clear();
         administrativeCallPositions.clear();
+        administrativeCallStatements.clear();
         executionRequirements.clear();
         executionRequirementPosition = -1;
         nonDeterministicCallIndex = -1;
@@ -1088,6 +1097,13 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
     }
 
     /**
+     * Whether the administrative call at the index is a SHOW statement rather than a function.
+     */
+    public boolean isAdministrativeStatement(int index) {
+        return administrativeCallStatements.get(index);
+    }
+
+    /**
      * Whether a function factory has produced a CURSOR-typed function since the last
      * {@link #resetCursorFunctionInstantiated()}. The flag is raised on the <em>instantiated</em>
      * function rather than on the factory or the name, because the same name can be either: the
@@ -1446,10 +1462,6 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
         return otherType == ColumnType.NULL || otherType == ColumnType.CHAR;
     }
 
-    private static boolean isOrderingOperator(CharSequence name) {
-        return Chars.equals(name, "<") || Chars.equals(name, "<=") || Chars.equals(name, ">") || Chars.equals(name, ">=");
-    }
-
     private static boolean isUntypedEmptyArrayLiteral(Function function) {
         return function instanceof ArrayConstant && ColumnType.decodeArrayElementType(function.getType()) == ColumnType.UNDEFINED;
     }
@@ -1671,6 +1683,7 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
             }
             administrativeCallNames.add(Chars.toString(name));
             administrativeCallPositions.add(requirementPosition);
+            administrativeCallStatements.add(isStatement);
         }
         if (executionContext.allowNonDeterministicFunctions()) {
             return;

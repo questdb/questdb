@@ -34,8 +34,6 @@ public final class FunctionSourcePlan extends LogicalPlan {
     public static final ObjectFactory<FunctionSourcePlan> FACTORY = FunctionSourcePlan::new;
     private final OutputSchema recordSchema = new OutputSchema();
     private final IntList sourceColumnIndexes = new IntList();
-    private String administrativeCallName;
-    private int administrativeCallPosition = -1;
     private boolean hasExternalDataSource;
     private boolean isDeterministic;
     private boolean isLongSequence;
@@ -52,8 +50,6 @@ public final class FunctionSourcePlan extends LogicalPlan {
         super.clear();
         recordSchema.clear();
         sourceColumnIndexes.clear();
-        administrativeCallName = null;
-        administrativeCallPosition = -1;
         hasExternalDataSource = false;
         isDeterministic = false;
         isLongSequence = false;
@@ -74,22 +70,6 @@ public final class FunctionSourcePlan extends LogicalPlan {
         isPageFrameSupported = source.isPageFrameSupported;
         isRandomAccess = source.isRandomAccess;
         scanDirection = source.scanDirection;
-    }
-
-    /**
-     * The name of the first call or SHOW statement of the source that needs the Enterprise security context of the
-     * caller, or null, see {@link io.questdb.griffin.SqlExecutionRequirements#REQUIRES_ENTERPRISE_SECURITY_CONTEXT}.
-     */
-    public String getAdministrativeCallName() {
-        return administrativeCallName;
-    }
-
-    /**
-     * The position where the requirements of the call {@link #getAdministrativeCallName()} names surface in the
-     * compiled SQL, or -1.
-     */
-    public int getAdministrativeCallPosition() {
-        return administrativeCallPosition;
     }
 
     /**
@@ -195,11 +175,6 @@ public final class FunctionSourcePlan extends LogicalPlan {
         this.isDeterministic = isDeterministic;
     }
 
-    public void setAdministrativeCall(String name, int position) {
-        administrativeCallName = name;
-        administrativeCallPosition = position;
-    }
-
     public void setExternalDataSource(boolean hasExternalDataSource) {
         this.hasExternalDataSource = hasExternalDataSource;
     }
@@ -233,8 +208,6 @@ public final class FunctionSourcePlan extends LogicalPlan {
         super.visitFacts(visitor);
         visitor.recordFields("recordSchema", recordSchema);
         visitor.facts("sourceColumnIndexes", sourceColumnIndexes);
-        visitor.fact("administrativeCallName", administrativeCallName);
-        visitor.fact("administrativeCallPosition", administrativeCallPosition);
         visitor.fact("hasExternalDataSource", hasExternalDataSource);
         visitor.fact("isDeterministic", isDeterministic);
         visitor.fact("isLongSequence", isLongSequence);

@@ -8832,6 +8832,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * Generates a new, owned factory of an optimised sub-query.
      */
     RecordCursorFactory generateSubquery(Subquery subquery, SqlExecutionContext executionContext) throws SqlException {
+        if (subquery.getAdministrativeCallName() != null && executionContext.isViewMetadataSubquery()) {
+            // the plan of a view's PIVOT IN subquery keeps the sub-query, see FunctionBinder.bindSubquery()
+            SqlExecutionRequirements.checkViewMetadataSubquery(SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT,
+                    subquery.getAdministrativeCallPosition(), subquery.getAdministrativeCallName(), subquery.isAdministrativeStatement());
+        }
         final int depth = scopes.depth();
         final boolean isWindowContextPushed = enterSubquery(SubqueryPhase.GENERATE, subquery.getDepth(), executionContext);
         try {

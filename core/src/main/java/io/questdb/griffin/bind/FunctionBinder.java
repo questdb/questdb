@@ -862,20 +862,28 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
 
     /**
      * Binds the sub-query of an expression. One nested in a view's PIVOT IN subquery runs only if the subquery's plan
-     * keeps it, so it may hold what the subquery itself may not: code generation checks the table functions and SHOW
-     * statements it takes into the plan, see {@link io.questdb.griffin.TableFunctionSources#takeFactory}, and the
-     * calls it constructs, see {@link SqlExecutionContext#isViewMetadataSubquery()}.
+     * keeps it, so binding records the first administrative call or SHOW statement it admits for it rather than
+     * rejecting it, and code generation rejects the sub-query once it generates it, see
+     * {@link io.questdb.griffin.SqlExecutionRequirements#checkViewMetadataSubquery}. The record covers the sub-queries
+     * nested in it too, which run only if it does.
      */
     private Subquery bindSubquery(ExpressionNode node, SqlExecutionContext executionContext) throws SqlException {
         if (!executionContext.isViewMetadataSubquery()) {
             return compiler.bindSubquery(node.queryModel, node.position, executionContext);
         }
+        final int administrativeCount = resolver.getAdministrativeCallCount();
+        final Subquery subquery;
         executionContext.setViewMetadataSubquery(false);
         try {
-            return compiler.bindSubquery(node.queryModel, node.position, executionContext);
+            subquery = compiler.bindSubquery(node.queryModel, node.position, executionContext);
         } finally {
             executionContext.setViewMetadataSubquery(true);
         }
+        if (resolver.getAdministrativeCallCount() > administrativeCount) {
+            subquery.setAdministrativeCall(resolver.getAdministrativeCallName(administrativeCount),
+                    resolver.getAdministrativeCallPosition(administrativeCount), resolver.isAdministrativeStatement(administrativeCount));
+        }
+        return subquery;
     }
 
     /**

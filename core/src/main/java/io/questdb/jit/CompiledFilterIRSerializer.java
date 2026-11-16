@@ -3397,12 +3397,7 @@ public class CompiledFilterIRSerializer implements Mutable {
      * those two branches - see {@link #orderingRewindOffsets}.
      */
     private boolean isOrderingComparison(BoundExpression node) {
-        if (paramCount(node) != 2) {
-            return false;
-        }
-        final CharSequence token = operator(node);
-        return Chars.equals(token, "<") || Chars.equals(token, "<=")
-                || Chars.equals(token, ">") || Chars.equals(token, ">=");
+        return paramCount(node) == 2 && FunctionResolver.isOrderingOperator(operator(node));
     }
 
     /**

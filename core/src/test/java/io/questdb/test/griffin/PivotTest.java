@@ -1627,7 +1627,8 @@ public class PivotTest extends AbstractSqlParserTest {
                             SELECT cat, CASE WHEN val > (SELECT count() FROM admin_cursor()) THEN 1 ELSE 0 END n FROM data
                         )""");
                 // compiler derives pv's columns: binding leaves the check of admin_cursor(), in the column of v_column that
-                // pv's PIVOT IN subquery does not read, to code generation, which never takes it, and accepts the view
+                // pv's PIVOT IN subquery does not read, to code generation, which never generates its sub-query, and
+                // accepts the view
                 final CompiledQuery cq = parser.compile(
                         "CREATE VIEW pv AS (SELECT * FROM data PIVOT (SUM(val) FOR cat IN (SELECT cat FROM v_column)))",
                         sqlExecutionContext
@@ -1974,6 +1975,42 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotSubqueryRejectsAdministrativeScalarInNestedSubquery() throws Exception {
+        // Binding constructs the scalars of a sub-query nested in the IN subquery, and code generation adopts them, so
+        // the view compile rejects the sub-query when it generates it, which it does only for a sub-query the plan keeps.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (cat VARCHAR, val INT)");
+            execute("INSERT INTO data VALUES ('a', 42)");
+            registerAdminScalar(new AtomicInteger(SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT), new AtomicInteger());
+            try {
+                final String nested = "CASE WHEN (SELECT admin_scalar()) = 'a' THEN 'a' ELSE 'b' END";
+                execute("CREATE VIEW names AS (SELECT " + nested + " cat, 'a' plain FROM long_sequence(1))");
+                final String message = "administrative function cannot be used in view PIVOT IN subquery: admin_scalar";
+                final String fromView = "CREATE VIEW pv AS (SELECT * FROM data PIVOT (SUM(val) FOR cat IN (SELECT cat FROM names)))";
+                assertQuery(fromView).noLeakCheck().fails(fromView.lastIndexOf("names"), message);
+                final String direct = "CREATE VIEW pv AS (SELECT * FROM data PIVOT (SUM(val) FOR cat IN (SELECT " + nested + " FROM long_sequence(1))))";
+                assertQuery(direct).noLeakCheck().fails(direct.indexOf("admin_scalar"), message);
+                Assert.assertNull(engine.getTableTokenIfExists("pv"));
+
+                // the plan of this IN subquery does not keep the nested sub-query, which never runs
+                execute("CREATE VIEW pv AS (SELECT * FROM data PIVOT (SUM(val) FOR cat IN (SELECT plain FROM names)))");
+                assertQuery("SELECT * FROM pv")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                a
+                                42
+                                """);
+                assertViewCompileFlagsClear();
+                assertNothingBusy();
+            } finally {
+                TableFunctionTestUtils.unregister(engine, "admin_scalar");
+            }
+        });
+    }
+
+    @Test
     public void testPivotSubqueryRejectsAdministrativeScalarInStoredView() throws Exception {
         // COMPILE VIEW, the view compiler job and the compile of every view at startup derive the view's columns
         // detached from any caller, so they reject the function as CREATE VIEW does
@@ -2142,7 +2179,7 @@ public class PivotTest extends AbstractSqlParserTest {
             try {
                 // Binding creates the table function of a sub-query nested in the IN subquery before the subquery's plan
                 // shows whether it keeps the sub-query, so the view compile rejects the function once code generation
-                // took it into the plan, before its cursor opens.
+                // generates the sub-query, before its cursor opens.
                 assertViewPivotRejects(
                         "admin_cursor",
                         """

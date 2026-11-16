@@ -114,10 +114,7 @@ public final class SqlExecutionRequirements implements Mutable {
             boolean isStatement
     ) throws SqlException {
         if ((requirements & REQUIRES_ENTERPRISE_SECURITY_CONTEXT) != 0) {
-            throw SqlException.functionNotAllowed(position)
-                    .put(isStatement ? "administrative statement" : "administrative function")
-                    .put(" cannot be used in view PIVOT IN subquery: ")
-                    .put(name);
+            throw administrativeCallRejected(position, isStatement).put("view PIVOT IN subquery: ").put(name);
         }
     }
 
@@ -235,6 +232,12 @@ public final class SqlExecutionRequirements implements Mutable {
         }
     }
 
+    private static SqlException administrativeCallRejected(int position, boolean isStatement) {
+        return SqlException.functionNotAllowed(position)
+                .put(isStatement ? "administrative statement" : "administrative function")
+                .put(" cannot be used in ");
+    }
+
     private static void checkStoredView(
             int requirements,
             int position,
@@ -246,12 +249,7 @@ public final class SqlExecutionRequirements implements Mutable {
     ) throws SqlException {
         final CharSequence objectKind = objectKind(executionContext);
         if ((requirements & REQUIRES_ENTERPRISE_SECURITY_CONTEXT) != 0) {
-            throw SqlException.functionNotAllowed(position)
-                    .put(isStatement ? "administrative statement" : "administrative function")
-                    .put(" cannot be used in ")
-                    .put(objectKind)
-                    .put(": ")
-                    .put(name);
+            throw administrativeCallRejected(position, isStatement).put(objectKind).put(": ").put(name);
         }
         if ((requirements & DISCLOSES_OBJECTS) == 0) {
             return;

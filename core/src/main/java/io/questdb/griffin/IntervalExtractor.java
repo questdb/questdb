@@ -259,13 +259,6 @@ public final class IntervalExtractor implements Mutable {
                 || expression instanceof ColumnExpression column && !column.isDirectReference();
     }
 
-    private static boolean isRangeOperator(String operator) {
-        return switch (operator) {
-            case "<", "<=", ">", ">=" -> true;
-            default -> false;
-        };
-    }
-
     /**
      * A runtime DATE or text bound of a comparison, which the runtime interval model converts at execution: text at
      * the precision it spells, as interval extraction parses a literal.
@@ -372,7 +365,7 @@ public final class IntervalExtractor implements Mutable {
                 remaining = intersectBetween(negated, true, timestampColumnId, input, executionContext);
             } else if ("in".equals(negated.getName()) && negated.getArgumentCount() >= 2) {
                 remaining = intersectIn(negated, true, timestampColumnId, input, executionContext);
-            } else if (negated.getArgumentCount() == 2 && isRangeOperator(negated.getName())) {
+            } else if (negated.getArgumentCount() == 2 && FunctionResolver.isOrderingOperator(negated.getName())) {
                 remaining = intersectComparison(negated, true, timestampColumnId, input, executionContext);
             } else {
                 return predicate;
@@ -518,7 +511,8 @@ public final class IntervalExtractor implements Mutable {
                 }
             }
         }
-        if (!predicate.isPolicyPredicate() && column.isDirectReference() && column.getDataType() == timestampType && isRangeOperator(operator)) {
+        if (!predicate.isPolicyPredicate() && column.isDirectReference() && column.getDataType() == timestampType
+                && FunctionResolver.isOrderingOperator(operator)) {
             validateRangeBound(bound);
         }
         final boolean isIntegralBound = bound instanceof ConstantExpression && column.isDirectReference()
