@@ -907,13 +907,18 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * Publishes one logical checkpoint root into the versioned timeline for the seal
      * in progress, advancing the generation watermarks and the timeline WAL floor.
      * <p>
-     * Runs for a forced seal too. A forced seal follows an O3 replay, which already
-     * retired the timeline through {@link #retireCheckpointTimeline}, so the
-     * append opens a fresh history whose single root describes the post-replay
-     * state. Skipping it - as this did while the timeline was write-only on the
-     * in-order path - leaves every replay-driven view with no timeline at all, so a
-     * restart has nothing to restore from but a full rebuild from the view's
-     * {@code START FROM} boundary.
+     * Runs for a forced seal too. A forced seal follows an O3 replay, which kept the
+     * generation its splice or truncate published or retired the timeline through
+     * {@link #retireCheckpointTimeline}, and after a retire the append opens a fresh
+     * history whose single root describes the post-replay state. Skipping it - as this
+     * did while the timeline was write-only on the in-order path - leaves every
+     * replay-driven view with no timeline at all, so a restart has nothing to restore
+     * from but a full rebuild from the view's {@code START FROM} boundary.
+     * <p>
+     * A retire that could not remove {@code _timeline} left a generation this process
+     * retired, which the append runs the retire's on-disk half over again first
+     * ({@link #removeCheckpointTimelineFiles}): once the file goes the append opens the
+     * fresh history, and while it stays the append is refused and fails as a seal does.
      * <p>
      * {@code seedCursorOffset} carries the seed sweep's base-cursor row offset
      * when a mid-sweep cadence event drives the append, so a restart can resume
@@ -959,13 +964,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             long batchMinTs,
             long seedCursorOffset
     ) {
-        if (checkpointTimelineStoreWriter == null) {
-            checkpointTimelineStoreWriter = new LiveViewCheckpointTimelineStoreWriter(
-                    engine.getConfiguration(),
-                    engine.getLiveViewCheckpointPurgeState()
-            );
-            checkpointTimelineStoreWriter.setTestFailureStage(checkpointTimelineTestFailureStage);
+        if (instance.isCheckpointTimelineRetirePending()) {
+            // The retire's in-memory half has run already, so this counts no reset of its own.
+            removeCheckpointTimelineFiles(instance);
         }
+        final LiveViewCheckpointTimelineStoreWriter writer = checkpointTimelineStoreWriterFor(instance);
         final long coveredLvSeqTxn = engine.getTableSequencerAPI()
                 .getTxnTracker(instance.getLiveViewToken())
                 .getWriterTxn();
@@ -981,7 +984,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final Lock roleLock = engine.getRoleSwitchReadLock();
         roleLock.lock();
         try {
-            timelineResult = checkpointTimelineStoreWriter.append(
+            timelineResult = writer.append(
                     path,
                     functions,
                     anchorWindow,
@@ -1019,7 +1022,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // What this seal's freeze walked, split by root kind. Taken here, while this
         // publication is still the newest the writer performed: the ledger is the writer's
         // flyweight and its next publication clears it.
-        instance.recordCheckpointCapture(checkpointTimelineStoreWriter.getCaptureLedger());
+        instance.recordCheckpointCapture(writer.getCaptureLedger());
         if (timelineResult.getLiveSegmentCount() != Numbers.LONG_NULL) {
             instance.recordCheckpointGcSweep(
                     timelineResult.getLiveSegmentCount(),
@@ -1119,7 +1122,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 LiveViewCheckpointCompaction.compact(
                         engine.getConfiguration(),
                         checkpointsDir,
-                        checkpointTimelineStoreWriter,
+                        checkpointTimelineStoreWriterFor(instance),
                         instance.getLiveViewToken().getTableId(),
                         0,
                         instance.getLifecycleIdentity(),
@@ -1179,7 +1182,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             roleLock.lock();
             final LiveViewCheckpointTimelineStoreWriter.SweepResult result;
             try {
-                result = checkpointTimelineStoreWriter.sweep(
+                result = checkpointTimelineStoreWriterFor(instance).sweep(
                         checkpointsDir,
                         instance.getLiveViewToken().getTableId(),
                         0,
@@ -1270,13 +1273,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final ObjList<LiveViewCheckpointTimelineEntry> repairBoundaries = session.getBoundaries();
         final LiveViewCheckpointRepairState repairState = session.getDescriptor();
         repairBoundaries.clear();
-        if (checkpointTimelineStoreWriter == null) {
-            checkpointTimelineStoreWriter = new LiveViewCheckpointTimelineStoreWriter(
-                    engine.getConfiguration(),
-                    engine.getLiveViewCheckpointPurgeState()
-            );
-            checkpointTimelineStoreWriter.setTestFailureStage(checkpointTimelineTestFailureStage);
-        }
         LiveViewCheckpointTimelineStoreWriter.RepairCapture capture = null;
         try (Path checkpointsDir = new Path()) {
             checkpointsDir.of(engine.getConfiguration().getDbRoot())
@@ -1294,7 +1290,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // it, so a key it does not touch is one the restored state already holds.
             // Reading the rebuild's flag here would hand Q to a capture that cannot use
             // one and silently drop the whole repair back onto the truncate.
-            capture = checkpointTimelineStoreWriter.beginRepair(
+            capture = checkpointTimelineStoreWriterFor(instance).beginRepair(
                     checkpointsDir,
                     // A keyed replay's own Q wins over both: its state describes the keys
                     // the correction touched and no others, whatever the plan derived for
@@ -1354,7 +1350,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             return capture;
         } catch (Throwable t) {
             // Most often "no valid generation": a view whose timeline was retired by
-            // an earlier repair and not yet re-sealed has nothing to splice into.
+            // an earlier repair and not yet re-sealed has nothing to splice into. A
+            // generation a retire could not remove is refused here the same way.
             LOG.info().$("live view checkpoint timeline repair capture unavailable, truncating instead [view=")
                     .$(instance.getDefinition().getViewName())
                     .$(", lowTsInclusive=").$(lowTsInclusive)
@@ -1973,8 +1970,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * reads it the same way (see {@link #readPreCommitRepairMarkerLvSeqTxn}): it clears a
      * stale leftover, and over a live one records no seqTxn, so a fault ahead of that
      * repair's commit rebuilds as a restart would.
+     * <p>
+     * It clears nothing beside a {@code _timeline} a retire could not remove, which a retire
+     * inside the repair's own closing seal can leave: the marker goes only with that file, and
+     * is what keeps a restart off the generation it names (see
+     * {@link #removeCheckpointTimelineFiles}).
      */
     private void clearCheckpointRepairMarker(LiveViewInstance instance) {
+        if (instance.isCheckpointTimelineRetirePending()) {
+            return;
+        }
         path.of(engine.getConfiguration().getDbRoot())
                 .concat(instance.getLiveViewToken())
                 .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
@@ -4318,14 +4323,50 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * predecessor resume whose marker could not be written at its replacement commit
      * retires here too, ahead of that commit.
      * <p>
-     * Failure is logged and swallowed: the replay owns correctness of the durable
-     * output, so a retire that fails does not block the refresh. The next seal appends
-     * to a timeline the retire left behind, and a restart restores it, unless a repair
-     * marker stands beside it: the retire keeps the marker while {@code _timeline}
-     * survives, so a restart rebuilds rather than restore the generation the marker
-     * held off, until a seal two generations past the one the marker names lands.
+     * A retire has two halves. The one in memory always runs: the head goes, with its root
+     * identity and the cadence counters it resets, and so does the view's ownership of the
+     * generation, which releases both {@code WalPurgeJob} arms the view held - the head's
+     * first, the timeline's once the on-disk half has run, so no purge outruns a root a restart
+     * could still restore. No caller is left holding a reference to the retired generation.
+     * The one on disk removes the files ({@link #removeCheckpointTimelineFiles}), and may fail.
+     * Failure is logged and swallowed: the replay owns correctness of the durable output, so a
+     * retire that fails does not block the refresh. A {@code _timeline} it could not remove stays
+     * a generation this process retired, which the view refuses until a later retire removes it,
+     * with a live repair marker beside it that sends a restart to the rebuild.
      */
     private void retireCheckpointTimeline(LiveViewInstance instance) {
+        instance.setHeadCheckpoint(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL);
+        removeCheckpointTimelineFiles(instance);
+        instance.recordCheckpointTimelineReset();
+        instance.clearCheckpointTimelineOwnership();
+    }
+
+    /**
+     * The on-disk half of {@link #retireCheckpointTimeline}: removes the timeline's files, and
+     * answers for a {@code _timeline} it could not remove.
+     * <p>
+     * Such a file still names the generation the retire meant to remove, which no longer
+     * describes the view's output, and nothing tells it from a live one: every publication names
+     * the view's table id and history epoch 0. So the view refuses it until a retire removes it
+     * ({@link LiveViewInstance#isCheckpointTimelineRetirePending()}): no read binds it
+     * ({@link #borrowCheckpointTimelineStoreReader}), no write builds on it
+     * ({@link #checkpointTimelineStoreWriterFor}), and the next seal runs this again before it
+     * appends ({@link #appendCheckpointTimelineRoot}), so it opens a fresh history once the file
+     * can go. A restart starts with nothing refused, so it has to meet a live repair marker beside
+     * the file instead, and rebuild over it: a marker there that reads as live stays as it is, and
+     * otherwise this writes one that names no base generation, which reads as live whatever the
+     * superblock says. Judging the marker reads the superblock, which the fault that refused the
+     * unlink may refuse to open as well, so a marker this cannot judge is written over all the
+     * same. A marker this cannot write leaves the file refused in this process alone, until the
+     * next run of this writes it. The retire's own removal keeps any marker beside a
+     * {@code _timeline} it cannot remove, and {@link #clearCheckpointRepairMarker} clears none
+     * while the file stands, so the marker goes only with the file.
+     * <p>
+     * Nothing here fails the caller: every fault is logged. An upgrade-pending view's older
+     * {@code _timeline} is the upgrade's to end instead ({@link #clearUpgradeRebuildPendingIfRetired}),
+     * since every seal already refuses to publish over it.
+     */
+    private void removeCheckpointTimelineFiles(LiveViewInstance instance) {
         try (Path checkpointsDir = new Path()) {
             checkpointsDir.of(engine.getConfiguration().getDbRoot())
                     .concat(instance.getLiveViewToken())
@@ -4341,11 +4382,77 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(instance.getDefinition().getViewName())
                     .$(", error=").$(t).I$();
         }
-        if (instance.isCheckpointUpgradeRebuildPending()) {
-            clearUpgradeRebuildPendingIfRetired(instance);
+        final boolean isTimelineKept;
+        try (Path timelinePath = new Path()) {
+            timelinePath.of(engine.getConfiguration().getDbRoot())
+                    .concat(instance.getLiveViewToken())
+                    .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME)
+                    .concat(LiveViewCheckpointLayout.TIMELINE_FILE_NAME);
+            isTimelineKept = engine.getConfiguration().getFilesFacade().exists(timelinePath.$());
+        } catch (Throwable t) {
+            LOG.error().$("could not check the live view checkpoint timeline after a retire [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", error=").$(t).I$();
+            return;
         }
-        instance.recordCheckpointTimelineReset();
-        instance.clearCheckpointTimelineOwnership();
+        if (instance.isCheckpointUpgradeRebuildPending()) {
+            clearUpgradeRebuildPendingIfRetired(instance, isTimelineKept);
+        } else if (isTimelineKept) {
+            refuseKeptCheckpointTimeline(instance);
+        } else if (instance.isCheckpointTimelineRetirePending()) {
+            instance.clearCheckpointTimelineRetirePending();
+            LOG.info().$("live view removed the checkpoint timeline an earlier retire left behind [view=")
+                    .$(instance.getDefinition().getViewName()).I$();
+        }
+    }
+
+    // The branch of removeCheckpointTimelineFiles for a _timeline the retire could not remove: see
+    // there. The refusal goes first, and stands whatever the marker comes to: every fault after it
+    // is logged.
+    private void refuseKeptCheckpointTimeline(LiveViewInstance instance) {
+        final boolean isNewlyKept = !instance.isCheckpointTimelineRetirePending();
+        instance.markCheckpointTimelineRetirePending();
+        try (Path checkpointsDir = new Path()) {
+            if (isNewlyKept) {
+                LOG.critical().$("live view could not remove the checkpoint timeline it retired, refusing it until a retire removes it [view=")
+                        .$(instance.getDefinition().getViewName()).I$();
+            }
+            checkpointsDir.of(engine.getConfiguration().getDbRoot())
+                    .concat(instance.getLiveViewToken())
+                    .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
+            boolean isMarkerLive;
+            try {
+                // While the process runs the view's table never applies past its sequencer, so the
+                // sequencer's last txn stands for the applied seqTxn a restart compares.
+                isMarkerLive = isRepairMarkerLive(
+                        instance,
+                        checkpointsDir,
+                        engine.getTableSequencerAPI().lastTxn(instance.getLiveViewToken())
+                );
+            } catch (Throwable t) {
+                LOG.error().$("could not read the live view checkpoint repair marker beside a timeline its retire could not remove, writing one [view=")
+                        .$(instance.getDefinition().getViewName())
+                        .$(", error=").$(t).I$();
+                isMarkerLive = false;
+            }
+            if (!isMarkerLive) {
+                // No base generation: a restart reads the marker as live whatever the superblock
+                // says. The identity fields are the ones every publication of the view names.
+                LiveViewCheckpointRepairMarker.write(
+                        engine.getConfiguration(),
+                        checkpointsDir,
+                        instance.getLiveViewToken().getTableId(),
+                        0,
+                        Numbers.LONG_NULL,
+                        Numbers.LONG_NULL,
+                        Numbers.LONG_NULL
+                );
+            }
+        } catch (Throwable t) {
+            LOG.error().$("could not write the live view checkpoint repair marker beside a timeline its retire could not remove [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", error=").$(t).I$();
+        }
     }
 
     /**
@@ -4355,22 +4462,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * the directory still disagrees with. Whatever else a partial retire left - segment
      * directories, a retirement work set - declares no format, and the next seal's
      * reconciliation collects it as orphans of a directory with no timeline.
+     *
+     * @param isTimelineKept whether the retire that just ran left {@code _timeline} on disk
      */
-    private void clearUpgradeRebuildPendingIfRetired(LiveViewInstance instance) {
-        try (Path timelinePath = new Path()) {
-            timelinePath.of(engine.getConfiguration().getDbRoot())
-                    .concat(instance.getLiveViewToken())
-                    .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME)
-                    .concat(LiveViewCheckpointLayout.TIMELINE_FILE_NAME);
-            if (engine.getConfiguration().getFilesFacade().exists(timelinePath.$())) {
-                LOG.error().$("live view could not retire its older-format checkpoint timeline, the upgrade stays pending [view=")
-                        .$(instance.getDefinition().getViewName()).I$();
-                return;
-            }
-        } catch (Throwable t) {
-            LOG.error().$("could not check the live view checkpoint timeline after a retire [view=")
-                    .$(instance.getDefinition().getViewName())
-                    .$(", error=").$(t).I$();
+    private void clearUpgradeRebuildPendingIfRetired(LiveViewInstance instance, boolean isTimelineKept) {
+        if (isTimelineKept) {
+            LOG.error().$("live view could not retire its older-format checkpoint timeline, the upgrade stays pending [view=")
+                    .$(instance.getDefinition().getViewName()).I$();
             return;
         }
         instance.clearCheckpointUpgradeRebuildPending();
@@ -4447,6 +4545,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         instance.setHeadCheckpoint(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL);
         head.clear();
         try {
+            // Ahead of the superblock read and the marker: a generation a retire could not remove
+            // is neither truncated nor marked over, and the catch below retires it again.
+            final LiveViewCheckpointTimelineStoreWriter writer = checkpointTimelineStoreWriterFor(instance);
             path.of(engine.getConfiguration().getDbRoot())
                     .concat(instance.getLiveViewToken())
                     .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
@@ -4468,13 +4569,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             final long lvSeqTxn = isReplacementCommitted
                     ? Numbers.LONG_NULL
                     : readPreCommitRepairMarkerLvSeqTxn(instance, path);
-            if (checkpointTimelineStoreWriter == null) {
-                checkpointTimelineStoreWriter = new LiveViewCheckpointTimelineStoreWriter(
-                        engine.getConfiguration(),
-                        engine.getLiveViewCheckpointPurgeState()
-                );
-                checkpointTimelineStoreWriter.setTestFailureStage(checkpointTimelineTestFailureStage);
-            }
             boolean preserved = false;
             final Lock roleLock = engine.getRoleSwitchReadLock();
             roleLock.lock();
@@ -4491,7 +4585,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         lvSeqTxn
                 );
                 final LiveViewCheckpointTimelineStoreWriter.TruncateResult result =
-                        checkpointTimelineStoreWriter.publishTruncate(
+                        writer.publishTruncate(
                                 path,
                                 definitionTxn,
                                 historyEpoch,
@@ -11455,7 +11549,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     if (timelineCapture != null && timelineSplice == null) {
                         // Either the splice could not publish, or it was never allowed to try
                         // because the replacement has not applied. The output the timeline's
-                        // roots describe has moved either way, so it must not survive them.
+                        // roots describe has moved either way, so it must not survive them, and
+                        // neither may the head the closing seal set on them: the retire takes it.
                         retireCheckpointTimeline(instance);
                     }
                     Misc.free(timelineCapture);
@@ -11637,7 +11732,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 checkpointsDir.of(engine.getConfiguration().getDbRoot())
                         .concat(instance.getLiveViewToken())
                         .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
-                final LiveViewCheckpointTimelineStoreReader reader = borrowCheckpointTimelineStoreReader(checkpointsDir);
+                final LiveViewCheckpointTimelineStoreReader reader = borrowCheckpointTimelineStoreReader(instance, checkpointsDir);
                 try {
                     final long rootRowPosition = reader.predecessorLvRowPosition(frontierTs + 1, timelineFrontierRoot);
                     if (rootRowPosition != Numbers.LONG_NULL) {
@@ -12525,7 +12620,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             final Lock roleLock = engine.getRoleSwitchReadLock();
             roleLock.lock();
             try {
-                result = checkpointTimelineStoreWriter.publishRepair(
+                result = checkpointTimelineStoreWriterFor(instance).publishRepair(
                         capture,
                         instance.getLiveViewToken().getTableId(),
                         normalizedBaseSeqTxn,
@@ -13014,13 +13109,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // Above the head's: the cycle consumed at least one commit past the last one.
         final long baseSeqTxn = instance.getLastProcessedSeqTxn();
         try {
-            if (checkpointTimelineStoreWriter == null) {
-                checkpointTimelineStoreWriter = new LiveViewCheckpointTimelineStoreWriter(
-                        engine.getConfiguration(),
-                        engine.getLiveViewCheckpointPurgeState()
-                );
-                checkpointTimelineStoreWriter.setTestFailureStage(checkpointTimelineTestFailureStage);
-            }
             path.of(engine.getConfiguration().getDbRoot())
                     .concat(instance.getLiveViewToken())
                     .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
@@ -13029,7 +13117,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             final Lock roleLock = engine.getRoleSwitchReadLock();
             roleLock.lock();
             try {
-                result = checkpointTimelineStoreWriter.publishWatermark(
+                result = checkpointTimelineStoreWriterFor(instance).publishWatermark(
                         path,
                         instance.getLiveViewToken().getTableId(),
                         0,
@@ -13174,13 +13262,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final long viewLowerBoundTimestamp = instance.getDefinition().getViewLowerBoundTimestamp();
         final LiveViewWindow anchorWindow = instance.getAnchorWindow();
         final long definitionTxn = instance.getLiveViewToken().getTableId();
-        if (checkpointTimelineStoreWriter == null) {
-            checkpointTimelineStoreWriter = new LiveViewCheckpointTimelineStoreWriter(
-                    engine.getConfiguration(),
-                    engine.getLiveViewCheckpointPurgeState()
-            );
-            checkpointTimelineStoreWriter.setTestFailureStage(checkpointTimelineTestFailureStage);
-        }
         LiveViewCheckpointTimelineStoreWriter.RepairCapture capture = null;
         TableReader baseReader = null;
         TableReader lvReader = null;
@@ -13191,7 +13272,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
             // The heal replays every base row above the predecessor it restored, so its
             // state describes every live key and no key domain narrows it.
-            capture = checkpointTimelineStoreWriter.beginRepair(checkpointsDir, null, instance.getMemoryTracker(), false);
+            capture = checkpointTimelineStoreWriterFor(instance).beginRepair(checkpointsDir, null, instance.getMemoryTracker(), false);
             // (predecessorMaxTs, corruptCeilingMaxTs] in key space: the predecessor's
             // own boundary is kept, and every corrupt root above it up to and including
             // the ceiling is re-versioned. A non-corrupt boundary caught in the range
@@ -13479,7 +13560,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // suffixRowDelta is 0: the base did not change, so the repaired roots
                 // hold the same rows at the same positions - only their damaged state
                 // pages are replaced.
-                checkpointTimelineStoreWriter.publishRepair(
+                checkpointTimelineStoreWriterFor(instance).publishRepair(
                         capture,
                         definitionTxn,
                         publishBaseSeqTxn,
@@ -13767,15 +13848,39 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * a retire, repair or compaction may have changed in between. A bind that
      * meets a reader still attached is a caller that lost its {@code finally};
      * that raises rather than silently restoring against the wrong view.
+     * <p>
+     * Every read of {@code instance}'s roots binds here, so this is where a generation a retire
+     * could not remove is refused to them all ({@link #checkCheckpointTimelineNotRetired}).
      */
     private LiveViewCheckpointTimelineStoreReader borrowCheckpointTimelineStoreReader(
+            LiveViewInstance instance,
             @Transient Path checkpointsDir
     ) {
+        checkCheckpointTimelineNotRetired(instance);
         if (checkpointTimelineStoreReader == null) {
             checkpointTimelineStoreReader = new LiveViewCheckpointTimelineStoreReader(engine.getConfiguration());
         }
         checkpointTimelineStoreReader.of(checkpointsDir);
         return checkpointTimelineStoreReader;
+    }
+
+    /**
+     * The worker's checkpoint timeline writer, for one operation on {@code instance}'s timeline:
+     * built on first use and shared by every view this worker drives. Every writer operation -
+     * append, repair capture and splice, truncate, watermark, compaction, sweep - reaches the writer
+     * through here, at its own call, so a generation a retire could not remove is refused to them
+     * all ({@link #checkCheckpointTimelineNotRetired}), ahead of anything the operation writes.
+     */
+    private LiveViewCheckpointTimelineStoreWriter checkpointTimelineStoreWriterFor(LiveViewInstance instance) {
+        checkCheckpointTimelineNotRetired(instance);
+        if (checkpointTimelineStoreWriter == null) {
+            checkpointTimelineStoreWriter = new LiveViewCheckpointTimelineStoreWriter(
+                    engine.getConfiguration(),
+                    engine.getLiveViewCheckpointPurgeState()
+            );
+            checkpointTimelineStoreWriter.setTestFailureStage(checkpointTimelineTestFailureStage);
+        }
+        return checkpointTimelineStoreWriter;
     }
 
     /**
@@ -13808,7 +13913,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .concat(instance.getLiveViewToken())
                     .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
             final LiveViewCheckpointTimelineStoreReader reader =
-                    borrowCheckpointTimelineStoreReader(checkpointsDir);
+                    borrowCheckpointTimelineStoreReader(instance, checkpointsDir);
             try {
                 final LiveViewCheckpointTimelineStoreReader.Result result = reader.restoreKeys(
                         anchorMaxTs,
@@ -13890,7 +13995,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .concat(instance.getLiveViewToken())
                     .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
             final LiveViewCheckpointTimelineStoreReader reader =
-                    borrowCheckpointTimelineStoreReader(checkpointsDir);
+                    borrowCheckpointTimelineStoreReader(instance, checkpointsDir);
             try {
                 return reader.restore(
                         anchorMaxTs,
@@ -13948,7 +14053,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             checkpointsDir.of(engine.getConfiguration().getDbRoot())
                     .concat(instance.getLiveViewToken())
                     .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
-            final LiveViewCheckpointTimelineStoreReader reader = borrowCheckpointTimelineStoreReader(checkpointsDir);
+            final LiveViewCheckpointTimelineStoreReader reader = borrowCheckpointTimelineStoreReader(instance, checkpointsDir);
             try {
                 final long lvRowPosition = reader.predecessorLvRowPosition(frontierTs + 1, timelineFrontierRoot);
                 return lvRowPosition != Numbers.LONG_NULL
@@ -14250,7 +14355,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 return false;
             }
             final LiveViewCheckpointTimelineStoreReader reader =
-                    borrowCheckpointTimelineStoreReader(checkpointsDir);
+                    borrowCheckpointTimelineStoreReader(instance, checkpointsDir);
             try {
                 // Open the (lazy) window cursor before writing restored state into it:
                 // allocates the per-partition maps and marks the cursor open so the
@@ -14655,7 +14760,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final TimestampDriver driver = ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType());
         LiveViewCheckpointTimelineStoreReader.Result restored;
         final LiveViewCheckpointTimelineStoreReader timelineReader =
-                borrowCheckpointTimelineStoreReader(checkpointsDir);
+                borrowCheckpointTimelineStoreReader(instance, checkpointsDir);
         try {
             // Allocate/open the caller-owned maps before the page reader
             // validates and restores into them, matching legacy restore.
@@ -14696,7 +14801,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         .put("live view checkpoint corrupt-root reconstruction failed");
             }
             final LiveViewCheckpointTimelineStoreReader healedReader =
-                    borrowCheckpointTimelineStoreReader(checkpointsDir);
+                    borrowCheckpointTimelineStoreReader(instance, checkpointsDir);
             try {
                 restored = healedReader.restoreLatestCompatible(
                         durableFrontierTimestamp,
@@ -14846,6 +14951,20 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             instance.recordCheckpointRestoreRestored(restored.generation, restored.checkpointId);
         } else {
             instance.recordCheckpointRuntimeRestore();
+        }
+    }
+
+    /**
+     * Refuses a read or a write of {@code instance}'s checkpoint timeline while the generation on
+     * disk is one a retire could not remove (see {@link #removeCheckpointTimelineFiles}). Each
+     * caller sits in a try that already answers a timeline it cannot use - no valid generation, an
+     * unreadable root - and the refusal takes that answer: no anchor, no root to restore, no
+     * capture, no truncate, and a seal that fails.
+     */
+    private static void checkCheckpointTimelineNotRetired(LiveViewInstance instance) {
+        if (instance.isCheckpointTimelineRetirePending()) {
+            throw CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
+                    .put("live view checkpoint timeline is retired, its _timeline could not be removed");
         }
     }
 
@@ -19320,8 +19439,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * generation it splices into.
      * <p>
      * A view with no readable timeline - never sealed, retired by an earlier
-     * repair, or corrupt - reports no anchor rather than raising, so the plan
-     * takes the rebuild it would take for a change below every boundary.
+     * repair, kept on disk by a retire that could not remove it, or corrupt - reports
+     * no anchor rather than raising, so the plan takes the rebuild it would take for a
+     * change below every boundary.
      */
     private final class TimelineAnchorSource implements LiveViewCheckpointRepairPlan.AnchorSource {
         // The boundary isEveryTimestampGroupCovered is vetting, reused across the walk.
@@ -19336,7 +19456,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         .concat(instance.getLiveViewToken())
                         .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
                 final LiveViewCheckpointTimelineStoreReader reader =
-                        borrowCheckpointTimelineStoreReader(checkpointsDir);
+                        borrowCheckpointTimelineStoreReader(instance, checkpointsDir);
                 try {
                     while (true) {
                         final long lvRowPosition = reader.predecessorLvRowPosition(ceiling, out);
@@ -19405,7 +19525,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         .concat(instance.getLiveViewToken())
                         .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
                 final LiveViewCheckpointTimelineStoreReader reader =
-                        borrowCheckpointTimelineStoreReader(checkpointsDir);
+                        borrowCheckpointTimelineStoreReader(instance, checkpointsDir);
                 try {
                     long ceiling = highTsExclusive;
                     int boundaries = 0;

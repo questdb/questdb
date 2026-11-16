@@ -487,6 +487,14 @@ public class LiveViewInstance implements QuietCloseable {
     // a reader that sees the flag sees its reason. Volatile for live_views().
     private volatile boolean isCheckpointUpgradeRebuildPending;
     private volatile String checkpointUpgradeRebuildReason;
+    // Whether a retire of this view's checkpoint timeline ran and left _timeline on disk: the
+    // unlink failed, so the generation it names is one this process retired. While it stands no
+    // read binds that generation and no write builds on it, and the next seal retries the retire
+    // first. Set by the retire that finds _timeline after the unlink, cleared by the one that
+    // finds it gone. Mutated and read only on the refresh-worker thread under the refresh latch,
+    // whose CAS publishes it from one turn to the next; not volatile. In-memory only: a restart
+    // meets the repair marker the retire keeps beside the file instead.
+    private boolean isCheckpointTimelineRetirePending;
     // Lifetime counts of the two destructive events a restart witness has to rule
     // out: applied-base rebuilds this instance started (one per restart at most
     // today, since the restore attempt is single-shot) and whole-timeline
@@ -2124,6 +2132,15 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * @return true while a retire of this view's checkpoint timeline has run and its
+     * {@code _timeline} is still on disk. See {@link #isCheckpointTimelineRetirePending}. Read on
+     * the refresh-worker thread only
+     */
+    public boolean isCheckpointTimelineRetirePending() {
+        return isCheckpointTimelineRetirePending;
+    }
+
+    /**
      * @return true while this view, carried over from an older checkpoint format, still
      * owes the rebuild from its base table that replaces its output and retires the older
      * directory. The flag stops nothing: the view's first refresh turn runs the rebuild, or
@@ -2323,6 +2340,15 @@ public class LiveViewInstance implements QuietCloseable {
         // Reason first, as for a block: a reader that sees the phase sees its reason.
         checkpointRecoveryReason = reason.toString();
         checkpointRecoveryPhase = LiveViewCheckpointRecoveryPhase.REBUILD_DEFERRED;
+    }
+
+    /**
+     * Records that a retire of this view's checkpoint timeline left {@code _timeline} on disk.
+     * The refresh worker calls this under the refresh latch, from the retire itself.
+     * {@link #clearCheckpointTimelineRetirePending()} ends it.
+     */
+    public void markCheckpointTimelineRetirePending() {
+        isCheckpointTimelineRetirePending = true;
     }
 
     /**
@@ -2572,6 +2598,14 @@ public class LiveViewInstance implements QuietCloseable {
         checkpointDataSegmentCount = Numbers.LONG_NULL;
         checkpointObsoleteSegmentBytes = Numbers.LONG_NULL;
         checkpointLastLookupDepth = Numbers.LONG_NULL;
+    }
+
+    /**
+     * Ends what {@link #markCheckpointTimelineRetirePending()} recorded. The refresh worker calls
+     * this under the refresh latch, from a retire that finds {@code _timeline} gone.
+     */
+    public void clearCheckpointTimelineRetirePending() {
+        isCheckpointTimelineRetirePending = false;
     }
 
     /**
@@ -3129,6 +3163,10 @@ public class LiveViewInstance implements QuietCloseable {
      * immediately rather than waiting for the row-count trigger to re-fire.
      */
     public void setHeadCheckpoint(long lvSeqTxn, long baseSeqTxn, long maxTs, long stateBytes, long writtenUs) {
+        // A retire drops the head whatever it did on disk, and nothing publishes over a _timeline it
+        // could not remove, so no head stands beside one.
+        assert lvSeqTxn == Numbers.LONG_NULL || !isCheckpointTimelineRetirePending
+                : "a live view head checkpoint stands beside a timeline a retire could not remove";
         // Publish the (lvSeqTxn, maxTs, stateBytes, baseSeqTxn) tuple atomically:
         // build a fresh immutable array and store the reference volatile. A reader
         // observing the new reference is guaranteed to see all fields from the same

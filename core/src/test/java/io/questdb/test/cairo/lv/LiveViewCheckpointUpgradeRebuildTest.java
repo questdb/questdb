@@ -882,6 +882,10 @@ public class LiveViewCheckpointUpgradeRebuildTest extends AbstractLiveViewCheckp
                 driveRefreshToQuiescence(job);
                 Assert.assertTrue(fault.hasTimelineRemoveFired());
                 Assert.assertTrue(instance.isCheckpointUpgradeRebuildPending());
+                // The older _timeline the retire could not remove is the upgrade's to end: the
+                // retire neither refuses it as a kept timeline nor writes a marker beside it, and
+                // the seals keep meeting the older format.
+                assertOlderTimelineNotRefusedAsKept(instance);
 
                 // No retry loop: the view keeps refreshing, and every seal refuses to publish over
                 // the older superblock that survived. The third refusal in a row retires the
@@ -889,6 +893,7 @@ public class LiveViewCheckpointUpgradeRebuildTest extends AbstractLiveViewCheckp
                 // pending upgrade.
                 insertAndRefresh(job, "('2026-01-03T10:00:00.000000Z', 'acct-1', 64.0)");
                 Assert.assertTrue(instance.isCheckpointUpgradeRebuildPending());
+                assertOlderTimelineNotRefusedAsKept(instance);
                 insertAndRefresh(job, "('2026-01-03T10:10:00.000000Z', 'acct-2', 128.0)");
                 capture.drain();
                 capture.assertLogged("live view checkpoint seal keeps failing, retiring the timeline and backing off [view=lv, consecutiveFailures=3");
@@ -1144,6 +1149,21 @@ public class LiveViewCheckpointUpgradeRebuildTest extends AbstractLiveViewCheckp
             putLeInt(bytes, base + LiveViewCheckpointSuperblock.SLOT_CRC_OFFSET, (int) crc.getValue());
         }
         Files.write(timeline.toPath(), bytes);
+    }
+
+    // The older _timeline a retire could not remove stays the upgrade's: the view does not refuse it
+    // as a timeline a retire kept, and no repair marker stands beside it.
+    private void assertOlderTimelineNotRefusedAsKept(LiveViewInstance instance) {
+        Assert.assertTrue("the older timeline survives the retire", new File(checkpointsRootByDirName(), LiveViewCheckpointLayout.TIMELINE_FILE_NAME).exists());
+        Assert.assertFalse("the upgrade owns it", instance.isCheckpointTimelineRetirePending());
+        Assert.assertFalse(
+                "no marker stands beside it",
+                new File(checkpointsRootByDirName(), LiveViewCheckpointLayout.REPAIRING_MARKER_FILE_NAME).exists()
+        );
+        Assert.assertFalse(
+                "staged or published",
+                new File(checkpointsRootByDirName(), LiveViewCheckpointLayout.REPAIRING_MARKER_FILE_NAME + LiveViewCheckpointLayout.TMP_SUFFIX).exists()
+        );
     }
 
     private void assertRecoveryReport(String expectedRow) throws Exception {

@@ -80,6 +80,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.function.IntSupplier;
+import java.util.regex.Pattern;
 
 /**
  * Acceptance coverage for the retention rule the versioned timeline replaced the
@@ -113,6 +114,26 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
     // Deep historical corrections one case drives, each three seconds above the group
     // its ordinal names, so it lands between two in-order groups without colliding.
     private static final int CORRECTIONS = 6;
+    // What the upsert of 00:01 to 100 over the rows 00:01 to 00:04, x 1 to 4, leaves: s sums x over
+    // the row and the two rows of 'a' below it, by hand.
+    private static final String CHANGE_BELOW_EVERY_ROOT_ROWS = """
+            ts\tsym\tx\ts
+            2026-01-01T00:01:00.000000Z\ta\t100.0\t100.0
+            2026-01-01T00:02:00.000000Z\ta\t2.0\t102.0
+            2026-01-01T00:03:00.000000Z\ta\t3.0\t105.0
+            2026-01-01T00:04:00.000000Z\ta\t4.0\t9.0
+            """;
+    // CHANGE_BELOW_EVERY_ROOT_ROWS with the late row 00:01:30 of 0.5, which shifts the two sums above it.
+    private static final String CHANGE_BELOW_EVERY_ROOT_LATE_ROW_ROWS = """
+            ts\tsym\tx\ts
+            2026-01-01T00:01:00.000000Z\ta\t100.0\t100.0
+            2026-01-01T00:01:30.000000Z\ta\t0.5\t100.5
+            2026-01-01T00:02:00.000000Z\ta\t2.0\t102.5
+            2026-01-01T00:03:00.000000Z\ta\t3.0\t5.5
+            2026-01-01T00:04:00.000000Z\ta\t4.0\t9.0
+            """;
+    // The forward row 00:05 of 5.0 above them: 5.0 + 4.0 + 3.0.
+    private static final String CHANGE_BELOW_EVERY_ROOT_ROW_0005 = "2026-01-01T00:05:00.000000Z\ta\t5.0\t12.0\n";
     // Too many open files: a fault a retry may get past.
     private static final int ERRNO_EMFILE = 24;
     // What a departure of the newest of two roots above the day the base loses leaves.
@@ -172,6 +193,12 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
     // day the base lost.
     private static final String LATE_ROW_HISTORY_FLOOR = "the view holds rows from 2025-12-31T12:00:00.000000Z "
             + "but the base table's earliest row is at 2026-01-01T00:00:30.000000Z";
+    // What the retire logs when it keeps _timeline and cannot write the marker beside it.
+    private static final String KEPT_TIMELINE_MARKER_WRITE_FAILED = "could not write the live view checkpoint repair marker "
+            + "beside a timeline its retire could not remove [view=lv";
+    // What a read or a write of the checkpoint timeline fails with while a retire's kept _timeline
+    // stands.
+    private static final String KEPT_TIMELINE_REFUSAL = "live view checkpoint timeline is retired, its _timeline could not be removed";
     // The cause the in-place recovery after a faulted refresh turn reports.
     private static final String MID_DRAIN_CAUSE = "mid-drain refresh failure";
     // What an upsert of the owed-root fixture's row 00:04 out of the filter leaves: 00:03's sum
@@ -234,6 +261,31 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
     // commit this is also the epoch's logical entry count - eight times the retained
     // ring's former default count bound, which is the retention the timeline replaced.
     private static final int SEALS = 64;
+    // The rows the seeding view's base holds ahead of CREATE, one a minute from 00:01.
+    private static final int SEED_ROWS = 8;
+    // What the anchored view over tx computes, recomputed in plain SQL: each account's running sum
+    // over a partition of the day the anchor resets on.
+    private static final String ANCHORED_RECOMPUTE_SQL = "SELECT created_at, account_id, sum(amount) OVER (PARTITION BY account_id, bucket "
+            + "ORDER BY created_at ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS cumulative_sum FROM (SELECT created_at, "
+            + "account_id, amount, timestamp_floor('1d', created_at, '1970-01-01T00:00:00.000000Z'::timestamp) AS bucket FROM tx)";
+    private static final String ANCHORED_VIEW_SQL = "SELECT created_at, account_id, sum(amount) OVER w AS cumulative_sum FROM tx "
+            + "WINDOW w AS (PARTITION BY account_id ORDER BY created_at ANCHOR DAILY '00:00')";
+    // What a seed sweep's resume logs when it abandons the timeline for a re-sweep from offset 0.
+    private static final String SEED_RESUME_ABANDONED = "could not restore live view from seed checkpoint [view=lv";
+    // What a seed sweep's seal logs when it fails.
+    private static final String SEED_SEAL_FAILED = "could not write live view seed checkpoint [view=lv";
+    private static final String SEED_VIEW_SQL = "SELECT ts, sym, x, sum(x) OVER (PARTITION BY sym ORDER BY ts "
+            + "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) s FROM base";
+    // What the departure of 00:03 from the rows 00:01, 00:02 and 00:03 leaves, with the forward row
+    // 00:04 of 1.0 and the late row 00:03:30 of 2.0: s sums x over the row and the two rows of 'a'
+    // below it, by hand.
+    private static final String SPLICED_DEPARTURE_LATE_ROW_ROWS = """
+            ts\tsym\tx\ts
+            2026-01-01T00:01:00.000000Z\ta\t1.5\t1.5
+            2026-01-01T00:02:00.000000Z\ta\t2.5\t4.0
+            2026-01-01T00:03:30.000000Z\ta\t2.0\t6.0
+            2026-01-01T00:04:00.000000Z\ta\t1.0\t5.5
+            """;
     // The checkpoint files a splicing EOF repair and the seals around it write: the repair's
     // marker and descriptor, the seals' segments and retirement queue, and the superblock.
     private static final ObjList<String> SPLICE_SYNCED_FILE_KINDS = new ObjList<>(
@@ -1414,17 +1466,15 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
     }
 
     @Test
-    public void testDepartureFrontierSealThatFailsWithOnlyItsTimelineLockedKeepsEveryRow() throws Exception {
+    public void testDepartureFrontierSealThatFailsWithOnlyItsTimelineLockedOpensAFreshHistoryAtTheNextSeal() throws Exception {
         // A lock on the _timeline file alone: the retire that answers the failed seal removes the
         // segment directories and every file but _timeline, and keeps the truncate's marker beside
-        // it. The next row's seal fails: the superblock still names the truncated generation, whose
-        // segments are gone, so the seal can neither append to it nor start a fresh history below
-        // it. A base column has the view recover in place, which declines the generation over the
-        // marker, and the restatement guard refuses the rebuild over the day the base lost. With the
-        // lock gone, a restart's reconciliation cannot adopt a generation whose roots are gone, so
-        // it leaves the directory as it is, and the marker still reads as live against the
-        // superblock: each restart rebuilds over it, and the guard refuses that too. The view keeps
-        // every row throughout.
+        // it. The view refuses the generation the superblock still names, whose segments are gone.
+        // The lock goes with the departure's turn, so the next row's seal retries the retire, which
+        // removes _timeline and the marker with it, and opens a fresh history at the row: no seal
+        // meets the truncated generation's missing segments. A base column then has the view
+        // restore its runtime in place from that history, and each restart restores from it. The
+        // view keeps every row throughout.
         final TimelineUnlinkFault fault = new TimelineUnlinkFault();
         final String rows = singleDepartureRows(true) + "2026-01-01T00:04:00.000000Z\ta\t8.0\t12.0\n";
         final LogCapture capture = new LogCapture();
@@ -1440,25 +1490,28 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
                         Assert.assertFalse("the retire removes the metadata segments", ff.exists(LiveViewCheckpointLayout.metaDirPath(path, dir).$()));
                         Assert.assertFalse("and the data segments", ff.exists(LiveViewCheckpointLayout.dataDirPath(path, dir).$()));
                     }
+                    Assert.assertTrue("and the view refuses the generation it kept", instance.isCheckpointTimelineRetirePending());
                     final long sealFailuresBefore = instance.getCheckpointSealFailures();
                     commitDeparture(job, "('2026-01-01T00:04:00.000000Z', 'a', 8.0)");
-                    Assert.assertEquals("the next seal fails", sealFailuresBefore + 1, instance.getCheckpointSealFailures());
+                    Assert.assertEquals("the next seal lands", sealFailuresBefore, instance.getCheckpointSealFailures());
+                    Assert.assertFalse("its retry of the retire removes the kept file", instance.isCheckpointTimelineRetirePending());
+                    Assert.assertEquals("and it opens a fresh history", 1, generation(instance));
+                    assertCheckpointLadder(instance, false, "2026-01-01T00:04:00.000000Z -> 4\n");
+                    assertNoRepairMarker(instance);
                     final long runtimeRestoresBefore = instance.getCheckpointRuntimeRestores();
                     execute("ALTER TABLE base ADD COLUMN y INT");
                     drainWalQueue();
                     driveRefreshToQuiescence(job);
-                    Assert.assertEquals("nothing restores behind the live marker", runtimeRestoresBefore, instance.getCheckpointRuntimeRestores());
-                    Assert.assertTrue("the refused rebuild stops the view", instance.isCheckpointRecoveryBlocked());
+                    Assert.assertEquals("the base column restores the runtime in place", runtimeRestoresBefore + 1, instance.getCheckpointRuntimeRestores());
+                    Assert.assertFalse(instance.isCheckpointRecoveryBlocked());
                     Assert.assertFalse(instance.isInvalid());
-                    TestUtils.assertContains(
-                            instance.getCheckpointRecoveryReason(),
-                            "would drop rows it retains [cause=base table metadata change]: " + OWED_ROOT_HISTORY_FLOOR
-                    );
                 }
-                capture.drain();
-                capture.assertLogged(runtimeRestoreDeclinedOverTheMarker("base table metadata change"));
                 assertViewRows(rows, DEPARTURE_ROWS_QUERY);
-                assertRestartsBlockedByTheRepairMarker(rows, OWED_ROOT_HISTORY_FLOOR);
+                for (int restart = 0; restart < 2; restart++) {
+                    restartAndRefresh();
+                    assertRestoredFromTimeline("lv");
+                    assertViewRows(rows, DEPARTURE_ROWS_QUERY);
+                }
                 capture.drain();
                 capture.assertNotLogged("reset live view checkpoint directory");
                 capture.assertNotLogged("does not match durable materialization");
@@ -1671,28 +1724,30 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
     }
 
     @Test
-    public void testDepartureFrontierTruncateWhoseRetireKeepsOnlyTheTimelineBlocksARestartAfterOneSeal() throws Exception {
+    public void testDepartureFrontierTruncateWhoseRetireKeepsOnlyTheTimelineOpensAFreshHistoryAtTheNextSeal() throws Exception {
         // The frontier truncate fails after its marker and its metadata, and the retire that answers
         // it keeps _timeline and the marker beside it: the splice's generation, whose root of the
-        // departed row sits above the frontier. The next row seals a root on top of it, one
-        // generation past the one the marker names, so the marker still reads as live: each restart
-        // rebuilds, and the restatement guard refuses the rebuild over the day the base lost. The
-        // view stops with every row.
+        // departed row sits above the frontier, and which the view refuses. Once the fault is gone,
+        // the next row's seal retries the retire, which removes that generation and the marker with
+        // it, and opens a fresh history at the row. Each restart restores from it with every row,
+        // over the day the base lost too.
         final FrontierTruncateDoubleFault fault = new FrontierTruncateDoubleFault(true);
+        final String rows = singleDepartureRows(true) + "2026-01-01T00:04:00.000000Z\ta\t8.0\t12.0\n";
         assertMemoryLeak(fault, () -> {
             failTheFrontierTruncateWithItsTimelineLockedThenSeal(fault, 1);
-            assertRestartsBlockedByTheRepairMarker(
-                    singleDepartureRows(true) + "2026-01-01T00:04:00.000000Z\ta\t8.0\t12.0\n",
-                    OWED_ROOT_HISTORY_FLOOR
-            );
+            for (int restart = 0; restart < 2; restart++) {
+                restartAndRefresh();
+                assertRestoredFromTimeline("lv");
+                assertNoRepairMarker(viewInstance());
+                assertViewRows(rows, DEPARTURE_ROWS_QUERY);
+            }
         });
     }
 
     @Test
     public void testDepartureFrontierTruncateWhoseRetireKeepsOnlyTheTimelineRestoresAfterTwoSeals() throws Exception {
-        // As above, with two rows sealed on top of the generation the retire kept: the second lands
-        // two generations past the one the marker names, which reads the marker as stale. Each
-        // restart clears it and restores from the newest root, which the running view sealed.
+        // As above, with two rows sealed in the fresh history the first one's seal opened. Each
+        // restart restores from the newest root, which the running view sealed.
         final FrontierTruncateDoubleFault fault = new FrontierTruncateDoubleFault(true);
         // s sums x over the row and the two rows of 'a' below it.
         final String rows = singleDepartureRows(true) + """
@@ -2744,8 +2799,8 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
     public void testHeadMissDepartureSpliceThatFailsToPublishRetiresTheTimeline() throws Exception {
         // The splice of the kept-row departure fails after writing its metadata and before the
         // superblock names it: the output moved under every root it re-versioned, so the timeline
-        // retires on the way out, with the seal the repair put on it. Over a base that lost nothing
-        // the restart rebuilds what a recompute gives.
+        // retires on the way out, and neither a head nor a base WAL arm the view held survives it.
+        // Over a base that lost nothing the restart rebuilds what a recompute gives.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
         final AtomicReference<LiveViewRefreshJob> faultedJob = new AtomicReference<>();
         final AtomicInteger markerRenames = new AtomicInteger();
@@ -2783,6 +2838,10 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
                     Assert.assertFalse(configuration.getFilesFacade().exists(timelinePath.$()));
                     Assert.assertFalse(LiveViewCheckpointRepairMarker.exists(configuration.getFilesFacade(), dir));
                 }
+                Assert.assertEquals("no head survives the retire", Numbers.LONG_NULL, instance.getHeadCheckpointMaxTs());
+                Assert.assertEquals("nor the head's base WAL arm", Numbers.LONG_NULL, instance.getHeadCheckpointBaseSeqTxn());
+                Assert.assertEquals("nor the timeline's", Numbers.LONG_NULL, instance.getCheckpointTimelineWalPurgeFloor());
+                Assert.assertFalse(instance.isCheckpointTimelineRetirePending());
             }
             assertViewRows(HEAD_MISS_KEPT_ROW_DEPARTURE_ROWS, DEPARTURE_ROWS_QUERY);
             assertNoRefreshFaults("lv");
@@ -3315,58 +3374,46 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
     }
 
     @Test
-    public void testTruncateWithNoPrefixWhoseRetireKeepsTheTimelineKeepsItsMarker() throws Exception {
+    public void testTruncateWithNoPrefixWhoseRetireKeepsTheTimelineOpensAFreshHistoryAtTheNextSeal() throws Exception {
         // A truncate whose floor sits below every root keeps no prefix and retires the timeline
         // instead. Its marker, written ahead of the truncate, names the generation and the view's
         // last seqTxn, and the retire, which fails on _timeline and the segment directories, keeps
-        // it beside the generation it could not remove. Once the view commits past that seqTxn the
-        // marker reads as live, and the restart rebuilds rather than restore a generation the
-        // commit may have moved under.
+        // the file and refuses the generation it names. The view has committed nothing past that
+        // seqTxn, so the truncate's marker reads as stale there, and the retire writes its own in
+        // its place, which names no generation and so reads as live. The lock goes, and the next
+        // row's seal retries the retire, which removes the file and the marker with it, and opens a
+        // fresh history at the row, which the restart restores.
         final TimelineUnlinkFault fault = new TimelineUnlinkFault();
-        final LogCapture capture = new LogCapture();
-        capture.start();
-        try {
-            assertMemoryLeak(fault, () -> {
-                createView();
-                final LiveViewInstance instance;
-                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                    instance = buildHistory(job);
+        assertMemoryLeak(fault, () -> {
+            createView();
+            final LiveViewInstance instance;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                instance = buildHistory(job);
+            }
+            final long generationBefore = generation(instance);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                fault.lock(false);
+                try {
+                    Assert.assertFalse("no root sits below the floor", job.truncateOrRetireTimelineOnO3ForTest(instance, ts(timestamp(5))));
+                } finally {
+                    fault.unlock();
                 }
-                final long generationBefore = generation(instance);
-                final long lvSeqTxn = engine.getTableSequencerAPI().lastTxn(instance.getLiveViewToken());
-                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                    fault.lock(false);
-                    try {
-                        Assert.assertFalse("no root sits below the floor", job.truncateOrRetireTimelineOnO3ForTest(instance, ts(timestamp(5))));
-                    } finally {
-                        fault.unlock();
-                    }
-                    Assert.assertEquals("the retire meets the lock once", 1, fault.getRefusedTimelineUnlinks());
-                    assertTimelineOnDisk(instance, true);
-                    Assert.assertEquals("the truncate publishes nothing", generationBefore, generation(instance));
-                    assertMarkerNames(generationBefore);
-                    try (Path dir = checkpointsDir(instance)) {
-                        Assert.assertEquals(lvSeqTxn, LiveViewCheckpointRepairMarker.readLvSeqTxn(configuration, dir));
-                    }
-                    appendAndRefresh(job, SEALS * 10 + 10, SEALS + 1);
-                    driveRefreshToQuiescence(job);
+                Assert.assertEquals("the retire meets the lock once", 1, fault.getRefusedTimelineUnlinks());
+                assertTimelineRetirePending(instance, generationBefore, Numbers.LONG_NULL);
+                try (Path dir = checkpointsDir(instance)) {
+                    Assert.assertEquals(Numbers.LONG_NULL, LiveViewCheckpointRepairMarker.readLvSeqTxn(configuration, dir));
                 }
-                Assert.assertTrue(
-                        "the view commits past the marker's seqTxn",
-                        engine.getTableSequencerAPI().lastTxn(instance.getLiveViewToken()) > lvSeqTxn
-                );
-                restartAndRefresh();
-                capture.drain();
-                capture.assertLogged("live view restart rebuilding from applied base [view=lv, cause=prefix preservation repair marker present");
-                assertRebuiltFromAppliedBase("lv");
-                final LiveViewInstance rebuilt = viewInstance();
-                Assert.assertEquals("the rebuild opens a fresh history", 1, generation(rebuilt));
-                assertNoRepairMarker(rebuilt);
-                assertViewMatchesRecompute();
-            });
-        } finally {
-            capture.stop();
-        }
+                appendAndRefresh(job, SEALS * 10 + 10, SEALS + 1);
+                driveRefreshToQuiescence(job);
+                Assert.assertFalse("the seal's retry of the retire removed the file", instance.isCheckpointTimelineRetirePending());
+                Assert.assertEquals("and the seal opens a fresh history", 1, generation(instance));
+                assertCheckpointLadder(instance, false, timestamp(SEALS * 10 + 10) + " -> " + (SEALS + 1) + "\n");
+                assertNoRepairMarker(instance);
+            }
+            restartAndRefresh();
+            assertRestoredFromTimeline("lv");
+            assertViewMatchesRecompute();
+        });
     }
 
     @Test
@@ -3609,10 +3656,10 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
         // fails the way Windows fails it: the live record unlinked, the retried rename refused. The
         // write keeps the staged record, the only one left, and the repair retires the timeline
         // ahead of its commit, with _timeline and the segment directories locked: the splice's
-        // generation stays on disk with the staged record beside it. The closing seal lands on top
-        // of that generation, one past the one the record names, so each restart reads it as live
-        // and rebuilds, which the restatement guard refuses over the day the base lost: the view
-        // stops with every row.
+        // generation stays on disk with the staged record beside it, which reads as live there. The
+        // closing seal retries the retire, meets the lock and is refused, so nothing lands on the
+        // generation the record names: each restart reads it as live and rebuilds, which the
+        // restatement guard refuses over the day the base lost. The view stops with every row.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
         final TimelineUnlinkFault fault = new TimelineUnlinkFault();
         final LogCapture capture = new LogCapture();
@@ -3627,6 +3674,7 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
                     failTheOwedResumeSealAtItsPublication(job, "('2026-01-01T00:01:30.000000Z', 'a', 1.0)");
                     assertRepairMarkerLive(instance, generationBefore);
                     final long resetsBefore = instance.getCheckpointTimelineResets();
+                    final long sealFailuresBefore = instance.getCheckpointSealFailures();
                     fault.failTheNextMarkerRewrite();
                     fault.lock(false);
                     try {
@@ -3636,7 +3684,9 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
                     }
                     Assert.assertEquals("the second repair's marker rewrite fails", 1, fault.getFailedMarkerRewrites());
                     Assert.assertEquals("the repair retires the timeline ahead of its commit", resetsBefore + 1, instance.getCheckpointTimelineResets());
-                    Assert.assertEquals("the retire meets the lock once", 1, fault.getRefusedTimelineUnlinks());
+                    Assert.assertEquals("the retire, then the closing seal's retry of it", 2, fault.getRefusedTimelineUnlinks());
+                    Assert.assertEquals("which refuses the seal", sealFailuresBefore + 1, instance.getCheckpointSealFailures());
+                    Assert.assertTrue("the view refuses the generation the retire kept", instance.isCheckpointTimelineRetirePending());
                     assertTimelineOnDisk(instance, true);
                     try (Path dir = checkpointsDir(instance); Path path = new Path()) {
                         final FilesFacade ff = configuration.getFilesFacade();
@@ -3651,8 +3701,8 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
                         );
                     }
                     assertMarkerNames(generationBefore + 1);
-                    Assert.assertEquals("the closing seal lands on the generation the retire kept", generationBefore + 2, generation(instance));
-                    Assert.assertEquals(ts("2026-01-01T00:04:00.000000Z"), instance.getHeadCheckpointMaxTs());
+                    Assert.assertEquals("nothing lands on the generation the retire kept", generationBefore + 1, generation(instance));
+                    Assert.assertEquals("no head survives the retire", Numbers.LONG_NULL, instance.getHeadCheckpointMaxTs());
                     assertViewRows(OWED_ROOT_SECOND_LATE_ROW_ROWS, DEPARTURE_ROWS_QUERY);
                 }
                 assertRestartsBlockedByTheRepairMarker(OWED_ROOT_SECOND_LATE_ROW_ROWS, OWED_ROOT_HISTORY_FLOOR);
@@ -6303,6 +6353,1348 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
         });
     }
 
+    @Test
+    public void testResumeWhoseSpliceFailsAndWhoseRetireKeepsTheTimelineOpensAFreshHistoryAtTheNextSeal() throws Exception {
+        // The departure of 00:03 resumes from the root at 00:01, and its splice fails after its data:
+        // the output moved under every root above the anchor, so the timeline retires, under a lock
+        // on _timeline that keeps the file, and the splice's live marker beside it. The lock goes
+        // ahead of the closing seal, which retires the kept file first and opens a fresh history at
+        // the frontier 00:02. No root of the departed row, whose state still holds its 9.5, is left
+        // to anchor the late row 00:03:30, which resumes from the fresh root.
+        final TimelineUnlinkFault fault = new TimelineUnlinkFault();
+        assertMemoryLeak(fault, () -> {
+            createDepartureView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = commitTwoRootsUnderASplicedDeparture(job);
+                final long sealFailuresBefore = instance.getCheckpointSealFailures();
+                final long resetsBefore = instance.getCheckpointTimelineResets();
+                departWithTheSpliceFailingUnderALock(job, fault, true);
+                Assert.assertEquals("the splice's retire meets the lock alone", 1, fault.getRefusedTimelineUnlinks());
+                Assert.assertEquals("the seal's retry of the retire counts no reset", resetsBefore + 1, instance.getCheckpointTimelineResets());
+                Assert.assertFalse("the seal's retry removed the kept timeline", instance.isCheckpointTimelineRetirePending());
+                Assert.assertEquals("and the seal lands", sealFailuresBefore, instance.getCheckpointSealFailures());
+                Assert.assertEquals("on a fresh history", 1, generation(instance));
+                assertCheckpointLadder(instance, false, "2026-01-01T00:02:00.000000Z -> 2\n");
+                assertNoRepairMarker(instance);
+                commitDeparture(job, "('2026-01-01T00:04:00.000000Z', 'a', 1.0)");
+                final long resumesBefore = job.getStatsForTest().getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_RESUME_FROM_ANCHOR);
+                commitDeparture(job, "('2026-01-01T00:03:30.000000Z', 'a', 2.0)");
+                Assert.assertEquals(
+                        "the late row resumes from the fresh root at 00:02",
+                        resumesBefore + 1,
+                        job.getStatsForTest().getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_RESUME_FROM_ANCHOR)
+                );
+            }
+            assertViewRows(SPLICED_DEPARTURE_LATE_ROW_ROWS, DEPARTURE_ROWS_QUERY);
+            assertViewMatchesRecompute(DEPARTURE_VIEW_SQL);
+        });
+    }
+
+    @Test
+    public void testResumeWhoseSpliceFailsWhileItsTimelineStaysLockedRepairsLateRowsWithoutAnAnchor() throws Exception {
+        // As above, with the lock held through a forward row and a late row. Every seal retries the
+        // retire first and is refused, the third refusal pausing the seal; the late row finds no
+        // anchor, since the timeline it would search is the retired one, and the head-miss rebuild
+        // repairs it from scratch. Once the lock goes, the first seal past the pause retires the
+        // kept file and opens a fresh history, which a restart restores.
+        final TimelineUnlinkFault fault = new TimelineUnlinkFault();
+        final LogCapture capture = new LogCapture();
+        capture.start();
+        try {
+            assertMemoryLeak(fault, () -> {
+                createDepartureView();
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    final LiveViewInstance instance = commitTwoRootsUnderASplicedDeparture(job);
+                    final long spliceBaseGeneration = superblockGeneration(instance);
+                    final long sealFailuresBefore = instance.getCheckpointSealFailures();
+                    final long resetsBefore = instance.getCheckpointTimelineResets();
+                    departWithTheSpliceFailingUnderALock(job, fault, false);
+                    Assert.assertEquals("the retire, then the closing seal's retry of it", 2, fault.getRefusedTimelineUnlinks());
+                    Assert.assertEquals("the closing seal is refused", sealFailuresBefore + 1, instance.getCheckpointSealFailures());
+                    assertTimelineRetirePending(instance, spliceBaseGeneration, spliceBaseGeneration);
+                    assertSpliceMarkerLive(instance);
+
+                    commitDeparture(job, "('2026-01-01T00:04:00.000000Z', 'a', 1.0)");
+                    Assert.assertEquals(3, fault.getRefusedTimelineUnlinks());
+                    Assert.assertEquals("the forward row's seal is refused", sealFailuresBefore + 2, instance.getCheckpointSealFailures());
+
+                    final long resumesBefore = job.getStatsForTest().getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_RESUME_FROM_ANCHOR);
+                    final long headMissRepairsBefore = countHeadMissRepairs(job);
+                    capture.drain();
+                    commitDeparture(job, "('2026-01-01T00:03:30.000000Z', 'a', 2.0)");
+                    Assert.assertEquals(
+                            "the late row takes no anchor",
+                            resumesBefore,
+                            job.getStatsForTest().getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_RESUME_FROM_ANCHOR)
+                    );
+                    Assert.assertEquals("the head-miss rebuild repairs it", headMissRepairsBefore + 1, countHeadMissRepairs(job));
+                    capture.drain();
+                    capture.assertLogged("live view checkpoint timeline holds no resume anchor [view=lv");
+                    capture.assertLogged(KEPT_TIMELINE_REFUSAL);
+                    Assert.assertEquals("the rebuild's retire, then its closing seal's retry of it", 5, fault.getRefusedTimelineUnlinks());
+                    Assert.assertEquals("the splice's retire and the rebuild's", resetsBefore + 2, instance.getCheckpointTimelineResets());
+                    Assert.assertEquals("the third refusal", sealFailuresBefore + 3, instance.getCheckpointSealFailures());
+                    Assert.assertTrue("pauses the seal", instance.isSealOnCooldown(currentMicros));
+                    assertTimelineRetirePending(instance, spliceBaseGeneration, spliceBaseGeneration);
+                    assertSpliceMarkerLive(instance);
+                    assertViewRows(SPLICED_DEPARTURE_LATE_ROW_ROWS, DEPARTURE_ROWS_QUERY);
+                    assertViewMatchesRecompute(DEPARTURE_VIEW_SQL);
+
+                    fault.unlock();
+                    setCurrentMicros(currentMicros + 61_000_000L);
+                    commitDeparture(job, "('2026-01-01T00:05:00.000000Z', 'a', 1.0)");
+                    Assert.assertFalse("the seal past the pause retires the kept timeline", instance.isCheckpointTimelineRetirePending());
+                    Assert.assertEquals("and opens a fresh history", 1, generation(instance));
+                    assertCheckpointLadder(instance, false, "2026-01-01T00:05:00.000000Z -> 5\n");
+                    assertNoRepairMarker(instance);
+                    Assert.assertEquals("the seal that lands ends the streak", 0, instance.getSealFailureStreak());
+                    Assert.assertFalse(instance.isSealOnCooldown(currentMicros));
+                }
+                // s sums x over the row and the two rows of 'a' below it.
+                final String rows = SPLICED_DEPARTURE_LATE_ROW_ROWS + "2026-01-01T00:05:00.000000Z\ta\t1.0\t4.0\n";
+                assertViewRows(rows, DEPARTURE_ROWS_QUERY);
+                restartAndRefresh();
+                assertRestoredFromTimeline("lv");
+                assertViewRows(rows, DEPARTURE_ROWS_QUERY);
+                assertViewMatchesRecompute(DEPARTURE_VIEW_SQL);
+            });
+        } finally {
+            capture.stop();
+        }
+    }
+
+    @Test
+    public void testChangeBelowEveryRootWhoseRetireKeepsTheTimelineOpensAFreshHistoryAtTheNextSeal() throws Exception {
+        assertChangeBelowEveryRootWhoseRetireKeepsTheTimelineOpensAFreshHistory(false);
+    }
+
+    @Test
+    public void testChangeBelowEveryRootWhoseRetireKeepsTheTimelineOpensAFreshHistoryAtTheNextSealOverANanosecondBase() throws Exception {
+        assertChangeBelowEveryRootWhoseRetireKeepsTheTimelineOpensAFreshHistory(true);
+    }
+
+    @Test
+    public void testChangeBelowEveryRootWhileItsTimelineStaysLockedRepairsLateRowsWithoutAnAnchor() throws Exception {
+        // The lock outlasts the change below every root: the forward row's seal and the late row's
+        // closing seal retry the retire and are refused, the third refusal in a row pausing the
+        // seal, and the late row finds no anchor. Nothing publishes over the kept generation. Past
+        // the pause, with the lock gone, the next row's seal opens a fresh history.
+        final TimelineUnlinkFault fault = new TimelineUnlinkFault();
+        assertMemoryLeak(fault, () -> {
+            createDepartureView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = commitFourRoots(job, false);
+                final long generationBefore = superblockGeneration(instance);
+                final long sealFailuresBefore = instance.getCheckpointSealFailures();
+                changeBelowEveryRootUnderALock(job, fault);
+                commitDeparture(job, "('2026-01-01T00:05:00.000000Z', 'a', 5.0)");
+                Assert.assertEquals("the forward row's seal retries the retire", 3, fault.getRefusedTimelineUnlinks());
+                Assert.assertEquals("and is refused", sealFailuresBefore + 2, instance.getCheckpointSealFailures());
+                final long resumesBefore = job.getStatsForTest().getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_RESUME_FROM_ANCHOR);
+                commitDeparture(job, "('2026-01-01T00:01:30.000000Z', 'a', 0.5)");
+                Assert.assertEquals(
+                        "the late row takes no anchor",
+                        resumesBefore,
+                        job.getStatsForTest().getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_RESUME_FROM_ANCHOR)
+                );
+                Assert.assertEquals("the rebuild's retire, then its closing seal's retry of it", 5, fault.getRefusedTimelineUnlinks());
+                Assert.assertEquals("the third refusal", sealFailuresBefore + 3, instance.getCheckpointSealFailures());
+                Assert.assertTrue("pauses the seal", instance.isSealOnCooldown(currentMicros));
+                assertTimelineRetirePending(instance, generationBefore, Numbers.LONG_NULL);
+                assertViewRows(CHANGE_BELOW_EVERY_ROOT_LATE_ROW_ROWS + CHANGE_BELOW_EVERY_ROOT_ROW_0005, DEPARTURE_ROWS_QUERY);
+                assertViewMatchesRecompute(DEPARTURE_VIEW_SQL);
+
+                fault.unlock();
+                setCurrentMicros(currentMicros + 61_000_000L);
+                commitDeparture(job, "('2026-01-01T00:06:00.000000Z', 'a', 6.0)");
+                Assert.assertFalse(instance.isCheckpointTimelineRetirePending());
+                Assert.assertEquals("the seal past the pause opens a fresh history", 1, generation(instance));
+                assertCheckpointLadder(instance, false, "2026-01-01T00:06:00.000000Z -> 7\n");
+                assertNoRepairMarker(instance);
+            }
+            // 6.0 + 5.0 + 4.0.
+            assertViewRows(
+                    CHANGE_BELOW_EVERY_ROOT_LATE_ROW_ROWS + CHANGE_BELOW_EVERY_ROOT_ROW_0005 + "2026-01-01T00:06:00.000000Z\ta\t6.0\t15.0\n",
+                    DEPARTURE_ROWS_QUERY
+            );
+            assertViewMatchesRecompute(DEPARTURE_VIEW_SQL);
+        });
+    }
+
+    @Test
+    public void testChangeBelowEveryRootWhoseTimelineStaysLockedIsRefusedOnEveryWorker() throws Exception {
+        // Two refresh workers, each with a timeline writer and reader of its own. The first runs the
+        // change below every root, whose retire keeps _timeline under the lock. The second runs the
+        // late row and the forward row with the lock held: the retire the first worker ran is the
+        // view's, so the second neither finds an anchor in the kept generation nor binds a writer
+        // to it, and its seals are refused. The third refusal on the view pauses the seal, and past
+        // the pause, with the lock gone, the second worker's next seal opens a fresh history.
+        final TimelineUnlinkFault fault = new TimelineUnlinkFault();
+        assertMemoryLeak(fault, () -> {
+            createDepartureView();
+            try (
+                    LiveViewRefreshJob first = new LiveViewRefreshJob(0, 2, engine, 1);
+                    LiveViewRefreshJob second = new LiveViewRefreshJob(1, 2, engine, 1)
+            ) {
+                final LiveViewInstance instance = commitFourRoots(first, false);
+                final long generationBefore = superblockGeneration(instance);
+                final long sealFailuresBefore = instance.getCheckpointSealFailures();
+                changeBelowEveryRootUnderALock(first, fault);
+                Assert.assertEquals(sealFailuresBefore + 1, instance.getCheckpointSealFailures());
+                Assert.assertNull("the second worker has bound no timeline writer", second.getCheckpointTimelinePurgeStateForTest());
+
+                commitDeparture(second, "('2026-01-01T00:01:30.000000Z', 'a', 0.5)");
+                commitDeparture(second, "('2026-01-01T00:05:00.000000Z', 'a', 5.0)");
+                Assert.assertEquals(
+                        "the second worker's late row takes no anchor",
+                        0,
+                        second.getStatsForTest().getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_RESUME_FROM_ANCHOR)
+                );
+                Assert.assertEquals("its head-miss rebuild repairs it", 1, countHeadMissRepairs(second));
+                Assert.assertNull(
+                        "the second worker never binds a writer to the kept generation",
+                        second.getCheckpointTimelinePurgeStateForTest()
+                );
+                Assert.assertEquals("its two seals are refused", sealFailuresBefore + 3, instance.getCheckpointSealFailures());
+                Assert.assertTrue("the third refusal on the view pauses the seal", instance.isSealOnCooldown(currentMicros));
+                assertTimelineRetirePending(instance, generationBefore, Numbers.LONG_NULL);
+                assertViewRows(CHANGE_BELOW_EVERY_ROOT_LATE_ROW_ROWS + CHANGE_BELOW_EVERY_ROOT_ROW_0005, DEPARTURE_ROWS_QUERY);
+                assertViewMatchesRecompute(DEPARTURE_VIEW_SQL);
+
+                fault.unlock();
+                setCurrentMicros(currentMicros + 61_000_000L);
+                commitDeparture(second, "('2026-01-01T00:06:00.000000Z', 'a', 6.0)");
+                Assert.assertNotNull("the seal binds the second worker's writer", second.getCheckpointTimelinePurgeStateForTest());
+                Assert.assertFalse(instance.isCheckpointTimelineRetirePending());
+                Assert.assertEquals("and opens a fresh history", 1, generation(instance));
+                assertCheckpointLadder(instance, false, "2026-01-01T00:06:00.000000Z -> 7\n");
+            }
+            assertViewMatchesRecompute(DEPARTURE_VIEW_SQL);
+        });
+    }
+
+    @Test
+    public void testChangeBelowEveryRootWhoseTimelineStaysLockedRebuildsOnRestart() throws Exception {
+        // A restart with the lock still held meets the marker the kept retire wrote: it rebuilds
+        // from the applied base rather than restore the kept generation, and the rebuild's own
+        // retire meets the lock, so the restarted view refuses the generation too. A late row then
+        // finds no anchor. Once the lock goes, the next seal opens a fresh history, which the next
+        // restart restores.
+        final TimelineUnlinkFault fault = new TimelineUnlinkFault();
+        final LogCapture capture = new LogCapture();
+        capture.start();
+        try {
+            assertMemoryLeak(fault, () -> {
+                createDepartureView();
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    commitFourRoots(job, false);
+                    changeBelowEveryRootUnderALock(job, fault);
+                }
+                restartAndRefresh();
+                capture.drain();
+                capture.assertLogged("live view restart rebuilding from applied base [view=lv, cause=prefix preservation repair marker present");
+                assertRebuiltFromAppliedBase("lv");
+                final LiveViewInstance restarted = viewInstance();
+                Assert.assertTrue("the rebuild's retire meets the lock too", restarted.isCheckpointTimelineRetirePending());
+                assertMarkerNames(Numbers.LONG_NULL);
+                assertViewRows(CHANGE_BELOW_EVERY_ROOT_ROWS, DEPARTURE_ROWS_QUERY);
+                assertViewMatchesRecompute(DEPARTURE_VIEW_SQL);
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    commitDeparture(job, "('2026-01-01T00:01:30.000000Z', 'a', 0.5)");
+                    Assert.assertEquals(0, job.getStatsForTest().getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_RESUME_FROM_ANCHOR));
+                    assertViewRows(CHANGE_BELOW_EVERY_ROOT_LATE_ROW_ROWS, DEPARTURE_ROWS_QUERY);
+                    assertViewMatchesRecompute(DEPARTURE_VIEW_SQL);
+                    fault.unlock();
+                    setCurrentMicros(currentMicros + 61_000_000L);
+                    commitDeparture(job, "('2026-01-01T00:06:00.000000Z', 'a', 6.0)");
+                    Assert.assertFalse(restarted.isCheckpointTimelineRetirePending());
+                    Assert.assertEquals("the next seal opens a fresh history", 1, generation(restarted));
+                    assertCheckpointLadder(restarted, false, "2026-01-01T00:06:00.000000Z -> 6\n");
+                }
+                // 6.0 + 4.0 + 3.0.
+                final String rows = CHANGE_BELOW_EVERY_ROOT_LATE_ROW_ROWS + "2026-01-01T00:06:00.000000Z\ta\t6.0\t13.0\n";
+                assertViewRows(rows, DEPARTURE_ROWS_QUERY);
+                restartAndRefresh();
+                assertRestoredFromTimeline("lv");
+                assertViewRows(rows, DEPARTURE_ROWS_QUERY);
+                assertViewMatchesRecompute(DEPARTURE_VIEW_SQL);
+            });
+        } finally {
+            capture.stop();
+        }
+    }
+
+    @Test
+    public void testChangeBelowEveryRootWhoseTimelineStaysLockedStopsTheRestartOverTheDayTheBaseLost() throws Exception {
+        // The row of the day the base then loses rode in with 00:01, so the oldest root sits at
+        // 00:01 and the upsert of 00:01 changes a row below every root. Its rebuild keeps the lost
+        // row, and its retire keeps _timeline under the lock, with the marker it writes beside it.
+        // Each restart then rebuilds rather than restore the kept generation, and the restatement
+        // guard refuses the rebuild over the day the base lost: the view stops with every row.
+        final TimelineUnlinkFault fault = new TimelineUnlinkFault();
+        // s sums x over the row and the two rows of 'a' below it; the rebuild's state reads the
+        // base, which no longer holds 12:00.
+        final String rows = """
+                ts\tsym\tx\ts
+                2025-12-31T12:00:00.000000Z\ta\t0.5\t0.5
+                2026-01-01T00:01:00.000000Z\ta\t100.0\t100.0
+                2026-01-01T00:02:00.000000Z\ta\t2.0\t102.0
+                2026-01-01T00:03:00.000000Z\ta\t3.0\t105.0
+                2026-01-01T00:04:00.000000Z\ta\t4.0\t9.0
+                """;
+        final LogCapture capture = new LogCapture();
+        capture.start();
+        try {
+            assertMemoryLeak(fault, () -> {
+                createDepartureView();
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    final LiveViewInstance instance = commitFourRootsOverTheDayTheBaseLoses(job);
+                    final long generationBefore = superblockGeneration(instance);
+                    changeBelowEveryRootUnderALock(job, fault);
+                    assertTimelineRetirePending(instance, generationBefore, Numbers.LONG_NULL);
+                }
+                assertViewRows(rows, DEPARTURE_ROWS_QUERY);
+                assertRestartsBlockedByTheRepairMarker(rows, OWED_ROOT_HISTORY_FLOOR);
+                capture.drain();
+                capture.assertNotLogged(GUARD_STAND_DOWN);
+                capture.assertNotLogged("does not match durable materialization");
+            });
+        } finally {
+            capture.stop();
+        }
+    }
+
+    @Test
+    public void testSealsOverAKeptTimelineBackOffOnTheSealFailureBudget() throws Exception {
+        // While the lock holds, every seal retries the retire before it appends and is refused when
+        // the retry meets the lock, which spends the seal failure budget as any failed seal does: the
+        // third refusal pauses the seal a minute, the first after the pause retires once more and
+        // pauses it two, and the first after that four. No retry runs inside a pause, so the unlinks
+        // the lock refuses follow that schedule. Once the lock goes, the first seal past the pause
+        // opens a fresh history and ends the streak.
+        final TimelineUnlinkFault fault = new TimelineUnlinkFault();
+        final LogCapture capture = new LogCapture();
+        capture.start();
+        try {
+            assertMemoryLeak(fault, () -> {
+                createDepartureView();
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    final LiveViewInstance instance = commitFourRoots(job, false);
+                    final long generationBefore = superblockGeneration(instance);
+                    final long sealFailuresBefore = instance.getCheckpointSealFailures();
+                    final long resetsBefore = instance.getCheckpointTimelineResets();
+                    changeBelowEveryRootUnderALock(job, fault);
+                    assertSealRetries(instance, sealFailuresBefore + 1, fault, 2, resetsBefore + 1);
+
+                    commitDeparture(job, "('2026-01-01T00:05:00.000000Z', 'a', 1.0)");
+                    assertSealRetries(instance, sealFailuresBefore + 2, fault, 3, resetsBefore + 1);
+                    commitDeparture(job, "('2026-01-01T00:06:00.000000Z', 'a', 1.0)");
+                    assertSealRetries(instance, sealFailuresBefore + 3, fault, 4, resetsBefore + 1);
+                    Assert.assertTrue("the third refusal pauses the seal a minute", instance.isSealOnCooldown(currentMicros + 59_000_000L));
+                    Assert.assertFalse(instance.isSealOnCooldown(currentMicros + 61_000_000L));
+
+                    setCurrentMicros(currentMicros + 30_000_000L);
+                    commitDeparture(job, "('2026-01-01T00:07:00.000000Z', 'a', 1.0)");
+                    assertSealRetries(instance, sealFailuresBefore + 3, fault, 4, resetsBefore + 1);
+
+                    setCurrentMicros(currentMicros + 31_000_000L);
+                    commitDeparture(job, "('2026-01-01T00:08:00.000000Z', 'a', 1.0)");
+                    // The seal's retry, then the retire the failure after the pause runs.
+                    assertSealRetries(instance, sealFailuresBefore + 4, fault, 6, resetsBefore + 2);
+                    Assert.assertTrue("which pauses the seal two minutes", instance.isSealOnCooldown(currentMicros + 119_000_000L));
+                    Assert.assertFalse(instance.isSealOnCooldown(currentMicros + 121_000_000L));
+
+                    setCurrentMicros(currentMicros + 60_000_000L);
+                    commitDeparture(job, "('2026-01-01T00:09:00.000000Z', 'a', 1.0)");
+                    assertSealRetries(instance, sealFailuresBefore + 4, fault, 6, resetsBefore + 2);
+
+                    setCurrentMicros(currentMicros + 61_000_000L);
+                    commitDeparture(job, "('2026-01-01T00:10:00.000000Z', 'a', 1.0)");
+                    assertSealRetries(instance, sealFailuresBefore + 5, fault, 8, resetsBefore + 3);
+                    Assert.assertTrue("and the next one four", instance.isSealOnCooldown(currentMicros + 239_000_000L));
+                    Assert.assertFalse(instance.isSealOnCooldown(currentMicros + 241_000_000L));
+                    assertTimelineRetirePending(instance, generationBefore, Numbers.LONG_NULL);
+                    capture.drain();
+                    capture.assertLogged("live view checkpoint seal keeps failing, keeping the timeline and backing off "
+                            + "[view=lv, consecutiveFailures=3, backoffMicros=60000000]");
+                    capture.assertLogged("live view checkpoint seal keeps failing, retiring the timeline and backing off "
+                            + "[view=lv, consecutiveFailures=4, backoffMicros=120000000]");
+                    capture.assertLogged("live view checkpoint seal keeps failing, retiring the timeline and backing off "
+                            + "[view=lv, consecutiveFailures=5, backoffMicros=240000000]");
+                    assertViewMatchesRecompute(DEPARTURE_VIEW_SQL);
+
+                    fault.unlock();
+                    setCurrentMicros(currentMicros + 241_000_000L);
+                    commitDeparture(job, "('2026-01-01T00:11:00.000000Z', 'a', 1.0)");
+                    Assert.assertFalse(instance.isCheckpointTimelineRetirePending());
+                    Assert.assertEquals("the seal past the pause opens a fresh history", 1, generation(instance));
+                    assertCheckpointLadder(instance, false, "2026-01-01T00:11:00.000000Z -> 11\n");
+                    Assert.assertEquals("and ends the streak", 0, instance.getSealFailureStreak());
+                    Assert.assertFalse(instance.isSealOnCooldown(currentMicros));
+                }
+                assertViewMatchesRecompute(DEPARTURE_VIEW_SQL);
+            });
+        } finally {
+            capture.stop();
+        }
+    }
+
+    @Test
+    public void testRetireThatKeepsTheTimelineAndCannotWriteItsMarkerStillRefusesTheTimeline() throws Exception {
+        // The retire keeps _timeline under the lock and cannot write the marker beside it: the view
+        // refuses the kept generation all the same, and the closing seal's retry of the retire, which
+        // meets the lock too, writes the marker. The late row after it finds no anchor.
+        final TimelineUnlinkFault fault = new TimelineUnlinkFault();
+        final LogCapture capture = new LogCapture();
+        capture.start();
+        try {
+            assertMemoryLeak(fault, () -> {
+                createDepartureView();
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    final LiveViewInstance instance = commitFourRoots(job, false);
+                    final long generationBefore = superblockGeneration(instance);
+                    final AtomicBoolean isMarkerAtTheSeal = new AtomicBoolean(true);
+                    final AtomicBoolean isPendingAtTheSeal = new AtomicBoolean();
+                    hooks(job).setSimulateHeadMissHeadSealStart(() -> {
+                        try (Path dir = checkpointsDir(instance)) {
+                            isMarkerAtTheSeal.set(LiveViewCheckpointRepairMarker.exists(configuration.getFilesFacade(), dir));
+                        }
+                        isPendingAtTheSeal.set(instance.isCheckpointTimelineRetirePending());
+                    });
+                    fault.failMarkerWrites(1);
+                    try {
+                        changeBelowEveryRootUnderALock(job, fault);
+                    } finally {
+                        hooks(job).setSimulateHeadMissHeadSealStart(null);
+                        fault.failMarkerWrites(0);
+                    }
+                    Assert.assertEquals("the retire's marker write fails", 1, fault.getRefusedMarkerWrites());
+                    Assert.assertTrue("the retire refuses the kept timeline all the same", isPendingAtTheSeal.get());
+                    Assert.assertFalse("with no marker beside it", isMarkerAtTheSeal.get());
+                    capture.drain();
+                    capture.assertLogged(KEPT_TIMELINE_MARKER_WRITE_FAILED);
+                    // The closing seal's retry of the retire writes it.
+                    assertTimelineRetirePending(instance, generationBefore, Numbers.LONG_NULL);
+                    try (Path dir = checkpointsDir(instance)) {
+                        Assert.assertEquals(Numbers.LONG_NULL, LiveViewCheckpointRepairMarker.readLvSeqTxn(configuration, dir));
+                    }
+                    commitDeparture(job, "('2026-01-01T00:01:30.000000Z', 'a', 0.5)");
+                    Assert.assertEquals(
+                            "the late row takes no anchor",
+                            0,
+                            job.getStatsForTest().getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_RESUME_FROM_ANCHOR)
+                    );
+                    assertTimelineRetirePending(instance, generationBefore, Numbers.LONG_NULL);
+                    fault.unlock();
+                }
+                assertViewRows(CHANGE_BELOW_EVERY_ROOT_LATE_ROW_ROWS, DEPARTURE_ROWS_QUERY);
+                assertViewMatchesRecompute(DEPARTURE_VIEW_SQL);
+            });
+        } finally {
+            capture.stop();
+        }
+    }
+
+    @Test
+    public void testRetireRetryThatCannotCheckTheTimelineKeepsRefusingItUntilTheNextSeal() throws Exception {
+        // The change below every root keeps _timeline under the lock, and the lock goes. The next
+        // seal's retry of the retire removes the file and the marker beside it, but the check of
+        // _timeline after the unlink fails: the retire cannot tell whether the file went, so the
+        // view goes on refusing it and the seal is refused. The seal after it retries again, finds
+        // the file gone, and opens a fresh history.
+        final TimelineUnlinkFault fault = new TimelineUnlinkFault();
+        final LogCapture capture = new LogCapture();
+        capture.start();
+        try {
+            assertMemoryLeak(fault, () -> {
+                createDepartureView();
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    final LiveViewInstance instance = commitFourRoots(job, false);
+                    final long sealFailuresBefore = instance.getCheckpointSealFailures();
+                    final long resetsBefore = instance.getCheckpointTimelineResets();
+                    try {
+                        changeBelowEveryRootUnderALock(job, fault);
+                    } finally {
+                        fault.unlock();
+                    }
+                    Assert.assertEquals("the closing seal is refused", sealFailuresBefore + 1, instance.getCheckpointSealFailures());
+
+                    fault.failTheCheckAfterTheNextTimelineUnlink();
+                    capture.drain();
+                    commitDeparture(job, "('2026-01-01T00:05:00.000000Z', 'a', 5.0)");
+                    Assert.assertEquals("the retry's check of the timeline fails", 1, fault.getFailedTimelineChecks());
+                    capture.drain();
+                    capture.assertLogged("could not check the live view checkpoint timeline after a retire [view=lv");
+                    assertTimelineOnDisk(instance, false);
+                    assertNoRepairMarker(instance);
+                    Assert.assertTrue("the view goes on refusing the timeline it could not check", instance.isCheckpointTimelineRetirePending());
+                    Assert.assertEquals("so the seal is refused", sealFailuresBefore + 2, instance.getCheckpointSealFailures());
+                    Assert.assertEquals("and the retry counts no reset", resetsBefore + 1, instance.getCheckpointTimelineResets());
+                    Assert.assertEquals("no head stands", Numbers.LONG_NULL, instance.getHeadCheckpointMaxTs());
+
+                    commitDeparture(job, "('2026-01-01T00:06:00.000000Z', 'a', 6.0)");
+                    capture.drain();
+                    capture.assertLogged("live view removed the checkpoint timeline an earlier retire left behind [view=lv");
+                    Assert.assertFalse("the next retry finds the file gone", instance.isCheckpointTimelineRetirePending());
+                    Assert.assertEquals("and its seal opens a fresh history", 1, generation(instance));
+                    assertCheckpointLadder(instance, false, "2026-01-01T00:06:00.000000Z -> 6\n");
+                    Assert.assertEquals("which lands", sealFailuresBefore + 2, instance.getCheckpointSealFailures());
+                    Assert.assertEquals("and ends the streak", 0, instance.getSealFailureStreak());
+                    Assert.assertEquals(resetsBefore + 1, instance.getCheckpointTimelineResets());
+                }
+                // 00:06 sums 6.0 + 5.0 + 4.0.
+                assertViewRows(
+                        CHANGE_BELOW_EVERY_ROOT_ROWS + CHANGE_BELOW_EVERY_ROOT_ROW_0005 + "2026-01-01T00:06:00.000000Z\ta\t6.0\t15.0\n",
+                        DEPARTURE_ROWS_QUERY
+                );
+                assertViewMatchesRecompute(DEPARTURE_VIEW_SQL);
+            });
+        } finally {
+            capture.stop();
+        }
+    }
+
+    @Test
+    public void testRestartAfterARetireThatKeptTheTimelineWithoutItsMarkerReplaysTheCorrection() throws Exception {
+        // Every marker write of the change's turn fails, the retire's and the closing seal's retry's,
+        // so nothing durable refuses the kept generation: a restart before any later retire restores
+        // it. Its replay meets the change's commit out of order and hands it to the repair, which
+        // rebuilds the view around it and retires the kept generation on its way. With one
+        // correction in the replay's gap, the view comes back as a recompute leaves it.
+        final TimelineUnlinkFault fault = new TimelineUnlinkFault();
+        assertMemoryLeak(fault, () -> {
+            createDepartureView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = commitFourRoots(job, false);
+                final long sealFailuresBefore = instance.getCheckpointSealFailures();
+                fault.failMarkerWrites(-1);
+                try {
+                    changeBelowEveryRootUnderALock(job, fault);
+                } finally {
+                    fault.failMarkerWrites(0);
+                    fault.unlock();
+                }
+                Assert.assertEquals("the retire's marker write and the retry's", 2, fault.getRefusedMarkerWrites());
+                Assert.assertTrue(instance.isCheckpointTimelineRetirePending());
+                Assert.assertEquals("the closing seal is refused", sealFailuresBefore + 1, instance.getCheckpointSealFailures());
+                assertTimelineOnDisk(instance, true);
+                assertNoRepairMarker(instance);
+            }
+            assertViewRows(CHANGE_BELOW_EVERY_ROOT_ROWS, DEPARTURE_ROWS_QUERY);
+            restartAndRefresh();
+            final LiveViewInstance restarted = viewInstance();
+            Assert.assertEquals(
+                    "timeline_restore",
+                    LiveViewCheckpointRecoveryPhase.routeName(restarted.getCheckpointRestoreRoute())
+            );
+            Assert.assertEquals("the repair the replay handed the change to retires the kept generation", 1, restarted.getCheckpointTimelineResets());
+            assertViewRows(CHANGE_BELOW_EVERY_ROOT_ROWS, DEPARTURE_ROWS_QUERY);
+            assertViewMatchesRecompute(DEPARTURE_VIEW_SQL);
+        });
+    }
+
+    @Test
+    public void testCrashAfterARetireThatKeptTheTimelineRebuildsOnRestart() throws Exception {
+        // A crash at the change's replacement commit, after the retire kept _timeline and wrote its
+        // marker: the view's table still holds the rows from before the change, and the marker sends
+        // the restart to the rebuild from the applied base rather than to the kept generation.
+        assertCrashAfterARetireThatKeptTheTimeline(false);
+    }
+
+    @Test
+    public void testCrashAfterARetireThatKeptTheTimelineStopsTheRestartOverTheDayTheBaseLost() throws Exception {
+        // As above, over a row of the day the base lost: the restatement guard refuses the rebuild,
+        // and the view stops with every row it held.
+        assertCrashAfterARetireThatKeptTheTimeline(true);
+    }
+
+    @Test
+    public void testDropOfAViewWhoseRetireKeptTheTimeline() throws Exception {
+        // A view whose retire kept _timeline, dropped once the lock is gone and created again under
+        // the same name: the drop takes the kept file with the view's directory, and the new view
+        // refuses nothing and opens a history of its own at its seed's completion.
+        final TimelineUnlinkFault fault = new TimelineUnlinkFault();
+        assertMemoryLeak(fault, () -> {
+            createDepartureView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = commitFourRoots(job, false);
+                final long generationBefore = superblockGeneration(instance);
+                try {
+                    changeBelowEveryRootUnderALock(job, fault);
+                } finally {
+                    fault.unlock();
+                }
+                assertTimelineRetirePending(instance, generationBefore, Numbers.LONG_NULL);
+                execute("DROP LIVE VIEW lv");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " + DEPARTURE_VIEW_SQL);
+                driveSeedToCompletion(job, "lv");
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance recreated = viewInstance();
+                Assert.assertNotSame(instance, recreated);
+                Assert.assertFalse(recreated.isCheckpointTimelineRetirePending());
+                Assert.assertEquals("the seed's completion seal opens the new view's history", 1, generation(recreated));
+                assertCheckpointLadder(recreated, false, "2026-01-01T00:04:00.000000Z -> 4\n");
+                assertNoRepairMarker(recreated);
+                Assert.assertEquals(0, recreated.getCheckpointSealFailures());
+            }
+            assertViewRows(CHANGE_BELOW_EVERY_ROOT_ROWS, DEPARTURE_ROWS_QUERY);
+            assertViewMatchesRecompute(DEPARTURE_VIEW_SQL);
+        });
+    }
+
+    @Test
+    public void testWalPurgeBetweenAKeptRetireAndTheRestartRebuilds() throws Exception {
+        // The retire released both base WAL arms the view held, as every retire does, so a purge
+        // after it removes the base WAL the kept generation would replay from. The restart meets
+        // the marker the retire wrote and rebuilds from the applied base, which reads no base WAL,
+        // without trying a restore whose replay the purge removed.
+        setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 1);
+        setProperty(PropertyKey.CAIRO_WAL_PURGE_INTERVAL, 0);
+        final TimelineUnlinkFault fault = new TimelineUnlinkFault();
+        final LogCapture capture = new LogCapture();
+        capture.start();
+        try {
+            assertMemoryLeak(fault, () -> {
+                createDepartureView();
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    final LiveViewInstance instance = commitFourRoots(job, false);
+                    final long generationBefore = superblockGeneration(instance);
+                    try {
+                        changeBelowEveryRootUnderALock(job, fault);
+                    } finally {
+                        fault.unlock();
+                    }
+                    assertTimelineRetirePending(instance, generationBefore, Numbers.LONG_NULL);
+                }
+                releaseSavePointHolds("base");
+                engine.releaseInactive();
+                setCurrentMicros(currentMicros + 60_000_000L);
+                try (WalPurgeJob purgeJob = new WalPurgeJob(engine)) {
+                    purgeJob.drain(0);
+                }
+                Assert.assertEquals("the purge removes every base WAL segment the view consumed", 0, countBaseWalSegments());
+                restartAndRefresh();
+                capture.drain();
+                capture.assertLogged("live view restart rebuilding from applied base [view=lv, cause=prefix preservation repair marker present");
+                capture.assertNotLogged("could not restore live view from checkpoint timeline");
+                assertRebuiltFromAppliedBase("lv");
+                assertViewRows(CHANGE_BELOW_EVERY_ROOT_ROWS, DEPARTURE_ROWS_QUERY);
+                assertViewMatchesRecompute(DEPARTURE_VIEW_SQL);
+            });
+        } finally {
+            capture.stop();
+        }
+    }
+
+    @Test
+    public void testTruncateOverAKeptTimelinePublishesNothing() throws Exception {
+        // A truncate that meets the kept generation is refused at the writer, ahead of the marker it
+        // would write over the retire's: nothing publishes, and its own failure path retires once
+        // more, which meets the lock too.
+        final TimelineUnlinkFault fault = new TimelineUnlinkFault();
+        final LogCapture capture = new LogCapture();
+        capture.start();
+        try {
+            assertMemoryLeak(fault, () -> {
+                createDepartureView();
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    final LiveViewInstance instance = commitFourRoots(job, false);
+                    final long generationBefore = superblockGeneration(instance);
+                    changeBelowEveryRootUnderALock(job, fault);
+                    final long resetsBefore = instance.getCheckpointTimelineResets();
+                    final int markerRenamesBefore = fault.getMarkerRenames();
+                    capture.drain();
+                    Assert.assertFalse(
+                            "the truncate retires instead of keeping the roots below 00:03",
+                            job.truncateOrRetireTimelineOnO3ForTest(instance, ts("2026-01-01T00:03:00.000000Z"))
+                    );
+                    Assert.assertEquals("its retire", resetsBefore + 1, instance.getCheckpointTimelineResets());
+                    Assert.assertEquals("meets the lock", 3, fault.getRefusedTimelineUnlinks());
+                    Assert.assertEquals("no truncate marker replaces the retire's", markerRenamesBefore, fault.getMarkerRenames());
+                    assertTimelineRetirePending(instance, generationBefore, Numbers.LONG_NULL);
+                    capture.drain();
+                    capture.assertLogged("could not preserve live view checkpoint timeline prefix, retiring [view=lv");
+                    capture.assertLogged(KEPT_TIMELINE_REFUSAL);
+                    fault.unlock();
+                }
+            });
+        } finally {
+            capture.stop();
+        }
+    }
+
+    @Test
+    public void testCountDriftRetireThatKeepsTheTimelineKeepsTheFrontierTruncateMarker() throws Exception {
+        // The departure of 00:02 resumes from the root at 00:01 and replays nothing: its frontier
+        // truncate keeps that root, now at the frontier, under a marker naming the splice's
+        // generation, and the closing seal only re-stamps the head on it. The re-stamp meets a count
+        // that drifted and retires the timeline, under a lock that keeps the file. The resolution
+        // clears the marker over a root kept at the frontier, but not beside a timeline a retire
+        // could not remove: the marker stays live, and the restart rebuilds.
+        final TimelineUnlinkFault fault = new TimelineUnlinkFault();
+        final LogCapture capture = new LogCapture();
+        capture.start();
+        try {
+            assertMemoryLeak(fault, () -> {
+                createDepartureView();
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    driveSeedToCompletion(job, "lv");
+                    commitDeparture(job, "('2026-01-01T00:01:00.000000Z', 'a', 1.5)");
+                    commitDeparture(job, "('2026-01-01T00:02:00.000000Z', 'a', 2.5)");
+                    final LiveViewInstance instance = viewInstance();
+                    final long spliceGeneration = superblockGeneration(instance) + 1;
+                    final long mismatchesBefore = instance.getCheckpointRowCountMismatches();
+                    hooks(job).setSimulateResumeHeadSealStart(() -> {
+                        fault.lock(false);
+                        instance.addLvRowsTotal(1);
+                    });
+                    try {
+                        commitDeparture(job, "('2026-01-01T00:02:00.000000Z', 'a', -2.5)");
+                    } finally {
+                        hooks(job).setSimulateResumeHeadSealStart(null);
+                        fault.unlock();
+                    }
+                    Assert.assertEquals(1, job.getStatsForTest().get(LiveViewRefreshStats.SPLICE_FRONTIER_TRUNCATE_COUNT));
+                    Assert.assertEquals("the re-stamp meets the drift", mismatchesBefore + 1, instance.getCheckpointRowCountMismatches());
+                    Assert.assertEquals("whose retire meets the lock", 1, fault.getRefusedTimelineUnlinks());
+                    // The truncate published one past the splice, so the marker naming the splice's
+                    // generation reads as live.
+                    assertTimelineRetirePending(instance, spliceGeneration + 1, spliceGeneration);
+                    try (Path dir = checkpointsDir(instance)) {
+                        Assert.assertEquals(Numbers.LONG_NULL, LiveViewCheckpointRepairMarker.readLvSeqTxn(configuration, dir));
+                    }
+                }
+                capture.drain();
+                capture.assertLogged("live view emitted row count does not match its durable output, retiring the timeline [view=lv");
+                restartAndRefresh();
+                capture.drain();
+                capture.assertLogged("live view restart rebuilding from applied base [view=lv, cause=prefix preservation repair marker present");
+                assertRebuiltFromAppliedBase("lv");
+                assertViewRows("ts\tsym\tx\ts\n2026-01-01T00:01:00.000000Z\ta\t1.5\t1.5\n", DEPARTURE_ROWS_QUERY);
+                assertViewMatchesRecompute(DEPARTURE_VIEW_SQL);
+            });
+        } finally {
+            capture.stop();
+        }
+    }
+
+    @Test
+    public void testHeadMissSpliceThatFailsToPublishUnderALockPublishesNothingOverTheKeptTimeline() throws Exception {
+        // The head-miss rebuild's splice fails to publish, and its closing seal lands on the
+        // un-spliced generation, at the frontier 01:05 above every root that generation keeps. The
+        // tail then retires that generation under a lock that keeps the file, and the retire takes
+        // the head the seal set with it, so no cycle without rows publishes over the kept file: each
+        // one's seal retries the retire and is refused, the third pausing the seal, and the first
+        // after the pause retiring once more. The splice's marker stays live through all of it, and a
+        // restart rebuilds over it.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        final TimelineUnlinkFault fault = new TimelineUnlinkFault();
+        final LogCapture capture = new LogCapture();
+        capture.start();
+        try {
+            assertMemoryLeak(fault, () -> {
+                createHeadMissDepartureView();
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    final LiveViewInstance instance = commitSixUnsealedRowsAboveTheHeadMissRoots(job);
+                    final long spliceBaseGeneration = superblockGeneration(instance);
+                    final long sealFailuresBefore = instance.getCheckpointSealFailures();
+                    failTheHeadMissSpliceUnderALock(job, fault, true);
+                    Assert.assertEquals("the closing seal lands", sealFailuresBefore, instance.getCheckpointSealFailures());
+                    assertCheckpointLadder(instance, false, "2025-12-31T23:55:00.000000Z -> 1\n2026-01-01T01:05:00.000000Z -> 67\n");
+                    Assert.assertEquals("the tail's retire meets the lock", 1, fault.getRefusedTimelineUnlinks());
+                    assertTimelineRetirePending(instance, spliceBaseGeneration + 1, spliceBaseGeneration);
+                    for (int cycle = 0; cycle < 4; cycle++) {
+                        setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+                        commitDeparture(job, "('2026-01-01T01:1" + cycle + ":00.000000Z', 'a', -1.0)");
+                        Assert.assertEquals(
+                                "each cycle's seal retries the retire and is refused",
+                                sealFailuresBefore + cycle + 1,
+                                instance.getCheckpointSealFailures()
+                        );
+                        // The fourth, past the pause the third armed, retires once more on its way.
+                        Assert.assertEquals(cycle < 3 ? cycle + 2 : 6, fault.getRefusedTimelineUnlinks());
+                        assertTimelineRetirePending(instance, spliceBaseGeneration + 1, spliceBaseGeneration);
+                    }
+                    capture.drain();
+                    capture.assertLogged("live view checkpoint seal keeps failing, keeping the timeline and backing off "
+                            + "[view=lv, consecutiveFailures=3, backoffMicros=60000000]");
+                    capture.assertLogged("live view checkpoint seal keeps failing, retiring the timeline and backing off "
+                            + "[view=lv, consecutiveFailures=4, backoffMicros=120000000]");
+                    fault.unlock();
+                }
+                restartAndRefresh();
+                capture.drain();
+                capture.assertLogged("live view restart rebuilding from applied base [view=lv, cause=prefix preservation repair marker present");
+                assertRebuiltFromAppliedBase("lv");
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    commitDeparture(job, "('2026-01-01T00:58:30.000000Z', 'a', 2.0)");
+                }
+                // 00:58:30's one-minute frame holds 00:58 at 3.0, and 00:59's holds both.
+                assertQuery("SELECT ts, s FROM lv WHERE ts BETWEEN '2026-01-01T00:58:30.000000Z' AND '2026-01-01T00:59:00.000000Z'")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .sizeMayVary()
+                        .returns("""
+                                ts\ts
+                                2026-01-01T00:58:30.000000Z\t5.0
+                                2026-01-01T00:59:00.000000Z\t6.0
+                                """);
+                assertViewMatchesRecompute(HEAD_MISS_DEPARTURE_VIEW_SQL);
+            });
+        } finally {
+            capture.stop();
+        }
+    }
+
+    @Test
+    public void testHeadMissSpliceThatFailsToPublishLeavesNoHeadBehindItsRetire() throws Exception {
+        // As above with no lock: the tail's retire removes the generation the closing seal landed
+        // on, and the head that seal set goes with it. So the first cycle without rows seals a fresh
+        // history at the frontier 01:05 on the first-checkpoint path, rather than publish over a
+        // timeline that is gone, the next ones advance its base, and nothing fails; the forward row
+        // then seals at its cadence, and a restart restores.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        final TimelineUnlinkFault fault = new TimelineUnlinkFault();
+        assertMemoryLeak(fault, () -> {
+            createHeadMissDepartureView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = commitSixUnsealedRowsAboveTheHeadMissRoots(job);
+                final long sealFailuresBefore = instance.getCheckpointSealFailures();
+                failTheHeadMissSpliceUnderALock(job, fault, false);
+                Assert.assertEquals("no head survives the retire", Numbers.LONG_NULL, instance.getHeadCheckpointMaxTs());
+                Assert.assertEquals("nor its base WAL arm", Numbers.LONG_NULL, instance.getHeadCheckpointBaseSeqTxn());
+                Assert.assertEquals("nor the timeline's", Numbers.LONG_NULL, instance.getCheckpointTimelineWalPurgeFloor());
+                Assert.assertFalse(instance.isCheckpointTimelineRetirePending());
+                assertTimelineAndMarkerRetired(instance);
+                Assert.assertEquals("the closing seal landed ahead of the retire", sealFailuresBefore, instance.getCheckpointSealFailures());
+                for (int cycle = 0; cycle < 4; cycle++) {
+                    setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+                    commitDeparture(job, "('2026-01-01T01:1" + cycle + ":00.000000Z', 'a', -1.0)");
+                    Assert.assertEquals(
+                            "the first cycle seals a fresh history, each later one advances its base",
+                            cycle + 1,
+                            generation(instance)
+                    );
+                    Assert.assertEquals(ts("2026-01-01T01:05:00.000000Z"), instance.getHeadCheckpointMaxTs());
+                    Assert.assertEquals("at the cycle's commit", lastBaseSeqTxn(), instance.getHeadCheckpointBaseSeqTxn());
+                }
+                assertCheckpointLadder(instance, false, "2026-01-01T01:05:00.000000Z -> 67\n");
+                Assert.assertEquals("nothing fails", sealFailuresBefore, instance.getCheckpointSealFailures());
+                Assert.assertFalse(instance.isSealOnCooldown(currentMicros));
+                setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+                commitDeparture(job, "('2026-01-01T01:20:00.000000Z', 'a', 1.0)");
+                Assert.assertEquals("the forward row seals at its cadence", ts("2026-01-01T01:20:00.000000Z"), instance.getHeadCheckpointMaxTs());
+                assertCheckpointLadder(instance, false, "2026-01-01T01:05:00.000000Z -> 67\n2026-01-01T01:20:00.000000Z -> 68\n");
+                assertNoRefreshFaults("lv");
+            }
+            restartAndRefresh();
+            assertRestoredFromTimeline("lv");
+            assertViewMatchesRecompute(HEAD_MISS_DEPARTURE_VIEW_SQL);
+        });
+    }
+
+    @Test
+    public void testLocalizedHeadMissOverAKeptTimelinePublishesNoSplice() throws Exception {
+        // A localized correction while the view refuses the generation a retire kept: the repair
+        // finds no anchor in it, its capture is refused, and so is the truncate it falls back to,
+        // whose own failure path retires once more. Nothing splices into the kept generation and
+        // nothing publishes over it.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        final TimelineUnlinkFault fault = new TimelineUnlinkFault();
+        final LogCapture capture = new LogCapture();
+        capture.start();
+        try {
+            assertMemoryLeak(fault, () -> {
+                createHeadMissDepartureView();
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    final LiveViewInstance instance = commitSixUnsealedRowsAboveTheHeadMissRoots(job);
+                    final long spliceBaseGeneration = superblockGeneration(instance);
+                    failTheHeadMissSpliceUnderALock(job, fault, true);
+                    final long rootsVersionedBefore = instance.getCheckpointRepairRootsVersioned();
+                    final long resetsBefore = instance.getCheckpointTimelineResets();
+                    final long sealFailuresBefore = instance.getCheckpointSealFailures();
+                    final long headMissRepairsBefore = countHeadMissRepairs(job);
+                    capture.drain();
+                    commitDeparture(job, "('2026-01-01T00:30:00.000000Z', 'a', 4.0)");
+                    Assert.assertEquals("the head-miss rebuild repairs the change", headMissRepairsBefore + 1, countHeadMissRepairs(job));
+                    capture.drain();
+                    capture.assertLogged("live view checkpoint timeline repair capture unavailable, truncating instead [view=lv");
+                    capture.assertLogged("could not preserve live view checkpoint timeline prefix, retiring [view=lv");
+                    Assert.assertEquals("no splice re-versions a root", rootsVersionedBefore, instance.getCheckpointRepairRootsVersioned());
+                    Assert.assertEquals("the truncate's failure path retires", resetsBefore + 1, instance.getCheckpointTimelineResets());
+                    // The tail's retire, then the truncate's and the closing seal's retry of it.
+                    Assert.assertEquals(3, fault.getRefusedTimelineUnlinks());
+                    Assert.assertEquals("the closing seal is refused", sealFailuresBefore + 1, instance.getCheckpointSealFailures());
+                    assertTimelineRetirePending(instance, spliceBaseGeneration + 1, spliceBaseGeneration);
+                    fault.unlock();
+                }
+                assertViewMatchesRecompute(HEAD_MISS_DEPARTURE_VIEW_SQL);
+            });
+        } finally {
+            capture.stop();
+        }
+    }
+
+    @Test
+    public void testHeadMissSpliceThatFailsWhileItsTimelineRefusesEveryOpenStillWritesItsMarker() throws Exception {
+        // The kept-row departure's splice fails after its metadata, and from the closing seal on
+        // _timeline refuses its unlink and every open. The closing seal fails on the open, and the
+        // tail's retire keeps the file beside the splice's marker. Judging that marker reads the
+        // superblock, whose open is refused too, so the retire writes its own marker in its place,
+        // which names no generation and so reads as live whatever the superblock says. The turn
+        // ends with no refresh fault, the capture the repair held freed on its way out, and a
+        // restart rebuilds over the marker.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        final TimelineUnlinkFault fault = new TimelineUnlinkFault();
+        final LogCapture capture = new LogCapture();
+        capture.start();
+        try {
+            assertMemoryLeak(fault, () -> {
+                createHeadMissDepartureView();
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    driveSeedToCompletion(job, "lv");
+                    commitHeadMissDepartureFixture(job, false, 59);
+                    final LiveViewInstance instance = viewInstance();
+                    final long sealFailuresBefore = instance.getCheckpointSealFailures();
+                    final long repairFailuresBefore = instance.getCheckpointRepairFailures();
+                    fault.afterTheNextMarker(() -> job.setCheckpointTimelineTestFailureStage(LiveViewCheckpointTimelineStoreWriter.TEST_FAIL_AFTER_METADATA_PUBLISH));
+                    hooks(job).setSimulateHeadMissHeadSealStart(() -> {
+                        job.setCheckpointTimelineTestFailureStage(0);
+                        fault.lock(false);
+                        fault.refuseTimelineOpens(true);
+                    });
+                    try {
+                        commitDeparture(job, HEAD_MISS_KEPT_ROW_DEPARTURE);
+                    } finally {
+                        hooks(job).setSimulateHeadMissHeadSealStart(null);
+                        fault.afterTheNextMarker(null);
+                        job.setCheckpointTimelineTestFailureStage(0);
+                    }
+                    Assert.assertEquals("the splice fails to publish", repairFailuresBefore + 1, instance.getCheckpointRepairFailures());
+                    Assert.assertEquals("the closing seal fails on the open", sealFailuresBefore + 1, instance.getCheckpointSealFailures());
+                    Assert.assertEquals("the tail's retire meets the lock", 1, fault.getRefusedTimelineUnlinks());
+                    assertNoRefreshFaults("lv");
+                    Assert.assertTrue("the retire keeps the timeline", instance.isCheckpointTimelineRetirePending());
+                    assertTimelineOnDisk(instance, true);
+                    assertMarkerNames(Numbers.LONG_NULL);
+                    try (Path dir = checkpointsDir(instance)) {
+                        Assert.assertEquals(Numbers.LONG_NULL, LiveViewCheckpointRepairMarker.readLvSeqTxn(configuration, dir));
+                    }
+                    capture.drain();
+                    capture.assertLogged("could not read the live view checkpoint repair marker beside a timeline its retire could not remove, writing one [view=lv");
+                    fault.refuseTimelineOpens(false);
+                    fault.unlock();
+                }
+                assertViewRows(HEAD_MISS_KEPT_ROW_DEPARTURE_ROWS, DEPARTURE_ROWS_QUERY);
+                restartAndRefresh();
+                capture.drain();
+                capture.assertLogged("live view restart rebuilding from applied base [view=lv, cause=prefix preservation repair marker present");
+                assertRebuiltFromAppliedBase("lv");
+                assertViewMatchesRecompute(HEAD_MISS_DEPARTURE_VIEW_SQL);
+            });
+        } finally {
+            capture.stop();
+        }
+    }
+
+    @Test
+    public void testDepartureThatEmptiesTheViewWhileItsTimelineIsLockedSealsNothingAndKeepsItsMarker() throws Exception {
+        // The departure that empties the view retires its timeline under a lock that keeps the file
+        // and the frontier truncate's marker beside it. A view with no row seals no boundary, so no
+        // seal retries the retire: the closing seal has no frontier to stamp, and each cycle without
+        // rows declines its boundary over the empty table. The restart rebuilds over the marker,
+        // with no row, and the forward row after it opens a fresh history.
+        final TimelineUnlinkFault fault = new TimelineUnlinkFault();
+        final LogCapture capture = new LogCapture();
+        capture.start();
+        try {
+            assertMemoryLeak(fault, () -> {
+                createHeadMissDepartureView();
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    driveSeedToCompletion(job, "lv");
+                    commitDeparture(job, "('2026-01-01T00:01:00.000000Z', 'a', 1.5)");
+                    commitDeparture(job, "('2026-01-01T00:05:00.000000Z', 'a', 2.5)");
+                    final LiveViewInstance instance = viewInstance();
+                    replaceBaseRange(
+                            MicrosTimestampDriver.floor("2026-01-01T00:01:00.000000Z"),
+                            MicrosTimestampDriver.floor("2026-01-01T00:01:00.000001Z"),
+                            Double.NaN
+                    );
+                    drainWalQueue();
+                    driveRefreshToQuiescence(job);
+                    assertCheckpointLadder(instance, false, """
+                            2026-01-01T00:01:00.000000Z -> 0
+                            2026-01-01T00:05:00.000000Z -> 1
+                            """);
+                    final long spliceGeneration = superblockGeneration(instance) + 1;
+                    final long sealFailuresBefore = instance.getCheckpointSealFailures();
+                    fault.lock(false);
+                    commitDeparture(job, "('2026-01-01T00:05:00.000000Z', 'a', -2.5)");
+                    Assert.assertEquals(1, job.getStatsForTest().get(LiveViewRefreshStats.SPLICE_FRONTIER_TRUNCATE_COUNT));
+                    Assert.assertEquals("the truncate's retire alone meets the lock", 1, fault.getRefusedTimelineUnlinks());
+                    Assert.assertEquals("no seal is attempted", sealFailuresBefore, instance.getCheckpointSealFailures());
+                    assertTimelineRetirePending(instance, spliceGeneration, spliceGeneration);
+                    final long declinesBefore = job.getStatsForTest().get(LiveViewRefreshStats.SEAL_ABOVE_DURABLE_FRONTIER_DECLINE_COUNT);
+                    for (int minute = 6; minute <= 7; minute++) {
+                        setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+                        commitDeparture(job, "('2026-01-01T00:0" + minute + ":00.000000Z', 'a', -1.0)");
+                        Assert.assertEquals(
+                                "each cycle declines its boundary over the empty table",
+                                declinesBefore + minute - 5,
+                                job.getStatsForTest().get(LiveViewRefreshStats.SEAL_ABOVE_DURABLE_FRONTIER_DECLINE_COUNT)
+                        );
+                    }
+                    Assert.assertEquals("and retries no retire", 1, fault.getRefusedTimelineUnlinks());
+                    Assert.assertEquals(sealFailuresBefore, instance.getCheckpointSealFailures());
+                    assertTimelineRetirePending(instance, spliceGeneration, spliceGeneration);
+                    fault.unlock();
+                }
+                final String noRows = "ts\tsym\tx\ts\n";
+                assertViewRows(noRows, DEPARTURE_ROWS_QUERY);
+                restartAndRefresh();
+                capture.drain();
+                capture.assertLogged("live view restart rebuilding from applied base [view=lv, cause=prefix preservation repair marker present");
+                assertRebuiltFromAppliedBase("lv");
+                assertViewRows(noRows, DEPARTURE_ROWS_QUERY);
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    commitDeparture(job, "('2026-01-01T00:08:00.000000Z', 'a', 4.0)");
+                }
+                final LiveViewInstance instance = viewInstance();
+                Assert.assertEquals("the forward row's seal opens a fresh history", 1, generation(instance));
+                assertCheckpointLadder(instance, false, "2026-01-01T00:08:00.000000Z -> 1\n");
+                assertViewRows(noRows + "2026-01-01T00:08:00.000000Z\ta\t4.0\t4.0\n", DEPARTURE_ROWS_QUERY);
+                assertViewMatchesRecompute(HEAD_MISS_DEPARTURE_VIEW_SQL);
+            });
+        } finally {
+            capture.stop();
+        }
+    }
+
+    @Test
+    public void testBaseColumnAddedOverAKeptTimelineRebuildsInPlace() throws Exception {
+        // A base column added while the view refuses the generation a retire kept: the in-place
+        // recovery reads the marker the retire wrote, and rebuilds from the applied base rather than
+        // restore the kept generation.
+        final TimelineUnlinkFault fault = new TimelineUnlinkFault();
+        final LogCapture capture = new LogCapture();
+        capture.start();
+        try {
+            assertMemoryLeak(fault, () -> {
+                createDepartureView();
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    final LiveViewInstance instance = commitFourRoots(job, false);
+                    changeBelowEveryRootUnderALock(job, fault);
+                    final long runtimeRestoresBefore = instance.getCheckpointRuntimeRestores();
+                    execute("ALTER TABLE base ADD COLUMN y INT");
+                    drainWalQueue();
+                    driveRefreshToQuiescence(job);
+                    Assert.assertEquals("nothing restores behind the live marker", runtimeRestoresBefore, instance.getCheckpointRuntimeRestores());
+                    Assert.assertFalse(instance.isCheckpointRecoveryBlocked());
+                    Assert.assertFalse(instance.isInvalid());
+                    fault.unlock();
+                }
+                capture.drain();
+                capture.assertLogged(runtimeRestoreDeclinedOverTheMarker("base table metadata change"));
+                assertViewRows(CHANGE_BELOW_EVERY_ROOT_ROWS, DEPARTURE_ROWS_QUERY);
+                TestUtils.assertSqlCursors(
+                        engine,
+                        sqlExecutionContext,
+                        "(" + DEPARTURE_VIEW_SQL + ") ORDER BY 2, 1",
+                        "(" + DEPARTURE_ROWS_QUERY + ") ORDER BY 2, 1",
+                        LOG,
+                        true
+                );
+            });
+        } finally {
+            capture.stop();
+        }
+    }
+
+    @Test
+    public void testSeedCompletionOverAKeptTimelineSealsNoRootAndRebuildsOnRestart() throws Exception {
+        // The seed sweep's completion retires the seed roots under a lock that keeps _timeline. The
+        // seal of the finished state retries the retire, meets the lock and is refused, so the view
+        // goes ACTIVE with no head, and nothing publishes over the seed generation. A restart meets
+        // the marker the retire wrote and rebuilds rather than restore that generation.
+        final TimelineUnlinkFault fault = new TimelineUnlinkFault();
+        final LogCapture capture = new LogCapture();
+        capture.start();
+        try {
+            assertMemoryLeak(fault, () -> {
+                createSeedingView(SEED_ROWS - 2, 2);
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    final LiveViewInstance instance = runSeedTurns(job, SEED_ROWS);
+                    Assert.assertEquals("each turn sealed a seed root", SEED_ROWS, instance.getSeedCheckpointDataOffset());
+                    final long generationBefore = superblockGeneration(instance);
+                    final long sealFailuresBefore = instance.getCheckpointSealFailures();
+                    fault.lock(false);
+                    job.run();
+                    drainWalQueue();
+                    Assert.assertEquals(LiveViewState.SEED_STATE_ACTIVE, instance.getStateReader().getSeedState());
+                    Assert.assertEquals("the completion's retire, then its seal's retry of it", 2, fault.getRefusedTimelineUnlinks());
+                    Assert.assertEquals("the completion seal is refused", sealFailuresBefore + 1, instance.getCheckpointSealFailures());
+                    assertTimelineRetirePending(instance, generationBefore, Numbers.LONG_NULL);
+                    fault.unlock();
+                }
+                assertViewMatchesRecompute(SEED_VIEW_SQL);
+                restartAndRefresh();
+                capture.drain();
+                capture.assertLogged("live view restart rebuilding from applied base [view=lv, cause=prefix preservation repair marker present");
+                assertRebuiltFromAppliedBase("lv");
+                assertViewMatchesRecompute(SEED_VIEW_SQL);
+            });
+        } finally {
+            capture.stop();
+        }
+    }
+
+    @Test
+    public void testSeedSweepOverAKeptTimelineRetriesItsSealOnEveryTurn() throws Exception {
+        // Once the lock goes, the first seed seal retires the kept timeline and seals its root in a
+        // fresh history, and the sweep completes as a recompute does.
+        assertSeedSweepOverAKeptTimeline(false);
+    }
+
+    @Test
+    public void testSeedSweepOverAKeptTimelineRestartedWhileTheLockHoldsResweeps() throws Exception {
+        // A restart while the lock holds: the restarted sweep's resume reads the kept seed root,
+        // which it cannot read either, so it retires again, under the lock, and re-sweeps from offset
+        // 0 behind its skip-write floor.
+        assertSeedSweepOverAKeptTimeline(true);
+    }
+
+    @Test
+    public void testSeedRearmOverAKeptTimelineResweeps() throws Exception {
+        // The restarted sweep cannot read its torn seed root, and the retire that abandons the resume
+        // keeps _timeline under the lock. Two rows a turn: the turn that feeds the first day's last
+        // row and then reads the second day faults on that read, which re-arms the sweep's resume in
+        // the same process. The resume reads the timeline again and is refused the kept generation,
+        // so it is abandoned for a re-sweep from offset 0 behind the skip-write floor, which
+        // completes as a recompute does once the lock goes.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 2);
+        final TimelineUnlinkFault fault = new TimelineUnlinkFault();
+        final LogCapture capture = new LogCapture();
+        capture.start();
+        try {
+            assertMemoryLeak(fault, () -> {
+                createSeedingView(7, 2);
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    Assert.assertEquals("the turn seals a seed root", 2, runSeedTurns(job, 1).getSeedCheckpointDataOffset());
+                }
+                engine.getLiveViewRegistry().clear();
+                engine.buildViewGraphs();
+                final LiveViewInstance instance = viewInstance();
+                corruptNewestRootDataSegment(instance);
+                final long generationBefore = superblockGeneration(instance);
+                fault.lock(false);
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    runSeedTurns(job, 1);
+                    Assert.assertEquals("the abandon's two retires, then the turn's seal", 3, fault.getRefusedTimelineUnlinks());
+                    capture.drain();
+                    Assert.assertEquals("the torn root abandons the resume", 1, capture.countOccurrences(SEED_RESUME_ABANDONED));
+                    fault.failTheNextBaseColumnOpen(engine.verifyTableName("base").getDirName(), "2026-01-02");
+                    for (int pass = 0; pass < REFRESH_QUIESCENCE_PASSES && capture.countOccurrences(SEED_RESUME_ABANDONED) < 2; pass++) {
+                        advanceClockToNextRefreshPass();
+                        runSeedTurns(job, 1);
+                        capture.drain();
+                    }
+                    Assert.assertEquals("the sweep's read of the second day faults", 1, fault.getRefusedBaseColumnOpens());
+                    Assert.assertEquals("which is the view's one refresh fault", 1, instance.getRefreshFaultCount());
+                    capture.assertLogged("live view mid-seed refresh failure, sweep will resume [view=lv");
+                    Assert.assertEquals("the re-armed resume is abandoned too", 2, capture.countOccurrences(SEED_RESUME_ABANDONED));
+                    capture.assertLoggedRE(Pattern.quote(SEED_RESUME_ABANDONED) + "[^\\n]*" + Pattern.quote(KEPT_TIMELINE_REFUSAL));
+                    assertTimelineRetirePending(instance, generationBefore, Numbers.LONG_NULL);
+                    Assert.assertEquals("and no seed root landed", Numbers.LONG_NULL, instance.getSeedCheckpointDataOffset());
+                    fault.unlock();
+                    driveSeedToCompletion(job, "lv");
+                    Assert.assertFalse(instance.isCheckpointTimelineRetirePending());
+                }
+                Assert.assertEquals(LiveViewState.SEED_STATE_ACTIVE, viewInstance().getStateReader().getSeedState());
+                // The injected fault is the view's one refresh fault, asserted above.
+                TestUtils.assertSqlCursors(
+                        engine,
+                        sqlExecutionContext,
+                        "(" + SEED_VIEW_SQL + ") ORDER BY 2, 1",
+                        "(lv) ORDER BY 2, 1",
+                        LOG,
+                        true
+                );
+                restartAndRefresh();
+                assertViewMatchesRecompute(SEED_VIEW_SQL);
+            });
+        } finally {
+            capture.stop();
+        }
+    }
+
+    @Test
+    public void testKeyedClosedSegmentRepairOverAKeptTimelineReadsTheSegmentWhole() throws Exception {
+        // A correction of acct-2 in the closed day 2026-01-02, which a keyed replay would repair
+        // along that account alone once it has vetted the roots it re-versions. The timeline they
+        // sit in is one a retire kept: the vetting is refused, so the repair reads the day whole,
+        // and nothing splices into the kept generation.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_REPLAY_ENABLED, "true");
+        final TimelineUnlinkFault fault = new TimelineUnlinkFault();
+        final LogCapture capture = new LogCapture();
+        capture.start();
+        try {
+            assertMemoryLeak(fault, () -> {
+                final StringSink seed = new StringSink();
+                for (int day = 2; day <= 4; day++) {
+                    for (int offset = 1; offset <= 16; offset++) {
+                        if (seed.length() > 0) {
+                            seed.put(", ");
+                        }
+                        seed.put(anchoredRow(day, 1, offset, "acct-" + ((offset - 1) % 4 + 1)));
+                    }
+                }
+                createAnchoredView(seed);
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    driveRefreshToQuiescence(job);
+                    commitToTx(job, anchoredRow(5, 1, 0, "acct-1"));
+                    final LiveViewInstance instance = keepTheTimelineUnderALock(job, fault);
+                    final long generationBefore = superblockGeneration(instance);
+                    final long keyedRepairsBefore = job.getStatsForTest().getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_KEYED_CLOSED_SEGMENT);
+                    final long rootsVersionedBefore = instance.getCheckpointRepairRootsVersioned();
+                    capture.drain();
+                    commitToTx(job, anchoredRow(2, 0, 30, "acct-2"));
+                    capture.drain();
+                    capture.assertLogged("live view could not vet the boundaries a keyed repair re-versions [view=lv");
+                    Assert.assertEquals(
+                            "the keyed route is declined",
+                            keyedRepairsBefore,
+                            job.getStatsForTest().getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_KEYED_CLOSED_SEGMENT)
+                    );
+                    Assert.assertEquals("nothing splices into the kept generation", rootsVersionedBefore, instance.getCheckpointRepairRootsVersioned());
+                    assertTimelineRetirePending(instance, generationBefore, Numbers.LONG_NULL);
+                    fault.unlock();
+                }
+                assertAnchoredViewMatchesRecompute();
+            });
+        } finally {
+            capture.stop();
+        }
+    }
+
+    @Test
+    public void testSegmentLoopOverAKeptTimelineDoesNotRestoreTheFrontierRoot() throws Exception {
+        // A late commit into the closed day 2026-01-09, whose repair seals a root at the frontier,
+        // then a drain that feeds an in-order row and meets a late commit into 2026-01-08, which
+        // it hands to a per-segment loop. Ahead of the loop the runtime goes back to the root at
+        // its frontier, which drops the in-order row the drain fed, but every root the view could
+        // go back to sits in a timeline a retire kept: the lookup is refused, and the union range
+        // repairs the change instead.
+        final TimelineUnlinkFault fault = new TimelineUnlinkFault();
+        final LogCapture capture = new LogCapture();
+        capture.start();
+        try {
+            assertMemoryLeak(fault, () -> {
+                final StringSink seed = new StringSink();
+                for (int day = 2; day <= 9; day++) {
+                    if (seed.length() > 0) {
+                        seed.put(", ");
+                    }
+                    seed.put(anchoredRow(day, 1, 0, "acct-1")).put(", ").put(anchoredRow(day, 2, 0, "acct-2"));
+                }
+                createAnchoredView(seed);
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    driveRefreshToQuiescence(job);
+                    commitToTx(job, anchoredRow(10, 1, 0, "acct-1"));
+                    final LiveViewInstance instance = keepTheTimelineUnderALock(job, fault);
+                    final long generationBefore = superblockGeneration(instance);
+                    hooks(job).setSimulatePeerTurnBeforeRefreshLatch(() -> {
+                        try {
+                            execute("INSERT INTO tx VALUES " + anchoredRow(10, 2, 0, "acct-2"));
+                            execute("INSERT INTO tx VALUES " + anchoredRow(8, 3, 0, "acct-1"));
+                        } catch (SqlException e) {
+                            throw new RuntimeException(e);
+                        }
+                        // Ahead of the pass that reads the two commits, which is the turn after this one.
+                        hooks(job).setSimulatePeerTurnBeforeRefreshLatch(() -> drainWalQueue());
+                    });
+                    capture.drain();
+                    try {
+                        commitToTx(job, anchoredRow(9, 3, 0, "acct-2"));
+                    } finally {
+                        hooks(job).setSimulatePeerTurnBeforeRefreshLatch(null);
+                    }
+                    capture.drain();
+                    capture.assertNotLogged("live view restored its runtime to the root at the frontier ahead of a segment loop");
+                    assertTimelineRetirePending(instance, generationBefore, Numbers.LONG_NULL);
+                    fault.unlock();
+                }
+                assertAnchoredViewMatchesRecompute();
+            });
+        } finally {
+            capture.stop();
+        }
+    }
+
+    @Test
+    public void testZeroRowEndOfTableHeadMissOverAKeptTimelineWarmsTheFrontierState() throws Exception {
+        // The departure of the rows above the frontier 2026-01-02T00:00:50 emits no row, and the
+        // rebuild derives the state at that frontier ahead of its commit. A root at 00:00:10, inside
+        // the frontier's frame, would let it restore that root and fold the rows above it, but the
+        // timeline holding it is one a retire kept: the lookup is refused, and the state is folded
+        // from the frame's floor instead.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        final TimelineUnlinkFault fault = new TimelineUnlinkFault();
+        assertMemoryLeak(fault, () -> {
+            createHeadMissDepartureView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                commitDeparture(job, "('2025-12-31T23:55:00.000000Z', 'a', 0.5)");
+                commitDeparture(job, minuteRowsOfA(0, 30, "1.0") + ", ('2026-01-01T23:59:50.000000Z', 'a', 1.0)");
+                setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+                commitDeparture(job, "('2026-01-02T00:00:10.000000Z', 'a', 1.0)");
+                commitDeparture(
+                        job,
+                        "('2026-01-02T00:00:20.000000Z', 'a', -1.0), ('2026-01-02T00:00:30.000000Z', 'a', -1.0), "
+                                + "('2026-01-02T00:00:40.000000Z', 'a', -1.0), ('2026-01-02T00:00:50.000000Z', 'a', 1.0), "
+                                + "('2026-01-02T00:02:00.000000Z', 'a', 1.0), ('2026-01-02T00:02:10.000000Z', 'a', 1.0), "
+                                + "('2026-01-02T00:02:20.000000Z', 'a', 1.0)"
+                );
+                final LiveViewInstance instance = viewInstance();
+                assertCheckpointLadder(instance, false, """
+                        2025-12-31T23:55:00.000000Z -> 1
+                        2026-01-02T00:00:10.000000Z -> 34
+                        """);
+                final long generationBefore = superblockGeneration(instance);
+                final LiveViewRefreshStats stats = job.getStatsForTest();
+                final long warmUpsBefore = stats.get(LiveViewRefreshStats.HEAD_MISS_FRONTIER_STATE_WARM_UP_COUNT);
+                final long restoresBefore = stats.get(LiveViewRefreshStats.HEAD_MISS_FRONTIER_STATE_RESTORE_COUNT);
+                // A truncate floored below every root keeps none, so it retires the timeline, which
+                // the lock keeps.
+                fault.lock(false);
+                Assert.assertFalse(job.truncateOrRetireTimelineOnO3ForTest(instance, ts("2025-12-31T23:55:00.000000Z")));
+                replaceBaseRange(ts("2026-01-02T00:02:00.000000Z"), ts("2026-01-02T00:03:00.000000Z"), Double.NaN);
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals("no root is restored at the frontier", restoresBefore, stats.get(LiveViewRefreshStats.HEAD_MISS_FRONTIER_STATE_RESTORE_COUNT));
+                Assert.assertEquals("its state is folded from the frame's floor", warmUpsBefore + 1, stats.get(LiveViewRefreshStats.HEAD_MISS_FRONTIER_STATE_WARM_UP_COUNT));
+                assertTimelineRetirePending(instance, generationBefore, Numbers.LONG_NULL);
+                fault.unlock();
+            }
+            // Each one-minute frame holds the rows of 'a' the filter keeps within a minute below the
+            // row: 01-01T23:59:50 alone, then 01-02T00:00:10 over it, then 00:00:50 over both.
+            assertViewRows(headMissDepartureRows(true, 30) + """
+                    2026-01-01T23:59:50.000000Z\ta\t1.0\t1.0
+                    2026-01-02T00:00:10.000000Z\ta\t1.0\t2.0
+                    2026-01-02T00:00:50.000000Z\ta\t1.0\t3.0
+                    """, DEPARTURE_ROWS_QUERY);
+            assertViewMatchesRecompute(HEAD_MISS_DEPARTURE_VIEW_SQL);
+        });
+    }
+
+    // One row of account at hour:minute of 2026-01-day, holding 1.0, as an INSERT tuple.
+    private static String anchoredRow(int day, int hour, int minute, String account) {
+        return String.format("('2026-01-%02dT%02d:%02d:00.000000Z', '%s', 1.0)", day, hour, minute, account);
+    }
+
     private static Path checkpointsDir(LiveViewInstance instance) {
         return new Path().of(configuration.getDbRoot())
                 .concat(instance.getLiveViewToken())
@@ -6974,6 +8366,475 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
                     configuration.getFilesFacade().exists(timelinePath.$())
             );
         }
+    }
+
+    // The anchored view over tx matches the plain-SQL recompute that partitions each account's rows
+    // by the day the anchor resets on.
+    private void assertAnchoredViewMatchesRecompute() throws Exception {
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                "(" + ANCHORED_RECOMPUTE_SQL + ") ORDER BY 2, 1",
+                "(lv) ORDER BY 2, 1",
+                LOG,
+                true
+        );
+        assertNoRefreshFaults("lv");
+    }
+
+    // The seal failures the view counted, the unlinks of _timeline the lock refused, and the timeline
+    // resets the view counted, each at its expected total.
+    private static void assertSealRetries(
+            LiveViewInstance instance,
+            long sealFailures,
+            TimelineUnlinkFault fault,
+            int refusedUnlinks,
+            long resets
+    ) {
+        Assert.assertEquals("seal failures", sealFailures, instance.getCheckpointSealFailures());
+        Assert.assertEquals("unlinks of _timeline the lock refused", refusedUnlinks, fault.getRefusedTimelineUnlinks());
+        Assert.assertEquals("timeline resets", resets, instance.getCheckpointTimelineResets());
+    }
+
+    // The splice's marker, under the generation it names, which the failed splice never moved past,
+    // records a seqTxn the view's own WAL has committed past: the seqTxn rule reads it as live.
+    private static void assertSpliceMarkerLive(LiveViewInstance instance) {
+        try (Path dir = checkpointsDir(instance)) {
+            final long markerLvSeqTxn = LiveViewCheckpointRepairMarker.readLvSeqTxn(configuration, dir);
+            Assert.assertNotEquals("the splice's marker records the seqTxn ahead of its commit", Numbers.LONG_NULL, markerLvSeqTxn);
+            Assert.assertTrue(
+                    "and the replacement committed past it",
+                    markerLvSeqTxn < engine.getTableSequencerAPI().lastTxn(instance.getLiveViewToken())
+            );
+        }
+    }
+
+    /**
+     * Asserts the view refuses the generation a retire kept: the retire stands pending, the file is
+     * on disk with its superblock still at keptGeneration, which nothing published over, no head and
+     * neither base WAL arm survived the retire, and a marker naming markerBaseGeneration stands beside
+     * the file. {@link Numbers#LONG_NULL} is the marker the retire writes itself, which names no
+     * generation and so reads as live whatever the superblock says.
+     */
+    private void assertTimelineRetirePending(LiveViewInstance instance, long keptGeneration, long markerBaseGeneration) {
+        Assert.assertTrue("the retire kept _timeline", instance.isCheckpointTimelineRetirePending());
+        assertTimelineOnDisk(instance, true);
+        Assert.assertEquals("nothing publishes over the kept timeline", keptGeneration, superblockGeneration(instance));
+        Assert.assertEquals("no head survives the retire", Numbers.LONG_NULL, instance.getHeadCheckpointMaxTs());
+        Assert.assertEquals("nor the head's base WAL arm", Numbers.LONG_NULL, instance.getHeadCheckpointBaseSeqTxn());
+        Assert.assertEquals("nor the timeline's", Numbers.LONG_NULL, instance.getCheckpointTimelineWalPurgeFloor());
+        assertMarkerNames(markerBaseGeneration);
+    }
+
+    /**
+     * Roots at 00:01 to 00:04, then the upsert of 00:01 to 100 under a lock on _timeline for that
+     * turn alone, over a base whose designated timestamp has nanosecond precision when isNanos. The
+     * rebuild's retire keeps the file and writes a marker naming no generation beside it, and the
+     * closing seal retries the retire, meets the lock and is refused. With the lock gone, the next
+     * row's seal retries the retire again, removes the kept file and the marker with it, and opens
+     * a fresh history. The late row 00:01:30 then finds no root below it in that history, and the
+     * rebuild gives what a recompute gives.
+     */
+    private void assertChangeBelowEveryRootWhoseRetireKeepsTheTimelineOpensAFreshHistory(boolean isNanos) throws Exception {
+        final TimelineUnlinkFault fault = new TimelineUnlinkFault();
+        assertMemoryLeak(fault, () -> {
+            createDepartureView(isNanos);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = commitFourRoots(job, isNanos);
+                final long generationBefore = superblockGeneration(instance);
+                final long sealFailuresBefore = instance.getCheckpointSealFailures();
+                final long resetsBefore = instance.getCheckpointTimelineResets();
+                try {
+                    changeBelowEveryRootUnderALock(job, fault);
+                } finally {
+                    fault.unlock();
+                }
+                assertTimelineRetirePending(instance, generationBefore, Numbers.LONG_NULL);
+                try (Path dir = checkpointsDir(instance)) {
+                    Assert.assertEquals("nor any seqTxn", Numbers.LONG_NULL, LiveViewCheckpointRepairMarker.readLvSeqTxn(configuration, dir));
+                }
+                Assert.assertEquals("the closing seal is refused", sealFailuresBefore + 1, instance.getCheckpointSealFailures());
+                Assert.assertEquals("the rebuild retires once", resetsBefore + 1, instance.getCheckpointTimelineResets());
+
+                commitDeparture(job, "('2026-01-01T00:05:00.000000Z', 'a', 5.0)");
+                Assert.assertFalse("the seal's retry removed the kept timeline", instance.isCheckpointTimelineRetirePending());
+                Assert.assertEquals("and counts no reset of its own", resetsBefore + 1, instance.getCheckpointTimelineResets());
+                Assert.assertEquals("the seal opens a fresh history", 1, generation(instance));
+                assertCheckpointLadder(instance, isNanos, owedRootText("2026-01-01T00:05:00.000000Z -> 5\n", "2026-01-01", isNanos));
+                assertNoRepairMarker(instance);
+                Assert.assertEquals("and lands", sealFailuresBefore + 1, instance.getCheckpointSealFailures());
+
+                commitDeparture(job, "('2026-01-01T00:01:30.000000Z', 'a', 0.5)");
+                Assert.assertEquals(
+                        "no root of the fresh history sits below the late row",
+                        0,
+                        job.getStatsForTest().getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_RESUME_FROM_ANCHOR)
+                );
+            }
+            assertViewRows(
+                    owedRootText(CHANGE_BELOW_EVERY_ROOT_LATE_ROW_ROWS + CHANGE_BELOW_EVERY_ROOT_ROW_0005, "2026-01-01", isNanos),
+                    DEPARTURE_ROWS_QUERY
+            );
+            assertViewMatchesRecompute(DEPARTURE_VIEW_SQL);
+        });
+    }
+
+    /**
+     * The change below every root over {@link #commitFourRoots}, or over
+     * {@link #commitFourRootsOverTheDayTheBaseLoses} when isDayLost, under a lock on _timeline, with
+     * the process stopped at the change's replacement commit, after the retire kept the file and
+     * wrote its marker beside it: the view's table still holds the rows from before the change. The
+     * restart meets the marker and rebuilds from the applied base, which the restatement guard
+     * refuses over the day the base lost.
+     */
+    private void assertCrashAfterARetireThatKeptTheTimeline(boolean isDayLost) throws Exception {
+        final TimelineUnlinkFault fault = new TimelineUnlinkFault();
+        // s sums x over the row and the two rows of 'a' below it, by hand.
+        final String rowsBeforeTheChange = isDayLost
+                ? """
+                ts\tsym\tx\ts
+                2025-12-31T12:00:00.000000Z\ta\t0.5\t0.5
+                2026-01-01T00:01:00.000000Z\ta\t1.0\t1.5
+                2026-01-01T00:02:00.000000Z\ta\t2.0\t3.5
+                2026-01-01T00:03:00.000000Z\ta\t3.0\t6.0
+                2026-01-01T00:04:00.000000Z\ta\t4.0\t9.0
+                """
+                : """
+                ts\tsym\tx\ts
+                2026-01-01T00:01:00.000000Z\ta\t1.0\t1.0
+                2026-01-01T00:02:00.000000Z\ta\t2.0\t3.0
+                2026-01-01T00:03:00.000000Z\ta\t3.0\t6.0
+                2026-01-01T00:04:00.000000Z\ta\t4.0\t9.0
+                """;
+        final LogCapture capture = new LogCapture();
+        capture.start();
+        try {
+            assertMemoryLeak(fault, () -> {
+                createDepartureView();
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    final LiveViewInstance instance = isDayLost ? commitFourRootsOverTheDayTheBaseLoses(job) : commitFourRoots(job, false);
+                    final long generationBefore = superblockGeneration(instance);
+                    final LiveViewReplacementCommitWitness witness = new LiveViewReplacementCommitWitness(
+                            engine,
+                            instance,
+                            Numbers.LONG_NULL,
+                            LiveViewReplacementCommitWitness.FAIL_CANCELLATION
+                    );
+                    fault.lock(false);
+                    commitAndStopAtTheReplacementCommit(witness, job, "('2026-01-01T00:01:00.000000Z', 'a', 100.0)");
+                    assertMarkersRecorded(witness, Numbers.LONG_NULL);
+                    Assert.assertEquals("the retire meets the lock ahead of the commit", 1, fault.getRefusedTimelineUnlinks());
+                    assertTimelineRetirePending(instance, generationBefore, Numbers.LONG_NULL);
+                    fault.unlock();
+                }
+                assertViewRows(rowsBeforeTheChange, DEPARTURE_ROWS_QUERY);
+                restartAndRefresh();
+                if (isDayLost) {
+                    assertRebuildBlockedByTheRepairMarker(rowsBeforeTheChange, OWED_ROOT_HISTORY_FLOOR);
+                    assertRestartsBlockedByTheRepairMarker(rowsBeforeTheChange, OWED_ROOT_HISTORY_FLOOR);
+                    capture.drain();
+                    capture.assertNotLogged(GUARD_STAND_DOWN);
+                } else {
+                    capture.drain();
+                    capture.assertLogged("live view restart rebuilding from applied base [view=lv, cause=prefix preservation repair marker present");
+                    assertRebuiltFromAppliedBase("lv");
+                    assertViewRows(CHANGE_BELOW_EVERY_ROOT_ROWS, DEPARTURE_ROWS_QUERY);
+                    assertViewMatchesRecompute(DEPARTURE_VIEW_SQL);
+                }
+            });
+        } finally {
+            capture.stop();
+        }
+    }
+
+    /**
+     * Seeds three rows, then restarts with the newest seed root's data segment torn, under a lock on
+     * _timeline: the restarted sweep cannot read that root, so its resume retires the timeline and
+     * retires it again to re-sweep from offset 0 behind its skip-write floor, the lock keeping the
+     * file both times. Each of the three turns from the abandon on, the abandoning one included,
+     * feeds one row and yields, and its seed seal retries the retire and is refused: the sweep keeps
+     * no resume point while the lock holds, and nothing publishes over the kept generation. Then the
+     * lock goes and the next seed seal opens a fresh history, or, when isRestartedWhileLocked, the
+     * process restarts with the lock held, and the restarted resume meets the torn root again. The
+     * view completes as a recompute does, and so does it after a restart.
+     */
+    private void assertSeedSweepOverAKeptTimeline(boolean isRestartedWhileLocked) throws Exception {
+        final TimelineUnlinkFault fault = new TimelineUnlinkFault();
+        final LogCapture capture = new LogCapture();
+        capture.start();
+        try {
+            assertMemoryLeak(fault, () -> {
+                createSeedingView(SEED_ROWS - 2, 2);
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    Assert.assertEquals("each turn seals a seed root", 3, runSeedTurns(job, 3).getSeedCheckpointDataOffset());
+                }
+                engine.getLiveViewRegistry().clear();
+                engine.buildViewGraphs();
+                final LiveViewInstance instance = viewInstance();
+                corruptNewestRootDataSegment(instance);
+                final long generationBefore = superblockGeneration(instance);
+                fault.lock(false);
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    for (int turn = 1; turn <= 3; turn++) {
+                        runSeedTurns(job, 1);
+                        Assert.assertEquals("the abandon's two retires, then one seal per turn", 2 + turn, fault.getRefusedTimelineUnlinks());
+                        Assert.assertEquals("no seed root lands", Numbers.LONG_NULL, instance.getSeedCheckpointDataOffset());
+                    }
+                    assertTimelineRetirePending(instance, generationBefore, Numbers.LONG_NULL);
+                    capture.drain();
+                    Assert.assertEquals("the torn root abandons the resume", 1, capture.countOccurrences(SEED_RESUME_ABANDONED));
+                    Assert.assertEquals("each turn's seed seal is refused", 3, capture.countOccurrences(SEED_SEAL_FAILED));
+                    if (!isRestartedWhileLocked) {
+                        fault.unlock();
+                        runSeedTurns(job, 1);
+                        Assert.assertFalse("the seed seal removed the kept timeline", instance.isCheckpointTimelineRetirePending());
+                        Assert.assertEquals("and sealed its root in a fresh history", 1, generation(instance));
+                        Assert.assertEquals("three rows re-swept under the lock, then the fourth", 4, instance.getSeedCheckpointDataOffset());
+                        driveSeedToCompletion(job, "lv");
+                    }
+                }
+                if (isRestartedWhileLocked) {
+                    engine.getLiveViewRegistry().clear();
+                    engine.buildViewGraphs();
+                    final LiveViewInstance restarted = viewInstance();
+                    try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                        runSeedTurns(job, 1);
+                        capture.drain();
+                        Assert.assertEquals("the restarted resume cannot read the kept root either", 2, capture.countOccurrences(SEED_RESUME_ABANDONED));
+                        Assert.assertTrue("and its retire keeps the file", restarted.isCheckpointTimelineRetirePending());
+                        fault.unlock();
+                        driveSeedToCompletion(job, "lv");
+                    }
+                }
+                Assert.assertEquals(LiveViewState.SEED_STATE_ACTIVE, viewInstance().getStateReader().getSeedState());
+                assertViewMatchesRecompute(SEED_VIEW_SQL);
+                restartAndRefresh();
+                assertViewMatchesRecompute(SEED_VIEW_SQL);
+            });
+        } finally {
+            capture.stop();
+        }
+    }
+
+    /**
+     * Upserts 00:01 to 100 over {@link #commitFourRoots} under a lock on _timeline, and leaves the
+     * lock on. No root sits below the change, and a ROWS repair over a deduplicating base does not
+     * localize, so the head-miss rebuild re-derives the whole view and retires the timeline ahead of
+     * its commit, writing no marker of its own: the retire keeps the file, and the closing seal
+     * retries the retire and meets the lock as well.
+     */
+    private void changeBelowEveryRootUnderALock(LiveViewRefreshJob job, TimelineUnlinkFault fault) throws Exception {
+        final long headMissRepairsBefore = countHeadMissRepairs(job);
+        fault.lock(false);
+        commitDeparture(job, "('2026-01-01T00:01:00.000000Z', 'a', 100.0)");
+        Assert.assertEquals("the head-miss rebuild repairs the change", headMissRepairsBefore + 1, countHeadMissRepairs(job));
+        Assert.assertEquals("the retire, then the closing seal's retry of it", 2, fault.getRefusedTimelineUnlinks());
+    }
+
+    // Commits values to tx, the anchored view's base, and drives the refresh to quiescence over it.
+    private void commitToTx(LiveViewRefreshJob job, String values) throws Exception {
+        execute("INSERT INTO tx VALUES " + values);
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+    }
+
+    // The anchored view over tx, whose base holds the rows seed ahead of CREATE, so the view seeds
+    // them. account_id carries an index, which a keyed repair reads its account's rows through.
+    private void createAnchoredView(CharSequence seed) throws Exception {
+        execute("CREATE TABLE tx (created_at TIMESTAMP, account_id SYMBOL NOCACHE INDEX CAPACITY 8, amount DOUBLE) "
+                + "TIMESTAMP(created_at) PARTITION BY HOUR WAL");
+        execute("INSERT INTO tx VALUES " + seed);
+        drainWalQueue();
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " + ANCHORED_VIEW_SQL);
+    }
+
+    /**
+     * Under a lock on _timeline, runs a truncate floored below every root the view's timeline
+     * holds: it keeps no prefix, so it retires the timeline instead, and the lock keeps the file.
+     * The lock stays on.
+     */
+    private LiveViewInstance keepTheTimelineUnderALock(LiveViewRefreshJob job, TimelineUnlinkFault fault) {
+        final LiveViewInstance instance = viewInstance();
+        fault.lock(false);
+        Assert.assertFalse(
+                "a truncate below every root retires the timeline",
+                job.truncateOrRetireTimelineOnO3ForTest(instance, ts("2026-01-01T00:00:00.000000Z"))
+        );
+        Assert.assertEquals("and the lock keeps the file", 1, fault.getRefusedTimelineUnlinks());
+        return instance;
+    }
+
+    // A root at each of the rows 00:01 to 00:04, x 1 to 4, each sealed by its own commit under the
+    // class's row cadence of one, over the view createDepartureView(isNanos) created.
+    private LiveViewInstance commitFourRoots(LiveViewRefreshJob job, boolean isNanos) throws Exception {
+        driveSeedToCompletion(job, "lv");
+        for (int minute = 1; minute <= 4; minute++) {
+            commitDeparture(job, "('2026-01-01T00:0" + minute + ":00.000000Z', 'a', " + minute + ".0)");
+        }
+        final LiveViewInstance instance = viewInstance();
+        assertCheckpointLadder(instance, isNanos, owedRootText("""
+                2026-01-01T00:01:00.000000Z -> 1
+                2026-01-01T00:02:00.000000Z -> 2
+                2026-01-01T00:03:00.000000Z -> 3
+                2026-01-01T00:04:00.000000Z -> 4
+                """, "2026-01-01", isNanos));
+        return instance;
+    }
+
+    // A root at 00:01 over the row 2025-12-31T12:00 that rides in with it, whose day the base then
+    // drops while the view keeps it, and a root at each of 00:02 to 00:04: x 1 to 4.
+    private LiveViewInstance commitFourRootsOverTheDayTheBaseLoses(LiveViewRefreshJob job) throws Exception {
+        driveSeedToCompletion(job, "lv");
+        commitDeparture(job, "('2025-12-31T12:00:00.000000Z', 'a', 0.5), ('2026-01-01T00:01:00.000000Z', 'a', 1.0)");
+        execute("ALTER TABLE base DROP PARTITION LIST '2025-12-31'");
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+        for (int minute = 2; minute <= 4; minute++) {
+            commitDeparture(job, "('2026-01-01T00:0" + minute + ":00.000000Z', 'a', " + minute + ".0)");
+        }
+        final LiveViewInstance instance = viewInstance();
+        assertCheckpointLadder(instance, false, """
+                2026-01-01T00:01:00.000000Z -> 2
+                2026-01-01T00:02:00.000000Z -> 3
+                2026-01-01T00:03:00.000000Z -> 4
+                2026-01-01T00:04:00.000000Z -> 5
+                """);
+        return instance;
+    }
+
+    // The head-miss departure fixture over a base that lost nothing, roots at 23:55 and 00:59, and
+    // the rows 01:00 to 01:05 above it, which the cadence leaves unsealed.
+    private LiveViewInstance commitSixUnsealedRowsAboveTheHeadMissRoots(LiveViewRefreshJob job) throws Exception {
+        driveSeedToCompletion(job, "lv");
+        commitHeadMissDepartureFixture(job, false, 59);
+        commitDeparture(
+                job,
+                "('2026-01-01T01:00:00.000000Z', 'a', 1.0), ('2026-01-01T01:01:00.000000Z', 'a', 1.0), "
+                        + "('2026-01-01T01:02:00.000000Z', 'a', 1.0), ('2026-01-01T01:03:00.000000Z', 'a', 1.0), "
+                        + "('2026-01-01T01:04:00.000000Z', 'a', 1.0), ('2026-01-01T01:05:00.000000Z', 'a', 1.0)"
+        );
+        final LiveViewInstance instance = viewInstance();
+        assertCheckpointLadder(instance, false, "2025-12-31T23:55:00.000000Z -> 1\n2026-01-01T00:59:00.000000Z -> 61\n");
+        return instance;
+    }
+
+    // A root at 00:01, then one at 00:03 over the rows 00:02 and 00:03, the newer of which the
+    // departure of departWithTheSpliceFailingUnderALock upserts out of the filter.
+    private LiveViewInstance commitTwoRootsUnderASplicedDeparture(LiveViewRefreshJob job) throws Exception {
+        driveSeedToCompletion(job, "lv");
+        commitDeparture(job, "('2026-01-01T00:01:00.000000Z', 'a', 1.5)");
+        commitDeparture(job, "('2026-01-01T00:02:00.000000Z', 'a', 2.5), ('2026-01-01T00:03:00.000000Z', 'a', 9.5)");
+        final LiveViewInstance instance = viewInstance();
+        assertCheckpointLadder(instance, false, """
+                2026-01-01T00:01:00.000000Z -> 1
+                2026-01-01T00:03:00.000000Z -> 3
+                """);
+        return instance;
+    }
+
+    // A view over rows of 'a' a minute apart from 00:01, firstDayRows of them on 2026-01-01 and
+    // secondDayRows on 2026-01-02, in a day partition of their own, x numbering them from 1. The base
+    // holds them ahead of CREATE, so the view seeds them: under the class's row cadence of one each
+    // sweep turn feeds one row and seals a seed root at it.
+    private void createSeedingView(int firstDayRows, int secondDayRows) throws Exception {
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        final StringSink rows = new StringSink();
+        for (int row = 1; row <= firstDayRows + secondDayRows; row++) {
+            if (row > 1) {
+                rows.put(", ");
+            }
+            final boolean isFirstDay = row <= firstDayRows;
+            rows.put(isFirstDay ? "('2026-01-01T00:0" : "('2026-01-02T00:0")
+                    .put(isFirstDay ? row : row - firstDayRows)
+                    .put(":00.000000Z', 'a', ").put(row).put(".0)");
+        }
+        execute("INSERT INTO base VALUES " + rows);
+        drainWalQueue();
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " + SEED_VIEW_SQL);
+    }
+
+    /**
+     * Commits the departure of 00:03 over {@link #commitTwoRootsUnderASplicedDeparture}, whose resume
+     * from the root at 00:01 splices the root at 00:03, with the splice failing after its data and
+     * a lock on _timeline from the replay on: the retire that answers the failed splice keeps the
+     * file, and the splice's marker beside it. The lock goes ahead of the closing seal when
+     * isReleasedAtTheSeal, and stays otherwise.
+     */
+    private void departWithTheSpliceFailingUnderALock(
+            LiveViewRefreshJob job,
+            TimelineUnlinkFault fault,
+            boolean isReleasedAtTheSeal
+    ) throws Exception {
+        final LiveViewInstance instance = viewInstance();
+        final long repairFailuresBefore = instance.getCheckpointRepairFailures();
+        final long resumesBefore = job.getStatsForTest().getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_RESUME_FROM_ANCHOR);
+        hooks(job).setSimulateResumeReplayStart(() -> {
+            job.setCheckpointTimelineTestFailureStage(LiveViewCheckpointTimelineStoreWriter.TEST_FAIL_AFTER_DATA_PUBLISH);
+            fault.lock(false);
+        });
+        hooks(job).setSimulateResumeHeadSealStart(() -> {
+            job.setCheckpointTimelineTestFailureStage(0);
+            if (isReleasedAtTheSeal) {
+                fault.unlock();
+            }
+        });
+        try {
+            commitDeparture(job, "('2026-01-01T00:03:00.000000Z', 'a', -9.5)");
+        } finally {
+            hooks(job).setSimulateResumeReplayStart(null);
+            hooks(job).setSimulateResumeHeadSealStart(null);
+            job.setCheckpointTimelineTestFailureStage(0);
+        }
+        Assert.assertEquals(
+                "the resume from 00:01 repairs the departure",
+                resumesBefore + 1,
+                job.getStatsForTest().getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_RESUME_FROM_ANCHOR)
+        );
+        Assert.assertEquals("its splice fails to publish", repairFailuresBefore + 1, instance.getCheckpointRepairFailures());
+    }
+
+    /**
+     * Commits the upsert of 00:58 to 3.0 over {@link #commitSixUnsealedRowsAboveTheHeadMissRoots}: a
+     * value change below the root at 00:59, which the head-miss rebuild's end-of-table splice
+     * re-versions, with the splice failing after its metadata, before the superblock names it. The
+     * closing seal still appends onto the un-spliced generation, at the frontier 01:05 above every
+     * root it keeps, and the tail then retires that generation, under a lock on _timeline taken at
+     * the closing seal when isLocked.
+     */
+    private void failTheHeadMissSpliceUnderALock(LiveViewRefreshJob job, TimelineUnlinkFault fault, boolean isLocked) throws Exception {
+        final LiveViewInstance instance = viewInstance();
+        final long repairFailuresBefore = instance.getCheckpointRepairFailures();
+        final long headMissRepairsBefore = countHeadMissRepairs(job);
+        final int markerRenamesBefore = fault.getMarkerRenames();
+        fault.afterTheNextMarker(() -> job.setCheckpointTimelineTestFailureStage(LiveViewCheckpointTimelineStoreWriter.TEST_FAIL_AFTER_METADATA_PUBLISH));
+        hooks(job).setSimulateHeadMissHeadSealStart(() -> {
+            job.setCheckpointTimelineTestFailureStage(0);
+            if (isLocked) {
+                fault.lock(false);
+            }
+        });
+        try {
+            commitDeparture(job, "('2026-01-01T00:58:00.000000Z', 'a', 3.0)");
+        } finally {
+            hooks(job).setSimulateHeadMissHeadSealStart(null);
+            fault.afterTheNextMarker(null);
+            job.setCheckpointTimelineTestFailureStage(0);
+        }
+        Assert.assertEquals("the head-miss rebuild repairs the change", headMissRepairsBefore + 1, countHeadMissRepairs(job));
+        Assert.assertEquals("the splice's marker alone", markerRenamesBefore + 1, fault.getMarkerRenames());
+        Assert.assertEquals("the splice fails to publish", repairFailuresBefore + 1, instance.getCheckpointRepairFailures());
+    }
+
+    // Runs turns sweep turns of the seeding view, each feeding one row under the class's row cadence
+    // of one, and returns the view, which still has rows to sweep.
+    private LiveViewInstance runSeedTurns(LiveViewRefreshJob job, int turns) {
+        for (int turn = 0; turn < turns; turn++) {
+            job.run();
+            drainWalQueue();
+        }
+        final LiveViewInstance instance = viewInstance();
+        Assert.assertEquals("the sweep has rows left", LiveViewState.SEED_STATE_SEEDING, instance.getStateReader().getSeedState());
+        return instance;
     }
 
     /**
@@ -8872,8 +10733,11 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
      * Over the day the base loses, the departure of the newer of two rows under one root, with the
      * frontier truncate failing after its marker and its metadata, and the retire that answers it
      * failing on {@code _timeline} and the segment directories: the splice's generation stays on
-     * disk with the truncate's marker beside it, and the seal at the new frontier fails too. Then
-     * {@code rowsAfter} rows, one or two, each sealing a root on top of that generation.
+     * disk with the truncate's marker beside it, the view refuses it, and the seal at the new
+     * frontier, which retries the retire, fails too. Then, with the fault gone, {@code rowsAfter}
+     * rows, one or two: the first one's seal retries the retire, which removes the splice's
+     * generation and the marker with it, and opens a fresh history at the row, and each row seals a
+     * root of it.
      */
     private void failTheFrontierTruncateWithItsTimelineLockedThenSeal(FrontierTruncateDoubleFault fault, int rowsAfter) throws Exception {
         createDepartureView();
@@ -8895,26 +10759,28 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
             Assert.assertEquals("the truncate never published", spliceGeneration, generation(instance));
             assertTimelineOnDisk(instance, true);
             assertMarkerNames(spliceGeneration);
+            Assert.assertTrue("the view refuses the generation the retire kept", instance.isCheckpointTimelineRetirePending());
             // The splice re-versioned the departed row's root, above the new frontier 00:02.
-            final String splicedLadder = """
+            assertCheckpointLadder(instance, false, """
                     2025-12-31T12:00:00.000000Z -> 1
                     2026-01-01T00:01:00.000000Z -> 2
                     2026-01-01T00:03:00.000000Z -> 3
-                    """;
-            assertCheckpointLadder(instance, false, splicedLadder);
+                    """);
 
             commitDeparture(job, "('2026-01-01T00:04:00.000000Z', 'a', 8.0)");
-            assertCheckpointLadder(instance, false, splicedLadder + "2026-01-01T00:04:00.000000Z -> 4\n");
-            assertRepairMarkerLive(instance, spliceGeneration);
+            Assert.assertFalse("the seal's retry of the retire removes the kept file", instance.isCheckpointTimelineRetirePending());
+            Assert.assertEquals("and the seal opens a fresh history", 1, generation(instance));
+            assertCheckpointLadder(instance, false, "2026-01-01T00:04:00.000000Z -> 4\n");
+            assertNoRepairMarker(instance);
             if (rowsAfter > 1) {
                 commitDeparture(job, "('2026-01-01T00:05:00.000000Z', 'a', 1.0)");
                 assertCheckpointLadder(
                         instance,
                         false,
-                        splicedLadder + "2026-01-01T00:04:00.000000Z -> 4\n2026-01-01T00:05:00.000000Z -> 5\n"
+                        "2026-01-01T00:04:00.000000Z -> 4\n2026-01-01T00:05:00.000000Z -> 5\n"
                 );
-                Assert.assertEquals("each row seals one generation", spliceGeneration + 2, generation(instance));
-                assertRepairMarkerStale(instance, spliceGeneration);
+                Assert.assertEquals("each row seals one generation", 2, generation(instance));
+                assertNoRepairMarker(instance);
             }
             assertNoRefreshFaults("lv");
         }
@@ -9558,17 +11424,33 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
      * before the next unlink of {@code _timeline}, where a crash image of a crash ahead of a
      * retire is taken, and fail the next rewrite of the repair marker the way Windows fails it:
      * the rename over the previous record is refused, that record unlinked, and the retried
-     * rename refused too.
+     * rename refused too. Apart from the lock it can refuse every open of {@code _timeline}, refuse
+     * the staged write of the next repair markers before it creates a file, so no marker of theirs
+     * reaches the disk, run an action right after the next repair marker lands, and fail the check
+     * of {@code _timeline} that follows its next unlink.
      */
     private static final class TimelineUnlinkFault extends TestFilesFacadeImpl {
         private final AtomicInteger failedMarkerRewrites = new AtomicInteger();
+        private final AtomicInteger failedTimelineChecks = new AtomicInteger();
+        private final AtomicInteger markerRenames = new AtomicInteger();
+        private final AtomicInteger refusedBaseColumnOpens = new AtomicInteger();
+        private final AtomicInteger refusedMarkerWrites = new AtomicInteger();
         private final AtomicInteger refusedTimelineUnlinks = new AtomicInteger();
+        private volatile Runnable afterTheNextMarker;
+        // The directory and partition of the base column open to fail once, or null.
+        private volatile String baseColumnFaultDirName;
+        private volatile String baseColumnFaultPartition;
         private volatile Runnable beforeTheNextTimelineUnlink;
         private volatile int injectedErrno;
+        private volatile boolean isFailingTheCheckAfterTheNextTimelineUnlink;
         private volatile boolean isFailingTheNextMarkerRewrite;
+        private volatile boolean isFailingTheNextTimelineCheck;
         private volatile boolean isLocked;
         private volatile boolean isMarkerRewriteRetried;
         private volatile boolean isOnlyTheFileLocked;
+        private volatile boolean isRefusingTimelineOpens;
+        // Staged marker writes left to refuse, or a negative count to refuse every one.
+        private volatile int markerWritesToRefuse;
 
         @Override
         public int errno() {
@@ -9577,13 +11459,61 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
         }
 
         @Override
+        public boolean exists(LPSZ path) {
+            if (isFailingTheNextTimelineCheck && isTimelineFile(path)) {
+                isFailingTheNextTimelineCheck = false;
+                failedTimelineChecks.incrementAndGet();
+                throw CairoException.critical(0).put("injected fault on the check of _timeline");
+            }
+            return super.exists(path);
+        }
+
+        @Override
+        public long openRO(LPSZ name) {
+            if (isRefusedTimelineOpen(name)) {
+                return -1;
+            }
+            final String dirName = baseColumnFaultDirName;
+            if (dirName != null
+                    && Utf8s.containsAscii(name, dirName)
+                    && Utf8s.containsAscii(name, baseColumnFaultPartition)
+                    && Utf8s.endsWithAscii(name, "x.d")
+                    && !Utf8s.containsAscii(name, "wal")) {
+                baseColumnFaultDirName = null;
+                refusedBaseColumnOpens.incrementAndGet();
+                return -1;
+            }
+            return super.openRO(name);
+        }
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            if (isRefusedTimelineOpen(name)) {
+                return -1;
+            }
+            final int toRefuse = markerWritesToRefuse;
+            if (toRefuse != 0
+                    && Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.REPAIRING_MARKER_FILE_NAME + LiveViewCheckpointLayout.TMP_SUFFIX)) {
+                if (toRefuse > 0) {
+                    markerWritesToRefuse = toRefuse - 1;
+                }
+                refusedMarkerWrites.incrementAndGet();
+                return -1;
+            }
+            return super.openRW(name, opts);
+        }
+
+        @Override
         public boolean removeQuiet(LPSZ name) {
-            if (Utf8s.containsAscii(name, LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME)
-                    && Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.TIMELINE_FILE_NAME)) {
+            if (isTimelineFile(name)) {
                 final Runnable action = beforeTheNextTimelineUnlink;
                 if (action != null) {
                     beforeTheNextTimelineUnlink = null;
                     action.run();
+                }
+                if (isFailingTheCheckAfterTheNextTimelineUnlink) {
+                    isFailingTheCheckAfterTheNextTimelineUnlink = false;
+                    isFailingTheNextTimelineCheck = true;
                 }
                 if (isLocked) {
                     refusedTimelineUnlinks.incrementAndGet();
@@ -9612,7 +11542,16 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
                 }
             }
             injectedErrno = 0;
-            return super.rename(from, to);
+            final int result = super.rename(from, to);
+            if (result == Files.FILES_RENAME_OK && Utf8s.endsWithAscii(to, LiveViewCheckpointLayout.REPAIRING_MARKER_FILE_NAME)) {
+                markerRenames.incrementAndGet();
+                final Runnable action = afterTheNextMarker;
+                if (action != null) {
+                    afterTheNextMarker = null;
+                    action.run();
+                }
+            }
+            return result;
         }
 
         @Override
@@ -9627,8 +11566,18 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
             return super.rmdir(name, haltOnError);
         }
 
+        void afterTheNextMarker(Runnable action) {
+            afterTheNextMarker = action;
+        }
+
         void beforeTheNextTimelineUnlink(Runnable action) {
             beforeTheNextTimelineUnlink = action;
+        }
+
+        // Fails the check whether _timeline exists that follows its next unlink, refused or not,
+        // once.
+        void failTheCheckAfterTheNextTimelineUnlink() {
+            isFailingTheCheckAfterTheNextTimelineUnlink = true;
         }
 
         void failTheNextMarkerRewrite() {
@@ -9636,8 +11585,37 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
             isFailingTheNextMarkerRewrite = true;
         }
 
+        // Refuses the staged write of the next count repair markers, or of every one until called
+        // again with 0 when count is negative.
+        void failMarkerWrites(int count) {
+            markerWritesToRefuse = count;
+        }
+
+        // Fails the next open of the column file x.d in the partition directory named partition of
+        // the table whose directory is dirName, once.
+        void failTheNextBaseColumnOpen(String dirName, String partition) {
+            baseColumnFaultPartition = partition;
+            baseColumnFaultDirName = dirName;
+        }
+
+        int getRefusedBaseColumnOpens() {
+            return refusedBaseColumnOpens.get();
+        }
+
         int getFailedMarkerRewrites() {
             return failedMarkerRewrites.get();
+        }
+
+        int getFailedTimelineChecks() {
+            return failedTimelineChecks.get();
+        }
+
+        int getMarkerRenames() {
+            return markerRenames.get();
+        }
+
+        int getRefusedMarkerWrites() {
+            return refusedMarkerWrites.get();
         }
 
         int getRefusedTimelineUnlinks() {
@@ -9650,8 +11628,21 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
             isLocked = true;
         }
 
+        void refuseTimelineOpens(boolean isRefusing) {
+            isRefusingTimelineOpens = isRefusing;
+        }
+
         void unlock() {
             isLocked = false;
+        }
+
+        private static boolean isTimelineFile(LPSZ name) {
+            return Utf8s.containsAscii(name, LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME)
+                    && Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.TIMELINE_FILE_NAME);
+        }
+
+        private boolean isRefusedTimelineOpen(LPSZ name) {
+            return isRefusingTimelineOpens && isTimelineFile(name);
         }
     }
 

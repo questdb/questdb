@@ -366,6 +366,10 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // for the same reason.
     private static final long FRONTIER_TRUNCATE_CRASH_SALT0 = 0x94D049BB133111EBL;
     private static final long FRONTIER_TRUNCATE_CRASH_SALT1 = 0x6A09E667F3BCC909L;
+    // Salt the draws of the kept-timeline episode a departure's frontier truncate can open apart
+    // from the run's sequence, for the same reason: see runKeptTimelineEpisode.
+    private static final long KEPT_TIMELINE_EPISODE_SALT0 = 0x1B873593CC9E2D51L;
+    private static final long KEPT_TIMELINE_EPISODE_SALT1 = 0x85EBCA6BC2B2AE35L;
     // Salt the draws of the sparse departure whose frontier seal fails apart from the run's
     // sequence, for the same reason.
     private static final long FRONTIER_SEAL_FAILURE_SALT0 = 0x2C1B3C6D7E9F0A1BL;
@@ -562,6 +566,17 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     private int owedSealKeptTimelineRetires;
     private int sparseFrontierSealKeptTimelineRetires;
     private int restartRebuildsOverTheMarkerBefore;
+    // Set while testFuzzDedup, testFuzzReplaceRange or testFuzzKeptTimelineEpisodes runs: a
+    // departure of a filtered view whose resume reaches its frontier truncate may fail that
+    // truncate's publication under a lock on _timeline, which keeps the splice's generation the
+    // view then refuses. Then the episodes that kept the timeline, the seals the view refused
+    // while the lock held, the late rows it repaired with no anchor meanwhile, and the fresh
+    // histories the first seal after the lock opened: see runKeptTimelineEpisode.
+    private boolean isKeptTimelineEpisodeArm;
+    private int keptTimelineEpisodes;
+    private int keptTimelineFreshHistories;
+    private int keptTimelineLateRowRepairs;
+    private int keptTimelineRefusedSeals;
     // Retires that answered the failed frontier seal of a sparse departure with no lock on
     // _timeline, which removed the timeline and its marker, and whose restart the restatement
     // guard refused over the day the run dropped, as a rebuild over an absent timeline: see
@@ -799,20 +814,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // Each variant runs under O3 with random restart and seed; DROP PARTITION
         // of an unprocessed future band (removals=true) exercises the divergence gate
         // - a removed row the LV never emitted must not leak onto the raw-WAL path.
-        final Rnd rnd = TestUtils.generateRandom(LOG);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
         isSecondRepairCommitFaultArm = true;
-        final int firstSparseDepartureShape = rnd.nextInt(SPARSE_DEPARTURE_SHAPES);
-        assertMemoryLeak(checkpointFaults, () -> {
-            for (int i = 0, rangeFrameRuns = 0; i < DEDUP_VARIANTS.length; i++) {
-                final int variant = DEDUP_VARIANTS[i];
-                final int sparseDepartureShape = isRangeFrameVariant(variant)
-                        ? (firstSparseDepartureShape + rangeFrameRuns++) % SPARSE_DEPARTURE_SHAPES
-                        : -1;
-                runDedupFuzz(rnd, variant, 120 + rnd.nextInt(160),
-                        true, rnd.nextBoolean(), rnd.nextBoolean(), true, null, sparseDepartureShape);
-            }
-        });
+        isKeptTimelineEpisodeArm = true;
+        runDedupFuzzBatch(TestUtils.generateRandom(LOG));
         coverage.log(LOG, "dedup");
         // Each run ends moving its newest rows out of the view: see departNewestRows, and
         // departNewestRowsOverSparseRoots for the RANGE-frame runs, which take one shape each.
@@ -826,6 +830,24 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         assertReachedASecondRepairCommitFault();
         assertReachedAResumeFrontierTruncateCrash();
         logKeptTimelineRetires();
+        logKeptTimelineEpisodes();
+    }
+
+    @Test
+    public void testFuzzKeptTimelineEpisodes() throws Exception {
+        // A pinned seed pair whose testFuzzDedup batch fails the frontier truncate of a filtered
+        // view's departure under a lock on _timeline, which keeps the splice's generation: the
+        // view refuses its seals while the lock holds, repairs a late row with no anchor in the
+        // kept generation, and opens a fresh history at its first seal once the lock goes. See
+        // runKeptTimelineEpisode. A generator change that stops producing that fails here.
+        isSecondRepairCommitFaultArm = true;
+        isKeptTimelineEpisodeArm = true;
+        runDedupFuzzBatch(TestUtils.generateRandom(LOG, 1140836954857725101L, 2366910634094568575L));
+        logKeptTimelineEpisodes();
+        Assert.assertTrue("no departure kept its timeline under the lock", keptTimelineEpisodes > 0);
+        Assert.assertTrue("no seal was refused over a kept timeline", keptTimelineRefusedSeals > 0);
+        Assert.assertTrue("no late row was repaired over a kept timeline", keptTimelineLateRowRepairs > 0);
+        Assert.assertTrue("no seal opened a fresh history once the lock went", keptTimelineFreshHistories > 0);
     }
 
     @Test
@@ -1270,6 +1292,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // any ghost row a converging replay failed to erase diverges from the
         // recompute oracle at quiescence.
         isSecondRepairCommitFaultArm = true;
+        isKeptTimelineEpisodeArm = true;
         runReplaceRangeFuzzVariants(TestUtils.generateRandom(LOG), true);
         // Each run ends moving its newest rows out of the view: see departNewestRows, and
         // departNewestRowsOverSparseRoots for the RANGE-frame runs, which take one shape each.
@@ -1283,6 +1306,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         assertReachedASecondRepairCommitFault();
         assertReachedAResumeFrontierTruncateCrash();
         logKeptTimelineRetires();
+        logKeptTimelineEpisodes();
     }
 
     @Test
@@ -1905,6 +1929,12 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         return new Rnd(rnd.getSeed0() ^ KEPT_TIMELINE_RETIRE_SALT0, rnd.getSeed1() ^ KEPT_TIMELINE_RETIRE_SALT1);
     }
 
+    // The sequence a departure draws its kept-timeline episode from, drawn from the run's without
+    // advancing it.
+    private static Rnd keptTimelineEpisodeRnd(Rnd rnd) {
+        return new Rnd(rnd.getSeed0() ^ KEPT_TIMELINE_EPISODE_SALT0, rnd.getSeed1() ^ KEPT_TIMELINE_EPISODE_SALT1);
+    }
+
     // The sequence a departure draws a crash at its frontier truncate from, drawn from the run's
     // without advancing it.
     private static Rnd frontierTruncateCrashRnd(Rnd rnd) {
@@ -2418,6 +2448,32 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         Assert.assertTrue("no crash interrupted a departure's frontier truncate", resumeFrontierTruncateCrashes > 0);
     }
 
+    // One batch of testFuzzDedup: every DEDUP_VARIANTS run over the deduplicating base under O3 and
+    // removals, with a random restart and seed, and the RANGE-frame runs' sparse departures taking
+    // one shape each, from the first one the batch draws.
+    private void runDedupFuzzBatch(Rnd rnd) throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
+        final int firstSparseDepartureShape = rnd.nextInt(SPARSE_DEPARTURE_SHAPES);
+        assertMemoryLeak(checkpointFaults, () -> {
+            for (int i = 0, rangeFrameRuns = 0; i < DEDUP_VARIANTS.length; i++) {
+                final int variant = DEDUP_VARIANTS[i];
+                final int sparseDepartureShape = isRangeFrameVariant(variant)
+                        ? (firstSparseDepartureShape + rangeFrameRuns++) % SPARSE_DEPARTURE_SHAPES
+                        : -1;
+                runDedupFuzz(rnd, variant, 120 + rnd.nextInt(160),
+                        true, rnd.nextBoolean(), rnd.nextBoolean(), true, null, sparseDepartureShape);
+            }
+        });
+    }
+
+    // The kept-timeline episodes a test ran, and what they reached: see runKeptTimelineEpisode.
+    private void logKeptTimelineEpisodes() {
+        LOG.info().$("LV fuzz kept-timeline episodes [episodes=").$(keptTimelineEpisodes)
+                .$(", refusedSeals=").$(keptTimelineRefusedSeals)
+                .$(", lateRowRepairs=").$(keptTimelineLateRowRepairs)
+                .$(", freshHistories=").$(keptTimelineFreshHistories).I$();
+    }
+
     // A retire that met a lock on _timeline on each arm that draws one: the test's first owed-seal
     // episode whose fault outlasts the pause, and its first filtered sparse departure whose frontier
     // seal fails, each lock theirs. See failTheOwedSealOfALateRow and
@@ -2525,7 +2581,11 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
      * truncate's marker and the truncate's publication, until one departure of the batch has, and
      * one departure in three after that: see runUnderTheFrontierTruncateCrash. When
      * {@code isRowlessAnchorEpisodeAllowed}, a departure no crash struck is followed by
-     * {@link #departNewestRowsAboveARowlessAnchor}.
+     * {@link #departNewestRowsAboveARowlessAnchor}. While {@link #isKeptTimelineEpisodeArm}
+     * holds, a departure of a filtered view that draws neither the crash nor a declined chain may
+     * fail its frontier truncate's publication under a lock on {@code _timeline} instead: see
+     * {@link #runKeptTimelineEpisode}, which the oracle the caller runs over the view,
+     * {@code oracleOrderedSql} against {@code viewOrderedSql}, checks after each step.
      *
      * @return true when rows departed, and the caller restarts
      */
@@ -2538,7 +2598,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             boolean withWhere,
             boolean isUnsealedDepartureAllowed,
             boolean isFrontierTruncateCrashAllowed,
-            boolean isRowlessAnchorEpisodeAllowed
+            boolean isRowlessAnchorEpisodeAllowed,
+            String oracleOrderedSql,
+            String viewOrderedSql
     ) throws Exception {
         final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
         final long baseMaxTs = queryTimestamp("SELECT max(ts) FROM base");
@@ -2596,7 +2658,19 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             final int lateSym = rnd.nextInt(symCount);
             final long lateI = 1 + rnd.nextInt(1000);
             final double lateX = rnd.nextDouble() * 1000.0;
-            final boolean isCrashDrawn = isFrontierTruncateCrashAllowed
+            // While the arm is on, the test's first departure of a filtered view whose departed batch
+            // a root sealed, and one in three after that, fails its frontier truncate's publication
+            // under a lock on _timeline: see runKeptTimelineEpisode. It needs the splice, so it takes
+            // the departure from the crash and from a declined chain, which the next departure can
+            // draw. Drawn from a sequence salted apart from the run's, and only while the arm is on,
+            // so a pinned-seed batch of a test without the arm draws what it drew before.
+            final boolean isKeptTimelineDrawn = isKeptTimelineEpisodeArm
+                    && withWhere
+                    && isFrontierTruncateCrashAllowed
+                    && !isDepartedBatchUnsealed
+                    && (keptTimelineEpisodes == 0 || keptTimelineEpisodeRnd(rnd).nextInt(3) == 0);
+            final boolean isCrashDrawn = !isKeptTimelineDrawn
+                    && isFrontierTruncateCrashAllowed
                     && (resumeFrontierTruncateCrashes == 0 || frontierTruncateCrashRnd(rnd).nextInt(3) == 0);
             final long truncatesBefore = job.getStatsForTest().get(LiveViewRefreshStats.SPLICE_FRONTIER_TRUNCATE_COUNT);
             // The first departure of a batch that can reach it, and one in three after it, declines
@@ -2608,6 +2682,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             // zero-row re-stamp it exists for. Counted rather than drawn, so a pinned-seed batch
             // draws what it drew before.
             final boolean isChainDeclined = !isCrashDrawn
+                    && !isKeptTimelineDrawn
                     && lateMode != 1
                     && (!isDepartedBatchUnsealed || unsealedDepartures > 0)
                     && chainDeclineCandidates++ % 3 == 0;
@@ -2615,12 +2690,35 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             if (isChainDeclined) {
                 setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
             }
+            final long sealFailuresBefore = instance.getCheckpointSealFailures();
+            if (isKeptTimelineDrawn) {
+                checkpointFaults.armTheKeptTimeline(() -> {
+                    job.setCheckpointTimelineTestFailureStage(LiveViewCheckpointTimelineStoreWriter.TEST_FAIL_AFTER_METADATA_PUBLISH);
+                    checkpointFaults.lockTheTimeline();
+                });
+            }
             try {
                 departNewestBatch(job, baseToken, usedTs, withWhere, departedTs, departedSym, keptTs[3], lateMode, lateTs, lateSym, lateI, lateX, isCrashDrawn);
             } finally {
                 if (isChainDeclined) {
                     setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, maxChainedBoundaries);
                 }
+                if (isKeptTimelineDrawn) {
+                    checkpointFaults.disarmTheKeptTimeline();
+                    job.setCheckpointTimelineTestFailureStage(0);
+                }
+            }
+            if (isKeptTimelineDrawn && checkpointFaults.consumeKeptTimeline()) {
+                runKeptTimelineEpisode(
+                        keptTimelineEpisodeRnd(rnd),
+                        job,
+                        usedTs,
+                        symCount,
+                        keptTs,
+                        sealFailuresBefore,
+                        oracleOrderedSql,
+                        viewOrderedSql
+                );
             }
             if (checkpointFaults.hasCrashed()) {
                 Assert.assertEquals(
@@ -2886,6 +2984,116 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             drainWalQueue();
             driveRefreshToQuiescence(job);
         }
+    }
+
+    // A retire kept _timeline under the lock: the view refuses the generation the superblock
+    // names, keptGeneration, which nothing publishes over, its head stays clear, and the frontier
+    // truncate's marker beside the file names that generation and records no seqTxn, so it reads
+    // as live.
+    private void assertKeptTimelineRefused(LiveViewInstance instance, long keptGeneration) {
+        Assert.assertTrue("the view refuses the generation the retire kept", instance.isCheckpointTimelineRetirePending());
+        Assert.assertEquals("no head survives the retire", Numbers.LONG_NULL, instance.getHeadCheckpointMaxTs());
+        Assert.assertEquals("nothing publishes over the kept generation", keptGeneration, publishedCheckpointGeneration(instance));
+        try (Path dir = checkpointsDirOf(instance)) {
+            Assert.assertEquals("the marker names the kept generation", keptGeneration, LiveViewCheckpointRepairMarker.readBaseGeneration(configuration, dir));
+            Assert.assertEquals("and records no seqTxn", Numbers.LONG_NULL, LiveViewCheckpointRepairMarker.readLvSeqTxn(configuration, dir));
+        }
+    }
+
+    /**
+     * The departure's frontier truncate failed to publish, and the retire that answered it met a
+     * lock on {@code _timeline}: the splice's generation, whose root of the departed batch sits
+     * above the view's new frontier, stays on disk under the truncate's marker, and the view
+     * refuses it. The lock holds for a drawn 0 to 2 later steps: one or two rows the filter drops,
+     * whose cycles have no head to stand on and decline a first root above the view's newest row,
+     * then a late row the filter keeps, inside the kept batch, whose repair finds no anchor and
+     * whose closing seal retries the retire and is refused. While the lock holds nothing
+     * publishes over the kept generation, the head stays clear and the marker live, and the view
+     * matches its oracle after each step. Once the lock goes, past any pause the refusals armed,
+     * the first seal, a forward row's, retires the kept file and opens a fresh history, which the
+     * caller's restart restores. Draws from {@code episodeRnd} alone.
+     *
+     * @param keptTs              the kept batch's timestamps, below the departed one's
+     * @param sealFailuresBefore  the seal failures the view counted ahead of the departure
+     */
+    private void runKeptTimelineEpisode(
+            Rnd episodeRnd,
+            LiveViewRefreshJob job,
+            @Nullable LongHashSet usedTs,
+            int symCount,
+            long[] keptTs,
+            long sealFailuresBefore,
+            String oracleOrderedSql,
+            String viewOrderedSql
+    ) throws Exception {
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        Assert.assertNotNull(instance);
+        keptTimelineEpisodes++;
+        // The truncate never published, so the superblock still names the splice's generation,
+        // which its marker names too.
+        final long keptGeneration = publishedCheckpointGeneration(instance);
+        assertKeptTimelineRefused(instance, keptGeneration);
+        TestUtils.assertSqlCursors(engine, sqlExecutionContext, oracleOrderedSql, viewOrderedSql, LOG, true);
+        final int lockedSteps = episodeRnd.nextInt(3);
+        LOG.info().$("LV fuzz kept timeline: keptGeneration=").$(keptGeneration).$(", lockedSteps=").$(lockedSteps).$();
+        if (lockedSteps > 0) {
+            long ts = Math.max(queryTimestamp("SELECT max(ts) FROM base"), instance.getLatestSeenTs());
+            for (int c = 0, n = 1 + episodeRnd.nextInt(2); c < n; c++) {
+                ts = commitRowTheFilterDrops(job, usedTs, ts);
+            }
+            assertKeptTimelineRefused(instance, keptGeneration);
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, oracleOrderedSql, viewOrderedSql, LOG, true);
+        }
+        if (lockedSteps > 1 && keptTs[3] - keptTs[0] > 1) {
+            long lateTs = Numbers.LONG_NULL;
+            for (int attempt = 0; attempt < 16 && lateTs == Numbers.LONG_NULL; attempt++) {
+                final long t = keptTs[0] + 1 + episodeRnd.nextLong(keptTs[3] - keptTs[0] - 1);
+                if (usedTs == null || usedTs.add(t)) {
+                    lateTs = t;
+                }
+            }
+            if (lateTs != Numbers.LONG_NULL) {
+                final LiveViewRefreshStats stats = job.getStatsForTest();
+                final long resumesBefore = stats.getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_RESUME_FROM_ANCHOR)
+                        + stats.getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_KEYED_RESUME_FROM_ANCHOR);
+                final StringSink values = new StringSink();
+                appendEpisodeRow(values, lateTs, episodeRnd.nextInt(symCount), 1 + episodeRnd.nextInt(1000), episodeRnd.nextDouble() * 1000.0);
+                execute("INSERT INTO base (ts, sym, i, x) VALUES " + values);
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals(
+                        "no resume anchors on the kept generation",
+                        resumesBefore,
+                        stats.getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_RESUME_FROM_ANCHOR)
+                                + stats.getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_KEYED_RESUME_FROM_ANCHOR)
+                );
+                assertKeptTimelineRefused(instance, keptGeneration);
+                TestUtils.assertSqlCursors(engine, sqlExecutionContext, oracleOrderedSql, viewOrderedSql, LOG, true);
+                keptTimelineLateRowRepairs++;
+            }
+        }
+        keptTimelineRefusedSeals += (int) (instance.getCheckpointSealFailures() - sealFailuresBefore);
+        checkpointFaults.unlockTheTimeline();
+        // Past any pause the refusals armed: each is shorter than the duration cadence's wait.
+        setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+        Assert.assertFalse(instance.isSealOnCooldown(currentMicros));
+        long forwardTs = Math.max(queryTimestamp("SELECT max(ts) FROM base"), instance.getLatestSeenTs()) + 1;
+        while (usedTs != null && !usedTs.add(forwardTs)) {
+            forwardTs++;
+        }
+        final StringSink values = new StringSink();
+        appendEpisodeRow(values, forwardTs, episodeRnd.nextInt(symCount), 1 + episodeRnd.nextInt(1000), episodeRnd.nextDouble() * 1000.0);
+        execute("INSERT INTO base (ts, sym, i, x) VALUES " + values);
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+        Assert.assertFalse("the seal's retry of the retire removed the kept file", instance.isCheckpointTimelineRetirePending());
+        Assert.assertEquals("and the seal opened a fresh history", 1, publishedCheckpointGeneration(instance));
+        Assert.assertEquals("at the forward row", forwardTs, instance.getHeadCheckpointMaxTs());
+        try (Path dir = checkpointsDirOf(instance)) {
+            Assert.assertFalse("the marker went with the kept file", LiveViewCheckpointRepairMarker.exists(configuration.getFilesFacade(), dir));
+        }
+        keptTimelineFreshHistories++;
+        TestUtils.assertSqlCursors(engine, sqlExecutionContext, oracleOrderedSql, viewOrderedSql, LOG, true);
     }
 
     /**
@@ -6200,7 +6408,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 } finally {
                     endSparseCheckpointCadence(rowsCadence);
                 }
-            } else if (departNewestRows(rnd, job, engine.verifyTableName("base"), null, symCount, withWhere, anchor == null, anchor == null, anchor == null)) {
+            } else if (departNewestRows(rnd, job, engine.verifyTableName("base"), null, symCount, withWhere, anchor == null, anchor == null, anchor == null, oracleOrderedSql, viewOrderedSql)) {
                 // An anchored run draws repair knobs that can take the departure off the chained
                 // resume, and every route there keeps the timeline, a declined chain whose replay
                 // emits no row included. The default knobs keep the chain, and only they crash the
@@ -8578,7 +8786,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 } finally {
                     endSparseCheckpointCadence(rowsCadence);
                 }
-            } else if (departNewestRows(rnd, job, baseToken, usedTs, symCount, withWhere, true, true, true)) {
+            } else if (departNewestRows(rnd, job, baseToken, usedTs, symCount, withWhere, true, true, true, oracleOrderedSql, viewOrderedSql)) {
                 // A crash the departure drew left the image the restart below comes back from.
                 final boolean isCrashed = checkpointFaults.consumeCrash();
                 commitRowlessStretch(job, usedTs, withWhere, false, true);
@@ -8936,8 +9144,10 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         private final AtomicInteger markerRenames = new AtomicInteger();
         private final AtomicInteger refusedTimelineUnlinks = new AtomicInteger();
         private volatile boolean hasCrashed;
+        private volatile boolean hasKeptTheTimeline;
         private volatile boolean isTimelineLocked;
         private volatile Runnable onCrash;
+        private volatile Runnable onTheKeptTimeline;
 
         @Override
         public boolean removeQuiet(LPSZ name) {
@@ -8961,14 +9171,22 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         @Override
         public int rename(LPSZ from, LPSZ to) {
             final int result = super.rename(from, to);
-            final Runnable action = onCrash;
-            if (action != null
+            final Runnable crash = onCrash;
+            final Runnable keep = onTheKeptTimeline;
+            if ((crash != null || keep != null)
                     && result == Files.FILES_RENAME_OK
                     && Utf8s.endsWithAscii(to, LiveViewCheckpointLayout.REPAIRING_MARKER_FILE_NAME)
                     && markerRenames.incrementAndGet() == 2) {
-                onCrash = null;
-                action.run();
-                hasCrashed = true;
+                if (crash != null) {
+                    onCrash = null;
+                    crash.run();
+                    hasCrashed = true;
+                }
+                if (keep != null) {
+                    onTheKeptTimeline = null;
+                    keep.run();
+                    hasKeptTheTimeline = true;
+                }
             }
             return result;
         }
@@ -8977,6 +9195,26 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             markerRenames.set(0);
             hasCrashed = false;
             this.onCrash = onCrash;
+        }
+
+        // Runs action at the second repair marker rename the next commit's turn makes, the marker a
+        // frontier truncate writes after its splice's, as armTheCrash does, for the kept-timeline
+        // episode: see runKeptTimelineEpisode.
+        void armTheKeptTimeline(Runnable action) {
+            markerRenames.set(0);
+            hasKeptTheTimeline = false;
+            onTheKeptTimeline = action;
+        }
+
+        // Whether the kept-timeline action ran since the last call, which forgets it.
+        boolean consumeKeptTimeline() {
+            final boolean wasKept = hasKeptTheTimeline;
+            hasKeptTheTimeline = false;
+            return wasKept;
+        }
+
+        void disarmTheKeptTimeline() {
+            onTheKeptTimeline = null;
         }
 
         // Whether the crash was taken since the last call, which forgets it.

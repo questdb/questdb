@@ -44,14 +44,18 @@ import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.Files;
 import io.questdb.std.LongHashSet;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -63,6 +67,7 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.zone.ZoneOffsetTransition;
 import java.time.zone.ZoneRules;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Differential fuzz for the out-of-order repair routes of anchored live views.
@@ -138,6 +143,10 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
     // keyed open-segment routes decline (LiveViewRefreshJob.isEveryFunctionDurablyGrouped).
     private static final int GROUPED_VARIANT_COUNT = 5;
     private static final long HOUR_MICROS = 3_600_000_000L;
+    // Salt the draws of keptTimelineRetireEpisode apart from the run's sequence, so a run that
+    // reaches it draws everything else as it did before the episode existed.
+    private static final long KEPT_TIMELINE_SALT0 = 0x510E527FADE682D1L;
+    private static final long KEPT_TIMELINE_SALT1 = 0x9B05688C2B3E6C1FL;
     // How a pass decides whether to hold its flush off.
     private static final int PIN_NO = 0;
     private static final int PIN_RANDOM = -1;
@@ -170,6 +179,9 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
     private final ObjList<String> runKeys = new ObjList<>();
     private final StringSink syntheticSink = new StringSink();
     private final LongHashSet syntheticTs = new LongHashSet();
+    // The lock on _timeline the mixed arm's episodes take: see keptTimelineRetireEpisode and
+    // keptSpliceEpisode.
+    private final TimelineLock timelineLock = new TimelineLock();
     private int consecutiveFaultedPasses;
     // Episodes of dstFrontierEpisode the batch ran, logged with the route coverage.
     private int dstFrontierEpisodes;
@@ -178,6 +190,12 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
     private int firedThisRun;
     private boolean isOpenSegmentKeyedReplayForced;
     private LiveViewRefreshJob job;
+    // Late rows keptTimelineRetireEpisode committed while the lock kept the timeline, and after
+    // the lock went, and the episodes; and the episodes of keptSpliceEpisode.
+    private int keptSpliceEpisodes;
+    private int keptTimelineLateRowsLocked;
+    private int keptTimelineLateRowsReleased;
+    private int keptTimelineRetireEpisodes;
     // Cycles without rows that sealed the root a keyed resume owed once its closing seal failed:
     // see keyedOwedRootEpisode.
     private int keyedOwedRootSeals;
@@ -348,7 +366,9 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
 
     @Test
     public void testMixed() throws Exception {
-        // Every anchor shape and knob, with some passes carrying an ALTER between late rows.
+        // Every anchor shape and knob, with some passes carrying an ALTER between late rows, and
+        // every run retiring its timeline under a lock that keeps the file: see
+        // keptTimelineRetireEpisode and keptSpliceEpisode.
         runBatch(STEER_MIXED);
     }
 
@@ -601,6 +621,16 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
                 // of which asserts it.
                 coverage.assertReachedStat(LiveViewRefreshStats.SPLICE_FRONTIER_TRUNCATE_COUNT);
                 assertTimestampGroupsRepaired();
+                if (steer == STEER_MIXED) {
+                    // Every run of the arm runs one of the two episodes, and each episode asserts
+                    // what its own retire under the lock left.
+                    LOG.info().$("LV route fuzz kept timelines [retireEpisodes=").$(keptTimelineRetireEpisodes)
+                            .$(", lateRowsLocked=").$(keptTimelineLateRowsLocked)
+                            .$(", lateRowsReleased=").$(keptTimelineLateRowsReleased)
+                            .$(", spliceEpisodes=").$(keptSpliceEpisodes).I$();
+                    Assert.assertTrue("no repair retired its timeline under a lock that kept the file", keptTimelineRetireEpisodes > 0);
+                    Assert.assertTrue("no failed head-miss splice left its timeline under a lock", keptSpliceEpisodes > 0);
+                }
             }
             case STEER_KEYED_OPEN_SEGMENT -> {
                 coverage.assertReached(LiveViewCheckpointRepairRoute.ROUTE_KEYED_COLD_OPEN_SEGMENT);
@@ -1554,6 +1584,273 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
         Assert.assertEquals("no root has landed past the splice", markerBaseGeneration + 1, publishedCheckpointGeneration(instance));
     }
 
+    /**
+     * A late row below every row of the run under a lock on {@code _timeline}, the file a retire
+     * unlinks, whose repair retires the timeline ahead of its commit, and the lock keeps the file.
+     * An anchored view localizes a late row to its segment, so the episode first takes that away:
+     * past the duration cadence, a root seals a row above every row, and a REPLACE_RANGE then
+     * deletes a row above it, which leaves the newest timestamp the view has seen above the newest
+     * row its table holds and so denies the anchor's bound (DENIAL_UNFLUSHED_OUTPUT, the term for
+     * output the runtime holds that its table does not). No root sits below the late row, so the
+     * head-miss rebuild re-derives the whole view and retires the timeline ahead of its commit,
+     * writing no marker of its own: the retire writes one naming no generation beside the file it
+     * kept. From then on the view refuses the kept generation: nothing publishes over it, no head
+     * stands on it and no resume anchors in it. A drawn 0 to 2 late rows inside the run's rows
+     * follow, the lock going ahead of a drawn one of them or after the last, and the view matches
+     * the oracle after each; the first late row past the lock retires the kept file and its
+     * marker. A forward row past the duration cadence then seals a root, which a fresh history
+     * takes when no seal landed since the retire. Draws from a sequence salted apart from the
+     * run's, so the run draws everything else as it did before the episode existed.
+     */
+    private void keptTimelineRetireEpisode(Rnd rnd, PassShape shape) throws Exception {
+        final Rnd episodeRnd = new Rnd(rnd.getSeed0() ^ KEPT_TIMELINE_SALT0, rnd.getSeed1() ^ KEPT_TIMELINE_SALT1);
+        final LiveViewInstance instance = viewInstance();
+        driveRefreshToQuiescence(job);
+        setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+        insertSynthetic(Math.max(maxInsertedTs, instance.getLatestSeenTs()) + 1);
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+        final long rootTs = maxInsertedTs;
+        Assert.assertEquals("a root seals the row above every row", rootTs, instance.getHeadCheckpointMaxTs());
+        final long seenTs = rootTs + 1;
+        insertSynthetic(seenTs);
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+        commitDeparture(seenTs, seenTs, Numbers.LONG_NULL);
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+        Assert.assertEquals("the view has seen the departed row", seenTs, instance.getLatestSeenTs());
+        Assert.assertEquals("which its table does not hold", rootTs, queryLong("SELECT max(ts)::long FROM lv"));
+
+        final long keptGeneration = publishedCheckpointGeneration(instance);
+        final long minTs = queryLong("SELECT min(ts)::long FROM base");
+        final LiveViewRefreshStats stats = job.getStatsForTest();
+        final long headMissRepairsBefore = countHeadMissRepairs(job);
+        final long resetsBefore = instance.getCheckpointTimelineResets();
+        final int lateRows = episodeRnd.nextInt(3);
+        final int releasedAhead = episodeRnd.nextInt(lateRows + 1);
+        LOG.info().$("LV route fuzz: kept timeline retire [rootTs=").$ts(rootTs)
+                .$(", lateTs=").$ts(minTs - 1)
+                .$(", keptGeneration=").$(keptGeneration)
+                .$(", lateRows=").$(lateRows)
+                .$(", releasedAhead=").$(releasedAhead).I$();
+        timelineLock.lock();
+        try {
+            insertSynthetic(minTs - 1);
+            drainWalQueue();
+            driveRefreshToQuiescence(job);
+            Assert.assertEquals("the head-miss rebuild repairs the late row", headMissRepairsBefore + 1, countHeadMissRepairs(job));
+            Assert.assertEquals("and retires the timeline ahead of its commit", resetsBefore + 1, instance.getCheckpointTimelineResets());
+            Assert.assertTrue("which the lock keeps", timelineLock.getRefusedTimelineUnlinks() > 0);
+            assertTimelineKept(instance, keptGeneration, "the late row below every row");
+            try (Path dir = checkpointsDir(instance)) {
+                Assert.assertEquals(
+                        "the retire wrote the marker beside the file, naming no generation",
+                        Numbers.LONG_NULL,
+                        LiveViewCheckpointRepairMarker.readBaseGeneration(configuration, dir)
+                );
+            }
+            assertView(shape.oracleSql, shape.orderBy, "after the late row below every row");
+            for (int k = 0; k < lateRows; k++) {
+                if (k == releasedAhead) {
+                    timelineLock.unlock();
+                }
+                final long resumesBefore = countResumes(stats);
+                insertSynthetic(minTs + episodeRnd.nextLong(rootTs - minTs));
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals("no resume anchors in the kept generation", resumesBefore, countResumes(stats));
+                if (k < releasedAhead) {
+                    assertTimelineKept(instance, keptGeneration, "late row " + k + " under the lock");
+                    keptTimelineLateRowsLocked++;
+                } else {
+                    Assert.assertFalse("the late row's retire removed the kept file", instance.isCheckpointTimelineRetirePending());
+                    keptTimelineLateRowsReleased++;
+                }
+                assertView(shape.oracleSql, shape.orderBy, "after late row " + k + " over the kept timeline");
+            }
+        } finally {
+            timelineLock.unlock();
+        }
+        final boolean isKeptBeforeTheForwardRow = instance.isCheckpointTimelineRetirePending();
+        final boolean hasTimelineBeforeTheForwardRow = hasTimeline(instance);
+        setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+        insertSynthetic(maxInsertedTs + 1);
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+        Assert.assertFalse("nothing keeps the timeline once the lock is gone", instance.isCheckpointTimelineRetirePending());
+        Assert.assertEquals("a root seals the forward row", maxInsertedTs, instance.getHeadCheckpointMaxTs());
+        if (isKeptBeforeTheForwardRow || !hasTimelineBeforeTheForwardRow) {
+            Assert.assertEquals("in a fresh history", 1, publishedCheckpointGeneration(instance));
+        }
+        try (Path dir = checkpointsDir(instance)) {
+            Assert.assertFalse("the marker went with the kept file", LiveViewCheckpointRepairMarker.exists(configuration.getFilesFacade(), dir));
+        }
+        assertView(shape.oracleSql, shape.orderBy, "after the forward row behind the kept timeline");
+        keptTimelineRetireEpisodes++;
+    }
+
+    /**
+     * The head-miss rebuild's end-of-table splice fails to publish, and the retire that answers it
+     * meets a lock on {@code _timeline}. Under a row cadence no commit reaches, the episode commits
+     * a root at P, at the start of a day three days above every row, past the duration cadence,
+     * with rows above it, then, three days up, rows from S, a root above them past the duration
+     * cadence and rows above that root. A REPLACE_RANGE then deletes the row at S + 1: the resume
+     * would read every row above P's root, the localized rebuild only the segment S sits in, so
+     * the rebuild takes it, replays up
+     * to the newest row and splices the timeline, which fails after the splice's metadata, before
+     * the superblock names it. The closing seal lands on the generation the splice left, above
+     * every root it keeps, and the lock goes on at that seal, so the retire that follows keeps the
+     * file, the splice's marker beside it, and takes the head the seal set with it. A stretch
+     * without rows past the cadence - rows the filter drops, or REPLACE_RANGEs above every row
+     * that delete nothing - publishes nothing over the kept file. With the lock gone, a restart
+     * finds the live marker and rebuilds from the applied base, and a late row then gives what the
+     * oracle gives. Restores the run's knobs on the way out.
+     */
+    private void keptSpliceEpisode(LiveViewFuzzKnobs knobs, PassShape shape, boolean isFiltered) throws Exception {
+        driveRefreshToQuiescence(job);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS, (String) null);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ADAPTIVE_CADENCE_ENABLED, "false");
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_PER_SEGMENT_ENABLED, "false");
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_REPLAY_ENABLED, "false");
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_OPEN_SEGMENT_KEYED_REPLAY_ENABLED, "false");
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_ISOLATED_RUNTIME_ENABLED, "false");
+        // The configured chain count and key budget admit the splice's one-boundary chain.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, (String) null);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_KEYS, (String) null);
+        try {
+            final LiveViewInstance instance = viewInstance();
+            // At the start of a day, so the resume's price counts P's rows above the root: it
+            // spreads the rows of a partition below the newest over the partition's whole span.
+            final long prefixRootTs = (Math.max(maxInsertedTs, instance.getLatestSeenTs()) / DAY_MICROS + 3) * DAY_MICROS;
+            setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+            commitSyntheticRows(prefixRootTs, 1);
+            Assert.assertEquals("a root seals P", prefixRootTs, instance.getHeadCheckpointMaxTs());
+            commitSyntheticRows(prefixRootTs + 1, 8);
+            final long segmentTs = prefixRootTs + 3 * DAY_MICROS;
+            commitSyntheticRows(segmentTs, 4);
+            setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+            commitSyntheticRows(segmentTs + 4, 1);
+            Assert.assertEquals("a root seals the rows from S", segmentTs + 4, instance.getHeadCheckpointMaxTs());
+            commitSyntheticRows(segmentTs + 5, 3);
+            Assert.assertEquals("and none the rows above it", segmentTs + 4, instance.getHeadCheckpointMaxTs());
+
+            final long spliceBaseGeneration = publishedCheckpointGeneration(instance);
+            final long headMissRepairsBefore = countHeadMissRepairs(job);
+            final long repairFailuresBefore = instance.getCheckpointRepairFailures();
+            final int markerRenamesBefore = timelineLock.getMarkerRenames();
+            timelineLock.afterTheNextMarker(
+                    () -> job.setCheckpointTimelineTestFailureStage(LiveViewCheckpointTimelineStoreWriter.TEST_FAIL_AFTER_METADATA_PUBLISH)
+            );
+            hooks(job).setSimulateHeadMissHeadSealStart(() -> {
+                job.setCheckpointTimelineTestFailureStage(0);
+                timelineLock.lock();
+            });
+            try {
+                commitDeparture(segmentTs + 1, segmentTs + 1, Numbers.LONG_NULL);
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals("the head-miss rebuild repairs the departure", headMissRepairsBefore + 1, countHeadMissRepairs(job));
+                Assert.assertEquals("the splice's marker alone", markerRenamesBefore + 1, timelineLock.getMarkerRenames());
+                Assert.assertEquals("the splice fails to publish", repairFailuresBefore + 1, instance.getCheckpointRepairFailures());
+                Assert.assertTrue("the retire behind it meets the lock", timelineLock.getRefusedTimelineUnlinks() > 0);
+                // The closing seal landed on the generation the splice left.
+                assertTimelineKept(instance, spliceBaseGeneration + 1, "the failed splice");
+                assertRepairMarkerLive(instance, spliceBaseGeneration);
+                for (int c = 0; c < 2; c++) {
+                    setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+                    if (isFiltered) {
+                        long t = maxInsertedTs + 1;
+                        while (!syntheticTs.add(t)) {
+                            t++;
+                        }
+                        maxInsertedTs = t;
+                        execute("INSERT INTO base (ts, sym, i, x) VALUES (" + t + "::timestamp, '" + SYNTHETIC_KEY + "', -1, 1.0)");
+                        drainWalQueue();
+                        driveRefreshToQuiescence(job);
+                    } else {
+                        commitRowlessReplaceRange();
+                    }
+                }
+                assertTimelineKept(instance, spliceBaseGeneration + 1, "the stretch without rows");
+                assertRepairMarkerLive(instance, spliceBaseGeneration);
+            } finally {
+                hooks(job).setSimulateHeadMissHeadSealStart(null);
+                timelineLock.afterTheNextMarker(null);
+                timelineLock.unlock();
+                job.setCheckpointTimelineTestFailureStage(0);
+            }
+            restart();
+            driveRefreshToQuiescence(job);
+            assertRebuiltFromAppliedBase("lv");
+            assertView(shape.oracleSql, shape.orderBy, "after the restart over the kept splice");
+            insertSynthetic(segmentTs + 2);
+            drainWalQueue();
+            driveRefreshToQuiescence(job);
+            assertView(shape.oracleSql, shape.orderBy, "after the late row behind the kept splice");
+            keptSpliceEpisodes++;
+        } finally {
+            knobs.apply(AbstractLiveViewTest::setProperty);
+        }
+    }
+
+    // The view refuses keptGeneration, the generation the superblock names, which a retire could
+    // not remove: nothing publishes over it, no head stands on it, and a marker beside it reads as
+    // live - one naming no generation, or one a publication of the kept generation outlives.
+    private void assertTimelineKept(LiveViewInstance instance, long keptGeneration, String where) {
+        Assert.assertTrue("[" + where + "] the view refuses the generation the retire kept", instance.isCheckpointTimelineRetirePending());
+        Assert.assertEquals("[" + where + "] nothing publishes over it", keptGeneration, publishedCheckpointGeneration(instance));
+        Assert.assertEquals("[" + where + "] no head stands on it", Numbers.LONG_NULL, instance.getHeadCheckpointMaxTs());
+        try (Path dir = checkpointsDir(instance)) {
+            Assert.assertTrue("[" + where + "] a marker stands beside it", LiveViewCheckpointRepairMarker.exists(configuration.getFilesFacade(), dir));
+            final long markerBaseGeneration = LiveViewCheckpointRepairMarker.readBaseGeneration(configuration, dir);
+            Assert.assertTrue(
+                    "[" + where + "] and reads as live, markerBaseGeneration=" + markerBaseGeneration,
+                    markerBaseGeneration == Numbers.LONG_NULL || keptGeneration <= markerBaseGeneration + 1
+            );
+        }
+    }
+
+    private static Path checkpointsDir(LiveViewInstance instance) {
+        return new Path().of(configuration.getDbRoot())
+                .concat(instance.getLiveViewToken())
+                .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
+    }
+
+    // Whether the view's checkpoint timeline, _timeline, is on disk.
+    private static boolean hasTimeline(LiveViewInstance instance) {
+        try (Path dir = checkpointsDir(instance); Path timeline = new Path()) {
+            LiveViewCheckpointLayout.timelinePath(timeline, dir);
+            return configuration.getFilesFacade().exists(timeline.$());
+        }
+    }
+
+    // The repairs job ran on either resume from a sealed anchor.
+    private static long countResumes(LiveViewRefreshStats stats) {
+        return stats.getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_RESUME_FROM_ANCHOR)
+                + stats.getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_KEYED_RESUME_FROM_ANCHOR);
+    }
+
+    // count rows on the synthetic key at fromTs and the microseconds above it, in one commit,
+    // applied and refreshed.
+    private void commitSyntheticRows(long fromTs, int count) throws SqlException {
+        syntheticSink.clear();
+        syntheticSink.put("INSERT INTO base (ts, sym, i, x) VALUES ");
+        for (int k = 0; k < count; k++) {
+            final long t = fromTs + k;
+            Assert.assertTrue(syntheticTs.add(t));
+            maxInsertedTs = Math.max(maxInsertedTs, t);
+            if (k > 0) {
+                syntheticSink.put(", ");
+            }
+            syntheticSink.put('(').put(t).put("::timestamp, '").put(SYNTHETIC_KEY).put("', ").put(1 + (t & 511)).put(", 1.0)");
+        }
+        execute(syntheticSink);
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+    }
+
     // A REPLACE_RANGE above every row, which deletes nothing and puts no row through the window,
     // applied and refreshed.
     private void commitRowlessReplaceRange() {
@@ -1727,6 +2024,13 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
         if (steer == STEER_FAULTS) {
             fault = new LiveViewMidDrainFault("ts", "ts", "sym");
             assertMemoryLeak(fault.facade(), () -> {
+                for (int run = 0; run < RUNS_PER_TEST; run++) {
+                    runOne(rnd, run, steer);
+                }
+            });
+        } else if (steer == STEER_MIXED) {
+            // The arm's episodes lock _timeline around a retire, which no other pass does.
+            assertMemoryLeak(timelineLock, () -> {
                 for (int run = 0; run < RUNS_PER_TEST; run++) {
                     runOne(rnd, run, steer);
                 }
@@ -1985,6 +2289,16 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
                 // batch reaches it whatever the draws: see departureEpisode.
                 departureEpisode(rnd, knobs, shape, isFiltered, run % 2 == 0);
             }
+            if (steer == STEER_MIXED) {
+                // Every run retires its timeline under a lock on _timeline that keeps the file:
+                // the even runs ahead of a repair's commit, the odd ones behind a head-miss
+                // splice that failed to publish.
+                if (run % 2 == 0) {
+                    keptTimelineRetireEpisode(rnd, shape);
+                } else {
+                    keptSpliceEpisode(knobs, shape, isFiltered);
+                }
+            }
             if (steer == STEER_KEYED_OPEN_SEGMENT) {
                 keyedOwedRootEpisode(knobs, oracleSql, orderBy, symCount);
             }
@@ -2085,6 +2399,74 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
             unexplained.clear();
             driftCredits = 0;
             isInjectionOpen = false;
+        }
+    }
+
+    /**
+     * While locked, refuses to unlink a live view's checkpoint timeline, {@code _timeline}, and
+     * to remove its {@code _checkpoints} directory, the way a reader that holds the file open
+     * refuses it on Windows. Also runs an action once, right after the next rename that publishes
+     * a repair marker, {@code _repairing}, ahead of anything the repair does next.
+     */
+    private static final class TimelineLock extends TestFilesFacadeImpl {
+        private final AtomicInteger markerRenames = new AtomicInteger();
+        private final AtomicInteger refusedTimelineUnlinks = new AtomicInteger();
+        private volatile Runnable afterTheNextMarker;
+        private volatile boolean isLocked;
+
+        @Override
+        public boolean removeQuiet(LPSZ name) {
+            if (isLocked
+                    && Utf8s.containsAscii(name, LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME)
+                    && Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.TIMELINE_FILE_NAME)) {
+                refusedTimelineUnlinks.incrementAndGet();
+                return false;
+            }
+            return super.removeQuiet(name);
+        }
+
+        @Override
+        public int rename(LPSZ from, LPSZ to) {
+            final int result = super.rename(from, to);
+            if (result == Files.FILES_RENAME_OK && Utf8s.endsWithAscii(to, LiveViewCheckpointLayout.REPAIRING_MARKER_FILE_NAME)) {
+                markerRenames.incrementAndGet();
+                final Runnable action = afterTheNextMarker;
+                if (action != null) {
+                    afterTheNextMarker = null;
+                    action.run();
+                }
+            }
+            return result;
+        }
+
+        @Override
+        public boolean rmdir(Path name, boolean haltOnError) {
+            if (isLocked && Utf8s.containsAscii(name, LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME)) {
+                return false;
+            }
+            return super.rmdir(name, haltOnError);
+        }
+
+        void afterTheNextMarker(Runnable action) {
+            afterTheNextMarker = action;
+        }
+
+        int getMarkerRenames() {
+            return markerRenames.get();
+        }
+
+        int getRefusedTimelineUnlinks() {
+            return refusedTimelineUnlinks.get();
+        }
+
+        // Counts the refused unlinks from 0.
+        void lock() {
+            refusedTimelineUnlinks.set(0);
+            isLocked = true;
+        }
+
+        void unlock() {
+            isLocked = false;
         }
     }
 }
