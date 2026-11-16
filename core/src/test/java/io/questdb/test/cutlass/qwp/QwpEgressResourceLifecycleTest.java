@@ -30,9 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.qwp.server.egress.QwpEgressProcessorState;
-import io.questdb.cutlass.qwp.server.egress.QwpEgressUpgradeProcessor;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -44,8 +42,6 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.lang.reflect.Field;
-import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -91,6 +87,41 @@ public class QwpEgressResourceLifecycleTest extends AbstractTest {
     }
 
     @Test
+    public void testEndWithoutCacheFreesCacheableFactory() throws Exception {
+        // Error, cancel and disconnect paths end streaming without a cache. A cacheable SELECT
+        // factory must be freed then, not kept for a cache: the processor that started the
+        // query may already be closed, and so may its cache.
+        TestUtils.assertMemoryLeak(() -> {
+            final DefaultTestCairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
+            try (
+                    TrackingCairoEngine engine = new TrackingCairoEngine(configuration);
+                    SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1)
+                            .with(AllowAllSecurityContext.INSTANCE);
+                    QwpEgressProcessorState state = new QwpEgressProcessorState(configuration)
+            ) {
+                final TrackingRecordCursorFactory factory = new TrackingRecordCursorFactory();
+                state.beginSqlExecutionOwner("SELECT 1", executionContext, CompiledQuery.SELECT);
+                state.beginStreaming(
+                        1,
+                        factory,
+                        new TrackingRecordCursor(engine.events),
+                        0,
+                        0,
+                        "SELECT 1",
+                        CompiledQuery.SELECT,
+                        true
+                );
+                Assert.assertTrue(state.isStreamingFactoryCacheable());
+
+                state.endStreaming();
+                Assert.assertEquals(List.of("owner.begin", "cursor.close", "owner.end"), engine.events);
+                Assert.assertTrue(factory.closed);
+                Assert.assertFalse(state.isStreamingActive());
+            }
+        });
+    }
+
+    @Test
     public void testOwnerEndFailureFreesFactoryInsteadOfCachingIt() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final DefaultTestCairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
@@ -115,9 +146,8 @@ public class QwpEgressResourceLifecycleTest extends AbstractTest {
                             CompiledQuery.SELECT,
                             true
                     );
-                    state.cacheStreamingFactoryOnEnd(cache);
                     try {
-                        state.endStreaming();
+                        state.endStreaming(cache);
                         Assert.fail("owner end failure was expected");
                     } catch (RuntimeException e) {
                         Assert.assertEquals("owner end failed", e.getMessage());
@@ -157,10 +187,9 @@ public class QwpEgressResourceLifecycleTest extends AbstractTest {
                             CompiledQuery.SELECT,
                             true
                     );
-                    state.cacheStreamingFactoryOnEnd(cache);
                     Assert.assertEquals(List.of("owner.begin"), engine.events);
 
-                    state.endStreaming();
+                    state.endStreaming(cache);
                     Assert.assertEquals(
                             List.of("owner.begin", "cursor.close", "owner.end", "cache.put"),
                             engine.events
@@ -236,32 +265,29 @@ public class QwpEgressResourceLifecycleTest extends AbstractTest {
             final DefaultTestCairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
             try (
                     TrackingCairoEngine engine = new TrackingCairoEngine(configuration);
-                    QwpEgressUpgradeProcessor processor = new QwpEgressUpgradeProcessor(
-                            engine,
-                            new DefaultHttpServerConfiguration(configuration),
-                            1
-                    );
                     QwpEgressProcessorState state = new QwpEgressProcessorState(configuration)
             ) {
-                final String sql = "COPY tab TO 'tab.csv'";
-                final TrackingRecordCursorFactory factory = new TrackingRecordCursorFactory();
-                state.beginStreaming(
-                        1,
-                        factory,
-                        null,
-                        0,
-                        0,
-                        sql,
-                        CompiledQuery.PSEUDO_SELECT,
-                        true
-                );
+                final TrackingSelectCache cache = new TrackingSelectCache(engine.events);
+                try (cache) {
+                    final String sql = "COPY tab TO 'tab.csv'";
+                    final TrackingRecordCursorFactory factory = new TrackingRecordCursorFactory();
+                    state.beginStreaming(
+                            1,
+                            factory,
+                            null,
+                            0,
+                            0,
+                            sql,
+                            CompiledQuery.PSEUDO_SELECT,
+                            true
+                    );
 
-                Assert.assertFalse(state.isStreamingFactoryCacheable());
-                invokeCacheStreamingFactoryIfAvailable(processor, state);
-                Assert.assertNull(selectCache(processor).poll(sql));
-
-                state.endStreaming();
-                Assert.assertTrue(factory.closed);
+                    Assert.assertFalse(state.isStreamingFactoryCacheable());
+                    state.endStreaming(cache);
+                    Assert.assertNull(cache.factory);
+                    Assert.assertFalse(engine.events.contains("cache.put"));
+                    Assert.assertTrue(factory.closed);
+                }
             }
         });
     }
@@ -272,35 +298,32 @@ public class QwpEgressResourceLifecycleTest extends AbstractTest {
             final DefaultTestCairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
             try (
                     TrackingCairoEngine engine = new TrackingCairoEngine(configuration);
-                    QwpEgressUpgradeProcessor processor = new QwpEgressUpgradeProcessor(
-                            engine,
-                            new DefaultHttpServerConfiguration(configuration),
-                            1
-                    );
                     QwpEgressProcessorState state = new QwpEgressProcessorState(configuration)
             ) {
-                final String sql = "SELECT 1";
-                final TrackingRecordCursorFactory factory = new TrackingRecordCursorFactory();
-                state.beginStreaming(
-                        1,
-                        factory,
-                        null,
-                        0,
-                        0,
-                        sql,
-                        CompiledQuery.SELECT,
-                        true
-                );
+                final TrackingSelectCache cache = new TrackingSelectCache(engine.events);
+                try (cache) {
+                    final String sql = "SELECT 1";
+                    final TrackingRecordCursorFactory factory = new TrackingRecordCursorFactory();
+                    state.beginStreaming(
+                            1,
+                            factory,
+                            null,
+                            0,
+                            0,
+                            sql,
+                            CompiledQuery.SELECT,
+                            true
+                    );
 
-                Assert.assertTrue(state.isStreamingFactoryCacheable());
-                invokeCacheStreamingFactoryIfAvailable(processor, state);
-                state.endStreaming();
+                    Assert.assertTrue(state.isStreamingFactoryCacheable());
+                    state.endStreaming(cache);
 
-                final RecordCursorFactory cachedFactory = selectCache(processor).poll(sql);
-                Assert.assertSame(factory, cachedFactory);
-                Assert.assertFalse(factory.closed);
-                Misc.free(cachedFactory);
-                Assert.assertTrue(factory.closed);
+                    final RecordCursorFactory cachedFactory = cache.poll(sql);
+                    Assert.assertSame(factory, cachedFactory);
+                    Assert.assertFalse(factory.closed);
+                    Misc.free(cachedFactory);
+                    Assert.assertTrue(factory.closed);
+                }
             }
         });
     }
@@ -322,25 +345,6 @@ public class QwpEgressResourceLifecycleTest extends AbstractTest {
                 Assert.assertEquals(-1, engine.endedOwnerId);
             }
         });
-    }
-
-    private static void invokeCacheStreamingFactoryIfAvailable(
-            QwpEgressUpgradeProcessor processor,
-            QwpEgressProcessorState state
-    ) throws Exception {
-        final Method method = QwpEgressUpgradeProcessor.class.getDeclaredMethod(
-                "cacheStreamingFactoryIfAvailable",
-                QwpEgressProcessorState.class
-        );
-        method.setAccessible(true);
-        method.invoke(processor, state);
-    }
-
-    @SuppressWarnings("unchecked")
-    private static AssociativeCache<RecordCursorFactory> selectCache(QwpEgressUpgradeProcessor processor) throws Exception {
-        final Field field = QwpEgressUpgradeProcessor.class.getDeclaredField("selectCache");
-        field.setAccessible(true);
-        return (AssociativeCache<RecordCursorFactory>) field.get(processor);
     }
 
     private static final class TrackingCairoEngine extends CairoEngine {

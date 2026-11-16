@@ -57,6 +57,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Zstd;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.atomic.AtomicLong;
@@ -258,8 +259,6 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     private int streamingPageFrameIndex;
     private long streamingPageFrameRow;
     private long streamingPageFrameRowHi;
-    // Set by cacheStreamingFactoryOnEnd(): the select cache endStreaming() puts the factory into.
-    private AssociativeCache<RecordCursorFactory> streamingFactoryCache;
     private boolean streamingFactoryCacheable;
     /**
      * {@code volatile}: the CANCEL handler compares the current request id
@@ -500,21 +499,6 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         return columnDefsPool;
     }
 
-    /**
-     * Makes {@link #endStreaming} put the current streaming factory into the given select cache,
-     * keyed by the query's SQL text, instead of freeing it. endStreaming() puts it there only after
-     * it has closed the cursor and ended the execution owner: ending the owner releases the
-     * execution's resources, which include state of the factory's functions, and another
-     * connection can take the factory from the shared cache as soon as it is there.
-     * <p>
-     * Does nothing when the factory is not cacheable or no factory is streaming.
-     */
-    public void cacheStreamingFactoryOnEnd(AssociativeCache<RecordCursorFactory> cache) {
-        if (streamingFactoryCacheable && streamingFactory != null) {
-            streamingFactoryCache = cache;
-        }
-    }
-
     public void clear() {
         endStreaming();
         recvBufferLen = 0;
@@ -647,6 +631,22 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     }
 
     public void endStreaming() {
+        endStreaming(null);
+    }
+
+    /**
+     * Ends streaming like {@link #endStreaming()}, but puts a cacheable streaming factory into
+     * {@code selectCache}, keyed by the query's SQL text, instead of freeing it. The factory goes
+     * there only after the cursor is closed and the execution owner has ended: ending the owner
+     * releases the execution's resources, which include state of the factory's functions, and
+     * another connection can take the factory from the shared cache as soon as it is there.
+     * <p>
+     * The caller passes its own cache on every call rather than the state keeping one: a
+     * connection can outlive the processor that started its query (a fiber-limit reload closes
+     * processors while connections are parked), and a factory put into a closed cache leaks.
+     * A null {@code selectCache} frees the factory.
+     */
+    public void endStreaming(@Nullable AssociativeCache<RecordCursorFactory> selectCache) {
         streamingActive = false;
         streamingCurrentPageFrame = null;
         final RecordCursor streamingCursor = this.streamingCursor;
@@ -655,8 +655,8 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         this.streamingPageFrameCursor = null;
         final RecordCursorFactory streamingFactory = this.streamingFactory;
         this.streamingFactory = null;
-        final AssociativeCache<RecordCursorFactory> streamingFactoryCache = this.streamingFactoryCache;
-        this.streamingFactoryCache = null;
+        final AssociativeCache<RecordCursorFactory> streamingFactoryCache =
+                streamingFactoryCacheable && streamingFactory != null ? selectCache : null;
         final String streamingSqlText = this.streamingSqlText;
 
         Throwable cleanupFailure = null;
@@ -709,7 +709,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
             cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
         }
         if (streamingFactoryCache != null) {
-            // Only after the owner has ended: see cacheStreamingFactoryOnEnd().
+            // Only after the owner has ended: see endStreaming(AssociativeCache).
             if (isOwnerEnded && streamingSqlText != null) {
                 try {
                     streamingFactoryCache.put(streamingSqlText, streamingFactory);
