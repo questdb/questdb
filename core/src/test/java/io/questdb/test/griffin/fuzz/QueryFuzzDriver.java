@@ -166,7 +166,7 @@ public final class QueryFuzzDriver {
                 boolean injectFaultFn = faultType == FaultType.FUNCTION;
                 long preGenS0 = rnd.getSeed0();
                 long preGenS1 = rnd.getSeed1();
-                GeneratedQuery query = QueryGenerator.generate(rnd, tables, null, injectFaultFn, config.isWindowEnabled(), config.isLatestOnEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled(), config.isHashJoinEnabled(), config.isGroupingSetsEnabled());
+                GeneratedQuery query = QueryGenerator.generate(rnd, tables, null, injectFaultFn, config.isWindowEnabled(), config.isLatestOnEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled(), config.isHashJoinEnabled(), config.isGroupingSetsEnabled(), config);
                 QueryRunner.Result result;
                 if (faultType != null) {
                     // Fault queries use a crash-and-recover oracle, not the
@@ -226,7 +226,7 @@ public final class QueryFuzzDriver {
                         long bindS1 = rnd.nextLong();
                         rnd.reset(preGenS0, preGenS1);
                         BindContext ctx = new BindContext(new Rnd(bindS0, bindS1), CONSTANT_BIND_PROBABILITY_PCT);
-                        GeneratedQuery bindForm = QueryGenerator.generate(rnd, tables, ctx, injectFaultFn, config.isWindowEnabled(), config.isLatestOnEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled(), config.isHashJoinEnabled(), config.isGroupingSetsEnabled());
+                        GeneratedQuery bindForm = QueryGenerator.generate(rnd, tables, ctx, injectFaultFn, config.isWindowEnabled(), config.isLatestOnEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled(), config.isHashJoinEnabled(), config.isGroupingSetsEnabled(), config);
                         if (ctx.getBindValues().size() > 0) {
                             query = query.withBind(bindForm.sql(), ctx.getBindNames(), ctx.getBindValues());
                             bindGen++;
