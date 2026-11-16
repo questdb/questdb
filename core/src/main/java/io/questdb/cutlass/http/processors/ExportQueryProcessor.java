@@ -1162,6 +1162,8 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             sendStoredError(response, state);
             return false;
         }
+        // for the log lines of the statements the request runs; the connection clears them
+        context.getOrCreateSqlExecutionContext(engine, sharedWorkerCount).setRequestVariables(state.getQueryVariables());
         DirectUtf8Sequence fileName = request.getUrlParam(URL_PARAM_FILENAME);
         state.fileName.clear();
         if (fileName != null && fileName.size() > 0) {

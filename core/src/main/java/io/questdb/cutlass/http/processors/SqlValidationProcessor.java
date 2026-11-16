@@ -487,6 +487,8 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
             state.onResumeError(response);
             return false;
         }
+        // for the log lines of the statements the request runs; the connection clears them
+        context.getOrCreateSqlExecutionContext(engine, sharedWorkerCount).setRequestVariables(state.getQueryVariables());
         return true;
     }
 

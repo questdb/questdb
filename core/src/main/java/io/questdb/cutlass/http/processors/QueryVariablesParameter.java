@@ -26,6 +26,7 @@ package io.questdb.cutlass.http.processors;
 
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.griffin.SqlException;
+import io.questdb.log.LogRecord;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.DirectUtf8Sequence;
@@ -105,6 +106,16 @@ final class QueryVariablesParameter implements Mutable {
     void putErrorSource(Utf8Sink response) {
         if (isErrorInVariables) {
             response.putAscii(',').putAsciiQuoted("errorSource").putAscii(':').putAsciiQuoted("variables");
+        }
+    }
+
+    /**
+     * Adds {@code , vars=`...`} to a log record that shows the query's text, when the client
+     * sent variables: the text alone does not tell what ran.
+     */
+    void putLog(LogRecord log) {
+        if (text.length() > 0) {
+            log.$(", vars=`").$safe(text).$('`');
         }
     }
 }

@@ -25,6 +25,8 @@
 package io.questdb.test.cutlass.http;
 
 import io.questdb.cutlass.http.client.HttpClient;
+import io.questdb.griffin.engine.QueryProgress;
+import io.questdb.log.LogFactory;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
@@ -32,6 +34,7 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractTest;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.AfterClass;
@@ -103,6 +106,60 @@ public class HttpQueryVariablesTest extends AbstractTest {
             testHttpClient.get("CREATE TABLE x AS (SELECT @a v)", variables, sink);
             TestUtils.assertContains(sink.toString(), "\"error\"");
         }));
+    }
+
+    @Test
+    public void testLogsShowVariables() throws Exception {
+        // The log lines that show a statement's text show the variables it ran with, so the log
+        // tells what ran. A request without variables logs as before.
+        LogFactory.enableGuaranteedLogging(QueryProgress.class);
+        final LogCapture capture = new LogCapture();
+        try {
+            TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
+                capture.start();
+                engine.execute("CREATE TABLE t (v INT)", sqlExecutionContext);
+                // a query: when it starts and when it ends, and the timings line
+                assertGet(
+                        "{\"query\":\"SELECT @a + 1 x\",\"columns\":[{\"name\":\"x\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[2]],\"count\":1}",
+                        "SELECT @a + 1 x",
+                        "@a := 1"
+                );
+                // an INSERT, which runs after its compile
+                assertGet("{\"dml\":\"OK\"}", "INSERT INTO t SELECT @v", "@v := 42");
+                // an error
+                assertGet(
+                        "{\"query\":\"SELECT @a FROM nope\",\"error\":\"table does not exist [table=nope]\",\"position\":15}",
+                        "SELECT @a FROM nope",
+                        "@a := 1"
+                );
+                // the export and the validation endpoints
+                assertSameExport("SELECT 3 z", "SELECT @c z", "@c := 3", null);
+                final Utf8StringSink sink = new Utf8StringSink();
+                Assert.assertEquals("200", testHttpClient.get("/api/v1/sql/validate", "SELECT @d w", "@d := 4", null, sink));
+                // a request without variables after them
+                assertGet(
+                        "{\"query\":\"SELECT 2 y\",\"columns\":[{\"name\":\"y\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[2]],\"count\":1}",
+                        "SELECT 2 y",
+                        null
+                );
+                capture.waitForRegex("fin \\[id=\\d+, sql=`SELECT 2 y`");
+
+                capture.assertOnlyOnce("exe \\[id=\\d+, sql=`SELECT @a \\+ 1 x`, vars=`@a := 1`, principal=");
+                capture.assertOnlyOnce("fin \\[id=\\d+, sql=`SELECT @a \\+ 1 x`, vars=`@a := 1`, principal=");
+                capture.assertOnlyOnce("timings \\[compiler: \\d+, count: \\d+, execute: \\d+, q=`SELECT @a \\+ 1 x`, vars=`@a := 1`]");
+                capture.assertOnlyOnce("fin \\[id=\\d+, sql=`INSERT INTO t SELECT @v`, vars=`@v := 42`, principal=");
+                capture.assertOnlyOnce("err \\[id=-1, sql=`SELECT @a FROM nope`, vars=`@a := 1`, principal=.*, msg=table does not exist \\[table=nope], errno=0, pos=15");
+                capture.assertOnlyOnce("fin \\[id=\\d+, sql=`SELECT @c z`, vars=`@c := 3`, principal=");
+                capture.assertOnlyOnce("timings \\[compiler: \\d+, q=`SELECT @d w`, vars=`@d := 4`]");
+                capture.assertOnlyOnce("fin \\[id=\\d+, sql=`SELECT 2 y`, principal=");
+                capture.assertOnlyOnce("timings \\[compiler: \\d+, count: \\d+, execute: \\d+, q=`SELECT 2 y`]");
+                // the reference export ran without variables
+                capture.assertOnlyOnce("fin \\[id=\\d+, sql=`SELECT 3 z`, principal=");
+            }));
+        } finally {
+            capture.stop();
+            LogFactory.disableGuaranteedLogging(QueryProgress.class);
+        }
     }
 
     @Test

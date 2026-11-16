@@ -209,10 +209,11 @@ public class SqlValidationProcessorState implements Mutable, Closeable {
     }
 
     public void logTimings() {
-        info().$("timings ")
+        final LogRecord log = info().$("timings ")
                 .$("[compiler: ").$(compilerNanos)
-                .$(", q=`").$safe(getQueryOrHidden())
-                .$("`]").$();
+                .$(", q=`").$safe(getQueryOrHidden()).$('`');
+        queryVariables.putLog(log);
+        log.$(']').$();
     }
 
     public void setCompilerNanos(long compilerNanos) {

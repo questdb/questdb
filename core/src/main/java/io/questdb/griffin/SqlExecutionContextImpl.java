@@ -63,6 +63,7 @@ import io.questdb.std.Transient;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.StringSink;
 import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -84,6 +85,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final MicrosecondClock microClock;
     private final NanosecondClock nanoClock;
     private final ObjList<PageFrameSequence<?>> pageFrameSequences = new ObjList<>();
+    // see getRequestVariables(), empty for none
+    private final StringSink requestVariables = new StringSink();
     private final int sharedQueryWorkerCount;
     private final AtomicBooleanCircuitBreaker simpleCircuitBreaker;
     private final Telemetry<TelemetryTask> telemetry;
@@ -430,6 +433,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public long getRequestFd() {
         return requestFd;
+    }
+
+    @Override
+    public @Nullable CharSequence getRequestVariables() {
+        return requestVariables.length() > 0 ? requestVariables : null;
     }
 
     @Override
@@ -836,6 +844,19 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void setReaderPoolSupervisor(@Nullable ResourcePoolSupervisor<TableReader> supervisor) {
         this.readerPoolSupervisor = supervisor;
+    }
+
+    /**
+     * Sets the variables the client sent with the request this context runs, or {@code null} for
+     * none, see {@link #getRequestVariables()}. The context keeps a copy. Rebinding the context
+     * to another statement of the same request keeps them, so the caller clears them when the
+     * request ends.
+     */
+    public void setRequestVariables(@Nullable CharSequence requestVariables) {
+        this.requestVariables.clear();
+        if (requestVariables != null) {
+            this.requestVariables.put(requestVariables);
+        }
     }
 
     @Override

@@ -385,12 +385,14 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     public void logTimings() {
-        info().$("timings ")
+        final long executeNanos = nanosecondClock.getTicks() - executeStartNanos;
+        final LogRecord log = info().$("timings ")
                 .$("[compiler: ").$(compilerNanos)
                 .$(", count: ").$(recordCountNanos)
-                .$(", execute: ").$(nanosecondClock.getTicks() - executeStartNanos)
-                .$(", q=`").$safe(getQueryOrHidden())
-                .$("`]").$();
+                .$(", execute: ").$(executeNanos)
+                .$(", q=`").$safe(getQueryOrHidden()).$('`');
+        queryVariables.putLog(log);
+        log.$(']').$();
     }
 
     public void beginSqlExecutionOwner(

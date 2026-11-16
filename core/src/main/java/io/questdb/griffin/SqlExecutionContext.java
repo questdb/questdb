@@ -228,6 +228,16 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
         return null;
     }
 
+    /**
+     * Returns the variables the client sent with the request this context runs, or {@code null}
+     * for none, for the log lines that show the statements it runs. Unlike
+     * {@link #getQueryVariables()}, they last for the whole request, and the parser never reads
+     * them.
+     */
+    default @Nullable CharSequence getRequestVariables() {
+        return null;
+    }
+
     Rnd getRandom();
 
     default TableReader getReader(TableToken tableToken, long version) {
