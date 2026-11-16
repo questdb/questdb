@@ -1434,9 +1434,18 @@ public class TableReader implements Closeable, SymbolTableSource {
         final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
         long partitionTs = openPartitionInfo.getQuick(offset);
         long existingPartitionNameTxn = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN);
+        // Resolve by TIMESTAMP: a metadata transition runs before reconcileOpenPartitions, so the reader's
+        // partition index need not yet line up with the transaction's.
+        final int txPartitionIndex = txFile.getPartitionIndex(partitionTs);
         long newNameTxn = txFile.getPartitionNameTxnByPartitionTimestamp(partitionTs);
         long newSize = txFile.getPartitionRowCountByTimestamp(partitionTs);
-        if (existingPartitionNameTxn != newNameTxn || newSize < 0) {
+        // A partition mapped before its Delta catalog existed must reopen through the catalog's base, as
+        // reconcileOpenPartitions0 closes it later. The name txn and the _txn row count do not show a base
+        // compaction, and the retired native base's column files are gone by the time a column is remapped.
+        final boolean isCatalogNew = txPartitionIndex > -1
+                && txFile.getPartitionHasDelta(txPartitionIndex)
+                && getPartitionBaseId(partitionIndex) == 0;
+        if (existingPartitionNameTxn != newNameTxn || newSize < 0 || isCatalogNew) {
             LOG.debug().$("close outdated partition files [table=").$(tableToken).$(", ts=")
                     .$ts(ColumnType.getTimestampDriver(timestampType), partitionTs).$(", nameTxn=").$(newNameTxn).$();
             // Close all columns, partition is overwritten. Partition reconciliation process will re-open correct files
@@ -1452,13 +1461,9 @@ public class TableReader implements Closeable, SymbolTableSource {
             openPartitionCount--;
             return -1;
         }
-        long nameTxn = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_NAME_TXN);
         //noinspection resource
-        pathGenNativePartition(partitionIndex, nameTxn);
-        // Resolve the geometry by TIMESTAMP: a metadata transition runs before reconcileOpenPartitions, so the
-        // reader's partition index need not yet line up with the transaction's, which is why every lookup above
-        // goes by timestamp too.
-        return mappedRowCount(txFile.getPartitionIndex(partitionTs), newSize);
+        pathGenNativePartition(partitionIndex, existingPartitionNameTxn);
+        return mappedRowCount(txPartitionIndex, newSize);
     }
 
     private void copyColumns(
