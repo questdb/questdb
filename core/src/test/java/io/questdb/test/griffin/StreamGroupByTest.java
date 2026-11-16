@@ -1531,6 +1531,39 @@ public class StreamGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWrappedCopiesIgnoreSortAndJoinBudgets() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 1024);
+        setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_BYTES, 1024);
+        setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE, 1024);
+        setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_MAX_PAGES, 1);
+        run((engine, compiler, context) -> {
+            createTable(compiler, context);
+            context.getBindVariableService().clear();
+            context.getBindVariableService().setLong(0, 600);
+            final String sampleBy = "SELECT ts, sym, sum(v) v FROM trades SAMPLE BY 1s";
+            for (String wrapped : new String[]{
+                    "SELECT * FROM (" + sampleBy + ") WHERE now() > '2000-01-01'",
+                    sampleBy + " EXCEPT (SELECT ts, sym, v FROM trades WHERE v = 2)",
+                    sampleBy + " EXCEPT ALL (SELECT ts, sym, v FROM trades WHERE v = 2)",
+                    sampleBy + " INTERSECT (" + sampleBy + ")",
+                    sampleBy + " INTERSECT ALL (" + sampleBy + ")",
+                    sampleBy + " LIMIT -600",
+                    sampleBy + " LIMIT $1",
+            }) {
+                for (String sql : new String[]{
+                        "SELECT * FROM (" + wrapped + ") ORDER BY v, ts, sym",
+                        "SELECT count(), sum(s.v) FROM (SELECT DISTINCT sym FROM trades) m JOIN (" + wrapped + ") s ON (sym)",
+                }) {
+                    context.setStreamGroupByEnabled(false);
+                    final String expected = compileAndRead(compiler, context, sql);
+                    context.setStreamGroupByEnabled(true);
+                    Assert.assertEquals(sql, expected, compileAndRead(compiler, context, sql));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testColumnTopKeyAggregatesMatchPerRowSemantics() throws Exception {
         run((engine, compiler, context) -> {
             engine.execute("CREATE TABLE s (ts TIMESTAMP, d DOUBLE, e DOUBLE) TIMESTAMP(ts) PARTITION BY DAY", context);

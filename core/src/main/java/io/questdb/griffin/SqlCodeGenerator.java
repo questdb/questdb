@@ -342,6 +342,7 @@ import io.questdb.griffin.engine.table.RuntimeConstGateRecordCursorFactory;
 import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
 import io.questdb.griffin.engine.table.SymbolPatternIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
+import io.questdb.griffin.engine.union.AbstractSetRecordCursorFactory;
 import io.questdb.griffin.engine.union.ExceptAllRecordCursorFactory;
 import io.questdb.griffin.engine.union.ExceptRecordCursorFactory;
 import io.questdb.griffin.engine.union.IntersectAllRecordCursorFactory;
@@ -2091,12 +2092,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     // Over a hash GROUP BY, only these factories pass random access through to a light join or sort.
     private static boolean isOverStreamGroupBy(RecordCursorFactory factory) {
-        for (RecordCursorFactory f = factory; f != null; f = f.getBaseFactory()) {
+        for (RecordCursorFactory f = factory; !f.recordCursorSupportsRandomAccess();
+             f = f instanceof AbstractSetRecordCursorFactory set ? set.getFactoryA() : f.getBaseFactory()) {
             if (f instanceof StreamGroupByRecordCursorFactory || f instanceof AsyncStreamGroupByRecordCursorFactory) {
                 return true;
             }
             if (!(f instanceof SelectedRecordCursorFactory || f instanceof VirtualRecordCursorFactory
-                    || f instanceof FilteredRecordCursorFactory || f instanceof LimitRecordCursorFactory)) {
+                    || f instanceof FilteredRecordCursorFactory || f instanceof LimitRecordCursorFactory
+                    || f instanceof RuntimeConstGateRecordCursorFactory || f instanceof MaterializedRecordCursorFactory
+                    || f instanceof ExceptRecordCursorFactory || f instanceof ExceptAllRecordCursorFactory
+                    || f instanceof IntersectRecordCursorFactory || f instanceof IntersectAllRecordCursorFactory)) {
                 return false;
             }
         }
