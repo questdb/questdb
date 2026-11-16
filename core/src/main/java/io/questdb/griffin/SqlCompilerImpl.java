@@ -255,6 +255,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     //true - compiler treats whole input as single query and doesn't stop on ';'. Default mode.
     //false - compiler treats input as list of statements and stops processing statement on ';'. Used in batch processing.
     private boolean isSingleQueryMode = true;
+    // Whether the plan of the SELECT of a view the last optimiseViewQuery() optimised keeps an order a reader of the
+    // view requires that the SELECT as a query of its own does not, see SqlOptimiser.hasTopLevelOrderChangedPlan().
+    private boolean isViewPlanOrderedForReader;
     // Number of items in the top-level select list of the last materialized view query parsed by
     // compileMatViewQuery(), wildcards counted as one item each.
     private int matViewProjectionSize;
@@ -3104,6 +3107,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         functionParser.clear();
         compiledQuery.clear();
         columnNames.clear();
+        isViewPlanOrderedForReader = false;
     }
 
     // Compiles the SELECT of a view again, as a sub-query of a read that counts its rows and, given filteredOutputs,
@@ -6482,13 +6486,25 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 final CreateTableOperation createTableOp = createViewOp.getCreateTableOperation();
                 if (createTableOp.getSelectText() != null) {
                     RecordCursorFactory newFactory = null;
+                    // the plan of the SELECT as a query of its own, whose metadata the view records when newFactory
+                    // keeps an order a reader requires, see generateViewMetadataFactory()
+                    RecordCursorFactory metadataFactory = null;
                     RecordCursor newCursor;
                     long expiryPolicyVersion;
                     for (int retryCount = 0; ; retryCount++) {
                         try {
+                            // the plan of the attempt that retries, if any
+                            metadataFactory = Misc.free(metadataFactory);
                             expiryPolicyVersion = compileViewQuery(executionContext, createViewOp);
                             Misc.free(newFactory);
                             newFactory = compiledQuery.getRecordCursorFactory();
+                            if (isViewPlanOrderedForReader) {
+                                metadataFactory = generateViewMetadataFactory(
+                                        createTableOp.getSelectText(),
+                                        createTableOp.getSelectTextPosition(),
+                                        executionContext
+                                );
+                            }
                             // This cursor exists to report column types, not to hand anyone rows.
                             // Flag it so that an audited view in the SELECT does not record a read.
                             // The flag covers the cursor open only: the compile above runs with it
@@ -6516,18 +6532,22 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         } catch (TableReferenceOutOfDateException e) {
                             if (retryCount >= maxRecompileAttempts) {
                                 Misc.free(newFactory);
+                                Misc.free(metadataFactory);
                                 throw SqlException.$(0, e.getFlyweightMessage());
                             }
                             LOG.info().$("retrying plan [q=`").$(createTableOp.getSelectText()).$("`]").$();
                         } catch (Throwable th) {
                             Misc.free(newFactory);
+                            Misc.free(metadataFactory);
                             throw th;
                         }
                     }
 
                     try {
-                        final RecordMetadata metadata = newFactory.getMetadata();
-                        createViewOp.validateAndUpdateMetadataFromSelect(metadata, newFactory.getScanDirection());
+                        // ViewCompilerJob records the metadata of the plan of the SELECT as a query of its own
+                        final RecordCursorFactory viewMetadataFactory = metadataFactory != null ? metadataFactory : newFactory;
+                        final RecordMetadata metadata = viewMetadataFactory.getMetadata();
+                        createViewOp.validateAndUpdateMetadataFromSelect(metadata, viewMetadataFactory.getScanDirection());
 
                         viewDefinition = engine.createView(
                                 executionContext.getSecurityContext(),
@@ -6550,6 +6570,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     } finally {
                         Misc.free(newCursor);
                         Misc.free(newFactory);
+                        Misc.free(metadataFactory);
                     }
 
                     createViewOp.updateOperationFutureTableToken(viewToken);
@@ -7055,6 +7076,27 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
+    // Compiles the SELECT of a view, viewSql, as a query of its own, which requires no order of its result, and
+    // returns its plan, whose metadata ViewCompilerJob records for the view. The plan compileViewQuery() generates
+    // keeps the order a reader of the view requires, see optimiseViewQuery(), and can lose the designated timestamp
+    // that the plan of the SELECT as a query of its own keeps, such as when it keeps the ORDER BY of a sub-query of
+    // a window function. CREATE VIEW records the metadata of this plan, so that the catalog does not change when
+    // ViewCompilerJob compiles the view next.
+    private RecordCursorFactory generateViewMetadataFactory(
+            CharSequence viewSql,
+            int viewSqlPosition,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            final ExecutionModel executionModel = compiler.generateExecutionModel(viewSql, executionContext);
+            return SqlUtil.generateFactory(compiler, executionModel, executionContext);
+        } catch (SqlException e) {
+            // position is reported from the view SQL, we have to adjust it
+            e.setPosition(e.getPosition() + viewSqlPosition);
+            throw e;
+        }
+    }
+
     private int getNextValidTokenPosition() throws SqlException {
         while (lexer.hasNext()) {
             CharSequence token = SqlUtil.fetchNext(lexer);
@@ -7179,7 +7221,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     // BY the plan of the SELECT drops, as a read that joins the view to something before it does. Another one,
     // collectFilteredReadDependencies(), collects the columns of the same name as an output a model computes,
     // which a read that filters on that output scans. optimise() changes the model in place, so the parsed
-    // references are collected before it runs.
+    // references are collected before it runs. The plan of the SELECT keeps the order a reader requires, which
+    // can differ from the plan of the SELECT as a query of its own, see isViewPlanOrderedForReader.
     private IQueryModel optimiseViewQuery(
             CharSequence viewSql,
             IQueryModel parsedModel,
@@ -7202,6 +7245,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             } finally {
                 optimiser.setPivotInValueRecorder(null);
             }
+            isViewPlanOrderedForReader = optimiser.hasTopLevelOrderChangedPlan();
             final boolean isOrderByCleared = optimiser.isOrderByCleared();
             SqlUtil.collectTableColumnReads(engine, queryModel, dependencies, viewWildcardSources, viewCompileRecord, true);
             // The view lends its readers the columns its plan reads that no view it reads lends. Opening the plan

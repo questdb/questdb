@@ -113,6 +113,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 
 import static io.questdb.griffin.SqlCodeGenerator.ALLOW_FUNCTION_MEMOIZATION;
 import static io.questdb.griffin.SqlCodeGenerator.joinsRequiringTimestamp;
@@ -204,6 +205,10 @@ public class SqlOptimiser implements Mutable {
     // the sets of outputs of the columns and of the columns they reach, see takeKeptWholeWork(). Tests read it on the
     // thread that ran the compile and assert on deltas.
     private static long keptWholeOriginAddCount;
+    // Test-only observability for the release of the memory of the propagation of the columns of a query in
+    // kept-whole mode: when set, receives each map and set of outputs the propagation takes from its pools, see
+    // releaseKeptWholeMemory().
+    private static volatile Consumer<Object> keptWholePoolListener;
     protected final ObjList<CharSequence> literalCollectorANames = new ObjList<>();
     private final CharacterStore characterStore;
     private final IntList clausesToSteal = new IntList();
@@ -249,8 +254,6 @@ public class SqlOptimiser implements Mutable {
     // per column of the projection emitKeptWholeProjection() emits, the join model of its nested model a filter on the
     // column gives a column, see filteredJoinIndex()
     private final IntList keptWholeFilteredJoins = new IntList();
-    // the outputs of the view whose columns need a join model, see collectWithholdingOutputs()
-    private final IntHashSet keptWholeNeededBy = new IntHashSet();
     // the sets of outputs collectWithholdingOutputs() has added to keptWholeNeededBy
     private final ObjHashSet<IntHashSet> keptWholeNeededOrigins = new ObjHashSet<>();
     private final ObjectPool<LowerCaseCharSequenceObjHashMap<IntHashSet>> keptWholeOriginMapPool = new ObjectPool<>(LowerCaseCharSequenceObjHashMap::new, 16);
@@ -266,8 +269,6 @@ public class SqlOptimiser implements Mutable {
     // per column of the projection of a VIRTUAL model, its outputs with those of the columns that read it, see
     // addSameModelReaderOrigins(): null when no column reads it, and EVERY_OUTPUT when every read needs it
     private final ObjList<IntHashSet> keptWholeReaderOrigins = new ObjList<>();
-    // the outputs of the view the columns of a projection serve, see collectWithholdingOutputs()
-    private final IntHashSet keptWholeServedBy = new IntHashSet();
     // the sets of outputs collectWithholdingOutputs() has added to keptWholeServedBy
     private final ObjHashSet<IntHashSet> keptWholeServedOrigins = new ObjHashSet<>();
     // the join models of projectionJoinHolder that addTopDownColumn() gives no column of the projection
@@ -365,6 +366,9 @@ public class SqlOptimiser implements Mutable {
     // True when moveWhereInsideSubQueries has pushed down at least one and_offset wrapper, so
     // rebuildStrandedAndOffsets may find one in a post-join filter.
     private boolean hasOptimiserAndOffsets;
+    // True when the order the outermost optimise() required of the result of the query changed its plan, see
+    // hasTopLevelOrderChangedPlan().
+    private boolean hasTopLevelOrderChangedPlan;
     // True while emitKeptWholeProjection() collects the join models the columns of a projection reach, which
     // addTopDownColumn() then records rather than gives a column.
     private boolean isKeptWholeDryRun;
@@ -384,8 +388,14 @@ public class SqlOptimiser implements Mutable {
     private boolean isViewMetadataCheckDeferred;
     // the outputs of the view the projection column emitKeptWholeProjection() emits serves, null otherwise
     private IntHashSet keptWholeEmittedOrigins;
+    // the outputs of the view whose columns need a join model, see collectWithholdingOutputs(), a set of
+    // intHashSetPool while the columns of a query propagate in kept-whole mode, null otherwise
+    private IntHashSet keptWholeNeededBy;
     // the number of outputs of the view while the columns of a query propagate in kept-whole mode
     private int keptWholeOutputCount;
+    // the outputs of the view the columns of a projection serve, see collectWithholdingOutputs(), a set of
+    // intHashSetPool while the columns of a query propagate in kept-whole mode, null otherwise
+    private IntHashSet keptWholeServedBy;
     // the entries the propagation in kept-whole mode has added to its sets, see takeKeptWholeWork()
     private long keptWholeWork;
     private OperatorExpression opAnd;
@@ -534,6 +544,18 @@ public class SqlOptimiser implements Mutable {
         return replaceAndTransferDependents(oldModel, newModel);
     }
 
+    /**
+     * Sets the listener that receives each map and set of outputs the propagation of the columns of a query in
+     * kept-whole mode takes from its pools, see {@link #setSubQueryKeptWhole(boolean)}, or clears it with null.
+     * Tests hold the objects weakly to check that no compiler keeps them once the propagation has ended.
+     *
+     * @param listener the listener, called on the thread that compiles the query, or null
+     */
+    @TestOnly
+    public static void setKeptWholePoolListenerForTesting(@Nullable Consumer<Object> listener) {
+        keptWholePoolListener = listener;
+    }
+
     public void clear() {
         clearConstNameMaps();
         contextPool.clear();
@@ -547,6 +569,7 @@ public class SqlOptimiser implements Mutable {
         defaultAliasCount = 0;
         hasNonEquiNullingJoin = false;
         hasOptimiserAndOffsets = false;
+        hasTopLevelOrderChangedPlan = false;
         isNullingExecOrderValid = false;
         isOrderByCleared = false;
         isOrderByKept = false;
@@ -1064,6 +1087,16 @@ public class SqlOptimiser implements Mutable {
         return model != null && flexColumnModelTypes.contains(model.getSelectModelType());
     }
 
+    // Hands an object the propagation in kept-whole mode takes from its pools to the listener tests set, see
+    // setKeptWholePoolListenerForTesting().
+    private static <T> T notifyKeptWholePoolListener(T object) {
+        final Consumer<Object> listener = keptWholePoolListener;
+        if (listener != null) {
+            listener.accept(object);
+        }
+        return object;
+    }
+
     /**
      * Parses a unit character from a dateadd unit token.
      * Handles both quoted ('h') and unquoted (h) formats.
@@ -1324,6 +1357,25 @@ public class SqlOptimiser implements Mutable {
         if ((nestedModel.getOrderBy().size() == 0 || isOrderedByDesignatedTimestamp(nestedModel)) && !rowCountChanges) {
             nestedModel.setLimitAdvice(model.getLimitLo(), model.getLimitHi());
         }
+    }
+
+    // The order optimiseOrderBy() requires of a model, given the order its parent requires of it.
+    private static int requiredOrderByMnemonic(IQueryModel model, int topLevelOrderByMnemonic) {
+        // limit x,y forces order materialization; we can't push order by past it and need to discover actual nested ordering
+        if (model.getLimitLo() != null) {
+            topLevelOrderByMnemonic = OrderByMnemonic.ORDER_BY_UNKNOWN;
+        }
+
+        // if model has explicit timestamp then we should detect and preserve actual order because it might be used for asof/lt/splice join
+        if (model.getTimestamp() != null) {
+            topLevelOrderByMnemonic = OrderByMnemonic.ORDER_BY_REQUIRED;
+        }
+
+        // keep order by on model with window functions to speed up query (especially when it matches window order by)
+        if (model.getSelectModelType() == IQueryModel.SELECT_MODEL_WINDOW && model.getOrderBy().size() > 0) {
+            topLevelOrderByMnemonic = OrderByMnemonic.ORDER_BY_REQUIRED;
+        }
+        return topLevelOrderByMnemonic;
     }
 
     // Returns the column a grouping set key names: the column behind a SELECT alias, as in
@@ -5379,12 +5431,14 @@ public class SqlOptimiser implements Mutable {
         keptWholeColumnOrigins.clear();
         keptWholeEmittedOrigins = null;
         keptWholeFilteredJoins.clear();
+        keptWholeNeededBy = null;
         keptWholeNeededOrigins.clear();
         keptWholeOrigins.clear();
         keptWholeOutputCount = 0;
         keptWholeOutputLayers.clear();
         keptWholeReachedReaders.clear();
         keptWholeReaderOrigins.clear();
+        keptWholeServedBy = null;
         keptWholeServedOrigins.clear();
         keptWholeWithheldJoins.clear();
         projectionJoinHolder = null;
@@ -8326,6 +8380,64 @@ public class SqlOptimiser implements Mutable {
         return n;
     }
 
+    // The order optimiseOrderBy() requires of the models a model reads, given the order required of the model, see
+    // requiredOrderByMnemonic(). It changes nothing: optimiseOrderBy() drops the ORDER BY of a model whose order
+    // nothing requires.
+    private int nestedOrderByMnemonic(IQueryModel model, int requiredOrderByMnemonic) {
+        final ObjList<QueryColumn> columns = model.getBottomUpColumns();
+        final int n = columns.size();
+        int orderByMnemonic;
+
+        // determine if ordering is required
+        switch (requiredOrderByMnemonic) {
+            case OrderByMnemonic.ORDER_BY_UNKNOWN:
+                // we have sample by, so expect sub-query has to be ordered
+                if (model.getOrderBy().size() > 0 && model.getSampleBy() == null) {
+                    orderByMnemonic = OrderByMnemonic.ORDER_BY_INVARIANT;
+                } else {
+                    orderByMnemonic = OrderByMnemonic.ORDER_BY_REQUIRED;
+                }
+                if (model.getSampleBy() == null && orderByMnemonic != OrderByMnemonic.ORDER_BY_INVARIANT) {
+                    for (int i = 0; i < n; i++) {
+                        QueryColumn col = columns.getQuick(i);
+                        if (hasGroupByFunc(sqlNodeStack, functionParser.getFunctionFactoryCache(), col.getAst())) {
+                            orderByMnemonic = OrderByMnemonic.ORDER_BY_INVARIANT;
+                            break;
+                        }
+                    }
+                }
+                break;
+            case OrderByMnemonic.ORDER_BY_REQUIRED:
+                // parent requires order
+                // if this model forces ordering - sub-query ordering is not needed
+                if (model.getOrderBy().size() > 0) {
+                    orderByMnemonic = OrderByMnemonic.ORDER_BY_INVARIANT;
+                } else {
+                    orderByMnemonic = OrderByMnemonic.ORDER_BY_REQUIRED;
+                }
+                break;
+            default:
+                // sub-query ordering is not needed, unless sample by needs it
+                if (model.getSampleBy() != null) {
+                    orderByMnemonic = OrderByMnemonic.ORDER_BY_REQUIRED;
+                } else {
+                    orderByMnemonic = OrderByMnemonic.ORDER_BY_INVARIANT;
+                }
+                break;
+        }
+
+        // some aggregate functions (e.g. first()) rely on the rows being properly ordered to return the correct result
+        if (model.getSelectModelType() == IQueryModel.SELECT_MODEL_GROUP_BY) {
+            for (int i = 0; i < n && orderByMnemonic != OrderByMnemonic.ORDER_BY_REQUIRED; i++) {
+                if (hasOrderedGroupByFunc(columns.getQuick(i).getAst())) {
+                    orderByMnemonic = OrderByMnemonic.ORDER_BY_REQUIRED;
+                    break;
+                }
+            }
+        }
+        return orderByMnemonic;
+    }
+
     private QueryColumn nextColumn(CharSequence name) {
         return nextColumn(name, true, 0);
     }
@@ -8813,76 +8925,18 @@ public class SqlOptimiser implements Mutable {
         if (!model.isOptimisable()) {
             return;
         }
-        ObjList<QueryColumn> columns = model.getBottomUpColumns();
-        int orderByMnemonic;
-        int n = columns.size();
-
-        // limit x,y forces order materialization; we can't push order by past it and need to discover actual nested ordering
-        if (model.getLimitLo() != null) {
-            topLevelOrderByMnemonic = OrderByMnemonic.ORDER_BY_UNKNOWN;
+        final int requiredOrderByMnemonic = requiredOrderByMnemonic(model, topLevelOrderByMnemonic);
+        // sub-query ordering is not needed, but we'd like to propagate order by advice (if possible)
+        if (
+                requiredOrderByMnemonic == OrderByMnemonic.ORDER_BY_INVARIANT
+                        && !model.hasSharedRefs()
+                        && !isOrderByKept
+                        && model.getOrderBy().size() > 0
+        ) {
+            model.getOrderBy().clear();
+            isOrderByCleared = true;
         }
-
-        // if model has explicit timestamp then we should detect and preserve actual order because it might be used for asof/lt/splice join
-        if (model.getTimestamp() != null) {
-            topLevelOrderByMnemonic = OrderByMnemonic.ORDER_BY_REQUIRED;
-        }
-
-        // keep order by on model with window functions to speed up query (especially when it matches window order by)
-        if (model.getSelectModelType() == IQueryModel.SELECT_MODEL_WINDOW && model.getOrderBy().size() > 0) {
-            topLevelOrderByMnemonic = OrderByMnemonic.ORDER_BY_REQUIRED;
-        }
-
-        // determine if ordering is required
-        switch (topLevelOrderByMnemonic) {
-            case OrderByMnemonic.ORDER_BY_UNKNOWN:
-                // we have sample by, so expect sub-query has to be ordered
-                if (model.getOrderBy().size() > 0 && model.getSampleBy() == null) {
-                    orderByMnemonic = OrderByMnemonic.ORDER_BY_INVARIANT;
-                } else {
-                    orderByMnemonic = OrderByMnemonic.ORDER_BY_REQUIRED;
-                }
-                if (model.getSampleBy() == null && orderByMnemonic != OrderByMnemonic.ORDER_BY_INVARIANT) {
-                    for (int i = 0; i < n; i++) {
-                        QueryColumn col = columns.getQuick(i);
-                        if (hasGroupByFunc(sqlNodeStack, functionParser.getFunctionFactoryCache(), col.getAst())) {
-                            orderByMnemonic = OrderByMnemonic.ORDER_BY_INVARIANT;
-                            break;
-                        }
-                    }
-                }
-                break;
-            case OrderByMnemonic.ORDER_BY_REQUIRED:
-                // parent requires order
-                // if this model forces ordering - sub-query ordering is not needed
-                if (model.getOrderBy().size() > 0) {
-                    orderByMnemonic = OrderByMnemonic.ORDER_BY_INVARIANT;
-                } else {
-                    orderByMnemonic = OrderByMnemonic.ORDER_BY_REQUIRED;
-                }
-                break;
-            default:
-                // sub-query ordering is not needed, but we'd like to propagate order by advice (if possible)
-                if (!model.hasSharedRefs() && !isOrderByKept && model.getOrderBy().size() > 0) {
-                    model.getOrderBy().clear();
-                    isOrderByCleared = true;
-                }
-                if (model.getSampleBy() != null) {
-                    orderByMnemonic = OrderByMnemonic.ORDER_BY_REQUIRED;
-                } else {
-                    orderByMnemonic = OrderByMnemonic.ORDER_BY_INVARIANT;
-                }
-                break;
-        }
-
-        // some aggregate functions (e.g. first()) rely on the rows being properly ordered to return the correct result
-        if (model.getSelectModelType() == IQueryModel.SELECT_MODEL_GROUP_BY) {
-            for (int i = 0; i < n && orderByMnemonic != OrderByMnemonic.ORDER_BY_REQUIRED; i++) {
-                if (hasOrderedGroupByFunc(columns.getQuick(i).getAst())) {
-                    orderByMnemonic = OrderByMnemonic.ORDER_BY_REQUIRED;
-                    break;
-                }
-            }
-        }
+        int orderByMnemonic = nestedOrderByMnemonic(model, requiredOrderByMnemonic);
 
         ObjList<ExpressionNode> orderByAdvice = getOrderByAdvice(model, orderByMnemonic);
         IntList orderByDirectionAdvice = getOrderByAdviceDirection(model, orderByMnemonic);
@@ -9918,7 +9972,7 @@ public class SqlOptimiser implements Mutable {
         final int modelIndex = keptWholeOrigins.keyIndex(model);
         final LowerCaseCharSequenceObjHashMap<IntHashSet> columnOrigins;
         if (modelIndex > -1) {
-            columnOrigins = keptWholeOriginMapPool.next();
+            columnOrigins = notifyKeptWholePoolListener(keptWholeOriginMapPool.next());
             keptWholeOrigins.putAt(modelIndex, model, columnOrigins);
         } else {
             columnOrigins = keptWholeOrigins.valueAt(modelIndex);
@@ -9944,7 +9998,7 @@ public class SqlOptimiser implements Mutable {
         } else {
             // The set may serve other columns too: a projection shares the set of its column with the columns the
             // column reads. So the column takes a copy of its own.
-            final KeptWholeOrigins union = keptWholeOriginsPool.next();
+            final KeptWholeOrigins union = notifyKeptWholePoolListener(keptWholeOriginsPool.next());
             union.isOwned = true;
             union.addAll(recorded);
             union.addAll(origins);
@@ -10243,7 +10297,8 @@ public class SqlOptimiser implements Mutable {
 
     // The propagation in kept-whole mode takes the sets it fills from pools, which keep the capacity of their objects
     // for the life of the compiler, up to KEPT_WHOLE_WORK_LIMIT entries. The pools start over instead, as the next
-    // statements of the compiler rarely propagate in kept-whole mode.
+    // statements of the compiler rarely propagate in kept-whole mode. endKeptWholePropagation(), which runs first,
+    // drops every other reference the optimiser holds to those objects, so they go with the pools.
     private void releaseKeptWholeMemory() {
         intHashSetPool.resetCapacity();
         keptWholeOriginMapPool.resetCapacity();
@@ -16194,6 +16249,10 @@ public class SqlOptimiser implements Mutable {
     private void startKeptWholePropagation(IQueryModel root) {
         isSubQueryKeptWhole = true;
         keptWholeWork = 0;
+        // The sets grow with the outputs of the view. Taken from the pool, they go with the rest of the memory of the
+        // propagation once it ends, see releaseKeptWholeMemory().
+        keptWholeNeededBy = notifyKeptWholePoolListener(intHashSetPool.next());
+        keptWholeServedBy = notifyKeptWholePoolListener(intHashSetPool.next());
         final IQueryModel view = skipNoneTypeModels(root.getNestedModel());
         assert view != null : "a read of a view counts the rows of a SELECT";
         keptWholeOutputCount = view.getColumns().size();
@@ -17530,6 +17589,17 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
+     * Returns whether the order the last optimise() that is not nested in another required of the result of the
+     * query, its {@code topLevelOrderByMnemonic}, changed the plan of the query. The query then plans otherwise as a
+     * query of its own, which requires no order of its result, and the metadata of that plan may differ, such as by
+     * the designated timestamp that the plan keeps when it drops the ORDER BY of a sub-query, see
+     * {@code SqlCompilerImpl.optimiseViewQuery()}.
+     */
+    boolean hasTopLevelOrderChangedPlan() {
+        return hasTopLevelOrderChangedPlan;
+    }
+
+    /**
      * Returns whether an optimise() since the last {@link #setOrderByKept} dropped the ORDER BY of a model whose
      * parent does not need its rows ordered, such as the ORDER BY of a sub-query the parent orders again. The plan
      * of a read that places the query on a side of a join other than the first keeps such an ORDER BY, see
@@ -17555,9 +17625,12 @@ public class SqlOptimiser implements Mutable {
             SqlParserCallback sqlParserCallback,
             int topLevelOrderByMnemonic
     ) throws SqlException {
-        if (optimiseDepth == 0 && bareNoArgCallPositions != null) {
-            bareNoArgCallNames.clear();
-            bareNoArgCallPositions.clear();
+        if (optimiseDepth == 0) {
+            hasTopLevelOrderChangedPlan = false;
+            if (bareNoArgCallPositions != null) {
+                bareNoArgCallNames.clear();
+                bareNoArgCallPositions.clear();
+            }
         }
         if (!model.isOptimisable()) {
             return model;
@@ -17614,6 +17687,18 @@ public class SqlOptimiser implements Mutable {
             rewriteOrderByPosition(rewrittenModel);
             rewriteOrderByPositionForUnionModels(rewrittenModel);
             rewrittenModel = rewriteOrderBy(rewrittenModel);
+            if (topLevelOrderByMnemonic != OrderByMnemonic.ORDER_BY_UNKNOWN) {
+                // optimiseOrderBy() changes no ORDER BY of the top-level model, whose order either way is required
+                // or unknown, so the order the model requires of the models it reads decides the rest of the plan.
+                // An optimise() nested in this one requires no order of its query.
+                hasTopLevelOrderChangedPlan = nestedOrderByMnemonic(
+                        rewrittenModel,
+                        requiredOrderByMnemonic(rewrittenModel, topLevelOrderByMnemonic)
+                ) != nestedOrderByMnemonic(
+                        rewrittenModel,
+                        requiredOrderByMnemonic(rewrittenModel, OrderByMnemonic.ORDER_BY_UNKNOWN)
+                );
+            }
             optimiseOrderBy(rewrittenModel, topLevelOrderByMnemonic);
             createOrderHash(rewrittenModel);
             moveWhereInsideSubQueries(rewrittenModel, sqlExecutionContext);

@@ -188,6 +188,14 @@ public class ViewFuzzTest extends AbstractFuzzTest {
         execute("create view " + viewName + " as (" + viewSql + ")");
     }
 
+    private static String metadataOf(String viewName) {
+        final StringSink sink = new StringSink();
+        try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName(viewName))) {
+            metadata.toJson(sink);
+        }
+        return sink.toString();
+    }
+
     // The deterministic CTE tests in ViewColumnDependencyTest pin each wrapper; this combines nested wrappers.
     private static String wrapWithCte(String query, int shape) {
         final String unused = "DECLARE @c := a SELECT a FROM v_in";
@@ -363,8 +371,11 @@ public class ViewFuzzTest extends AbstractFuzzTest {
                     viewSqls.add(viewSql);
                     createView(viewName, viewSql);
                     LOG.info().$("created view ").$(viewName).$(" as ").$(viewSql).$();
+                    final String createdMetadata = metadataOf(viewName);
                     // compile the view before registering it, so dependent views can see this view's metadata
                     viewCompiler.run();
+                    // nothing the view reads changed, so the compile records the metadata CREATE VIEW recorded
+                    Assert.assertEquals(viewSql, createdMetadata, metadataOf(viewName));
                     selectGenerator.registerTable(viewName);
                 }
             }

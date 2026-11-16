@@ -57,6 +57,7 @@ import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.lang.ref.WeakReference;
 import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.function.IntFunction;
@@ -2122,6 +2123,37 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
     }
 
     @Test
+    public void testSubQueryKeptWholeReleasesItsMemory() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE w_chain (ts TIMESTAMP, c1 LONG, c2 LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+            // The second compile of the SELECT keeps the sub-query whole, and fills maps and sets of outputs that grow
+            // with the columns. The compilers live on in the pool once the statement ends, and keep none of them.
+            final ObjList<WeakReference<Object>> references = new ObjList<>();
+            SqlOptimiser.setKeptWholePoolListenerForTesting(object -> references.add(new WeakReference<>(object)));
+            try {
+                execute("CREATE VIEW v AS (" + chainedColumns(100, "c1") + ")");
+            } finally {
+                SqlOptimiser.setKeptWholePoolListenerForTesting(null);
+            }
+            Assert.assertEquals("{w_chain=[c1]}", dependenciesOf("v"));
+            // the two sets of outputs of the projections, and a map of the columns of each model the outputs reach
+            Assert.assertTrue(references.size() + " objects taken from the pools", references.size() > 2);
+            int retainedCount = references.size();
+            for (int attempt = 0; attempt < 10 && retainedCount > 0; attempt++) {
+                System.gc();
+                retainedCount = 0;
+                for (int i = 0, n = references.size(); i < n; i++) {
+                    if (references.getQuick(i).get() != null) {
+                        retainedCount++;
+                    }
+                }
+            }
+            Assert.assertEquals("objects of the propagation that outlive it", 0, retainedCount);
+        });
+    }
+
+    @Test
     public void testSubQueryOrderedAgainByTheView() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
@@ -2490,7 +2522,9 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
             // ORDER BY of a sub-query, which a read that counts the rows of the view drops; and when the plan drops
             // the ORDER BY of a sub-query the SELECT orders again, which a read that joins the view to something
             // before it keeps, but not the ORDER BY of a sub-query of an expression, whose tables a read of the view
-            // reads as the reader.
+            // reads as the reader. CREATE VIEW also compiles it once more as a query of its own, for the metadata the
+            // view records, when the order a reader of the view requires changes the plan of the SELECT: when the
+            // SELECT aggregates and orders nothing itself.
             final AlteringSecurityContext securityContext = new AlteringSecurityContext();
             try (SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(securityContext, bindVariableService, null, -1, null)) {
                 final String[] viewSqls = {
@@ -2510,12 +2544,13 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
                         "SELECT c FROM (SELECT c, d FROM y ORDER BY d) ORDER BY c",
                         "SELECT a FROM x WHERE a < (SELECT max(c) FROM (SELECT c, d FROM y ORDER BY d))",
                 };
-                final int[] expectedCompiles = {1, 1, 1, 1, 2, 2, 2, 2, 1, 1, 1, 2, 1, 2, 1};
+                final int[] expectedCreateCompiles = {1, 1, 1, 1, 2, 2, 3, 2, 2, 2, 2, 2, 1, 2, 1};
+                final int[] expectedAlterCompiles = {1, 1, 1, 1, 2, 2, 2, 2, 1, 1, 1, 2, 1, 2, 1};
                 for (int i = 0; i < viewSqls.length; i++) {
                     execute("CREATE VIEW v AS (" + viewSqls[i] + ")", context);
-                    Assert.assertEquals(viewSqls[i], expectedCompiles[i], securityContext.takeCheckCount());
+                    Assert.assertEquals(viewSqls[i], expectedCreateCompiles[i], securityContext.takeCheckCount());
                     execute("ALTER VIEW v_altered AS (" + viewSqls[i] + ")", context);
-                    Assert.assertEquals(viewSqls[i], expectedCompiles[i], securityContext.takeCheckCount());
+                    Assert.assertEquals(viewSqls[i], expectedAlterCompiles[i], securityContext.takeCheckCount());
                     execute("DROP VIEW v");
                     drainWalAndViewQueues();
                 }
