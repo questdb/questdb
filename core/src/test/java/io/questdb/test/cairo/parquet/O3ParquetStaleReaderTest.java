@@ -65,6 +65,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.microtime.Micros;
@@ -79,6 +80,7 @@ import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
 import java.io.File;
@@ -4635,7 +4637,9 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
     public void testAttachedForeignIndexDdlReadOnlyPartitionStays() throws Exception {
         // The attached partition, detached and attached back through a soft link, is read-only and keeps the foreign
         // version 31 of s. It cannot move off its volume, and no in-place commit reaches it: DROP INDEX and RENAME
-        // COLUMN leave it in its directory.
+        // COLUMN leave it in its directory. Windows has no soft-linked partitions: Files.softLink() creates a file
+        // link there, which ATTACH cannot read as a directory.
+        Assume.assumeFalse(Os.isWindows());
         setInPlaceParquetO3Properties();
         assertMemoryLeak(() -> {
             for (boolean isDropIndex : new boolean[]{true, false}) {
