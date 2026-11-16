@@ -30,6 +30,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.O3PartitionJob;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -66,9 +67,11 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
+import io.questdb.test.QueryAssertion;
 import io.questdb.test.cairo.fuzz.AbstractFuzzTest;
 import io.questdb.test.fuzz.FuzzDropCreateTableOperation;
 import io.questdb.test.fuzz.FuzzDropPartitionOperation;
+import io.questdb.test.fuzz.FuzzInsertOperation;
 import io.questdb.test.fuzz.FuzzSetTtlOperation;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.fuzz.FuzzTransactionOperation;
@@ -80,6 +83,10 @@ import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.temporal.ChronoUnit;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.concurrent.CountDownLatch;
@@ -111,6 +118,15 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             }
             return super.removeQuiet(name);
         }
+    };
+    // Zones whose spring-forward gap holds the floor of a day bucket under an offset inside the gap, each [zone, the
+    // transition, the first and the last minute of the day inside the gap]. Europe/Berlin jumps from 02:00 to 03:00,
+    // Africa/Cairo from 00:00 to 01:00, and Australia/Lord_Howe from 02:00 to 02:30 on the 1st of October, where month
+    // buckets start too.
+    private static final String[][] DST_GAP_ZONES = {
+            {"Europe/Berlin", "2023-03-26T01:00:00.000000Z", "121", "179"},
+            {"Africa/Cairo", "2023-04-27T22:00:00.000000Z", "1", "59"},
+            {"Australia/Lord_Howe", "2023-09-30T15:30:00.000000Z", "121", "149"}
     };
     // Two hours of fuzz data that NOT BETWEEN reads and view queries exclude.
     private static final String NOT_BETWEEN_HI = "'2022-02-24T20:00:00.000000Z'";
@@ -207,6 +223,91 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             setFuzzParams(rnd, 0.2, 0);
             setFuzzProperties(rnd);
             runMvFuzz(rnd, getTestName(), 1, true);
+        });
+    }
+
+    @Test
+    public void testDstGapDayBucketGeneratorCoversBucketAfterGap() throws Exception {
+        // testMultipleQueryExecutionsPerRefreshDstGapDayBuckets must keep drawing every zone with offsets inside its
+        // DST gap and outside it, day buckets of each stride and month buckets, and later batches with transactions
+        // whose first row lies in the bucket after the gap: past the first timestamp after the transition, which the
+        // refresh still merges with the bucket before the gap, and before the next bucket floor, from java.time. The
+        // seed is fixed, so a failure reproduces.
+        assertMemoryLeak(() -> {
+            final Rnd rnd = new Rnd(42, 42);
+            final DstGapDayBucketCase fuzzCase = new DstGapDayBucketCase();
+            final int[] inGapCounts = new int[DST_GAP_ZONES.length];
+            final int[] outOfGapCounts = new int[DST_GAP_ZONES.length];
+            final int[] dayStrideCounts = new int[4];
+            int monthCount = 0;
+            for (int i = 0; i < 500; i++) {
+                generateDstGapDayBucketCase(rnd, "base", fuzzCase);
+                final String text = fuzzCase.sql.toString();
+                Assert.assertTrue(text, text.matches("select min\\(c3\\) as min, max\\(c3\\) as max, ts from base sample by [1-3][dM] "
+                        + "align to calendar time zone '[A-Za-z_/]+' with offset '[0-2][0-9]:[0-5][0-9]'"));
+                final int zoneIndex = zoneIndex(fuzzCase.zone);
+                final int gapLo = Integer.parseInt(DST_GAP_ZONES[zoneIndex][2]);
+                final int gapHi = Integer.parseInt(DST_GAP_ZONES[zoneIndex][3]);
+                final boolean isInGap = fuzzCase.offsetMinutes >= gapLo && fuzzCase.offsetMinutes <= gapHi;
+                Assert.assertEquals(text, fuzzCase.isOffsetInGap, isInGap);
+                if (isInGap) {
+                    inGapCounts[zoneIndex]++;
+                } else {
+                    outOfGapCounts[zoneIndex]++;
+                }
+                if (fuzzCase.unit == 'M') {
+                    Assert.assertEquals(text, 1, fuzzCase.stride);
+                    monthCount++;
+                } else {
+                    dayStrideCounts[fuzzCase.stride]++;
+                }
+                Assert.assertEquals(text, fuzzCase.transitionTs - 3 * Micros.DAY_MICROS, fuzzCase.start);
+                Assert.assertEquals(text, fuzzCase.transitionTs + 6 * Micros.HOUR_MICROS, fuzzCase.hotTs);
+            }
+            for (int i = 0; i < DST_GAP_ZONES.length; i++) {
+                Assert.assertTrue("too few offsets inside the gap of " + DST_GAP_ZONES[i][0], inGapCounts[i] > 50);
+                Assert.assertTrue("too few offsets outside the gap of " + DST_GAP_ZONES[i][0], outOfGapCounts[i] > 50);
+            }
+            for (int stride = 1; stride < 4; stride++) {
+                Assert.assertTrue("too few day buckets of stride " + stride, dayStrideCounts[stride] > 50);
+            }
+            Assert.assertTrue("too few month buckets", monthCount > 50);
+
+            setFuzzParams(rnd, 0, 0);
+            fuzzer.createInitialTableWal("base", "timestamp");
+            final int[] transactionsAfterGap = new int[DST_GAP_ZONES.length];
+            for (int i = 0; i < 30; i++) {
+                do {
+                    generateDstGapDayBucketCase(rnd, "base", fuzzCase);
+                } while (!fuzzCase.isOffsetInGap || fuzzCase.unit != 'd' || fuzzCase.stride != 1);
+                final ZoneId zone = ZoneId.of(fuzzCase.zone);
+                final Instant transition = Instant.EPOCH.plus(fuzzCase.transitionTs, ChronoUnit.MICROS);
+                final LocalDateTime gapFloor = transition.atZone(zone).toLocalDate().atStartOfDay().plusMinutes(fuzzCase.offsetMinutes);
+                final long nextFloorTs = ChronoUnit.MICROS.between(Instant.EPOCH, gapFloor.plusDays(1).atZone(zone).toInstant());
+                final ObjList<FuzzTransaction> transactions = generateLaterBatch(rnd, "base", fuzzCase.hotTs);
+                try {
+                    for (int j = 0, n = transactions.size(); j < n; j++) {
+                        final FuzzTransaction transaction = transactions.getQuick(j);
+                        if (transaction.rollback || transaction.hasReplaceRange()) {
+                            continue;
+                        }
+                        long firstRowTs = Long.MAX_VALUE;
+                        for (int k = 0, m = transaction.operationList.size(); k < m; k++) {
+                            if (transaction.operationList.getQuick(k) instanceof FuzzInsertOperation insert) {
+                                firstRowTs = Math.min(firstRowTs, insert.getTimestamp());
+                            }
+                        }
+                        if (firstRowTs > fuzzCase.transitionTs + 1 && firstRowTs < nextFloorTs) {
+                            transactionsAfterGap[zoneIndex(fuzzCase.zone)]++;
+                        }
+                    }
+                } finally {
+                    Misc.freeObjListAndClear(transactions);
+                }
+            }
+            for (int i = 0; i < DST_GAP_ZONES.length; i++) {
+                Assert.assertTrue("no transaction starts in the bucket after the gap of " + DST_GAP_ZONES[i][0], transactionsAfterGap[i] > 0);
+            }
         });
     }
 
@@ -443,6 +544,26 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
+    public void testMultipleQueryExecutionsPerRefreshDstGapDayBuckets() throws Exception {
+        // SAMPLE BY 1d to 3d or 1M ALIGN TO CALENDAR TIME ZONE with, half of the time, a WITH OFFSET inside the zone's
+        // DST gap, so that the floor of the bucket after the gap lies inside the gap. The first batch starts three days
+        // before the transition, and the later ones write around a point six hours after it, in the bucket after the
+        // gap, so that their incremental refreshes start there. See generateDstGapDayBucketCase().
+        // The budget: questdb.fuzz.matview.rounds independent rounds, each with its own base table and view.
+        final int rounds = Integer.getInteger("questdb.fuzz.matview.rounds", 1);
+        final Rnd rnd = generateRandom(LOG);
+        final int rowsPerQuery = Math.max(100, rnd.nextInt(10_000));
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, rowsPerQuery);
+        final DstGapDayBucketCase fuzzCase = new DstGapDayBucketCase();
+        for (int round = 0; round < rounds; round++) {
+            final String tableName = testName.getMethodName() + "_" + round;
+            generateDstGapDayBucketCase(rnd, tableName, fuzzCase);
+            LOG.info().$("fuzz: DST gap round ").$(round).$(" [sql=").$(fuzzCase.sql).I$();
+            testMvFuzz(rnd, tableName, fuzzCase.start, fuzzCase.hotTs, tableName + "_mv", fuzzCase.sql.toString());
+        }
+    }
+
+    @Test
     public void testMultipleQueryExecutionsPerRefreshSmallSamplingInterval() throws Exception {
         final Rnd rnd = generateRandom(LOG);
         final int rowsPerQuery = Math.max(100, rnd.nextInt(10_000));
@@ -478,6 +599,43 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         final long monthStart = MicrosFormatUtils.parseUTCTimestamp(monthStarts.getQuick(rnd.nextInt(monthStarts.size())));
         final long start = monthStart - 4 * Micros.DAY_MICROS - 7 * Micros.HOUR_MICROS;
         testMvFuzz(rnd, tableName, start, monthStart, mvName, viewSql);
+    }
+
+    @Test
+    public void testOracleAcceptsStaleBucketOnlyWhereItStraddlesRemovedPartition() throws Exception {
+        // The oracle, assertViewMatchesBase(), accepts a view bucket that differs from its SQL only where the bucket
+        // straddles a base partition that a removed range emptied and the base removed: the partition clip keeps such
+        // a bucket's old value ("Known limitations"). Day buckets that start at 12:00 straddle two day partitions.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (c3 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base VALUES (1, '2024-01-01T13:00'), (2, '2024-01-02T01:00')");
+            final String viewSql = "SELECT min(c3) AS min, max(c3) AS max, ts FROM base SAMPLE BY 1d ALIGN TO CALENDAR WITH OFFSET '12:00'";
+            execute("CREATE MATERIALIZED VIEW mv AS (" + viewSql + ") PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+            // The replace commit removes the row of 2024-01-02, and with it the partition, and writes a row on
+            // 2024-01-03. The refresh skips the removed day, so the bucket that straddles it keeps its old value.
+            final TimestampDriver driver = MicrosTimestampDriver.INSTANCE;
+            MatViewPeriodRefreshTest.replaceRange(engine, driver, "2024-01-02T00:00", "2024-01-03T06:00", 3, "2024-01-03T05:00");
+            drainWalAndMatViewQueues();
+            assertQuery("mv").timestamp("ts").expectSize().noLeakCheck().returns("""
+                    min\tmax\tts
+                    1\t2\t2024-01-01T12:00:00.000000Z
+                    3\t3\t2024-01-02T12:00:00.000000Z
+                    """);
+
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                final LongList removedRanges = new LongList();
+                removedRanges.add(driver.parseFloorLiteral("2024-01-02T00:00"), driver.parseFloorLiteral("2024-01-03T06:00"));
+                assertViewMatchesBase(compiler, viewSql, "mv", removedRanges);
+
+                // a removed range only inside a partition the base still holds explains no stale bucket, and neither
+                // does no removed range
+                final LongList keptPartitionRanges = new LongList();
+                keptPartitionRanges.add(driver.parseFloorLiteral("2024-01-01T20:00"), driver.parseFloorLiteral("2024-01-01T21:00"));
+                assertViewDiffersFromBase(compiler, viewSql, keptPartitionRanges);
+                assertViewDiffersFromBase(compiler, viewSql, new LongList());
+            }
+        });
     }
 
     @Test
@@ -1320,9 +1478,15 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         Assert.assertEquals(context.toString(), MatViewFuzzOpGenerator.viewSql(generator.getSqlColumns(), generator.isSqlPositional()), state.getViewDefinition().getMatViewSql());
         // the view's EXPIRE ROWS policy is the fuzzer's, and every read of the view below goes through it
         generator.onViewWalApplied();
-        final StringSink expireClause = new StringSink();
-        printSql("SELECT expire_clause FROM materialized_views() WHERE view_name = 'mv'", expireClause);
-        TestUtils.assertEquals(context.toString(), "expire_clause\n" + (generator.getExpireClause() != null ? generator.getExpireClause() : "") + '\n', expireClause);
+        try {
+            // a static context: the builder of AbstractCairoTest.assertQuery() without its no-op prepare hook
+            new QueryAssertion(engine, sqlExecutionContext, null, "SELECT expire_clause FROM materialized_views() WHERE view_name = 'mv'")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("expire_clause\n" + (generator.getExpireClause() != null ? generator.getExpireClause() : "") + '\n');
+        } catch (AssertionError e) {
+            throw new AssertionError(context.toString(), e);
+        }
 
         // The twin lives for the check only, so that it holds back no base WAL purge between the checks.
         final ObjList<String> allColumns = new ObjList<>(MatViewFuzzOpGenerator.TS, MatViewFuzzOpGenerator.SYM);
@@ -1363,23 +1527,26 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     // Asserts a view against its SQL run on the current base, which a fully refreshed twin view holds: every bucket of
     // the SQL is in the view with the same values, and the view holds no other bucket outside the ranges the base
     // lost. A replace commit that empties a partition, and TRUNCATE, remove base rows while the view keeps its own
-    // there ("Known limitations"), so the view may keep a bucket that intersects one of those ranges.
+    // there ("Known limitations"), so the view may keep a bucket that intersects one of those ranges. A bucket that
+    // straddles a base partition such a range emptied and the base removed keeps its old value as well, see
+    // isStraddlingRemovedPartition().
     private static void assertViewMatchesBase(SqlCompiler compiler, String viewSql, String viewName, LongList removedRanges) throws SqlException {
         final TreeMap<Long, String> expected = readRowsByTimestamp(compiler, viewSql);
         final TreeMap<Long, String> actual = readRowsByTimestamp(compiler, viewName);
-        for (Map.Entry<Long, String> e : expected.entrySet()) {
-            final String actualRow = actual.get(e.getKey());
-            if (!e.getValue().equals(actualRow)) {
-                Assert.fail("view " + viewName + " differs from its SQL at a bucket the base holds [ts=" + e.getKey()
-                        + ", expected=" + e.getValue() + ", actual=" + actualRow + ']');
-            }
-        }
         final TableToken viewToken = engine.verifyTableName(viewName);
         final int timestampType;
         try (TableMetadata metadata = engine.getTableMetadata(viewToken)) {
             timestampType = metadata.getColumnType(metadata.getTimestampIndex());
         }
         final long bucketWidth = ColumnType.getTimestampDriver(timestampType).fromMicros(maxBucketWidthMicros(viewToken));
+        for (Map.Entry<Long, String> e : expected.entrySet()) {
+            final long ts = e.getKey();
+            final String actualRow = actual.get(ts);
+            if (!e.getValue().equals(actualRow) && !isStraddlingRemovedPartition(viewToken, removedRanges, ts, ts + bucketWidth)) {
+                Assert.fail("view " + viewName + " differs from its SQL at a bucket the base holds [ts=" + ts
+                        + ", expected=" + e.getValue() + ", actual=" + actualRow + ']');
+            }
+        }
         for (Map.Entry<Long, String> e : actual.entrySet()) {
             final long ts = e.getKey();
             if (!expected.containsKey(ts) && !intersects(removedRanges, ts, ts + bucketWidth)) {
@@ -1387,6 +1554,20 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                         + ts + ", row=" + e.getValue() + ']');
             }
         }
+    }
+
+    // Asserts that assertViewMatchesBase() rejects the 2024-01-01T12:00 bucket of the view "mv" of
+    // testOracleAcceptsStaleBucketOnlyWhereItStraddlesRemovedPartition() under the removed ranges.
+    private static void assertViewDiffersFromBase(SqlCompiler compiler, String viewSql, LongList removedRanges) throws SqlException {
+        AssertionError error = null;
+        try {
+            assertViewMatchesBase(compiler, viewSql, "mv", removedRanges);
+        } catch (AssertionError e) {
+            error = e;
+        }
+        Assert.assertNotNull(error);
+        TestUtils.assertContains(error.getMessage(), "view mv differs from its SQL at a bucket the base holds [ts=1704110400000000, expected=1\t1\t");
+        TestUtils.assertContains(error.getMessage(), "actual=1\t2\t");
     }
 
     // The ranges the transactions may remove from the base: a replace commit removes the rows in its range, and a
@@ -1410,10 +1591,47 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         return sink;
     }
 
+    private static boolean hasPartition(TableReader reader, TimestampDriver.TimestampFloorMethod floor, long partitionLo) {
+        for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
+            // a split partition starts after its partition's floor
+            if (floor.floor(reader.getPartitionTimestampByIndex(i)) == partitionLo) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static boolean intersects(LongList ranges, long lo, long hi) {
         for (int i = 0, n = ranges.size(); i < n; i += 2) {
             if (ranges.getQuick(i) < hi && ranges.getQuick(i + 1) >= lo) {
                 return true;
+            }
+        }
+        return false;
+    }
+
+    // True when the bucket [lo, hi) of the view intersects a partition of the view's base that a removed range
+    // intersects and that the base no longer holds: a replace commit emptied it and the base removed it. The refresh
+    // clips its interval to the base's partitions, so the view keeps such a bucket's old value, which the spec
+    // documents ("Buckets that straddle a removed partition").
+    private static boolean isStraddlingRemovedPartition(TableToken viewToken, LongList removedRanges, long lo, long hi) {
+        final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
+        Assert.assertNotNull(state);
+        try (TableReader reader = engine.getReader(state.getViewDefinition().getBaseTableName())) {
+            final int partitionBy = reader.getPartitionedBy();
+            if (!PartitionBy.isPartitioned(partitionBy)) {
+                return false;
+            }
+            final int timestampType = reader.getMetadata().getTimestampType();
+            final TimestampDriver.TimestampFloorMethod floor = PartitionBy.getPartitionFloorMethod(timestampType, partitionBy);
+            final TimestampDriver.TimestampCeilMethod ceil = PartitionBy.getPartitionCeilMethod(timestampType, partitionBy);
+            for (long partitionLo = floor.floor(lo); partitionLo < hi; ) {
+                final long partitionHi = ceil.ceil(partitionLo);
+                if (intersects(removedRanges, Math.max(lo, partitionLo), Math.min(hi, partitionHi))
+                        && !hasPartition(reader, floor, partitionLo)) {
+                    return true;
+                }
+                partitionLo = partitionHi;
             }
         }
         return false;
@@ -2124,6 +2342,36 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         execute("create materialized view " + mvName + " refresh every " + interval + intervalUnit + " " + (deferred ? "deferred" : "") + " start '" + sink + "' as (" + viewSql + ") partition by DAY");
     }
 
+    // Draws a case of testMultipleQueryExecutionsPerRefreshDstGapDayBuckets(): a zone of DST_GAP_ZONES, SAMPLE BY 1d to
+    // 3d, or 1M a quarter of the time, and a WITH OFFSET inside the zone's gap half of the time, anywhere in the day
+    // otherwise. The first batch starts three days before the transition, the later ones write around a point six
+    // hours after it.
+    private static void generateDstGapDayBucketCase(Rnd rnd, String tableName, DstGapDayBucketCase fuzzCase) throws NumericException {
+        final String[] zone = DST_GAP_ZONES[rnd.nextInt(DST_GAP_ZONES.length)];
+        fuzzCase.zone = zone[0];
+        fuzzCase.transitionTs = MicrosFormatUtils.parseUTCTimestamp(zone[1]);
+        fuzzCase.isOffsetInGap = rnd.nextBoolean();
+        if (fuzzCase.isOffsetInGap) {
+            final int gapLo = Integer.parseInt(zone[2]);
+            fuzzCase.offsetMinutes = gapLo + rnd.nextInt(Integer.parseInt(zone[3]) - gapLo + 1);
+        } else {
+            do {
+                fuzzCase.offsetMinutes = rnd.nextInt(24 * 60);
+            } while (fuzzCase.offsetMinutes >= Integer.parseInt(zone[2]) && fuzzCase.offsetMinutes <= Integer.parseInt(zone[3]));
+        }
+        fuzzCase.unit = rnd.nextInt(4) == 0 ? 'M' : 'd';
+        fuzzCase.stride = fuzzCase.unit == 'M' ? 1 : 1 + rnd.nextInt(3);
+        fuzzCase.start = fuzzCase.transitionTs - 3 * Micros.DAY_MICROS;
+        fuzzCase.hotTs = fuzzCase.transitionTs + 6 * Micros.HOUR_MICROS;
+        final int hours = fuzzCase.offsetMinutes / 60;
+        final int minutes = fuzzCase.offsetMinutes % 60;
+        fuzzCase.sql.clear();
+        fuzzCase.sql.put("select min(c3) as min, max(c3) as max, ts from ").put(tableName)
+                .put(" sample by ").put(fuzzCase.stride).put(fuzzCase.unit)
+                .put(" align to calendar time zone '").put(fuzzCase.zone).put("' with offset '")
+                .put(hours < 10 ? "0" : "").put(hours).put(':').put(minutes < 10 ? "0" : "").put(minutes).put('\'');
+    }
+
     // The SQL of an ALTER ... AS of testPassthroughViewAlterAs(): the columns ts, sym, price and qty of the base's rows
     // through zero to two SELECTs over the innermost one, the outermost of them over a subquery or a CTE. Each level
     // names its timestamp column ts or another name, takes it as the level below names it, in any spelling, under a
@@ -2382,6 +2630,15 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     private static String shiftPassthroughTimestamp(Rnd rnd, String ref) {
         final int stride = (1 + rnd.nextInt(30)) * (rnd.nextBoolean() ? 1 : -1);
         return "dateadd('" + (rnd.nextBoolean() ? 'm' : 'h') + "', " + stride + ", " + ref + ")";
+    }
+
+    private static int zoneIndex(String zone) {
+        for (int i = 0; i < DST_GAP_ZONES.length; i++) {
+            if (DST_GAP_ZONES[i][0].equals(zone)) {
+                return i;
+            }
+        }
+        throw new AssertionError("unexpected zone: " + zone);
     }
 
     private ObjList<FuzzTransaction> createTransactionsAndMv(
@@ -2684,6 +2941,13 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         }
     }
 
+    // A later batch of testMvFuzz(): rows over up to 2 days starting within a day of hotTs.
+    private ObjList<FuzzTransaction> generateLaterBatch(Rnd rnd, String baseTableName, long hotTs) {
+        final long lo = hotTs - Micros.DAY_MICROS + rnd.nextLong(2 * Micros.DAY_MICROS);
+        final long hi = lo + Micros.HOUR_MICROS + rnd.nextLong(2 * Micros.DAY_MICROS);
+        return fuzzer.generateTransactions(baseTableName, rnd, lo, hi);
+    }
+
     private void setFuzzParams(Rnd rnd, double colAddProb, double truncateProb) {
         setFuzzParams(rnd, 10_000, 100_000, colAddProb, truncateProb);
     }
@@ -2845,9 +3109,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                     } else {
                         // Let the refresh job catch up, so that the next batch gets refreshes of its own.
                         drainWalAndMatViewQueues();
-                        final long lo = hotTs - Micros.DAY_MICROS + rnd.nextLong(2 * Micros.DAY_MICROS);
-                        final long hi = lo + Micros.HOUR_MICROS + rnd.nextLong(2 * Micros.DAY_MICROS);
-                        transactions = fuzzer.generateTransactions(baseTableName, rnd, lo, hi);
+                        transactions = generateLaterBatch(rnd, baseTableName, hotTs);
                     }
                     collectRemovedRanges(transactions, removedRanges);
                     ObjList<ObjList<FuzzTransaction>> fuzzTransactions = new ObjList<>();
@@ -2880,6 +3142,22 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 }
             }
         });
+    }
+
+    // A case of testMultipleQueryExecutionsPerRefreshDstGapDayBuckets(), see generateDstGapDayBucketCase().
+    private static final class DstGapDayBucketCase {
+        final StringSink sql = new StringSink();
+        // the point the later batches write around, in micros
+        long hotTs;
+        boolean isOffsetInGap;
+        int offsetMinutes;
+        // the first batch's start, in micros
+        long start;
+        int stride;
+        // the zone's spring-forward transition, in micros
+        long transitionTs;
+        char unit;
+        String zone;
     }
 
     // An ALTER ... AS SQL of testPassthroughViewAlterAs(), see generatePassthroughSql().
