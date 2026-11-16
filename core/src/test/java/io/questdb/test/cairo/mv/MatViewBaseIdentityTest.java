@@ -1208,6 +1208,61 @@ public class MatViewBaseIdentityTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRestartLoadsStateAtAppliedViewColumnChangeAbovePurgedTxnLogParts() throws Exception {
+        // With the view's transaction log in parts of one transaction, the view's newest transaction is an applied view
+        // ADD COLUMN, a structural transaction without a WAL event, and the WAL purge deleted the parts below it. A
+        // restart takes the state from _mv.s there and reads no deleted part: the view keeps its refresh position, its
+        // base table and, in the second round, its invalidation.
+        setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 1);
+        assertMemoryLeak(() -> {
+            for (int round = 0; round < 2; round++) {
+                final boolean isInvalid = round == 1;
+                createBase();
+                execute("INSERT INTO base VALUES ('a', 1.0, '2024-01-01T00:10:00.000000Z'), ('b', 2.0, '2024-01-02T00:10:00.000000Z')");
+                createView("IMMEDIATE");
+                drainWalAndMatViewQueues();
+                if (isInvalid) {
+                    engine.getMatViewStateStore().enqueueInvalidate(viewToken(), "test invalidation");
+                    drainWalAndMatViewQueues();
+                }
+                execute("ALTER MATERIALIZED VIEW price_1h ADD COLUMN extra DOUBLE");
+                drainWalQueue();
+                Assert.assertEquals(isInvalid ? "INVALIDATE,DATA,INVALIDATE,STRUCTURE" : "INVALIDATE,DATA,STRUCTURE", viewTxnTypes());
+                MatViewTxnLogParts.purge(engine, viewToken());
+                final long appliedSeqTxn = engine.getTableSequencerAPI().getTxnTracker(viewToken()).getWriterTxn();
+                for (long part = 0; part < appliedSeqTxn - 1; part++) {
+                    Assert.assertFalse(MatViewTxnLogParts.exists(engine, viewToken(), part));
+                }
+                Assert.assertTrue(MatViewTxnLogParts.exists(engine, viewToken(), appliedSeqTxn - 1));
+
+                restart();
+                Assert.assertEquals(isInvalid, viewState().isInvalid());
+                Assert.assertEquals(isInvalid ? "test invalidation" : null, viewState().getInvalidationReasonForReport());
+                Assert.assertEquals(1, viewState().getLastRefreshBaseTxn());
+                Assert.assertEquals(baseTableId(), viewState().getBaseTableId());
+                drainWalAndMatViewQueues();
+                insertBaseRow("c", 3.0, "2024-01-02T05:10:00.000000Z");
+                drainWalAndMatViewQueues();
+                assertQuery("SELECT view_status, refresh_base_table_txn, base_table_txn FROM materialized_views() WHERE view_name = 'price_1h'")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns(isInvalid
+                                ? """
+                                view_status\trefresh_base_table_txn\tbase_table_txn
+                                invalid\t1\t2
+                                """
+                                : """
+                                view_status\trefresh_base_table_txn\tbase_table_txn
+                                valid\t2\t2
+                                """);
+                execute("DROP MATERIALIZED VIEW price_1h");
+                execute("DROP TABLE base");
+                drainWalAndMatViewQueues();
+            }
+        });
+    }
+
+    @Test
     public void testRestartStopsAtAppliedTxnsAbovePurgedTxnLogParts() throws Exception {
         // With the view's transaction log in parts of one transaction, the WAL purge deletes the parts below the one of
         // the view's applied seqTxn, an applied view ADD COLUMN. A view DROP PARTITION follows, unapplied, and in the

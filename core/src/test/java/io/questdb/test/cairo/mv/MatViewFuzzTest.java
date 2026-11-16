@@ -45,7 +45,6 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
-import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -1549,29 +1548,6 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         return opsViewState("mv").hasPendingFullRefreshOwnerForTesting();
     }
 
-    // Whether a restart would load the view's state past every transaction with a WAL event left in the view's
-    // transaction log, view column changes only, into a txn-log part that the WAL purge deleted. The load fails there
-    // and leaves the view the default state, a known bug (N11) whose fix removes this steering.
-    private static boolean isOperationsFuzzRestartIntoPurgedPart(TableToken viewToken) {
-        if (!isOperationsFuzzTxnLogPartPurged(viewToken)) {
-            return false;
-        }
-        final long partSize = engine.getConfiguration().getDefaultSeqPartTxnCount();
-        final long newestPart = (engine.getTableSequencerAPI().getTxnTracker(viewToken).getSeqTxn() - 1) / partSize;
-        long oldestPart = 1;
-        while (oldestPart < newestPart && !MatViewTxnLogParts.exists(engine, viewToken, oldestPart)) {
-            oldestPart++;
-        }
-        try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(viewToken, oldestPart * partSize)) {
-            while (cursor.hasNext()) {
-                if (cursor.getWalId() > 0) {
-                    return false;
-                }
-            }
-        }
-        return true;
-    }
-
     // Whether the WAL purge deleted the oldest parts of the view's transaction log, as it deletes the parts below the
     // one of the view's applied seqTxn.
     private static boolean isOperationsFuzzTxnLogPartPurged(TableToken viewToken) {
@@ -1678,10 +1654,6 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     // view state event persisted it, the backlog-lost marker.
     private static void restartOperationsFuzzViewStates(MatViewFuzzOracle oracle) {
         final TableToken viewToken = engine.verifyTableName("mv");
-        if (isOperationsFuzzRestartIntoPurgedPart(viewToken)) {
-            LOG.info().$("fuzz: skipping the restart, the view's newest transactions are column changes above a purged txn-log part (N11)").$();
-            return;
-        }
         final MatViewState before = opsViewState("mv");
         final boolean isStateCompared = !before.isLocked()
                 && !before.isPendingInvalidation()

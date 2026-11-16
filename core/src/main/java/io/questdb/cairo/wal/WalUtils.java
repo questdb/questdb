@@ -440,8 +440,9 @@ public class WalUtils {
      * {@code appliedSeqTxn}, the view's applied seqTxn, past the unapplied transactions that carry no view state. When
      * there is none and such a transaction is unapplied, it comes from the {@code _mv.s} state file, which holds the
      * state of the applied transactions. When every transaction above {@code appliedSeqTxn} is structural, or none is
-     * there, it comes from the newest transaction with a WAL event: its view state event, or the state file. An event
-     * that cannot be opened gives the state file's state too. The base table id comes from the newest
+     * there, it comes from the newest applied transaction: its view state event, or the state file when it has none,
+     * as a structural transaction does. An event that cannot be opened gives the state file's state too, and so does a
+     * txn-log part that the WAL purge job deleted. The base table id comes from the newest
      * {@code MAT_VIEW_INVALIDATE} event above {@code appliedSeqTxn}, and otherwise from the {@code _mv.s} state file,
      * which the WAL apply job writes before it marks a view state event applied and keeps when it applies a data
      * commit. A data commit cannot carry the id. Bounding the scan by the applied seqTxn keeps the load from opening
@@ -512,6 +513,16 @@ public class WalUtils {
                         PARTS:
                         for (long part = partCount - 1; part >= 0; part--) {
                             tablePath.trimTo(tablePathLen).concat(SEQ_DIR).concat(TXNLOG_PARTS_DIR).slash().put(part);
+                            if (!configuration.getFilesFacade().exists(tablePath.$())) {
+                                // The WAL purge job deletes the parts below the one of the view's applied seqTxn, so
+                                // the transactions of this part and the ones below are applied, and the state file
+                                // holds their state and base table id. The scan gets here only when it does not know
+                                // the applied seqTxn, or the state file could not be read on the way.
+                                if (!scan.isStateLoaded) {
+                                    scan.isStateLoaded = readMatViewStateFile(tablePath, tablePathLen, blockFileReader, matViewStateReader, tableToken);
+                                }
+                                break;
+                            }
                             partMem.smallFile(configuration.getFilesFacade(), tablePath.$(), MemoryTag.MMAP_TX_LOG);
                             final long partTxnCount = Math.min(partSize, txnCount - part * partSize);
                             for (long txn = partTxnCount - 1; txn >= 0; txn--) {
@@ -979,6 +990,11 @@ public class WalUtils {
                     // the one of the applied seqTxn, and the WAL-e files of applied transactions. When the file
                     // cannot be read, the scan goes on.
                     isStateFileDeferred = false;
+                    isStateLoaded = readMatViewStateFile(tablePath, tablePathLen, blockFileReader, matViewStateReader, tableToken);
+                } else if (!isStateLoaded && !isUnapplied) {
+                    // An applied structural transaction, such as a view column change, carries no WAL event. The
+                    // state file holds the state of the applied transactions, and the WAL purge job may have deleted
+                    // the txn-log parts below this one, so the scan stops here too, unless the file cannot be read.
                     isStateLoaded = readMatViewStateFile(tablePath, tablePathLen, blockFileReader, matViewStateReader, tableToken);
                 }
             } else {
