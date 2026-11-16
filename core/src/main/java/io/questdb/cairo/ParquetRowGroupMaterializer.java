@@ -49,6 +49,7 @@ final class ParquetRowGroupMaterializer {
             PartitionUpdater partitionUpdater,
             int sourceRowGroupIndex,
             int targetRowGroupIndex,
+            long targetRowOffset,
             TableRecordMetadata metadata,
             IntList tableToParquetIndex,
             SymbolTableProvider symbolTableProvider
@@ -59,6 +60,7 @@ final class ParquetRowGroupMaterializer {
                 partitionUpdater,
                 sourceRowGroupIndex,
                 targetRowGroupIndex,
+                targetRowOffset,
                 metadata,
                 tableToParquetIndex,
                 symbolTableProvider,
@@ -85,6 +87,8 @@ final class ParquetRowGroupMaterializer {
                 partitionUpdater,
                 sourceRowGroupIndex,
                 sourceRowGroupIndex,
+                // unused: rewriteRowGroupColumns() moves no row, the updater takes the offset of the source
+                0,
                 metadata,
                 tableToParquetIndex,
                 symbolTableProvider,
@@ -100,6 +104,7 @@ final class ParquetRowGroupMaterializer {
             PartitionUpdater partitionUpdater,
             int sourceRowGroupIndex,
             int targetRowGroupIndex,
+            long targetRowOffset,
             TableRecordMetadata metadata,
             IntList tableToParquetIndex,
             SymbolTableProvider symbolTableProvider,
@@ -247,7 +252,7 @@ final class ParquetRowGroupMaterializer {
             if (changedColumnsOnly) {
                 partitionUpdater.rewriteRowGroupColumns(sourceRowGroupIndex, descriptor);
             } else {
-                partitionUpdater.addRowGroup(targetRowGroupIndex, descriptor);
+                partitionUpdater.addRowGroup(targetRowGroupIndex, targetRowOffset, descriptor);
             }
         } finally {
             descriptor.clear();

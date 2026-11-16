@@ -269,6 +269,7 @@ fn run_e2e_pipeline(parquet_bytes: &[u8]) {
                 col_name,
                 rg_idx,
                 true,
+                false,
             )
             .unwrap_or_else(|e| {
                 panic!(
@@ -414,6 +415,7 @@ fn run_e2e_pipeline_multi(parquet_bytes: &[u8]) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) 
                 col_name,
                 rg_idx,
                 true,
+                false,
             )
             .unwrap_or_else(|e| {
                 panic!(
@@ -1081,6 +1083,7 @@ fn e2e_multiple_row_groups() {
             col_name,
             rg_idx,
             true,
+            false,
         )
         .unwrap_or_else(|e| panic!("decode rg {}: {}", rg_idx, e));
 
@@ -1186,6 +1189,7 @@ fn run_e2e_filtered<const FILL_NULLS: bool>(parquet_bytes: &[u8], rows_filter: &
         rows_filter,
         col_name,
         0,
+        false,
     )
     .expect("decode_column_chunk_filtered_with_params");
 

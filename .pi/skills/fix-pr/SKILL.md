@@ -95,11 +95,12 @@ inside a tool call, pi keeps its prompt cache warm; a session that ends its
 turn and is woken later by a background helper loses the cache and pays to
 rebuild it.
 
-Every agent of the run thinks at max. The builtin `worker` and `reviewer`
-default to high, and a launch overrides that only through the `:max` suffix of
-its model; `review-pr-runner`, `risk-assessor` and the review's
-`review-prober` agents set max in their definitions. The timeouts leave room
-for it.
+Every agent of the run thinks at max, except the review's discovery agents:
+review-pr runs them as the builtin `reviewer` at its default, high, because
+they only read code. The builtin `worker` and `reviewer` default to high, and
+a launch overrides that only through the `:max` suffix of its model;
+`review-pr-runner`, `risk-assessor` and the review's `review-prober`
+falsifiers set max in their definitions. The timeouts leave room for it.
 
 | Helper | Agent | Extra parameters |
 |---|---|---|
@@ -240,6 +241,8 @@ as `.pi/agents/risk-assessor.md` rates them. A bug rated at or above
   needs no rating (CLAUDE.md "Failure paths and misuse").
 - The user's own items, and findings the user asks to fix, are never rated.
 - A bug whose risk helper fails twice blocks.
+- A rating of `NONE` means the author's reply holds: drop the bug, and list it
+  for the user with that reply.
 
 ## Backstop review
 
@@ -250,8 +253,9 @@ START, not only this run's. Number the rounds from 1.
 1. With a PR, write `<state>/pr-body.md` without reading it: in round 1 the
    published body (`gh pr view <PR> --json body -q .body`), later the
    previous round's `<state>/review<N-1>/pr-body.md`, followed by the EFFECT
-   bullet of each item built since, one `- ` line each. The review checks the
-   body the PR will get, not the published one.
+   bullet of each item built since, one `- ` line each, and then their
+   APPROACH lines. The review checks the body the PR will get, not the
+   published one.
 2. Launch the review helper for round N. It follows review-pr with
    `<PR> --range=<PR base>..<HEAD sha> --level=<review-level>
    --block-at=<block-at> --body=<state>/pr-body.md --prior=<files>`; without
@@ -359,11 +363,12 @@ pushed. Then print in full each crash or Deferred issue the Issue list
 could not file.
 
 End with the PR body, per CLAUDE.md "Git & PR Conventions". With a PR, print
-the last round's `<state>/review<N>/pr-body.md` plus the EFFECT bullet of each
-item built after that round, and the title and labels from that round's report
-when it changed them. Without a PR, print the EFFECT bullet of each built item.
-Skip EFFECT lines that are `none`, and add any benchmark an EFFECT line names,
-whose JMH results go in the body. No test plan.
+the last round's `<state>/review<N>/pr-body.md` plus the EFFECT bullet and
+APPROACH of each item built after that round, and the title and labels from
+that round's report when it changed them. Without a PR, print the EFFECT
+bullet of each built item, then their APPROACH lines. Skip EFFECT and
+APPROACH lines that are `none`, and add any benchmark an EFFECT line names,
+whose JMH results go in the body. No test plan, commit hashes or test counts.
 
 ## Task templates
 
@@ -471,11 +476,13 @@ from what it wrote in <state>/<ID>/; don't repeat its probes.]
    deterministic performance assertion and the benchmark.
 8. For BUILD and FIX: write the PR body bullet, per CLAUDE.md "Git & PR
    Conventions": the net effect against the PR base, what users gain or no
-   longer suffer, in at most 15 words, not what the code does. For a change
-   made for speed or on a data path, name the JMH benchmark whose results the
-   PR reports. The bullet is none when users see no change against the PR
-   base, such as a fix for a bug only this PR's own commits have, or a
-   missing test.
+   longer suffer, in at most 15 words, not what the code does. Then the
+   approach the body states after its bullets: one to three sentences
+   naming the root cause or the design and how the change addresses it.
+   For a change made for speed or on a data path, name the JMH benchmark
+   whose results the PR reports. Both are none when users see no change
+   against the PR base, such as a fix for a bug only this PR's own commits
+   have, or a missing test.
 9. Other bugs your work ran into, such as the same kind of bug in other
    code; don't go looking for more. Mark each one PR if this PR caused it,
    this run's commits included: some trigger gets a worse result than on
@@ -503,6 +510,7 @@ DECISION: BUILD | FIX | SKIP | ASK | BLOCK | SPLIT
 PROBLEM: <one line>
 IMPACT: <one line>
 EFFECT: <the PR body bullet; the JMH benchmark to report, if any> | none
+APPROACH: <the PR body's approach for this item, one to three sentences> | none
 CHANGE: <one line, naming the files> | REASON: <one line, for SKIP or BLOCK> | QUESTIONS: <for ASK, one line each> | ITEMS: <for SPLIT, one line per sub-item: its root cause and the tests or symptoms it covers>
 WHY: <one line: why this change beats the alternatives>
 TESTS: <one line: the dimensions covered and the ones not applicable>

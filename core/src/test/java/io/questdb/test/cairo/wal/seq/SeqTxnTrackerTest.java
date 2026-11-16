@@ -319,6 +319,25 @@ public class SeqTxnTrackerTest {
     }
 
     @Test
+    public void testWaiterFiresOnInitTxns() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            SeqTxnTracker tracker = createSeqTracker();
+            FiberTarget target = new FiberTarget();
+            FiberWaitCoordinator coordinator = new FiberWaitCoordinator(target);
+            long token = coordinator.beginBuild(1);
+            FiberWalWaitRegistration registration = coordinator.acquireWal(token, 5);
+            assertSame(SourceRegistrationResult.ACCEPTED, tracker.registerWaiter(registration));
+            assertTrue(coordinator.seal(token));
+            assertFalse(coordinator.isFired(token));
+
+            assertFalse(tracker.initTxns(5, 5, false));
+
+            assertTrue(coordinator.isFired(token));
+            assertEquals(FiberWaitCoordinator.REASON_WAL, target.reason);
+        });
+    }
+
+    @Test
     public void testWaiterFiresOnSuspend() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             SeqTxnTracker tracker = createSeqTracker();

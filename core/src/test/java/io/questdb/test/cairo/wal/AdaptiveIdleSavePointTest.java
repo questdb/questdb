@@ -30,11 +30,13 @@ import io.questdb.cairo.ColumnPurgeJob;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.PostingSealPurgeJob;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.wal.LocalDurabilityPolicy;
@@ -813,6 +815,91 @@ public class AdaptiveIdleSavePointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStartupColumnPurgeKeepsHeldTaskOfSplitPartition() throws Exception {
+        // An O3 split of a TIMESTAMP_NS table names the new partition one nanosecond after the last row it leaves
+        // behind. The startup purge holds the purge of the column version that an UPDATE replaced there while the
+        // older save point names it, and writes the task back to the log with the whole partition timestamp: every
+        // later start finds the partition and holds the task again. The running job removes the files once the save
+        // points move on.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, INTERVAL_MS);
+        // an O3 row splits a partition whatever the size of the rows before it, rather than adding a piece to it
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 20);
+        assertMemoryLeak(() -> {
+            startClock();
+            try {
+                execute("CREATE TABLE t (ts TIMESTAMP_NS, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                tick(INTERVAL_MS);
+                execute("""
+                        INSERT INTO t VALUES
+                        ('2024-01-01T01:00:00.000000Z', 1), ('2024-01-01T02:00:00.000000Z', 1), ('2024-01-01T03:00:00.000000Z', 1),
+                        ('2024-01-01T04:00:00.000000Z', 1), ('2024-01-01T05:00:00.000000Z', 1), ('2024-01-01T06:00:00.000000Z', 1),
+                        ('2024-01-01T07:00:00.000000Z', 1), ('2024-01-01T08:00:00.000000Z', 1), ('2024-01-01T09:00:00.000000Z', 1),
+                        ('2024-01-01T10:00:00.000000Z', 1), ('2024-01-02T00:00:00.000000Z', 2)""");
+                drainWalQueue();
+                tick(INTERVAL_MS);
+                // splits 2024-01-01 after its 09:00 row
+                execute("INSERT INTO t VALUES ('2024-01-01T09:30:00.000000Z', 1)");
+                drainWalQueue();
+                final TableToken tt = engine.verifyTableName("t");
+                final StringSink splitDir = new StringSink();
+                try (TableReader reader = engine.getReader(tt)) {
+                    Assert.assertEquals(3, reader.getPartitionCount());
+                    final long splitTimestamp = reader.getTxFile().getPartitionTimestampByIndex(1);
+                    Assert.assertEquals(NanosTimestampDriver.floor("2024-01-01T09:00:00.000000Z") + 1, splitTimestamp);
+                    TableUtils.setSinkForNativePartition(
+                            splitDir,
+                            ColumnType.TIMESTAMP_NANO,
+                            PartitionBy.DAY,
+                            splitTimestamp,
+                            reader.getTxFile().getPartitionNameTxn(1)
+                    );
+                }
+                final ObjList<String> left = new ObjList<>();
+                left.add(splitDir + "/v.d");
+                tick(INTERVAL_MS);
+                // rewrites v in the split partition only
+                execute("UPDATE t SET v = 9 WHERE ts > '2024-01-01T09:00:00.000000Z' AND ts < '2024-01-02'");
+                drainWalQueue();
+                try (ColumnPurgeJob columnPurgeJob = new ColumnPurgeJob(engine)) {
+                    columnPurgeJob.run();
+                }
+                final StringSink failures = new StringSink();
+                checkOnDisk(failures, "logged for purge", tt, left, true);
+                for (int restart = 1; restart <= 2; restart++) {
+                    try (ColumnPurgeJob job = new ColumnPurgeJob(engine)) {
+                        Assert.assertEquals("restart " + restart + ", tasks kept for a retry", 1, job.getOutstandingPurgeTasks());
+                    }
+                    checkOnDisk(failures, "restart " + restart + ", the older save point names it", tt, left, true);
+                }
+                try (ColumnPurgeJob job = new ColumnPurgeJob(engine)) {
+                    idlePass(INTERVAL_MS / 2, null);
+                    idlePass(INTERVAL_MS / 2, null);
+                    final SeqTxnTracker tracker = tracker(tt);
+                    Assert.assertEquals("idle spell over", tracker.getPinnedEpochTxn(), tracker.getOtherPinnedEpochTxn());
+                    tick(INTERVAL_MS);
+                    job.run();
+                    checkOnDisk(failures, "retry, both save points past the update", tt, left, false);
+                    Assert.assertEquals("retry, tasks kept for a retry", 0, job.getOutstandingPurgeTasks());
+                }
+                Assert.assertEquals("", failures.toString());
+            } finally {
+                setCurrentMicros(-1);
+            }
+            // nine rows of 1 before 09:30, the 2 of 2024-01-02, and the 9 of the two rows the UPDATE rewrote
+            assertQuery("SELECT sum(v) FROM t")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            sum
+                            29
+                            """);
+        });
+    }
+
+    @Test
     public void testStartupColumnPurgeKeepsTwoHeldTasksApart() throws Exception {
         // The startup purge groups log rows into tasks by their timestamp. It writes each held task back at its own
         // original timestamp, so every later start reads the two tasks again instead of merging them into one.
@@ -1019,7 +1106,7 @@ public class AdaptiveIdleSavePointTest extends AbstractCairoTest {
         }
         execute("INSERT INTO '" + logTable + "' VALUES (" + (currentMicros - 1000) + ", '" + tt.getDirName() + "', 'v', "
                 + tt.getTableId() + ", " + truncateVersion + ", " + ColumnType.LONG + ", " + PartitionBy.DAY + ", "
-                + (txn + 1) + ", " + columnVersion + ", " + partitionTs + ", " + partitionNameTxn + ", NULL)");
+                + (txn + 1) + ", " + columnVersion + ", " + partitionTs + ", " + partitionNameTxn + ", NULL, " + partitionTs + ")");
         final Path liveFile = Path.of(
                 configuration.getDbRoot(),
                 tt.getDirName(),

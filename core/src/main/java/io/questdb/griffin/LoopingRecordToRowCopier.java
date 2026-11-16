@@ -124,8 +124,15 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
                 continue;
             }
 
-            final int toColumnType = toColumnTypes.getQuick(i);
             final int fromColumnType = fromTypes.getColumnType(i);
+            if (ColumnType.isNull(fromColumnType)) {
+                // A NULL-typed column holds no value, and records that materialize rows, such as
+                // map records and sort chains, keep no bytes for it: a typed getter would read the
+                // next column. Leave the column out of the row, and TableWriter and WalWriter fill
+                // it with NULL.
+                continue;
+            }
+            final int toColumnType = toColumnTypes.getQuick(i);
             int fromColumnTypeTag = ColumnType.tagOf(fromColumnType);
             final int toColumnTypeTag = ColumnType.tagOf(toColumnType);
             final int toColumnWriterIndex = toColumnWriterIndexes.getQuick(i);
@@ -134,11 +141,6 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
             // accessed through the same getVarcharA() interface as VARCHAR.
             if (fromColumnTypeTag == ColumnType.VARCHAR_SLICE) {
                 fromColumnTypeTag = ColumnType.VARCHAR;
-            }
-
-            // Handle NULL type - treat as target type so getter returns null value
-            if (fromColumnTypeTag == ColumnType.NULL) {
-                fromColumnTypeTag = toColumnTypeTag;
             }
 
             // Get TimestampDriver when needed for conversions
@@ -248,9 +250,10 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
             case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64,
                  ColumnType.DECIMAL128, ColumnType.DECIMAL256 ->
                     copyFromDecimal(record, row, fromColumnIndex, toColumnWriterIndex, fromColumnTypeTag, fromColumnType, toColumnType, decimal128, decimal256);
-            default -> {
-            }
-            // NULL type - do nothing, let NullSetters handle it
+            // copy() skips NULL-typed columns, and INSERT compilation rejects every type the
+            // copier does not convert
+            default ->
+                    throw new IllegalStateException("Unexpected source column type: " + ColumnType.nameOf(fromColumnType));
         }
     }
 

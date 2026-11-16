@@ -206,11 +206,12 @@ echo "  producer scan: guest/verify.sh's own verdict lines"
 
 VERIFY_SH="$HERE/../guest/verify.sh"
 
-# Every verdict guest/verify.sh emits, as the literal text after echo " or line=".
+# Every verdict guest/verify.sh emits, as the literal text after echo ", line=" or sf_verdict "
+# (the store-and-forward checks set the verdict through that helper).
 # Comments are stripped first: this file's own explanatory prose names these tokens.
 emitted_lines=$(grep -vE '^[[:space:]]*#' "$VERIFY_SH" \
-    | grep -oE '(echo "|line=")(NOT_EVALUATED|LOUD_FAILURE|DURABILITY_FAILURE|NO_COMMIT)[^"]*' \
-    | sed -e 's/^echo "//' -e 's/^line="//')
+    | grep -oE '(echo "|line="|sf_verdict ")(NOT_EVALUATED|LOUD_FAILURE|DURABILITY_FAILURE|NO_COMMIT)[^"]*' \
+    | sed -e 's/^echo "//' -e 's/^line="//' -e 's/^sf_verdict "//')
 
 unknown=0
 while IFS= read -r l; do
@@ -224,8 +225,8 @@ check "every verdict line verify.sh emits is classifiable" "$unknown" "0"
 producer_is_instrument() {  # PHRASE
     local phrase="$1" line tok
     line=$(grep -vE '^[[:space:]]*#' "$VERIFY_SH" \
-        | grep -oE '(echo "|line=")[A-Z_]+[^"]*'"$(printf '%s' "$phrase" | sed 's/[].[^$*\/]/\\&/g')"'[^"]*' \
-        | sed -e 's/^echo "//' -e 's/^line="//' | head -1)
+        | grep -oE '(echo "|line="|sf_verdict ")[A-Z_]+[^"]*'"$(printf '%s' "$phrase" | sed 's/[].[^$*\/]/\\&/g')"'[^"]*' \
+        | sed -e 's/^echo "//' -e 's/^line="//' -e 's/^sf_verdict "//' | head -1)
     if [ -z "$line" ]; then
         bad "producer: no verdict line carries '$phrase' (wording changed?)"
         return
@@ -248,8 +249,8 @@ producer_is_instrument "unknown arm"
 producer_is_product() {  # PHRASE
     local phrase="$1" line tok
     line=$(grep -vE '^[[:space:]]*#' "$VERIFY_SH" \
-        | grep -oE '(echo "|line=")[A-Z_]+[^"]*'"$(printf '%s' "$phrase" | sed 's/[].[^$*\/]/\\&/g')"'[^"]*' \
-        | sed -e 's/^echo "//' -e 's/^line="//' | head -1)
+        | grep -oE '(echo "|line="|sf_verdict ")[A-Z_]+[^"]*'"$(printf '%s' "$phrase" | sed 's/[].[^$*\/]/\\&/g')"'[^"]*' \
+        | sed -e 's/^echo "//' -e 's/^line="//' -e 's/^sf_verdict "//' | head -1)
     if [ -z "$line" ]; then
         bad "producer: no verdict line carries '$phrase' (wording changed?)"
         return

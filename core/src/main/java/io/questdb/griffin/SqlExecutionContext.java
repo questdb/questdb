@@ -38,6 +38,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.window.WindowContext;
@@ -73,6 +74,9 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     // Returns true when the context doesn't require all SQL functions to be deterministic.
     // Deterministic-only functions are enforced e.g. when compiling a mat view.
     boolean allowNonDeterministicFunctions();
+
+    default void awaitPageFrameSequences() {
+    }
 
     void changePageFrameSizes(int minRows, int maxRows);
 
@@ -503,6 +507,22 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     boolean isValidationOnly();
 
     /**
+     * Whether the current compile derives an ordinary view's metadata, at CREATE, ALTER or
+     * recompilation. PIVOT IN subqueries execute now and must also work without the caller later.
+     */
+    default boolean isViewCompile() {
+        return false;
+    }
+
+    /**
+     * Whether this compile is inside a PIVOT IN subquery that derives an ordinary view's metadata.
+     * Unlike the rest of the view's SELECT, its functions execute during detached recompilation.
+     */
+    default boolean isViewMetadataSubquery() {
+        return false;
+    }
+
+    /**
      * Returns true while the context compiles a materialized view's own SQL, as refresh does. In this mode the
      * parser checks whether the SQL names its columns and reports it through
      * {@link #setViewSqlGeneratedColumnNames(boolean)}.
@@ -549,6 +569,9 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
      * Starts a nested query with an empty window context; the caller must pop it in finally.
      */
     void pushWindowContext();
+
+    default void registerPageFrameSequence(PageFrameSequence<?> frameSequence) {
+    }
 
     void reset();
 
@@ -689,6 +712,12 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     void setUseSimpleCircuitBreaker(boolean value);
 
+    default void setViewCompile(boolean value) {
+    }
+
+    default void setViewMetadataSubquery(boolean value) {
+    }
+
     /**
      * Turns view-SQL compile mode on or off, see {@link #isViewSqlCompile()}. A context whose mode is fixed
      * ignores the call.
@@ -715,6 +744,9 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     }
 
     default void toSink(@NotNull CharSink<?> sink) {
+    }
+
+    default void unregisterPageFrameSequence(PageFrameSequence<?> frameSequence) {
     }
 
     // the view definition, as of the compile, that a table-name function or SHOW statement reads through

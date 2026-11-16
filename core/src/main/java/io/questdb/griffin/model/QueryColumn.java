@@ -25,6 +25,7 @@
 package io.questdb.griffin.model;
 
 import io.questdb.std.Chars;
+import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjectFactory;
 import io.questdb.std.str.CharSink;
@@ -42,6 +43,7 @@ public class QueryColumn implements Mutable, Sinkable {
     private int exprEndPosition = -1;
     private boolean includeIntoWildcard = true;
     private boolean isGenerated;
+    private final IntList groupingArgKeyPositions = new IntList();
 
     public QueryColumn() {
     }
@@ -55,6 +57,7 @@ public class QueryColumn implements Mutable, Sinkable {
         isGenerated = false;
         columnType = -1;
         exprEndPosition = -1;
+        groupingArgKeyPositions.clear();
     }
 
     public CharSequence getAlias() {
@@ -80,6 +83,10 @@ public class QueryColumn implements Mutable, Sinkable {
      */
     public int getExprEndPosition() {
         return exprEndPosition;
+    }
+
+    public IntList getGroupingArgKeyPositions() {
+        return groupingArgKeyPositions;
     }
 
     public CharSequence getName() {
@@ -128,6 +135,11 @@ public class QueryColumn implements Mutable, Sinkable {
 
     public void setGenerated(boolean isGenerated) {
         this.isGenerated = isGenerated;
+    }
+
+    public void setGroupingArgKeyPositions(IntList keyPositions) {
+        groupingArgKeyPositions.clear();
+        groupingArgKeyPositions.addAll(keyPositions);
     }
 
     public void setIncludeIntoWildcard(boolean includeIntoWildcard) {

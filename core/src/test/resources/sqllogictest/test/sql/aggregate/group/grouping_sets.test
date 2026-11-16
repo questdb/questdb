@@ -1,0 +1,524 @@
+# name: test/sql/aggregate/group/grouping_sets.test
+# description: ROLLUP, CUBE, GROUPING SETS, GROUPING and GROUPING_ID.
+# Expected results come from DuckDB 1.5.3 and PostgreSQL 15, which agree on every query.
+# Where QuestDB spells a query differently (GROUPING_ID, SAMPLE BY), the reference query
+# is noted above it. Rows are compared with rowsort, because QuestDB orders NULL first.
+# group: [group]
+
+statement ok
+CREATE TABLE gs_sales (region VARCHAR, product SYMBOL, yr INT, qty INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+
+statement ok
+INSERT INTO gs_sales VALUES
+('EU', 'apple', 2023, 10, '2024-01-01T01:00:00.000000Z'),
+('EU', 'pear', 2023, 5, '2024-01-01T02:00:00.000000Z'),
+('EU', 'apple', 2024, 7, '2024-01-02T01:00:00.000000Z'),
+('US', 'apple', 2023, 3, '2024-01-02T02:00:00.000000Z'),
+('US', 'plum', NULL, 8, '2024-01-02T03:00:00.000000Z'),
+('US', 'plum', 2024, NULL, '2024-01-03T01:00:00.000000Z'),
+(NULL, 'pear', 2024, 4, '2024-01-03T02:00:00.000000Z'),
+(NULL, NULL, 2023, 6, '2024-01-03T03:00:00.000000Z'),
+('EU', 'pear', 2024, 2, '2024-01-03T04:00:00.000000Z')
+
+statement ok
+CREATE TABLE gs_stock (product SYMBOL, kind VARCHAR)
+
+statement ok
+INSERT INTO gs_stock VALUES ('apple', 'fruit'), ('pear', 'fruit'), ('plum', 'stone')
+
+statement ok
+CREATE TABLE gs_empty (region VARCHAR, qty INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+
+# ROLLUP over two keys: detail rows, one subtotal per region and a grand total
+query TTII rowsort
+SELECT region, product, sum(qty), count(*) FROM gs_sales GROUP BY ROLLUP(region, product)
+----
+EU NULL 24 4
+EU apple 17 2
+EU pear 7 2
+NULL NULL 10 2
+NULL NULL 45 9
+NULL NULL 6 1
+NULL pear 4 1
+US NULL 11 3
+US apple 3 1
+US plum 8 2
+
+# CUBE over two keys adds the per-product subtotals
+query TTII rowsort
+SELECT region, product, sum(qty), count(*) FROM gs_sales GROUP BY CUBE(region, product)
+----
+EU NULL 24 4
+EU apple 17 2
+EU pear 7 2
+NULL NULL 10 2
+NULL NULL 45 9
+NULL NULL 6 1
+NULL NULL 6 1
+NULL apple 20 3
+NULL pear 11 3
+NULL pear 4 1
+NULL plum 8 2
+US NULL 11 3
+US apple 3 1
+US plum 8 2
+
+# Explicit grouping sets with the empty set
+query TTI rowsort
+SELECT region, product, sum(qty) FROM gs_sales GROUP BY GROUPING SETS ((region), (product), ())
+----
+EU NULL 24
+NULL NULL 10
+NULL NULL 45
+NULL NULL 6
+NULL apple 20
+NULL pear 11
+NULL plum 8
+US NULL 11
+
+# GROUPING SETS equivalent to ROLLUP
+query TTI rowsort
+SELECT region, product, sum(qty) FROM gs_sales GROUP BY GROUPING SETS ((region, product), (region), ())
+----
+EU NULL 24
+EU apple 17
+EU pear 7
+NULL NULL 10
+NULL NULL 45
+NULL NULL 6
+NULL pear 4
+US NULL 11
+US apple 3
+US plum 8
+
+# Only the empty grouping set: one grand total row
+query III rowsort
+SELECT sum(qty), count(*), count(qty) FROM gs_sales GROUP BY GROUPING SETS (())
+----
+45 9 8
+
+# The empty grouping set over an empty table still returns one row
+query II rowsort
+SELECT count(*), sum(qty) FROM gs_empty GROUP BY GROUPING SETS (())
+----
+0 NULL
+
+# ROLLUP over an empty table returns only the grand total
+query TII rowsort
+SELECT region, count(*), sum(qty) FROM gs_empty GROUP BY ROLLUP(region)
+----
+NULL 0 NULL
+
+# Duplicate grouping sets return their rows twice
+query TI rowsort
+SELECT region, count(*) FROM gs_sales GROUP BY GROUPING SETS ((region), (region))
+----
+EU 4
+EU 4
+NULL 2
+NULL 2
+US 3
+US 3
+
+# A plain key next to ROLLUP is part of every set
+query TTI rowsort
+SELECT region, product, sum(qty) FROM gs_sales GROUP BY region, ROLLUP(product)
+----
+EU NULL 24
+EU apple 17
+EU pear 7
+NULL NULL 10
+NULL NULL 6
+NULL pear 4
+US NULL 11
+US apple 3
+US plum 8
+
+# CUBE over three keys
+query TTII rowsort
+SELECT region, product, yr, count(*) FROM gs_sales GROUP BY CUBE(region, product, yr)
+----
+EU NULL 2023 2
+EU NULL 2024 2
+EU NULL NULL 4
+EU apple 2023 1
+EU apple 2024 1
+EU apple NULL 2
+EU pear 2023 1
+EU pear 2024 1
+EU pear NULL 2
+NULL NULL 2023 1
+NULL NULL 2023 1
+NULL NULL 2023 1
+NULL NULL 2023 4
+NULL NULL 2024 1
+NULL NULL 2024 4
+NULL NULL NULL 1
+NULL NULL NULL 1
+NULL NULL NULL 1
+NULL NULL NULL 2
+NULL NULL NULL 9
+NULL apple 2023 2
+NULL apple 2024 1
+NULL apple NULL 3
+NULL pear 2023 1
+NULL pear 2024 1
+NULL pear 2024 2
+NULL pear NULL 1
+NULL pear NULL 3
+NULL plum 2024 1
+NULL plum NULL 1
+NULL plum NULL 2
+US NULL 2023 1
+US NULL 2024 1
+US NULL NULL 1
+US NULL NULL 3
+US apple 2023 1
+US apple NULL 1
+US plum 2024 1
+US plum NULL 1
+US plum NULL 2
+
+# GROUPING tells a rolled-up NULL from a NULL in the data
+query TIII rowsort
+SELECT region, grouping(region), sum(qty), count(*) FROM gs_sales GROUP BY ROLLUP(region)
+----
+EU 0 24 4
+NULL 0 10 2
+NULL 1 45 9
+US 0 11 3
+
+# GROUPING per key and GROUPING_ID as a bit mask over several keys
+# Reference: SELECT region, product, grouping(region), grouping(product), grouping(region, product), sum(qty) FROM gs_sales GROUP BY CUBE(region, product)
+query TTIIII rowsort
+SELECT region, product, grouping(region), grouping(product), grouping_id(region, product), sum(qty) FROM gs_sales GROUP BY CUBE(region, product)
+----
+EU NULL 0 1 1 24
+EU apple 0 0 0 17
+EU pear 0 0 0 7
+NULL NULL 0 0 0 6
+NULL NULL 0 1 1 10
+NULL NULL 1 0 2 6
+NULL NULL 1 1 3 45
+NULL apple 1 0 2 20
+NULL pear 0 0 0 4
+NULL pear 1 0 2 11
+NULL plum 1 0 2 8
+US NULL 0 1 1 11
+US apple 0 0 0 3
+US plum 0 0 0 8
+
+# GROUPING_ID equals multi-argument GROUPING
+# Reference: SELECT region, product, grouping(region, product), sum(qty) FROM gs_sales GROUP BY ROLLUP(region, product)
+query TTII rowsort
+SELECT region, product, grouping_id(region, product), sum(qty) FROM gs_sales GROUP BY ROLLUP(region, product)
+----
+EU NULL 1 24
+EU apple 0 17
+EU pear 0 7
+NULL NULL 0 6
+NULL NULL 1 10
+NULL NULL 3 45
+NULL pear 0 4
+US NULL 1 11
+US apple 0 3
+US plum 0 8
+
+# GROUPING_ID argument order sets the bit order
+# Reference: SELECT region, product, grouping(product, region) FROM gs_sales GROUP BY CUBE(region, product)
+query TTI rowsort
+SELECT region, product, grouping_id(product, region) FROM gs_sales GROUP BY CUBE(region, product)
+----
+EU NULL 2
+EU apple 0
+EU pear 0
+NULL NULL 0
+NULL NULL 1
+NULL NULL 2
+NULL NULL 3
+NULL apple 1
+NULL pear 0
+NULL pear 1
+NULL plum 1
+US NULL 2
+US apple 0
+US plum 0
+
+# A key with NULLs in the data, rolled up
+query III rowsort
+SELECT yr, grouping(yr), count(*) FROM gs_sales GROUP BY ROLLUP(yr)
+----
+2023 0 4
+2024 0 4
+NULL 0 1
+NULL 1 9
+
+# Aggregates with NULL inputs in every set
+query TIIIII rowsort
+SELECT region, count(*), count(qty), sum(qty), min(qty), max(qty) FROM gs_sales GROUP BY ROLLUP(region)
+----
+EU 4 4 24 2 10
+NULL 2 2 10 4 6
+NULL 9 8 45 2 10
+US 3 2 11 3 8
+
+# An expression rolled up through a subquery column
+# Reference: SELECT yr % 2 AS parity, sum(qty), count(*) FROM gs_sales GROUP BY ROLLUP(yr % 2)
+query III rowsort
+SELECT parity, sum(qty), count(*) FROM (SELECT yr % 2 AS parity, qty FROM gs_sales) t GROUP BY ROLLUP(parity)
+----
+0 13 4
+1 24 4
+NULL 45 9
+NULL 8 1
+
+# An expression key that is part of every set
+query ITI rowsort
+SELECT yr % 2, region, count(*) FROM gs_sales GROUP BY yr % 2, ROLLUP(region)
+----
+0 EU 2
+0 NULL 1
+0 NULL 4
+0 US 1
+1 EU 2
+1 NULL 1
+1 NULL 4
+1 US 1
+NULL NULL 1
+NULL US 1
+
+# A SELECT alias as a grouping key
+query TII rowsort
+SELECT region AS r, sum(qty), count(*) FROM gs_sales GROUP BY ROLLUP(r)
+----
+EU 24 4
+NULL 10 2
+NULL 45 9
+US 11 3
+
+# A positional key next to ROLLUP
+query TTI rowsort
+SELECT region, product, sum(qty) FROM gs_sales GROUP BY 1, ROLLUP(product)
+----
+EU NULL 24
+EU apple 17
+EU pear 7
+NULL NULL 10
+NULL NULL 6
+NULL pear 4
+US NULL 11
+US apple 3
+US plum 8
+
+# Keys listed in ROLLUP in another order than in SELECT
+query TTI rowsort
+SELECT region, product, sum(qty) FROM gs_sales GROUP BY ROLLUP(product, region)
+----
+EU apple 17
+EU pear 7
+NULL NULL 45
+NULL NULL 6
+NULL NULL 6
+NULL apple 20
+NULL pear 11
+NULL pear 4
+NULL plum 8
+US apple 3
+US plum 8
+
+# WHERE filters rows before grouping
+query TTI rowsort
+SELECT region, product, sum(qty) FROM gs_sales WHERE yr = 2023 GROUP BY ROLLUP(region, product)
+----
+EU NULL 15
+EU apple 10
+EU pear 5
+NULL NULL 24
+NULL NULL 6
+NULL NULL 6
+US NULL 3
+US apple 3
+
+# An outer filter on a key that is rolled up keeps the subtotal rows out
+query TTI rowsort
+SELECT * FROM (SELECT region, product, sum(qty) s FROM gs_sales GROUP BY ROLLUP(region, product)) t WHERE product = 'pear'
+----
+EU pear 7
+NULL pear 4
+
+# An outer IS NULL filter keeps the subtotals and the NULL products
+query TTI rowsort
+SELECT * FROM (SELECT region, product, sum(qty) s FROM gs_sales GROUP BY ROLLUP(region, product)) t WHERE product IS NULL
+----
+EU NULL 24
+NULL NULL 10
+NULL NULL 45
+NULL NULL 6
+US NULL 11
+
+# An outer filter on GROUPING selects the subtotal rows only
+query TI rowsort
+SELECT region, s FROM (SELECT region, product, grouping(product) g, sum(qty) s FROM gs_sales GROUP BY ROLLUP(region, product)) t WHERE g = 1
+----
+EU 24
+NULL 10
+NULL 45
+US 11
+
+# ORDER BY and LIMIT over grouping sets
+# Reference: SELECT region, product, sum(qty) s FROM gs_sales GROUP BY CUBE(region, product) ORDER BY s DESC NULLS LAST, grouping(region, product) DESC LIMIT 3
+query TTI rowsort
+SELECT region, product, sum(qty) s FROM gs_sales GROUP BY CUBE(region, product) ORDER BY s DESC, grouping_id(region, product) DESC LIMIT 3
+----
+EU NULL 24
+NULL NULL 45
+NULL apple 20
+
+# Grouping sets in a CTE
+query TI rowsort
+WITH r AS (SELECT region, sum(qty) s FROM gs_sales GROUP BY ROLLUP(region)) SELECT region, s FROM r
+----
+EU 24
+NULL 10
+NULL 45
+US 11
+
+# Grouping sets over a join
+query TTI rowsort
+SELECT s.region, k.kind, sum(s.qty) FROM gs_sales s JOIN gs_stock k ON s.product = k.product GROUP BY ROLLUP(s.region, k.kind)
+----
+EU NULL 24
+EU fruit 24
+NULL NULL 39
+NULL NULL 4
+NULL fruit 4
+US NULL 11
+US fruit 3
+US stone 8
+
+# Grouping sets over a subquery
+# Reference: SELECT region, sum(q) FROM (SELECT region, qty * 2 AS q FROM gs_sales) t GROUP BY CUBE(region)
+query TI rowsort
+SELECT region, sum(q) FROM (SELECT region, qty * 2 AS q FROM gs_sales) GROUP BY CUBE(region)
+----
+EU 48
+NULL 20
+NULL 90
+US 22
+
+# DISTINCT over grouping sets output
+# Reference: SELECT DISTINCT region FROM (SELECT region, product FROM gs_sales GROUP BY ROLLUP(region, product)) t
+query T rowsort
+SELECT DISTINCT region FROM (SELECT region, product FROM gs_sales GROUP BY ROLLUP(region, product))
+----
+EU
+NULL
+US
+
+# UNION ALL of two grouping sets queries
+# Reference: SELECT region, count(*) FROM gs_sales GROUP BY ROLLUP(region) UNION ALL SELECT product::VARCHAR, count(*) FROM gs_sales GROUP BY ROLLUP(product)
+query TI rowsort
+SELECT region, count(*) FROM gs_sales GROUP BY ROLLUP(region) UNION ALL SELECT product, count(*) FROM gs_sales GROUP BY ROLLUP(product)
+----
+EU 4
+NULL 1
+NULL 2
+NULL 9
+NULL 9
+US 3
+apple 3
+pear 3
+plum 2
+
+# A window function over grouping sets output
+# Reference: SELECT region, s, row_number() OVER (ORDER BY s DESC) FROM (SELECT region, sum(qty) s FROM gs_sales GROUP BY ROLLUP(region)) t
+query TII rowsort
+SELECT region, s, row_number() OVER (ORDER BY s DESC) FROM (SELECT region, sum(qty) s FROM gs_sales GROUP BY ROLLUP(region))
+----
+EU 24 2
+NULL 10 4
+NULL 45 1
+US 11 3
+
+# QuestDB SAMPLE BY with ROLLUP matches GROUP BY a day bucket plus ROLLUP
+# Reference: SELECT date_trunc('day', ts), region, sum(qty) FROM gs_sales GROUP BY date_trunc('day', ts), ROLLUP(region)
+query TTI rowsort
+SELECT ts, region, sum(qty) FROM gs_sales SAMPLE BY 1d ROLLUP(region)
+----
+2024-01-01 00:00:00 EU 15
+2024-01-01 00:00:00 NULL 15
+2024-01-02 00:00:00 EU 7
+2024-01-02 00:00:00 NULL 18
+2024-01-02 00:00:00 US 11
+2024-01-03 00:00:00 EU 2
+2024-01-03 00:00:00 NULL 10
+2024-01-03 00:00:00 NULL 12
+2024-01-03 00:00:00 US NULL
+
+# QuestDB SAMPLE BY with CUBE matches GROUP BY a day bucket plus CUBE
+# Reference: SELECT date_trunc('day', ts), region, product, count(*) FROM gs_sales GROUP BY date_trunc('day', ts), CUBE(region, product)
+query TTTI rowsort
+SELECT ts, region, product, count(*) FROM gs_sales SAMPLE BY 1d CUBE(region, product)
+----
+2024-01-01 00:00:00 EU NULL 2
+2024-01-01 00:00:00 EU apple 1
+2024-01-01 00:00:00 EU pear 1
+2024-01-01 00:00:00 NULL NULL 2
+2024-01-01 00:00:00 NULL apple 1
+2024-01-01 00:00:00 NULL pear 1
+2024-01-02 00:00:00 EU NULL 1
+2024-01-02 00:00:00 EU apple 1
+2024-01-02 00:00:00 NULL NULL 3
+2024-01-02 00:00:00 NULL apple 2
+2024-01-02 00:00:00 NULL plum 1
+2024-01-02 00:00:00 US NULL 2
+2024-01-02 00:00:00 US apple 1
+2024-01-02 00:00:00 US plum 1
+2024-01-03 00:00:00 EU NULL 1
+2024-01-03 00:00:00 EU pear 1
+2024-01-03 00:00:00 NULL NULL 1
+2024-01-03 00:00:00 NULL NULL 1
+2024-01-03 00:00:00 NULL NULL 2
+2024-01-03 00:00:00 NULL NULL 4
+2024-01-03 00:00:00 NULL pear 1
+2024-01-03 00:00:00 NULL pear 2
+2024-01-03 00:00:00 NULL plum 1
+2024-01-03 00:00:00 US NULL 1
+2024-01-03 00:00:00 US plum 1
+
+# QuestDB SAMPLE BY with GROUPING SETS over a subquery
+# Reference: SELECT date_trunc('day', ts), region, sum(qty) FROM (SELECT * FROM gs_sales WHERE qty > 2) t GROUP BY date_trunc('day', ts), GROUPING SETS ((region), ())
+query TTI rowsort
+SELECT ts, region, sum(qty) FROM (SELECT * FROM gs_sales WHERE qty > 2) SAMPLE BY 1d GROUPING SETS ((region), ())
+----
+2024-01-01 00:00:00 EU 15
+2024-01-01 00:00:00 NULL 15
+2024-01-02 00:00:00 EU 7
+2024-01-02 00:00:00 NULL 18
+2024-01-02 00:00:00 US 11
+2024-01-03 00:00:00 NULL 10
+2024-01-03 00:00:00 NULL 10
+
+# QuestDB difference: two grouping elements such as ROLLUP(a), ROLLUP(b) are not supported
+statement error
+SELECT region, product, count(*) FROM gs_sales GROUP BY ROLLUP(region), ROLLUP(product)
+
+# QuestDB difference: SAMPLE BY with grouping sets does not support FILL(PREV)
+statement error
+SELECT ts, region, sum(qty) FROM gs_sales SAMPLE BY 1d ROLLUP(region) FILL(PREV)
+
+# QuestDB difference: GROUPING takes one column, GROUPING_ID takes several
+statement error
+SELECT region, product, grouping(region, product) FROM gs_sales GROUP BY CUBE(region, product)
+
+# QuestDB difference: a rolled-up key must be a column, not an expression
+statement error
+SELECT yr % 2, count(*) FROM gs_sales GROUP BY ROLLUP(yr % 2)
+
+# QuestDB difference: a SELECT alias of an expression cannot be rolled up either
+statement error
+SELECT yr % 2 AS parity, count(*) FROM gs_sales GROUP BY ROLLUP(parity)
+
+# A column that is not a grouping key is rejected
+statement error
+SELECT region, product, count(*) FROM gs_sales GROUP BY ROLLUP(region)

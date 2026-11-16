@@ -464,8 +464,9 @@ flush failure (with the forms `dataSyncFailureOfFd` and `dataSyncFailureOfMappin
 engine that owns the file at once, so a path that later drops, counts or wraps the exception (a task's error counter,
 a job's top-level catch, a wrapper without the cause) cannot lose the stop. The owner is a live engine whose files
 facade is `ff` and whose database, checkpoint, COPY work or volume (`cairo.volumes`) root holds the failed file, which the
-factory looks up on a failure only (Linux: `/proc/self/fd`, `/proc/self/maps`); so two engines on one facade object, a primary and a replica
-in one test JVM, hear only their own failures. Without a path (other systems, a test facade that gives none) or when
+factory looks up on a failure only (Linux reads `/proc/self/fd` and `/proc/self/maps`; macOS asks `fcntl(F_GETPATH)` and
+`proc_pidinfo`, Windows `GetFinalPathNameByHandleW` and `GetMappedFileNameW`); so two engines on one facade object, a primary and a replica
+in one test JVM, hear only their own failures. Without a path (FreeBSD, a test facade that gives none) or when
 no engine holds it, every engine on `ff` hears it, so a stop is never lost. A closed engine, or one whose construction
 failed, is unregistered. Each engine decides by `CairoEngine.isDataSyncFailureFatal`: the flag, and the commit mode
 `LocalDurabilityPolicy.resolveCommitMode` resolves for its role, so an Enterprise replica in `adaptive`, which resolves
@@ -639,6 +640,17 @@ write nothing, and the purge could remove the version the `_txn` on the device s
   membership. Structural column-type changes are not eligible for the suspended-table bypass. Physical partition
   conversions and background storage-policy tasks retain their existing publication cadence; they do not acquire
   a blanket two-save-point rule.
+- **`ALTER TABLE ... FORCE REINDEX PARQUET`** (`TableWriter.forceReindex`) rebuilds the indexes of Parquet
+  partitions outside the WAL, repairing their stale `_cv` column tops on the way: one node-local `_txn` commit per
+  partition, each giving the partition a new directory version whose files are hard links of the old one, with the
+  rebuilt index files of its own. Native partitions are left alone: their column files change in place (a squash
+  appends into them), so a hard-linked version would let those writes reach readers and checkpoints of the old one. No WAL replay redoes it, so a recovery to an earlier save point would bring stale
+  tops back; the statement ends with a best-effort inline save point (`advanceDurableEpochAfter`), and only then
+  removes the replaced directories, which the save point's partition pin keeps until the purge. A failure partway
+  through several partitions keeps the partitions already committed and still takes their save point, unless the
+  writer is distressed, in which case the next writer open reclaims the directories `_txn` does not name. The same
+  Parquet repair inside an `ADD INDEX` takes no save point: it is in the WAL, and a replay repeats it. On a replica
+  the table is not enrolled, so FORCE REINDEX takes no save point and removes the replaced directories right away.
 - **The old UDP receiver** writes outside the WAL. In `adaptive` mode it refuses WAL tables
   (`LineUdpParserImpl.refuseWalTable`), because recovery would roll its rows back.
 

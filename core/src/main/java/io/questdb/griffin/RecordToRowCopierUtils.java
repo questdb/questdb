@@ -411,6 +411,10 @@ public class RecordToRowCopierUtils {
      * This should be kept in sync with the actual bytecode generation in generateSingleMethodCopier.
      */
     private static int estimateColumnBytecodeSize(int fromType, int toType) {
+        if (ColumnType.isNull(fromType)) {
+            // the generators copy nothing for a NULL-typed column
+            return 0;
+        }
         int fromTag = ColumnType.tagOf(fromType);
         int toTag = ColumnType.tagOf(toType);
 
@@ -418,12 +422,16 @@ public class RecordToRowCopierUtils {
 
         if (fromTag != toTag) {
             size += CONVERSION_BYTECODE_OVERHEAD;
+        }
 
-            // GeoHash conversions between different sizes need extra bytecode:
-            // i2l + ldc + ldc + invokeStatic + l2i + i2b/i2s = ~20 bytes
-            if (ColumnType.isGeoHash(fromTag) && ColumnType.isGeoHash(toTag)) {
-                size += COMPLEX_TYPE_OVERHEAD;
-            }
+        // The generator converts between geohash precisions and between timestamp units whenever the
+        // encoded types differ, also within one tag (GEOINT 4c -> GEOINT 5c, TIMESTAMP_MICRO -> TIMESTAMP_NANO).
+        // GeoHash: i2l + ldc + ldc + invokeStatic + l2i + i2b/i2s = ~20 bytes; timestamp: ldc + invokeStatic +
+        // ldc + invokeInterface = ~14 bytes
+        if (fromType != toType
+                && ((ColumnType.isGeoHash(fromType) && ColumnType.isGeoHash(toType))
+                || (fromTag == ColumnType.TIMESTAMP && toTag == ColumnType.TIMESTAMP))) {
+            size += COMPLEX_TYPE_OVERHEAD;
         }
 
         // Complex types need more bytecode due to extra method calls and stack manipulation
@@ -760,8 +768,12 @@ public class RecordToRowCopierUtils {
                     continue;
                 }
 
-                final int toColumnType = toMetadata.getColumnType(toColumnIndex);
                 final int fromColumnType = fromTypes.getColumnType(i);
+                if (ColumnType.isNull(fromColumnType)) {
+                    // the writer stores NULL, see generateSingleMethodCopier()
+                    continue;
+                }
+                final int toColumnType = toMetadata.getColumnType(toColumnIndex);
                 int fromColumnTypeTag = ColumnType.tagOf(fromColumnType);
                 if (fromColumnTypeTag == ColumnType.VARCHAR_SLICE) {
                     fromColumnTypeTag = ColumnType.VARCHAR;
@@ -776,10 +788,6 @@ public class RecordToRowCopierUtils {
                         fromColumnTypeTag == ColumnType.SYMBOL || fromColumnTypeTag == ColumnType.VARCHAR || fromColumnTypeTag == ColumnType.STRING ||
                         (fromColumnTypeTag == ColumnType.TIMESTAMP && fromColumnType != toColumnType))) {
                     timestampTypeRef = toColumnType_0 + 2 * i;
-                }
-
-                if (fromColumnTypeTag == ColumnType.NULL) {
-                    fromColumnTypeTag = toColumnTypeTag;
                 }
 
                 // Generate bytecode for this column (same logic as single-method approach)
@@ -1915,8 +1923,15 @@ public class RecordToRowCopierUtils {
                 continue;
             }
 
-            final int toColumnType = toMetadata.getColumnType(toColumnIndex);
             final int fromColumnType = fromTypes.getColumnType(i);
+            if (ColumnType.isNull(fromColumnType)) {
+                // A NULL-typed column holds no value, and records that materialize rows, such as
+                // map records and sort chains, keep no bytes for it: a typed getter would read the
+                // next column. Leave the column out of the row, and TableWriter and WalWriter fill
+                // it with NULL.
+                continue;
+            }
+            final int toColumnType = toMetadata.getColumnType(toColumnIndex);
             int fromColumnTypeTag = ColumnType.tagOf(fromColumnType);
             if (fromColumnTypeTag == ColumnType.VARCHAR_SLICE) {
                 fromColumnTypeTag = ColumnType.VARCHAR;
@@ -1933,10 +1948,6 @@ public class RecordToRowCopierUtils {
                     fromColumnTypeTag == ColumnType.SYMBOL || fromColumnTypeTag == ColumnType.VARCHAR || fromColumnTypeTag == ColumnType.STRING || // Symbol, Varchar or String -> Timestamp
                     (fromColumnTypeTag == ColumnType.TIMESTAMP && fromColumnType != toColumnType))) { // Timestamp -> Timestamp
                 timestampTypeRef = toColumnType_0 + 2 * i;
-            }
-
-            if (fromColumnTypeTag == ColumnType.NULL) {
-                fromColumnTypeTag = toColumnTypeTag;
             }
 
             // todo: this branch is not great, but we need parser
@@ -2914,9 +2925,9 @@ public class RecordToRowCopierUtils {
                     }
                     break;
                 default:
-                    // we don't need to do anything for null as null is already written by TableWriter/WalWriter NullSetters
-                    // every non-null-type is an error
-                    assert fromColumnType == ColumnType.NULL;
+                    // the loop skips NULL-typed columns, and INSERT compilation rejects every type
+                    // the copier does not convert
+                    assert false : "unexpected source column type: " + ColumnType.nameOf(fromColumnType);
             }
         }
 

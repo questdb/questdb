@@ -13,7 +13,7 @@ use parquet2::statistics::{serialize_statistics, PrimitiveStatistics};
 use parquet2::types::NativeType;
 use parquet2::write::Version;
 use qdb_core::col_type::{encode_array_type, ColumnType, ColumnTypeTag};
-use questdbr::allocator::{MemTracking, QdbAllocator};
+use questdbr::allocator::{AcVec, MemTracking, QdbAllocator};
 use questdbr::parquet::{QdbMetaCol, QdbMetaColFormat};
 use questdbr::parquet_read::decode::decode_page;
 use questdbr::parquet_read::page;
@@ -2150,7 +2150,90 @@ fn bench_decode_page(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_decode_page);
+/// BYTE and SHORT pages as QuestDB writes them: Optional, the column top at definition level 0.
+/// Each decodes as plain reads do and as the reads that record its column-top rows do.
+fn bench_decode_page_top_rows(c: &mut Criterion) {
+    let options = write_options();
+    let mut group = c.benchmark_group("decode_page_top_rows");
+    group.throughput(Throughput::Elements(ROW_COUNT as u64));
+    for (name, tag) in [
+        ("byte", ColumnTypeTag::Byte),
+        ("short", ColumnTypeTag::Short),
+    ] {
+        for &encoding in &INT_ENCODINGS {
+            for top in [0, ROW_COUNT / 5] {
+                let column_type = ColumnType::new(tag, 0);
+                let primitive_type = primitive_type_for(column_type);
+                let page = if tag == ColumnTypeTag::Byte {
+                    let data = make_i8_data(ROW_COUNT - top, 0, 0);
+                    int_slice_to_page_nullable::<i8, i32, false>(
+                        &data,
+                        top,
+                        options,
+                        primitive_type,
+                        encoding,
+                        None,
+                    )
+                } else {
+                    let data = make_i16_data(ROW_COUNT - top, 0, 0);
+                    int_slice_to_page_nullable::<i16, i32, false>(
+                        &data,
+                        top,
+                        options,
+                        primitive_type,
+                        encoding,
+                        None,
+                    )
+                };
+                let case: &'static BenchCase = Box::leak(Box::new(build_case(
+                    format!("{name}_optional_{}_top{top}", enc_label(encoding)),
+                    data_page_from(page.expect("page")),
+                    None,
+                    column_type,
+                    None,
+                    ROW_COUNT,
+                )));
+                for records in [false, true] {
+                    let state: &'static mut DecodeBenchState =
+                        Box::leak(Box::new(DecodeBenchState::new()));
+                    let mut top_rows: AcVec<[u64; 2]> =
+                        AcVec::new_in(state.bufs.data_vec.allocator().clone());
+                    let page = page::DataPage {
+                        header: &case.page.header,
+                        buffer: &case.page.buffer,
+                        descriptor: &case.page.descriptor,
+                    };
+                    let page: &'static page::DataPage = Box::leak(Box::new(page));
+                    let col_info = case.col_info;
+                    let name = if records {
+                        format!("{}_records", case.name)
+                    } else {
+                        case.name.clone()
+                    };
+                    group.bench_function(name, move |b| {
+                        b.iter(|| {
+                            state.bufs.data_vec.clear();
+                            top_rows.clear();
+                            decode_page(
+                                black_box(page),
+                                None,
+                                &mut state.bufs,
+                                col_info,
+                                0,
+                                ROW_COUNT,
+                                records.then_some(&mut top_rows),
+                            )
+                            .expect("decode_page");
+                        })
+                    });
+                }
+            }
+        }
+    }
+    group.finish();
+}
+
+criterion_group!(benches, bench_decode_page, bench_decode_page_top_rows);
 criterion_main!(benches);
 
 pub fn decode_page_ref(
@@ -2179,6 +2262,7 @@ pub fn decode_page_ref(
         col_info,
         row_lo,
         row_hi,
+        None,
     )
     .expect("decode_page");
 }

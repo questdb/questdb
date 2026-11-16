@@ -177,6 +177,10 @@ public class FuzzInsertOperation implements FuzzTransactionOperation, QuietClose
     public void close() {
     }
 
+    public double getNullSet() {
+        return nullSet;
+    }
+
     public int getStrLen() {
         return (int) strLen;
     }

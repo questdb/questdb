@@ -48,11 +48,14 @@ public class RowGroupBuffers implements QuietCloseable, Reopenable {
     private static final long CHUNKS_PTR_OFFSET;
     private static final long CHUNK_AUX_PTR_OFFSET;
     private static final long CHUNK_AUX_SIZE_OFFSET;
-    private static final long CHUNK_COLUMN_TOP_OFFSET;
     private static final long CHUNK_DATA_PTR_OFFSET;
     private static final long CHUNK_DATA_SIZE_OFFSET;
     private static final long CHUNK_PAGE_BUFFERS_SIZE_OFFSET;
     private static final long CHUNK_STRUCT_SIZE;
+    private static final long CHUNK_TOP_ROWS_COUNT_OFFSET;
+    private static final long CHUNK_TOP_ROWS_PTR_OFFSET;
+    // bytes of one [lo, hi) run of column-top rows
+    private static final long TOP_ROWS_RUN_SIZE = 2 * Long.BYTES;
     private final int memoryTag;
     // Per-query tracker, when set, charges the decoded column data against the
     // owning workload's limit in addition to the global RSS counter. The native
@@ -72,6 +75,27 @@ public class RowGroupBuffers implements QuietCloseable, Reopenable {
         if (!keepClosed) {
             this.ptr = create(Unsafe.getNativeAllocator(memoryTag, memoryTracker));
         }
+    }
+
+    /**
+     * Whether buffer row {@code row} is a column-top row, one of the {@code topRowCount} ascending
+     * {@code [lo, hi)} runs of longs at {@code topRowsPtr} that {@link #getChunkTopRowsPtr} returns.
+     */
+    public static boolean isTopRow(long topRowsPtr, long topRowCount, long row) {
+        long lo = 0;
+        long hi = topRowCount - 1;
+        while (lo <= hi) {
+            final long mid = (lo + hi) >>> 1;
+            final long runAddress = topRowsPtr + mid * TOP_ROWS_RUN_SIZE;
+            if (row < Unsafe.getLong(runAddress)) {
+                hi = mid - 1;
+            } else if (row >= Unsafe.getLong(runAddress + Long.BYTES)) {
+                lo = mid + 1;
+            } else {
+                return true;
+            }
+        }
+        return false;
     }
 
     @Override
@@ -94,18 +118,6 @@ public class RowGroupBuffers implements QuietCloseable, Reopenable {
         return Unsafe.getLong(chunksPtr + columnIndex * CHUNK_STRUCT_SIZE + CHUNK_AUX_SIZE_OFFSET);
     }
 
-    /**
-     * Number of leading column-top rows in the decoded chunk for the given column. For a
-     * source type with no in-band null sentinel (BYTE/SHORT/CHAR) these are its only nulls,
-     * so a lazy fixed-&gt;var conversion must surface NULL for rows below this count rather
-     * than format the in-band 0. Returns 0 when the column has no column top in this chunk.
-     */
-    public long getChunkColumnTop(int columnIndex) {
-        final long chunksPtr = Unsafe.getLong(ptr + CHUNKS_PTR_OFFSET);
-        assert chunksPtr != 0;
-        return Unsafe.getLong(chunksPtr + columnIndex * CHUNK_STRUCT_SIZE + CHUNK_COLUMN_TOP_OFFSET);
-    }
-
     public long getChunkDataPtr(int columnIndex) {
         final long chunksPtr = Unsafe.getLong(ptr + CHUNKS_PTR_OFFSET);
         assert chunksPtr != 0;
@@ -116,6 +128,17 @@ public class RowGroupBuffers implements QuietCloseable, Reopenable {
         final long chunksPtr = Unsafe.getLong(ptr + CHUNKS_PTR_OFFSET);
         assert chunksPtr != 0;
         return Unsafe.getLong(chunksPtr + columnIndex * CHUNK_STRUCT_SIZE + CHUNK_DATA_SIZE_OFFSET);
+    }
+
+    /**
+     * Rows of the decoded chunk's leading column-top run, the column top a native column of its
+     * type keeps; 0 when its first row is no column-top row. See {@link #getChunkTopRowsPtr}.
+     */
+    public long getChunkLeadingTopRows(int columnIndex) {
+        final long topRowsPtr = getChunkTopRowsPtr(columnIndex);
+        return getChunkTopRowCount(columnIndex) > 0 && Unsafe.getLong(topRowsPtr) == 0
+                ? Unsafe.getLong(topRowsPtr + Long.BYTES)
+                : 0;
     }
 
     /**
@@ -130,6 +153,33 @@ public class RowGroupBuffers implements QuietCloseable, Reopenable {
         final long chunksPtr = Unsafe.getLong(ptr + CHUNKS_PTR_OFFSET);
         assert chunksPtr != 0;
         return Unsafe.getLong(chunksPtr + columnIndex * CHUNK_STRUCT_SIZE + CHUNK_PAGE_BUFFERS_SIZE_OFFSET);
+    }
+
+    /**
+     * Number of {@code [lo, hi)} runs at {@link #getChunkTopRowsPtr}.
+     */
+    public long getChunkTopRowCount(int columnIndex) {
+        final long chunksPtr = Unsafe.getLong(ptr + CHUNKS_PTR_OFFSET);
+        assert chunksPtr != 0;
+        return Unsafe.getLong(chunksPtr + columnIndex * CHUNK_STRUCT_SIZE + CHUNK_TOP_ROWS_COUNT_OFFSET);
+    }
+
+    /**
+     * Address of the column-top rows of the decoded chunk, as ascending, disjoint {@code [lo, hi)}
+     * runs of buffer rows, two longs each; {@link #getChunkTopRowCount} counts them. A chunk decoded
+     * at the width of a type without a NULL sentinel (BOOLEAN, BYTE, SHORT, CHAR) holds 0 or false
+     * in these rows: a conversion to a type with a NULL must read NULL in them rather than format
+     * the in-band 0. A column top need not be the leading rows of a chunk: CONVERT TO PARQUET of a
+     * split or composite partition writes a row group from several folders, each with its own top,
+     * which the {@code _pm} decoder records from the definition levels. The footer decoder, which
+     * serves CONVERT TO NATIVE, gives the leading rows of the column top that the file records, for
+     * a source type with a NULL as well, which a conversion to a type without a NULL keeps as the
+     * native column top. The memory stays valid until the next decode.
+     */
+    public long getChunkTopRowsPtr(int columnIndex) {
+        final long chunksPtr = Unsafe.getLong(ptr + CHUNKS_PTR_OFFSET);
+        assert chunksPtr != 0;
+        return Unsafe.getLong(chunksPtr + columnIndex * CHUNK_STRUCT_SIZE + CHUNK_TOP_ROWS_PTR_OFFSET);
     }
 
     /**
@@ -171,7 +221,8 @@ public class RowGroupBuffers implements QuietCloseable, Reopenable {
             final long base = chunksPtr + (startSlot + s) * CHUNK_STRUCT_SIZE;
             total += Unsafe.getLong(base + CHUNK_DATA_SIZE_OFFSET)
                     + Unsafe.getLong(base + CHUNK_AUX_SIZE_OFFSET)
-                    + Unsafe.getLong(base + CHUNK_PAGE_BUFFERS_SIZE_OFFSET);
+                    + Unsafe.getLong(base + CHUNK_PAGE_BUFFERS_SIZE_OFFSET)
+                    + Unsafe.getLong(base + CHUNK_TOP_ROWS_COUNT_OFFSET) * TOP_ROWS_RUN_SIZE;
         }
         return total;
     }
@@ -180,13 +231,15 @@ public class RowGroupBuffers implements QuietCloseable, Reopenable {
 
     private static native long chunkAuxSizeOffset();
 
-    private static native long chunkColumnTopOffset();
-
     private static native long chunkDataPtrOffset();
 
     private static native long chunkDataSizeOffset();
 
     private static native long chunkPageBuffersSizeOffset();
+
+    private static native long chunkTopRowsCountOffset();
+
+    private static native long chunkTopRowsPtrOffset();
 
     private static native long columnBuffersPtrOffset();
 
@@ -206,6 +259,7 @@ public class RowGroupBuffers implements QuietCloseable, Reopenable {
         CHUNK_PAGE_BUFFERS_SIZE_OFFSET = chunkPageBuffersSizeOffset();
         CHUNK_AUX_PTR_OFFSET = chunkAuxPtrOffset();
         CHUNK_AUX_SIZE_OFFSET = chunkAuxSizeOffset();
-        CHUNK_COLUMN_TOP_OFFSET = chunkColumnTopOffset();
+        CHUNK_TOP_ROWS_PTR_OFFSET = chunkTopRowsPtrOffset();
+        CHUNK_TOP_ROWS_COUNT_OFFSET = chunkTopRowsCountOffset();
     }
 }

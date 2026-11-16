@@ -2434,6 +2434,32 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByGroupingSetsEmptyLinearFillRejectedCleanly() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            String sql = "SELECT ts, sum(val) FROM x SAMPLE BY 1d GROUPING SETS (()) FILL(LINEAR)";
+            assertExceptionNoLeakCheck(sql, sql.indexOf("LINEAR"),
+                    "FILL(PREV) and FILL(LINEAR) are not supported with ROLLUP, CUBE, or GROUPING SETS");
+        });
+    }
+
+    @Test
+    public void testSampleByGroupingSetsEmptyNullFill() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES (1.0, '2024-01-01T01:00:00.000000Z'), " +
+                    "(3.0, '2024-01-03T01:00:00.000000Z')");
+            assertQuery("SELECT ts, sum(val) FROM x SAMPLE BY 1d GROUPING SETS (()) FILL(NULL)")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("ts\tsum\n" +
+                            "2024-01-01T00:00:00.000000Z\t1.0\n" +
+                            "2024-01-02T00:00:00.000000Z\tnull\n" +
+                            "2024-01-03T00:00:00.000000Z\t3.0\n");
+        });
+    }
+
+    @Test
     public void testSetOpExceptWithFillNull() throws Exception {
         // Smoke test: SAMPLE BY FILL(NULL) under EXCEPT should not crash and
         // should leave the fill cursor's per-key bucket grid intact on each

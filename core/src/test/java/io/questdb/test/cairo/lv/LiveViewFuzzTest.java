@@ -401,12 +401,13 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
 
     @Test
     public void testFuzzDedup() throws Exception {
-        // Differential fuzz over a DEDUP UPSERT KEYS(ts, sym) base - the coupled,
+        // Differential fuzz over a DEDUP UPSERT|SKIP KEYS(ts, sym) base - the coupled,
         // applied-reader refresh path. Unlike every other arm, timestamps are NOT
         // unique: they are drawn from a small pool so many rows share one ts across
         // different keys (additive same-ts, the Phase 2a clean raw-WAL fast path),
         // and a forced fraction re-emit an existing (ts, sym) with a new value (real
-        // dedup replacement, routed through the applied-reader replay). The recompute
+        // dedup: UPSERT replaces the existing row, SKIP drops the re-emitted one, either
+        // way routed through the applied-reader replay). The recompute
         // oracle stays sound because (ts, sym) is the dedup key: after apply every
         // (ts, sym) is unique, so within each sym partition ts is a total order and a
         // partitioned window is a deterministic function of the final deduped base.
@@ -2806,12 +2807,12 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         execute("DROP TABLE base");
     }
 
-    // Differential fuzz for a DEDUP UPSERT KEYS(ts, sym) base. Mirrors runFuzz's
+    // Differential fuzz for a DEDUP UPSERT|SKIP KEYS(ts, sym) base. Mirrors runFuzz's
     // ingestion shape (pre-CREATE seed history, then per-commit O3 refresh with
     // optional quiescent restarts and removal events), but with a data model built
     // for dedup: timestamps are drawn from a pool small enough to force same-ts /
     // same-(ts, sym) collisions, and a fifth of the emissions re-point onto an
-    // earlier (ts, sym) so a real below-frontier replacement is guaranteed. The
+    // earlier (ts, sym) so a real below-frontier dedup is guaranteed. The
     // oracle recomputes the window over the applied (post-dedup) base and orders
     // both sides by (ts, sym::string) - a total order because (ts, sym) is the dedup
     // key; genericStringMatch tolerates SYMBOL-vs-STRING on the sym passthrough.
@@ -2839,11 +2840,13 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final boolean withWhere = rnd.nextInt(3) == 0;
 
         final String projection = projection(variant, n);
+        // UPSERT keeps the last write of a (ts, sym), SKIP keeps the first one
+        final String dedupMode = rnd.nextBoolean() ? "SKIP" : "UPSERT";
 
         execute("DROP LIVE VIEW IF EXISTS lv");
         execute("DROP TABLE IF EXISTS base");
         execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) "
-                + "TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, sym)");
+                + "TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP " + dedupMode + " KEYS(ts, sym)");
 
         // Distinct, strictly-increasing timestamp pool - fewer distinct values than
         // rows, so many emissions collide on one ts (additive across keys) and the
@@ -2865,8 +2868,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
 
         // Each emission draws a ts from the pool and a non-null sym (a dedup key);
         // (ts, sym) may repeat across emissions. i/x carry occasional NULLs. The
-        // recompute oracle reads the final deduped base, so the keep-last winner
-        // never has to be predicted here.
+        // recompute oracle reads the final deduped base, so the surviving row (the
+        // last write under UPSERT, the first under SKIP) never has to be predicted here.
         final long[] tsv = new long[rowCount];
         final int[] symIdx = new int[rowCount];
         final long[] iv = new long[rowCount];
@@ -2879,9 +2882,10 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             xNull[k] = rnd.nextInt(20) == 0;
             xv[k] = rnd.nextDouble() * 1000.0;
         }
-        // Force a replacement fraction: re-point some emissions onto an earlier
-        // (ts, sym) so a real below-frontier dedup is guaranteed, exercising the
-        // applied-reader replay path, not only the additive fast path.
+        // Force a dedup fraction: re-point some emissions onto an earlier (ts, sym)
+        // so a real below-frontier dedup is guaranteed, exercising the applied-reader
+        // replay path, not only the additive fast path. Of the two writes of a
+        // (ts, sym), UPSERT keeps the later one and SKIP keeps the earlier one.
         for (int r = 0, forced = rowCount / 5; r < forced; r++) {
             final int dst = 1 + rnd.nextInt(rowCount - 1);
             final int src = rnd.nextInt(dst);
@@ -2904,7 +2908,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 + startFromClause(startMode, boundary, false)
                 + "AS " + viewSql;
 
-        LOG.info().$("LV dedup fuzz: variant=").$(variant).$(", rows=").$(rowCount)
+        LOG.info().$("LV dedup fuzz: variant=").$(variant).$(", dedupMode=").$(dedupMode).$(", rows=").$(rowCount)
                 .$(", n=").$(n).$(", symCount=").$(symCount).$(", stepMode=").$(stepMode)
                 .$(", o3=").$(o3).$(", restart=").$(restart).$(", preCount=").$(preCount)
                 .$(", startMode=").$(startMode).$(", boundary=").$(boundary)

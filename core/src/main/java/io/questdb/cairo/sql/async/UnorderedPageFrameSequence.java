@@ -143,19 +143,19 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
         }
         // Wait for all queued frames to complete.
         final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
-        final boolean canPark = dispatcher != null && isFiberSuspendable();
+        final boolean isFiberSuspendable = isFiberSuspendable();
+        final boolean canPark = dispatcher != null && isFiberSuspendable;
         while (true) {
             final long observedProgress = canPark ? getProgressVersion() : 0;
-            final long observedGlobalProgress = canPark ? dispatcher.getProgressVersion() : 0;
             if (doneLatch.done(queuedCount)) {
                 break;
             }
             if (stealWork()) {
                 workStealCircuitBreaker.init(sqlExecutionContext.getCircuitBreaker());
             } else if (canPark) {
-                awaitProgress(dispatcher, observedProgress, observedGlobalProgress, true);
+                awaitProgress(dispatcher, observedProgress, true);
             } else {
-                Os.pause();
+                yieldOrPause(isFiberSuspendable);
             }
         }
     }
@@ -253,7 +253,8 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
         // Phase 1: Dispatch all frames.
         // The try/finally ensures queuedCount is set even if reduceLocally() throws,
         // so that await() in close() properly drains in-flight tasks.
-        final boolean canPark = dispatcher != null && isFiberSuspendable();
+        final boolean isFiberSuspendable = isFiberSuspendable();
+        final boolean canPark = dispatcher != null && isFiberSuspendable;
         boolean hasPublication = dispatcher == null || dispatcher.tryAcquirePublication();
         try {
             if (!hasPublication) {
@@ -285,7 +286,9 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
                             }
                         }
                         final long observedProgress = canPark ? getProgressVersion() : 0;
-                        final long observedGlobalProgress = canPark ? dispatcher.getProgressVersion() : 0;
+                        final long observedSlotProgress = canPark
+                                ? dispatcher.getRingProgressVersion(dispatcher.getUnorderedRing())
+                                : 0;
                         final long cursor;
                         cursor = reducePubSeq.next();
                         if (cursor > -1) {
@@ -312,8 +315,9 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
                                         awaitProgress(
                                                 dispatcher,
                                                 observedProgress,
-                                                observedGlobalProgress,
-                                                false
+                                                observedSlotProgress,
+                                                false,
+                                                dispatcher.getUnorderedRing()
                                         );
                                         continue;
                                     }
@@ -327,6 +331,8 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
                             if (workStealingStrategy.shouldSteal(localCount)) {
                                 if (stealWork()) {
                                     workStealCircuitBreaker.init(sqlExecutionContext.getCircuitBreaker());
+                                } else if (isFiberSuspendable) {
+                                    yieldOrPause(true);
                                 }
                                 continue;
                             }
@@ -351,7 +357,6 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
         final SqlExecutionCircuitBreaker circuitBreaker = sqlExecutionContext.getCircuitBreaker();
         while (true) {
             final long observedProgress = canPark ? getProgressVersion() : 0;
-            final long observedGlobalProgress = canPark ? dispatcher.getProgressVersion() : 0;
             if (doneLatch.done(queued)) {
                 break;
             }
@@ -366,9 +371,9 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
             if (stealWork()) {
                 workStealCircuitBreaker.init(circuitBreaker);
             } else if (canPark) {
-                awaitProgress(dispatcher, observedProgress, observedGlobalProgress, false);
+                awaitProgress(dispatcher, observedProgress, false);
             } else {
-                Os.pause();
+                yieldOrPause(isFiberSuspendable);
             }
         }
 
@@ -376,16 +381,15 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
         // to complete to avoid data races with setError().
         while (true) {
             final long observedProgress = canPark ? getProgressVersion() : 0;
-            final long observedGlobalProgress = canPark ? dispatcher.getProgressVersion() : 0;
             if (doneLatch.done(queued)) {
                 break;
             }
             if (stealWork()) {
                 workStealCircuitBreaker.init(circuitBreaker);
             } else if (canPark) {
-                awaitProgress(dispatcher, observedProgress, observedGlobalProgress, true);
+                awaitProgress(dispatcher, observedProgress, true);
             } else {
-                Os.pause();
+                yieldOrPause(isFiberSuspendable);
             }
         }
 

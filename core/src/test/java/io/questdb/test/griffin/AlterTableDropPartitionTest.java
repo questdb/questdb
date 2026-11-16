@@ -1272,7 +1272,7 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
 
     @Test
     public void testForceDropPartitionExpectDrop() throws Exception {
-        createXAndAssertException("alter table x force partition list '2022-02-04';", 20, "'drop' expected");
+        createXAndAssertException("alter table x force partition list '2022-02-04';", 20, "'drop' or 'reindex' expected");
     }
 
     @Test

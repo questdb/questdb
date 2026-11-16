@@ -116,8 +116,8 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
     private static final int MAT_VIEW_CRASH_POINT_CAP = 256;
     /**
      * Floor on the crash points of one part where the view came back valid, so the phantom check runs: four parts
-     * of 5 keep the whole sweep's floor of 20. With N=110 the view comes back valid at every point of every part
-     * (30, 30, 30 and 20), so even the shorter last part clears it with room. The floor is absolute rather than a
+     * of 5 keep the whole sweep's floor of 20. Each part holds a quarter of the crash points, so it clears the floor
+     * with room while the view comes back valid at most of them. The floor is absolute rather than a
      * fraction, so ordinary op-count drift does not trip it, while it still fails if the view starts coming back
      * invalid nearly everywhere.
      */
@@ -144,27 +144,26 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
     private static final int[] LAZY_TS_HOUR = {23, 9, 14, 4, 11, 2, 17, 7, 20};
 
     /**
-     * The full sweep (N=110 crash points) runs in four parts of up to 30 points; see
-     * {@link #assertSweepPartRecoversMutuallyConsistent}. If N grows well past 120, the last part needs a further split.
+     * The full sweep runs in four parts; see {@link #assertSweepPartRecoversMutuallyConsistent}.
      */
     @Test
-    public void testMatViewLazyGapSweepRecoversMutuallyConsistentAtCrashPoints1To30() throws Exception {
-        assertSweepPartRecoversMutuallyConsistent(1, 30);
+    public void testMatViewLazyGapSweepRecoversMutuallyConsistentInPart1Of4() throws Exception {
+        assertSweepPartRecoversMutuallyConsistent(1, 4);
     }
 
     @Test
-    public void testMatViewLazyGapSweepRecoversMutuallyConsistentAtCrashPoints31To60() throws Exception {
-        assertSweepPartRecoversMutuallyConsistent(31, 60);
+    public void testMatViewLazyGapSweepRecoversMutuallyConsistentInPart2Of4() throws Exception {
+        assertSweepPartRecoversMutuallyConsistent(2, 4);
     }
 
     @Test
-    public void testMatViewLazyGapSweepRecoversMutuallyConsistentAtCrashPoints61To90() throws Exception {
-        assertSweepPartRecoversMutuallyConsistent(61, 90);
+    public void testMatViewLazyGapSweepRecoversMutuallyConsistentInPart3Of4() throws Exception {
+        assertSweepPartRecoversMutuallyConsistent(3, 4);
     }
 
     @Test
-    public void testMatViewLazyGapSweepRecoversMutuallyConsistentAtCrashPoints91ToLast() throws Exception {
-        assertSweepPartRecoversMutuallyConsistent(91, Integer.MAX_VALUE);
+    public void testMatViewLazyGapSweepRecoversMutuallyConsistentInPart4Of4() throws Exception {
+        assertSweepPartRecoversMutuallyConsistent(4, 4);
     }
 
     /**
@@ -460,8 +459,9 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
     }
 
     /**
-     * The mutual-consistency sweep over crash points {@code firstK..min(lastK, N)}. Crashes at each durability op of
-     * the M lazily applied base rows (each also drives a lazy mv refresh) in that range, running the recovery triple,
+     * The mutual-consistency sweep over part {@code part} of {@code partCount} near-equal ranges of the crash points
+     * 1..N. Crashes at each durability op of the M lazily applied base rows (each also drives a lazy mv refresh) in
+     * that range, running the recovery triple,
      * restart rehydration and the base/view consistency oracle at each point. The whole sweep needs more than the
      * test timeout in one method (the crash facade's per-point cost grows with the points already run in it), so it
      * is split into parts; every point starts from a fresh identical baseline, so a part sweeps exactly the points
@@ -470,14 +470,14 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
      * least LAZY_K at its first point; the genuine rise only in the part holding k=1, the full set only in the part
      * holding k=N.
      */
-    private void assertSweepPartRecoversMutuallyConsistent(int firstK, int lastK) throws Exception {
+    private void assertSweepPartRecoversMutuallyConsistent(int part, int partCount) throws Exception {
         withAdaptiveLazyGap(() -> runWithCrashFacade(() -> {
             crashFf.modelSharedJournal = false; // per-inode strictness (ext4 fast_commit)
 
             final MatViewLazyGapWorkload workload = new MatViewLazyGapWorkload();
             // Sweeping every crash point is the point of this test (the assertions below demand no truncation), and
             // the base and view commit phase runs past the default cap of 200, so raise the cap for this workload.
-            final SweepResult r = forEachAdaptiveCrashPoint(workload, MAT_VIEW_CRASH_POINT_CAP, firstK, lastK);
+            final SweepResult r = forEachAdaptiveCrashPointInPart(workload, MAT_VIEW_CRASH_POINT_CAP, part, partCount);
             final int first = r.firstSweptK;
             final int last = r.lastSweptK;
 
@@ -487,7 +487,7 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
                     .$(", invalidViewPoints=").$(workload.invalidViewPoints)
                     .$(", recoveredBaseByK=").$(Arrays.toString(r.recoveredByK())).$();
 
-            Assert.assertTrue("N must be > 0", r.n > 0);
+            assertCommitDurabilityOps(r, 122, 162);
             Assert.assertEquals("the cap must not truncate this small workload", r.n, r.sweptPoints);
             Assert.assertFalse("small workload must not be truncated", r.truncated);
             Assert.assertEquals(
