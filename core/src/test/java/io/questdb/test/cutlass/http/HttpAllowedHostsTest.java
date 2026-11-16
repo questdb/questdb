@@ -182,7 +182,16 @@ public class HttpAllowedHostsTest {
         assertInvalid(" ,a.example.com", "empty entry, check for a stray comma: ");
         assertInvalid("*.example.com", "write .example.com to serve example.com and its subdomains, no other wildcard is supported: *.example.com");
         assertInvalid("questdb.example.com:9000", "host names are listed without a port: questdb.example.com:9000");
-        assertInvalid("::1", "host names are listed without a port: ::1");
+        // a port follows the only colon of a host name, while an IPv6 address has two or more
+        assertInvalid("cafe:9000", "host names are listed without a port: cafe:9000");
+        assertInvalid("questdb.example.com::9000", "host names are listed without a port: questdb.example.com::9000");
+        assertInvalid("http://questdb.example.com:9000", "host names are listed without a port: http://questdb.example.com:9000");
+        // a character outside ASCII whose low byte is a hexadecimal digit
+        assertInvalid("\u0161::1", "host names are listed without a port: \u0161::1");
+        assertInvalid("::1", "IP addresses are always served, list host names only: ::1");
+        assertInvalid("2001:DB8::1", "IP addresses are always served, list host names only: 2001:DB8::1");
+        assertInvalid("::ffff:127.0.0.1", "IP addresses are always served, list host names only: ::ffff:127.0.0.1");
+        assertInvalid("fe80::1%eth0", "IP addresses are always served, list host names only: fe80::1%eth0");
         assertInvalid("[::1]", "IP addresses are always served, list host names only: [::1]");
         assertInvalid("10.0.0.5", "IP addresses are always served, list host names only: 10.0.0.5");
         assertInvalid("10.0.0.5.", "IP addresses are always served, list host names only: 10.0.0.5.");

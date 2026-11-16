@@ -139,34 +139,6 @@ public final class BrowserAllowedOrigins {
         return parts == 4;
     }
 
-    // WHATWG URL "ends in a number": a host whose last label parses as an IPv4
-    // number is an IPv4 address, which browsers serialize as dotted decimal.
-    private static boolean isIpv4Host(String value, int lo, int hi) {
-        if (hi > lo && value.charAt(hi - 1) == '.') {
-            hi--;
-        }
-        final int lastLo = value.lastIndexOf('.', hi - 1) + 1;
-        final int labelLo = Math.max(lastLo, lo);
-        if (labelLo == hi) {
-            return false;
-        }
-        if (hi - labelLo >= 2 && value.charAt(labelLo) == '0' && value.charAt(labelLo + 1) == 'x') {
-            for (int i = labelLo + 2; i < hi; i++) {
-                if (hexDigit(value.charAt(i)) < 0) {
-                    return false;
-                }
-            }
-            return true;
-        }
-        for (int i = labelLo; i < hi; i++) {
-            final char c = value.charAt(i);
-            if (c < '0' || c > '9') {
-                return false;
-            }
-        }
-        return true;
-    }
-
     // Returns the WHATWG URL serialization of an IPv6 literal (without brackets),
     // or null when the text is not an IPv6 address in hexadecimal notation.
     private static @Nullable String serializeIpv6(String value, int lo, int hi) {
@@ -317,7 +289,8 @@ public final class BrowserAllowedOrigins {
             final String host = hasUppercase ? value.substring(hostLo, hostHi).toLowerCase(Locale.ROOT) : value;
             final int lo = hasUppercase ? 0 : hostLo;
             final int hi = hasUppercase ? host.length() : hostHi;
-            if (isIpv4Host(host, lo, hi) && !isCanonicalIpv4(host, lo, hi)) {
+            // a host that ends in a number is an IPv4 address, which browsers serialize as dotted decimal
+            if (HttpAllowedHosts.endsInNumber(new Utf8String(host), lo, hi) && !isCanonicalIpv4(host, lo, hi)) {
                 return "the IPv4 address is not in canonical dotted-decimal form";
             }
             if (hasUppercase) {

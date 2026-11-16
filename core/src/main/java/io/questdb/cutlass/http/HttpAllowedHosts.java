@@ -48,6 +48,7 @@ import java.util.Locale;
 public final class HttpAllowedHosts {
     public static final HttpAllowedHosts ANY = new HttpAllowedHosts(true, new ObjList<>(), new ObjList<>());
     public static final HttpAllowedHosts DEFAULT = new HttpAllowedHosts(false, new ObjList<>(), new ObjList<>());
+    private static final String IP_ADDRESS_LISTED = "IP addresses are always served, list host names only";
     // no public DNS server answers for these domains (RFC 6761, RFC 6762, RFC 8375, ICANN)
     private static final ObjList<String> SPECIAL_USE_DOMAINS = new ObjList<>(".home.arpa", ".internal", ".local", ".localhost", ".test");
     // configured domains, each with its leading dot
@@ -137,6 +138,20 @@ public final class HttpAllowedHosts {
         return false;
     }
 
+    // WHATWG URL "ends in a number": whether the last label of the host name in
+    // host[lo, hi), which is not empty, is a number, after one trailing dot. A
+    // browser takes such a host for an IPv4 address. isAllowed() applies the same
+    // rule to the Host header within its own scan for the last label.
+    static boolean endsInNumber(Utf8Sequence host, int lo, int hi) {
+        assert hi > lo;
+        final int labelHi = host.byteAt(hi - 1) == '.' ? hi - 1 : hi;
+        int labelLo = labelHi;
+        while (labelLo > lo && host.byteAt(labelLo - 1) != '.') {
+            labelLo--;
+        }
+        return isNumber(host, labelLo, labelHi);
+    }
+
     // compares host[lo, hi) with name[nameLo, name.length()), the latter lowercase ASCII
     private static boolean equalsIgnoreCase(Utf8Sequence host, int lo, int hi, String name, int nameLo) {
         if (hi - lo != name.length() - nameLo) {
@@ -160,7 +175,27 @@ public final class HttpAllowedHosts {
                 || (hi > domain.length() && equalsIgnoreCase(host, hi - domain.length(), hi, domain, 0));
     }
 
-    // WHATWG URL "ends in a number": decimal digits, or 0x followed by hexadecimal digits
+    // whether the entry is an IPv6 address written without brackets: hexadecimal
+    // digits and two or more colons, possibly ending in an IPv4 address and
+    // followed by a %zone
+    private static boolean isIpv6Address(String entry) {
+        int colons = 0;
+        for (int i = 0, n = entry.length(); i < n; i++) {
+            final char c = entry.charAt(i);
+            if (c == '%') {
+                break;
+            }
+            if (c == ':') {
+                colons++;
+            } else if (c != '.' && (c > 127 || !isHexDigit((byte) c))) {
+                return false;
+            }
+        }
+        return colons > 1;
+    }
+
+    // whether host[lo, hi) is a WHATWG URL IPv4 number: decimal digits, or 0x or 0X
+    // followed by hexadecimal digits
     private static boolean isNumber(Utf8Sequence host, int lo, int hi) {
         if (lo == hi) {
             return false;
@@ -204,10 +239,11 @@ public final class HttpAllowedHosts {
             return "write .example.com to serve example.com and its subdomains, no other wildcard is supported";
         }
         if (entry.charAt(0) == '[') {
-            return "IP addresses are always served, list host names only";
+            return IP_ADDRESS_LISTED;
         }
         if (entry.indexOf(':') > -1) {
-            return "host names are listed without a port";
+            // a port follows the only colon of a host name, while an IPv6 address has two or more
+            return isIpv6Address(entry) ? IP_ADDRESS_LISTED : "host names are listed without a port";
         }
         for (int i = 0, n = entry.length(); i < n; i++) {
             final char c = entry.charAt(i);
@@ -230,8 +266,8 @@ public final class HttpAllowedHosts {
                 labelLo = i + 1;
             }
         }
-        if (isNumber(new Utf8String(entry), Math.max(entry.lastIndexOf('.', hi - 1) + 1, lo), hi)) {
-            return "IP addresses are always served, list host names only";
+        if (endsInNumber(new Utf8String(entry), lo, entry.length())) {
+            return IP_ADDRESS_LISTED;
         }
         return null;
     }
