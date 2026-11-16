@@ -95,7 +95,8 @@ public class HttpCrossSiteRequestTest extends AbstractBootstrapTest {
         assertMemoryLeak(() -> {
             try (TestServerMain ignore = startWithEnvVariables(
                     PropertyKey.HTTP_USER.getEnvVarName(), "admin",
-                    PropertyKey.HTTP_PASSWORD.getEnvVarName(), "quest"
+                    PropertyKey.HTTP_PASSWORD.getEnvVarName(), "quest",
+                    PropertyKey.HTTP_HEALTH_CHECK_AUTHENTICATION_REQUIRED.getEnvVarName(), "false"
             )) {
                 new SendAndReceiveRequestBuilder()
                         .withPort(HTTP_PORT)
@@ -109,6 +110,24 @@ public class HttpCrossSiteRequestTest extends AbstractBootstrapTest {
                             );
                             executor.execute(selectOne(REBIND_HOST), textResponse("401 Unauthorized", "Unauthorized"));
                         });
+                // so do the endpoints that serve requests without a credential: the web
+                // console's files and settings, and the probes of both HTTP servers
+                for (String[] pathAndStatus : new String[][]{
+                        {"/index.html", "HTTP/1.1 200 OK"},
+                        {"/settings", "HTTP/1.1 200 OK"},
+                        {"/warnings", "HTTP/1.1 200 OK"},
+                        {"/ping", "HTTP/1.1 204 OK"}
+                }) {
+                    Assert.assertEquals(
+                            pathAndStatus[0],
+                            pathAndStatus[1],
+                            statusLine(HTTP_PORT, "GET " + pathAndStatus[0] + " HTTP/1.1\r\nHost: " + REBIND_HOST + "\r\n\r\n")
+                    );
+                }
+                Assert.assertEquals(
+                        "HTTP/1.1 200 OK",
+                        statusLine(HTTP_MIN_PORT, "GET /status HTTP/1.1\r\nHost: rebind.example.com:" + HTTP_MIN_PORT + "\r\n\r\n")
+                );
             }
         });
     }
@@ -453,6 +472,19 @@ public class HttpCrossSiteRequestTest extends AbstractBootstrapTest {
                             "HTTP/1.1 400 Bad Request",
                             qwpUpgradeStatusLine(path, HOST, "http://evil.example.com", "Sec-Fetch-Site: cross-site\r\n")
                     );
+                    // a listed origin does not admit a host name the server refuses, and the 403
+                    // and its reason stand when the upgrade offers a browser credential
+                    new SendAndReceiveRequestBuilder()
+                            .withPort(HTTP_PORT)
+                            .execute(
+                                    QwpWireTestFixtures.browserUpgradeRequestWithOrigin(
+                                            path,
+                                            REBIND_HOST,
+                                            "http://app.example.com",
+                                            "Sec-WebSocket-Protocol: " + QwpWireTestFixtures.browserCredentialOffer("Basic YWRtaW46cXVlc3Q=") + "\r\n"
+                                    ),
+                                    forbiddenResponse(HOST_NAME_REJECTED)
+                            );
                 }
             }
         });

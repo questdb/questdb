@@ -138,20 +138,6 @@ public final class HttpAllowedHosts {
         return false;
     }
 
-    // WHATWG URL "ends in a number": whether the last label of the host name in
-    // host[lo, hi), which is not empty, is a number, after one trailing dot. A
-    // browser takes such a host for an IPv4 address. isAllowed() applies the same
-    // rule to the Host header within its own scan for the last label.
-    static boolean endsInNumber(Utf8Sequence host, int lo, int hi) {
-        assert hi > lo;
-        final int labelHi = host.byteAt(hi - 1) == '.' ? hi - 1 : hi;
-        int labelLo = labelHi;
-        while (labelLo > lo && host.byteAt(labelLo - 1) != '.') {
-            labelLo--;
-        }
-        return isNumber(host, labelLo, labelHi);
-    }
-
     // compares host[lo, hi) with name[nameLo, name.length()), the latter lowercase ASCII
     private static boolean equalsIgnoreCase(Utf8Sequence host, int lo, int hi, String name, int nameLo) {
         if (hi - lo != name.length() - nameLo) {
@@ -270,5 +256,19 @@ public final class HttpAllowedHosts {
             return IP_ADDRESS_LISTED;
         }
         return null;
+    }
+
+    // WHATWG URL "ends in a number": whether the last label of the host name in
+    // host[lo, hi), which is not empty, is a number, after one trailing dot. A
+    // browser takes such a host for an IPv4 address. isAllowed() applies the same
+    // rule to the Host header within its own scan for the last label.
+    static boolean endsInNumber(Utf8Sequence host, int lo, int hi) {
+        assert hi > lo;
+        final int labelHi = host.byteAt(hi - 1) == '.' ? hi - 1 : hi;
+        int labelLo = labelHi;
+        while (labelLo > lo && host.byteAt(labelLo - 1) != '.') {
+            labelLo--;
+        }
+        return isNumber(host, labelLo, labelHi);
     }
 }
