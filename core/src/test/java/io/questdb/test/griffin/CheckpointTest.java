@@ -6856,6 +6856,10 @@ public class CheckpointTest extends AbstractCairoTest {
             final boolean isMarkerFailure = failingFile.endsWith(".rebuild");
             final AtomicBoolean isArmed = new AtomicBoolean(isMarkerFailure);
             final AtomicInteger failures = new AtomicInteger();
+            // The restore checks partitions in parallel. Match only the files of the damaged partition,
+            // so the other partition's worker never hits the fault, whatever the interleaving.
+            final String keyFileSuffix = Files.SEPARATOR + partDir.getName() + Files.SEPARATOR + "s.pk";
+            final String failingFileSuffix = Files.SEPARATOR + partDir.getName() + Files.SEPARATOR + failingFile;
             final FilesFacade failingFacade = new TestFilesFacadeImpl() {
                 @Override
                 public long openRO(LPSZ name) {
@@ -6869,7 +6873,7 @@ public class CheckpointTest extends AbstractCairoTest {
 
                 @Override
                 public boolean removeQuiet(LPSZ name) {
-                    if (Utf8s.endsWithAscii(name, Files.SEPARATOR + "s.pk")) {
+                    if (Utf8s.endsWithAscii(name, keyFileSuffix)) {
                         isArmed.set(true);
                     }
                     return super.removeQuiet(name);
@@ -6881,7 +6885,7 @@ public class CheckpointTest extends AbstractCairoTest {
                 }
 
                 private boolean fails(LPSZ name) {
-                    if (isArmed.get() && Utf8s.endsWithAscii(name, Files.SEPARATOR + failingFile)) {
+                    if (isArmed.get() && Utf8s.endsWithAscii(name, failingFileSuffix)) {
                         failures.incrementAndGet();
                         return true;
                     }
